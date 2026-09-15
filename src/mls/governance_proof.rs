@@ -207,15 +207,16 @@ fn proposed_group_genesis_binding(
             };
             (scheme, durability)
         }
-        arkret_sdk::ScopeRef::Circle { circle_id, .. } => (
-            state_store
-                .circle_content_scheme(realm_id.as_str(), circle_id.as_str())
-                .ok_or_else(|| {
-                    "pre-Genesis Circle proposal requires the accepted Circle content scheme"
-                        .to_owned()
-                })?,
-            state_store.circle_durability_policy(realm_id.as_str(), circle_id.as_str()),
-        ),
+        // `ak.component.circle.create.v1` is an ordered log and therefore
+        // outside the current cell set (`sync/current-results.md`), so no
+        // Station current value carries a Circle group's create-locked
+        // binding. Fail closed instead of proposing a guessed scheme.
+        arkret_sdk::ScopeRef::Circle { .. } => {
+            return Err(
+                "pre-Genesis Circle proposal requires the accepted Circle content scheme"
+                    .to_owned(),
+            );
+        }
         _ => return Err("unsupported MLS governance effective scope".to_owned()),
     };
     let content_scheme = match content_scheme.as_str() {
@@ -261,19 +262,13 @@ fn legacy_creator_binding_is_implied_by_history(projection: &serde_json::Value) 
 fn direct_conversation_genesis_proposal(
     projection: &serde_json::Value,
 ) -> Option<arkret_sdk::ProposedMlsGroupGenesisBinding> {
-    crate::realm_tree::projected_state_event_values(projection)
-        .filter(|event| event.get("kind").and_then(serde_json::Value::as_str)
-            == Some(arkret_sdk::EventKind::RealmCreate.as_str()))
-        .find_map(|event| {
-            let payload = serde_json::from_value::<arkret_sdk::RealmCreatePayload>(
-                event.get("payload")?.clone(),
-            ).ok()?;
-            arkret_models_collaboration::objects::direct_conversation::DirectConversationRealmRole::validate(&payload.object).ok()?;
-            Some(arkret_sdk::ProposedMlsGroupGenesisBinding {
-                content_scheme: arkret_wire::ContentScheme::MlsExporterAeadV1,
-                durability_policy: Some(arkret_wire::DurabilityPolicy::None),
-            })
-        })
+    let genesis = crate::realm_tree::realm_projection_genesis_value(projection)?;
+    let object = serde_json::from_value::<arkret_sdk::RealmGenesis>(genesis.clone()).ok()?;
+    arkret_models_collaboration::objects::direct_conversation::DirectConversationRealmRole::validate(&object).ok()?;
+    Some(arkret_sdk::ProposedMlsGroupGenesisBinding {
+        content_scheme: arkret_wire::ContentScheme::MlsExporterAeadV1,
+        durability_policy: Some(arkret_wire::DurabilityPolicy::None),
+    })
 }
 
 pub(crate) async fn fetch_and_cache_frontier<S: GovernanceProofStateStore>(
@@ -998,10 +993,15 @@ mod direct_conversation_genesis_tests {
 
     use super::*;
 
+    const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+
     fn projection() -> serde_json::Value {
-        json!({"state": {"events": [{
-            "kind": "ak.realm.create",
-            "payload": {"object": {
+        json!({"current": {"entries": [{
+            "selector": {
+                "scope_ref": {"kind": "realm", "realm_id": REALM},
+                "cell_id": "ak:cell:ak.component.realm.genesis.v1:null"
+            },
+            "result": {"status": "value", "value": {
                 "schema": "ak.schema.realm_genesis.v1",
                 "purpose": "direct_conversation",
                 "genesis_salt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -1041,17 +1041,16 @@ mod direct_conversation_genesis_tests {
             crate::realm_tree::realm_projection_content_scheme(&projection),
             None
         );
-        assert!(crate::realm_tree::realm_projection_group_genesis_binding(&projection).is_none());
     }
 
     #[test]
     fn direct_conversation_genesis_requires_both_canonical_purpose_and_profile() {
         let mut wrong_purpose = projection();
-        wrong_purpose["state"]["events"][0]["payload"]["object"]["purpose"] =
+        wrong_purpose["current"]["entries"][0]["result"]["value"]["purpose"] =
             json!("collaboration");
         assert!(direct_conversation_genesis_proposal(&wrong_purpose).is_none());
         let mut missing_profile = projection();
-        missing_profile["state"]["events"][0]["payload"]["object"]["schema_refs"] =
+        missing_profile["current"]["entries"][0]["result"]["value"]["schema_refs"] =
             json!(["ak.schema.realm.v1"]);
         assert!(direct_conversation_genesis_proposal(&missing_profile).is_none());
         assert!(

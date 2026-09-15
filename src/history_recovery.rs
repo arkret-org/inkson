@@ -387,12 +387,12 @@ fn scope_uses_exporter_history(
         arkret_sdk::HistoryEffectiveScope::Realm { realm_id } => store
             .realm_content_scheme(realm_id.as_str())
             .is_some_and(|scheme| scheme == "mls_exporter_aead_v1"),
-        arkret_sdk::HistoryEffectiveScope::Circle {
-            realm_id,
-            circle_id,
-        } => store
-            .circle_content_scheme(realm_id.as_str(), circle_id.as_str())
-            .is_some_and(|scheme| scheme == "mls_exporter_aead_v1"),
+        // A Circle MLS group freezes its own content scheme at its accepted
+        // Genesis. `ak.component.circle.create.v1` is an ordered log, which
+        // `sync/current-results.md` keeps out of the current cell set, so the
+        // Station publishes no current value a client can read for it yet.
+        // Fail closed rather than borrow the parent Realm's scheme.
+        arkret_sdk::HistoryEffectiveScope::Circle { .. } => false,
     })
 }
 

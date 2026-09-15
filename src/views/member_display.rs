@@ -209,14 +209,15 @@ pub(crate) fn test_issuer_policy(issuer_did: &str, domain: &str) -> HandleIssuer
 }
 
 /// `identity-handles.md` §3.2.1 issuer trust + domain-authority filter input:
-/// the Realm's effective `handle_issuer_policies`, read from the accepted
-/// `ak.realm.policy_bundle` revisions in the Realm projection.
+/// the Realm's effective `handle_issuer_policies`, read from the Station's
+/// current `ak.component.realm.policy_bundle.v1` value.
 ///
-/// The bundle cell is sequenced state, so the current accepted
-/// `policy_revision` is the effective one. An empty result is not "no
-/// constraint": §3.2.1 Step 0 makes the issuer filter mandatory, so an empty
-/// policy makes the inline candidate set empty and the renderer degrades
-/// instead of showing an unvetted handle.
+/// The bundle cell is sequenced state and the Station publishes exactly one
+/// selected value for it, so the installed current result is the effective
+/// policy; the client never re-picks a revision across projected Events. An
+/// empty result is not "no constraint": §3.2.1 Step 0 makes the issuer filter
+/// mandatory, so an empty policy makes the inline candidate set empty and the
+/// renderer degrades instead of showing an unvetted handle.
 pub(crate) fn realm_handle_issuer_policies(
     projections: &BTreeMap<String, Value>,
     realm_id: &str,
@@ -229,38 +230,20 @@ pub(crate) fn realm_handle_issuer_policies(
 pub(crate) fn handle_issuer_policies_from_projection(
     projection: Option<&Value>,
 ) -> Vec<HandleIssuerPolicyEntry> {
-    let Some(events) = projection
-        .and_then(|projection| projection.get("state"))
-        .and_then(|state| state.get("events"))
-        .and_then(Value::as_array)
-    else {
+    let Some(value) = projection.and_then(|projection| {
+        garth::installed_cell_value(
+            projection,
+            crate::current_projection::REQUIRED_REALM_CELLS[2],
+        )
+    }) else {
         return Vec::new();
     };
-    let mut best: Option<arkret_sdk::RealmPolicyBundlePayload> = None;
-    for event in events {
-        let kind = event
-            .get("kind")
-            .or_else(|| event.get("event_kind"))
-            .and_then(Value::as_str);
-        if kind != Some(arkret_wire::event_kind_str::REALM_POLICY_BUNDLE) {
-            continue;
-        }
-        let Some(payload) = event.get("payload") else {
-            continue;
-        };
-        let Ok(bundle) =
-            serde_json::from_value::<arkret_sdk::RealmPolicyBundlePayload>(payload.clone())
-        else {
-            continue;
-        };
-        if best
-            .as_ref()
-            .is_none_or(|current| bundle.policy_revision >= current.policy_revision)
-        {
-            best = Some(bundle);
-        }
-    }
-    best.and_then(|bundle| bundle.handle_issuer_policies)
+    // The registry projects `field=payload`, so the published value is either
+    // the bundle payload itself or the generic `{"value": ...}` state envelope.
+    let candidate = value.get("value").unwrap_or(value);
+    serde_json::from_value::<arkret_sdk::RealmPolicyBundlePayload>(candidate.clone())
+        .ok()
+        .and_then(|bundle| bundle.handle_issuer_policies)
         .unwrap_or_default()
 }
 

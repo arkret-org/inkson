@@ -134,17 +134,20 @@ fn mls_encrypted_projection_detects_epoch_pause_scope() {
 }
 
 #[test]
-fn mls_encrypted_projection_reads_canonical_realm_create_state_event() {
-    let path = temp_state_path("mls-encrypted-state-event-projection");
+fn mls_encrypted_projection_reads_the_installed_realm_genesis_value() {
+    let path = temp_state_path("mls-encrypted-genesis-current-projection");
     let mut store = LocalStateStore::with_path(path);
     let realm = "ak:realm:AbL5fawW_ixBPm33UQ3u2DB4FgKEE52qRcPacwGPz9Hh";
     store.save_realm_tree_projection(
         realm,
         json!({
             "summary": {"joined_member_count": 2},
-            "state": {"events": [{
-                "kind": "ak.realm.create",
-                "payload": {"object": {
+            "current": {"entries": [{
+                "selector": {
+                    "scope_ref": {"kind": "realm", "realm_id": realm},
+                    "cell_id": "ak:cell:ak.component.realm.genesis.v1:null"
+                },
+                "result": {"status": "value", "value": {
                     "encryption_profile": "mls_rfc9420",
                     "history_access": "all_history_for_current_members"
                 }}

@@ -340,17 +340,22 @@ fn groups_agent_members_under_reported_controller() {
 
 const PANEL_ISSUER: &str = "ak:did_core:web:acme.example";
 
-fn acme_policy_events() -> serde_json::Value {
-    serde_json::json!({"events": [{
-        "kind": "ak.realm.policy_bundle",
-        "payload": {
+/// The installed current `ak.component.realm.policy_bundle.v1` value: one
+/// Station-selected bundle, not a revision race across projected Events.
+fn acme_policy_current(realm_id: &str) -> serde_json::Value {
+    serde_json::json!({"entries": [{
+        "selector": {
+            "scope_ref": {"kind": "realm", "realm_id": realm_id},
+            "cell_id": "ak:cell:ak.component.realm.policy_bundle.v1:null"
+        },
+        "result": {"status": "value", "value": {
             "policy_revision": 1,
             "handle_issuer_policies": [{
                 "issuer_id": PANEL_ISSUER,
                 "authorized_handle_domains": ["acme.example"],
                 "issuer_class": "domain_authority"
             }]
-        }
+        }}
     }]})
 }
 
@@ -373,7 +378,7 @@ fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
                     arkret_models_identity::HandleClaimStatus::Verified,
                 )]
             }],
-            "state": acme_policy_events(),
+            "current": acme_policy_current(realm_id),
             "admins": ["did:web:alice.example"]
         }),
     );
@@ -460,10 +465,16 @@ fn projected_member_profiles_classify_authority_root_controller_as_owner() {
                 "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
                 "membership": "join"
             }],
-            "state": {"events": [{
-                "kind": "ak.realm.create",
-                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-                "payload": {"object": {}}
+            "current": {"entries": [{
+                "selector": {
+                    "scope_ref": {"kind": "realm", "realm_id": realm_id},
+                    "cell_id": "ak:cell:ak.component.realm.authority_root.v1:null"
+                },
+                "result": {"status": "value", "value": {
+                    "controller_actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
+                    "controller_epoch": 0,
+                    "authority_generation": 0
+                }}
             }]}
         }),
     );

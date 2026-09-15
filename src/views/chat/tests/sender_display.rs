@@ -255,16 +255,19 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
                 )]
             }
         ],
-        "state": {"events": [{
-            "kind": "ak.realm.policy_bundle",
-            "payload": {
+        "current": {"entries": [{
+            "selector": {
+                "scope_ref": {"kind": "realm", "realm_id": "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE"},
+                "cell_id": "ak:cell:ak.component.realm.policy_bundle.v1:null"
+            },
+            "result": {"status": "value", "value": {
                 "policy_revision": 1,
                 "handle_issuer_policies": [{
                     "issuer_id": "ak:did_core:web:local.host",
                     "authorized_handle_domains": ["local.host"],
                     "issuer_class": "domain_authority"
                 }]
-            }
+            }}
         }]}
     });
 

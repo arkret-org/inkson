@@ -332,31 +332,6 @@ impl LocalStateStore {
             .and_then(crate::realm_tree::realm_projection_content_scheme)
     }
 
-    /// The create-locked content scheme for one independent Circle MLS group.
-    pub fn circle_content_scheme(&self, realm_id: &str, circle_id: &str) -> Option<String> {
-        self.load()
-            .realm_tree_projections
-            .get(realm_id.trim())
-            .and_then(|body| {
-                crate::realm_tree::circle_projection_content_scheme(body, circle_id.trim())
-            })
-    }
-
-    /// The create-locked durability selector for one independent Circle MLS
-    /// group, resolved from the accepted Circle create projection.
-    pub fn circle_durability_policy(
-        &self,
-        realm_id: &str,
-        circle_id: &str,
-    ) -> Option<arkret_sdk::DurabilityPolicy> {
-        self.load()
-            .realm_tree_projections
-            .get(realm_id.trim())
-            .and_then(|body| {
-                crate::realm_tree::circle_projection_durability_policy(body, circle_id.trim())
-            })
-    }
-
     /// SEC-08 (`encryption-and-audit.md` §2.9) — does the latest cached
     /// realm-tree projection declare the
     /// `ak.profile.mls.minimal_metadata_realm.v1` profile? The committer uses

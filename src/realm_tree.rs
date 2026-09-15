@@ -252,123 +252,53 @@ struct ProjectionEventFeed {
 // existing `crate::realm_tree::` paths keep resolving.
 pub(crate) use garth::projection::string_field;
 
-fn state_event_values(body: &Value) -> impl Iterator<Item = &Value> {
-    body.get("state")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .chain(
-            body.get("state")
-                .and_then(|state| state.get("events"))
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten(),
-        )
-}
-
-pub(crate) fn projected_state_event_values(body: &Value) -> impl Iterator<Item = &Value> {
-    body.get("state_after")
-        .and_then(|state| state.get("events"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .chain(state_event_values(body))
+/// The closed `ak.schema.realm_genesis.v1` object the Station publishes as the
+/// current `ak.component.realm.genesis.v1` value.
+///
+/// This cell is the only authority for the create-locked identity/security
+/// core (`realm-and-space.md` §2.5). The client reads the single published
+/// value and never reconstructs it from Events: the retired `state` /
+/// `state_after` containers are gone from the wire, and re-deriving a current
+/// value from Event arrival order is exactly the raw-latest reduction the
+/// current-result contract removed.
+pub(crate) fn realm_projection_genesis_value(body: &Value) -> Option<&Value> {
+    garth::installed_cell_value(body, crate::current_projection::REQUIRED_REALM_CELLS[0])
 }
 
 /// Return the create-locked control purpose only when the accepted Realm
 /// genesis carries both normative PCR markers. A bare `purpose` string or a
 /// profile ref by itself is not enough to classify a Realm as control-plane.
 pub(crate) fn realm_projection_control_purpose(body: &Value) -> Option<&str> {
-    projected_state_event_values(body)
-        .filter(|event| {
-            event
-                .get("kind")
-                .or_else(|| event.get("type"))
-                .and_then(Value::as_str)
-                == Some(arkret_sdk::EventKind::RealmCreate.as_str())
-        })
-        .find_map(|event| {
-            let object = event
-                .pointer("/payload/object")
-                .or_else(|| event.pointer("/content/object"))?;
-            let purpose = object.get("purpose").and_then(Value::as_str)?;
-            let is_control_purpose = matches!(purpose, "principal_control" | "agent_control");
-            let has_control_profile = object
-                .get("schema_refs")
-                .and_then(Value::as_array)
-                .is_some_and(|refs| {
-                    refs.iter().any(|value| {
-                        value.as_str() == Some(arkret_wire::ProfileId::PRINCIPAL_CONTROL_REALM_V1)
-                    })
-                });
-            (is_control_purpose && has_control_profile).then_some(purpose)
-        })
+    let genesis = realm_projection_genesis_value(body)?;
+    let purpose = genesis.get("purpose").and_then(Value::as_str)?;
+    let is_control_purpose = matches!(purpose, "principal_control" | "agent_control");
+    let has_control_profile = genesis
+        .get("schema_refs")
+        .and_then(Value::as_array)
+        .is_some_and(|refs| {
+            refs.iter().any(|value| {
+                value.as_str() == Some(arkret_wire::ProfileId::PRINCIPAL_CONTROL_REALM_V1)
+            })
+        });
+    (is_control_purpose && has_control_profile).then_some(purpose)
 }
 
 pub(crate) fn realm_projection_is_principal_control(body: &Value) -> bool {
     realm_projection_control_purpose(body).is_some()
 }
 
-/// Resolve the exact immutable group binding from one accepted MLS Genesis.
-/// Both fields are read from the same signed Event so a partial projection can
-/// never splice an optimistic `content_scheme` together with an unrelated
-/// materialized `durability_policy`.
-pub(crate) fn realm_projection_group_genesis_binding(
-    body: &Value,
-) -> Option<arkret_sdk::MlsGroupGenesisBinding> {
-    let mut resolved = None;
-    for event in projected_state_event_values(body).filter(|event| {
-        event
-            .get("kind")
-            .or_else(|| event.get("type"))
-            .and_then(Value::as_str)
-            == Some(event_kind_str::MLS_GENESIS)
-    }) {
-        let binding = event
-            .pointer("/payload/governance_binding")
-            .or_else(|| event.pointer("/content/governance_binding"))?;
-        let content_scheme = serde_json::from_value::<arkret_wire::ContentScheme>(
-            binding.get("content_scheme")?.clone(),
-        )
-        .ok()?;
-        let durability_policy = match binding
-            .get("durability_policy")
-            .filter(|value| !value.is_null())
-        {
-            Some(value) => {
-                Some(serde_json::from_value::<arkret_wire::DurabilityPolicy>(value.clone()).ok()?)
-            }
-            None => None,
-        };
-        let candidate = arkret_sdk::MlsGroupGenesisBinding {
-            content_scheme,
-            durability_policy,
-        };
-        candidate.validate().ok()?;
-        match resolved.as_ref() {
-            Some(current) if current != &candidate => return None,
-            Some(_) => {}
-            None => resolved = Some(candidate),
-        }
-    }
-    resolved
-}
-
-/// Resolve the Realm's immutable content scheme from the accepted MLS Genesis.
-/// An explicit top-level value remains available only for pre-Genesis local
-/// authoring. A canonical create Event cannot carry this field and is never a
-/// defaulting source.
+/// Resolve the Realm's immutable content scheme.
+///
+/// The accepted binding is frozen by the Realm's MLS Genesis and published by
+/// the Station in the `ak.component.mls.epoch.v1` current value; that cell is
+/// not yet part of this client's selector set, so the only source here is the
+/// explicit pre-Genesis authoring value written by the local creator
+/// bootstrap. `None` means the authoritative scheme is unknown and encrypted
+/// sends stay paused — never a default to `mls_rfc9420`. The retired scan over
+/// projected `ak.mls.genesis` Events is gone: the wire carries no `state` /
+/// `state_after` container, and re-deriving a current value from Event arrival
+/// order is the raw-latest reduction the current-result contract removed.
 pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
-    if let Some(binding) = realm_projection_group_genesis_binding(body) {
-        return Some(
-            match binding.content_scheme {
-                arkret_wire::ContentScheme::MlsRfc9420 => "mls_rfc9420",
-                arkret_wire::ContentScheme::MlsExporterAeadV1 => "mls_exporter_aead_v1",
-            }
-            .to_owned(),
-        );
-    }
-
     let null = Value::Null;
     for container in [
         body,
@@ -383,52 +313,6 @@ pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
     }
 
     None
-}
-
-/// Resolve one Circle's create-locked content scheme from its accepted
-/// `ak.circle.create` Event in the parent Realm projection. Circle MLS groups
-/// are independent from the Realm group, so the parent Realm scheme is never
-/// used as a fallback.
-pub(crate) fn circle_projection_content_scheme(body: &Value, circle_id: &str) -> Option<String> {
-    circle_projection_object(body, circle_id)?
-        .content_scheme
-        .map(|scheme| scheme.as_str().to_owned())
-}
-
-/// Resolve one Circle's create-locked durability profile from the same
-/// accepted create Event as its content scheme.
-pub(crate) fn circle_projection_durability_policy(
-    body: &Value,
-    circle_id: &str,
-) -> Option<arkret_wire::DurabilityPolicy> {
-    circle_projection_object(body, circle_id)?.durability_policy
-}
-
-fn circle_projection_object(body: &Value, circle_id: &str) -> Option<arkret_sdk::Circle> {
-    projected_state_event_values(body)
-        .filter(|event| {
-            event
-                .get("kind")
-                .or_else(|| event.get("type"))
-                .and_then(Value::as_str)
-                == Some(arkret_sdk::EventKind::CircleCreate.as_str())
-        })
-        .find_map(|event| {
-            let payload = event.get("payload").or_else(|| event.get("content"))?;
-            let object: arkret_sdk::Circle =
-                serde_json::from_value(payload.get("object")?.clone()).ok()?;
-            let projected_id = match object.id.as_ref() {
-                Some(id) => id.clone(),
-                None => {
-                    let event_id = event
-                        .get("event_id")
-                        .and_then(Value::as_str)
-                        .and_then(|value| arkret_sdk::EventId::new(value.to_owned()).ok())?;
-                    arkret_sdk::CircleId::from_event_id(&event_id)
-                }
-            };
-            (projected_id.as_str() == circle_id).then_some(object)
-        })
 }
 
 fn nested_string_field(value: &Value, parent: &str, keys: &[&str]) -> Option<String> {
@@ -451,19 +335,6 @@ fn explicit_realm_title(body: &Value) -> Option<String> {
         body.pointer("/state_at_window_start/realm_metadata")
             .and_then(|metadata| string_field(metadata, &["title", "name"]))
     })
-    .or_else(|| {
-        state_event_values(body)
-            .filter(|event| {
-                event.get("kind").and_then(Value::as_str)
-                    == Some(arkret_sdk::EventKind::RealmCreate.as_str())
-            })
-            .find_map(|event| {
-                event.get("payload").and_then(|payload| {
-                    string_field(payload, &["realm_title", "title"])
-                        .or_else(|| nested_string_field(payload, "object", &["title"]))
-                })
-            })
-    })
 }
 
 fn explicit_realm_summary(body: &Value) -> Option<String> {
@@ -472,19 +343,6 @@ fn explicit_realm_summary(body: &Value) -> Option<String> {
         .or_else(|| {
             body.pointer("/state_at_window_start/realm_metadata")
                 .and_then(|metadata| string_field(metadata, &["summary", "description"]))
-        })
-        .or_else(|| {
-            state_event_values(body)
-                .filter(|event| {
-                    event.get("kind").and_then(Value::as_str)
-                        == Some(arkret_sdk::EventKind::RealmCreate.as_str())
-                })
-                .find_map(|event| {
-                    event.get("payload").and_then(|payload| {
-                        string_field(payload, &["realm_summary", "summary"])
-                            .or_else(|| nested_string_field(payload, "object", &["summary"]))
-                    })
-                })
         })
 }
 
@@ -538,30 +396,7 @@ pub(crate) fn extract_parent_space_id(space_id: &str, body: &Value) -> Option<St
         }
     }
 
-    state_event_values(body).find_map(|event| {
-        let kind = event
-            .get("kind")
-            .or_else(|| event.get("type"))
-            .and_then(Value::as_str)?;
-        if kind != event_kind_str::SPACE_PARENT {
-            return None;
-        }
-        for container in [
-            event.get("payload").unwrap_or(&Value::Null),
-            event.get("content").unwrap_or(&Value::Null),
-            event,
-        ] {
-            if let Some(parent) = string_field(
-                container,
-                &["parent_space_id", "parent_id", "parent", "target_parent_id"],
-            )
-            .filter(|parent| parent != space_id && parent.starts_with("ak:space:"))
-            {
-                return Some(parent);
-            }
-        }
-        None
-    })
+    None
 }
 
 pub(crate) fn extract_child_space_ids(space_id: &str, body: &Value) -> Vec<String> {
@@ -582,31 +417,6 @@ pub(crate) fn extract_child_space_ids(space_id: &str, body: &Value) -> Vec<Strin
                 "space_child_ids",
             ],
         ));
-    }
-
-    for event in state_event_values(body) {
-        let kind = event
-            .get("kind")
-            .or_else(|| event.get("type"))
-            .and_then(Value::as_str);
-        if kind != Some(arkret_sdk::EventKind::SpaceParent.as_str()) {
-            continue;
-        }
-        let payload = event
-            .get("payload")
-            .or_else(|| event.get("content"))
-            .and_then(|payload| {
-                serde_json::from_value::<arkret_sdk::SpaceParentPayload>(payload.clone()).ok()
-            });
-        if let Some(payload) = payload
-            && payload
-                .parent_space_id
-                .as_ref()
-                .map(arkret_sdk::SpaceId::as_str)
-                == Some(space_id)
-        {
-            children.push(payload.space_id.to_string());
-        }
     }
 
     children
@@ -968,6 +778,21 @@ mod tests {
 
     use super::*;
 
+    /// One Realm projection carrying exactly the installed current
+    /// `ak.component.realm.genesis.v1` value. That single published result is
+    /// the whole create-locked identity/security core a client may read.
+    fn installed_genesis_projection(realm_id: &str, genesis: Value) -> Value {
+        json!({
+            "current": {"entries": [{
+                "selector": {
+                    "scope_ref": {"kind": "realm", "realm_id": realm_id},
+                    "cell_id": "ak:cell:ak.component.realm.genesis.v1:null"
+                },
+                "result": {"status": "value", "value": genesis}
+            }]}
+        })
+    }
+
     fn preview(id: &str, name: &str, parent: Option<&str>) -> RealmTreeNode {
         let kind = if id.starts_with("ak:space:") {
             RealmTreeNodeKind::Space
@@ -1030,100 +855,57 @@ mod tests {
     }
 
     #[test]
-    fn sync_projection_recovers_title_from_canonical_realm_create_state_event() {
+    fn sync_projection_reads_the_title_the_current_profile_value_installed() {
+        // `install_bounded_view` writes `summary.title` / `summary.summary`
+        // from the current `ak.component.realm.profile.v1` value. The retired
+        // `state` / `state_after` Event containers are gone from the wire, so
+        // there is no second place a title could come from.
         let id = "ak:realm:AWgGCEbMHnelRQfzqg1C_onV9Ej_FdpdAZyM_JoFgAd3";
         let nodes = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
             id.to_owned(),
             json!({
-                "summary": {"joined_member_count": 1},
-                "state": {"events": [{
-                    "kind": "ak.realm.create",
-                    "payload": {"object": {
-                        "title": "Recovered title",
-                        "summary": "Recovered summary"
-                    }}
-                }]}
+                "summary": {
+                    "joined_member_count": 1,
+                    "title": "Installed title",
+                    "summary": "Installed summary"
+                }
             }),
         )]));
 
-        assert_eq!(nodes[0].title, "Recovered title");
-        assert_eq!(nodes[0].description.as_deref(), Some("Recovered summary"));
+        assert_eq!(nodes[0].title, "Installed title");
+        assert_eq!(nodes[0].description.as_deref(), Some("Installed summary"));
     }
 
     #[test]
-    fn content_scheme_prefers_immutable_mls_genesis_over_projection_hints() {
-        let projection = json!({
-            "object": {"content_scheme": "mls_rfc9420"},
-            "state_after": {"events": [
-                {
-                    "kind": "ak.realm.create",
-                    "payload": {"object": {"content_scheme": "mls_rfc9420"}}
-                },
-                {
-                    "kind": "ak.realm.policy_bundle",
-                    "payload": {"value": {"content_scheme": "mls_rfc9420"}}
-                },
-                {
-                    "kind": "ak.mls.genesis",
-                    "payload": {"governance_binding": {
-                        "content_scheme": "mls_exporter_aead_v1",
-                        "durability_policy": "none"
-                    }}
-                }
-            ]}
-        });
-
-        assert_eq!(
-            realm_projection_content_scheme(&projection).as_deref(),
-            Some("mls_exporter_aead_v1")
-        );
-    }
-
-    #[test]
-    fn content_scheme_never_uses_forbidden_create_payload_fallback() {
-        let projection = json!({
-            "state": {"events": [{
-                "kind": "ak.realm.create",
-                "payload": {"object": {"content_scheme": "mls_exporter_aead_v1"}}
-            }]}
-        });
-
-        assert_eq!(realm_projection_content_scheme(&projection), None);
-    }
-
-    #[test]
-    fn content_scheme_remains_pending_until_accepted_genesis_is_visible() {
-        let accepted_default = json!({
-            "state": {"events": [{
-                "kind": "ak.realm.create",
-                "payload": {"object": {"encryption_profile": "mls_rfc9420"}}
-            }]}
-        });
+    fn content_scheme_remains_pending_without_an_explicit_authoring_selector() {
         let transient_projection = json!({
             "member_roster_entries_limited": false,
             "member_roster_entries": []
         });
 
-        assert_eq!(realm_projection_content_scheme(&accepted_default), None);
         assert_eq!(
             realm_projection_content_scheme(&transient_projection),
             None,
-            "neither create nor a roster-only frame may guess a content wire scheme"
+            "a roster-only frame may not guess a content wire scheme"
         );
-    }
-
-    #[test]
-    fn group_genesis_binding_never_splices_materialized_fields() {
-        let projection = json!({
-            "content_scheme": "mls_exporter_aead_v1",
-            "durability_policy": "none",
-            "state": {"events": [{
-                "kind": "ak.realm.create",
-                "payload": {"object": {"encryption_profile": "mls_rfc9420"}}
-            }]}
-        });
-
-        assert_eq!(realm_projection_group_genesis_binding(&projection), None);
+        assert_eq!(
+            realm_projection_content_scheme(&json!({
+                "current": {"entries": [{
+                    "selector": {
+                        "scope_ref": {
+                            "kind": "realm",
+                            "realm_id": "ak:realm:AWgGCEbMHnelRQfzqg1C_onV9Ej_FdpdAZyM_JoFgAd3"
+                        },
+                        "cell_id": "ak:cell:ak.component.realm.genesis.v1:null"
+                    },
+                    "result": {"status": "value", "value": {
+                        "encryption_profile": "mls_rfc9420"
+                    }}
+                }]}
+            })),
+            None,
+            "the Realm genesis profile is not the MLS group content scheme"
+        );
     }
 
     #[test]
@@ -1343,22 +1125,14 @@ mod tests {
 
         let genesis_only = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
             realm_id.to_owned(),
-            json!({
-                "state": {
-                    "events": [{
-                        "kind": "ak.realm.create",
-                        "payload": {
-                            "object": {
-                                "collaboration_role": "direct_conversation"
-                            }
-                        }
-                    }]
-                }
-            }),
+            installed_genesis_projection(
+                realm_id,
+                json!({"collaboration_role": "direct_conversation"}),
+            ),
         )]));
         assert!(
             !realm_tree_node_is_direct_conversation(&genesis_only[0]),
-            "untyped Event payload probes must not drive MLS classification"
+            "an untyped genesis field probe must not drive MLS classification"
         );
 
         let heuristic_only = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(
@@ -1375,19 +1149,13 @@ mod tests {
         let nodes = realm_tree_nodes_from_sync_realms(&BTreeMap::from([
             (
                 pcr_id.to_owned(),
-                json!({
-                    "state": {
-                        "events": [{
-                            "kind": "ak.realm.create",
-                            "payload": {
-                                "object": {
-                                    "purpose": "principal_control",
-                                    "schema_refs": ["ak.profile.principal_control_realm.v1"]
-                                }
-                            }
-                        }]
-                    }
-                }),
+                installed_genesis_projection(
+                    pcr_id,
+                    json!({
+                        "purpose": "principal_control",
+                        "schema_refs": ["ak.profile.principal_control_realm.v1"]
+                    }),
+                ),
             ),
             (
                 collaboration_id.to_owned(),
@@ -1401,21 +1169,16 @@ mod tests {
 
     #[test]
     fn principal_control_classification_requires_purpose_and_profile() {
-        let purpose_only = json!({
-            "state": {"events": [{
-                "kind": "ak.realm.create",
-                "payload": {"object": {"purpose": "principal_control"}}
-            }]}
-        });
-        let profile_only = json!({
-            "state": {"events": [{
-                "kind": "ak.realm.create",
-                "payload": {"object": {
-                    "purpose": "collaboration",
-                    "schema_refs": ["ak.profile.principal_control_realm.v1"]
-                }}
-            }]}
-        });
+        let realm_id = "ak:realm:Ac9iLS6pVSDjqFeDeJjvUhbtREpxQ8IWem2mi64wrqDq";
+        let purpose_only =
+            installed_genesis_projection(realm_id, json!({"purpose": "principal_control"}));
+        let profile_only = installed_genesis_projection(
+            realm_id,
+            json!({
+                "purpose": "collaboration",
+                "schema_refs": ["ak.profile.principal_control_realm.v1"]
+            }),
+        );
 
         assert!(!realm_projection_is_principal_control(&purpose_only));
         assert!(!realm_projection_is_principal_control(&profile_only));
@@ -1497,7 +1260,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_parent_space_id_prefers_summary_and_event_signals() {
+    fn extract_parent_space_id_reads_only_projected_hierarchy_fields() {
         // Summary-level parent link.
         assert_eq!(
             extract_parent_space_id(
@@ -1506,7 +1269,7 @@ mod tests {
             ),
             Some("ak:space:root".to_owned())
         );
-        // `ak.space.parent` state event.
+        // The retired `state` Event container is not a parent-edge source.
         assert_eq!(
             extract_parent_space_id(
                 "ak:space:child",
@@ -1517,7 +1280,7 @@ mod tests {
                     }]
                 })
             ),
-            Some("ak:space:root".to_owned())
+            None
         );
         // Self-reference and non-Space ids are rejected.
         assert_eq!(
@@ -1558,13 +1321,12 @@ mod tests {
         assert!(!garth::realm_projection_is_encrypted(&json!({
             "state_at_window_start": {"e2ee_epoch": null}
         })));
-        assert!(garth::realm_projection_is_encrypted(&json!({
-            "state_at_window_start": {"e2ee_epoch": null},
-            "state": {"events": [{
-                "kind": "ak.realm.create",
-                "payload": {"object": {"encryption_profile": "mls_rfc9420"}}
-            }]}
-        })));
+        assert!(garth::realm_projection_is_encrypted(
+            &installed_genesis_projection(
+                "ak:realm:AWgGCEbMHnelRQfzqg1C_onV9Ej_FdpdAZyM_JoFgAd3",
+                json!({"encryption_profile": "mls_rfc9420"}),
+            )
+        ));
     }
 
     #[test]
@@ -1759,14 +1521,6 @@ mod tests {
                     "kind": "discussion",
                     "title": "Test"
                 }],
-                "state": [],
-                "state_after": {
-                    "events": [{
-                        "strand_id": "ak:strand:ARDR2oN-Bh8J55KxFHM6s_izSsUg0-1gh3XfOjfjJ9HE",
-                        "kind": "discussion",
-                        "title": "Test"
-                    }]
-                },
                 "summary": {
                     "category": null,
                     "strand": {

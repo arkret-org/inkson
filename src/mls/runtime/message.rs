@@ -110,13 +110,18 @@ pub(super) fn realm_content_scheme_is_exporter_aead_for_send(
     realm_id: &str,
     circle: Option<&str>,
 ) -> Result<bool, MlsRuntimeError> {
-    let scheme = circle
-        .map(|circle_id| state_store.circle_content_scheme(realm_id, circle_id))
-        .unwrap_or_else(|| state_store.realm_content_scheme(realm_id))
-        .ok_or(MlsRuntimeError::EncryptionPolicyPending)?
-        .trim()
-        .to_ascii_lowercase()
-        .replace('-', "_");
+    // A Circle group's create-locked scheme has no current cell to read
+    // (`ak.component.circle.create.v1` is an ordered log, excluded from the
+    // current cell set), so Circle scope reports the policy as still pending
+    // rather than inheriting the Realm scheme.
+    let scheme = match circle {
+        Some(_) => None,
+        None => state_store.realm_content_scheme(realm_id),
+    }
+    .ok_or(MlsRuntimeError::EncryptionPolicyPending)?
+    .trim()
+    .to_ascii_lowercase()
+    .replace('-', "_");
     match scheme.as_str() {
         "mls_exporter_aead_v1" => Ok(true),
         "mls_rfc9420" => Ok(false),
@@ -230,10 +235,7 @@ pub(crate) fn encrypted_payload_from_verified_event_context(
             // artifact. The Account Station's immutable group configuration
             // supplies the scheme; the exact transition reference and AEAD still bind it.
             let scheme = match effective_scope {
-                arkret_sdk::ScopeRef::Circle {
-                    realm_id,
-                    circle_id,
-                } => state_store.circle_content_scheme(realm_id.as_str(), circle_id.as_str()),
+                arkret_sdk::ScopeRef::Circle { .. } => None,
                 _ => state_store.realm_content_scheme(effective_scope.realm_id_opt()?.as_str()),
             }?;
             match scheme.as_str() {

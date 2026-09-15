@@ -30,13 +30,14 @@ pub(crate) fn mls_base_epoch_ref_for_scope(
 /// `realm_id` according to local state. Single predicate for every creator
 /// MLS bootstrap gate.
 ///
-/// The only source is the envelope `actor_id` of the locally projected
-/// accepted `ak.realm.create` — the same create-locked fact the authority-root
-/// authorization claim uses. The Realm sync entry itself carries no creator
-/// mirror: it deserializes into the closed `RealmSyncEntry`
+/// The only source is the Station's current `ak.component.realm.authority_root.v1`
+/// value, whose controller is derived from the accepted `ak.realm.create`
+/// envelope `actor_id`. The Realm sync entry itself carries no creator mirror:
+/// it deserializes into the closed `RealmSyncEntry`
 /// (`joined/invited_member_count` + `heroes` under `summary`, and no `object`
 /// / `realm` / `metadata` container at all), so probing it for `owner` /
-/// `created_by` / `creator` could never match.
+/// `created_by` / `creator` could never match, and the retired `state` /
+/// `state_after` Event containers are gone from the wire.
 pub(crate) fn projected_realm_creator_matches_actor(
     realm_tree_projections: &std::collections::BTreeMap<String, Value>,
     realm_id: &str,
@@ -45,24 +46,8 @@ pub(crate) fn projected_realm_creator_matches_actor(
     let Ok(actor) = crate::mls_api_helpers::local_account_actor_id(actor_id) else {
         return false;
     };
-    if garth::realm_authority_root_controller_for_realm(realm_tree_projections, realm_id)
-        == Some(actor.clone())
-    {
-        return true;
-    }
-    let Some(projection) = realm_tree_projections.get(realm_id) else {
-        return false;
-    };
-    crate::realm_tree::projected_state_event_values(projection).any(|event| {
-        event.get("kind").and_then(Value::as_str)
-            == Some(arkret_sdk::EventKind::RealmCreate.as_str())
-            && event
-                .get("actor_id")
-                .cloned()
-                .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value).ok())
-                .as_ref()
-                == Some(&actor)
-    })
+    garth::realm_authority_root_controller_for_realm(realm_tree_projections, realm_id)
+        == Some(actor)
 }
 
 pub(crate) fn circle_effective_scope(
@@ -96,7 +81,17 @@ mod creator_authority_tests {
             let projections = std::collections::BTreeMap::from([(
                 "realm".to_owned(),
                 serde_json::json!({
-                    "state": {"events": [{"kind": "ak.realm.create", "actor_id": controller}]}
+                    "current": {"entries": [{
+                        "selector": {
+                            "scope_ref": {"kind": "realm", "realm_id": "realm"},
+                            "cell_id": "ak:cell:ak.component.realm.authority_root.v1:null"
+                        },
+                        "result": {"status": "value", "value": {
+                            "controller_actor_id": controller,
+                            "controller_epoch": 0,
+                            "authority_generation": 0
+                        }}
+                    }]}
                 }),
             )]);
             assert_eq!(

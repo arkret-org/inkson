@@ -27,21 +27,13 @@ fn external_history_decrypt_tasks_in_store(
     let state = store.load();
     let mut tasks = Vec::new();
     // The Realm stream persists messages in raw_operations, which is also the
-    // chat feed's source after reload. Account tree snapshots need not contain
-    // those messages, especially ones delivered while this endpoint was offline.
-    let projected_events = state
-        .realm_tree_projections
-        .values()
-        .filter_map(|projection| {
-            projection
-                .get("state")
-                .and_then(|state| state.get("events"))
-                .and_then(serde_json::Value::as_array)
-        })
-        .flatten();
+    // chat feed's source after reload. The account tree projection carries no
+    // Event container of its own: the retired `state` / `state_after` shapes
+    // are gone from the wire, and a current result is a selected value, not a
+    // signed Event this decryptor could open.
     let durable_events = state.raw_operations.iter().map(|record| &record.payload);
     let mut seen = std::collections::BTreeSet::new();
-    for event in projected_events.chain(durable_events) {
+    for event in durable_events {
         // Only a canonical signed Event supplies scope, kind and encrypted
         // field bytes. Projection wrappers cannot author this context.
         let Ok(signed_event) = serde_json::from_value::<arkret_sdk::Event>(event.clone()) else {

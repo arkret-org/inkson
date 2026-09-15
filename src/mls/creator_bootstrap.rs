@@ -823,10 +823,11 @@ mod tests {
     }
 
     /// A realm projection in its post-P1 shape: the creator fact is only
-    /// available through the projected `ak.realm.create` Event, which is the
-    /// single registered writer of the authority-root cell. The retired
-    /// `owner` / `created_by` mirrors are deliberately absent — a fixture that
-    /// carried them would test a fallback the client no longer has.
+    /// available through the Station's current `ak.component.realm.authority_root.v1`
+    /// value, whose controller comes from the accepted `ak.realm.create`
+    /// envelope. The retired `owner` / `created_by` mirrors are deliberately
+    /// absent — a fixture that carried them would test a fallback the client
+    /// no longer has.
     fn realm_projection(creator: &str, encryption_profile: &str) -> serde_json::Value {
         let principal_id = crate::mls_api_helpers::principal_core_id(creator).unwrap();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
@@ -842,17 +843,24 @@ mod tests {
                 "title": "Realm",
                 "encryption_profile": encryption_profile,
             },
-            "state": {
-                "events": [{
-                    "kind": "ak.realm.create",
-                    "actor_id": creator,
-                    "payload": {
-                        "object": {
-                            "encryption_profile": encryption_profile,
-                        }
-                    }
-                }]
+            "current": {
+                "entries": [authority_root_entry(&creator)]
             }
+        })
+    }
+
+    /// The single installed current authority-root result for [`REALM`].
+    fn authority_root_entry(controller: &arkret_sdk::ActorId) -> serde_json::Value {
+        json!({
+            "selector": {
+                "scope_ref": {"kind": "realm", "realm_id": REALM},
+                "cell_id": "ak:cell:ak.component.realm.authority_root.v1:null"
+            },
+            "result": {"status": "value", "value": {
+                "controller_actor_id": controller,
+                "controller_epoch": 0,
+                "authority_generation": 0
+            }}
         })
     }
 
@@ -990,9 +998,9 @@ mod tests {
     }
 
     #[test]
-    fn creator_is_recognized_from_the_projected_realm_create_when_no_owner_field_exists() {
+    fn creator_is_recognized_from_the_current_authority_root_when_no_owner_field_exists() {
         // Post-P1 realm projections carry no owner/created_by mirror; the
-        // creator fact lives in the projected `ak.realm.create` event.
+        // creator fact lives in the installed authority-root current value.
         let mut store = temp_store("create-event-source");
         let actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
@@ -1004,13 +1012,7 @@ mod tests {
                 "__kind": "realm",
                 "content_scheme": "mls_rfc9420",
                 "summary": { "title": "Realm", "encryption_profile": "mls_rfc9420" },
-                "state": {
-                    "events": [{
-                        "kind": "ak.realm.create",
-                        "actor_id": actor_id,
-                        "payload": { "object": { "encryption_profile": "mls_rfc9420" } }
-                    }]
-                }
+                "current": { "entries": [authority_root_entry(&actor_id)] }
             }),
         );
         assert!(creator_mls_bootstrap_pending(&store, REALM, ACTOR));

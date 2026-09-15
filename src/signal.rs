@@ -618,9 +618,9 @@ pub fn restore_signal_mls_session(
     }
     let content_scheme = match scope_ref {
         arkret_sdk::ScopeRef::Realm { .. } => state_store.realm_content_scheme(realm_id),
-        arkret_sdk::ScopeRef::Circle { circle_id, .. } => {
-            state_store.circle_content_scheme(realm_id, circle_id.as_str())
-        }
+        // No current cell publishes a Circle group's create-locked scheme yet
+        // (`ak.component.circle.create.v1` is an ordered log), so Signal stays
+        // paused for Circle scope instead of guessing a wire scheme.
         _ => None,
     };
     let content_scheme = match content_scheme.as_deref() {
