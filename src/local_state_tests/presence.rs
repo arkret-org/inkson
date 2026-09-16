@@ -1,0 +1,62 @@
+//! Presence visibility preference persistence.
+
+use super::*;
+
+#[test]
+fn presence_visibility_defaults_to_public_and_persists() {
+    let path = temp_state_path("presence-visibility");
+    let mut store = LocalStateStore::with_path(path.clone());
+    assert_eq!(store.presence_visibility(), PresenceVisibility::Public);
+
+    store.set_presence_visibility(PresenceVisibility::Nobody);
+
+    let reader = LocalStateStore::with_path(path);
+    assert_eq!(reader.presence_visibility(), PresenceVisibility::Nobody);
+}
+
+#[test]
+fn presence_preference_persists_and_expires() {
+    let path = temp_state_path("presence-preference");
+    let mut store = LocalStateStore::with_path(path.clone());
+    assert!(store.presence_preference().is_empty());
+
+    store.set_presence_preference(PresencePreference {
+        manual_state: Some(arkret_sdk::ManualPresenceState::Dnd),
+        status_message: Some("In a meeting".to_owned()),
+        clears_at: Some("2026-07-03T12:00:00.000Z".parse().unwrap()),
+    });
+
+    let reader = LocalStateStore::with_path(path);
+    let preference = reader.presence_preference();
+    let before: chrono::DateTime<chrono::Utc> = "2026-07-03T11:59:59.000Z".parse().unwrap();
+    let after: chrono::DateTime<chrono::Utc> = "2026-07-03T12:00:00.000Z".parse().unwrap();
+    assert_eq!(
+        preference.effective_manual_state(before),
+        Some(arkret_sdk::PresenceStatus::Dnd)
+    );
+    assert_eq!(
+        preference.effective_status_message(before),
+        Some("In a meeting")
+    );
+    assert_eq!(preference.next_clears_at(before), Some(after));
+    // Past clears_at the whole preference reads as absent.
+    assert_eq!(preference.effective_manual_state(after), None);
+    assert_eq!(preference.effective_status_message(after), None);
+    assert_eq!(preference.next_clears_at(after), None);
+}
+
+#[test]
+fn presence_preference_rejects_bad_wire_values() {
+    assert!(
+        serde_json::from_value::<PresencePreference>(serde_json::json!({
+            "manual_state": "offline"
+        }))
+        .is_err()
+    );
+
+    let corrupted = serde_json::from_value::<PresencePreference>(serde_json::json!({
+        "manual_state": "dnd",
+        "clears_at": "not-a-timestamp"
+    }));
+    assert!(corrupted.is_err());
+}

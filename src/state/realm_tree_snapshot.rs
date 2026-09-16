@@ -1,0 +1,335 @@
+use super::*;
+
+impl LocalStateStore {
+    pub(crate) fn set_product_current_demand(
+        &self,
+        authority: &arkret_sdk::AccountId,
+        realm: &str,
+        strands: Option<Vec<arkret_sdk::StrandId>>,
+        mut cells: Vec<arkret_sdk::CellRef>,
+    ) {
+        let mut demand = self
+            .product_current_demand
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(mut strands) = strands {
+            strands.sort();
+            strands.dedup();
+            cells.sort();
+            cells.dedup();
+            assert!(strands.len() <= 32, "product demand exceeds protocol bound");
+            assert!(
+                cells.len() <= 256,
+                "product cell demand exceeds local bound"
+            );
+            *demand = Some((authority.clone(), realm.to_owned(), strands, cells));
+        } else if demand
+            .as_ref()
+            .is_some_and(|(a, r, ..)| a == authority && r == realm)
+        {
+            *demand = None;
+        }
+    }
+
+    pub(crate) fn product_current_strands(
+        &self,
+        authority: &arkret_sdk::AccountId,
+        realm: &str,
+    ) -> Option<Vec<arkret_sdk::StrandId>> {
+        self.product_current_demand
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .filter(|(a, r, ..)| a == authority && r == realm)
+            .map(|(_, _, strands, _)| strands.clone())
+    }
+
+    pub(crate) fn product_current_cells(
+        &self,
+        authority: &arkret_sdk::AccountId,
+        realm: &str,
+    ) -> Vec<arkret_sdk::CellRef> {
+        self.product_current_demand
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .filter(|(a, r, ..)| a == authority && r == realm)
+            .map(|(_, _, _, cells)| cells.clone())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn realm_tree_projection(&self, realm_id: &str) -> Option<Value> {
+        self.cached.realm_tree_projections.get(realm_id).cloned()
+    }
+
+    pub(crate) fn install_current_product_view(
+        &mut self,
+        realm_id: &str,
+        entries: Vec<arkret_sdk::CurrentResultEntry>,
+        ready: bool,
+    ) -> anyhow::Result<()> {
+        self.ensure_cached_loaded();
+        // Keep only the active Realm's bounded current view in the account
+        // blob. Full rows and baseline seen markers belong to CurrentIndex.
+        for (id, projection) in &mut self.cached.realm_tree_projections {
+            if id != realm_id {
+                if let Some(object) = projection.as_object_mut() {
+                    object.remove("current");
+                    object.remove("__current_required_ready");
+                }
+            }
+        }
+        let projection = self
+            .cached
+            .realm_tree_projections
+            .entry(realm_id.to_owned())
+            .or_insert_with(|| serde_json::json!({}));
+        crate::current_projection::install_bounded_view(projection, realm_id, entries)?;
+        projection["__current_required_ready"] = Value::Bool(ready);
+        self.flush()
+    }
+
+    /// Return every canonical Realm id currently represented by the local
+    /// collaboration projection. Callers use this to execute Realm-scoped
+    /// protocol reads without inventing a cross-Realm wildcard.
+    pub fn known_realm_ids(&self) -> Vec<arkret_sdk::RealmId> {
+        let state = self.load();
+        state
+            .realm_tree_projections
+            .keys()
+            .chain(state.realm_collaboration_roles.keys())
+            .filter_map(|realm_id| {
+                arkret_sdk::RealmId::new(realm_id.clone())
+                    .ok()
+                    .map(|typed| (typed.to_string(), typed))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into_values()
+            .collect()
+    }
+
+    /// Has the Realm (security boundary, formerly Space)
+    /// emitted a `ak.realm.destroy` event we've already received? The
+    /// chat UI MUST gray out the send box and surface the
+    /// "permanently retired" banner once this returns true.
+    ///
+    /// Backed by `realm_destroy_receipts`, which is updated as local raw
+    /// operations are appended. This keeps the send-box guard at
+    /// a constant-time lookup instead of scanning the raw operation log on
+    /// every render.
+    pub fn realm_is_destroyed(&self, realm_id: &str) -> bool {
+        if realm_id.is_empty() {
+            return false;
+        }
+        self.load()
+            .realm_destroy_receipts
+            .get(realm_id)
+            .is_some_and(|state| state.destroyed)
+    }
+
+    pub fn save_realm_tree_projection(
+        &mut self,
+        projection_id: impl Into<String>,
+        mut projection: Value,
+    ) {
+        self.ensure_cached_loaded();
+        let projection_id = projection_id.into();
+        // The create workflow stores these create-locked selectors locally so
+        // a pre-Genesis MLS proposal can be resumed after navigation/reload.
+        // Account snapshots do not carry them until an accepted MLS Genesis is
+        // folded into the local Event projection. Preserve the local values
+        // across that gap; accepted Genesis remains authoritative because the
+        // resolver always prefers its signed governance_binding.
+        for key in ["content_scheme", "durability_policy"] {
+            if let Some(local_value) = self
+                .cached
+                .realm_tree_projections
+                .get(&projection_id)
+                .and_then(|current| current.get(key))
+                .cloned()
+                && let Some(incoming) = projection.as_object_mut()
+                && !incoming.contains_key(key)
+            {
+                incoming.insert(key.to_owned(), local_value);
+            }
+        }
+        if self.cached.realm_tree_projections.get(&projection_id) == Some(&projection) {
+            return; // projection identical — skip flush + dirtying renders
+        }
+        self.cached
+            .realm_tree_projections
+            .insert(projection_id, projection);
+        let _ = self.flush();
+    }
+
+    pub fn save_realm_collaboration_role(
+        &mut self,
+        realm_id: impl Into<String>,
+        role: Option<arkret_sdk::CollaborationRealmRole>,
+    ) {
+        self.ensure_cached_loaded();
+        let realm_id = realm_id.into();
+        let changed = match role {
+            Some(role) => {
+                self.cached.realm_collaboration_roles.insert(realm_id, role) != Some(role)
+            }
+            None => self
+                .cached
+                .realm_collaboration_roles
+                .remove(&realm_id)
+                .is_some(),
+        };
+        if changed {
+            let _ = self.flush();
+        }
+    }
+
+    pub fn realm_collaboration_role(
+        &self,
+        realm_id: &str,
+    ) -> Option<arkret_sdk::CollaborationRealmRole> {
+        self.cached.realm_collaboration_roles.get(realm_id).copied()
+    }
+
+    pub fn realm_state_snapshot_sync_status(
+        &self,
+        realm_id: &str,
+    ) -> Option<RealmStateSnapshotSyncStatus> {
+        self.load().realm_state_snapshot_sync.get(realm_id).cloned()
+    }
+
+    /// Drop every `realm_tree_projections` entry whose key isn't in `keep`.
+    /// Used by the sync reconcile path when `after=None` so Realm/Space
+    /// projection nodes the server no longer reports get pruned from the
+    /// local cache instead of lingering as ghost entries in the sidebar.
+    ///
+    /// Also prunes the auxiliary per-Realm caches (`drafts`,
+    /// `seal_views`, `read_cursors`, `realm_remarks`,
+    /// `mls_local_checkpoints`, `move_submissions` keyed by Realm, the
+    /// `read_receipt_*_overrides`, `read_receipt_policy_snapshots`,
+    /// `realm_watch_levels`, and any leftover encrypted-message draft) so a
+    /// pruned Realm/Space node doesn't leave private remnants behind.
+    pub fn retain_realm_tree_projections<F>(&mut self, keep: F) -> Vec<String>
+    where
+        F: Fn(&str) -> bool,
+    {
+        self.ensure_cached_loaded();
+        let removed: Vec<String> = self
+            .cached
+            .realm_tree_projections
+            .keys()
+            .filter(|id| !keep(id))
+            .cloned()
+            .collect();
+        if removed.is_empty() {
+            return removed;
+        }
+        for id in &removed {
+            self.forget_realm_tree_projection_inner(id);
+        }
+        let _ = self.flush();
+        removed
+    }
+
+    /// Remove a single Realm Tree projection node and every derived record
+    /// keyed by the same id. Public entry point for `left_realms`-style sync
+    /// deltas. Flushes once.
+    pub fn forget_realm_tree_projection(&mut self, projection_id: &str) {
+        self.ensure_cached_loaded();
+        let trimmed = projection_id.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        self.forget_realm_tree_projection_inner(trimmed);
+        let _ = self.flush();
+    }
+
+    fn forget_realm_tree_projection_inner(&mut self, projection_id: &str) {
+        self.cached.realm_tree_projections.remove(projection_id);
+        self.cached.realm_collaboration_roles.remove(projection_id);
+        self.cached.realm_destroy_receipts.remove(projection_id);
+        self.cached.seal_views.remove(projection_id);
+        self.cached.realm_remarks.remove(projection_id);
+        self.cached.mls_local_checkpoints.remove(projection_id);
+        self.cached.realm_watch_levels.remove(projection_id);
+        self.cached
+            .read_receipt_realm_overrides
+            .remove(projection_id);
+        self.cached
+            .read_receipt_realm_display_overrides
+            .remove(projection_id);
+        self.cached
+            .read_receipt_policy_snapshots
+            .remove(projection_id);
+        // `read_cursors` are keyed by `"{realm}\n{kind}\n{ref}\n{track}"` —
+        // strip every marker whose Realm prefix matches.
+        let prefix = format!("{projection_id}\n");
+        self.cached
+            .read_cursors
+            .retain(|key, _| !key.starts_with(&prefix));
+        // `move_submissions` carry a `realm_id` field; drop matching entries.
+        self.cached
+            .move_submissions
+            .retain(|_, record| record.realm_id != projection_id);
+    }
+
+    /// True when the latest cached realm-tree projection declares an
+    /// MLS-backed encryption profile. Used by membership/admin surfaces
+    /// to decide whether a membership frontier change must pause sends
+    /// until an MLS commit covers it.
+    pub fn realm_projection_is_mls_encrypted(&self, realm_id: &str) -> bool {
+        self.load()
+            .realm_tree_projections
+            .get(realm_id)
+            .is_some_and(garth::realm_projection_is_encrypted)
+    }
+
+    /// Joined-actor projection hint when account sync explicitly says the
+    /// roster is complete. A missing/limited roster is `None`. This is useful
+    /// for conservative mismatch detection and reconciliation wakeups, but it
+    /// never replaces verified membership Events or MLS governance proofs.
+    pub fn complete_joined_member_hint_for_realm(
+        &self,
+        realm_id: &str,
+    ) -> anyhow::Result<Option<std::collections::BTreeSet<arkret_sdk::ActorId>>> {
+        let state = self.load();
+        let Some(projection) = state.realm_tree_projections.get(realm_id.trim()) else {
+            return Ok(None);
+        };
+        if projection
+            .get("member_roster_entries_limited")
+            .and_then(Value::as_bool)
+            != Some(false)
+        {
+            return Ok(None);
+        }
+        let members = projection
+            .get("member_roster_entries")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow::anyhow!("complete Realm roster omits member entries"))?;
+        Ok(Some(
+            members
+                .iter()
+                .filter(|member| member.get("membership").and_then(Value::as_str) == Some("join"))
+                .map(|member| {
+                    serde_json::from_value::<arkret_sdk::ActorId>(
+                        member.get("actor_id").cloned().unwrap_or(Value::Null),
+                    )
+                })
+                .collect::<Result<_, _>>()?,
+        ))
+    }
+
+    /// SEC-08 (`encryption-and-audit.md` §2.9) — does the latest cached
+    /// realm-tree projection declare the
+    /// `ak.profile.mls.minimal_metadata_realm.v1` profile? The committer uses
+    /// this to decide whether the ≤1h epoch-lifetime cap applies to a given
+    /// Realm. Unknown / absent projection ⇒ `false` (the realm is treated as a
+    /// normal realm).
+    pub fn realm_projection_is_minimal_metadata(&self, realm_id: &str) -> bool {
+        self.load()
+            .realm_tree_projections
+            .get(realm_id)
+            .is_some_and(realm_tree_projection_value_is_minimal_metadata)
+    }
+}

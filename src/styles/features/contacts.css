@@ -1,0 +1,90 @@
+/* The contacts list and the invite flows that start from it.
+ */
+.blocklist-applies-grid { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.blocklist-applies-grid .metric { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; }
+/* ── Contacts list (U1/U5) + invite-from-contacts (U3) + invite policy (U4) ── */
+
+/* Dimmed presentation for rejected / tombstoned / blocked contact rows. */
+.contact-row.weak {
+  opacity: 0.6;
+}
+
+/* Per-row block-confirm + status sit slightly inset from the row body. */
+.contact-block-confirm {
+  margin-top: 8px;
+}
+
+.contact-message-counter.over {
+  color: var(--danger);
+}
+
+/* U3 — "from contacts" picker vs the locator (stranger) path. The divider
+   makes the two entry points visually distinct; the contacts path is primary. */
+.invite-from-contacts {
+  display: grid;
+  gap: 8px;
+}
+
+.invite-contact-row,
+.invite-policy-kind-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.invite-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 4px;
+  font-size: 0.85rem;
+}
+
+.invite-divider::before,
+.invite-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.invite-policy-blocked-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.contacts-panel > .settings-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.contact-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.contact-row > .event-head {
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.contact-row > .event-head > .mono {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.contact-row > .actions {
+  align-items: center;
+  min-width: 0;
+}
+
+.invite-locator-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}

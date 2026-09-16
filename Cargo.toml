@@ -3,7 +3,7 @@ name = "inkson"
 version = "0.3.0"
 edition = "2024"
 rust-version = "1.98"
-description = "Arkret authority-commit reference client"
+description = "Dioxus desktop and web Arkret v1 reference client"
 license = "Apache-2.0"
 repository = "https://github.com/arkret-org/inkson"
 
@@ -19,21 +19,366 @@ mem_forget = "deny"
 todo = "deny"
 unimplemented = "deny"
 
-[dependencies]
-arkret-canonical = { version = "0.3.0", path = "../arkret-rust-sdk/crates/canonical", default-features = false }
-arkret-identifiers = { version = "0.3.0", path = "../arkret-rust-sdk/crates/identifiers", default-features = false }
-arkret-wire = { version = "0.3.0", path = "../arkret-rust-sdk/crates/wire", default-features = false }
-chrono = { version = "0.4.45", features = ["serde"] }
+[workspace.dependencies]
+anyhow = "1.0.104"
+# Needed only to name arkret_crypto::Result in the MlsExporterSource impl:
+# the SFrame exporter trait moved to arkret-crypto (SDK phase 2-d), so its
+# method signature returns arkret_crypto::Error at the crypto boundary.
+arkret-crypto = { version = "0.3.0", path = "../arkret-rust-sdk/crates/crypto", default-features = false }
+arkret-retry = { version = "0.3.0", path = "../arkret-rust-sdk/crates/retry" }
+arkret-sdk = { package = "arkret", version = "0.3.0", path = "../arkret-rust-sdk/crates/sdk" }
+arkret-signatures = { version = "0.3.0", path = "../arkret-rust-sdk/crates/signatures", default-features = false, features = ["collaboration", "webvh"] }
+base64 = "0.23"
+chacha20poly1305 = { version = "0.11", default-features = false }
+chime = { version = "0.3.0", path = "../chime" }
+chrono = "0.4.45"
 dioxus = { version = "=0.7.10", default-features = false, features = ["minimal", "asset", "document", "mounted"] }
+dioxus-primitives = { version = "0.0.1", git = "https://github.com/DioxusLabs/components", default-features = false }
+dioxus-router = "=0.7.10"
+ed25519-dalek = "3.0.0"
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+getrandom = "0.4.3"
+getrandom_02 = { package = "getrandom", version = "0.2.17" }
+gloo-timers = "0.4"
+hkdf = "0.13"
+image = { version = "0.25.10", default-features = false }
+js-sys = "0.3"
+jsonschema = { version = "0.52.1", default-features = false }
+pulldown-cmark = { version = "0.13", default-features = false }
+qrcode = { version = "0.14", default-features = false }
+rand_core = "0.10"
+regex = "1.13"
+reqwest = { version = "0.13.4", default-features = false }
+sentry = { version = "0.49.2", default-features = false }
+serde = "1.0.229"
 serde_json = "1.0.151"
+sha2 = "0.11"
 thiserror = "2"
+tokio = "1.53.1"
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect"] }
+tracing = "0.1"
+tracing-subscriber = "0.3.23"
+tracing-wasm = "0.2.1"
+url = "2.5.8"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = "0.3.104"
+x25519-dalek = "3.0.0"
+zeroize = "1.9"
+
+[features]
+# No default features. `OperationBuilder::build()` always emits
+# `proofs: Vec::new()` (there is NO placeholder proof), and the runtime
+# proof-mode default starts in [`operation::ProofMode::Production`] so
+# the submit guard refuses to ship envelopes that were never signed by a
+# real signer.
+default = []
+# Deferred protocol surfaces are compiled by default for unit coverage but
+# hidden from the local 1.0 UI unless explicitly opted in.
+experimental-discussion-promote = []
+experimental-applets = []
+spec-conformance = ["dep:arkret-schema-conformance"]
+# Test-only wasm escape hatch for Playwright/cotest fixtures that must inject a
+# real session grant and grant-binding seed before IndexedDB is ready. Production
+# builds must not enable this feature.
+wasm-localstorage-secrets-test = []
+# Mobile host-bridge stubs. The `AndroidKeystoreSecureKeyStore` /
+# `IosKeychainSecureKeyStore` types are host-bridge wrappers around a
+# `HostSecretBridge` trait the platform shell installs; there is NO real
+# JNI / Security.framework FFI inside inkson. The actual mobile artifacts
+# are outside the local 1.0 milestone.
+#
+# Gating rule: these types are compiled when EITHER the target is the
+# corresponding mobile OS (`target_os = "android"` / `target_os = "ios"`)
+# OR the feature is explicitly enabled. That gives:
+#   * Native Android / iOS builds — types auto-enabled, no manual feature
+#     wiring required by downstream tooling.
+#   * Desktop / wasm builds — types compiled OUT by default so the
+#     desktop binary doesn't ship dead stub code; opt in with
+#     `--features mobile-android,mobile-ios` to cross-compile-check.
+mobile-android = []
+mobile-ios = []
+
+[[bin]]
+name = "inkson-wire"
+path = "src/bin/inkson-wire.rs"
+required-features = ["spec-conformance"]
+
+[dependencies]
+rand_chacha = "0.10"
+# Feature-unification alias: `getrandom@0.2` is pulled in transitively by the
+# crypto stack (rand_core 0.6 → p256/k256/hpke-rs/openmls and Arkret owner
+# crates). On `wasm32-unknown-unknown` that 0.2.x dep needs the
+# `js` feature so it routes RNG through Web Crypto; this alias is the only
+# place in the workspace that turns it on. NOT used via `use getrandom_02`
+# anywhere in src/ — do not remove without re-checking the wasm build.
+# R31: derive `std::error::Error` + `Display` for the crate's `*Error`
+# enums via `#[derive(thiserror::Error)]` instead of hand-rolled impls.
+# Pure derive-macro crate, zero runtime, wasm-friendly. Pinned to the
+# same major as the workspace SDK (`thiserror = "2.0.17"`).
+# Event-proof signing. ed25519-dalek produces Ed25519 detached-JWS
+# signatures for `event_signer`; did:key multibase encoding comes from
+# the shared SDK helper.
+# QR rendering for device-verification handoff. SVG output keeps the
+# crate pure-Rust with no image / font dependencies.
+# Recovery strand (R-recovery-001): the Encrypted Cloud Vault KDF / AEAD is
+# owned by `arkret_crypto::backup`; inkson holds no direct argon2 dependency.
+# encryption-and-audit.md §2.9: the v1 reaction routing tag is derived by the
+# SDK (`reaction_routing_tag`), which NFC-normalises the canonical emoji bytes
+# and HMACs them internally — inkson delegates the derivation, so the
+# chosen-emoji privacy property holds regardless of the sender's input
+# normalisation form with no direct unicode-normalization / hmac dependency.
+# key-management.md §7.5.2: `recipient_method=recovery_public_key` backups pin
+# the v1 default-MUST application-layer HPKE suite
+# `ak.hpke_x25519_aead_chacha20poly1305.v1` (DHKEM(X25519,HKDF-SHA256) +
+# HKDF-SHA256 + ChaCha20-Poly1305, 96-bit nonce) — standard RFC 9180 SetupBase.
+# `hpke_backup.rs` delegates the seal/open to the SDK's RFC 9180 single-shot API
+# (`arkret_crypto::secret_share`, KAT-validated) and keeps only the recovery-keypair
+# derivation over x25519-dalek / chacha20poly1305 / hkdf.
+# Phase A.6 #1: zero plaintext-secret bytes on drop / overwrite for the
+# in-memory secure key store. The crate is already in the dependency graph
+# transitively (via ed25519-dalek / chacha20poly1305 / openmls); making it
+# a direct dep lets `MemorySecureKeyStore` reach for `Zeroize` /
+# `ZeroizeOnDrop` without an indirect import path.
+# A3 (round 28): markdown rendering for the timeline/chat content
+# renderer. pulldown-cmark is pure-Rust, no_std-friendly, and known to
+# build cleanly under wasm32-unknown-unknown. Raw-HTML pass-through is
+# left disabled (default) so untrusted message bodies cannot inject
+# arbitrary tags via `dangerous_inner_html`.
+anyhow = { workspace = true }
+arkret-bootstrap = { version = "0.3.0", path = "../arkret-rust-sdk/crates/bootstrap", default-features = false }
+arkret-crypto = { workspace = true, features = ["backup", "blob-aead", "identity-root", "secret-share", "sframe"] }
+arkret-event-draft = { version = "0.3.0", path = "../arkret-rust-sdk/crates/event-draft", default-features = false }
+arkret-identifiers = { version = "0.3.0", path = "../arkret-rust-sdk/crates/identifiers", default-features = false }
+arkret-identity = { version = "0.3.0", path = "../arkret-rust-sdk/crates/identity", default-features = false }
+arkret-locale = { version = "0.3.0", path = "../arkret-rust-sdk/crates/locale", default-features = false, features = ["serde"] }
+arkret-models-collaboration = { version = "0.3.0", path = "../arkret-rust-sdk/crates/models-collaboration", default-features = false }
+arkret-models-crypto = { version = "0.3.0", path = "../arkret-rust-sdk/crates/models-crypto", default-features = false }
+arkret-models-discovery = { version = "0.3.0", path = "../arkret-rust-sdk/crates/models-discovery", default-features = false }
+arkret-models-identity = { version = "0.3.0", path = "../arkret-rust-sdk/crates/models-identity", default-features = false }
+arkret-models-integration = { version = "0.3.0", path = "../arkret-rust-sdk/crates/models-integration", default-features = false }
+arkret-policy = { version = "0.3.0", path = "../arkret-rust-sdk/crates/policy", default-features = false }
+arkret-retry = { workspace = true }
+arkret-schema = { version = "0.3.0", path = "../arkret-rust-sdk/crates/schema", default-features = false }
+arkret-schema-conformance = { version = "0.3.0", path = "../arkret-rust-sdk/crates/schema-conformance", default-features = false, optional = true }
+arkret-signatures = { workspace = true }
+arkret-state = { version = "0.3.0", path = "../arkret-rust-sdk/crates/state", default-features = false }
+arkret-wire = { version = "0.3.0", path = "../arkret-rust-sdk/crates/wire", default-features = false }
+base64 = { workspace = true }
+chacha20poly1305 = { workspace = true, default-features = false, features = ["alloc"] }
+chime = { workspace = true, features = ["http"] }
+chrono = { workspace = true, features = ["serde"] }
+dioxus-primitives = { workspace = true, default-features = false }
+dioxus-router = { workspace = true }
+ed25519-dalek = { workspace = true, features = ["pem", "pkcs8", "zeroize"] }
+futures-util = { workspace = true }
+getrandom = { workspace = true, features = ["sys_rng", "wasm_js"] }
+getrandom_02 = { workspace = true, features = ["js"] }
+hex = "0.4.3"
+hkdf = { workspace = true }
+image = { workspace = true, default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+pulldown-cmark = { workspace = true, default-features = false, features = ["html"] }
+qrcode = { workspace = true, default-features = false, features = ["svg"] }
+rand_core = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+x25519-dalek = { workspace = true, features = ["static_secrets"] }
+# C3: shared Arkret frontend component crate. The former `src/ui/`
+# css-module wrappers now live in yoface, which re-exports
+# `dioxus_primitives` and `dioxus_icons`; inkson imports
+# `yoface::ui::*` through the SDK-local `pub use yoface::ui`.
+# Keep the patch sections below aligned with the yoface README.
+yoface = { git = "https://github.com/arkret-org/yoface", branch = "main" }
+zeroize = { workspace = true, features = ["derive"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-dioxus = { version = "=0.7.10", default-features = false, features = ["desktop"] }
+# P3.2c request-layer SSRF guard for DID fetches (native only): judges the
+# derived URL, resolves the host, judges every DNS answer, and pins the
+# validated addresses into the client. wasm has no socket to pin — the
+# browser owns DNS there — so the wasm build keeps the static shared
+# classification (`host_is_safe_for_outbound`) as its whole guard.
+arkret-egress-reqwest = { version = "0.3.0", path = "../arkret-rust-sdk/crates/egress-reqwest" }
+# T5.2 (2026-05-20): `signer` feature enabled so `event_signer` can pull
+# in `arkret_sdk::signatures::Ed25519DetachedJwsSigner` for the
+# `RealEd25519` proof-mode path. Without it the SDK signatures module is
+# canonical-bytes-only and the active-write signing path has nothing to
+# call into.
+# Desktop secure storage delegates to the SDK's canonical platform backend;
+# Inkson only adapts `KeyStore` to garth's `SecureKeyStore` contract.
+# `multipart` is required because the spec binds
+# `POST /_arkret/self/blob/upload` to multipart/form-data
+# (blob_upload_request_body), not a raw octet-stream body.
+# Opt-in crash telemetry. The Sentry client is
+# initialised only when both the user-facing CrashTelemetryPrefs
+# toggle is on AND a build-time `SENTRY_DSN` env var is set; an
+# empty DSN logs a debug message and skips init silently per
+# `src/telemetry.rs::sentry_init`. Wasm builds skip the dep entirely.
+# NOTE: arkret-sdk `default = []`; this client opts into only its transport,
+# MLS, signer and platform-keystore integrations. Crypto capabilities are
+# selected directly on `arkret-crypto`.
+arkret-sdk = { workspace = true, features = ["client", "mls", "signer", "keystore-macos", "keystore-linux", "keystore-windows"] }
+dioxus = { workspace = true, features = ["desktop", "web"] }
+fs2 = "0.4.3"
+garth = { path = "../garth", default-features = false, features = ["native"] }
+reqwest = { workspace = true, default-features = false, features = ["json", "multipart", "rustls", "stream", "form"] }
+rfd = "0.17.2"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+sentry = { workspace = true, default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
+tempfile = "3.27.0"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+# `ak.profile.binding.websocket.v1` native socket. garth owns the protocol;
+# tungstenite only reassembles messages and enforces the byte ceiling.
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-dioxus = { version = "=0.7.10", default-features = false, features = ["web"] }
-web-sys = { version = "0.3.104", features = ["Document", "Element", "History", "Location", "Node", "Window"] }
+# wasm32 uses the same protocol/MLS surface as native while platform crypto
+# capabilities are selected on their owner crates.
+#
+# T5.2: same `signer` feature as native — the wasm32 build uses the same
+# Ed25519 detached-JWS pipeline; the signing seed comes from
+# `LocalStorageSecureKeyStore` / `IndexedDbSecureKeyStore` instead of the
+# OS keychain, with the documented "browser has no symmetric-secret tier"
+# warning.
+# web-sys feature flags expanded so the WebPushTokenProvider
+# can drive `navigator.serviceWorker.register` + `pushManager.subscribe(...)`
+# end-to-end. The Crypto/SubtleCrypto/CryptoKey features back the
+# IndexedDB + non-extractable SubtleCrypto secure key store
+# (`src/secure_key_store/indexed_db.rs`) while signing material stays in
+# Rust (the SDK's MoveSigner / ed25519-dalek path is process-local and
+# never leaves the wasm linear memory boundary).
+# `tokio::time` is unsupported on wasm32-unknown-unknown — it calls
+# `std::time::Instant::now()` and panics with "time not implemented on this
+# platform". `gloo-timers` routes through `setTimeout` instead, which is what
+# `sleep_for` uses for HTTP retry backoff in the wasm build.
+# See the non-wasm note above.
+arkret-sdk = { workspace = true, features = ["client", "mls", "signer"] }
+dioxus = { workspace = true, features = ["web"] }
+garth = { path = "../garth", default-features = false, features = ["wasm"] }
+gloo-timers = { workspace = true, features = ["futures"] }
+js-sys = { workspace = true }
+reqwest = { workspace = true, default-features = false, features = ["json", "multipart", "stream", "form"] }
+send_wrapper = "0.6.0"
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing-wasm = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+web-sys = { workspace = true, features = [
+    "Storage",
+    "StorageEvent",
+    "Window",
+    "CssStyleDeclaration",
+    "MediaQueryList",
+    "Navigator",
+    "StorageManager",
+    "ServiceWorker",
+    "ServiceWorkerContainer",
+    "ServiceWorkerRegistration",
+    "PushManager",
+    "PushSubscription",
+    "PushSubscriptionOptionsInit",
+    "Crypto",
+    "SubtleCrypto",
+    "CryptoKey",
+    "Blob",
+    "BlobPropertyBag",
+    "Document",
+    "Element",
+    "HtmlAnchorElement",
+    "HtmlElement",
+    "Url",
+    # IndexedDB-backed secure key store.
+    # `IndexedDbSecureKeyStore` opens an IDB database, derives an
+    # AES-GCM key via SubtleCrypto.deriveKey (`extractable: false`),
+    # and persists entries under structured keys.
+    "IdbFactory",
+    "IdbKeyRange",
+    "IdbDatabase",
+    "IdbObjectStore",
+    "IdbObjectStoreParameters",
+    "IdbOpenDbRequest",
+    "IdbRequest",
+    "IdbRequestReadyState",
+    "IdbTransaction",
+    "IdbTransactionMode",
+    "IdbVersionChangeEvent",
+    "Event",
+    "DomException",
+    # Live WebRTC media transport (`src/rtc_transport/web.rs`): browser
+    # RtcPeerConnection + getUserMedia capture + SDP offer/answer + ICE
+    # candidate relay for 1:1 P2P and SFU room join.
+    "MediaDevices",
+    "MediaStream",
+    "MediaStreamTrack",
+    "MediaStreamConstraints",
+    "RtcConfiguration",
+    "RtcPeerConnection",
+    "RtcPeerConnectionIceEvent",
+    "RtcIceCandidate",
+    "RtcIceCandidateInit",
+    "RtcSessionDescription",
+    "RtcSessionDescriptionInit",
+    "RtcSdpType",
+    "RtcRtpSender",
+    "RtcTrackEvent",
+] }
+
+# Build-time only: stamps `INKSON_BUILD_ID` (local build time + git short hash)
+# so the running wasm can print which bundle the browser loaded — the
+# definitive stale-cached-wasm check. Build deps do not affect the wasm binary.
+[build-dependencies]
+chrono = { workspace = true }
+
+[dev-dependencies]
+arkret-test-kit = { path = "../arkret-rust-sdk/crates/test-kit" }
+arkret-schema-conformance = { version = "0.3.0", path = "../arkret-rust-sdk/crates/schema-conformance", default-features = false }
+arkret-sdk = { workspace = true, features = ["mls-test-utils"] }
+arkret-wire = { version = "0.3.0", path = "../arkret-rust-sdk/crates/wire", default-features = false, features = ["test-support"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# Deterministic signed service-route fixtures for the media route-evaluator
+# tests (`src/media/service_route.rs`, `src/media/rtc.rs`). Test builds only.
+garth = { path = "../garth", default-features = false, features = ["native", "route-material-test-support"] }
+# Stream J conformance gate (`tests/conformance_gates.rs`): JSON Schema
+# 2020-12 validation of envelopes produced by typed builders against
+# `arkret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
+# Pinned to the same version cotest uses so a registry/resource bump
+# lands in one place.
+
+jsonschema = { workspace = true, default-features = false, features = ["resolve-file"] }
+regex = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
 
 [lints]
 workspace = true
+
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+debug = 0
+strip = "debuginfo"
+# opt-level >= 1 + incremental on wasm32 makes LLVM internalize cross-CGU
+# `.llvm.`/`anon.*` symbols that rust-lld then reports as "undefined symbol"
+# at link time (rust-lang/rust#115297). `cargo check` never links, so it
+# passes while `dx build/serve --platform web` fails. Disabling incremental
+# for this profile is the standard workaround.
+incremental = false
+
+# cotest serves the web output as static files rather than through `dx serve`.
+# Disable debug assertions so dioxus-web does not embed its devtools WebSocket
+# client in that bundle; failed `/_dioxus` reconnect callbacks can otherwise
+# corrupt the long-lived wasm instance. Keep the wasm-dev optimization/linker
+# settings without invoking release-only wasm-opt in the offline harness.
+[profile.joint-e2e]
+inherits = "dev"
+opt-level = 1
+debug = 0
+strip = "debuginfo"
+incremental = false
+debug-assertions = false

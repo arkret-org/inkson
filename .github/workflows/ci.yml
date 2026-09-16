@@ -3,46 +3,188 @@ name: CI
 on:
   pull_request:
   push:
-    branches: ["main"]
+    branches: ["main", "master"]
 
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  DIOXUS_CLI_VERSION: "0.7.9"
+  # Private `yoface` git dependency: cargo must fetch through the git CLI so
+  # the credential rewrite installed below applies. Redundant with
+  # inkson/.cargo/config.toml, but also covers cargo runs started outside the
+  # inkson directory.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
 jobs:
-  rust:
+  rust-and-web:
+    name: Rust tests and web build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout inkson
         uses: actions/checkout@v6
         with:
           path: inkson
-      - name: Checkout SDK
+
+      - name: Checkout arkret-spec
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/arkret-spec
+          path: arkret-spec
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+
+      - name: Checkout arkret-rust-sdk
         uses: actions/checkout@v6
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: arkret-rust-sdk
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
-      - name: Install desktop libraries
+
+      - name: Checkout garth
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/garth
+          path: garth
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+
+      - name: Checkout chime
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/chime
+          path: chime
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+
+      # `yoface` is no longer a sibling path dependency: Cargo.toml pulls it
+      # straight from `github.com/arkret-org/yoface` (branch `main`). The repo
+      # is private, so cargo needs the same token the sibling checkouts use.
+      # `net.git-fetch-with-cli` (inkson/.cargo/config.toml) makes cargo shell
+      # out to git, which honours this credential rewrite.
+      - name: Authenticate cargo for the private yoface git dependency
+        run: git config --global url."https://x-access-token:${{ secrets.CI_REPO_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Install Linux desktop dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: inkson
-      - name: Format
+
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: inkson/package-lock.json
+
+      - name: Install npm dependencies
+        working-directory: inkson
+        run: npm ci
+
+      - name: Verify vendored asset integrity
+        working-directory: inkson
+        run: node scripts/verify_vendored_assets.mjs
+
+      - name: Install Dioxus CLI
+        run: cargo install dioxus-cli --version "${DIOXUS_CLI_VERSION}" --locked
+
+      # ARC-0002 (重构计划 2026-07-10): legacy patterns must ratchet to zero.
+      - name: Deletion gate
+        working-directory: inkson
+        run: bash scripts/deletion_gate.sh
+
+      - name: Registered cell-family literal gate
+        working-directory: inkson
+        run: python ../arkret-rust-sdk/tools/lint-cell-family-literals.py --root .
+
+      - name: Check formatting
         working-directory: inkson
         run: cargo fmt --all -- --check
+
       - name: Clippy
         working-directory: inkson
         run: cargo clippy --all-targets -- -D warnings
-      - name: Test
+
+      - name: Rust tests
         working-directory: inkson
-        run: cargo test --all-targets
-      - name: Web type-check
+        run: cargo test
+
+      # Production-path gate: build + test without optional local UI surfaces.
+      - name: cargo check (no-default-features, prod path)
         working-directory: inkson
-        run: cargo check --target wasm32-unknown-unknown
+        run: cargo check --workspace --no-default-features
+
+      - name: cargo test (no-default-features)
+        working-directory: inkson
+        run: cargo test --workspace --no-default-features --no-run
+
+      - name: Web build
+        working-directory: inkson
+        run: dx build --platform web
+
+      - name: Install Playwright browser
+        working-directory: inkson
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Chrome and ChromeDriver
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          install-chromedriver: true
+
+      - name: Install wasm-bindgen test runner
+        run: cargo install wasm-bindgen-cli --version 0.2.123 --locked
+
+      - name: WebAssembly browser tests
+        working-directory: inkson
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+          CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
+          CHROMEDRIVER: ${{ steps.setup-chrome.outputs.chromedriver-path }}
+        run: >-
+          cargo test --locked --target wasm32-unknown-unknown
+          --test mls_data_plane_wasm
+          --test wasm_indexed_db_capacity
+
+      - name: Browser end-to-end tests
+        working-directory: inkson
+        run: npm run e2e
+
+      - name: Start web preview for Lighthouse
+        working-directory: inkson
+        shell: bash
+        run: |
+          nohup dx serve --platform web --port 4528 --open false > ../inkson-lighthouse-server.log 2>&1 &
+          for i in {1..90}; do
+            if curl -fsS http://127.0.0.1:4528 >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat ../inkson-lighthouse-server.log
+          exit 1
+
+      - name: Lighthouse budget
+        working-directory: inkson
+        run: npx --yes lighthouse@12 http://127.0.0.1:4528 --output=json --output-path=dist/lighthouse/lighthouse.json --budget-path=docs/lighthouse-budget.json --chrome-flags="--headless=new --no-sandbox"
+
+      - name: Upload Lighthouse report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lighthouse-report
+          path: inkson/dist/lighthouse/
+          if-no-files-found: ignore
