@@ -1,0 +1,595 @@
+/* Chat messages: bubbles, heads, reactions, pins, reply quotes, crypto status,
+ * send state and the message overflow menu.
+ */
+/* Pinned bar (A6.3): horizontal scrollable strip at the top of a
+   space showing every pinned message. Click a pill to scroll the
+   message list to that message. */
+.pinned-bar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--surface-3);
+}
+.pinned-bar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  border: 1px solid transparent;
+  font-size: 11px;
+  cursor: pointer;
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pinned-bar-item:hover { border-color: var(--accent); }
+
+/* Message overflow menu, shared by pointer, keyboard, and context-click access. */
+.message-context-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--layer-local-scrim);
+  background: transparent;
+}
+
+.message-context-menu {
+  position: absolute;
+  z-index: var(--layer-local-popover);
+  background: var(--surface-solid, var(--surface));
+  top: 30px;
+  right: 0;
+  display: grid;
+  gap: 2px;
+  width: max-content;
+  min-width: 176px;
+  max-width: min(240px, calc(100vw - 32px));
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+}
+
+.discussion-message:nth-child(n + 4):nth-last-child(-n + 2) .message-context-menu {
+  top: auto;
+  bottom: 30px;
+}
+
+.message-context-menu .message-context-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+  text-align: left;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.message-context-menu .message-context-menu-item:hover,
+.message-context-menu .message-context-menu-item:focus-visible {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
+  outline: none;
+}
+
+.message-context-menu .message-context-menu-item.danger {
+  margin-top: 2px;
+  border-top: 1px solid var(--border-faint);
+  border-radius: 0 0 6px 6px;
+  color: var(--danger);
+}
+
+.message-context-menu .message-context-menu-item.danger:hover,
+.message-context-menu .message-context-menu-item.danger:focus-visible {
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface-2));
+}
+
+.message-context-menu .message-context-menu-item:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+
+.msg { display: flex; gap: 10px; }
+.msg-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: calc(100% - 36px); }
+.msg-head {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: 12px;
+}
+.msg-head .name { font-weight: 600; color: var(--text); }
+.msg-head time { color: var(--text-3); font-size: 11px; }
+.msg-content { font-size: 14px; line-height: 1.5; word-wrap: break-word; }
+
+.chat-reply-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px;
+  margin-bottom: 2px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface-2);
+  border-radius: 4px;
+  font-size: 12px;
+  max-width: 100%;
+  min-width: 0;
+}
+.chat-reply-quote .chat-reply-quote-name {
+  font-weight: 600;
+  color: var(--accent);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-reply-quote .chat-reply-quote-body {
+  color: var(--text-2);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.chat-reply-quote.chat-reply-quote-missing {
+  border-left-color: var(--border-strong);
+  color: var(--text-3);
+  font-style: italic;
+}
+.chat-reply-quote-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.chat-reply-quote-banner .chat-reply-quote {
+  flex: 1;
+  min-width: 0;
+}
+.msg-content.redacted { color: var(--text-3); font-style: italic; }
+.msg-content.encrypted { color: var(--text-3); }
+.msg-content.encrypted::before { content: "🔒 "; }
+.msg-content.decryption-pending {
+  color: var(--warning-ink);
+  background: var(--warning-soft);
+  padding: 6px 10px; border-radius: 8px;
+  font-size: 12px;
+}
+.msg-content.decryption-pending::before { content: "⌛ "; }
+.msg-content.quarantined {
+  color: var(--text-3);
+  font-style: italic;
+  padding: 4px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  display: inline-block;
+}
+
+.msg.system {
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-2);
+  justify-content: center;
+  align-items: center;
+}
+.msg.system .pill { margin-right: 6px; }
+
+.reaction {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 11px;
+}
+.reactions { display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* T7.4: E2EE message status row */
+.crypto-status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-top: 4px;
+}
+.crypto-status-icon {
+  font-size: 14px;
+}
+.crypto-status-decrypting {
+  color: var(--text-2);
+  font-style: italic;
+}
+.crypto-status-key-missing {
+  color: var(--warning-ink);
+}
+.crypto-status-needs-verification {
+  color: var(--warning-ink);
+}
+.discussion-message.is-crypto-pending .msg-content {
+  opacity: 0.55;
+  filter: grayscale(0.4);
+}
+
+.pinned-bar {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 8px;
+  margin: 10px 14px 0;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 82%, var(--accent-soft));
+}
+
+.pinned-bar-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pinned-bar-head svg,
+.pinned-bar-item svg,
+.message-pin-indicator svg,
+.message-private-saved-indicator svg {
+  width: 14px;
+  height: 14px;
+}
+
+.pinned-bar-list {
+  display: grid;
+  gap: 6px;
+}
+
+.pinned-bar-item {
+  width: 100%;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  justify-content: initial;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  color: var(--text);
+  text-align: left;
+  box-shadow: none;
+}
+
+.pinned-bar-item:hover,
+.pinned-bar-item:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface));
+}
+
+.pinned-bar-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discussion-message {
+  position: relative;
+  width: fit-content;
+  min-width: min(200px, 100%);
+  max-width: min(76%, 720px);
+  align-self: flex-start;
+}
+
+.discussion-message.is-own {
+  align-self: flex-end;
+}
+
+/* Deep-link focus flash (design/route-view-ia.md §3.2): the message named by
+   `?message=` pulses an accent ring for ~2s on arrival, then settles. */
+.discussion-message.is-highlighted {
+  animation: chat-message-focus-flash 2s ease-out 1;
+  border-radius: 10px;
+  scroll-margin: 16px;
+}
+@keyframes chat-message-focus-flash {
+  0% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 70%, transparent);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    background: transparent;
+  }
+}
+
+.discussion-message .msg-body {
+  max-width: 100%;
+  position: relative;
+  display: grid;
+  gap: 5px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.discussion-message.is-pinned .msg-body {
+  padding-right: 42px;
+}
+
+.discussion-message.is-own .msg-body {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--accent-soft) 82%, var(--surface)),
+      color-mix(in srgb, var(--accent-soft) 68%, var(--surface)));
+  box-shadow:
+    inset -3px 0 0 color-mix(in srgb, var(--accent) 82%, var(--accent-2)),
+    var(--shadow-xs);
+}
+
+.discussion-message.is-failed .msg-body,
+.discussion-message.is-own.is-failed .msg-body {
+  border-color: color-mix(in srgb, var(--danger) 72%, var(--border));
+  background: color-mix(in srgb, var(--danger-soft) 72%, var(--surface));
+}
+
+.discussion-message .msg-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.discussion-message.is-own .msg-head {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.discussion-message .msg-head .name {
+  overflow-wrap: anywhere;
+}
+
+.self-attribution-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 18px;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 56%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  color: var(--accent-ink);
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.message-self-badge {
+  flex: 0 0 auto;
+}
+
+.discussion-message .msg-content {
+  overflow-wrap: anywhere;
+}
+
+.message-pin-indicator {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 82%, var(--accent-soft));
+  color: var(--accent-ink);
+  box-shadow: none;
+}
+
+.message-private-saved-indicator {
+  position: absolute;
+  top: 7px;
+  right: 39px;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--success) 36%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 84%, var(--success-soft));
+  color: var(--success-ink, var(--text));
+}
+
+.message-pin-indicator:hover,
+.message-pin-indicator:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 70%, var(--surface));
+}
+.message-status-icon{
+  display: inline-grid;
+  place-items: center;
+  color: var(--danger-ink);
+  line-height: 1;
+}
+.message-status-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+}
+.message-status-icon.is-pending {
+  border: 2px solid color-mix(in srgb, var(--accent) 72%, var(--border));
+  border-right-color: transparent;
+  color: transparent;
+  animation: message-send-spin 760ms linear infinite;
+}
+.message-status-icon.is-failed {
+  background: var(--danger);
+  color: var(--text-on-accent);
+}
+.message-status-icon.is-queued-offline {
+  width: auto;
+  height: auto;
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.message-error-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger-soft) 84%, var(--surface));
+  color: var(--danger-ink);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.message-error-mark {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: var(--text-on-accent);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.message-retry-button {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  min-height: 0;
+  width: auto;
+  color: inherit;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.message-retry-button {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--danger-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chat-message-actions {
+  position: absolute;
+  top: -13px;
+  right: 8px;
+  z-index: 2;
+  display: inline-flex;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(2px);
+  transition: opacity 100ms ease, transform 100ms ease;
+}
+
+.discussion-message:hover .chat-message-actions,
+.discussion-message:focus-within .chat-message-actions,
+.chat-message-actions.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.chat-message-menu-button {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  min-width: 28px;
+  min-height: 26px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  color: var(--text-2);
+  background: var(--surface-solid, var(--surface));
+  box-shadow: var(--shadow-sm);
+}
+
+.chat-message-menu-button .ui-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.chat-message-menu-button:hover,
+.chat-message-menu-button:focus-visible,
+.chat-message-actions.is-open .chat-message-menu-button {
+  color: var(--accent-ink);
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  outline: none;
+}
+
+.message-retry-button:hover,
+.message-retry-button:focus-visible {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (hover: none) {
+  .chat-message-actions {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+}
+
+.chat-redact-confirm{
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+/* The single-column chat layout (see chat-shell.css) gives a message more
+ * room, so the bubble cap widens with it. This lives next to the base
+ * `.discussion-message` cap rather than with the layout switch: a media
+ * query adds no specificity, so an override that sits in another file has
+ * to be ordered after the rule it overrides to have any effect at all. */
+@media (max-width: 980px) {
+  .discussion-message {
+    max-width: 92%;
+  }
+}

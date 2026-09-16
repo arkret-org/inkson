@@ -1,0 +1,47 @@
+name: cargo-deny
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout inkson
+        uses: actions/checkout@v6
+        with:
+          path: inkson
+      - name: Checkout arkret-rust-sdk
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/arkret-rust-sdk
+          path: arkret-rust-sdk
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+      - name: Checkout garth
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/garth
+          path: garth
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+      - name: Checkout chime
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/chime
+          path: chime
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+      # `yoface` is a private cargo git dependency rather than a sibling
+      # checkout (see .github/workflows/ci.yml). cargo-deny runs inside a
+      # container action, so a `git config --global` on the runner would not
+      # reach it — the credential rewrite is passed as `GIT_CONFIG_*` env vars,
+      # which git reads in any process, container included.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.CI_REPO_TOKEN || github.token }}@github.com/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/
+        with:
+          command: check
+          manifest-path: inkson/Cargo.toml
