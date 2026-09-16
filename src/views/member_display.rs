@@ -4,7 +4,8 @@ use arkret_models_identity::HandleClaim;
 use arkret_sdk::identity::{
     HandleIssuerPolicyEntry, MentionRender, PrimaryHandleSelectInput, render_mention,
 };
-use arkret_sdk::{AccountId, Handle, MemberRosterEntry, MembershipState};
+use arkret_sdk::sync::{MemberRosterEntry, MemberRosterMembership};
+use arkret_sdk::{AccountId, Handle};
 use dioxus::prelude::{SyncSignal, WritableExt};
 use serde_json::Value;
 
@@ -21,7 +22,7 @@ use crate::state::LocalStateStore;
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RealmMemberRow {
     pub actor_id: arkret_sdk::ActorId,
-    pub membership: Option<MembershipState>,
+    pub membership: Option<MemberRosterMembership>,
     pub identity_event_ids: Vec<String>,
     pub member_display_state_digest: Option<String>,
     pub subject_account_id: Option<AccountId>,
@@ -68,13 +69,13 @@ pub(crate) struct MemberHandleLookupRequest {
     pub member_display_state_digest: Option<String>,
 }
 
-/// Wire value of a roster membership state. `MembershipState` is closed to
+/// Wire value of a roster membership state. `MemberRosterMembership` is closed to
 /// the two roster-visible values; other membership words in this client come
 /// from raw operations, not from the roster projection.
-pub(crate) fn membership_wire_str(state: MembershipState) -> &'static str {
+pub(crate) fn membership_wire_str(state: MemberRosterMembership) -> &'static str {
     match state {
-        MembershipState::Join => "join",
-        MembershipState::Knock => "knock",
+        MemberRosterMembership::Join => "join",
+        MemberRosterMembership::Knock => "knock",
     }
 }
 
@@ -230,17 +231,14 @@ pub(crate) fn realm_handle_issuer_policies(
 pub(crate) fn handle_issuer_policies_from_projection(
     projection: Option<&Value>,
 ) -> Vec<HandleIssuerPolicyEntry> {
-    let Some(value) = projection.and_then(|projection| {
-        garth::installed_cell_value(
-            projection,
-            crate::current_projection::REQUIRED_REALM_CELLS[2],
-        )
-    }) else {
+    let Some(value) = projection.and_then(crate::current_projection::current_realm_policy_value)
+    else {
         return Vec::new();
     };
-    // The registry projects `field=payload`, so the published value is either
-    // the bundle payload itself or the generic `{"value": ...}` state envelope.
-    let candidate = value.get("value").unwrap_or(value);
+    // The Station selects the current policy value; the published value is
+    // either the bundle payload itself or the generic `{"value": ...}`
+    // envelope it was committed in.
+    let candidate = value.get("value").unwrap_or(&value);
     serde_json::from_value::<arkret_sdk::RealmPolicyBundlePayload>(candidate.clone())
         .ok()
         .and_then(|bundle| bundle.handle_issuer_policies)
@@ -821,14 +819,14 @@ mod petname_tests {
                 .find(|row| row.actor_id == first)
                 .unwrap()
                 .membership,
-            Some(MembershipState::Join)
+            Some(MemberRosterMembership::Join)
         );
         assert_eq!(
             rows.iter()
                 .find(|row| row.actor_id == second)
                 .unwrap()
                 .membership,
-            Some(MembershipState::Knock)
+            Some(MemberRosterMembership::Knock)
         );
     }
 
@@ -867,7 +865,7 @@ mod petname_tests {
     fn realm_row(actor_id: &str, subject_id: Option<&str>) -> RealmMemberRow {
         RealmMemberRow {
             actor_id: crate::mls_api_helpers::local_account_actor_id(actor_id).unwrap(),
-            membership: Some(MembershipState::Join),
+            membership: Some(MemberRosterMembership::Join),
             identity_event_ids: Vec::new(),
             member_display_state_digest: None,
             subject_account_id: subject_id.map(|subject| {

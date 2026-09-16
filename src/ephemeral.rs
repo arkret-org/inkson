@@ -1,5 +1,5 @@
 //! Durable outgoing-Event helpers for the self client: outgoing-payload schema
-//! validation and the events-batch acceptance gate.
+//! validation and the authority-submit acceptance gate.
 //!
 //! The `ak.typing` / `ak.receipt.read` / `ak.presence` / `ak.call.signal`
 //! plaintext broadcast envelopes used to live here. v1 deleted that rail: the
@@ -7,56 +7,31 @@
 
 use serde::Serialize;
 
-/// A batch the server did not fully accept.
+/// A submission the current governance Station refused.
 ///
-/// The message quotes wire vocabulary — the `status` token and each row's
+/// The message quotes wire vocabulary — the rejection status and the Station's
 /// `reason_code` exactly as they arrived — so a pasted log line can be grepped
-/// against the server's own response. Control flow never reads it; that is what
-/// [`events_submit_rejected_for_reason`] is for.
+/// against the server's own response. Control flow never reads the prose; that
+/// is what [`authority_rejected_for_reason`] is for.
 #[derive(Debug, thiserror::Error)]
-struct EventsSubmitRejectedError {
-    status: arkret_sdk::EventsSubmitStatus,
-    rejected: Vec<arkret_sdk::EventsSubmitRejectedRow>,
+#[error(
+    "authority refused the submission: status={status:?} reason_code={reason_code}",
+    status = self.status,
+    reason_code = self.reason_code
+)]
+struct AuthorityRejectedError {
+    status: arkret_wire::AuthorityRejectionStatus,
+    reason_code: String,
 }
 
-impl std::fmt::Display for EventsSubmitRejectedError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "events submit was not fully accepted: status={}",
-            self.status.as_str()
-        )?;
-        for row in &self.rejected {
-            write!(
-                formatter,
-                "; rejected {} reason_code={}",
-                row.id,
-                row.reason_code.as_str()
-            )?;
-            if let Some(detail) = &row.detail {
-                write!(formatter, " detail={detail}")?;
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Match a reducer refusal from the typed per-Event rejection rows. Diagnostic
-/// prose is deliberately ignored: changing a message must never change client
-/// control flow.
-pub(crate) fn events_submit_rejected_for_reason(
-    error: &anyhow::Error,
-    reason: &arkret_sdk::ReasonCode,
-) -> bool {
+/// Match a Station refusal by its exact reason code. Diagnostic prose is
+/// deliberately ignored: changing a message must never change client control
+/// flow.
+pub(crate) fn authority_rejected_for_reason(error: &anyhow::Error, reason: &str) -> bool {
     error.chain().any(|cause| {
         cause
-            .downcast_ref::<EventsSubmitRejectedError>()
-            .is_some_and(|rejection| {
-                rejection
-                    .rejected
-                    .iter()
-                    .any(|row| &row.reason_code == reason)
-            })
+            .downcast_ref::<AuthorityRejectedError>()
+            .is_some_and(|rejection| rejection.reason_code == reason)
     })
 }
 
@@ -74,47 +49,38 @@ pub(crate) fn validate_outgoing_registered_event_payload<T: Serialize>(
     )
 }
 
-pub(crate) fn ensure_events_submit_accepted(
-    response: &arkret_sdk::EventsSubmitOutcome,
-) -> anyhow::Result<()> {
-    if response.rejections.is_empty()
-        && matches!(
-            response.status,
-            arkret_sdk::EventsSubmitStatus::Accepted | arkret_sdk::EventsSubmitStatus::Duplicate
-        )
-    {
-        return Ok(());
+/// Turn one authority submit outcome into the accepted commit, or into the
+/// typed refusal above.
+pub(crate) fn ensure_authority_accepted(
+    outcome: arkret_wire::AuthoritySubmitOutcome,
+) -> anyhow::Result<arkret_wire::RealmCommit> {
+    match outcome {
+        arkret_wire::AuthoritySubmitOutcome::Accepted { commit, .. } => Ok(commit),
+        arkret_wire::AuthoritySubmitOutcome::Rejected {
+            status,
+            reason_code,
+        } => Err(AuthorityRejectedError {
+            status,
+            reason_code,
+        }
+        .into()),
     }
-
-    Err(EventsSubmitRejectedError {
-        status: response.status,
-        rejected: response.rejections.clone(),
-    }
-    .into())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{EventsSubmitRejectedError, events_submit_rejected_for_reason};
+    use super::{AuthorityRejectedError, authority_rejected_for_reason};
 
     #[test]
-    fn reducer_control_flow_reads_typed_reason_and_ignores_diagnostic_prose() {
-        let reason = arkret_sdk::ReasonCode::DependencyMissing;
-        let typed = anyhow::Error::new(EventsSubmitRejectedError {
-            status: arkret_sdk::EventsSubmitStatus::Partial,
-            rejected: vec![arkret_sdk::EventsSubmitRejectedRow {
-                index: Some(0),
-                id: "ak:event:test".to_owned(),
-                reason_code: reason.clone(),
-                detail: Some("arbitrary diagnostic".to_owned()),
-                missing_event_ids: Vec::new(),
-                missing_seal_refs: Vec::new(),
-                missing_event_digests: Vec::new(),
-            }],
+    fn control_flow_reads_the_typed_reason_and_ignores_diagnostic_prose() {
+        let typed = anyhow::Error::new(AuthorityRejectedError {
+            status: arkret_wire::AuthorityRejectionStatus::Rejected,
+            reason_code: "dependency_missing".to_owned(),
         });
-        assert!(events_submit_rejected_for_reason(&typed, &reason));
+        assert!(authority_rejected_for_reason(&typed, "dependency_missing"));
+        assert!(!authority_rejected_for_reason(&typed, "policy_violation"));
 
         let prose_only = anyhow::anyhow!("dependency_missing");
-        assert!(!events_submit_rejected_for_reason(&prose_only, &reason));
+        assert!(!authority_rejected_for_reason(&prose_only, "dependency_missing"));
     }
 }

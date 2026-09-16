@@ -82,7 +82,6 @@ pub async fn create_realm(
             "authenticated Station authority does not match the current service description"
         );
     }
-    let notary = submitter.current_service_notary().await?;
     let notary_service_origin = submitter.http().base_url().origin().ascii_serialization();
     // One CSPRNG salt belongs to this creation intent. The complete unsigned
     // unit is durably queued before prepare/sign; Garth then persists the
@@ -95,7 +94,6 @@ pub async fn create_realm(
         genesis_salt,
         actor_id,
         &notary_did,
-        notary,
         &notary_service_origin,
         title,
         summary,
@@ -620,15 +618,15 @@ pub async fn ban_member(
 /// The Grant id is derived from the accepted Event id. P1's
 /// `apply_capability` folds this into the soland authz index, so subsequent
 /// `ak.realm.admin` checks for `subject` pass. `root_basis` is the caller's
-/// resolved authority-root coordinates
-/// (`IssuerRootBasis::from_resolved_root`) the grant's `realm_root` issuer
+/// validated current-authority coordinates
+/// (`IssuerRealmAuthorityBasis::from_verified_bundle`) the grant's issuer
 /// authority binds to.
 pub async fn grant_realm_admin(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
     subject: &arkret_sdk::AccountId,
-    root_basis: ak_ops::IssuerRootBasis,
+    root_basis: &ak_ops::IssuerRealmAuthorityBasis,
 ) -> anyhow::Result<SubmitEventResult> {
     let event = ak_ops::capability_grant_actions(
         realm_id,
@@ -676,59 +674,11 @@ pub async fn moderation_decide(
     submitter.submit_sdk_event(&event).await
 }
 
-/// Read the exact decision and project its registered add dots through the
-/// SDK. A decision reference alone is not an observed removal set.
-async fn moderation_observed_dots(
-    submitter: &EventSubmitter,
-    realm_id: &str,
-    target_ref: &str,
-    decision_ref: &str,
-) -> anyhow::Result<Vec<String>> {
-    let decision_id = arkret_sdk::EventId::new(decision_ref.to_owned())?;
-    let outcome = submitter
-        .http()
-        .events_resolve(&arkret_sdk::EventsResolveRequestBody {
-            event_ids: vec![decision_id.clone()],
-            event_digests: Vec::new(),
-            include_payload: Some(true),
-            history_traversal_access: None,
-            max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
-        })
-        .await?;
-    anyhow::ensure!(
-        outcome.missing.is_empty() && outcome.unauthorized.is_empty() && outcome.events.len() == 1,
-        "moderation decision is not completely available"
-    );
-    let event = &outcome.events[0];
-    anyhow::ensure!(
-        event.event_id == decision_id
-            && event.realm_id.as_str() == realm_id
-            && event.kind == arkret_sdk::EventKind::ModerationDecision,
-        "moderation decision reference does not bind this Realm"
-    );
-    let payload: arkret_sdk::ModerationDecisionPayload =
-        serde_json::from_value(serde_json::to_value(&event.payload)?)?;
-    anyhow::ensure!(
-        payload.target_ref == target_ref,
-        "moderation decision target mismatch"
-    );
-    let dots =
-        crate::operation::direct_registered_cell_writes(event, arkret_sdk::DigestSuite::Sha256)?
-            .into_iter()
-            .filter(|write| write.op.op_type == arkret_sdk::LatticeOpType::Add)
-            .filter_map(|write| write.op.tag)
-            .collect::<Vec<_>>();
-    anyhow::ensure!(
-        !dots.is_empty(),
-        "moderation decision has no registered add dots"
-    );
-    Ok(dots)
-}
-
 /// Lift a previously sealed moderation decision via
-/// `ak.moderation.decision.lift`. `target_ref` is the moderated target
-/// (the cell subject shared with the original decision); `decision_ref`
-/// is the `ak:event:` id of the decision being lifted.
+/// `ak.moderation.decision.lift`. `target_ref` is the moderated target shared
+/// with the original decision; `decision_ref` is the `ak:event:` id of the
+/// decision being lifted. The lift names the decision Event directly: the
+/// or_set observed-remove dot set it used to carry no longer exists.
 pub async fn moderation_lift(
     submitter: &EventSubmitter,
     realm_id: &str,
@@ -737,14 +687,11 @@ pub async fn moderation_lift(
     decision_ref: &str,
     reason_code: &str,
 ) -> anyhow::Result<SubmitEventResult> {
-    let observed_dot_ids =
-        moderation_observed_dots(submitter, realm_id, target_ref, decision_ref).await?;
     let event = ak_ops::moderation_decision_lift(
         realm_id,
         actor_id,
         target_ref,
         decision_ref,
-        &observed_dot_ids,
         reason_code,
     )?
     .build_sdk_event("inkson")?;

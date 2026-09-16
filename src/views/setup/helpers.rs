@@ -44,6 +44,20 @@ pub(super) fn history_access_admits_prejoin(history_access: &str) -> bool {
     history_access.trim() == "all_history_for_current_members"
 }
 
+/// Whether the wizard's encryption selection asks for an end-to-end encrypted
+/// Realm.
+///
+/// This is a host-side reading of this wizard's own closed option list
+/// ([`super::data::ENCRYPTION_PROFILE_OPTIONS`]), not a protocol judgement. A
+/// scope is plaintext until its own accepted `ak.mls.genesis` and irreversibly
+/// RFC 9420 afterwards, so "is this scope encrypted" is answered by
+/// [`crate::current_projection::scope_has_accepted_mls_genesis`]; at create
+/// time no scope has a genesis yet, and this selection is only the intent the
+/// creator is expressing.
+pub(super) fn encryption_selection_is_e2ee(selection: &str) -> bool {
+    !matches!(selection.trim(), "" | "none")
+}
+
 pub(super) fn normalize_content_scheme(
     encryption_is_e2ee: bool,
     history_access: &str,
@@ -100,6 +114,13 @@ mod tests {
             normalize_content_scheme(false, "all_history_for_current_members", "mls_rfc9420"),
             "mls_rfc9420"
         );
+    }
+
+    #[test]
+    fn encryption_selection_reads_the_wizard_option_list() {
+        assert!(encryption_selection_is_e2ee("mls_rfc9420"));
+        assert!(!encryption_selection_is_e2ee("none"));
+        assert!(!encryption_selection_is_e2ee(" "));
     }
 
     #[test]

@@ -33,15 +33,11 @@ pub(crate) enum SpaceContainerLifecycleState {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct KanbanCard {
     pub(crate) id: String,
-    /// The card's current rank inside its column. This is the local
-    /// mirror of the `ak.component.strand.position.v1` cell's `rank`
-    /// field and seeds the `expected_position` of any subsequent
-    /// `ak.strand.move` / `ak.strand.reorder` Move. When the projection
-    /// refreshes (server-side cell update), this must be re-synced.
+    /// The card's current rank inside its column, mirrored from the Strand
+    /// projection row. It seeds the `expected_position` compare-and-swap guard
+    /// of any subsequent `ak.strand.move` / `ak.strand.reorder`, so it must be
+    /// re-synced whenever the projection refreshes.
     pub(crate) rank: String,
-    /// Canonical Event digest of the deterministic position winner. A normal
-    /// settled card has exactly one; no ref means the position is unwritten.
-    pub(crate) position_basis_refs: Vec<arkret_sdk::Hash>,
     pub(crate) title: String,
     /// Strand `metadata.summary` — the short one-line/paragraph overview.
     pub(crate) description: String,
@@ -69,16 +65,18 @@ pub(crate) struct KanbanCard {
     pub(crate) due: String,
     /// Deterministic schedule revision winner this client observed for the
     /// card's calendar, as one `event_digest`. Empty means the projection has
-    /// not exposed a readable winner yet, and RSVP authoring fails closed
-    /// rather than signing an unbacked basis.
+    /// not exposed a readable winner yet, and RSVP authoring fails closed with
+    /// `calendar_schedule_unavailable` rather than signing an unbacked basis.
     pub(crate) calendar_schedule_basis_refs: Vec<String>,
-    /// Identity captured together with the displayed complete current value.
-    pub(crate) authoring_basis: Option<(arkret_sdk::ScopeRef, arkret_sdk::EventId)>,
+    /// Authority-signed revision the displayed complete current value was
+    /// selected at: the exact `RealmCommit` and its position in that Strand's
+    /// own stream. `None` means the snapshot has not delivered the Strand yet.
+    pub(crate) authoring_basis: Option<arkret_wire::CurrentRevision>,
     /// Folded RSVP state for the card's calendar: the signed-in actor's own
     /// answer, the aggregate, and how many retained winners do not count.
     pub(crate) calendar_rsvp: CalendarRsvpDisplay,
-    /// Projected RSVP cells retained so a new response can causally reference
-    /// the previous winner of its exact `(occurrence, responder)` cell.
+    /// Projected RSVP records for this card, retained so the responder's own
+    /// current answer and the excluded winners can both be rendered.
     pub(crate) calendar_rsvp_cells: Vec<crate::state::projection_views::RsvpCellProjectionView>,
     pub(crate) calendar: CalendarCardFields,
     pub(crate) primary_strand_id: String,
@@ -96,20 +94,14 @@ pub(crate) struct KanbanCard {
     /// irreversible terminal (content cleared, envelope/audit retained); UI
     /// never emits it but renders a withdrawn-message placeholder for it.
     pub(crate) lifecycle: StrandLifecycleState,
-    /// Canonical Event digest of the currently observed lifecycle winner.
-    /// Empty is the valid initial `active` state (the create Event does not
-    /// write the lifecycle cell); one ref is settled. More than one ref is
-    /// malformed input and never represents an ordinary concurrent state.
-    pub(crate) lifecycle_basis_refs: Vec<arkret_sdk::Hash>,
 }
 
 impl KanbanCard {
     /// Parses the observed schedule revision winner into an SDK digest.
     ///
     /// Anything unparseable is dropped rather than guessed: an invalid digest
-    /// can never be a legitimate causal edge, and signing it would produce an
-    /// RSVP a receiver rejects with `rsvp_basis_not_causal`.
-    #[cfg(test)]
+    /// can never be a legitimate schedule basis, and signing it would produce
+    /// an RSVP a receiver rejects with `rsvp_basis_not_causal`.
     pub(crate) fn calendar_schedule_basis_refs(&self) -> Vec<arkret_sdk::Hash> {
         self.calendar_schedule_basis_refs
             .iter()
@@ -213,18 +205,16 @@ pub(crate) struct LockedStrand {
     pub(crate) reason: String,
 }
 
-/// Snapshot of the card-being-dragged's pre-move state. The causal-register
-/// model requires the resulting Event to reference the exact position winner
-/// observed by the user. We capture it on `ondragstart` so the drop handler
-/// does not infer a different winner from a later holder-local projection.
-#[derive(Clone, Debug, PartialEq)]
+/// Snapshot of the card-being-dragged's pre-move state.
+///
+/// The placement the user actually saw becomes the write's `expected_position`
+/// guard, so it is captured on `ondragstart` rather than re-read from a later
+/// holder-local projection.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DraggedCard {
     pub(crate) card_id: String,
     pub(crate) from_column_id: String,
     pub(crate) from_rank: String,
-    /// Exact position winner captured with the rendered card. The drop command
-    /// signs this ref instead of inferring a winner from UI order.
-    pub(crate) position_basis_refs: Vec<arkret_sdk::Hash>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

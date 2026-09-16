@@ -3,10 +3,10 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use arkret_sdk::{
-    AccountId, AccountSubscribeFrame, CurrentMemberCoverage, CurrentResultEntry, CurrentSelector,
-    CurrentTarget,
-};
+use arkret_sdk::AccountId;
+use arkret_sdk::sync::AccountSubscribeFrame;
+use arkret_sdk::sync::{AccountCurrentCoverage, RealmDetailBaseline};
+use arkret_wire::{CurrentRevision, CurrentSelector, TypedCurrentResult};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
@@ -25,6 +25,253 @@ pub mod wasm_harness;
 
 pub(crate) const CURRENT_PREFIX: &str = "inkson.current.v1/";
 const PAGE_LIMIT: usize = 100;
+
+/// Index grouping of one typed current selector.
+///
+/// The wire selector union is closed and already names its domain coordinate;
+/// this is only the paging bucket the local index stores rows under, so a
+/// product view can read "every member row of this Realm" without scanning
+/// every selector. It is host state and never reaches the wire.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum CurrentTarget {
+    Realm,
+    Strand {
+        strand_id: arkret_sdk::StrandId,
+    },
+    Member {
+        actor_id: arkret_sdk::ActorId,
+    },
+    Event {
+        event_id: arkret_sdk::EventId,
+    },
+    MlsGroup {
+        scope_ref: arkret_sdk::ScopeRef,
+    },
+}
+
+fn target_of(selector: &CurrentSelector) -> CurrentTarget {
+    match selector {
+        CurrentSelector::RealmProfile | CurrentSelector::RealmPolicy => CurrentTarget::Realm,
+        CurrentSelector::MemberState { actor_id } => CurrentTarget::Member {
+            actor_id: actor_id.clone(),
+        },
+        CurrentSelector::Strand { strand_id } => CurrentTarget::Strand {
+            strand_id: strand_id.clone(),
+        },
+        CurrentSelector::MessageReactions { event_id } => CurrentTarget::Event {
+            event_id: event_id.clone(),
+        },
+        CurrentSelector::MlsGroup { scope_ref } => CurrentTarget::MlsGroup {
+            scope_ref: scope_ref.clone(),
+        },
+    }
+}
+
+fn selector_of(entry: &TypedCurrentResult) -> &CurrentSelector {
+    match entry {
+        TypedCurrentResult::Value { selector, .. }
+        | TypedCurrentResult::MessageReactions { selector, .. } => selector,
+    }
+}
+
+fn revision_of(entry: &TypedCurrentResult) -> &CurrentRevision {
+    match entry {
+        TypedCurrentResult::Value { revision, .. }
+        | TypedCurrentResult::MessageReactions { revision, .. } => revision,
+    }
+}
+
+fn selector_key(selector: &CurrentSelector) -> anyhow::Result<String> {
+    Ok(String::from_utf8(
+        arkret_sdk::canonical::canonical_json_bytes(selector)?,
+    )?)
+}
+
+/// Highest stream position that is provably covered by one baseline.
+///
+/// Each Realm, Circle and Sidecar keeps its own linear stream and there is no
+/// Realm-global position, so the only position a single number can safely
+/// assert coverage for is the smallest head across every covered stream: a row
+/// at or below it is at or below every covered stream's head. `None` means the
+/// reader was not told it saw every stream it is authorized to read, and
+/// nothing may be swept or hidden on the strength of this baseline.
+fn covered_floor(coverage: &AccountCurrentCoverage) -> Option<u64> {
+    if !coverage.complete_for_authorized_streams {
+        return None;
+    }
+    coverage
+        .stream_heads
+        .iter()
+        .map(|head| head.stream_position)
+        .min()
+}
+
+/// Highest position any covered stream reached. A current result above it
+/// cannot belong to the frozen cut the baseline describes.
+fn baseline_ceiling(coverage: &AccountCurrentCoverage) -> u64 {
+    coverage
+        .stream_heads
+        .iter()
+        .map(|head| head.stream_position)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Small durable per-Realm metadata, independent of the number of selectors.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct CurrentRealmProgress {
+    pub baseline: Option<RealmDetailBaseline>,
+    pub invalidated_snapshot: Option<String>,
+    pub invalidation_revision: u64,
+    pub has_invalidation: bool,
+    pub needs_refresh: bool,
+}
+
+impl CurrentRealmProgress {
+    fn invalidate(&mut self, revision: u64) {
+        if self.has_invalidation && revision <= self.invalidation_revision {
+            return;
+        }
+        self.has_invalidation = true;
+        self.invalidation_revision = revision;
+        self.needs_refresh = true;
+        self.invalidated_snapshot = self
+            .baseline
+            .as_ref()
+            .map(|baseline| baseline.snapshot_cursor.clone());
+    }
+
+    fn reset(&mut self) {
+        self.needs_refresh = true;
+        self.invalidated_snapshot = self
+            .baseline
+            .as_ref()
+            .map(|baseline| baseline.snapshot_cursor.clone());
+    }
+}
+
+/// A sweep predicate, never a list of every covered selector.
+#[derive(Clone, Debug)]
+struct CurrentCoverageCleanup {
+    snapshot_cursor: String,
+    covered_floor: u64,
+}
+
+#[derive(Clone, Debug)]
+struct CurrentInstallPlan {
+    progress: CurrentRealmProgress,
+    writes: Vec<TypedCurrentResult>,
+    seen_selectors: Vec<String>,
+    cleanup: Option<CurrentCoverageCleanup>,
+    /// An invalidated snapshot must not reach secondary product projections.
+    discard_frame: bool,
+}
+
+/// Validate one replacement while the caller holds only this selector's old
+/// row. Returns `(write, seen)`.
+fn plan_current_entry(
+    previous: &CurrentRealmProgress,
+    baseline: Option<&RealmDetailBaseline>,
+    entry: &TypedCurrentResult,
+    old: Option<&TypedCurrentResult>,
+) -> anyhow::Result<(bool, bool)> {
+    let complete = baseline.is_some_and(|segment| {
+        previous
+            .baseline
+            .as_ref()
+            .is_some_and(|old| old.snapshot_cursor == segment.snapshot_cursor && old.complete)
+    });
+    if let Some(segment) = baseline {
+        anyhow::ensure!(
+            revision_of(entry).stream_position <= baseline_ceiling(&segment.coverage),
+            "current result is outside its frozen baseline"
+        );
+    }
+    let seen = baseline.is_some() && !complete;
+    if let Some(old) = old {
+        anyhow::ensure!(
+            selector_of(old) == selector_of(entry),
+            "current row changed its selector"
+        );
+        let old_revision = revision_of(old);
+        let new_revision = revision_of(entry);
+        if old_revision == new_revision {
+            anyhow::ensure!(
+                arkret_sdk::canonical::canonical_json_bytes(old)?
+                    == arkret_sdk::canonical::canonical_json_bytes(entry)?,
+                "current result changed at the same revision"
+            );
+            return Ok((false, seen));
+        }
+        if old_revision.stream_position > new_revision.stream_position {
+            return Ok((false, seen));
+        }
+    } else if baseline.is_none()
+        && previous.baseline.as_ref().is_some_and(|installed| {
+            installed.complete
+                && covered_floor(&installed.coverage)
+                    .is_some_and(|floor| revision_of(entry).stream_position <= floor)
+        })
+    {
+        return Ok((false, seen));
+    }
+    Ok((!complete, seen))
+}
+
+/// Preflight one Realm entry's baseline transition without changing host state.
+fn plan_current_install(
+    previous: &CurrentRealmProgress,
+    incoming: &arkret_sdk::sync::RealmSyncEntry,
+) -> anyhow::Result<CurrentInstallPlan> {
+    let mut plan = CurrentInstallPlan {
+        progress: previous.clone(),
+        writes: Vec::new(),
+        seen_selectors: Vec::new(),
+        cleanup: None,
+        discard_frame: false,
+    };
+    if incoming.unavailable.is_some() {
+        plan.progress.reset();
+        return Ok(plan);
+    }
+    let mut already_complete = false;
+    if let Some(segment) = &incoming.baseline {
+        segment
+            .coverage
+            .validate()
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        if previous.invalidated_snapshot.as_deref() == Some(segment.snapshot_cursor.as_str())
+            || segment.cut_revision < previous.invalidation_revision
+        {
+            plan.discard_frame = true;
+            return Ok(plan);
+        }
+        if let Some(old) = &previous.baseline
+            && old.snapshot_cursor == segment.snapshot_cursor
+        {
+            anyhow::ensure!(
+                old.cut_revision == segment.cut_revision && old.coverage == segment.coverage,
+                "current baseline changed its cut or coverage"
+            );
+            already_complete = old.complete;
+        }
+        if !already_complete {
+            plan.progress.baseline = Some(segment.clone());
+            plan.progress.needs_refresh = !segment.complete;
+        }
+        if segment.complete
+            && !already_complete
+            && let Some(floor) = covered_floor(&segment.coverage)
+        {
+            plan.cleanup = Some(CurrentCoverageCleanup {
+                snapshot_cursor: segment.snapshot_cursor.clone(),
+                covered_floor: floor,
+            });
+        }
+    }
+    Ok(plan)
+}
 
 // Dropping the caller must not release a lease while a platform transaction
 // continues running. The independent job owns its lease until all IO completes.
@@ -106,13 +353,15 @@ impl Drop for CurrentStage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CoverageMark {
     snapshot: String,
-    cut_revision: u64,
+    /// Highest stream position every covered stream had reached. See
+    /// [`covered_floor`].
+    covered_floor: u64,
     generation: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct RetiredEntry {
-    revision: u64,
+    revision: CurrentRevision,
     target: CurrentTarget,
     digest: String,
     generation: u64,
@@ -120,9 +369,16 @@ struct RetiredEntry {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CleanupTask {
     realm: String,
-    target: String,
     after: Option<String>,
     generation: u64,
+}
+
+/// One queued per-selector version-compaction task. It carries the Realm
+/// because the selector alone does not name one.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PruneTask {
+    realm: String,
+    selector: CurrentSelector,
 }
 
 /// Phases of one reachability cycle over snapshot-scoped `seen` evidence.
@@ -170,7 +426,7 @@ const MARK_STREAMS: [&str; 2] = ["progress/", "coverage/"];
 
 #[derive(Clone, Debug)]
 pub(crate) struct CurrentTargetPage {
-    pub entries: Vec<CurrentResultEntry>,
+    pub entries: Vec<TypedCurrentResult>,
     // Pagination is owned by the 0540 durable-index follow-up. Keep the cursor
     // in the internal result shape until that reader is wired.
     #[allow(dead_code)]
@@ -367,24 +623,37 @@ impl CurrentIndex {
             .transpose()
             .map(|value| value.unwrap_or(0))
     }
-    fn row_prefix(&self, selector: &CurrentSelector) -> anyhow::Result<String> {
-        Ok(format!("{}row/{}/", self.prefix, hash(selector)?))
+    /// Row key. The selector union is Realm-relative — `RealmProfile` names a
+    /// different row in every Realm — so the Realm is part of the key and never
+    /// re-derived from the selector.
+    fn row_prefix(&self, realm: &str, selector: &CurrentSelector) -> anyhow::Result<String> {
+        Ok(format!(
+            "{}row/{}/{}/",
+            self.prefix,
+            hash(&realm)?,
+            hash(selector)?
+        ))
     }
     fn progress_prefix(&self, realm: &str) -> anyhow::Result<String> {
         Ok(format!("{}progress/{}/", self.prefix, hash(&realm)?))
     }
-    fn mark_prefix(&self, realm: &str, target: &str) -> anyhow::Result<String> {
-        Ok(format!(
-            "{}coverage/{}/{target}/",
-            self.prefix,
-            hash(&realm)?
-        ))
+    /// Coverage marks are per Realm. Baseline coverage is a set of independent
+    /// commit-stream heads, not a per-target enumeration, so one mark answers
+    /// for every selector of the Realm.
+    fn mark_prefix(&self, realm: &str) -> anyhow::Result<String> {
+        Ok(format!("{}coverage/{}/", self.prefix, hash(&realm)?))
     }
-    fn seen_prefix(&self, snapshot: &str, selector: &CurrentSelector) -> anyhow::Result<String> {
+    fn seen_prefix(
+        &self,
+        snapshot: &str,
+        realm: &str,
+        selector: &CurrentSelector,
+    ) -> anyhow::Result<String> {
         Ok(format!(
-            "{}seen/{}/{}/",
+            "{}seen/{}/{}/{}/",
             self.prefix,
             snapshot_key(snapshot)?,
+            hash(&realm)?,
             hash(selector)?
         ))
     }
@@ -413,9 +682,9 @@ impl CurrentIndex {
         &self,
         realm: &str,
         generation: u64,
-    ) -> anyhow::Result<garth::CurrentRealmProgress> {
+    ) -> anyhow::Result<CurrentRealmProgress> {
         let prefix = self.progress_prefix(realm)?;
-        let mut progress: garth::CurrentRealmProgress =
+        let mut progress: CurrentRealmProgress =
             self.latest(&prefix, generation).await?.unwrap_or_default();
         let reset = self
             .latest::<u64>(&format!("{}reset/", self.prefix), generation)
@@ -429,73 +698,59 @@ impl CurrentIndex {
     async fn strongest_mark(
         &self,
         realm: &str,
-        target: &CurrentTarget,
         generation: u64,
     ) -> anyhow::Result<Option<CoverageMark>> {
-        let mut regions = vec![target_key(target)?];
-        if matches!(target, CurrentTarget::Member { .. }) {
-            regions.push(member_all_key().into());
-        }
-        let mut strongest: Option<CoverageMark> = None;
-        for region in regions {
-            if let Some(mark) = self
-                .latest::<CoverageMark>(&self.mark_prefix(realm, &region)?, generation)
-                .await?
-            {
-                if strongest.as_ref().is_none_or(|old| {
-                    (old.cut_revision, old.generation) <= (mark.cut_revision, mark.generation)
-                }) {
-                    strongest = Some(mark);
-                }
-            }
-        }
-        Ok(strongest)
+        self.latest::<CoverageMark>(&self.mark_prefix(realm)?, generation)
+            .await
     }
     async fn raw_selector(
         &self,
+        realm: &str,
         selector: &CurrentSelector,
         generation: u64,
-    ) -> anyhow::Result<Option<CurrentResultEntry>> {
-        let prefix = self.row_prefix(selector)?;
+    ) -> anyhow::Result<Option<TypedCurrentResult>> {
+        let prefix = self.row_prefix(realm, selector)?;
         let row_generation = self.latest_generation(&prefix, generation).await?;
-        if let Some(retired) = self.retired(selector, generation).await? {
+        if let Some(retired) = self.retired(realm, selector, generation).await? {
             if retired.generation >= row_generation {
                 return Ok(None);
             }
         }
         self.latest(&prefix, generation).await
     }
+    fn retired_prefix(&self, realm: &str, selector: &CurrentSelector) -> anyhow::Result<String> {
+        Ok(format!(
+            "{}retired/{}/{}/",
+            self.prefix,
+            hash(&realm)?,
+            hash(selector)?
+        ))
+    }
     async fn retired(
         &self,
+        realm: &str,
         selector: &CurrentSelector,
         generation: u64,
     ) -> anyhow::Result<Option<RetiredEntry>> {
-        self.latest(
-            &format!("{}retired/{}/", self.prefix, hash(selector)?),
-            generation,
-        )
-        .await
+        self.latest(&self.retired_prefix(realm, selector)?, generation)
+            .await
     }
     async fn visible_selector(
         &self,
+        realm: &str,
         selector: &CurrentSelector,
         generation: u64,
-    ) -> anyhow::Result<Option<CurrentResultEntry>> {
-        let Some(entry) = self.raw_selector(selector, generation).await? else {
+    ) -> anyhow::Result<Option<TypedCurrentResult>> {
+        let Some(entry) = self.raw_selector(realm, selector, generation).await? else {
             return Ok(None);
         };
-        let realm = selector
-            .scope_ref
-            .realm_id_opt()
-            .ok_or_else(|| anyhow::anyhow!("current selector has no Realm"))?
-            .as_str();
-        if let Some(mark) = self
-            .strongest_mark(realm, entry.target(), generation)
-            .await?
-        {
-            if entry.revision() <= mark.cut_revision
+        if let Some(mark) = self.strongest_mark(realm, generation).await? {
+            if revision_of(&entry).stream_position <= mark.covered_floor
                 && self
-                    .latest::<bool>(&self.seen_prefix(&mark.snapshot, selector)?, generation)
+                    .latest::<bool>(
+                        &self.seen_prefix(&mark.snapshot, realm, selector)?,
+                        generation,
+                    )
                     .await?
                     .is_none()
             {
@@ -507,33 +762,31 @@ impl CurrentIndex {
     #[cfg(test)]
     pub(crate) async fn read_selector(
         &self,
+        realm: &str,
         selector: &CurrentSelector,
-    ) -> anyhow::Result<Option<CurrentResultEntry>> {
+    ) -> anyhow::Result<Option<TypedCurrentResult>> {
         let _lease = self.lease.lock().await;
-        self.visible_selector(selector, self.generation.load(Ordering::Acquire))
+        self.visible_selector(realm, selector, self.generation.load(Ordering::Acquire))
             .await
     }
     pub(crate) async fn read_selector_ready(
         &self,
+        realm: &str,
         selector: &CurrentSelector,
-    ) -> anyhow::Result<Option<CurrentResultEntry>> {
+    ) -> anyhow::Result<Option<TypedCurrentResult>> {
         let _lease = self.lease.lock().await;
         let generation = self.generation.load(Ordering::Acquire);
-        self.ready_selector(selector, generation).await
+        self.ready_selector(realm, selector, generation).await
     }
     async fn ready_selector(
         &self,
+        realm: &str,
         selector: &CurrentSelector,
         generation: u64,
-    ) -> anyhow::Result<Option<CurrentResultEntry>> {
-        let Some(entry) = self.visible_selector(selector, generation).await? else {
+    ) -> anyhow::Result<Option<TypedCurrentResult>> {
+        let Some(entry) = self.visible_selector(realm, selector, generation).await? else {
             return Ok(None);
         };
-        let realm = selector
-            .scope_ref
-            .realm_id_opt()
-            .ok_or_else(|| anyhow::anyhow!("current selector has no Realm"))?
-            .as_str();
         let progress = self.progress_at(realm, generation).await?;
         let floor = self
             .latest::<u64>(
@@ -548,25 +801,29 @@ impl CurrentIndex {
                     .unwrap_or(0),
             );
         let row_generation = self
-            .latest_generation(&self.row_prefix(selector)?, generation)
+            .latest_generation(&self.row_prefix(realm, selector)?, generation)
             .await?;
         let pending_covered = progress.needs_refresh
             && progress.baseline.as_ref().is_some_and(|baseline| {
-                baseline.coverage.covers(selector, entry.target())
-                    && entry.revision() <= baseline.cut_revision
+                covered_floor(&baseline.coverage)
+                    .is_some_and(|covered| revision_of(&entry).stream_position <= covered)
             });
         if pending_covered
             || row_generation < floor
-            || entry.revision() < progress.invalidation_revision
+            || revision_of(&entry).stream_position < progress.invalidation_revision
         {
             let seen = match &progress.baseline {
                 Some(baseline)
-                    if progress.invalidated_snapshot.as_ref()
-                        != Some(&baseline.snapshot_cursor) =>
+                    if progress.invalidated_snapshot.as_deref()
+                        != Some(baseline.snapshot_cursor.as_str()) =>
                 {
                     let seen = self
                         .latest_generation(
-                            &self.seen_prefix(baseline.snapshot_cursor.as_str(), selector)?,
+                            &self.seen_prefix(
+                                baseline.snapshot_cursor.as_str(),
+                                realm,
+                                selector,
+                            )?,
                             generation,
                         )
                         .await?;
@@ -585,7 +842,7 @@ impl CurrentIndex {
     pub(crate) async fn read_progress(
         &self,
         realm: &str,
-    ) -> anyhow::Result<garth::CurrentRealmProgress> {
+    ) -> anyhow::Result<CurrentRealmProgress> {
         let _lease = self.lease.lock().await;
         self.progress_at(realm, self.generation.load(Ordering::Acquire))
             .await
@@ -638,7 +895,7 @@ impl CurrentIndex {
         let mut bytes_used = 0usize;
         for (key, bytes) in rows {
             let selector: CurrentSelector = serde_json::from_slice(&bytes)?;
-            if let Some(entry) = self.ready_selector(&selector, generation).await? {
+            if let Some(entry) = self.ready_selector(realm, &selector, generation).await? {
                 let size = arkret_sdk::canonical::canonical_json_bytes(&entry)?.len();
                 anyhow::ensure!(size <= 8 * 1024 * 1024, "current entry exceeds byte limit");
                 if bytes_used + size > 8 * 1024 * 1024 {
@@ -694,8 +951,8 @@ impl CurrentIndex {
         // cannot lose the evidence and never has to restart its scan.
         let gc: GcState = self.load_state(&self.gc_state_key()).await?;
         let mut filtered = frame.clone();
-        let mut progress_updates = BTreeMap::<String, garth::CurrentRealmProgress>::new();
-        if frame.kind == arkret_sdk::AccountSubscribeFrameKind::ResyncRequired {
+        let mut progress_updates = BTreeMap::<String, CurrentRealmProgress>::new();
+        if frame.kind == arkret_sdk::sync::AccountSubscribeFrameKind::ResyncRequired {
             writes.insert(
                 format!("{}reset/{suffix}", self.prefix),
                 serde_json::to_vec(&generation)?,
@@ -720,73 +977,71 @@ impl CurrentIndex {
         }
         if let Some(realms) = &mut filtered.realms {
             for (realm, incoming) in &mut realms.entries {
-                incoming.validate_demand()?;
                 let previous = match progress_updates.remove(realm) {
                     Some(progress) => progress,
                     None => self.progress_at(realm, expected_generation).await?,
                 };
-                let mut metadata = incoming.clone();
-                metadata.current = None;
-                let mut plan = garth::plan_current_install(&previous, &metadata, &BTreeMap::new())?;
+                let mut plan = plan_current_install(&previous, incoming)?;
+                let baseline = incoming.baseline.clone();
                 let mut accepted = Vec::new();
                 let mut delivered = std::collections::BTreeSet::new();
+                // `RealmSyncEntry::current` is the Station's typed
+                // `AccountCurrentResult`; its entries are already selected and
+                // signed, so nothing is re-decoded out of opaque JSON here.
                 let entries = incoming
                     .current
                     .as_ref()
-                    .map(|current| current.entries.as_slice())
-                    .unwrap_or(&[]);
+                    .map(|current| current.entries.clone())
+                    .unwrap_or_default();
                 anyhow::ensure!(entries.len() <= 100, "current selector limit exceeded");
-                for entry in entries {
+                for entry in &entries {
                     if plan.discard_frame {
                         break;
                     }
-                    let key = entry.selector().canonical_key()?;
+                    let selector = selector_of(entry);
+                    let key = selector_key(selector)?;
                     anyhow::ensure!(delivered.insert(key.clone()), "duplicate current selector");
                     let old = self
-                        .raw_selector(entry.selector(), expected_generation)
+                        .raw_selector(realm, selector, expected_generation)
                         .await?;
                     let (write, seen) =
-                        garth::plan_current_entry(&previous, incoming, entry, old.as_ref())?;
+                        plan_current_entry(&previous, baseline.as_ref(), entry, old.as_ref())?;
                     if seen {
                         plan.seen_selectors.push(key);
                     }
                     if let Some(retired) =
-                        self.retired(entry.selector(), expected_generation).await?
+                        self.retired(realm, selector, expected_generation).await?
                     {
                         anyhow::ensure!(
-                            retired.target == *entry.target(),
+                            retired.target == target_of(selector),
                             "retired selector changed its target"
                         );
-                        if retired.revision == entry.revision() {
+                        if retired.revision == *revision_of(entry) {
                             anyhow::ensure!(
                                 retired.digest == hash(entry)?,
                                 "retired current changed at same revision"
                             );
                         }
-                        if retired.revision > entry.revision() {
+                        if retired.revision.stream_position > revision_of(entry).stream_position {
                             continue;
                         }
                     }
                     if !write {
                         continue;
                     }
-                    if incoming.baseline.is_none() {
-                        if let Some(mark) = self
-                            .strongest_mark(realm, entry.target(), expected_generation)
+                    if baseline.is_none()
+                        && let Some(mark) =
+                            self.strongest_mark(realm, expected_generation).await?
+                        && revision_of(entry).stream_position <= mark.covered_floor
+                        && self
+                            .latest_generation(
+                                &self.seen_prefix(&mark.snapshot, realm, selector)?,
+                                expected_generation,
+                            )
                             .await?
-                        {
-                            if entry.revision() <= mark.cut_revision
-                                && self
-                                    .latest_generation(
-                                        &self.seen_prefix(&mark.snapshot, entry.selector())?,
-                                        expected_generation,
-                                    )
-                                    .await?
-                                    == 0
-                            {
-                                continue;
-                            }
-                        }
+                            == 0
+                    {
+                        continue;
                     }
                     accepted.push(entry.clone());
                 }
@@ -801,7 +1056,9 @@ impl CurrentIndex {
                     incoming.current = None;
                     incoming.baseline = None;
                 } else {
-                    if let Some(current) = &mut incoming.current {
+                    if let Some(current) = incoming.current.as_mut() {
+                        // Keep the frame's authority coordinates; only the
+                        // entry set is narrowed to what this install accepted.
                         current.entries = plan.writes.clone();
                     }
                     if let Some(baseline) = &plan.progress.baseline {
@@ -810,107 +1067,90 @@ impl CurrentIndex {
                             writes.insert(
                                 format!(
                                     "{}{suffix}",
-                                    self.seen_prefix(baseline.snapshot_cursor.as_str(), &selector)?
+                                    self.seen_prefix(
+                                        baseline.snapshot_cursor.as_str(),
+                                        realm,
+                                        &selector
+                                    )?
                                 ),
                                 serde_json::to_vec(&true)?,
                             );
                         }
                     }
                     for entry in &plan.writes {
+                        let selector = selector_of(entry);
+                        let target = target_of(selector);
                         writes.insert(
-                            format!("{}{suffix}", self.row_prefix(entry.selector())?),
+                            format!("{}{suffix}", self.row_prefix(realm, selector)?),
                             serde_json::to_vec(entry)?,
                         );
                         unversioned.insert(
-                            format!("{}prune/{}", self.prefix, hash(entry.selector())?),
-                            serde_json::to_vec(entry.selector())?,
+                            format!(
+                                "{}prune/{}/{}",
+                                self.prefix,
+                                hash(realm)?,
+                                hash(selector)?
+                            ),
+                            serde_json::to_vec(&PruneTask {
+                                realm: realm.clone(),
+                                selector: selector.clone(),
+                            })?,
                         );
                         unversioned.insert(
                             format!(
                                 "{}target/{}/{}/{}",
                                 self.prefix,
                                 hash(realm)?,
-                                target_key(entry.target())?,
-                                hash(entry.selector())?
+                                target_key(&target)?,
+                                hash(selector)?
                             ),
-                            serde_json::to_vec(entry.selector())?,
+                            serde_json::to_vec(selector)?,
                         );
-                        if matches!(entry.target(), CurrentTarget::Member { .. }) {
+                        if matches!(target, CurrentTarget::Member { .. }) {
                             unversioned.insert(
                                 format!(
                                     "{}target/{}/{}/{}",
                                     self.prefix,
                                     hash(realm)?,
                                     member_all_key(),
-                                    hash(entry.selector())?
+                                    hash(selector)?
                                 ),
-                                serde_json::to_vec(entry.selector())?,
+                                serde_json::to_vec(selector)?,
                             );
                         }
                     }
                     if let Some(cleanup) = &plan.cleanup {
-                        let mut targets = Vec::new();
-                        if cleanup.coverage.realm {
-                            targets.push(target_key(&CurrentTarget::Realm)?);
-                        }
-                        for id in &cleanup.coverage.strand_ids {
-                            targets.push(target_key(&CurrentTarget::Strand {
-                                strand_id: id.clone(),
-                            })?);
-                        }
-                        for id in &cleanup.coverage.event_ids {
-                            targets.push(target_key(&CurrentTarget::Event {
-                                event_id: id.clone(),
-                            })?);
-                        }
-                        match &cleanup.coverage.members {
-                            CurrentMemberCoverage::All => targets.push(member_all_key().into()),
-                            CurrentMemberCoverage::Selected { actor_ids } => {
-                                for id in actor_ids {
-                                    targets.push(target_key(&CurrentTarget::Member {
-                                        actor_id: id.clone(),
-                                    })?);
-                                }
-                            }
-                        }
-                        for target in targets {
-                            let prefix = self.mark_prefix(realm, &target)?;
-                            let old = self
-                                .latest::<CoverageMark>(&prefix, expected_generation)
-                                .await?;
-                            if old
-                                .as_ref()
-                                .is_none_or(|old| old.cut_revision <= cleanup.cut_revision)
-                            {
-                                unversioned.insert(
-                                    self.gc_mark_key(
-                                        gc.epoch,
-                                        &snapshot_key(cleanup.snapshot_cursor.as_str())?,
-                                    ),
-                                    serde_json::to_vec(&true)?,
-                                );
-                                writes.insert(
-                                    format!("{prefix}{suffix}"),
-                                    serde_json::to_vec(&CoverageMark {
-                                        snapshot: cleanup.snapshot_cursor.to_string(),
-                                        cut_revision: cleanup.cut_revision,
-                                        generation,
-                                    })?,
-                                );
-                                writes.insert(
-                                    format!(
-                                        "{}cleanup/{suffix}/{}",
-                                        self.prefix,
-                                        hash(&(realm, &target))?
-                                    ),
-                                    serde_json::to_vec(&CleanupTask {
-                                        realm: realm.clone(),
-                                        target: target.clone(),
-                                        after: None,
-                                        generation,
-                                    })?,
-                                );
-                            }
+                        let prefix = self.mark_prefix(realm)?;
+                        let old = self
+                            .latest::<CoverageMark>(&prefix, expected_generation)
+                            .await?;
+                        if old
+                            .as_ref()
+                            .is_none_or(|old| old.covered_floor <= cleanup.covered_floor)
+                        {
+                            unversioned.insert(
+                                self.gc_mark_key(
+                                    gc.epoch,
+                                    &snapshot_key(cleanup.snapshot_cursor.as_str())?,
+                                ),
+                                serde_json::to_vec(&true)?,
+                            );
+                            writes.insert(
+                                format!("{prefix}{suffix}"),
+                                serde_json::to_vec(&CoverageMark {
+                                    snapshot: cleanup.snapshot_cursor.clone(),
+                                    covered_floor: cleanup.covered_floor,
+                                    generation,
+                                })?,
+                            );
+                            writes.insert(
+                                format!("{}cleanup/{suffix}/{}", self.prefix, hash(realm)?),
+                                serde_json::to_vec(&CleanupTask {
+                                    realm: realm.clone(),
+                                    after: None,
+                                    generation,
+                                })?,
+                            );
                         }
                     }
                 }
@@ -1090,7 +1330,7 @@ impl CurrentIndex {
         let mut next = None;
         for (key, bytes) in rows {
             if MARK_STREAMS[stream] == "progress/" {
-                let progress: garth::CurrentRealmProgress = serde_json::from_slice(&bytes)?;
+                let progress: CurrentRealmProgress = serde_json::from_slice(&bytes)?;
                 if let Some(baseline) = &progress.baseline {
                     snapshots.push(snapshot_key(baseline.snapshot_cursor.as_str())?);
                 }
@@ -1347,7 +1587,7 @@ impl CurrentIndex {
                     .get(key)
                     .await?
                     .ok_or_else(|| anyhow::anyhow!("current version disappeared"))?;
-                let entry: CurrentResultEntry = serde_json::from_slice(&bytes)?;
+                let entry: TypedCurrentResult = serde_json::from_slice(&bytes)?;
                 let row_generation = self.latest_generation(&row_prefix, generation).await?;
                 if self
                     .retired(&selector, generation)
@@ -1380,7 +1620,7 @@ impl CurrentIndex {
                         .await?
                         .ok_or_else(|| anyhow::anyhow!("current row disappeared"))?;
                     Some(
-                        serde_json::from_slice::<CurrentResultEntry>(&bytes)?
+                        serde_json::from_slice::<TypedCurrentResult>(&bytes)?
                             .target()
                             .clone(),
                     )
@@ -1428,11 +1668,11 @@ mod tests {
 
     use super::*;
     const REALM: &str = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
-    fn row(revision: u64, removed: bool) -> CurrentResultEntry {
+    fn row(revision: u64, removed: bool) -> TypedCurrentResult {
         serde_json::from_value(json!({"selector":{"scope_ref":{"kind":"realm","realm_id":REALM},"cell_id":"ak:cell:ak.component.realm.freeze.v1:null"},"target":{"kind":"realm"},"revision":revision,"result":if removed{json!({"status":"removed"})}else{json!({"status":"value","value":null})}})).unwrap()
     }
     fn frame(
-        entries: Vec<CurrentResultEntry>,
+        entries: Vec<TypedCurrentResult>,
         baseline: Option<serde_json::Value>,
     ) -> AccountSubscribeFrame {
         let mut realm = json!({"current":{"entries":entries}});
@@ -1477,15 +1717,15 @@ mod tests {
         "ak:cursor:aw",
         "ak:cursor:bA",
     ];
-    fn realm_row(realm: &str, revision: u64) -> CurrentResultEntry {
+    fn realm_row(realm: &str, revision: u64) -> TypedCurrentResult {
         serde_json::from_value(json!({"selector":{"scope_ref":{"kind":"realm","realm_id":realm},"cell_id":"ak:cell:ak.component.realm.freeze.v1:null"},"target":{"kind":"realm"},"revision":revision,"result":{"status":"value","value":null}})).unwrap()
     }
-    fn member_row(realm: &str, actor: &str, revision: u64) -> CurrentResultEntry {
+    fn member_row(realm: &str, actor: &str, revision: u64) -> TypedCurrentResult {
         serde_json::from_value(json!({"selector":{"scope_ref":{"kind":"realm","realm_id":realm},"cell_id":format!("ak:cell:ak.component.member.state.v1:{actor}")},"target":{"kind":"member","actor_id":{"kind":"service","service_id":actor}},"revision":revision,"result":{"status":"value","value":null}})).unwrap()
     }
     fn realm_frame(
         realm: &str,
-        entries: Vec<CurrentResultEntry>,
+        entries: Vec<TypedCurrentResult>,
         baseline: Option<serde_json::Value>,
     ) -> AccountSubscribeFrame {
         let mut entry = json!({"current":{"entries":entries}});
@@ -2319,7 +2559,7 @@ mod tests {
     async fn one_maintenance_pass_reclaims_at_most_one_bounded_page() {
         let path = path();
         let store = index(&path, 0).await;
-        let members: Vec<CurrentResultEntry> = (0..120)
+        let members: Vec<TypedCurrentResult> = (0..120)
             .map(|index| {
                 member_row(
                     REALM,
@@ -2395,7 +2635,7 @@ mod tests {
         );
     }
 
-    fn selector_of(entry: &CurrentResultEntry) -> CurrentSelector {
+    fn selector_of(entry: &TypedCurrentResult) -> CurrentSelector {
         entry.selector().clone()
     }
 }

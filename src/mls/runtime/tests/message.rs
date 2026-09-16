@@ -1,7 +1,7 @@
 //! Tests for welcome application, application-payload encrypt / decrypt, and
 //! §5.6 receive-chain persistence.
 
-use garth::mls::welcome_admission::{mls_group_id_for_realm, mls_welcome_message_matches_realm};
+use garth::mls::welcome_admission::mls_group_id_for_realm;
 use serde_json::json;
 
 use crate::mls::runtime::*;
@@ -30,12 +30,11 @@ fn seed_complete_rfc9420_projection(
 /// learn it: the Station's installed `ak.component.mls.epoch.v1` value.
 #[cfg(not(target_arch = "wasm32"))]
 fn seed_accepted_rfc9420_binding(state: &mut crate::state::LocalStateStore, realm: &str) {
-    fixture::install_accepted_mls_epoch(
+    fixture::install_accepted_mls_group(
         state,
         &arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         },
-        "mls_rfc9420",
     );
 }
 
@@ -73,7 +72,6 @@ fn creator_realm_state_snapshot_bootstrap_makes_space_encryptable() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
-    super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     state.save_realm_tree_projection(
         realm,
@@ -141,7 +139,6 @@ fn complete_membership_hint_does_not_alias_same_principal_at_another_station() {
     let authority = fixture::authority(principal);
     let device = fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001");
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(principal, device.as_str());
     seed_complete_rfc9420_projection(&mut state, realm, principal);
     ensure_creator_mls_checkpoint(&mut state, &secure, realm, &authority, &device).unwrap();
@@ -228,7 +225,6 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AekaXR7egHsJjC7lxnkHz8popOxRV27nKlKY8RDyuOBa";
 
-    super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
     ensure_creator_mls_checkpoint(
@@ -302,7 +298,6 @@ fn replacement_sender_domain_blocks_before_counter_advance() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:Ae1aXR7egHsJjC7lxnkHz8popOxRV27nKlKY8RDyuOBb";
 
-    super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
     ensure_creator_mls_checkpoint(
@@ -363,7 +358,6 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AcysOZi_v0RXNBYf47wJaNxuBSTq_WGE_xQtBPfwAWoj";
 
-    super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     ensure_creator_mls_checkpoint(
         &mut state,
@@ -419,7 +413,6 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AS5FqwC40o7__sjiREHUnzw9YDYeOTIYVGSZyZasRuaN";
 
-    super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     ensure_creator_mls_checkpoint(
         &mut state,
@@ -456,98 +449,6 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
 
     assert!(matches!(error, MlsRuntimeError::EncryptionPolicyPending));
     assert_eq!(state.mls_checkpoint_for(realm).unwrap().epoch, 0);
-}
-
-/// §2.10 history sharing: authoring `mls_exporter_aead_v1` content MUST retain
-/// the authoring epoch's `history_secret` locally. The author never decrypts
-/// its own ciphertext, so if the encrypt path does not retain here, the secret
-/// is lost once the epoch advances (forward secrecy). See
-/// `encrypt_values_with_device_snapshot`.
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::test]
-async fn authoring_exporter_aead_content_requires_accepted_transition_evidence() {
-    let mut state = temp_state_store("author-retains-history-secret");
-    let secure = MemorySecureKeyStore::new();
-    let actor = "did:web:alice.example";
-    let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    // History-secret persistence is process-global secure storage keyed by the
-    // exact scope/group pair, so this test uses a unique Realm.
-    let realm = "ak:realm:Ae6wQDaXscJ6lZGbcWqFv_CW7o0_w5CGmtuB6TvlwNh2";
-    super::seed_genesis_governance_proof(&mut state, realm);
-    super::seed_human_creator_authorization(actor, device);
-    ensure_creator_mls_checkpoint(
-        &mut state,
-        &secure,
-        realm,
-        &fixture::authority(actor),
-        &fixture::device_id(device),
-    )
-    .unwrap()
-    .expect("creator snapshot");
-    let scope = arkret_sdk::ScopeRef::Realm {
-        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
-    };
-    let group_id = state.mls_checkpoint_for(realm).unwrap().group_id;
-    let scope_group_key =
-        crate::state::mls_scope_checkpoint_key_for_group(&scope, &group_id).unwrap();
-    let history_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let history_key = crate::secure_key_store::mls_history_secret_store_key(&scope_group_key);
-    let _ = history_store.delete_secret(&history_key);
-    // The optimistic projection written immediately after Realm creation
-    // carries the creator's local `content_scheme` intent. Per the 1920 ruling
-    // that intent is not the group's binding, so it must not reach encryption
-    // dispatch; only the Station's accepted `ak.component.mls.epoch.v1` value
-    // may.
-    let optimistic = crate::realm_tree::OptimisticRealmTreeProjection::realm(
-        crate::realm_tree::RealmProjectionInput {
-            owner: actor.to_owned(),
-            admins: vec![actor.to_owned()],
-            members: vec![actor.to_owned()],
-            title: "Shared history".to_owned(),
-            summary: String::new(),
-            discoverability: "restricted".to_owned(),
-            encryption_profile: "mls_rfc9420".to_owned(),
-            content_scheme: "mls_exporter_aead_v1".to_owned(),
-            history_access: "all_history_for_current_members".to_owned(),
-            plaintext_visible_services: Vec::new(),
-            collaboration_role: None,
-            encryption_floor: Some("e2ee_required".to_owned()),
-        },
-    )
-    .into_value();
-    state.save_realm_tree_projection(realm, optimistic);
-    // A partial summary page is not a complete membership set and must not
-    // erase a just-created Realm while its summary is still being projected.
-    let page: arkret_sdk::AccountSubscribeFrame = serde_json::from_value(serde_json::json!({
-        "kind": "delta", "cursor": "ak:cursor:YQ",
-        "realm_list": {"snapshot_cursor": "ak:cursor:cw", "snapshot_revision": 1,
-            "items": [], "next_cursor": "ak:cursor:bn", "complete": false}
-    }))
-    .unwrap();
-    state.prepare_account_demand_frame(&page).unwrap();
-    state.finish_account_demand_frame(&page).unwrap();
-    assert!(!realm_content_scheme_is_exporter_aead(&state, realm));
-    fixture::install_accepted_mls_epoch(&mut state, &scope, "mls_exporter_aead_v1");
-    assert!(realm_content_scheme_is_exporter_aead(&state, realm));
-    // No secret is retained before any content is authored.
-    assert!(state.history_secret_for(&scope, &group_id, 0).is_none());
-
-    let error = encrypt_values_with_device_snapshot(
-        &mut state,
-        &secure,
-        realm,
-        &fixture::authority(actor),
-        &fixture::device_id(device),
-        "application/vnd.arkret.test+json",
-        &[br#""private""#.to_vec()],
-    )
-    .unwrap_err();
-    assert!(matches!(
-        error,
-        MlsRuntimeError::EncryptionTransitionPending
-    ));
-    assert!(state.history_secret_for(&scope, &group_id, 0).is_none());
-    let _ = history_store.delete_secret(&history_key);
 }
 
 // ── receive-chain persistence (§5.6) ─────────────────
@@ -959,7 +860,6 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
     let device = "ak:device:01904100-0000-7000-8000-0000000000d1";
     let realm = "ak:realm:AbTY4xkfqhJ_gKIwE_mty8Xoat_WVCf7dqfoHV5C3ziC";
 
-    super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
     ensure_creator_mls_checkpoint(
@@ -1190,7 +1090,6 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
     assert!(state.realm_projection_is_minimal_metadata(realm));
 
     // Genesis installs the epoch-0 snapshot.
-    super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     ensure_creator_mls_checkpoint(
         &mut state,
@@ -1225,338 +1124,5 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
     assert_eq!(before.app_messages_observed, 0);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::test(flavor = "current_thread")]
-async fn welcome_consume_redelivery_reuses_exact_signed_body_and_rejects_drift() {
-    let store = MemorySecureKeyStore::new();
-    let actor_did = "did:web:alice.example";
-    let authority = fixture::authority(actor_did);
-    let device = fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001");
-    let identity = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
-        authority.principal_id.clone(),
-        device.clone(),
-    )
-    .unwrap();
-    let key_package = identity.key_package_record().unwrap();
-    store_mls_key_package_identity_state(
-        &store,
-        &authority,
-        &device,
-        &key_package.keypackage_id,
-        &identity.export_private_state().unwrap(),
-    )
-    .unwrap();
-    let verification_method = format!("{actor_did}#{}", device.as_str());
-    let signer = std::sync::Arc::new(
-        crate::event_signer::build_ed25519_signer_with_verification_method(
-            [19u8; 32],
-            actor_did,
-            verification_method,
-        ),
-    );
-    let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
-    let candidate = WelcomeConsumeCandidate {
-        key_package_id: key_package.keypackage_id,
-        claim_id: "claim-exact-replay".to_owned(),
-        claim_request_id: arkret_sdk::Base64UrlString::new("Y2xhaW0tcmVxdWVzdA").unwrap(),
-        recipient_principal_id: authority.principal_id.clone(),
-        recipient: arkret_sdk::MlsWelcomeRecipient::Device {
-            recipient_device_id: device.clone(),
-        },
-        recipient_id: authority.principal_id.clone(),
-        welcome_event_id: "ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM".to_owned(),
-        realm_id: "ak:realm:AYlS_mnxn8_f65A0YrWEeLzd0F1vnM347xZzMSQEcrlz".to_owned(),
-        strand_id: None,
-        mls_group_id: "mls-group-exact-replay".to_owned(),
-        epoch: 1,
-        welcome_digest: arkret_sdk::Hash::new(
-            "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-        )
-        .unwrap(),
-    };
-
-    let first = sign_welcome_consume_request(&store, &authority, &device, &candidate)
-        .await
-        .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-    let replay = sign_welcome_consume_request(&store, &authority, &device, &candidate)
-        .await
-        .unwrap();
-    assert_eq!(
-        arkret_sdk::canonical::canonical_json_bytes(&first).unwrap(),
-        arkret_sdk::canonical::canonical_json_bytes(&replay).unwrap(),
-        "Welcome redelivery must reuse durable_at and both exact signatures"
-    );
-    assert_eq!(
-        first.recipient_durable_receipt.signature.sig,
-        replay.recipient_durable_receipt.signature.sig
-    );
-    assert_eq!(first.signature.sig, replay.signature.sig);
-
-    let mut drifted = candidate;
-    drifted.epoch += 1;
-    let error = sign_welcome_consume_request(&store, &authority, &device, &drifted)
-        .await
-        .unwrap_err();
-    assert!(error.contains("conflicts with Welcome claim_id=claim-exact-replay"));
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn durable_welcome_projection_context_is_removed_without_hiding_unknown_payload_fields() {
-    let projected = json!({
-        "keypackage_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-        "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "sender": "did:web:alice.example",
-        "hlc": "019041000000-0001-00000001",
-        "executed_by": "did:key:z6MkExecutor",
-        "authorization_ref": "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
-        "seal_ref": "ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "seal_basis": {"state_root": "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
-        "preconditions": {"expected_epoch": 0},
-        "effects": {"next_epoch": 1},
-        "accepted_event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "unexpected_business_field": true
-    });
-
-    let wire = durable_welcome_wire_payload(&projected);
-    for field in [
-        "event_id",
-        "sender",
-        "hlc",
-        "executed_by",
-        "authorization_ref",
-        "seal_ref",
-        "seal_basis",
-        "preconditions",
-        "effects",
-        "accepted_event_id",
-    ] {
-        assert!(
-            wire.get(field).is_none(),
-            "projection field {field} remained"
-        );
-    }
-    assert_eq!(wire.get("unexpected_business_field"), Some(&json!(true)));
-
-    let reason = durable_welcome_payload_reject_reason(&wire).expect("incomplete payload rejects");
-    assert!(reason.contains("unknown field `unexpected_business_field`"));
-}
-
-fn embedded_pairwise_welcome_value() -> serde_json::Value {
-    arkret_schema_conformance::spec_json_artifact(
-        "fixtures/keypackage-pairwise-welcome-fixture.json",
-    )
-    .unwrap()["schema_validation_cases"][0]["instance"]
-        .clone()
-}
-
-#[test]
-fn welcome_claim_receipt_context_must_match_exact_requester_realm_group_and_target() {
-    let valid = embedded_pairwise_welcome_value();
-    let typed: arkret_sdk::MlsWelcomePayload = serde_json::from_value(valid.clone()).unwrap();
-    assert!(validate_welcome_claim_receipt_context(&typed).is_ok());
-
-    for (name, path, replacement) in [
-        (
-            "requester_account_id",
-            vec!["claim_receipt", "request", "requester_account_id"],
-            json!({
-                "principal_id": "ak:did_core:webvh:z6mkfixturebobexample",
-                "station_id": "ak:did_core:webvh:z6mkfixturepsexample"
-            }),
-        ),
-        (
-            "realm",
-            vec!["claim_receipt", "request", "intended_realm_id"],
-            json!("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"),
-        ),
-        (
-            "group",
-            vec!["claim_receipt", "request", "mls_group_id"],
-            json!("different-fixture-group"),
-        ),
-        (
-            "target_account_id",
-            vec!["claim_receipt", "request", "target_account_id"],
-            json!({
-                "principal_id": "ak:did_core:webvh:z6mkfixture",
-                "station_id": "ak:did_core:webvh:z6mkfixturepsexample"
-            }),
-        ),
-    ] {
-        let mut mismatched = valid.clone();
-        let mut cursor = &mut mismatched;
-        for segment in &path[..path.len() - 1] {
-            cursor = cursor.get_mut(*segment).unwrap();
-        }
-        cursor[path[path.len() - 1]] = replacement;
-        let typed: arkret_sdk::MlsWelcomePayload = serde_json::from_value(mismatched).unwrap();
-        assert!(
-            validate_welcome_claim_receipt_context(&typed).is_err(),
-            "mismatched {name} context was accepted"
-        );
-    }
-}
-
-#[test]
-fn local_welcome_hint_filters_by_governance_realm() {
-    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    let other_realm = "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
-    let messages = vec![
-        json!({
-            "kind": "ak.mls.welcome",
-            "content": {
-                "governance_binding": { "effective_scope": { "kind": "realm", "realm_id": realm } },
-            },
-            "unsigned": {
-                "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000aa",
-            },
-        }),
-        json!({
-            "kind": "ak.mls.welcome",
-            "content": {
-                "governance_binding": { "effective_scope": { "kind": "realm", "realm_id": other_realm } },
-                "claim_envelope": {
-                    "welcome_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                },
-            },
-        }),
-        json!({
-            "kind": "ak.mls.welcome",
-            "content": {
-                "group_id": mls_group_id_for_realm(realm).unwrap(),
-                "welcome_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-            },
-        }),
-        json!({
-            "kind": "ak.secret.request",
-            "content": {
-                "governance_binding": { "effective_scope": { "kind": "realm", "realm_id": realm } },
-            },
-        }),
-    ];
-
-    assert_eq!(
-        collect_mls_welcome_messages_for_realm(&messages, realm).len(),
-        1
-    );
-    assert!(!mls_welcome_message_matches_realm(&messages[2], realm));
-    assert_eq!(
-        local_mls_welcome_hint_for_realm(&messages, realm),
-        "1:ak:mls_welcome:01904100-0000-7000-8000-0000000000aa"
-    );
-    assert_eq!(
-        local_mls_welcome_hint_for_realm(&messages, other_realm),
-        "1:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-    );
-}
-
-#[test]
-fn realm_welcome_filter_keeps_circle_scope_from_same_realm() {
-    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    let circle = "ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
-    let message = json!({
-        "kind": "ak.mls.welcome",
-        "content": {
-            "governance_binding": {
-                "effective_scope": {
-                    "kind": "circle",
-                    "realm_id": realm,
-                    "circle_id": circle,
-                }
-            }
-        }
-    });
-    assert!(mls_welcome_message_matches_realm(&message, realm));
-}
-
-#[test]
-fn ordinary_exporter_sender_domain_requires_canonical_device_id() {
-    let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
-    assert!(verify_exporter_sender_domain_for_send(device, false, true).is_ok());
-    assert!(matches!(
-        verify_exporter_sender_domain_for_send("not-a-device", false, true),
-        Err(MlsRuntimeError::Identity(_))
-    ));
-}
-
-#[test]
-fn minimal_exporter_sender_domain_uses_the_active_pairwise_leaf() {
-    let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
-    assert!(verify_exporter_sender_domain_for_send(device, true, true).is_ok());
-}
-
 // ── accepted MLS binding (`ak.component.mls.epoch.v1`) ─────────────────
 
-/// A non-creator has no local pre-Genesis authoring intent, so before the
-/// current-result cell is installed the send gate is `EncryptionPolicyPending`.
-/// Installing the Station's value for the scope is what releases it — and a
-/// Realm value never releases a Circle group, which owns its own cell.
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn accepted_epoch_cell_releases_the_send_gate_per_scope() {
-    let mut state = temp_state_store("accepted-epoch-cell-per-scope");
-    let realm = "ak:realm:AS5FqwC40o7__sjiREHUnzw9YDYeOTIYVGSZyZasRuaN";
-    let circle = "ak:circle:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    let realm_scope = arkret_sdk::ScopeRef::Realm {
-        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
-    };
-    let circle_scope = arkret_sdk::ScopeRef::Circle {
-        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
-        circle_id: arkret_sdk::CircleId::new(circle.to_owned()).unwrap(),
-    };
-
-    assert!(matches!(
-        realm_content_scheme_is_exporter_aead_for_send(&state, realm, None),
-        Err(MlsRuntimeError::EncryptionPolicyPending)
-    ));
-
-    fixture::install_accepted_mls_epoch(&mut state, &realm_scope, "mls_exporter_aead_v1");
-    assert!(realm_content_scheme_is_exporter_aead_for_send(&state, realm, None).unwrap());
-    // The Realm's own value is not the Circle group's binding.
-    assert!(matches!(
-        realm_content_scheme_is_exporter_aead_for_send(&state, realm, Some(circle)),
-        Err(MlsRuntimeError::EncryptionPolicyPending)
-    ));
-
-    fixture::install_accepted_mls_epoch(&mut state, &circle_scope, "mls_rfc9420");
-    assert!(!realm_content_scheme_is_exporter_aead_for_send(&state, realm, Some(circle)).unwrap());
-}
-
-/// `value_mls_epoch` is `anyOf[null, mls_epoch_head]`. A delivered `null` is a
-/// confirmed answer — this group has no accepted Genesis — and must stay
-/// distinguishable from an undelivered selector even though both pause sending.
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn a_delivered_null_epoch_is_not_the_same_state_as_an_undelivered_selector() {
-    let mut state = temp_state_store("accepted-epoch-null-vs-absent");
-    let realm = "ak:realm:Ae6wQDaXscJ6lZGbcWqFv_CW7o0_w5CGmtuB6TvlwNh2";
-    let scope = arkret_sdk::ScopeRef::Realm {
-        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
-    };
-    assert_eq!(
-        state.accepted_mls_epoch_binding(&scope),
-        garth::InstalledMlsEpoch::Pending
-    );
-
-    let group_id = scope.canonical_mls_group_id().unwrap();
-    let cell_id = arkret_state::mls_cells::mls_epoch_cell_id(&scope, &group_id).unwrap();
-    state.save_realm_tree_projection(
-        realm,
-        json!({"current": {"entries": [{
-            "selector": {"scope_ref": scope, "cell_id": cell_id},
-            "target": {"kind": "realm"},
-            "revision": 1,
-            "result": {"status": "value", "value": null},
-        }]}}),
-    );
-    assert_eq!(
-        state.accepted_mls_epoch_binding(&scope),
-        garth::InstalledMlsEpoch::NoAcceptedGenesis
-    );
-    assert!(matches!(
-        realm_content_scheme_is_exporter_aead_for_send(&state, realm, None),
-        Err(MlsRuntimeError::EncryptionPolicyPending)
-    ));
-}

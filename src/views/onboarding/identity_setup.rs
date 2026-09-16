@@ -865,7 +865,6 @@ pub(super) async fn finish_principal_setup(
     // Control-plane recovery policy. Neither root is a fallback for the other.
     crate::identity::device_directory::reset_session_cache();
     crate::identity::authoring_generation::reset_verified_authoring_generations();
-    crate::authorization_lease::clear_leases();
     state_store.write().set_device_authoring_authority(None);
     let device_cache_epoch = crate::identity::device_directory::cache_epoch();
     let http = api.sdk_http_client()?;

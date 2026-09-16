@@ -21,10 +21,9 @@
 //! read-only and does not invent an approval action.
 
 use arkret_models_collaboration::governance::holder_quarantine::{
-    HolderQuarantine, HolderQuarantineEntry,
+    HolderQuarantine, HolderQuarantineEntry, HolderQuarantineSurfaceKind,
 };
 use dioxus::prelude::*;
-use garth::sync_client::HolderQuarantineReview;
 
 use crate::i18n::tr;
 use crate::views::helpers::short_protocol_id;
@@ -52,17 +51,16 @@ pub fn QuarantinePanel() -> Element {
     );
     let mut invite_deliveries: Vec<HolderQuarantineEntry> = Vec::new();
     let mut consent_requests: Vec<HolderQuarantineEntry> = Vec::new();
-    if let Some(cell) = cell.as_ref() {
-        let review = HolderQuarantineReview::from_cell(cell);
-        invite_deliveries = review
-            .invite_deliveries
-            .iter()
-            .map(|e| (*e).clone())
+    if let Some(record) = cell.as_ref() {
+        // Holder review is per surface: the two branches share this record but
+        // not their terminal semantics, so they are never merged into one list.
+        invite_deliveries = record
+            .entries_for(HolderQuarantineSurfaceKind::InviteDelivery)
+            .cloned()
             .collect();
-        consent_requests = review
-            .consent_requests
-            .iter()
-            .map(|e| (*e).clone())
+        consent_requests = record
+            .entries_for(HolderQuarantineSurfaceKind::ConsentRequest)
+            .cloned()
             .collect();
     }
     let is_empty = invite_deliveries.is_empty() && consent_requests.is_empty();
@@ -189,18 +187,23 @@ mod tests {
     #[test]
     fn the_two_surfaces_are_reviewed_separately() {
         let cell = decode_holder_quarantine(Some(&cell_value())).expect("closed cell decodes");
-        let review = HolderQuarantineReview::from_cell(&cell);
-        assert_eq!(review.invite_deliveries.len(), 1);
-        assert_eq!(review.consent_requests.len(), 1);
+        let invite_deliveries = cell
+            .entries_for(HolderQuarantineSurfaceKind::InviteDelivery)
+            .collect::<Vec<_>>();
+        let consent_requests = cell
+            .entries_for(HolderQuarantineSurfaceKind::ConsentRequest)
+            .collect::<Vec<_>>();
+        assert_eq!(invite_deliveries.len(), 1);
+        assert_eq!(consent_requests.len(), 1);
         assert!(matches!(
-            review.consent_requests[0].surface,
+            consent_requests[0].surface,
             HolderQuarantineSurface::ConsentRequest {
                 consent_scope: ConsentRequestScope::VoiceCall
             }
         ));
         // A quarantine entry is not a consent cell: it carries no consent_id and
         // no grant dots, only the pending-review pointer.
-        let encoded = serde_json::to_value(review.consent_requests[0]).unwrap();
+        let encoded = serde_json::to_value(consent_requests[0]).unwrap();
         assert!(encoded.get("consent_id").is_none());
         assert!(encoded.get("grant_dots").is_none());
     }

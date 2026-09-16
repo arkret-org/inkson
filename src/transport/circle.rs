@@ -34,12 +34,12 @@ pub async fn add_circle_member(
     )?
     .build_sdk_event("inkson")?;
     let body = arkret_sdk::CircleMemberRequestBody {
-        member_event: arkret_wire::EventInitialSubmission::online(
-            submitter
+        member_event: arkret_wire::EventCommitSubmission {
+            event: submitter
                 .author_for_direct_submission(&event)
                 .await?
                 .into_event(),
-        ),
+        },
     };
     submitter
         .http()
@@ -66,12 +66,12 @@ pub async fn remove_circle_member(
     )?
     .build_sdk_event("inkson")?;
     let body = arkret_sdk::CircleMemberDeleteRequestBody {
-        member_event: arkret_wire::EventInitialSubmission::online(
-            submitter
+        member_event: arkret_wire::EventCommitSubmission {
+            event: submitter
                 .author_for_direct_submission(&event)
                 .await?
                 .into_event(),
-        ),
+        },
     };
     submitter
         .http()

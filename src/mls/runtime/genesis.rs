@@ -68,7 +68,7 @@ pub fn ensure_creator_mls_checkpoint_for_effective_scope_with_binding(
     circle_id: Option<&str>,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
+    sidecar_id: Option<arkret_sdk::SidecarId>,
 ) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
     create_creator_mls_checkpoint_for_effective_scope_with_binding(
         state_store,
@@ -77,7 +77,7 @@ pub fn ensure_creator_mls_checkpoint_for_effective_scope_with_binding(
         circle_id,
         authority,
         device_id,
-        sidecar_binding,
+        sidecar_id,
         false,
     )
 }
@@ -143,7 +143,7 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
     circle_id: Option<&str>,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
+    sidecar_id: Option<arkret_sdk::SidecarId>,
     replace_unaccepted_epoch_zero: bool,
 ) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
     let realm = realm_id.trim();
@@ -157,10 +157,10 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
         .filter(|circle_id| !circle_id.is_empty());
     let realm_typed = arkret_sdk::RealmId::new(realm.to_owned())
         .map_err(|error| MlsRuntimeError::Genesis(format!("invalid Realm id: {error}")))?;
-    let effective_scope = match sidecar_binding.as_ref() {
-        Some(binding) => arkret_sdk::ScopeRef::Sidecar {
+    let effective_scope = match sidecar_id.as_ref() {
+        Some(sidecar_id) => arkret_sdk::ScopeRef::Sidecar {
             realm_id: realm_typed.clone(),
-            sidecar_id: binding.sidecar_id.clone(),
+            sidecar_id: sidecar_id.clone(),
         },
         None => match circle {
             Some(circle_id) => arkret_sdk::ScopeRef::Circle {
@@ -188,7 +188,7 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
     let secret = load_or_create_account_mls_secret(secure_store, authority)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let identity =
-        if sidecar_binding.is_none() && state_store.realm_projection_is_minimal_metadata(realm) {
+        if sidecar_id.is_none() && state_store.realm_projection_is_minimal_metadata(realm) {
             let material =
             crate::mls::pairwise_identity::derive_pairwise_signing_material_from_account_secret(
                 secret.as_bytes(),
@@ -215,21 +215,8 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
             )
             .map_err(MlsRuntimeError::Identity)?
         };
-    let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
-        state_store,
-        &effective_scope,
-        &group_id,
-        0,
-        0,
-    )
-    .map_err(MlsRuntimeError::Genesis)?;
-    if let Some(binding) = sidecar_binding.as_ref()
-        && governance_binding.sidecar_binding() != Some(binding)
-    {
-        return Err(MlsRuntimeError::Genesis(
-            "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
-        ));
-    }
+    let governance_binding = crate::mls::governance_proof::genesis_binding(&effective_scope)
+        .map_err(MlsRuntimeError::Genesis)?;
     let mut group = identity
         .create_group_with_governance_binding(group_seed.as_bytes(), &governance_binding)
         .map_err(|err| MlsRuntimeError::Genesis(format!("create group: {err}")))?;
@@ -270,7 +257,8 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
     let serialized_state = serde_json::to_vec(&post_state)
         .map_err(|err| MlsRuntimeError::Genesis(format!("serialize state: {err}")))?;
     let mut salt = [0u8; 16];
-    getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
+    getrandom::fill(&mut salt)
+        .map_err(|err| MlsRuntimeError::Genesis(format!("MLS checkpoint salt: {err}")))?;
     let snapshot = crate::mls::persistence::encrypt_state(
         realm,
         &post_state.group_id,
@@ -336,7 +324,7 @@ pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope_with_bin
     circle_id: Option<&str>,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
+    sidecar_id: Option<arkret_sdk::SidecarId>,
 ) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
     let realm = realm_id.trim();
     if realm.is_empty() {
@@ -349,10 +337,10 @@ pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope_with_bin
         .filter(|circle_id| !circle_id.is_empty());
     let realm_typed = arkret_sdk::RealmId::new(realm.to_owned())
         .map_err(|error| MlsRuntimeError::Genesis(format!("invalid Realm id: {error}")))?;
-    let effective_scope = match sidecar_binding.as_ref() {
-        Some(binding) => arkret_sdk::ScopeRef::Sidecar {
+    let effective_scope = match sidecar_id.as_ref() {
+        Some(sidecar_id) => arkret_sdk::ScopeRef::Sidecar {
             realm_id: realm_typed.clone(),
-            sidecar_id: binding.sidecar_id.clone(),
+            sidecar_id: sidecar_id.clone(),
         },
         None => match circle {
             Some(circle_id) => arkret_sdk::ScopeRef::Circle {
@@ -386,25 +374,17 @@ pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope_with_bin
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|err| MlsRuntimeError::Genesis(format!("restore epoch-0 snapshot: {err}")))?;
     let group_id = group.group_id();
-    let expected_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
-        state_store,
-        &effective_scope,
-        &group_id,
-        0,
-        0,
-    )
-    .map_err(MlsRuntimeError::Genesis)?;
-    if let Some(binding) = sidecar_binding.as_ref()
-        && expected_binding.sidecar_binding() != Some(binding)
+    // The epoch-0 group must be the one this scope derives, or the material
+    // belongs to another group and must not be described as this scope's
+    // Genesis.
+    let expected_binding = crate::mls::governance_proof::genesis_binding(&effective_scope)
+        .map_err(MlsRuntimeError::Genesis)?;
+    if expected_binding
+        .mls_group_id()
+        .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
+        != group_id
+        || group.epoch() != 0
     {
-        return Err(MlsRuntimeError::Genesis(
-            "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
-        ));
-    }
-    let current_binding = group.current_governance_binding().map_err(|err| {
-        MlsRuntimeError::Genesis(format!("read epoch-0 governance binding: {err}"))
-    })?;
-    if current_binding.as_ref() != Some(&expected_binding) {
         return Err(MlsRuntimeError::Genesis(
             EPOCH_ZERO_SNAPSHOT_GOVERNANCE_BINDING_MISMATCH.to_owned(),
         ));
@@ -443,7 +423,11 @@ pub fn build_mls_genesis_payload(
     let ratchet_tree_digest = crate::canonical::sha256_digest(&summary.ratchet_tree_bytes);
     let group_info_ref = format!("ak:blob:{group_info_digest}");
     let ratchet_tree_ref = format!("ak:blob:{ratchet_tree_digest}");
-    if governance_binding.mls_group_id() != summary.group_id {
+    if governance_binding
+        .mls_group_id()
+        .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
+        != summary.group_id
+    {
         return Err(MlsRuntimeError::Genesis(
             "MLS Genesis material belongs to a different scope-derived group".to_owned(),
         ));
@@ -459,10 +443,6 @@ pub fn build_mls_genesis_payload(
             MlsRuntimeError::Genesis(format!("invalid ratchet-tree blob ref: {error}"))
         })?,
         governance_binding: governance_binding.clone(),
-        // The RHRK archive is produced by the exporter durability path, which
-        // this client does not yet author; the closed schema forbids the field
-        // for every other content-scheme/durability combination.
-        organization_recovery_archive: None,
         created_at: crate::clock::now_utc_canonical(),
     };
     payload.validate().map_err(|error| {

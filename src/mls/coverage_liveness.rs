@@ -123,14 +123,33 @@ pub(crate) fn mls_coverage_repair_dedup_hint(store: &LocalStateStore, realm_id: 
         .join(",")
 }
 
-/// Refresh the accepted Seal view, acquire + verify a governance proof for
-/// `epoch → epoch + 1`, and submit the `ak.mls.commit` that attests the
-/// governance Seals the scope is currently missing.
+/// Whether the scope's accepted MLS epoch still covers its current key-access
+/// revision.
 ///
-/// Returns `Ok(true)` when a commit was accepted, `Ok(false)` when nothing was
-/// pending. Idempotent: the flag is cleared only by an accepted commit, and a
-/// still-insufficient epoch re-arms it from the next refusal, so this can never
-/// declare the repair finished on its own.
+/// The scope's own current MLS group state publishes both numbers: a
+/// `covered_key_access_revision` behind `current_key_access_revision` means a
+/// membership or key-access change has landed that no accepted `ak.mls.commit`
+/// covers yet, which is exactly the condition a receiver reports as
+/// `epoch_update_required`. An undelivered current view answers nothing and
+/// never schedules a repair on its own.
+pub(crate) fn mls_key_access_coverage_is_stale(
+    store: &LocalStateStore,
+    effective_scope: &arkret_sdk::ScopeRef,
+) -> bool {
+    store
+        .current_mls_group_for_scope(effective_scope)
+        .is_some_and(|current| {
+            current.covered_key_access_revision < current.current_key_access_revision
+        })
+}
+
+/// Advance the MLS epoch so the scope's new commit covers its current
+/// key-access revision, restoring encrypted sending.
+///
+/// Returns `Ok(true)` when a commit was accepted and installed, `Ok(false)`
+/// when nothing was pending. Idempotent: the stale marker is cleared only by an
+/// accepted commit, and a still-insufficient epoch re-arms it from the next
+/// refusal, so this never declares the repair finished on its own.
 pub(crate) async fn ensure_mls_governance_coverage(
     api: &crate::transport::TransportClient,
     state_store: &StateStoreHandle,
@@ -158,128 +177,67 @@ pub(crate) async fn ensure_mls_governance_coverage(
         return Ok(false);
     }
 
-    let submitter = api
-        .event_submitter()
-        .map_err(|error| format!("MLS coverage repair frontier client: {error}"))?;
-    // The authoritative frontier source is `ak.self.seals.read.frontier.v1`
-    // (`client-sync.md` §4/§5 publishes none on the Realm delta). Storing it
-    // also evicts the cached governance proofs bound to the older head, which
-    // is exactly what the next request must not reuse.
-    let seal_view = crate::mls::creator_bootstrap::wait_for_realm_seal_view(&submitter, realm_id)
-        .await
-        .map_err(|error| {
-            format!("refreshing the accepted Seal view before MLS coverage repair failed: {error}")
-        })?;
-    state_store.write(|store| {
-        let mut view = store.seal_view_for_realm(realm_id);
-        view.frontier = seal_view
-            .seal_basis
-            .leaves
-            .iter()
-            .map(ToString::to_string)
-            .collect();
-        // The frontier view carries no service-derived root hint; the local
-        // post-state root is filled by verified Seal replay.
-        view.state_root = None;
-        store.set_realm_seal_view(realm_id.to_owned(), view);
-    });
-
-    let snapshot = state_store
-        .read(|store| store.mls_checkpoint_for_effective_scope(realm_id, circle_id))
-        .ok_or_else(|| "MLS coverage repair requires a local group snapshot".to_owned())?;
-    let leaves = state_store.read(|store| {
-        crate::mls::governance_proof::current_security_frontier_leaves(
-            store, realm_id, circle_id, authority, device_id,
-        )
-    })?;
-    let request = state_store
-        .read(|store| {
-            crate::mls::governance_proof::frontier_request(
-                store,
-                realm_id,
-                circle_id,
-                snapshot.group_id.clone(),
-                snapshot.epoch,
-                snapshot.epoch.saturating_add(1),
-                leaves.clone(),
-            )
-        })
-        .map_err(|error| format!("preparing the MLS governance proof request failed: {error}"))?;
-    crate::mls::governance_proof::fetch_and_cache_frontier(
-        api,
-        state_store.clone(),
-        &request,
-        &leaves,
-    )
-    .await
-    .map_err(|error| {
-        format!(
-            "verifying the accepted governance proof before MLS coverage repair failed: {error}"
-        )
-    })?;
-
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let local_state = state_store.read(Clone::clone);
-    let (commit_envelope, next_snapshot, previous_governance_binding) =
-        crate::mls::runtime::force_epoch_rotation_commit_for_effective_scope(
-            &local_state,
-            secure_store.as_ref(),
-            realm_id,
-            circle_id,
-            authority,
-            device_id,
+    let staged = crate::mls::runtime::force_epoch_rotation_commit_for_effective_scope(
+        &local_state,
+        secure_store.as_ref(),
+        realm_id,
+        circle_id,
+        authority,
+        device_id,
+    )
+    .map_err(|error| {
+        format!(
+            "building the MLS coverage repair commit failed: {}",
+            error.user_message()
         )
-        .map_err(|error| {
-            format!(
-                "building the MLS coverage repair commit failed: {}",
-                error.user_message()
-            )
-        })?;
+    })?;
     let commit_event = crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
         &local_state,
         realm_id,
         circle_id,
         actor_id,
-        &commit_envelope,
-        &previous_governance_binding,
+        &staged.envelope,
     )
-    .await
     .map_err(|error| format!("building ak.mls.commit event failed: {error}"))?;
 
-    // Persist-on-accept binds the group state to the Event the server admitted,
-    // so its id is read from the receipt rather than from a pre-submit draft.
-    let accepted = submitter
-        .submit_sdk_event(&commit_event)
-        .await
-        .map_err(|error| format!("submitting the MLS coverage repair commit failed: {error}"))?;
-    let commit_event_id = arkret_sdk::EventId::new(accepted.event_id.clone())
-        .map_err(|error| format!("accepted MLS commit carries an invalid Event id: {error}"))?;
-
-    // Persist-on-accept, identical to every other commit path: the local
-    // snapshot only advances once the server admitted the epoch.
+    // The staged state carries the pending commit, so it must be durable before
+    // the submission: a crash between submit and acceptance must still be able
+    // to merge the epoch the Station accepted.
     state_store.write(|store| {
-        store
-            .record_mls_group_state_ref_for_effective_scope(
-                realm_id.to_owned(),
-                circle_id,
-                next_snapshot.group_id.as_str(),
-                next_snapshot.epoch,
-                commit_event_id,
-            )
-            .map_err(|error| {
-                format!("MLS coverage repair accepted but reference persistence failed: {error}")
-            })?;
         store.save_mls_checkpoint_for_effective_scope(
             realm_id.to_owned(),
             circle_id,
-            next_snapshot,
-        )?;
-        store.clear_mls_coverage_stale(realm_id, circle_id)
+            staged.staged_checkpoint.clone(),
+        )
     })?;
+
+    let submitter = api
+        .event_submitter()
+        .map_err(|error| format!("MLS coverage repair client: {error}"))?;
+    let authored = submitter
+        .author_for_direct_submission(&commit_event)
+        .await
+        .map_err(|error| format!("authoring the MLS coverage repair commit failed: {error}"))?;
+    // No Welcome travels with a self-update: membership is unchanged, so the
+    // atomic submission carries the Commit alone. The accepted commit is
+    // installed by the submission's own post-accept step.
+    submitter
+        .submit_mls_commit(
+            authored,
+            Vec::new(),
+            device_id.clone(),
+            Vec::new(),
+            state_store,
+        )
+        .await
+        .map_err(|error| format!("submitting the MLS coverage repair commit failed: {error}"))?;
+    state_store.write(|store| store.clear_mls_coverage_stale(realm_id, circle_id))?;
     tracing::info!(
         realm = %realm_id,
         circle = circle_id.unwrap_or("-"),
-        epoch = commit_envelope.epoch,
+        epoch = staged.envelope.epoch,
         "MLS coverage repair commit accepted; encrypted sending may resume",
     );
     Ok(true)

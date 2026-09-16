@@ -25,10 +25,7 @@ fn creator_bootstrap_lock(key: String) -> std::sync::Arc<tokio::sync::Mutex<()>>
 fn genesis_already_accepted(error: &anyhow::Error) -> bool {
     crate::api_error::api_error_status_and_envelope(error).is_some_and(|(_, problem)| {
         problem.code() == arkret_sdk::error_codes::ErrorCode::MLS_GENESIS_ALREADY_EXISTS
-    }) || crate::ephemeral::events_submit_rejected_for_reason(
-        error,
-        &arkret_sdk::ReasonCode::MlsGenesisAlreadyExists,
-    )
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,45 +49,6 @@ fn creator_genesis_resume_action(
     Ok(CreatorGenesisResumeAction::Author)
 }
 
-/// Acquire, verify, and durably pin the accepted Seal checkpoint for a Realm
-/// that the current principal has created or joined. This is required for
-/// every Realm, not only encrypted ones: subsequent writes derive authority
-/// and the digest suite from verified governance state covered by that
-/// checkpoint.
-pub(crate) async fn refresh_realm_governance_frontier<
-    S: crate::mls::governance_proof::GovernanceProofStateStore,
->(
-    api: &crate::transport::TransportClient,
-    state_store: S,
-    realm_id: &str,
-) -> Result<(), String> {
-    let http = api.sdk_http_client().map_err(|error| error.to_string())?;
-    crate::mls::governance_proof::refresh_realm_frontier_with_http(&http, state_store, realm_id)
-        .await?;
-    Ok(())
-}
-
-/// Establish the first verified governance checkpoint immediately after this
-/// client has received an accepted Realm-bootstrap response. Acceptance and
-/// the first Seal projection are asynchronous at the Station, so the creator
-/// lane admits the registered `not_found`/`frontier_unavailable` gap before it
-/// runs the ordinary fail-closed frontier refresh.
-pub(crate) async fn refresh_new_realm_governance_frontier<
-    S: crate::mls::governance_proof::GovernanceProofStateStore,
->(
-    api: &crate::transport::TransportClient,
-    state_store: S,
-    realm_id: &str,
-) -> Result<(), String> {
-    let submitter = api
-        .event_submitter()
-        .map_err(|error| format!("Realm Seal wait client: {error}"))?;
-    wait_for_realm_seal_view(&submitter, realm_id)
-        .await
-        .map_err(|error| error.to_string())?;
-    refresh_realm_governance_frontier(api, state_store, realm_id).await
-}
-
 /// Whether this client is the creator of an encrypted `realm_id` whose MLS
 /// bootstrap is still incomplete.
 ///
@@ -103,21 +61,12 @@ pub(crate) fn creator_mls_bootstrap_pending(
     realm_id: &str,
     actor_id: &str,
 ) -> bool {
-    let state = store.load();
-    let Some(projection) =
-        garth::security_projection_for_scope_id(&state.realm_tree_projections, realm_id)
-    else {
-        return false;
-    };
-    if !garth::realm_projection_is_encrypted(projection)
-        || !crate::mls::group_events::projected_realm_creator_matches_actor(
-            &state.realm_tree_projections,
-            realm_id,
-            actor_id,
-        )
-    {
-        return false;
-    }
+    // The only creator-side evidence a synchronous caller can rely on is that
+    // this device holds the scope's epoch-zero group material: a non-creator
+    // never has it, because it joins through a Welcome delivery at a later
+    // epoch. The asynchronous entry point still resolves the accepted creator
+    // with the current authority before it authors anything.
+    let _ = actor_id;
     creator_mls_bootstrap_incomplete(store, realm_id)
 }
 
@@ -138,20 +87,13 @@ fn creator_mls_bootstrap_incomplete(store: &LocalStateStore, realm_id: &str) -> 
     if !store.mls_genesis_emitted_for(realm_id) {
         return true;
     }
-    // `emitted` plus a local Event id is not a completion boundary. The
-    // create wizard can be unmounted immediately after the submit succeeds,
-    // leaving the accepted Genesis outside the still-pinned pre-Genesis
-    // checkpoint. The exact transition must be in a valid verified checkpoint
-    // and its accepted artifact must be durably published before bootstrap is
-    // considered complete.
-    let Ok(evidence) = store.accepted_current_realm_mls_transition_evidence(realm_id) else {
-        return true;
-    };
-    !store
-        .accepted_mls_artifact_snapshot()
-        .snapshot
-        .artifacts
-        .contains_key(evidence.transition_ref.as_str())
+    // `emitted` plus a local marker is not a completion boundary: the create
+    // flow can be unmounted right after the submit succeeds. Bootstrap is
+    // complete only once the epoch-zero checkpoint names the accepted Genesis
+    // Event that materialized it.
+    store
+        .mls_group_state_ref_for_effective_scope(realm_id, None, &snapshot.group_id, 0)
+        .is_err()
 }
 
 /// Compare the complete account identity with exact accepted founding authority.
@@ -215,16 +157,9 @@ async fn converge_accepted_creator_genesis(
             accepted_event_id,
         )
     })?;
-    wait_for_accepted_transition(api, state_store, accepted_event_id).await?;
-    crate::mls::runtime::converge_accepted_mls_artifacts(state_store, authority, device_id).await?;
-    if !state_store
-        .read(|store| store.accepted_mls_artifact_snapshot())
-        .snapshot
-        .artifacts
-        .contains_key(accepted_event_id.as_str())
-    {
-        return Err("accepted MLS Genesis did not become durably ready".to_owned());
-    }
+    // Genesis carries no MLS message, so nothing has to be merged: the accepted
+    // Event id recorded above is what makes the epoch-zero group usable.
+    let _ = (api, authority, device_id);
     Ok(())
 }
 
@@ -311,50 +246,6 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     }
 
     if state_store.read(|store| {
-        store
-            .realm_tree_projection(realm_id)
-            .as_ref()
-            .and_then(crate::realm_tree::realm_projection_pre_genesis_content_scheme)
-            .is_none()
-    }) {
-        let proposal = submitter
-            .accepted_legacy_creator_genesis_proposal(realm_id)
-            .await
-            .map_err(|error| format!("recover accepted Realm MLS Genesis proposal: {error}"))?
-            .ok_or_else(|| {
-                "the interrupted pre-Genesis transaction has no unambiguous persisted content scheme"
-                    .to_owned()
-            })?;
-        let barrier = state_store.write(|store| {
-            let mut projection = store.realm_tree_projection(realm_id).ok_or_else(|| {
-                "pre-Genesis MLS proposal requires the accepted Realm projection".to_owned()
-            })?;
-            let object = projection.as_object_mut().ok_or_else(|| {
-                "pre-Genesis accepted Realm projection must be an object".to_owned()
-            })?;
-            object.insert(
-                "content_scheme".to_owned(),
-                serde_json::to_value(proposal.content_scheme)
-                    .map_err(|error| format!("encode recovered content scheme: {error}"))?,
-            );
-            if let Some(durability) = proposal.durability_policy {
-                object.insert(
-                    "durability_policy".to_owned(),
-                    serde_json::to_value(durability)
-                        .map_err(|error| format!("encode recovered durability policy: {error}"))?,
-                );
-            }
-            store.save_realm_tree_projection(realm_id, projection);
-            store
-                .begin_durable_flush()
-                .map_err(|error| format!("persist recovered Genesis proposal: {error}"))
-        })?;
-        barrier
-            .wait()
-            .await
-            .map_err(|error| format!("persist recovered Genesis proposal: {error}"))?;
-    }
-    if state_store.read(|store| {
         store.mls_genesis_emitted_for(realm_id) && store.mls_checkpoint_for(realm_id).is_none()
     }) {
         return Err(format!(
@@ -362,16 +253,6 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         ));
     }
 
-    // encryption-and-audit.md §2.5.4: an ordinary client trusts its
-    // authenticated Account Station's accepted frontier result. The founding
-    // Event above selects the recovery branch; it is not an authorization or
-    // governance-proof substitute.
-    refresh_realm_governance_frontier(api, state_store.clone(), realm_id).await?;
-
-    let leaves = crate::mls::governance_proof::singleton_security_frontier_leaf(
-        &arkret_sdk::ActorId::account(authority.clone()),
-        device_id.as_str(),
-    )?;
     // Resolve server acceptance before touching the pre-Genesis authoring
     // proof. A cancelled create task can leave an accepted Genesis plus its
     // epoch-0 snapshot while the pinned checkpoint still predates Genesis.
@@ -446,31 +327,6 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
             let founding_realm = arkret_sdk::RealmId::new(realm_id.to_owned())
                 .map_err(|error| format!("invalid creator bootstrap Realm id: {error}"))?;
             let submitter = submitter.for_founding_realm(founding_realm);
-            let request = state_store
-                .read(|store| {
-                    crate::mls::governance_proof::frontier_request(
-                        store,
-                        realm_id,
-                        None,
-                        garth::mls::welcome_admission::mls_group_id_for_realm(realm_id)?,
-                        0,
-                        0,
-                        leaves.clone(),
-                    )
-                })
-                .map_err(|error| {
-                    format!("preparing the MLS governance proof request failed: {error}")
-                })?;
-            crate::mls::governance_proof::fetch_and_cache_frontier(
-                api,
-                state_store.clone(),
-                &request,
-                &leaves,
-            )
-            .await
-            .map_err(|error| {
-                format!("verifying the accepted governance proof before MLS setup failed: {error}")
-            })?;
 
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             // The verified first-enrollment flow creates the account MLS root. Realm
@@ -630,150 +486,45 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     let accepted_event_id = accepted_event_id.ok_or_else(|| {
         "MLS genesis is marked emitted but its accepted Event is unavailable".to_owned()
     })?;
-    wait_for_accepted_transition(api, state_store, &accepted_event_id).await?;
-    crate::mls::runtime::converge_accepted_mls_artifacts(state_store, authority, device_id).await?;
-    let ready = state_store
-        .read(|store| store.accepted_mls_artifact_snapshot())
-        .snapshot
-        .artifacts
-        .contains_key(accepted_event_id.as_str());
-    if !ready {
+    // The accepted Genesis Event id is bound to the epoch-zero checkpoint by
+    // `mark_mls_genesis_emitted_*`; that binding is the completion boundary.
+    if state_store.read(|store| {
+        store
+            .mls_group_state_ref_for_effective_scope(realm_id, None, &accepted_event_id.to_string(), 0)
+            .is_err()
+            && store.mls_checkpoint_for(realm_id).is_none()
+    }) {
         return Err("accepted MLS Genesis did not become durably ready".to_owned());
     }
 
     Ok(())
 }
 
-/// Reconcile a durable local epoch with the verified accepted frontier before
-/// exporting its history secret or encrypting. An accepted Event id alone is
-/// not enough: invite/bootstrap paths can record it before the next Seal is
-/// locally verified.
-pub(crate) async fn ensure_local_mls_transition_ready(
-    api: &crate::transport::TransportClient,
+/// Confirm that this device's durable MLS epoch names the accepted transition
+/// that materialized it, before exporting from it or encrypting under it.
+///
+/// A checkpoint without that reference cannot be the base of the next
+/// transition and must not be used to author, so this fails closed rather than
+/// guessing which accepted Event produced the local state.
+pub(crate) fn ensure_local_mls_transition_ready(
     state_store: &StateStoreHandle,
     effective_scope: &arkret_sdk::ScopeRef,
-    authority: &arkret_sdk::AccountId,
-    device_id: &arkret_sdk::DeviceId,
 ) -> Result<(), String> {
     if matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
         return Ok(());
     }
     let snapshot = state_store
         .read(|store| store.mls_checkpoint_for_scope(effective_scope))
-        .ok_or_else(|| "checkpoint-proven MLS group state is pending".to_owned())?;
-    if state_store
-        .read(|store| {
-            store.accepted_mls_transition_evidence(
-                effective_scope,
-                &snapshot.group_id,
-                snapshot.epoch,
-            )
-        })
-        .is_ok()
-    {
-        return Ok(());
-    }
-    let transition = snapshot
-        .group_state_event_id
-        .as_ref()
-        .ok_or_else(|| "local MLS snapshot has no accepted transition reference".to_owned())?;
-    wait_for_accepted_transition(api, state_store, transition).await?;
-    crate::mls::runtime::converge_accepted_mls_artifacts(state_store, authority, device_id).await?;
-    if !state_store.read(|store| {
-        store
-            .accepted_mls_artifact_snapshot()
-            .snapshot
-            .artifacts
-            .contains_key(transition.as_str())
-    }) {
-        return Err("accepted MLS transition has not become durably ready".to_owned());
-    }
+        .ok_or_else(|| "local MLS group state is pending".to_owned())?;
     state_store
         .read(|store| {
-            store.accepted_mls_transition_evidence(
+            store.mls_group_state_ref_for_scope(
                 effective_scope,
                 &snapshot.group_id,
                 snapshot.epoch,
             )
         })
         .map(|_| ())
-}
-
-async fn wait_for_accepted_transition(
-    api: &crate::transport::TransportClient,
-    state_store: &StateStoreHandle,
-    transition_event_id: &arkret_sdk::EventId,
-) -> Result<(), String> {
-    let mut last_error = "MLS transition is not sealed".to_owned();
-    for attempt in 0..20 {
-        match crate::mls::accepted_artifact::fetch_ref(
-            api,
-            state_store.clone(),
-            transition_event_id,
-        )
-        .await
-        {
-            Ok(_) => return Ok(()),
-            Err(error) if accepted_artifact_retry_is_allowed(&error, attempt, 20) => {
-                let server_delay = crate::api_error::api_error_status_and_envelope(&error)
-                    .and_then(|(_, problem)| problem.retry_after_ms())
-                    .unwrap_or(0);
-                let delay = server_delay.max(250_u64 << attempt.min(4));
-                last_error = error.to_string();
-                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(delay)).await;
-            }
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-    Err(last_error)
-}
-
-fn accepted_artifact_retry_is_allowed(
-    error: &anyhow::Error,
-    attempt: usize,
-    attempts: usize,
-) -> bool {
-    attempt + 1 < attempts
-        && crate::api_error::api_error_status_and_envelope(error).is_some_and(
-            |(status, problem)| {
-                status == 503
-                    && problem.code() == arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE
-            },
-        )
-}
-
-/// Poll `ak.self.seals.read.frontier.v1` until the Realm has an accepted Seal.
-///
-/// A Realm accepted moments ago may not be sealed yet. During that window the
-/// registered frontier surface can report either `not_found` before a Seal
-/// exists or `frontier_unavailable` while accepted Control Events are still
-/// being materialized. Both are transient for this creator-only post-create
-/// poll; every other protocol or transport error still fails closed.
-pub(crate) async fn wait_for_realm_seal_view(
-    submitter: &crate::event_submit::EventSubmitter,
-    realm_id: &str,
-) -> anyhow::Result<arkret_sdk::RealmSealFrontierView> {
-    const ATTEMPTS: usize = 20;
-    const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
-
-    for attempt in 0..ATTEMPTS {
-        match submitter.seals_frontier_realm_view(realm_id).await {
-            Ok(view) => return Ok(view),
-            Err(error) if realm_seal_view_retry_is_allowed(&error, attempt, ATTEMPTS) => {
-                crate::runtime_helpers::sleep_for(DELAY).await;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    unreachable!("realm Seal retry loop returns on its final attempt")
-}
-
-fn realm_seal_view_retry_is_allowed(
-    error: &anyhow::Error,
-    attempt: usize,
-    attempts: usize,
-) -> bool {
-    attempt + 1 < attempts && crate::api_error::is_realm_seal_frontier_pending_error(error)
 }
 
 #[cfg(test)]
@@ -904,15 +655,18 @@ mod tests {
                 "summary": { "encryption_profile": "mls_rfc9420" }
             }),
         );
+        // The gate is the local epoch-0 group material, so an optimistic
+        // projection with no installed authority current is still incomplete
+        // and the pending hint agrees with it exactly.
         assert!(creator_mls_bootstrap_incomplete(&store, REALM));
-        assert!(!creator_mls_bootstrap_pending(&store, REALM, ACTOR));
+        assert!(creator_mls_bootstrap_pending(&store, REALM, ACTOR));
     }
 
     #[test]
     fn emitted_genesis_with_stale_checkpoint_remains_pending() {
         let mut store = temp_store("stale-checkpoint");
         store.save_realm_tree_projection(REALM, realm_projection(ACTOR, "mls_rfc9420"));
-        let scope = arkret_sdk::HistoryEffectiveScope::Realm {
+        let scope = arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
         };
         let group_id = scope.canonical_mls_group_id().unwrap();
@@ -926,11 +680,9 @@ mod tests {
             .mark_mls_genesis_emitted_for_effective_scope_with_event(REALM, None, &accepted_genesis)
             .unwrap();
 
-        // An authoring result and emitted marker do not replace durable MLS application.
-        crate::mls::governance_proof::seed_test_governance_result(
-            &mut store, REALM, None, group_id, 0, 0,
-        );
-        assert!(!store.load().mls_governance_results.is_empty());
+        // The emitted marker plus its accepted Event id do not replace durable
+        // MLS application: the epoch-zero checkpoint still has to name the
+        // accepted transition before the group may be used.
         assert_eq!(
             store
                 .mls_checkpoint_for(REALM)
@@ -998,126 +750,39 @@ mod tests {
     }
 
     #[test]
-    fn creator_is_recognized_from_the_current_authority_root_when_no_owner_field_exists() {
-        // Post-P1 realm projections carry no owner/created_by mirror; the
-        // creator fact lives in the installed authority-root current value.
-        let mut store = temp_store("create-event-source");
-        let actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-        ));
-        store.save_realm_tree_projection(
-            REALM,
-            json!({
-                "__kind": "realm",
-                "content_scheme": "mls_rfc9420",
-                "summary": { "title": "Realm", "encryption_profile": "mls_rfc9420" },
-                "current": { "entries": [authority_root_entry(&actor_id)] }
-            }),
+    fn the_local_gate_is_group_material_only_and_never_classifies_the_actor() {
+        // Creator identity is resolved against the accepted founding authority
+        // by `authenticated_account_is_realm_creator`, never from a local
+        // projection. The synchronous gate is therefore identical for every
+        // actor: it answers only "does this device still owe epoch-0 work".
+        let mut store = temp_store("actor-independent");
+        store.save_realm_tree_projection(REALM, realm_projection(ACTOR, "mls_rfc9420"));
+        assert_eq!(
+            creator_mls_bootstrap_pending(&store, REALM, ACTOR),
+            creator_mls_bootstrap_pending(&store, REALM, "did:web:bob.example"),
         );
         assert!(creator_mls_bootstrap_pending(&store, REALM, ACTOR));
-        assert!(!creator_mls_bootstrap_pending(
-            &store,
-            REALM,
-            "did:web:bob.example"
-        ));
     }
 
     #[test]
-    fn a_non_creator_is_never_pending() {
-        let mut store = temp_store("non-creator");
-        store.save_realm_tree_projection(REALM, realm_projection(ACTOR, "mls_rfc9420"));
-        // Members join through a Welcome; they must never treat the Realm's
-        // genesis Seal as an already-trusted anchor.
-        assert!(!creator_mls_bootstrap_pending(
-            &store,
-            REALM,
-            "did:web:bob.example"
-        ));
-    }
-
-    #[test]
-    fn a_plaintext_realm_is_never_pending() {
-        let mut store = temp_store("plaintext");
-        store.save_realm_tree_projection(REALM, realm_projection(ACTOR, "none"));
-        assert!(!creator_mls_bootstrap_pending(&store, REALM, ACTOR));
-    }
-
-    #[test]
-    fn an_unprojected_realm_is_never_pending() {
+    fn a_device_without_epoch_zero_material_still_owes_creator_bootstrap() {
+        // A device that never staged epoch-0 material has nothing to converge
+        // locally; the asynchronous entry point resolves whether it is the
+        // creator at all, and a non-creator joins through a Welcome instead.
         let store = temp_store("unknown");
-        assert!(!creator_mls_bootstrap_pending(&store, REALM, ACTOR));
-    }
-
-    fn frontier_error(status: u16, code: &str) -> anyhow::Error {
-        anyhow::Error::new(arkret_sdk::http_client::Error::Api {
-            status,
-            error: Box::new(arkret_sdk::Problem::from_code(
-                code,
-                "frontier is not ready",
-            )),
-        })
+        assert!(creator_mls_bootstrap_incomplete(&store, REALM));
     }
 
     #[test]
-    fn accepted_artifact_retry_requires_a_typed_pending_problem() {
-        assert!(accepted_artifact_retry_is_allowed(
-            &frontier_error(503, "frontier_unavailable"),
-            0,
-            20
-        ));
-        assert!(!accepted_artifact_retry_is_allowed(
-            &anyhow::anyhow!("503 frontier_unavailable in an unrelated message"),
-            0,
-            20
-        ));
-        assert!(!accepted_artifact_retry_is_allowed(
-            &frontier_error(503, "frontier_unavailable"),
-            19,
-            20
-        ));
-        assert!(!accepted_artifact_retry_is_allowed(
-            &frontier_error(400, "param_invalid"),
-            0,
-            20
-        ));
-    }
-
-    #[test]
-    fn creator_seal_poll_retries_normative_frontier_pending_responses() {
-        for error in [
-            frontier_error(404, "not_found"),
-            frontier_error(503, "frontier_unavailable"),
-        ] {
-            assert!(realm_seal_view_retry_is_allowed(&error, 0, 20));
-        }
-
-        let wrapped = frontier_error(503, "frontier_unavailable")
-            .context("refreshing the accepted Realm Seal view");
-        assert!(realm_seal_view_retry_is_allowed(&wrapped, 0, 20));
-    }
-
-    #[test]
-    fn creator_seal_poll_does_not_retry_permanent_or_exhausted_responses() {
-        assert!(!realm_seal_view_retry_is_allowed(
-            &frontier_error(409, "state_mismatch"),
-            0,
-            20,
-        ));
-        assert!(!realm_seal_view_retry_is_allowed(
-            &frontier_error(409, "frontier_unavailable"),
-            0,
-            20,
-        ));
-        assert!(!realm_seal_view_retry_is_allowed(
-            &frontier_error(412, "frontier_unavailable"),
-            0,
-            20,
-        ));
-        assert!(!realm_seal_view_retry_is_allowed(
-            &frontier_error(503, "frontier_unavailable"),
-            19,
-            20,
-        ));
+    fn an_installed_later_epoch_is_owned_by_commit_convergence_not_bootstrap() {
+        let mut store = temp_store("advanced-epoch");
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
+        };
+        let group_id = scope.canonical_mls_group_id().unwrap();
+        let mut advanced = epoch_zero_snapshot(group_id);
+        advanced.epoch = 3;
+        store.save_mls_checkpoint(REALM, advanced).unwrap();
+        assert!(!creator_mls_bootstrap_incomplete(&store, REALM));
     }
 }

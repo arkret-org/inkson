@@ -214,7 +214,7 @@ fn board_space_options_pick_board_spaces_from_projection() {
             realm_id: "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned(),
             kind: "board".to_owned(),
             title: "Release".to_owned(),
-            state: arkret_sdk::ProjectionSpaceState::Active,
+            state: arkret_sdk::SpaceState::Active,
             rank: None,
             parent_space_id: None,
         },
@@ -223,7 +223,7 @@ fn board_space_options_pick_board_spaces_from_projection() {
             realm_id: "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned(),
             kind: "list".to_owned(),
             title: "Todo".to_owned(),
-            state: arkret_sdk::ProjectionSpaceState::Active,
+            state: arkret_sdk::SpaceState::Active,
             rank: Some("U".to_owned()),
             parent_space_id: Some(
                 "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-".to_owned(),
@@ -290,7 +290,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
             realm_id: "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned(),
             kind: "board".to_owned(),
             title: "Release".to_owned(),
-            state: arkret_sdk::ProjectionSpaceState::Active,
+            state: arkret_sdk::SpaceState::Active,
             rank: None,
             parent_space_id: None,
         },
@@ -299,7 +299,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
             realm_id: "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned(),
             kind: "list".to_owned(),
             title: "Todo".to_owned(),
-            state: arkret_sdk::ProjectionSpaceState::Active,
+            state: arkret_sdk::SpaceState::Active,
             rank: Some("U".to_owned()),
             parent_space_id: Some(board_id.to_owned()),
         },
@@ -350,7 +350,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         created_at: Some("2026-05-22T10:00:00.000Z".to_owned()),
         updated_by: None,
         updated_at: None,
-        state: arkret_sdk::ProjectionObjectState::Active,
+        state: arkret_sdk::ObjectState::Active,
     }];
 
     let (columns, options, selected_board) =
@@ -391,7 +391,7 @@ fn lifecycle_projection_infers_board_from_list_parent() {
             realm_id: "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned(),
             kind: "list".to_owned(),
             title: "Todo".to_owned(),
-            state: arkret_sdk::ProjectionSpaceState::Active,
+            state: arkret_sdk::SpaceState::Active,
             rank: Some("U".to_owned()),
             parent_space_id: Some(board_id.to_owned()),
         },
@@ -678,7 +678,7 @@ fn non_spec_projection_paths_expose_no_strand_content() {
         created_at: None,
         updated_by: None,
         updated_at: None,
-        state: arkret_sdk::ProjectionObjectState::Active,
+        state: arkret_sdk::ObjectState::Active,
     };
 
     assert!(strand_projection_synthesis_content(&strand).is_none());

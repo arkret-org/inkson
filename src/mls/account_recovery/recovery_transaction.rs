@@ -9,11 +9,13 @@ use arkret_models_collaboration::events_payloads::device_identity::{
     UnsignedDeviceAuthorizePayload, device_authorize_payload_digest,
 };
 use arkret_models_crypto::{RecoveryAuthorityKind, RecoveryProofKind};
+use arkret_sdk::{
+    PcrPolicyRecoveryIntent, PreparedEventUnit, RecoveryTransactionCreateRequest,
+    SecurityTransaction, SecurityTransactionCreateRequest,
+};
 use arkret_wire::{
     ControlProposalAck, EventInitialSubmission, EventsSubmitBatchRequestBody, Hash, NonEmptyString,
-    PcrPolicyRecoveryIntent, PreparedEventUnit, ReceiptId, RecoverySealIntent,
-    RecoveryTransactionCreateRequest, SecurityTransaction, SecurityTransactionCreateRequest,
-    SecurityTransactionResultKind, TransactionId,
+    ReceiptId, RecoverySealIntent, SecurityTransactionResultKind, TransactionId,
 };
 use zeroize::Zeroizing;
 
@@ -322,7 +324,7 @@ fn exact_device_reanchor_payload(
 fn recovery_backup_classes_unlocked(
     restore_payload: &serde_json::Value,
 ) -> anyhow::Result<Vec<arkret_models_crypto::RecoveryBackupClassUnlocked>> {
-    let mut classes = garth::mls::backup_selection::iter_backup_bodies(restore_payload)
+    let mut classes = crate::mls::runtime::iter_backup_bodies(restore_payload)
         .filter(|backup| {
             backup
                 .get("ciphertext")

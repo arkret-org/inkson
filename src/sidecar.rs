@@ -223,6 +223,84 @@ pub fn ingest_sidecar_view_state_account_data(
 // replaces the cached value wholesale.
 // ---------------------------------------------------------------------------
 
+/// Incremental controller-private Sidecar projection registry.
+///
+/// View states are encrypted Account Data and fold by their own LWW stamp.
+/// Exchange projections are deterministic local Event-fold outputs: they never
+/// arrive over the account stream, never merge across devices, and each refold
+/// replaces the cached entry wholesale (`zh/models/sidecar.md` sections 8 and
+/// `zh/models/private-objects.md`: the cache is a deletable device-local
+/// artifact whose truth source is the Sidecar private Event history).
+#[derive(Clone, Debug, Default)]
+pub struct SidecarProjectionFold {
+    view_states: std::collections::BTreeMap<
+        (String, String, String),
+        arkret_sdk::AgentSidecarViewState,
+    >,
+    exchanges: std::collections::BTreeMap<String, arkret_sdk::AgentSidecarExchangeProjection>,
+}
+
+impl SidecarProjectionFold {
+    /// Last-writer-wins on `(updated_hlc, origin_device_id)`. Returns whether
+    /// the candidate replaced the stored value.
+    pub fn apply_view_state(&mut self, value: arkret_sdk::AgentSidecarViewState) -> bool {
+        let key = (
+            value.controller_account_id.to_string(),
+            value.context_ref.realm_id.to_string(),
+            value.context_ref.strand_id.to_string(),
+        );
+        let should_replace = self.view_states.get(&key).is_none_or(|current| {
+            (
+                value.updated_hlc.to_string(),
+                value.origin_device_id.to_string(),
+            ) > (
+                current.updated_hlc.to_string(),
+                current.origin_device_id.to_string(),
+            )
+        });
+        if should_replace {
+            self.view_states.insert(key, value);
+        }
+        should_replace
+    }
+
+    pub fn view_state(
+        &self,
+        controller_account_key: &str,
+        realm_id: &arkret_sdk::RealmId,
+        strand_id: &arkret_sdk::StrandId,
+    ) -> Option<&arkret_sdk::AgentSidecarViewState> {
+        self.view_states.get(&(
+            controller_account_key.to_owned(),
+            realm_id.to_string(),
+            strand_id.to_string(),
+        ))
+    }
+
+    /// Install one deterministic Event-fold result. There is no LWW and no
+    /// cross-device merge: the fold of the local accepted history is always
+    /// authoritative for its exchange, so the entry is replaced wholesale.
+    pub fn apply_folded_exchange(
+        &mut self,
+        value: arkret_sdk::AgentSidecarExchangeProjection,
+    ) -> arkret_sdk::Result<()> {
+        value.validate_shape()?;
+        self.exchanges.insert(value.exchange_id.clone(), value);
+        Ok(())
+    }
+
+    /// Enumerate the complete locally folded exchange projection for one
+    /// Realm, in canonical exchange-id order.
+    pub fn exchanges_for_realm<'a>(
+        &'a self,
+        realm_id: &'a arkret_sdk::RealmId,
+    ) -> impl Iterator<Item = &'a arkret_sdk::AgentSidecarExchangeProjection> + 'a {
+        self.exchanges
+            .values()
+            .filter(move |exchange| exchange.source_track_ref.realm_id == *realm_id)
+    }
+}
+
 /// Client-local fold-cache key prefix (deliberately NOT an `ak.*` account-data
 /// type name).
 const SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX: &str = "sidecar_exchange_fold";
@@ -1254,7 +1332,7 @@ pub(crate) async fn sync_sidecar_exchange_background(
                 .await?;
         }
         let backfill = api.event_submitter()?.backfill(&realm_id).await?;
-        let accepted_events = backfill.complete_events("Sidecar context recovery")?;
+        let accepted_events = backfill.events();
         let locators =
             arkret_sdk::recover_agent_sidecar_context_locators(&realm_views, &accepted_events)?;
         outcome.recovered_locators += locators.len();

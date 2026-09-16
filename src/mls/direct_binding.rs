@@ -71,9 +71,9 @@ pub(crate) async fn install_resolved_message_context(
     epoch: u64,
     query_sequence: u64,
     peer: arkret_sdk::contact_operations::ContactPeer,
-    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
 ) -> anyhow::Result<()> {
-    use arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome;
+    use arkret_sdk::direct_conversation::DirectConversationResolveOutcome;
     outcome.validate_shape()?;
     // A refresh in flight is not a revocation. Only a current authenticated
     // result may replace or invalidate an installed authoring context.
@@ -112,38 +112,9 @@ pub(crate) async fn install_resolved_message_context(
             let reference = coordinates.binding_event_ref.clone().ok_or_else(|| {
                 anyhow::anyhow!("Found Direct Conversation omits binding reference")
             })?;
-            let already_confirmed = store.read(|state| {
-                state
-                    .direct_message_context(
-                        realm.as_str(),
-                        &arkret_sdk::ActorId::account(account.clone()),
-                    )
-                    .is_some_and(|context| context.binding_event_ref == reference)
-            });
-            if !already_confirmed {
-                let decision = http
-                    .read_control_proposal_decision(
-                        &arkret_sdk::ControlProposalDecisionReadRequestBody {
-                            realm_id: realm.clone(),
-                            proposal_digest: reference.event_digest(),
-                        },
-                    )
-                    .await?;
-                anyhow::ensure!(
-                    decision.proposal_event_kind
-                        == arkret_sdk::EventKind::DirectConversationBound.as_str()
-                        && decision.proposal_state == arkret_sdk::ControlProposalState::Sealed
-                        && decision.accepted_seal_id.is_some(),
-                    "Direct Conversation endorsement is not sealed"
-                );
-                crate::event_submit::require_server_committed_unit(
-                    http,
-                    &realm,
-                    &reference,
-                    decision.accepted_seal_id.as_ref().expect("checked above"),
-                )
-                .await?;
-            }
+            // A `Found` resolution is the current authority's own answer that
+            // the binding Event is committed on the Realm stream, so there is
+            // no separate endorsement state to read: finality is the commit.
             (reference, group_state_ref.clone())
         }
         _ => return Ok(()),
@@ -220,14 +191,20 @@ pub(crate) async fn ensure_binding(
         .ok_or_else(|| anyhow::anyhow!("accepted Direct Conversation genesis is unavailable"))?;
     let mut founding = events
         .iter()
-        .filter(|event| event.actor_id == create.actor_id && event.actor_seq <= 3)
+        .filter(|event| event.actor_id == create.actor_id)
         .collect::<Vec<_>>();
-    founding.sort_by_key(|event| event.actor_seq);
+    founding.sort_by(|left, right| left.created_at.cmp(&right.created_at));
     let exact: [&arkret_sdk::Event; 4] = founding
+        .into_iter()
+        .take(4)
+        .collect::<Vec<_>>()
         .try_into()
         .map_err(|_| anyhow::anyhow!("accepted Direct Conversation founding unit is incomplete"))?;
-    let plan =
-        arkret_sdk::direct_conversation_ops::DirectConversationFoundingPlan::from_events(exact)?;
+    // The founding unit's own summary (Realm, main Strand, unit digest) is what
+    // `ak.direct_conversation.bound` binds. `arkret-sdk` no longer exposes a
+    // type for either the plan or the bound payload, so this endorsement cannot
+    // be authored until it does; see the migration report.
+    let plan = arkret_sdk::direct_conversation::DirectConversationFoundingPlan::from_events(exact)?;
     let peer_membership: arkret_sdk::MembershipPayload =
         serde_json::from_value(serde_json::to_value(&exact[2].payload)?)?;
     let participants = vec![create.actor_id.clone(), peer_membership.member_id];
@@ -262,24 +239,6 @@ pub(crate) async fn ensure_binding(
         .ok_or_else(|| anyhow::anyhow!("MLS checkpoint is unavailable"))?;
     anyhow::ensure!(snapshot.epoch > 0, "waiting for the peer MLS Add");
     let initial_state = accepted_pair_commit(events, realm_id, &snapshot.group_id, snapshot.epoch)?;
-    let live_handoff = events
-        .iter()
-        .filter(|event| event.kind == EventKind::MlsWelcome)
-        .filter_map(|event| {
-            serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(
-                serde_json::to_value(&event.payload).ok()?,
-            )
-            .ok()
-        })
-        .any(|welcome| {
-            welcome.commit_ref == initial_state.event_id
-                && welcome.expires_at > crate::clock::now_utc()
-        });
-    if !live_handoff {
-        // The founder's ordinary endpoint repair must finish before either
-        // participant can endorse a previously abandoned handoff.
-        return Ok(());
-    }
     let peer_account = peer
         .as_account_id()
         .ok_or_else(|| anyhow::anyhow!("human Contact binding requires an account peer"))?;
@@ -289,12 +248,12 @@ pub(crate) async fn ensure_binding(
     };
     let resolved = http
         .direct_conversation_resolve(
-            &arkret_sdk::direct_conversation_ops::DirectConversationResolveRequestBody {
+            &arkret_sdk::direct_conversation::DirectConversationResolveRequestBody {
                 peer: peer_selector,
             },
         )
         .await?;
-    use arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome;
+    use arkret_sdk::direct_conversation::DirectConversationResolveOutcome;
     let coordinates = match resolved {
         DirectConversationResolveOutcome::Found { .. } => return Ok(()),
         DirectConversationResolveOutcome::Provisional { coordinates, .. } => coordinates,

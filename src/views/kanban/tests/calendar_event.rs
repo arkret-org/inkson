@@ -278,7 +278,7 @@ fn calendar_projection_reads_schedule_and_plain_location() {
         schedule_revision_source: Some(
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         ),
-        state: arkret_sdk::ProjectionObjectState::Active,
+        state: arkret_sdk::ObjectState::Active,
         created_by: None,
         created_at: None,
         updated_by: None,
@@ -447,7 +447,7 @@ fn locally_accepted_rsvp_retains_the_observed_schedule_frontier() {
         schema_refs: Vec::new(),
         rsvps: Vec::new(),
         schedule_revision_source: None,
-        state: arkret_sdk::ProjectionObjectState::Active,
+        state: arkret_sdk::ObjectState::Active,
         created_by: None,
         created_at: None,
         updated_by: None,

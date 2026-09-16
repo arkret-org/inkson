@@ -956,7 +956,7 @@ fn strand_projection_with_synthesis_content(
         created_at: None,
         updated_by: None,
         updated_at: None,
-        state: arkret_sdk::ProjectionObjectState::Active,
+        state: arkret_sdk::ObjectState::Active,
     }
 }
 

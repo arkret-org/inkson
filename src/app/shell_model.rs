@@ -200,11 +200,11 @@ pub(super) fn build_realm_navigation(input: RealmNavigationInput<'_>) -> RealmNa
         .filter(|node| node.kind == RealmTreeNodeKind::Realm)
         .map(|node| {
             let display_name = remark_display_name(input.realm_remarks, node);
-            let encrypted = input
-                .realm_tree_projections
-                .get(&node.id)
-                .and_then(garth::realm_projection_security_state)
-                .unwrap_or_else(|| input.realm_ids_with_local_mls.contains(&node.id));
+            let encrypted = crate::views::helpers::realm_scope_security_state(
+                input.realm_tree_projections,
+                &node.id,
+            )
+            .unwrap_or_else(|| input.realm_ids_with_local_mls.contains(&node.id));
             let space_count = descendant_node_ids(&collaboration_nodes, &node.id)
                 .len()
                 .saturating_sub(1);
@@ -232,8 +232,10 @@ pub(super) fn build_realm_navigation(input: RealmNavigationInput<'_>) -> RealmNa
         .find(|row| row.realm_id == input.active_realm_id)
         .map(|row| row.encrypted)
         .or_else(|| {
-            garth::security_projection_for_scope_id(input.realm_tree_projections, security_scope_id)
-                .map(garth::realm_projection_is_encrypted)
+            crate::views::helpers::scope_security_state(
+                input.realm_tree_projections,
+                security_scope_id,
+            )
         })
         .unwrap_or(false);
     RealmNavigationModel {

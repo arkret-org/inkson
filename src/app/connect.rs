@@ -484,7 +484,6 @@ fn device_authorization_probe_from_account_viewer(
 fn clear_verified_device_authoring_authority(mut state_store: SyncSignal<LocalStateStore>) {
     crate::identity::device_directory::reset_session_cache();
     crate::identity::authoring_generation::reset_verified_authoring_generations();
-    crate::authorization_lease::clear_leases();
     state_store.write().set_device_authoring_authority(None);
 }
 

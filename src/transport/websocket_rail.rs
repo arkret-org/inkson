@@ -1,35 +1,40 @@
-//! The one WebSocket a session may hold, and the transports the three stream
-//! engines take off it.
+//! The one WebSocket a session may hold, and the transports the stream engines
+//! take off it.
 //!
-//! §1 asks an authenticated Station session to establish a single
-//! Arkret WebSocket and multiplex the covered operations as channels on it.
-//! inkson runs account, events and Signal as three independently spawned
-//! engines, so "one socket" has to be a shared service rather than something
-//! any one engine owns.
+//! `ak.profile.binding.websocket.v1` asks an authenticated Station session to
+//! establish a single Arkret WebSocket and multiplex the covered operations on
+//! it. inkson runs the account aggregate and the Signal rail as independently
+//! spawned engines, so "one socket" has to be a shared service rather than
+//! something one engine owns.
 //!
 //! [`WebSocketRail`] is that service. A dedicated engine establishes the
-//! connection, publishes the shared channel state here, and pumps; the three
-//! stream engines ask the rail for a transport each time they (re)connect and
-//! get a WebSocket channel when the rail is live, or the canonical HTTP client
+//! connection, publishes the delivered frames here, and pumps; the stream
+//! engines ask the rail for a transport each time they (re)connect and get the
+//! socket-backed delivery when the rail is live, or the canonical HTTP client
 //! when it is not.
 //!
 //! Falling back is therefore the ordinary path, not an error path: the rail
-//! detaches, the next `provide()` returns HTTP, and the engine keeps running.
+//! detaches, the next connection attempt returns HTTP, and the engine keeps
+//! running.
+//!
+//! The binding carries **one** subscription per socket
+//! (`WebSocketSubscribeRequest`), which fans out `account` frames and — when
+//! `include_signals` is set — `signal` envelopes. There is no separate per-Realm
+//! events channel: Realm commits ride the account frames, and a stream tail
+//! pull is `ak.self.events.read.scan.v1` over the canonical HTTPS binding.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
-use garth::BoxSyncFuture;
-use garth::subscribe::realm::{BoxRealmStreamFuture, RealmEventsFrameSource, RealmEventsTransport};
-use garth::subscribe::signal::{
-    BoxSignalStreamFuture, SignalStreamFrameSource, SignalStreamTransport,
+use arkret_models_collaboration::sync_frames::account_subscribe::{
+    AccountSubscribeBatch, AccountSubscribeFrame, AccountSubscribeSnapshotResult, SyncRequestBody,
 };
-use garth::websocket::socket::{BoxSocketFuture, WebSocketPacer};
-use garth::websocket::{
-    SharedConnection, WebSocketEventsChannel, WebSocketSignalChannel, WebSocketTransport,
-};
+use arkret_wire::SignalEnvelope;
+use garth::websocket::{BoxSocketFuture, WebSocketPacer};
 
-use super::websocket::WebSocketTransportSelector;
+use super::websocket::{
+    WebSocketHandshakeFailure, WebSocketTransportDecision, WebSocketTransportSelector,
+};
 
 /// How a channel adapter yields to the pump loop. The cadence matches the
 /// engines' own beat, so an adapter never becomes the slow part of a frame that
@@ -40,77 +45,191 @@ pub struct InksonPacer;
 impl WebSocketPacer for InksonPacer {
     fn pace(&self) -> BoxSocketFuture<'_, ()> {
         Box::pin(async move {
-            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(10)).await;
+            crate::runtime_helpers::sleep_for(garth::websocket::socket::CHANNEL_PACE).await;
             Ok(())
         })
     }
 }
 
-type RailTransport = WebSocketTransport<InksonPacer>;
-
-/// The session's single WebSocket, shared across the stream engines.
+/// Largest number of undelivered frames the rail buffers per kind.
 ///
-/// `Rc<RefCell<_>>` like the other runtime services: inkson drives every engine
-/// on one thread, and the borrow here only ever spans a synchronous read.
-#[derive(Clone, Default)]
-pub struct WebSocketRail {
-    inner: Rc<RefCell<RailState>>,
+/// The socket's own byte ceiling bounds one frame; this bounds how many the
+/// pump may run ahead of a consumer before the rail stops being a useful
+/// low-latency path and the connection is torn down instead of growing without
+/// bound.
+const MAX_BUFFERED_FRAMES: usize = 256;
+
+/// The frames one live connection has delivered and not yet handed to a
+/// consumer.
+#[derive(Debug, Default)]
+struct RailQueues {
+    account: VecDeque<AccountSubscribeFrame>,
+    signals: VecDeque<SignalEnvelope>,
+    /// The Station asked for a reconnect; the consumer stops after draining.
+    reconnect_after_ms: Option<u64>,
+    /// The last cursor the Station acknowledged for this subscription.
+    cursor: Option<String>,
+    closed: bool,
 }
 
-#[derive(Default)]
+/// A live connection's shared delivery state.
+///
+/// Held behind `Arc<Mutex<_>>` rather than `Rc<RefCell<_>>` so the rail can be
+/// observed from the run loops the shared client runtime drives, which are
+/// `Send` on native.
+#[derive(Clone, Debug, Default)]
+pub struct SharedConnection {
+    queues: Arc<Mutex<RailQueues>>,
+}
+
+impl SharedConnection {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn with<R>(&self, apply: impl FnOnce(&mut RailQueues) -> R) -> R {
+        let mut queues = self.queues.lock().unwrap_or_else(|poison| poison.into_inner());
+        apply(&mut queues)
+    }
+
+    /// Publish one delivered account frame. `false` means the buffer is full
+    /// and the connection must be torn down rather than silently dropping it.
+    #[must_use]
+    pub fn push_account_frame(&self, frame: AccountSubscribeFrame) -> bool {
+        self.with(|queues| {
+            if queues.account.len() >= MAX_BUFFERED_FRAMES {
+                return false;
+            }
+            queues.account.push_back(frame);
+            true
+        })
+    }
+
+    /// Publish one delivered Signal envelope.
+    #[must_use]
+    pub fn push_signal(&self, envelope: SignalEnvelope) -> bool {
+        self.with(|queues| {
+            if queues.signals.len() >= MAX_BUFFERED_FRAMES {
+                return false;
+            }
+            queues.signals.push_back(envelope);
+            true
+        })
+    }
+
+    pub fn set_cursor(&self, cursor: String) {
+        self.with(|queues| queues.cursor = Some(cursor));
+    }
+
+    pub fn request_reconnect(&self, after_ms: u64) {
+        self.with(|queues| queues.reconnect_after_ms = Some(after_ms));
+    }
+
+    pub fn close(&self) {
+        self.with(|queues| queues.closed = true);
+    }
+
+    fn take_account_batch(&self) -> Option<AccountSubscribeSnapshotResult> {
+        self.with(|queues| {
+            if let Some(reconnect_after_ms) = queues.reconnect_after_ms.take() {
+                return Some(AccountSubscribeSnapshotResult::ReconnectAfter {
+                    reconnect_after_ms,
+                    reconnect_cursor: queues.cursor.clone(),
+                    reason: None,
+                    reset_cursor: false,
+                });
+            }
+            let cursor = queues.cursor.clone()?;
+            if queues.account.is_empty() {
+                return None;
+            }
+            Some(AccountSubscribeSnapshotResult::Batch(
+                AccountSubscribeBatch {
+                    frames: queues.account.drain(..).collect(),
+                    cursor,
+                },
+            ))
+        })
+    }
+
+    fn take_signal(&self) -> Option<SignalEnvelope> {
+        self.with(|queues| queues.signals.pop_front())
+    }
+
+    fn is_closed(&self) -> bool {
+        self.with(|queues| queues.closed)
+    }
+}
+
+/// The session's single WebSocket, shared across the stream engines.
+#[derive(Clone, Debug, Default)]
+pub struct WebSocketRail {
+    inner: Arc<Mutex<RailState>>,
+}
+
+#[derive(Debug, Default)]
 struct RailState {
     connection: Option<SharedConnection>,
     selector: Option<WebSocketTransportSelector>,
 }
 
 impl WebSocketRail {
-    /// Record the descriptor decision for this session. `None` — no advertised
-    /// binding, or one this build cannot honour — keeps every stream on HTTP.
+    fn with<R>(&self, apply: impl FnOnce(&mut RailState) -> R) -> R {
+        let mut state = self.inner.lock().unwrap_or_else(|poison| poison.into_inner());
+        apply(&mut state)
+    }
+
+    /// Record the descriptor decision for this session. A `None` descriptor —
+    /// no advertised binding, or one this build cannot honour — keeps every
+    /// stream on HTTP.
     pub fn set_selector(&self, selector: WebSocketTransportSelector) {
-        self.inner.borrow_mut().selector = Some(selector);
+        self.with(|state| state.selector = Some(selector));
     }
 
     /// Whether a usable descriptor is currently known.
     pub fn is_advertised(&self) -> bool {
-        self.inner
-            .borrow()
-            .selector
-            .as_ref()
-            .is_some_and(|selector| selector.descriptor().is_some())
+        self.with(|state| {
+            state
+                .selector
+                .as_ref()
+                .is_some_and(|selector| selector.descriptor().is_some())
+        })
     }
 
     /// The canonical `base_url` to connect to, if any.
     pub fn base_url(&self) -> Option<String> {
-        self.inner
-            .borrow()
-            .selector
-            .as_ref()
-            .and_then(|selector| selector.descriptor())
-            .map(|descriptor| descriptor.base_url.clone())
+        self.with(|state| {
+            state
+                .selector
+                .as_ref()
+                .and_then(|selector| selector.descriptor())
+                .map(|descriptor| descriptor.base_url.clone())
+        })
     }
 
     /// The advertised frame ceiling of the current descriptor.
     pub fn max_frame_bytes(&self) -> Option<u32> {
-        self.inner
-            .borrow()
-            .selector
-            .as_ref()
-            .and_then(|selector| selector.descriptor())
-            .map(|descriptor| descriptor.max_frame_bytes)
+        self.with(|state| {
+            state
+                .selector
+                .as_ref()
+                .and_then(|selector| selector.descriptor())
+                .map(|descriptor| descriptor.max_frame_bytes)
+        })
     }
 
-    /// Publish a live connection. From here the stream engines take channels.
+    /// Publish a live connection. From here the stream engines take delivery.
     pub fn attach(&self, connection: SharedConnection) {
-        self.inner.borrow_mut().connection = Some(connection);
+        self.with(|state| state.connection = Some(connection));
     }
 
-    /// Withdraw the connection. Every engine's next `provide()` returns HTTP.
+    /// Withdraw the connection. Every engine's next attempt returns HTTP.
     pub fn detach(&self) {
-        self.inner.borrow_mut().connection = None;
+        self.with(|state| state.connection = None);
     }
 
     pub fn is_live(&self) -> bool {
-        self.inner.borrow().connection.is_some()
+        self.with(|state| state.connection.is_some())
     }
 
     /// Apply the §8.1 decision table to a finished connection and report
@@ -119,58 +238,55 @@ impl WebSocketRail {
         &self,
         code: arkret_wire::websocket_binding::WebSocketCloseCode,
         drain_reconnect_after_ms: Option<u32>,
-    ) -> garth::websocket::WebSocketTransportDecision {
+    ) -> WebSocketTransportDecision {
         self.detach();
-        let mut state = self.inner.borrow_mut();
-        match state.selector.as_mut() {
+        self.with(|state| match state.selector.as_mut() {
             Some(selector) => selector.on_close(code, drain_reconnect_after_ms),
-            None => garth::websocket::WebSocketTransportDecision::FallbackHttp,
-        }
+            None => WebSocketTransportDecision::FallbackHttp,
+        })
     }
 
     /// An upgrade / subprotocol / proxy failure. §8.1 gives these no retry, and
     /// the descriptor is dropped until discovery changes.
     pub fn on_handshake_failure(
         &self,
-        failure: garth::websocket::WebSocketHandshakeFailure,
-    ) -> garth::websocket::WebSocketTransportDecision {
+        failure: WebSocketHandshakeFailure,
+    ) -> WebSocketTransportDecision {
         self.detach();
-        let mut state = self.inner.borrow_mut();
-        match state.selector.as_mut() {
+        self.with(|state| match state.selector.as_mut() {
             Some(selector) => selector.on_handshake_failure(failure),
-            None => garth::websocket::WebSocketTransportDecision::FallbackHttp,
-        }
+            None => WebSocketTransportDecision::FallbackHttp,
+        })
     }
 
     /// A connection reached `welcome`: both retry budgets reset.
     pub fn welcomed(&self) {
-        if let Some(selector) = self.inner.borrow_mut().selector.as_mut() {
-            selector.welcomed();
-        }
+        self.with(|state| {
+            if let Some(selector) = state.selector.as_mut() {
+                selector.welcomed();
+            }
+        });
     }
 
-    fn transport(&self) -> Option<RailTransport> {
-        self.inner
-            .borrow()
-            .connection
-            .as_ref()
-            .map(|connection| WebSocketTransport::new(connection.clone(), InksonPacer))
+    fn connection(&self) -> Option<SharedConnection> {
+        self.with(|state| state.connection.clone())
     }
 }
 
 /// The transport one stream engine uses for one connection attempt.
 ///
-/// The HTTP client is always present. §1 covers exactly three stream
-/// operations, so everything else an engine does — a scan, a post-commit
-/// write, a blob — keeps using the canonical HTTPS binding whether the rail is
-/// live or not. Only the covered operations consult `websocket`.
+/// The HTTP client is always present. The binding covers exactly the account
+/// subscription and the Signal rail, so everything else an engine does — a
+/// stream scan, a submission, a blob — keeps using the canonical HTTPS binding
+/// whether the rail is live or not.
 ///
 /// §8 forbids holding a WebSocket and an HTTP consumer for the *same* stream at
 /// once, and that holds structurally here: a covered operation resolves to one
 /// or the other, never both.
+#[derive(Clone, Debug)]
 pub struct StreamRail<H> {
     http: H,
-    websocket: Option<RailTransport>,
+    websocket: Option<SharedConnection>,
 }
 
 impl<H> StreamRail<H> {
@@ -178,7 +294,7 @@ impl<H> StreamRail<H> {
     pub fn select(rail: &WebSocketRail, http: H) -> Self {
         let selected = Self {
             http,
-            websocket: rail.transport(),
+            websocket: rail.connection(),
         };
         // Which binding a stream actually landed on is the first thing worth
         // knowing when a deployment reports latency or reconnect behaviour, and
@@ -200,142 +316,54 @@ impl<H> StreamRail<H> {
     }
 }
 
-pub enum AccountSource<S> {
-    Http(S),
-    WebSocket(garth::websocket::WebSocketAccountChannel<InksonPacer>),
-}
-
-impl<S: garth::AccountFrameSource> garth::AccountFrameSource for AccountSource<S> {
-    fn next_frame(&mut self) -> BoxSyncFuture<'_, Option<arkret_sdk::AccountSubscribeFrame>> {
-        match self {
-            Self::Http(source) => source.next_frame(),
-            Self::WebSocket(source) => source.next_frame(),
-        }
-    }
-    fn committed(&mut self, cursor: &str) -> garth::Result<()> {
-        match self {
-            Self::Http(source) => source.committed(cursor),
-            Self::WebSocket(source) => source.committed(cursor),
-        }
-    }
-}
-
-impl<H: garth::AccountFrameTransport> garth::AccountFrameTransport for StreamRail<H> {
-    type Source = AccountSource<H::Source>;
-    fn open_account_frames(
+impl<H> garth::AccountSubscribeTransport for StreamRail<H>
+where
+    H: garth::AccountSubscribeTransport,
+{
+    /// One bounded delivery window of the account aggregate.
+    ///
+    /// On the socket the request was already installed by the rail engine's
+    /// `subscribe` frame, so this only drains what the pump delivered. A rail
+    /// that ended mid-window reports a reconnect rather than a short batch, so
+    /// the caller resumes from the durable cursor instead of treating the gap
+    /// as the tail.
+    async fn subscribe(
         &self,
-        request: arkret_sdk::SyncRequestBody,
-        options: arkret_sdk::http_client::ClientRequestOptions,
-    ) -> BoxSyncFuture<'_, Self::Source> {
-        Box::pin(async move {
-            if let Some(transport) = self.websocket.as_ref() {
-                Ok(AccountSource::WebSocket(transport.open_account(request)?))
-            } else {
-                self.http
-                    .open_account_frames(request, options)
-                    .await
-                    .map(AccountSource::Http)
+        request: &SyncRequestBody,
+    ) -> garth::Result<AccountSubscribeSnapshotResult> {
+        let Some(connection) = self.websocket.as_ref() else {
+            return self.http.subscribe(request).await;
+        };
+        loop {
+            if let Some(result) = connection.take_account_batch() {
+                return Ok(result);
             }
-        })
-    }
-}
-/// One events source, whichever transport produced it.
-pub enum RealmEventsSource<S> {
-    Http(S),
-    WebSocket(WebSocketEventsChannel<InksonPacer>),
-}
-
-impl<S> RealmEventsFrameSource for RealmEventsSource<S>
-where
-    S: RealmEventsFrameSource,
-{
-    fn next_frame<'a>(
-        &'a mut self,
-    ) -> BoxRealmStreamFuture<'a, Option<arkret_sdk::EventsSubscribeFrame>> {
-        match self {
-            Self::Http(source) => source.next_frame(),
-            Self::WebSocket(channel) => channel.next_frame(),
+            if connection.is_closed() {
+                return Ok(AccountSubscribeSnapshotResult::ReconnectAfter {
+                    reconnect_after_ms:
+                        arkret_models_collaboration::sync_frames::account_subscribe::DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS,
+                    reconnect_cursor: None,
+                    reason: Some("websocket rail closed".to_owned()),
+                    reset_cursor: false,
+                });
+            }
+            InksonPacer.pace().await?;
         }
     }
 }
 
-impl<H> RealmEventsTransport for StreamRail<H>
-where
-    H: RealmEventsTransport + Sync,
-{
-    type Source = RealmEventsSource<H::Source>;
-
-    fn open_realm_events<'a>(
-        &'a self,
-        realm_id: &'a arkret_sdk::RealmId,
-        after: Option<&'a str>,
-    ) -> BoxRealmStreamFuture<'a, Self::Source> {
-        let Some(transport) = self.websocket.as_ref() else {
-            let http = &self.http;
-            return Box::pin(async move {
-                http.open_realm_events(realm_id, after)
-                    .await
-                    .map(RealmEventsSource::Http)
-            });
-        };
-        Box::pin(async move {
-            transport
-                .open_events(vec![realm_id.clone()], after)
-                .map(RealmEventsSource::WebSocket)
-        })
-    }
-}
-
-impl<H> garth::EventsScanTransport for StreamRail<H>
-where
-    H: garth::EventsScanTransport,
-{
-    /// §1 — `ak.self.events.read.scan.v1` is not a covered operation, so a scan
-    /// always uses the canonical HTTPS binding even while the rail is live.
-    fn scan_events<'a>(
-        &'a self,
-        request: garth::EventsScanRequest,
-    ) -> garth::subscribe::scan::BoxScanFuture<'a, arkret_sdk::EventsQueryOutcome> {
-        self.http.scan_events(request)
-    }
-}
-
-/// One Signal source, whichever transport produced it.
-pub enum SignalSource<S> {
-    Http(S),
-    WebSocket(WebSocketSignalChannel<InksonPacer>),
-}
-
-impl<S> SignalStreamFrameSource for SignalSource<S>
-where
-    S: SignalStreamFrameSource,
-{
-    fn next_frame<'a>(
-        &'a mut self,
-    ) -> BoxSignalStreamFuture<'a, Option<arkret_wire::SignalStreamFrame>> {
-        match self {
-            Self::Http(source) => source.next_frame(),
-            Self::WebSocket(channel) => channel.next_frame(),
-        }
-    }
-}
-
-impl<H> SignalStreamTransport for StreamRail<H>
-where
-    H: SignalStreamTransport + Sync,
-{
-    type Source = SignalSource<H::Source>;
-
-    fn open_signal_stream<'a>(&'a self) -> BoxSignalStreamFuture<'a, Self::Source> {
-        let Some(transport) = self.websocket.as_ref() else {
-            let http = &self.http;
-            return Box::pin(
-                async move { http.open_signal_stream().await.map(SignalSource::Http) },
-            );
-        };
-        Box::pin(async move { transport.open_signal().map(SignalSource::WebSocket) })
-    }
-}
+// The Signal rail deliberately has no WebSocket source here.
+//
+// `garth::SignalReceiver` admits an envelope only together with the
+// Station-issued `arkret_wire::SignalDeliveryAuthority` that
+// `SignalStreamFrame::Signal` carries, but the WebSocket binding's own
+// `signal` server frame
+// (`arkret_models_collaboration::sync_frames::websocket::WebSocketServerFrame`)
+// carries the bare `SignalEnvelope` and no delivery authority. Admitting a
+// socket-delivered envelope would therefore mean inventing an authority in the
+// client, which is exactly what the sender-key resolver removal forbids, so the
+// Signal engine stays on the canonical `ak.self.signal.stream.subscribe.v1`
+// binding until the socket frame carries one.
 
 #[cfg(test)]
 mod tests {
@@ -389,9 +417,38 @@ mod tests {
                 arkret_wire::websocket_binding::WebSocketCloseCode::ProtocolError,
                 None
             ),
-            garth::websocket::WebSocketTransportDecision::FallbackHttp
+            WebSocketTransportDecision::FallbackHttp
         );
         assert!(!rail.is_live());
         assert!(!rail.is_advertised());
+    }
+
+    #[test]
+    fn a_full_account_buffer_refuses_the_frame_instead_of_growing() {
+        let connection = SharedConnection::new();
+        let frame: AccountSubscribeFrame =
+            serde_json::from_value(serde_json::json!({"kind": "heartbeat"})).unwrap();
+        for _ in 0..MAX_BUFFERED_FRAMES {
+            assert!(connection.push_account_frame(frame.clone()));
+        }
+        assert!(!connection.push_account_frame(frame));
+    }
+
+    #[test]
+    fn a_drained_window_without_a_cursor_is_not_a_batch() {
+        let connection = SharedConnection::new();
+        let frame: AccountSubscribeFrame =
+            serde_json::from_value(serde_json::json!({"kind": "heartbeat"})).unwrap();
+        assert!(connection.push_account_frame(frame));
+        // The Station acknowledges the subscription cursor before any frame is
+        // a resumable batch; without it there is nothing to checkpoint.
+        assert!(connection.take_account_batch().is_none());
+        connection.set_cursor("ak:cursor:one".to_owned());
+        let Some(AccountSubscribeSnapshotResult::Batch(batch)) = connection.take_account_batch()
+        else {
+            panic!("a cursor-acknowledged window is a batch");
+        };
+        assert_eq!(batch.frames.len(), 1);
+        assert_eq!(batch.cursor, "ak:cursor:one");
     }
 }

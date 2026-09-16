@@ -46,18 +46,6 @@ pub fn strand_watch_set(
     )
 }
 
-/// Return the exact causal-register selector used by a receiver's watch
-/// preference. Keep this derived by the SDK payload type so product reads and
-/// writes cannot disagree about the composite `(strand, actor)` subject.
-pub fn strand_watch_cell_ref(
-    strand_id: &str,
-    watcher_actor_id: &str,
-) -> anyhow::Result<arkret_sdk::CellRef> {
-    strand_watch_set_payload(strand_id, watcher_actor_id, Some("mentions_only"), None)?
-        .cell_ref()
-        .map_err(Into::into)
-}
-
 /// Build a `ak.strand.tracks.update` operation. Spec:
 /// `arkret-spec/spec/v1/zh/models/strand-and-message.md §3` (post dc01ad7).
 ///

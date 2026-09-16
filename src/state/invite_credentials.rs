@@ -81,7 +81,7 @@ impl ClientLocalState {
 impl LocalStateStore {
     pub(crate) fn apply_station_cas_account_data(
         &mut self,
-        deltas: &[arkret_sdk::StationCasAccountDataContainer],
+        deltas: &[arkret_sdk::sync::StationCasAccountDataContainer],
     ) {
         self.ensure_cached_loaded();
         let mut delivery_changed = false;
@@ -336,7 +336,7 @@ mod tests {
         let updated_at = DateTime::parse_from_rfc3339("2026-08-18T00:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        store.apply_station_cas_account_data(&[arkret_sdk::StationCasAccountDataContainer {
+        store.apply_station_cas_account_data(&[arkret_sdk::sync::StationCasAccountDataContainer {
             upserts: vec![arkret_sdk::AccountDataRow {
                 account_data_key: arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY.to_owned(),
                 revision: 3,
@@ -358,9 +358,9 @@ mod tests {
             Some("ak:invite-token:baseline")
         );
 
-        store.apply_station_cas_account_data(&[arkret_sdk::StationCasAccountDataContainer {
+        store.apply_station_cas_account_data(&[arkret_sdk::sync::StationCasAccountDataContainer {
             upserts: Vec::new(),
-            removals: vec![arkret_sdk::StationCasAccountDataRemoval {
+            removals: vec![arkret_sdk::sync::StationCasAccountDataRemoval {
                 account_data_key: arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY.to_owned(),
                 revision: 4,
                 updated_at,

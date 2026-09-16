@@ -50,7 +50,7 @@ pub fn encrypt_reaction_with_device_snapshot(
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: reaction send may force an epoch commit; bind it to the Seal-view
     // epoch floor so a stale local snapshot can't seal a reaction on a forked ratchet.
-    let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
+    let epoch_floor = super::accepted_mls_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
 
@@ -82,21 +82,10 @@ pub fn encrypt_reaction_with_device_snapshot(
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
             .map_err(|error| MlsRuntimeError::Serialize(error.to_string()))?,
     };
-    let use_exporter_aead = super::message::realm_content_scheme_is_exporter_aead_for_send(
-        state_store,
-        realm_id,
-        None,
-    )?;
-    super::message::verify_exporter_sender_domain_for_send(
-        device_id.as_str(),
-        is_minimal_metadata,
-        use_exporter_aead,
-    )?;
-    let scheme = if use_exporter_aead {
-        arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
-    } else {
-        arkret_sdk::EncryptedPayloadScheme::MlsRfc9420
-    };
+    // A scope is standard RFC 9420 from its accepted Genesis onward, so a
+    // reaction rides the same scheme as every other application payload.
+    super::message::require_active_mls_for_send(state_store, &effective_scope)?;
+    let scheme = arkret_sdk::EncryptedPayloadScheme::MlsRfc9420;
     let routing_window = u64::try_from(created_at.timestamp_millis().div_euclid(3_600_000))
         .map_err(|_| {
             MlsRuntimeError::Serialize("reaction timestamp precedes Unix epoch".to_owned())
@@ -139,7 +128,7 @@ pub fn encrypt_reaction_with_device_snapshot(
         group.epoch(),
         group_state_ref,
         sender_domain,
-        use_exporter_aead.then(|| group.next_content_counter()),
+        None,
         arkret_sdk::EventContentRoutingContext::Reaction {
             target_ref: target_ref.clone(),
             routing_window,
@@ -147,19 +136,17 @@ pub fn encrypt_reaction_with_device_snapshot(
         },
     )
     .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
-    let encrypted_payload = if use_exporter_aead {
-        group.encrypt_payload_exporter_aead(realm_id, header, &plaintext)
-    } else {
-        group.encrypt_payload(header, &plaintext)
-    }
-    .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
+    let encrypted_payload = group
+        .encrypt_payload(header, &plaintext)
+        .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
     let serialized_state = serde_json::to_vec(&post_state)
         .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
     let mut salt = [0u8; 16];
-    getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
+    getrandom::fill(&mut salt)
+        .map_err(|err| MlsRuntimeError::Encrypt(format!("MLS checkpoint salt: {err}")))?;
     let new_envelope = crate::mls::persistence::encrypt_state(
         realm_id,
         &post_state.group_id,

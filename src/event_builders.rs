@@ -2,16 +2,10 @@
 //!
 //! These helpers are transport-neutral and independent of the API transport.
 
-use arkret_wire::SchemaId;
 use serde_json::Value;
 
-use crate::operation::{
-    EventKind, EventRequirements, Precondition, Predicate, PredicateOp, TypedOperationBuilder,
-    trim_realm_id,
-};
-use crate::realm_defaults::{
-    RECOMMENDED_REALM_ENCRYPTION_FLOOR_TYPED, RECOMMENDED_REALM_ENCRYPTION_PROFILE,
-};
+use crate::operation::{EventKind, TypedOperationBuilder, trim_realm_id};
+use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_PROFILE;
 
 /// Event authoring instant normalized to the protocol's millisecond profile.
 fn event_timestamp() -> chrono::DateTime<chrono::Utc> {
@@ -27,37 +21,6 @@ fn payload_timestamp_wire(created_at: chrono::DateTime<chrono::Utc>) -> String {
     arkret_sdk::canonical::format_timestamp_canonical(created_at)
 }
 
-fn cell_ref(cell: &str) -> anyhow::Result<arkret_sdk::CellRef> {
-    arkret_sdk::CellRef::new(cell.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid cell ref {cell:?}: {err}"))
-}
-
-fn head_eq_precondition(cell: &str, value: Value) -> anyhow::Result<Precondition> {
-    Ok(Precondition {
-        cell_id: cell_ref(cell)?,
-        predicate: Predicate {
-            op: PredicateOp::HeadEq,
-            value: Some(value),
-            values: None,
-            predicate_id: None,
-        },
-    })
-}
-
-// Callers only pass `SchemaId` registry constants; the `expect` documents
-// that invariant. Rewriting it as `?` would add an error path no caller can
-// reach.
-#[allow(clippy::expect_used)]
-fn event_requirements_with_schema(schema_ref: &str) -> EventRequirements {
-    EventRequirements {
-        schema_profile_refs: vec![
-            arkret_sdk::ProfileRef::new(schema_ref.to_owned())
-                .expect("event builder schema profile ref must be valid"),
-        ],
-        required_features: Vec::new(),
-        critical_extensions: Vec::new(),
-    }
-}
 
 /// Build a Realm bootstrap against the exact Station captured by the
 /// authenticated submitter. Production create flows use this entry point so a
@@ -69,7 +32,6 @@ pub fn build_realm_bootstrap_steps_for_station(
     genesis_salt: arkret_sdk::GenesisSalt,
     actor_id: &str,
     notary_did: &str,
-    notary: arkret_sdk::NotaryValue,
     notary_service_origin: &str,
     title: &str,
     summary: Option<&str>,
@@ -94,18 +56,11 @@ pub fn build_realm_bootstrap_steps_for_station(
         station_id.clone(),
         genesis_salt,
         actor_id,
-        notary,
-        title,
-        summary,
         discoverability,
         join_rule,
         history_access,
-        encryption_profile,
         security_class,
-        federation_policy,
-        digest_algorithm,
         trust_domain,
-        content_scheme,
     )?;
 
     let facets = RealmBootstrapFacets {
@@ -203,14 +158,11 @@ pub fn build_realm_bootstrap_facet_intents(
     );
     // realm-and-space.md §2.5: an ordinary Realm is one genesis transaction of
     // `ak.realm.create` plus the closed follow-up facet whitelist. The creator's
-    // root authority is the `ak.component.realm.authority_root.v1` cell the
-    // create Event's registered reducer contract writes, so there is no
-    // wire slot for a self-issued genesis grant.
+    // authority is the Realm genesis itself, admitted by the governance Station
+    // named in that genesis, so there is no wire slot for a self-issued
+    // genesis grant.
     let mut policy_bundle = recommended_realm_policy_bundle_for_profile(encryption_profile)
-        .unwrap_or_else(|| arkret_sdk::RealmPolicyBundlePayload {
-            content_encryption_floor: Some(arkret_sdk::EncryptionFloor::AllowPlaintext),
-            ..arkret_sdk::RealmPolicyBundlePayload::new(1)
-        });
+        .unwrap_or_else(|| arkret_sdk::RealmPolicyBundlePayload::new(1));
     policy_bundle.federation_policy = Some(parse_wire_enum(
         "federation_policy",
         &facets.federation_policy,
@@ -339,8 +291,8 @@ pub(crate) fn parse_wire_enum<T: serde::de::DeserializeOwned>(
 ///
 /// A real Ed25519 verification key on the shared development derivation. The
 /// constant this replaced, `[7u8; 32]`, does not decompress to a curve point,
-/// so `decode_ed25519_multibase` handed `agent_inception_notary` a frozen key
-/// no signature could ever be checked against.
+/// so `decode_ed25519_multibase` was handed a frozen key no signature could
+/// ever be checked against.
 #[cfg(test)]
 pub(crate) fn test_inception_root_key_multibase(principal_did: &str) -> String {
     arkret_sdk::ed25519_pubkey_to_did_key_multibase(
@@ -349,72 +301,36 @@ pub(crate) fn test_inception_root_key_multibase(principal_did: &str) -> String {
     )
 }
 
-/// The Realm's designated notary, on the shared development key derivation.
-///
-/// See `tests/common/mod.rs::test_notary`: the two fixtures are deliberate
-/// duplicates because the integration tests are built only from this crate's
-/// public surface. The key is a real Ed25519 verification key — a constant byte
-/// pattern such as `[7u8; 32]` does not decompress to a curve point, and
-/// `NotarySignerDescriptor::validate` does not catch that today.
-#[cfg(test)]
-pub(crate) fn test_authority_notary(signer_did: &str) -> anyhow::Result<arkret_sdk::NotaryValue> {
-    let did = arkret_sdk::Did::new(signer_did.to_owned())?;
-    let actor_id = arkret_sdk::ActorId::service(arkret_sdk::project_did_to_core_id(&did)?);
-    let verification_method =
-        arkret_sdk::DidUrl::new(format!("{signer_did}#notary")).map_err(anyhow::Error::msg)?;
-    let public_key =
-        arkret_signatures::development_verifying_key(verification_method.as_str()).to_bytes();
-    let descriptor = arkret_sdk::NotarySignerDescriptor {
-        actor_id,
-        verification_method,
-        key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
-        jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
-        frozen_public_key_b64u: arkret_sdk::base64url_encode(public_key),
-    };
-    Ok(arkret_sdk::NotaryValue::new(descriptor, 1_000)?)
-}
-
 /// Build the closed `ak.schema.realm_genesis.v1` object as the SDK strong type.
 ///
 /// Every member is a declared field of [`arkret_sdk::RealmGenesis`]
-/// (`deny_unknown_fields`), so a member the
-/// schema does not carry cannot be authored at all — the previous hand-built
-/// `serde_json::Value` accepted any key and only failed at the receiver's
-/// candidate gate.
+/// (`deny_unknown_fields`), so a member the schema does not carry cannot be
+/// authored at all. The genesis names the initial governance Station and the
+/// initial join rule, history access and discoverability; everything else the
+/// creator chose is carried by the closed follow-up facet whitelist.
 #[allow(clippy::too_many_arguments)]
 fn build_realm_genesis_object(
     genesis_salt: arkret_sdk::GenesisSalt,
-    _actor_id: &str,
-    notary: arkret_sdk::NotaryValue,
-    _title: &str,
-    _summary: Option<&str>,
-    _discoverability: &str,
-    _join_rule: &str,
-    _history_access: &str,
-    encryption_profile: &str,
+    governance_station_id: arkret_sdk::DidCoreId,
+    discoverability: &str,
+    join_rule: &str,
+    history_access: &str,
     security_class: &str,
-    _federation_policy: &str,
-    digest_algorithm: &str,
     trust_domain: &str,
-    _content_scheme: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::RealmGenesis> {
     let trust_domain_typed = arkret_sdk::TrustDomainId::new(trust_domain.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid trust_domain for realm.create: {err:?}"))?;
-    notary
-        .validate()
-        .map_err(|error| anyhow::anyhow!("invalid frozen Realm notary configuration: {error}"))?;
-    let digest_algorithm = arkret_sdk::canonical::digest_suite(digest_algorithm.trim())
-        .map_err(|err| anyhow::anyhow!("invalid digest_algorithm {digest_algorithm:?}: {err}"))?;
-    arkret_sdk::RealmGenesis::event_derived(
+    arkret_sdk::RealmGenesis::new(
         arkret_sdk::RealmPurpose::Collaboration,
         genesis_salt,
         trust_domain_typed,
-        vec![arkret_wire::SchemaId::REALM_V1.to_owned()],
-        arkret_sdk::CORE_REDUCER_PROFILE,
-        digest_algorithm,
         parse_wire_enum("security_class", security_class)?,
-        parse_wire_enum("encryption_profile", encryption_profile)?,
-        notary,
+        governance_station_id,
+        parse_wire_enum("join_rule", join_rule)?,
+        parse_wire_enum("history_access", history_access)?,
+        parse_wire_enum("discoverability", discoverability)?,
+        None,
+        None,
     )
     .map_err(anyhow::Error::from)
 }
@@ -431,8 +347,6 @@ fn build_realm_create_event_from_object(
     let created_at = event_timestamp();
     // ak.component.realm.create.v1 is an ordered-log genesis singleton;
     // the bootstrap write asserts head_eq null and sets the realm metadata.
-    let cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_CREATE_V1);
-    let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let realm_body = arkret_sdk::RealmCreatePayload::new(object);
     // The builder emits the closed `realm_genesis` scope for this kind, so the
     // realm id passed here is a placeholder the envelope never carries.
@@ -442,8 +356,6 @@ fn build_realm_create_event_from_object(
         actor_id,
         realm_body,
     )
-    .preconditions(preconditions)
-    .requirements(event_requirements_with_schema(SchemaId::REALM_GENESIS_V1))
     .created_at(created_at)
     .build_sdk_event("inkson")
 }
@@ -454,8 +366,6 @@ fn build_realm_create_event_from_object_for_station(
     object: arkret_sdk::RealmGenesis,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let created_at = event_timestamp();
-    let cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_CREATE_V1);
-    let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let realm_body = arkret_sdk::RealmCreatePayload::new(object);
     TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::RealmCreate>(
         arkret_sdk::RealmId::new("ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR")?
@@ -464,115 +374,83 @@ fn build_realm_create_event_from_object_for_station(
         station_id,
         realm_body,
     )
-    .preconditions(preconditions)
-    .requirements(event_requirements_with_schema(SchemaId::REALM_GENESIS_V1))
     .created_at(created_at)
     .build_sdk_event("inkson")
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Build a standalone `ak.realm.create` against the process-selected Station.
+///
+/// The genesis names the initial governance Station, join rule, history access
+/// and discoverability. Everything else the creator chose is carried by the
+/// closed follow-up facet whitelist of the bootstrap unit.
 pub fn build_realm_create_event(
     genesis_salt: arkret_sdk::GenesisSalt,
     actor_id: &str,
-    notary: arkret_sdk::NotaryValue,
-    title: &str,
-    summary: Option<&str>,
     discoverability: &str,
     join_rule: &str,
     history_access: &str,
-    encryption_profile: &str,
     security_class: &str,
-    federation_policy: &str,
-    digest_algorithm: &str,
     trust_domain: &str,
-    content_scheme: Option<&str>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let object = build_realm_genesis_object(
         genesis_salt,
-        actor_id,
-        notary,
-        title,
-        summary,
+        crate::operation::authoring_station_id()?,
         discoverability,
         join_rule,
         history_access,
-        encryption_profile,
         security_class,
-        federation_policy,
-        digest_algorithm,
         trust_domain,
-        content_scheme,
     )?;
     build_realm_create_event_from_object(actor_id, object)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_realm_create_event_for_station(
     station_id: arkret_sdk::DidCoreId,
     genesis_salt: arkret_sdk::GenesisSalt,
     actor_id: &str,
-    notary: arkret_sdk::NotaryValue,
-    title: &str,
-    summary: Option<&str>,
     discoverability: &str,
     join_rule: &str,
     history_access: &str,
-    encryption_profile: &str,
     security_class: &str,
-    federation_policy: &str,
-    digest_algorithm: &str,
     trust_domain: &str,
-    content_scheme: Option<&str>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let object = build_realm_genesis_object(
         genesis_salt,
-        actor_id,
-        notary,
-        title,
-        summary,
+        station_id.clone(),
         discoverability,
         join_rule,
         history_access,
-        encryption_profile,
         security_class,
-        federation_policy,
-        digest_algorithm,
         trust_domain,
-        content_scheme,
     )?;
     build_realm_create_event_from_object_for_station(station_id, actor_id, object)
 }
 
-/// Build the create-locked Principal Control Realm genesis for a managed
-/// Agent. The control facts belong to `agent_id`; the active
-/// controller only executes the Event under the DID delegation returned by
-/// provisioning.
-pub fn agent_inception_notary(
-    agent_did: &arkret_sdk::Did,
-    root_public_key_multibase: &str,
-) -> anyhow::Result<arkret_sdk::NotaryValue> {
-    let actor_id = crate::mls_api_helpers::local_account_actor_id(
-        arkret_sdk::project_did_to_core_id(agent_did)?.as_str(),
-    )?;
-    let public_key = arkret_sdk::decode_ed25519_multibase(root_public_key_multibase)?;
-    let descriptor = arkret_sdk::NotarySignerDescriptor {
-        actor_id,
-        verification_method: arkret_sdk::DidUrl::new(format!(
-            "{}#{}",
-            agent_did, root_public_key_multibase
-        ))
-        .map_err(anyhow::Error::msg)?,
-        key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
-        jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
-        frozen_public_key_b64u: arkret_sdk::base64url_encode(public_key),
-    };
-    Ok(arkret_sdk::NotaryValue::new(descriptor, 1_000)?)
-}
+/// The closed initial policy every Principal Control Realm genesis carries.
+///
+/// A PCR is not joinable and not discoverable: it exists to hold one
+/// principal's own control facts. `history_access` is pinned by
+/// `identity/key-management.md` §4.1 (`history_access=since_join`); the other
+/// two are the fail-closed ends of their enums, because no `ak.realm.join_rule`
+/// or `ak.realm.discovery` follow-up is in the PCR profile's event-kind
+/// allowlist to widen them later.
+const PCR_INITIAL_JOIN_RULE: arkret_sdk::JoinRule = arkret_sdk::JoinRule::Closed;
+const PCR_INITIAL_HISTORY_ACCESS: arkret_sdk::HistoryAccess = arkret_sdk::HistoryAccess::SinceJoin;
+const PCR_INITIAL_DISCOVERABILITY: arkret_sdk::Discoverability =
+    arkret_sdk::Discoverability::Secret;
 
+/// Build the create-locked Principal Control Realm genesis for a managed
+/// Agent. The control facts belong to `agent_id`; the active controller only
+/// executes the Event under the DID delegation returned by provisioning.
+///
+/// `governance_station_id` is the generation-0 governance Station the genesis
+/// names (`identity/key-management.md` §4.1). It is passed in rather than read
+/// from the process-global selection so a reconnect between UI readiness and
+/// Event construction cannot move the frozen genesis to another Station.
 pub fn build_agent_pcr_create_event(
     agent_id: &str,
     initial_resolution: arkret_sdk::ResolutionCommitment,
-    notary: arkret_sdk::NotaryValue,
+    governance_station_id: arkret_sdk::DidCoreId,
     controller_principal_id: &str,
     controller_authorization_ref: &str,
     trust_domain: &str,
@@ -581,29 +459,25 @@ pub fn build_agent_pcr_create_event(
     let payload = arkret_bootstrap::build_agent_pcr_create_payload(
         arkret_bootstrap::AgentPcrCreatePayloadInput {
             agent_id: crate::mls_api_helpers::principal_core_id(agent_id)?,
+            governance_station_id: governance_station_id.clone(),
             initial_resolution,
-            controller_principal_id: crate::mls_api_helpers::principal_core_id(
-                controller_principal_id,
-            )?,
-            notary,
             genesis_salt: arkret_sdk::GenesisSalt::generate()?,
             trust_domain: arkret_sdk::TrustDomainId::new(trust_domain.to_owned())?,
-            digest_suite: arkret_sdk::DigestSuite::Sha256,
-            created_at,
+            initial_join_rule: PCR_INITIAL_JOIN_RULE,
+            initial_history_access: PCR_INITIAL_HISTORY_ACCESS,
+            initial_discoverability: PCR_INITIAL_DISCOVERABILITY,
         },
     )?;
-    let cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_CREATE_V1);
-    TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmCreate>(
+    TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::RealmCreate>(
         // `RealmCreate` serializes `realm_genesis`; this placeholder is never
         // carried and is replaced by retype(the finalized EventId).
         "ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR",
         agent_id,
+        governance_station_id,
         payload,
     )
     .executed_by(controller_principal_id)
     .authorization_ref(controller_authorization_ref)
-    .preconditions(vec![head_eq_precondition(&cell, Value::Null)?])
-    .requirements(event_requirements_with_schema(SchemaId::REALM_GENESIS_V1))
     .created_at(created_at)
     .build_sdk_event("inkson")
 }
@@ -615,7 +489,7 @@ pub fn build_agent_pcr_create_event(
 pub fn build_agent_pcr_bootstrap_steps(
     agent_id: &str,
     initial_resolution: arkret_sdk::ResolutionCommitment,
-    notary: arkret_sdk::NotaryValue,
+    governance_station_id: arkret_sdk::DidCoreId,
     controller_principal_id: &str,
     controller_authorization_ref: &str,
     trust_domain: &str,
@@ -623,7 +497,7 @@ pub fn build_agent_pcr_bootstrap_steps(
     let create = build_agent_pcr_create_event(
         agent_id,
         initial_resolution,
-        notary,
+        governance_station_id,
         controller_principal_id,
         controller_authorization_ref,
         trust_domain,
@@ -644,7 +518,6 @@ pub fn build_agent_pcr_bootstrap_steps(
 pub fn build_direct_conversation_founding_steps(
     founder_actor: &arkret_sdk::AccountId,
     peer_actor: &arkret_sdk::AccountId,
-    notary: arkret_sdk::NotaryValue,
     trust_domain: arkret_sdk::TrustDomainId,
     evidence: &arkret_sdk::DirectConversationFoundingAuthorityEvidence,
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
@@ -656,14 +529,15 @@ pub fn build_direct_conversation_founding_steps(
     );
     let founder_actor = founder_actor.clone();
     let peer_actor = peer_actor.clone();
+    // The genesis names the governance Station the founder is authenticated
+    // to: it is the Station that will commit every Event of this unit, and the
+    // create Event below is routed through that same Station.
     let create_payload = arkret_sdk::direct_conversation_realm_create_payload(
         arkret_sdk::GenesisSalt::generate()?,
         trust_domain,
-        notary,
+        founder_actor.station_id.clone(),
         created_at,
     )?;
-    let create_cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_CREATE_V1);
-    let create_precondition = head_eq_precondition(&create_cell, Value::Null)?;
 
     let founder = founder_actor.clone();
     let create_step: crate::event_submit::EventUnitStep = {
@@ -680,8 +554,6 @@ pub fn build_direct_conversation_founding_steps(
                     founder.station_id.clone(),
                     create_payload,
                 )
-                .preconditions(vec![create_precondition])
-                .requirements(event_requirements_with_schema(SchemaId::REALM_GENESIS_V1))
                 .refs(vec![founding_ref.clone()])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
@@ -712,8 +584,7 @@ pub fn build_direct_conversation_founding_steps(
             }
             let peer_actor_id = arkret_sdk::ActorId::account(peer_actor.clone());
             let peer_actor_key = peer_actor_id.canonical_key()?;
-            let member_cell_subject = arkret_sdk::composite_subject(&[peer_actor_key.as_str()])?;
-            let member_cell = format!("ak:cell:ak.component.member.state.v1:{member_cell_subject}");
+            let member_cell_subject = peer_actor_key.to_owned();
             Ok(vec![
                 TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::MemberState>(
                     create.realm_id.to_string(),
@@ -722,7 +593,6 @@ pub fn build_direct_conversation_founding_steps(
                     membership,
                 )
                 .target_ref(member_cell_subject)
-                .preconditions(vec![head_eq_precondition(&member_cell, Value::Null)?])
                 .refs(vec![founding_ref.clone()])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
@@ -770,9 +640,7 @@ pub fn build_direct_conversation_founding_steps(
             let founder_actor_id = arkret_sdk::ActorId::account(founder_actor.clone());
             let founder_actor_key = founder_actor_id.canonical_key()?;
             let founder_member_cell_subject =
-                arkret_sdk::composite_subject(&[founder_actor_key.as_str()])?;
-            let founder_member_cell =
-                format!("ak:cell:ak.component.member.state.v1:{founder_member_cell_subject}");
+                founder_actor_key.to_owned();
             Ok(vec![
                 TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::MemberState>(
                     create.realm_id.to_string(),
@@ -781,10 +649,6 @@ pub fn build_direct_conversation_founding_steps(
                     founder_membership,
                 )
                 .target_ref(founder_member_cell_subject)
-                .preconditions(vec![head_eq_precondition(
-                    &founder_member_cell,
-                    Value::Null,
-                )?])
                 .refs(vec![founding_ref.clone()])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
@@ -851,12 +715,7 @@ pub fn validate_realm_history_content_scheme_for_profile(
 /// at the accepted MLS group Genesis and the closed bundle schema does not
 /// declare it, so a bundle revision can neither select nor restate it.
 pub fn recommended_realm_policy_bundle_value() -> arkret_sdk::RealmPolicyBundlePayload {
-    arkret_sdk::RealmPolicyBundlePayload {
-        policy_revision: 1,
-        content_encryption_floor: Some(RECOMMENDED_REALM_ENCRYPTION_FLOOR_TYPED),
-        metadata_encryption_floor: Some(RECOMMENDED_REALM_ENCRYPTION_FLOOR_TYPED),
-        ..arkret_sdk::RealmPolicyBundlePayload::new(1)
-    }
+    arkret_sdk::RealmPolicyBundlePayload::new(1)
 }
 
 pub fn recommended_realm_policy_bundle_for_profile(
@@ -924,7 +783,6 @@ pub fn build_space_create_event(
     TypedOperationBuilder::new::<arkret_sdk::event_spec::SpaceCreate>(
         realm_id, actor_id, space_body,
     )
-    .requirements(event_requirements_with_schema(SchemaId::SPACE_V1))
     .created_at(created_at)
     .build_sdk_event("inkson")
 }
@@ -975,11 +833,6 @@ pub fn build_space_lifecycle_event(
         effective_at: None,
     };
     let created_at = event_timestamp();
-    let cell = space_cell(arkret_wire::CellFamilyId::SPACE_LIFECYCLE_V1, space_id);
-    let preconditions = vec![head_eq_precondition(
-        &cell,
-        Value::String(prior_state.to_owned()),
-    )?];
     match kind {
         EventKind::SpaceArchive => {
             TypedOperationBuilder::new::<arkret_sdk::event_spec::SpaceArchive>(
@@ -1001,7 +854,6 @@ pub fn build_space_lifecycle_event(
         _ => unreachable!("unsupported Space lifecycle kind was rejected above"),
     }
     .target_ref(space_id)
-    .preconditions(preconditions)
     .created_at(created_at)
     .build_sdk_event("inkson")
 }
@@ -1095,48 +947,7 @@ fn build_realm_state_event_for_station_with_set_head<K: arkret_sdk::EventSpec>(
     )
     .created_at(event_timestamp());
 
-    // event-kind-registry.json declares that `cell_writes[]` is the sole
-    // authority for reducer targets; the old flattened descriptor fields are
-    // deliberately absent. Project the complete contract so authoring and
-    // admission resolve exactly the same target. These Realm facet builders are
-    // intentionally single-target: if a future contract becomes conditional or
-    // multi-target, fail closed and require a purpose-built authoring path
-    // instead of silently putting a predicate on the wrong cell.
-    //
-    // The projection runs on the intent, because the precondition it produces is
-    // producer-signed content and so has to be in place before the identity is
-    // derived from that content.
-    let (kind, cell, expected_head) = {
-        let intent = builder.intent()?;
-        let kind = intent.kind().as_str().to_owned();
-        let writes = crate::operation::pre_authoring_cell_writes(intent, digest_suite)
-            .map_err(|error| anyhow::anyhow!("{kind} cell-write projection failed: {error}"))?;
-        let [write] = writes.as_slice() else {
-            anyhow::bail!(
-                "Realm state event kind {kind} must project exactly one cell write, got {}",
-                writes.len()
-            );
-        };
-        let arkret_sdk::ProjectedOp::Direct(op) = &write.op else {
-            anyhow::bail!("Realm state event kind {kind} does not have a direct state write");
-        };
-        let expected_head = match op.op_type {
-            arkret_sdk::LatticeOpType::Set => set_expected_head.unwrap_or(Value::Null),
-            arkret_sdk::LatticeOpType::Transition => op.from.clone().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Realm state event kind {kind} transition does not project an exact from state"
-                )
-            })?,
-            _ => anyhow::bail!(
-                "Realm state event kind {kind} has no supported singleton state contract"
-            ),
-        };
-        (kind, write.cell_id.as_str().to_owned(), expected_head)
-    };
-    let _ = kind;
-    builder
-        .preconditions(vec![head_eq_precondition(&cell, expected_head)?])
-        .build_sdk_event("inkson")
+    builder.build_sdk_event("inkson")
 }
 
 /// Build the explicit archive or restore Event selected by the user intent.
@@ -1352,10 +1163,8 @@ fn build_realm_alias_payload_event(
     payload: arkret_sdk::RealmAliasPayload,
     expected_head: Value,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
-    let cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_ALIAS_V1);
     let created_at = event_timestamp();
     TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmAlias>(realm_id, actor_id, payload)
-        .preconditions(vec![head_eq_precondition(&cell, expected_head)?])
         .created_at(created_at)
         .build_sdk_event("inkson")
 }
@@ -1367,12 +1176,10 @@ fn build_realm_alias_payload_event_for_station(
     payload: arkret_sdk::RealmAliasPayload,
     expected_head: Value,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
-    let cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_ALIAS_V1);
     let created_at = event_timestamp();
     TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::RealmAlias>(
         realm_id, actor_id, station_id, payload,
     )
-    .preconditions(vec![head_eq_precondition(&cell, expected_head)?])
     .created_at(created_at)
     .build_sdk_event("inkson")
 }
@@ -1438,15 +1245,10 @@ fn build_plaintext_visible_services_event_for_station(
         return Ok(None);
     }
     let created_at = event_timestamp();
-    let cell = arkret_wire::null_subject_cell(
-        arkret_wire::CellFamilyId::REALM_PLAINTEXT_VISIBLE_SERVICES_V1,
-    );
-    let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let body_value = arkret_sdk::PlaintextVisibleServicesPayload::new(services);
     let event = TypedOperationBuilder::new_for_station::<
         arkret_sdk::event_spec::RealmPlaintextVisibleServices,
     >(realm_id, actor_id, station_id, body_value)
-    .preconditions(preconditions)
     .created_at(created_at)
     .build_sdk_event("inkson")?;
     Ok(Some(event))
@@ -1501,7 +1303,7 @@ fn build_member_state_transition_event_for_station(
     // canonical JSON, so the registry's canonical_json composite rule hashes
     // that JSON string into the single safe CellRef subject segment.
     let member_actor_key = member_id.canonical_key()?;
-    let member_cell_subject = arkret_sdk::composite_subject(&[member_actor_key.as_str()])?;
+    let member_cell_subject = member_actor_key.to_owned();
     // Strong `membership_payload` (`event-payload.schema.json`). The schema's
     // `allOf` if/then makes `realm_id` + `actor_id` + `delivery_status`
     // REQUIRED whenever `membership == "join"`; we carry `realm_id` for every
@@ -1521,15 +1323,6 @@ fn build_member_state_transition_event_for_station(
     } else {
         MembershipPayload::transition(membership, member_id, reason).with_realm_id(realm_value)
     };
-    let cell = format!("ak:cell:ak.component.member.state.v1:{member_cell_subject}");
-    let preconditions = if let Some(prior) = from_state {
-        vec![head_eq_precondition(
-            &cell,
-            Value::String(prior.to_owned()),
-        )?]
-    } else {
-        vec![head_eq_precondition(&cell, Value::Null)?]
-    };
     let builder = TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::MemberState>(
         realm_id,
         actor_id,
@@ -1538,16 +1331,11 @@ fn build_member_state_transition_event_for_station(
     );
     builder
         .target_ref(member_cell_subject)
-        .preconditions(preconditions)
         .build_sdk_event("inkson")
 }
 
-fn space_cell(cell_family: &str, space_id: &str) -> String {
-    format!("ak:cell:{cell_family}:{space_id}")
-}
-
 #[cfg(test)]
-mod notary_derivation_tests {
+mod genesis_authority_tests {
     use serde_json::json;
 
     use super::*;
@@ -1560,10 +1348,11 @@ mod notary_derivation_tests {
         }
     }
 
-    fn agent_notary() -> arkret_sdk::NotaryValue {
-        let did = arkret_sdk::Did::new("did:web:agent.example").unwrap();
-        let root = test_inception_root_key_multibase(did.as_str());
-        agent_inception_notary(&did, &root).unwrap()
+    /// The governance Station an Agent PCR genesis names. It is the Station
+    /// the controller is authenticated to, not anything derived from the
+    /// Agent's own keys.
+    fn agent_governance_station() -> arkret_sdk::DidCoreId {
+        crate::operation::authoring_station_id().unwrap()
     }
 
     #[test]
@@ -1571,7 +1360,7 @@ mod notary_derivation_tests {
         let event = build_agent_pcr_create_event(
             "did:web:agent.example",
             agent_resolution(),
-            agent_notary(),
+            agent_governance_station(),
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
@@ -1587,7 +1376,7 @@ mod notary_derivation_tests {
             build_agent_pcr_bootstrap_steps(
                 "did:web:agent.example",
                 agent_resolution(),
-                agent_notary(),
+                agent_governance_station(),
                 "did:web:alice.example",
                 "did:web:agent.example#managed-controller",
                 "ak:trust_domain:did.web.example",
@@ -1635,7 +1424,6 @@ mod notary_derivation_tests {
                     .unwrap(),
                 "did:web:alice.example",
                 "did:web:alice.example",
-                test_authority_notary("did:web:alice.example").unwrap(),
                 "https://alice.example",
                 "Ordinary Realm",
                 Some("summary"),
@@ -1673,10 +1461,9 @@ mod notary_derivation_tests {
                 .any(|event| event.kind.as_str() == "ak.realm.plaintext_visible_services")
         );
 
-        // The bundle is a flat SDK-typed payload, and both its target and its
-        // genesis CAS guard come from the canonical registry contract. This is
-        // the regression for clients that still read the removed flattened
-        // EventKindDescriptor fields and rejected `ak.realm.policy_bundle`.
+        // The bundle is a flat SDK-typed payload. This is the regression for
+        // clients that still read the removed flattened EventKindDescriptor
+        // fields and rejected `ak.realm.policy_bundle`.
         let bundle = events
             .iter()
             .find(|event| event.kind == arkret_sdk::EventKind::RealmPolicyBundle)
@@ -1685,23 +1472,27 @@ mod notary_derivation_tests {
             serde_json::from_value(serde_json::to_value(&bundle.payload).unwrap()).unwrap();
         assert_eq!(typed.policy_revision, 1);
         assert!(!bundle.payload.contains_key("value"));
-        let writes = crate::operation::project_registered_cell_writes(
-            bundle.event(),
-            arkret_sdk::DigestSuite::Sha256,
-        )
-        .unwrap();
-        assert_eq!(writes.len(), 1);
-        assert_eq!(
-            writes[0].cell_id.as_str(),
-            "ak:cell:ak.component.realm.policy_bundle.v1:null"
-        );
-        assert_eq!(bundle.preconditions.len(), 1);
-        assert_eq!(bundle.preconditions[0].cell_id, writes[0].cell_id);
-        assert_eq!(
-            bundle.preconditions[0].predicate.op,
-            arkret_sdk::PredicateOp::HeadEq
-        );
-        assert_eq!(bundle.preconditions[0].predicate.value, Some(Value::Null));
+
+        // A producer Event carries no guard against prior state: no
+        // precondition, no predecessor, no position. The authority decides
+        // placement when it signs the RealmCommit, so the whole class of
+        // removed coordinates is checked against the SDK's own forbidden-field
+        // registry rather than a list copied into this crate.
+        // `AuthoredEvent` serializes as a `{digest_suite, event}` record, so
+        // the registry check has to be handed the Event envelope itself.
+        let envelope =
+            serde_json::to_value(bundle.event()).expect("the authored envelope serializes");
+        if let Some(entry) =
+            arkret_wire::forbidden_wire::forbidden_wire_violation("event_envelope", "*", &envelope)
+        {
+            panic!("authored policy_bundle envelope carries forbidden field {}", entry.id);
+        }
+        for removed in ["preconditions", "cell_writes", "basis", "seal", "frontier"] {
+            assert!(
+                envelope.get(removed).is_none(),
+                "producer Event must not carry {removed}"
+            );
+        }
     }
 
     #[test]
@@ -1715,7 +1506,6 @@ mod notary_derivation_tests {
                     .unwrap(),
                 "did:web:alice.example",
                 "did:web:alice.example",
-                test_authority_notary("did:web:alice.example").unwrap(),
                 "https://alice.example",
                 "Explicit Station Realm",
                 None,
@@ -1748,7 +1538,7 @@ mod notary_derivation_tests {
         let event = build_agent_pcr_create_event(
             "did:web:agent.example",
             agent_resolution(),
-            agent_notary(),
+            agent_governance_station(),
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
@@ -1765,7 +1555,7 @@ mod notary_derivation_tests {
     }
 
     #[test]
-    fn realm_authority_and_relinquish_builders_preserve_distinct_authorization_modes() {
+    fn realm_owner_transfer_and_relinquish_builders_keep_distinct_payload_commitments() {
         let realm = "ak:realm:ASxFeEp6tO9V7cjI3A4hL2nyI_lMtmbnR6TzaYTi-EgH";
         let transfer: arkret_sdk::RealmOwnerTransferPayload = serde_json::from_value(json!({
             "realm_id": realm,
@@ -1785,12 +1575,16 @@ mod notary_derivation_tests {
         let intent =
             build_realm_owner_transfer_control_intent("did:web:alice.example", transfer).unwrap();
         assert_eq!(intent.kind().as_str(), "ak.realm.owner.transfer");
-        assert_eq!(
-            intent
-                .authorization_ref()
-                .map(arkret_sdk::AuthorizationRef::as_str),
-            Some(arkret_wire::REALM_AUTHORITY_ROOT_CELL)
-        );
+        // Neither builder embeds an authorization reference any more: a
+        // producer Event never names the projection state it is authorized
+        // against, and the current governance Station evaluates authority
+        // against the committed projection when it admits the Event.
+        assert!(intent.authorization_ref().is_none());
+        // What still separates the two is what each payload commits to. The
+        // owner transfer names the exact authority-root state it replaces and
+        // carries the successor's independent acceptance.
+        assert!(intent.payload().contains_key("expected_state_digest"));
+        assert!(intent.payload().contains_key("successor_acceptance"));
 
         let relinquish = build_capability_relinquish_control_intent(
             arkret_sdk::RealmId::new(realm).unwrap(),
@@ -1806,6 +1600,10 @@ mod notary_derivation_tests {
         .unwrap();
         assert_eq!(relinquish.kind().as_str(), "ak.capability.relinquish");
         assert!(relinquish.authorization_ref().is_none());
+        // Relinquish is subject-only: it names the grant it gives up and
+        // nothing about the authority root.
+        assert!(!relinquish.payload().contains_key("expected_state_digest"));
+        assert!(relinquish.payload().contains_key("grant_id"));
     }
 
     #[test]

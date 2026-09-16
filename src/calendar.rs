@@ -4,17 +4,40 @@
 //! product and the live Inkson + Soland row exercise exactly the same RSVP
 //! authoring path.
 
-/// Derives the deterministic schedule revision winner from the accepted Realm
-/// event log. The UI calls the same reducer before it authors an RSVP.
+/// Derive the deterministic schedule revision winner from one Strand's own
+/// committed stream page.
+///
+/// The winner is returned as its exact committed reference, because that is
+/// what an RSVP payload binds: a responder may only answer a revision the
+/// current governance Station has admitted, and the commit is the only proof
+/// of that. The UI calls the same reducer before it authors an RSVP.
 pub fn schedule_revision_winner(
-    events: &[arkret_sdk::Event],
+    commits: &[arkret_wire::StreamItem],
     strand_id: &str,
     digest_suite: arkret_sdk::DigestSuite,
-) -> anyhow::Result<arkret_sdk::Hash> {
-    crate::views::kanban::calendar_schedule_revision_winner(events, strand_id, digest_suite)
+) -> anyhow::Result<arkret_wire::CommittedEventRef> {
+    let events: Vec<arkret_sdk::Event> = commits.iter().map(|item| item.event.clone()).collect();
+    let winner =
+        crate::views::kanban::calendar_schedule_revision_winner(&events, strand_id, digest_suite)?;
+    commits
+        .iter()
+        .find(|item| item.event.event_id.event_digest() == winner.as_str())
+        .map(|item| arkret_wire::CommittedEventRef {
+            event_id: item.event.event_id.clone(),
+            commit_id: item.commit.commit_id.clone(),
+            stream_ref: item.commit.stream_ref.clone(),
+            stream_position: item.commit.stream_position,
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!("the schedule revision winner has no commit in this stream page")
+        })
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Author `ak.calendar.rsvp.set` against the deterministic schedule winner.
+///
+/// `schedule_basis` is the exact committed reference of the winning schedule
+/// revision: the payload names the commit, not an Event digest, so a responder
+/// can only answer a revision the current governance Station has admitted.
 pub fn build_calendar_rsvp_event(
     realm_id: &str,
     actor_id: &arkret_sdk::ActorId,
@@ -22,38 +45,29 @@ pub fn build_calendar_rsvp_event(
     status: &str,
     occurrence: Option<&str>,
     calendar_fields: &arkret_sdk::CalendarEventFields,
-    schedule_basis_refs: Vec<arkret_sdk::Hash>,
-    current_rsvp_source: Option<arkret_sdk::Hash>,
+    schedule_basis: arkret_wire::CommittedEventRef,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let schedule_bytes = arkret_sdk::canonical::canonical_json_bytes(calendar_fields)?;
-    let [schedule_basis] = schedule_basis_refs.as_slice() else {
-        anyhow::bail!("RSVP requires exactly one deterministic schedule winner");
-    };
     let schedule = arkret_sdk::CalendarScheduleProjection::from_winner(
-        schedule_basis.clone(),
+        arkret_sdk::Hash::new(schedule_basis.event_id.event_digest())?,
         Some(schedule_bytes),
     );
     let mut authoring = crate::operation::ak_ops::rsvp_authoring(strand_id, status, occurrence)?;
-    authoring.schedule_basis_refs = schedule_basis_refs.clone();
-    let mut causal_refs = schedule_basis_refs;
-    if let Some(source) = current_rsvp_source {
-        causal_refs.push(source);
-    }
-    causal_refs.sort();
-    causal_refs.dedup();
-    Ok(crate::operation::LocalOperation::new(
-        arkret_sdk::calendar::build_rsvp_set_intent(
-            authoring,
-            calendar_fields,
-            &schedule,
-            arkret_sdk::ScopeRef::Realm {
-                realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
-            },
-            actor_id.clone(),
-            crate::clock::now_utc_millis(),
-            causal_refs,
-        )?,
-    ))
+    authoring.schedule_basis_refs = vec![schedule_basis];
+    let payload = authoring
+        .into_payload(calendar_fields, &schedule)
+        .map_err(|error| anyhow::anyhow!("RSVP payload is not authorable: {error}"))?;
+    let intent = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::RsvpSet>::new(
+        arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
+        },
+        actor_id.clone(),
+        payload,
+    )
+    .map_err(|error| anyhow::anyhow!("RSVP draft construction failed: {error}"))?
+    .into_intent(crate::clock::now_utc_millis())
+    .map_err(|error| anyhow::anyhow!("RSVP intent erasure failed: {error}"))?;
+    Ok(crate::operation::LocalOperation::new(intent))
 }
 
 #[cfg(test)]
@@ -83,8 +97,23 @@ mod tests {
                 "accepted",
                 None,
                 &fields,
-                vec![arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap()],
-                None,
+                arkret_wire::CommittedEventRef {
+                    event_id: arkret_sdk::EventId::new(
+                        "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                    )
+                    .unwrap(),
+                    commit_id: arkret_sdk::RealmCommitId::new(
+                        "ak:realm_commit:0196419b-0000-7000-8000-000000000001",
+                    )
+                    .unwrap(),
+                    stream_ref: arkret_wire::CommitStreamRef::Realm {
+                        realm_id: arkret_sdk::RealmId::new(
+                            "ak:realm:AV0aa7N4-6SpEMTq2vRgjNbMjn0vCIqfM5PxnJ-qQpPP",
+                        )
+                        .unwrap(),
+                    },
+                    stream_position: 3,
+                },
             )
             .unwrap();
             assert_eq!(operation.actor_id(), &actor);

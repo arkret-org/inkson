@@ -15,65 +15,11 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{OnceLock, RwLock};
 
 pub use arkret_sdk::events::kinds::EventKind;
-use arkret_sdk::schema::EventCellContractError;
 pub use arkret_sdk::{
-    Audience, AuthoredEvent, CriticalExtension, Event, EventIntent, EventRef, EventRequirements,
-    LatticeOp, LatticeOpType, Precondition, Predicate, PredicateOp, ProducerEventProof,
-    ProjectedCellWrite, ProjectionEffect, ScopeRef, SealBasis,
+    Audience, AuthoredEvent, CriticalExtension, Event, EventIntent, EventRef, ProducerEventProof,
+    ScopeRef,
 };
 use serde_json::Value;
-
-/// Single registry projection evaluator for this client.
-///
-/// v1 removed the producer-written `effects[]` channel: what an Event writes
-/// is derived from `kind + payload` through the generated reducer contract
-/// (`models/event-and-patch.md` §2.4.2). Every inkson call site — authoring
-/// pre-checks, MLS governance state roots and the SDK crates that sit below
-/// `arkret-schema` and take an injected projector — routes through this one
-/// function so no surface can grow a private table of cell writes.
-pub fn project_registered_cell_writes(
-    event: &Event,
-    digest_suite: arkret_sdk::DigestSuite,
-) -> Result<Vec<ProjectedCellWrite>, EventCellContractError> {
-    arkret_sdk::schema::project_registered_cell_writes(event, digest_suite)
-}
-
-/// [`project_registered_cell_writes`] adapted to the SDK's injected
-/// `CellWriteProjector` callback shape (`Result<_, String>`).
-pub fn cell_write_projector(
-    event: &Event,
-    digest_suite: arkret_sdk::DigestSuite,
-) -> Result<Vec<ProjectedCellWrite>, String> {
-    project_registered_cell_writes(event, digest_suite).map_err(|error| error.to_string())
-}
-
-/// The registered cells an intent will write, resolved before authoring.
-///
-/// One definition, owned by the SDK, so a precondition and the admission-side
-/// projection can never disagree about which cell a write names.
-pub fn pre_authoring_cell_writes(
-    intent: &EventIntent,
-    digest_suite: arkret_sdk::DigestSuite,
-) -> Result<Vec<ProjectedCellWrite>, EventCellContractError> {
-    arkret_sdk::pre_authoring_cell_writes(intent, digest_suite)
-}
-
-/// Every registered write of `event` that is fully determined by the signed
-/// Event, i.e. needs no frozen pre-state.
-///
-/// `transition_to` / `apply_patch` / `remove_observed` deliberately stay
-/// unresolved: only a reducer holding accepted pre-state may resolve them, and
-/// a client that invented an operand would be re-asserting a pre-state it never
-/// observed.
-pub fn direct_registered_cell_writes(
-    event: &Event,
-    digest_suite: arkret_sdk::DigestSuite,
-) -> Result<Vec<ProjectionEffect>, EventCellContractError> {
-    Ok(project_registered_cell_writes(event, digest_suite)?
-        .iter()
-        .filter_map(ProjectedCellWrite::as_direct)
-        .collect())
-}
 
 /// Active client-side proof attachment mode. Retained so the settings UI
 /// can surface which signer backend is wired and so the signer bootstrap
@@ -340,10 +286,6 @@ impl LocalOperation {
             .unwrap_or_else(|| self.local_operation_id.as_str())
     }
 
-    pub fn seal_basis(&self) -> Option<&SealBasis> {
-        self.intent.seal_basis()
-    }
-
     /// Adopt a holder-local identity that was allocated before this write could
     /// be built.
     ///
@@ -373,21 +315,6 @@ impl LocalOperation {
         self.intent = self
             .intent
             .with_executed_by(arkret_sdk::ActorId::account(account_id));
-        self
-    }
-
-    pub fn with_causal_refs(mut self, causal_refs: Vec<arkret_sdk::Hash>) -> Self {
-        self.intent = self.intent.with_causal_refs(causal_refs);
-        self
-    }
-
-    /// Pin the CBS basis this write authors against.
-    ///
-    /// Only a producer that cannot re-resolve one needs this: the authoring
-    /// boundary resolves the basis from the accepted Seal view otherwise, and
-    /// leaves a pinned one untouched.
-    pub fn with_seal_basis(mut self, seal_basis: SealBasis) -> Self {
-        self.intent = self.intent.with_seal_basis(seal_basis);
         self
     }
 
@@ -437,9 +364,13 @@ impl LocalOperation {
     }
 }
 
-/// `unsigned` member carrying the holder-local operation identity.
+/// Durable outbound-record field carrying the holder-local operation identity.
+///
+/// It is a local reconciliation key only: producer Events have no holder-local
+/// members, so this never reaches the wire.
 pub(crate) const LOCAL_OPERATION_IDEMPOTENCY_ALIAS: &str = "local_operation_idempotency_alias";
-/// `unsigned` member naming the existing object a non-create write targets.
+/// Durable outbound-record field naming the existing object a non-create write
+/// targets. Local only, for the same reason.
 pub(crate) const LOCAL_TARGET_REF: &str = "local_target_ref";
 
 /// Standard Event builder whose kind is fixed by the SDK payload marker.
@@ -561,10 +492,6 @@ impl TypedOperationBuilder {
         })
     }
 
-    pub fn preconditions(self, preconditions: Vec<Precondition>) -> Self {
-        self.map_intent(|intent| Ok(intent.with_preconditions(preconditions)))
-    }
-
     pub fn circle_id(self, circle_id: impl Into<String>) -> Self {
         self.map_intent(|intent| {
             let realm_id = intent
@@ -599,18 +526,6 @@ impl TypedOperationBuilder {
         self.map_intent(|intent| Ok(intent.with_refs(refs)))
     }
 
-    pub fn causal_refs(self, causal_refs: Vec<arkret_sdk::Hash>) -> Self {
-        self.map_intent(|intent| Ok(intent.with_causal_refs(causal_refs)))
-    }
-
-    pub fn seal_basis(self, seal_basis: SealBasis) -> Self {
-        self.map_intent(|intent| Ok(intent.with_seal_basis(seal_basis)))
-    }
-
-    pub fn requirements(self, requirements: EventRequirements) -> Self {
-        self.map_intent(|intent| Ok(intent.with_requirements(requirements)))
-    }
-
     pub fn created_at(self, created_at: chrono::DateTime<chrono::Utc>) -> Self {
         self.map_intent(|intent| Ok(intent.with_created_at(created_at)))
     }
@@ -633,9 +548,13 @@ impl TypedOperationBuilder {
 }
 
 pub trait EventExt {
-    fn local_operation_idempotency_alias(&self) -> Option<&str>;
+    /// The holder-local key for this write.
+    ///
+    /// A producer Event carries no holder-local members, so once the Event is
+    /// authored its own content-derived id is the only stable key. The
+    /// pre-authoring alias lives on [`LocalOperation`] and in the durable
+    /// outbound record, never on the wire.
     fn local_operation_id(&self) -> &str;
-    fn local_target_ref(&self) -> Option<&str>;
     fn canonical_digest(&self, digest_suite: arkret_sdk::DigestSuite) -> anyhow::Result<String>;
     fn require_proof(&self) -> anyhow::Result<&ProducerEventProof>;
 }
@@ -685,19 +604,8 @@ impl AuthoredEventExt for AuthoredEvent {
 }
 
 impl EventExt for Event {
-    fn local_operation_idempotency_alias(&self) -> Option<&str> {
-        self.unsigned
-            .get(LOCAL_OPERATION_IDEMPOTENCY_ALIAS)
-            .and_then(Value::as_str)
-    }
-
     fn local_operation_id(&self) -> &str {
-        self.local_operation_idempotency_alias()
-            .unwrap_or_else(|| self.event_id.as_str())
-    }
-
-    fn local_target_ref(&self) -> Option<&str> {
-        self.unsigned.get(LOCAL_TARGET_REF).and_then(Value::as_str)
+        self.event_id.as_str()
     }
 
     fn canonical_digest(&self, digest_suite: arkret_sdk::DigestSuite) -> anyhow::Result<String> {
@@ -747,36 +655,32 @@ pub(crate) fn author_intent_for_test(intent: EventIntent) -> arkret_sdk::Authore
     author_intent_for_test_at_seq(intent, 1)
 }
 
-/// [`author_intent_for_test`] at an explicit position in the actor chain.
+/// [`author_intent_for_test`] for one member of a multi-Event unit.
 ///
-/// A unit's members occupy consecutive `actor_seq` values, and their identities
-/// have to differ the way a real chain's do, so a test that authors several
-/// events walks the sequence instead of pinning one value for all of them.
+/// A producer Event has no actor chain, so `nth` only disambiguates the
+/// authoring timestamps of several Events built inside one test.
 #[cfg(test)]
 pub(crate) fn author_intent_for_test_at_seq(
     intent: EventIntent,
-    actor_seq: u64,
+    nth: u64,
 ) -> arkret_sdk::AuthoredEvent {
     intent
-        .author_with_digest_suite(
-            actor_seq,
-            test_authoring_hlc_at_seq(actor_seq),
-            arkret_sdk::DigestSuite::Sha256,
-        )
+        .with_created_at(test_authoring_created_at_at_seq(nth))
+        .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
         .expect("a test intent finalizes")
 }
 
-/// The pinned signing stamp for the first event of a test authoring path.
+/// The pinned authoring timestamp for the first Event of a test path.
 #[cfg(test)]
-pub(crate) fn test_authoring_hlc() -> arkret_sdk::Hlc {
-    test_authoring_hlc_at_seq(1)
+pub(crate) fn test_authoring_created_at() -> chrono::DateTime<chrono::Utc> {
+    test_authoring_created_at_at_seq(1)
 }
 
-/// The pinned signing stamp for position `actor_seq` of a test authoring path.
+/// The pinned authoring timestamp for the `nth` Event of a test path.
 #[cfg(test)]
-pub(crate) fn test_authoring_hlc_at_seq(actor_seq: u64) -> arkret_sdk::Hlc {
-    arkret_sdk::Hlc::new(format!("01970e589d21-{actor_seq:04}-a13f9c2e"))
-        .expect("a pinned test HLC parses")
+pub(crate) fn test_authoring_created_at_at_seq(nth: u64) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::from_timestamp_millis(1_760_000_000_000 + i64::try_from(nth).unwrap_or(0))
+        .expect("a pinned test timestamp parses")
 }
 
 #[cfg(test)]

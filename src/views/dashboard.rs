@@ -34,11 +34,11 @@ impl DashboardContactsSummary {
     }
 }
 
-fn projection_object_state_label(state: arkret_sdk::ProjectionObjectState) -> &'static str {
+fn projection_object_state_label(state: arkret_sdk::ObjectState) -> &'static str {
     match state {
-        arkret_sdk::ProjectionObjectState::Active => "active",
-        arkret_sdk::ProjectionObjectState::Archived => "archived",
-        arkret_sdk::ProjectionObjectState::Redacted => "redacted",
+        arkret_sdk::ObjectState::Active => "active",
+        arkret_sdk::ObjectState::Archived => "archived",
+        arkret_sdk::ObjectState::Redacted => "redacted",
     }
 }
 
@@ -176,7 +176,7 @@ pub fn DashboardPanel(
         // (strand.schema.json). "Recent strands" shows only `active`; `archived`
         // and `redacted` are hidden here. There is NO `deleted` state in the
         // spec, so it is intentionally not referenced.
-        .filter(|strand| strand.state == arkret_sdk::ProjectionObjectState::Active)
+        .filter(|strand| strand.state == arkret_sdk::ObjectState::Active)
         .take(5)
         .collect::<Vec<_>>();
     let visible_notifications = notification_summaries

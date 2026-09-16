@@ -1,48 +1,54 @@
 //! Encrypted Signal receive rail (`ak.self.signal.stream.subscribe.v1`).
 //!
-//! This is the third subscribe engine, alongside [`crate::sync_engine`]
-//! (account aggregate) and [`crate::realm_events_engine`] (per-Realm events).
-//! It is deliberately the poorest of the three: `signal.md` §4.1 gives the rail
-//! no cursor, catch-up, ack or delivery receipt, so this engine persists
-//! nothing, and a reconnect only re-establishes live fanout. Anything here that
-//! looked like a resume position would be a guarantee the protocol does not
-//! make.
+//! This is the momentary-announcement engine, alongside [`crate::sync_engine`]
+//! (account aggregate) and [`crate::realm_events_engine`] (Realm commit
+//! streams). It is deliberately the poorest of the three: the rail has no
+//! cursor, catch-up, ack or delivery receipt, so this engine persists nothing,
+//! and a reconnect only re-establishes live fanout. Anything here that looked
+//! like a resume position would be a guarantee the protocol does not make.
 //!
-//! Admission is entirely garth's [`garth::SignalReceiver`], driven by
-//! [`garth::SignalStreamDriver`]. This module supplies only the two seams that
-//! need host state:
+//! Admission is entirely [`garth::SignalReceiver`]. The client no longer
+//! resolves a sender key of its own: the Station issues the
+//! [`arkret_wire::SignalDeliveryAuthority`] inside the authenticated stream
+//! frame, and the receiver binds the envelope to it, verifies the producer
+//! proof, and enforces the per-endpoint sequence high-water. This module
+//! supplies only the two seams that need host state:
 //!
-//! * [`DirectorySenderKeyResolver`] consumes the exact sender/key/authorization instance in the
-//!   authenticated frame's `delivery_authority`, bound to the active local Account. Local known
-//!   revocation overrides that result; a cached public key alone is never current authorization
-//!   (`signal.md` §1).
 //! * [`MlsSignalDecryptor`] restores the scope's persisted MLS group through the same
 //!   [`crate::signal::restore_signal_mls_session`] helper the send path uses, then opens the AEAD
 //!   through the SDK, which enforces `aead_profile` equality with the group's negotiated
 //!   ciphersuite, epoch equality, the sender nonce prefix domain, the recomputed AAD and the
 //!   per-sender nonce-counter replay window.
+//! * [`InksonSignalSink`] routes the admitted plaintext to the product consumers.
 //!
 //! Product routing then splits four ways: call signalling, message-stream
 //! previews and read receipts go to the app-mounted hubs through
 //! [`crate::runtime::projection::SignalProductSink`], while presence and typing
 //! bodies land in the bounded live projection the chat views read.
+//!
+//! Local revocation still overrides the Station's authority: a cached public
+//! key alone is never current authorization, so a delivery naming a device this
+//! client already knows to be revoked is dropped before decryption.
 
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use garth::{
-    RetrySchedule, RunOptions, SignalReceiveHandlers, SignalRejection, SignalSink, SyncLoopControl,
-    TransportProvider,
-};
+use chrono::{DateTime, Utc};
+use garth::signal::{SignalReceiveOutcome, SignalReceiver, SignalSink, SignalStreamStopReason};
+use garth::RetrySchedule;
 use serde_json::Value;
 
 use crate::config::MultiProfileConfig;
-use crate::runtime::projection::{SignalProductRouter, SignalProductSink};
+use crate::runtime::projection::{AdmittedSignal, SignalProductRouter, SignalProductSink};
 
 /// Failure-backoff bounds, matching the account and realm engines so all three
 /// recover on the same human-scale cadence.
 const BACKOFF_FLOOR: Duration = Duration::from_secs(1);
 const BACKOFF_CEILING: Duration = Duration::from_secs(60);
+
+/// Most live TTL bodies the chat projection retains at once.
+const MAX_LIVE_SIGNAL_BODIES: usize = 512;
 
 /// Runtime inputs consumed by the Signal receive engine. UI frameworks stay in
 /// the app adapter that builds these handles.
@@ -64,89 +70,23 @@ pub struct SignalReceiveEngineContext {
     pub websocket_rail: crate::transport::websocket_rail::WebSocketRail,
 }
 
-/// Fail-closed [`garth::SignalSenderKeyResolver`] over accepted device and
-/// current Agent authority evidence.
-///
-/// Device and Agent authority arrive bound to the exact authenticated stream frame.
-/// No per-Signal self RPC or reusable current authorization cache is involved;
-/// local revocation and full account checks precede producer-proof and AEAD checks.
-///
-/// The recipient Station applies the current device/Agent gate before delivery.
-/// `envelope.seal_ref` selects Realm/scope state and does not replace that current
-/// PCR check. The client binds the returned authority to this envelope and its
-/// authenticated Account, then still verifies the producer signature and E2E data.
-#[derive(Default)]
-pub struct DirectorySenderKeyResolver {
-    state_store: Option<crate::runtime::input::StateStoreHandle>,
-    account: Option<crate::config::ActiveAccountContext>,
-}
-
-impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
-    fn resolve_sender_key<'a>(
-        &'a self,
-        envelope: &'a arkret_wire::SignalEnvelope,
-        delivery_authority: &'a arkret_wire::SignalDeliveryAuthority,
-    ) -> garth::BoxSignalSenderKeyFuture<'a> {
-        Box::pin(async move {
-            let account = self.account.as_ref()?;
-            let store = self.state_store.as_ref()?;
-            let recipient = store.read(|store| store.active_authority())?;
-            if recipient != account.authority {
-                return None;
-            }
-            delivery_authority.validate_for_envelope(envelope).ok()?;
-            if delivery_authority.recipient_account_id != recipient
-                || envelope.expires_at <= crate::clock::now_utc()
-            {
-                return None;
-            }
-            let key = delivery_authority.key.clone();
-            if let Some(device_id) = &envelope.sender_device_id {
-                if crate::identity::device_directory::known_device_revoked(
-                    &envelope.sender_actor_id.to_string(),
-                    device_id.as_str(),
-                ) {
-                    return None;
-                }
-            }
-            let public_key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
-                bytes: arkret_sdk::base64url_decode(key.public_key_b64u.as_str().as_bytes())
-                    .ok()?,
-            };
-            match envelope.sender_device_id.as_ref() {
-                Some(device_id) => garth::VerifiedSignalSenderKey::from_directory_evidence(
-                    public_key,
-                    key.actor.clone(),
-                    device_id.clone(),
-                    key.verification_method,
-                    key.actor.as_account_id()?.clone(),
-                    key.authorization_ref,
-                )
-                .ok(),
-                None => garth::VerifiedSignalSenderKey::from_agent_evidence(
-                    public_key,
-                    key.actor,
-                    key.verification_method,
-                    key.authorization_ref,
-                )
-                .ok(),
-            }
-        })
-    }
-}
-
 /// [`garth::SignalDecryptor`] backed by the persisted MLS group of the
 /// envelope's scope.
 ///
 /// The group is restored per envelope rather than cached: an epoch rotation
 /// must take effect on the very next Signal, and a stale cached group would
 /// open ciphertext under a key the scope has already left.
+///
+/// The sender's current authority is the Station-issued delivery authority the
+/// receiver already bound to this envelope; this decryptor only re-checks the
+/// one fact the Station cannot know, which is whether this client has locally
+/// observed the sending device as revoked.
 pub struct MlsSignalDecryptor {
     state_store: crate::runtime::input::StateStoreHandle,
     secure_store: std::sync::Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
     authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
-    /// §10.1 obliges a receiver to keep a seen-counter set per
+    /// A receiver keeps a seen-counter set per
     /// `(key_ref, epoch, device_id, purpose, aead_profile)`. It is shared
     /// across every envelope this engine opens, and bounded by the SDK.
     replay: Mutex<arkret_sdk::AeadNonceReplayTracker>,
@@ -168,70 +108,193 @@ impl MlsSignalDecryptor {
     }
 }
 
-impl garth::SignalDecryptor for MlsSignalDecryptor {
-    fn open<'a>(
-        &'a self,
-        envelope: &'a arkret_wire::SignalEnvelope,
-        verified_sender: &'a garth::VerifiedSignalSenderKey,
-    ) -> garth::BoxSignalDecryptFuture<'a> {
-        Box::pin(async move {
-            // The MLS exporter only evaluates the group's current epoch
-            // (`crates/mls/src/signal.rs::signal_suite_for`), so the shared restore
-            // helper's epoch gate drops a Signal naming any other epoch rather than
-            // routing around it. No decryption queue, no downgrade, no backfill.
-            let (session, accepted_group_state_ref) = self
-                .state_store
-                .read(|store| {
-                    let session = crate::signal::restore_signal_mls_session(
-                        store,
-                        self.secure_store.as_ref(),
-                        &envelope.scope_ref,
-                        &self.authority,
-                        &self.device_id,
-                        envelope.encrypted_payload.epoch,
-                    )?;
-                    let accepted_group_state_ref = store
-                        .mls_group_state_ref_for_scope(
-                            &envelope.scope_ref,
-                            &session.group.group_id(),
-                            session.group.epoch(),
-                        )
-                        .map_err(anyhow::Error::msg)?;
-                    Ok::<_, anyhow::Error>((session, accepted_group_state_ref))
-                })
-                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-            let group = session.group;
-            let mut replay = self.replay.lock().map_err(|error| {
-                garth::Error::Protocol(format!("signal replay tracker poisoned: {error}"))
-            })?;
-            let authority = match verified_sender.authority() {
-                garth::VerifiedSignalSenderAuthority::AccountDevice {
-                    device_authorize_event_id,
-                    ..
-                } => arkret_sdk::mls::SignalSenderAuthority::AccountDevice {
-                    public_key: verified_sender.public_key(),
-                    device_authorize_event_id,
-                },
-                garth::VerifiedSignalSenderAuthority::Agent {
-                    agent_key_authorize_event_id,
-                    ..
-                } => arkret_sdk::mls::SignalSenderAuthority::Agent {
-                    public_key: verified_sender.public_key(),
-                    verification_method: &envelope.proof.verification_method,
-                    agent_key_authorize_event_id,
-                },
-            };
-            group
-                .open_signal_envelope(
-                    envelope,
-                    session.content_scheme,
-                    authority,
-                    accepted_group_state_ref.as_str(),
-                    &mut replay,
+impl garth::signal::SignalDecryptor for MlsSignalDecryptor {
+    async fn decrypt(&self, envelope: &arkret_wire::SignalEnvelope) -> garth::Result<Vec<u8>> {
+        if let Some(device_id) = &envelope.sender_device_id
+            && crate::identity::device_directory::known_device_revoked(
+                &envelope.sender_actor_id.to_string(),
+                device_id.as_str(),
+            )
+        {
+            return Err(garth::Error::Protocol(
+                "Signal sender device is locally known to be revoked".to_owned(),
+            ));
+        }
+        // The MLS exporter only evaluates the group's current epoch, so the
+        // shared restore helper's epoch gate drops a Signal naming any other
+        // epoch rather than routing around it. No decryption queue, no
+        // downgrade, no backfill.
+        let session = self
+            .state_store
+            .read(|store| {
+                crate::signal::restore_signal_mls_session(
+                    store,
+                    self.secure_store.as_ref(),
+                    &envelope.scope_ref,
+                    &self.authority,
+                    &self.device_id,
+                    envelope.encrypted_payload.epoch,
                 )
-                .map_err(|error| garth::Error::Protocol(error.to_string()))
-        })
+            })
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let group = session.group;
+        let mut replay = self.replay.lock().map_err(|error| {
+            garth::Error::Protocol(format!("signal replay tracker poisoned: {error}"))
+        })?;
+        group
+            .open_signal_envelope(envelope, session.content_scheme, &mut replay)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
+}
+
+/// One live TTL body retained under its projection key.
+#[derive(Clone, Debug)]
+struct LiveSignalBody {
+    payload_sequence: u64,
+    expires_at: DateTime<Utc>,
+    body: Value,
+}
+
+/// The bounded in-memory presence / typing projection the chat views read.
+///
+/// The rail allows loss, duplication and reordering, so the per-key sequence
+/// guard is what keeps a reordered older presence from overwriting a newer one.
+/// Everything here is memory-only: presence is a TTL projection, not durable
+/// state, and it is a host concept with no wire form.
+#[derive(Clone, Debug, Default)]
+pub struct LiveSignalProjection {
+    bodies: BTreeMap<String, LiveSignalBody>,
+}
+
+impl LiveSignalProjection {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Drop every body at or past its effective expiry. Returns `true` when
+    /// the stored set changed.
+    pub fn expire(&mut self, now: DateTime<Utc>) -> bool {
+        let before = self.bodies.len();
+        self.bodies.retain(|_, live| live.expires_at > now);
+        self.bodies.len() != before
+    }
+
+    /// Fold one already-serialized body in under its own projection key.
+    /// Returns `true` when the stored set changed and the host projection must
+    /// be rewritten.
+    pub fn apply(
+        &mut self,
+        key: String,
+        payload_sequence: u64,
+        expires_at: DateTime<Utc>,
+        body: Value,
+        now: DateTime<Utc>,
+    ) -> bool {
+        let mut changed = self.expire(now);
+        if expires_at <= now {
+            return changed;
+        }
+        if let Some(existing) = self.bodies.get(&key)
+            && existing.payload_sequence >= payload_sequence
+        {
+            return changed;
+        }
+        self.bodies.insert(
+            key,
+            LiveSignalBody {
+                payload_sequence,
+                expires_at,
+                body,
+            },
+        );
+        changed = true;
+        while self.bodies.len() > MAX_LIVE_SIGNAL_BODIES {
+            let Some(soonest) = self
+                .bodies
+                .iter()
+                .min_by_key(|(_, live)| live.expires_at)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            self.bodies.remove(&soonest);
+        }
+        changed
+    }
+
+    /// Fold one admitted Signal in, deriving its projection key from the
+    /// verified sender domain and the typed profile.
+    ///
+    /// An Agent sender is keyed by the public key it signed with, so a key
+    /// rotation would otherwise leave the retired key's body live until its TTL
+    /// passed. The newest key is the only active endpoint for that Agent, so
+    /// earlier ones are collapsed first.
+    pub fn apply_admitted(
+        &mut self,
+        signal: &AdmittedSignal,
+        body: Value,
+        now: DateTime<Utc>,
+    ) -> garth::Result<bool> {
+        let key = live_signal_projection_key(signal)?;
+        if matches!(
+            signal.sender_endpoint(),
+            arkret_sdk::SignalSequenceEndpoint::AgentKey { .. }
+        ) {
+            let prefix = format!("{}|{}|", signal.kind().as_str(), signal.actor_id());
+            self.bodies
+                .retain(|existing, _| !existing.starts_with(&prefix) || existing == &key);
+        }
+        Ok(self.apply(
+            key,
+            signal.payload_sequence(),
+            signal.expires_at,
+            body,
+            now,
+        ))
+    }
+
+    /// The retained bodies, in projection-key order.
+    pub fn bodies(&self) -> Vec<Value> {
+        self.bodies.values().map(|live| live.body.clone()).collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.bodies.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bodies.is_empty()
+    }
+}
+
+/// The `(kind, actor, sender endpoint, target)` coordinates one live body is
+/// stored under. Only the two TTL profiles have a live projection; any other
+/// admitted kind is a caller error rather than a silently dropped body.
+pub fn live_signal_projection_key(signal: &AdmittedSignal) -> garth::Result<String> {
+    let target = match &signal.payload {
+        arkret_sdk::SignalPlaintext::Presence(_) => String::new(),
+        arkret_sdk::SignalPlaintext::Typing(typing) => typing.strand_id.to_string(),
+        _ => {
+            return Err(garth::Error::Protocol(
+                "only presence and typing have a live projection key".to_owned(),
+            ));
+        }
+    };
+    let endpoint = match signal.sender_endpoint() {
+        arkret_sdk::SignalSequenceEndpoint::AccountDevice { device_id } => {
+            device_id.as_str().to_owned()
+        }
+        arkret_sdk::SignalSequenceEndpoint::AgentKey { public_key_digest } => {
+            public_key_digest.as_str().to_owned()
+        }
+    };
+    Ok(format!(
+        "{}|{}|{}|{}",
+        signal.kind().as_str(),
+        signal.actor_id(),
+        endpoint,
+        target
+    ))
 }
 
 /// Routes admitted plaintext to the three product consumers.
@@ -242,74 +305,57 @@ struct InksonSignalSink {
 }
 
 impl SignalSink for InksonSignalSink {
-    async fn deliver<'a>(
-        &'a self,
-        envelope: &'a arkret_wire::SignalEnvelope,
-        plaintext: garth::SignalPlaintext,
-    ) -> garth::Result<()> {
-        {
-            match plaintext.kind.as_str() {
-                garth::SIGNAL_PLAINTEXT_KIND_CALL => {
-                    // The decrypted body verbatim: `CallSignalPlaintext` is a
-                    // closed `deny_unknown_fields` shape, so the
-                    // envelope-derived fields the presence projection wants
-                    // would make every call signal fail to decode. The router
-                    // already receives the envelope alongside it.
-                    self.products
-                        .call_signal(envelope, decrypted_body_value(&plaintext)?)
-                        .await;
-                }
-                garth::MESSAGE_STREAM_KIND => {
-                    self.products.message_stream(&plaintext).await;
-                }
-                garth::SIGNAL_PLAINTEXT_KIND_PRESENCE | SIGNAL_PLAINTEXT_KIND_TYPING => {
-                    self.apply_live_body(&plaintext)?;
-                }
-                SIGNAL_PLAINTEXT_KIND_READ_RECEIPT => {
-                    // Not a live body: presence and typing are TTL projections
-                    // that must disappear, whereas a read position stays true
-                    // after the receipt that carried it expires
-                    // (`read-receipts.md` §1.1).
-                    //
-                    // The Realm policy travels with it because §2.5 puts the
-                    // `disabled` / `private` discard on the receiving client:
-                    // the receipt is inside the ciphertext, so the Sync Service
-                    // could not have filtered it.
-                    let policy = self.realm_read_receipt_policy(&plaintext);
-                    self.products.read_receipt(&plaintext, &policy);
-                }
-                other => {
-                    // Admitted and authenticated, but no local consumer.
-                    // Dropping it is correct on a rail with no delivery
-                    // guarantee; tracing it keeps the gap visible.
-                    tracing::debug!(kind = other, "admitted Signal has no local product route");
-                }
+    /// One receiver decision.
+    ///
+    /// Stale and expired outcomes are not failures: the rail allows loss,
+    /// duplication and reordering, so the receiver's sequence high-water and
+    /// TTL gate discarding an envelope is the ordinary path. Only an admitted
+    /// plaintext reaches a product consumer.
+    async fn handle(&self, outcome: SignalReceiveOutcome) -> garth::Result<()> {
+        let SignalReceiveOutcome::Accepted {
+            domain,
+            plaintext,
+            effective_expires_at,
+        } = outcome
+        else {
+            return Ok(());
+        };
+        let signal = AdmittedSignal {
+            expires_at: effective_expires_at,
+            domain: *domain,
+            payload: plaintext,
+        };
+        match signal.kind() {
+            arkret_sdk::SignalPlaintextKind::CallSignal => {
+                // The decrypted body verbatim: `CallSignalPlaintext` is a
+                // closed `deny_unknown_fields` shape, so the
+                // envelope-derived fields the presence projection wants
+                // would make every call signal fail to decode.
+                self.products
+                    .call_signal(&signal, decrypted_body_value(&signal)?)
+                    .await;
             }
-            Ok(())
+            arkret_sdk::SignalPlaintextKind::MessageStream => {
+                self.products.message_stream(&signal).await;
+            }
+            arkret_sdk::SignalPlaintextKind::Presence | arkret_sdk::SignalPlaintextKind::Typing => {
+                self.apply_live_body(&signal)?;
+            }
+            arkret_sdk::SignalPlaintextKind::ReadReceipt => {
+                // Not a live body: presence and typing are TTL projections
+                // that must disappear, whereas a read position stays true
+                // after the receipt that carried it expires
+                // (`read-receipts.md` §1.1).
+                //
+                // The Realm policy travels with it because §2.5 puts the
+                // `disabled` / `private` discard on the receiving client:
+                // the receipt is inside the ciphertext, so the Station
+                // could not have filtered it.
+                let policy = self.realm_read_receipt_policy(&signal);
+                self.products.read_receipt(&signal, &policy);
+            }
         }
-    }
-
-    fn idle(&self, now: chrono::DateTime<chrono::Utc>) {
-        self.products.advance_clock(now);
-        self.expire_live_bodies(now);
-    }
-
-    fn rejected(
-        &self,
-        envelope: &arkret_wire::SignalEnvelope,
-        rejection: SignalRejection,
-        error: &garth::Error,
-    ) {
-        // Sender identity is already server-visible on this rail, so naming it
-        // here leaks nothing the transport did not. The plaintext never exists
-        // for a rejected envelope, so nothing product-level can be logged.
-        tracing::warn!(
-            rejection = ?rejection,
-            %error,
-            actor = %envelope.sender_actor_id,
-            endpoint = ?envelope.sender_device_id,
-            "inbound Signal failed receiver admission and was dropped"
-        );
+        Ok(())
     }
 }
 

@@ -34,14 +34,12 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
         "ak:event:AdU2TJKBkRBC1Jk1dY8ExFkUgDvhnVG8jmKT5BdWMeYp",
     );
 
-    fixture::install_accepted_mls_epoch(
+    fixture::install_accepted_mls_group(
         &mut state,
         &arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         },
-        "mls_rfc9420",
     );
-    super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     ensure_creator_mls_checkpoint(
         &mut state,
@@ -58,7 +56,6 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
     let mut overdue = state.mls_checkpoint_for(realm).unwrap();
     overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
     state.save_mls_checkpoint(realm, overdue).unwrap();
-    super::seed_next_governance_proof(&mut state, realm);
 
     let target =
         arkret_sdk::EventId::new("ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM").unwrap();
@@ -103,14 +100,12 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
             }]
         }),
     );
-    fixture::install_accepted_mls_epoch(
+    fixture::install_accepted_mls_group(
         &mut state,
         &arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         },
-        "mls_rfc9420",
     );
-    super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     ensure_creator_mls_checkpoint(
         &mut state,

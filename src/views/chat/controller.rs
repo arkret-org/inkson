@@ -1228,15 +1228,6 @@ impl ChatController {
                 .and_then(|channel| channel.scope_circle.as_ref())
                 .map(|scope| scope.circle_id.clone()),
         };
-        let actor_key = arkret_sdk::ActorId::account(context.authority.clone());
-        let response_heads = self
-            .poll_cards
-            .read()
-            .iter()
-            .find(|card| card.poll_ref.as_ref() == Some(&poll_ref))
-            .and_then(|card| card.response_heads.get(&actor_key))
-            .cloned()
-            .unwrap_or_default();
         let state_store = crate::app::SessionContext::get().state_store;
         let base_url = context.base_url;
         let realm_id = context.selected_realm_id;
@@ -1254,8 +1245,7 @@ impl ChatController {
                         &strand_id,
                         poll_ref.as_str(),
                         &[option_id],
-                    )?
-                    .with_causal_refs(response_heads);
+                    )?;
                     super::poll_submission::submit_poll_operation(
                         &api,
                         state_store,

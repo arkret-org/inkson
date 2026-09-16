@@ -15,13 +15,8 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use arkret_wire::event_kind_str;
 use dioxus::prelude::Signal;
-use garth::mls::welcome_admission::{
-    device_authorization_from_record, device_revoked, mls_welcome_batch_is_exclusively_for_realm,
-    recovery_public_key_secret_storage_backup_present, recovery_setup_prompt_required,
-    retain_mls_welcomes_for_realm,
-};
+use garth::mls::backup_selection::recovery_setup_prompt_required;
 use serde_json::Value;
 
 use super::server_key;
@@ -142,6 +137,42 @@ pub(crate) fn encryption_floor_prompt_acknowledged(store: &LocalStateStore) -> b
         .is_some()
 }
 
+/// Whether one account-viewer device row reports an accepted authorization.
+///
+/// `None` means the row does not carry the fact at all, which is not the same
+/// answer as "not authorized" and must keep the caller waiting rather than
+/// prompting for a fresh authorization.
+fn device_authorization_from_record(device: &Value) -> Option<bool> {
+    if device_revoked(device) {
+        return Some(false);
+    }
+    device
+        .get("authorized")
+        .and_then(Value::as_bool)
+        .or_else(|| {
+            device
+                .get("device_authorize_event_id")
+                .and_then(Value::as_str)
+                .map(|event_id| !event_id.trim().is_empty())
+        })
+}
+
+/// Whether one account-viewer device row reports a revoked device.
+fn device_revoked(device: &Value) -> bool {
+    device
+        .get("revoked_at")
+        .is_some_and(|value| !value.is_null())
+        || device.get("revoked").and_then(Value::as_bool) == Some(true)
+        || device.get("state").and_then(Value::as_str) == Some("revoked")
+}
+
+/// Whether the account has any `recovery_public_key` secret-storage backup at
+/// all, in any series.
+fn recovery_public_key_secret_storage_backup_present(list_payload: &Value) -> bool {
+    crate::mls::runtime::iter_backup_bodies(list_payload)
+        .any(crate::mls::runtime::is_recovery_public_key_account_secret_backup)
+}
+
 pub(crate) fn current_device_authorization_from_account_viewer(
     viewer: &Value,
     configured_device_id: &str,
@@ -240,7 +271,6 @@ pub(crate) fn mls_recovery_setup_missing(
         return false;
     }
     local_state_has_encrypted_realm(state_store)
-        || !crate::mls::account_recovery::select_mls_history_backups(list_payload).is_empty()
 }
 
 pub(crate) fn mls_welcome_bootstrap_key(
@@ -863,58 +893,16 @@ pub(crate) struct MlsWelcomeBootstrapOutcome {
     pub(crate) applied: usize,
 }
 
-fn should_ack_mls_welcome_batch(
-    can_ack_welcome_batch: bool,
-    welcome_outcome: &crate::mls::runtime::WelcomeApplyOutcome,
-    durable_snapshot_present: bool,
-    persist_error: Option<&str>,
+/// Whether the drained device-message batch may be acknowledged.
+///
+/// An ACK deletes the server-side copy, so a batch is only safe to acknowledge
+/// once every message it carried has been durably journalled: a partially
+/// journalled or unpersisted batch must be redelivered instead.
+fn should_ack_device_message_batch(
+    journalled_every_message: bool,
+    durable_persist_error: Option<&str>,
 ) -> bool {
-    can_ack_welcome_batch
-        && welcome_outcome.failed == 0
-        && (welcome_outcome.applied > 0 || welcome_outcome.skipped_stale > 0)
-        && durable_snapshot_present
-        && persist_error.is_none()
-}
-
-fn merge_durable_local_mls_welcomes_for_realm(
-    messages_value: &mut Value,
-    local_inbox: &[Value],
-    realm_id: &str,
-) -> Result<usize, String> {
-    // Account subscribe and the explicit query are two views of one queue. The
-    // sync dispatcher may durably journal an envelope and ACK the remote batch
-    // before this realm-specific bootstrap runs, so recovery must replay that
-    // same journal rather than depend on a second server fetch.
-    let messages = messages_value
-        .get_mut("messages")
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| "device messages response omits messages array".to_owned())?;
-    let mut merged = 0;
-    let now = crate::clock::now_utc();
-
-    for local in crate::mls::runtime::collect_mls_welcome_messages_for_realm(local_inbox, realm_id)
-    {
-        if crate::state::to_device_message_expired(&local, now) {
-            continue;
-        }
-        let local_key = crate::state::to_device_message_dedup_key(&local)?;
-        let duplicate = messages.iter().find(|message| {
-            crate::state::to_device_message_dedup_key(message)
-                .is_ok_and(|message_key| message_key == local_key)
-        });
-        if let Some(existing) = duplicate {
-            if existing != &local {
-                return Err(format!(
-                    "device_message_conflict: envelope changed for {local_key}"
-                ));
-            }
-            continue;
-        }
-        messages.push(local);
-        merged += 1;
-    }
-
-    Ok(merged)
+    journalled_every_message && durable_persist_error.is_none()
 }
 
 pub(crate) async fn bootstrap_mls_welcome_for_realm(
@@ -943,6 +931,20 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     .await
 }
 
+/// Drain this device's to-device queue and join every scope it has been
+/// Welcomed into.
+///
+/// A Welcome is no longer an Event and there is no separate Welcome-ref
+/// discovery endpoint: the governance Station commits MlsWelcomeDelivery
+/// objects in the same transaction as the ak.mls.commit they name and delivers
+/// them through the ordinary to-device queue. So the whole bootstrap is: drain
+/// the queue into the durable inbox, let the artifact consumer resolve each
+/// delivery's accepted Commit on the scope's own independent stream and install
+/// it, then acknowledge the batch once it is durably journalled.
+///
+/// `scope` only selects which scope this activation reports on. The drain
+/// itself is account-wide, because one queue batch can carry deliveries for
+/// several scopes and discarding the others would lose them at the ACK.
 pub(crate) async fn bootstrap_mls_welcome_for_scope(
     base_url: String,
     session_credential: String,
@@ -957,8 +959,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
         .realm_id_opt()
         .ok_or_else(|| "Welcome requires a Realm scope".to_owned())?
         .to_string();
-    let circle_id = scope.circle_id().map(|id| id.as_str());
-    if session_credential.trim().is_empty() || realm_id.trim().is_empty() {
+    if session_credential.trim().is_empty() {
         return Ok(MlsWelcomeBootstrapOutcome::default());
     }
 
@@ -971,100 +972,37 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
     .await
     .map_err(|error| error.display())?;
     let ack_token = messages.ack_token.clone();
+    let delivered = messages.messages.len();
 
-    // Runs on every target now that OpenMLS builds + runs under wasm32
-    // (the browser uses the in-tree OpenMLS via the `js` feature). Previously
-    // the wasm branch discarded the device messages and returned the default
-    // outcome, which is why a fresh browser never applied a pending Welcome
-    // and showed empty/locked encrypted Realms.
-    let mut messages_value =
-        serde_json::to_value(&messages).map_err(|error| format!("device messages: {error}"))?;
-    let mut can_ack_welcome_batch = circle_id.is_none()
-        && mls_welcome_batch_is_exclusively_for_realm(&messages_value, &realm_id);
-    retain_mls_welcomes_for_realm(&mut messages_value, &realm_id)?;
-    let local_inbox = state_store.read(|store| store.welcome_inbox_for_scope(&scope));
-    let replayed_local_welcomes =
-        merge_durable_local_mls_welcomes_for_realm(&mut messages_value, &local_inbox, &realm_id)?;
-    if let Some(messages) = messages_value
-        .get_mut("messages")
-        .and_then(Value::as_array_mut)
-    {
-        can_ack_welcome_batch &= messages.iter().all(|message| {
-            message
-                .get("content")
-                .and_then(|content| {
-                    serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(content.clone()).ok()
-                })
-                .is_some_and(|payload| payload.governance_binding.effective_scope() == &scope)
-        });
-        messages.retain(|message| {
-            message
-                .get("content")
-                .and_then(|content| {
-                    serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(content.clone()).ok()
-                })
-                .is_some_and(|payload| payload.governance_binding.effective_scope() == &scope)
-        });
-        if messages.len() > 4 {
-            messages.truncate(4);
-            can_ack_welcome_batch = false;
-        }
-    }
-    if replayed_local_welcomes > 0 {
-        tracing::debug!(
-            realm = %realm_id,
-            replayed_local_welcomes,
-            "replayed MLS welcome envelopes from the durable to-device dispatcher inbox"
-        );
-    }
-    let api = crate::transport::auth::authed_api_ready(&base_url, session_credential.clone())
-        .await
-        .map_err(|error| format!("MLS governance proof client: {error}"))?;
-    let has_welcome = messages_value
-        .get("messages")
-        .and_then(Value::as_array)
-        .is_some_and(|messages| {
-            messages.iter().any(|message| {
-                message.get("kind").and_then(Value::as_str) == Some(event_kind_str::MLS_WELCOME)
-            })
-        });
-    if has_welcome {
-        let seal_view = api
-            .event_submitter()
-            .map_err(|error| format!("MLS governance proof frontier client: {error}"))?
-            .seals_frontier_realm_view(&realm_id)
+    // The durable inbox is the only source the Welcome installer reads, so the
+    // batch is journalled before anything is installed or acknowledged.
+    let journalled = if messages.messages.is_empty() {
+        0
+    } else {
+        state_store.write(|store| store.ingest_to_device_messages(&messages.messages))
+    };
+    if journalled > 0 {
+        let barrier = state_store
+            .read(crate::state::LocalStateStore::begin_durable_flush)
+            .map_err(|error| format!("begin durable to-device journal: {error}"))?;
+        barrier
+            .wait()
             .await
-            .map_err(|error| format!("refresh accepted Seal view before Welcome proof: {error}"))?;
-        state_store.write(|store| {
-            store.set_realm_seal_view(
-                realm_id.clone(),
-                crate::state::LocalSealView {
-                    frontier: seal_view
-                        .seal_basis
-                        .leaves
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect(),
-                    // The Station frontier response does not carry a state root.
-                    state_root: None,
-                    ..Default::default()
-                },
-            );
-        });
+            .map_err(|error| format!("persist the to-device Welcome journal: {error}"))?;
     }
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    if has_welcome {
-        for reference in crate::mls::runtime::known_welcome_event_refs(&messages_value)? {
-            crate::mls::accepted_artifact::fetch_ref(&api, state_store.clone(), &reference)
-                .await
-                .map_err(|error| error.to_string())?;
-        }
-    }
-    if has_welcome {
+
+    let installed_before =
+        state_store.read(|store| store.mls_checkpoint_for_scope(&scope).is_some());
+    let pending_welcomes = state_store.read(|store| {
+        !crate::mls::welcome_delivery::pending_welcome_deliveries(&store.to_device_inbox())
+            .is_empty()
+    });
+    if pending_welcomes {
         // Enrollment or recovery must already have installed the account MLS
         // root. Re-commit it durably before joining so a page unload cannot
         // leave a snapshot no local secret can open; a Welcome must never mint
         // a replacement root.
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         crate::mls::runtime::ensure_existing_account_mls_secret_durable(
             secure_store.as_ref(),
             &authority,
@@ -1072,74 +1010,20 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
         .await
         .map_err(|error| format!("durably persisting the account MLS secret failed: {error}"))?;
     }
-    let snapshot_before = state_store.read(|store| {
-        store
-            .mls_checkpoint_for_effective_scope(&realm_id, circle_id)
-            .is_some()
-    });
-    let mut converged =
-        crate::mls::runtime::converge_accepted_mls_artifacts(state_store, &authority, &device_id)
-            .await?;
-    if !state_store.read(|store| {
-        store
-            .mls_checkpoint_for_effective_scope(&realm_id, circle_id)
-            .is_some()
-    }) {
-        converged +=
-            discover_mls_welcome_for_scope(&api, state_store, &authority, &device_id, &scope)
-                .await?;
-    }
-    let snapshot_after = state_store.read(|store| {
-        store
-            .mls_checkpoint_for_effective_scope(&realm_id, circle_id)
-            .is_some()
-    });
-    let consumable_claims = state_store.read(|store| {
-        crate::mls::runtime::accepted_welcome_consume_candidates(
-            &store.accepted_mls_artifact_snapshot().snapshot,
-            &scope,
-        )
-    });
-    let welcome_outcome = crate::mls::runtime::WelcomeApplyOutcome {
-        applied: usize::from(!snapshot_before && snapshot_after && converged > 0),
-        failed: 0,
-        skipped_stale: usize::from(snapshot_before && snapshot_after),
-        first_error: None,
-        consumable_claims,
-    };
+    let api = crate::transport::auth::authed_api_ready(&base_url, session_credential.clone())
+        .await
+        .map_err(|error| format!("MLS Welcome stream client: {error}"))?;
+    let applied = crate::mls::runtime::converge_accepted_mls_artifacts(
+        &api,
+        state_store,
+        &authority,
+        &device_id,
+    )
+    .await?;
+    let installed_after =
+        state_store.read(|store| store.mls_checkpoint_for_scope(&scope).is_some());
 
-    // Persist Welcome envelopes in the local to-device inbox as well. This
-    // bootstrap path fetches and acknowledges them without passing through the
-    // normal sync engine, so the explicit ingest preserves the same durable
-    // device-message accounting as an ordinary sync delivery.
-    if !messages.messages.is_empty() {
-        let ingested =
-            state_store.write(|store| store.ingest_to_device_messages(&messages.messages));
-        tracing::debug!(
-            realm = %realm_id,
-            ingested,
-            "ingested MLS welcome envelopes into to-device inbox for history provider discovery"
-        );
-    }
-
-    // Welcomes were present but some/all failed to apply: report (do not fail
-    // the boot when others succeeded). A totally-empty welcome set has
-    // `failed == 0` and is silent.
-    if welcome_outcome.failed > 0 {
-        tracing::warn!(
-            realm = %realm_id,
-            applied = welcome_outcome.applied,
-            failed = welcome_outcome.failed,
-            first_error = welcome_outcome.first_error.as_deref().unwrap_or(""),
-            "some MLS welcome(s) failed to apply"
-        );
-        if let Some(error) = terminal_welcome_apply_error(&welcome_outcome) {
-            return Err(error);
-        }
-    }
-
-    let applied = welcome_outcome.applied;
-    if applied > 0 || welcome_outcome.skipped_stale > 0 {
+    if applied > 0 {
         let barrier = state_store
             .read(crate::state::LocalStateStore::begin_durable_flush)
             .map_err(|error| format!("begin durable MLS Welcome persist: {error}"))?;
@@ -1148,52 +1032,22 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
             .await
             .map_err(|error| format!("persist MLS Welcome state: {error}"))?;
     }
-    if applied == 0 && welcome_outcome.skipped_stale == 0 {
-        return Ok(MlsWelcomeBootstrapOutcome::default());
-    }
-    if let Some(error) = state_store.read(|store| store.persist_error()) {
+    let persist_error = state_store.read(|store| store.persist_error());
+    if applied > 0
+        && let Some(error) = persist_error.as_deref()
+    {
         return Err(format!(
             "local state was not durably persisted after MLS Welcome: {error}"
         ));
     }
 
-    for candidate in &welcome_outcome.consumable_claims {
-        let candidate = candidate.clone();
-        let consume_request = crate::mls::runtime::sign_welcome_consume_request(
-            secure_store.as_ref(),
-            &authority,
-            &device_id,
-            &candidate,
-        )
-        .await?;
-        let key_package_id = candidate.key_package_id.clone();
-        let consume = crate::transport::auth::with_endpoint_clients(
-            &base_url,
-            session_credential.clone(),
-            None,
-            |clients| async move { clients.mls().consume_key_package(&consume_request).await },
-        )
-        .await
-        .map_err(|error| error.display())?;
-        if consume
-            .consume_receipt
-            .recipient_durable_receipt
-            .key_package_ref
-            .as_str()
-            != key_package_id
-        {
-            return Err(format!(
-                "MLS KeyPackage consume did not confirm {key_package_id}"
-            ));
-        }
-    }
-
     if applied > 0
         && let Some(needs_mls_backup) = needs_mls_backup
     {
-        // Applying a Welcome creates/imports the local account MLS secret before
-        // the user necessarily sends an encrypted message. Back it up with the
-        // cached recovery public key when available, otherwise surface the prompt.
+        // Applying a Welcome imports the local account MLS secret before the
+        // user necessarily sends an encrypted message. Back it up with the
+        // cached recovery public key when available, otherwise surface the
+        // prompt.
         crate::components::maybe_auto_backup_mls_after_encrypted_write(
             base_url.clone(),
             session_credential.clone(),
@@ -1206,65 +1060,21 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
         .await;
     }
 
-    let Some(_snapshot) =
-        state_store.read(|store| store.mls_checkpoint_for_effective_scope(&realm_id, circle_id))
-    else {
-        return Err("MLS Welcome batch had no durable local MLS snapshot".to_owned());
-    };
-    if applied > 0 || welcome_outcome.skipped_stale > 0 {
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let consumed_pairwise = welcome_outcome.consumable_claims.iter().any(|candidate| {
-            matches!(
-                candidate.recipient,
-                arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise { .. }
-            )
-        });
-        let consumed_device = welcome_outcome.consumable_claims.iter().any(|candidate| {
-            matches!(
-                candidate.recipient,
-                arkret_sdk::MlsWelcomeRecipient::Device { .. }
-            )
-        });
-        if consumed_device {
-            let consumed = welcome_outcome
-                .consumable_claims
-                .iter()
-                .filter(|candidate| {
-                    matches!(
-                        candidate.recipient,
-                        arkret_sdk::MlsWelcomeRecipient::Device { .. }
-                    )
-                })
-                .map(|candidate| candidate.key_package_id.as_str())
-                .collect::<std::collections::BTreeSet<_>>();
-            let mut inventory = crate::mls::runtime::load_mls_key_package_inventory(
-                secure_store.as_ref(),
-                &authority,
-                &device_id,
-            )
-            .map_err(|error| format!("load claimed MLS KeyPackage inventory: {error}"))?;
-            inventory.entries.retain(|_, entry| {
-                !consumed.contains(entry.keypackage_id.as_str())
-                    && !consumed.contains(entry.keypackage_ref.as_str())
-            });
-            crate::mls::runtime::store_mls_key_package_inventory(
-                secure_store.as_ref(),
-                &authority,
-                &device_id,
-                &inventory,
-            )
-            .map_err(|error| format!("store claimed MLS KeyPackage inventory: {error}"))?;
-            ensure_local_mls_key_package_inventory(
-                base_url.clone(),
-                session_credential.clone(),
-                authority.clone(),
-                device_id.clone(),
-            )
-            .await?;
-        }
-        if consumed_pairwise {
+    if applied > 0 {
+        // Joining consumed one of this device's published single-use
+        // KeyPackages, so refill the inventory before the next invite can
+        // fail with `mls_keypackage_not_found`.
+        ensure_local_mls_key_package_inventory(
+            base_url.clone(),
+            session_credential.clone(),
+            authority.clone(),
+            device_id.clone(),
+        )
+        .await?;
+        if state_store.read(|store| store.realm_projection_is_minimal_metadata(&realm_id)) {
             let typed_realm_id = arkret_sdk::RealmId::new(realm_id.clone())
                 .map_err(|error| format!("invalid pairwise Welcome Realm id: {error}"))?;
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             crate::mls::runtime::delete_mls_pairwise_key_package_publish_marker(
                 secure_store.as_ref(),
                 &authority,
@@ -1285,13 +1095,8 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
         }
     }
 
-    let persist_error = state_store.read(|store| store.persist_error());
-    if should_ack_mls_welcome_batch(
-        can_ack_welcome_batch,
-        &welcome_outcome,
-        true,
-        persist_error.as_deref(),
-    ) && let Some(ack_token) = ack_token
+    if should_ack_device_message_batch(journalled == delivered, persist_error.as_deref())
+        && let Some(ack_token) = ack_token
         && let Err(error) = crate::transport::auth::with_endpoint_clients(
             &base_url,
             session_credential.clone(),
@@ -1303,327 +1108,105 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
         tracing::debug!(?error, "failed to ack durable MLS welcome device messages");
     }
 
+    tracing::debug!(
+        realm = %realm_id,
+        delivered,
+        journalled,
+        applied,
+        joined_this_pass = !installed_before && installed_after,
+        "MLS Welcome bootstrap pass finished",
+    );
     Ok(MlsWelcomeBootstrapOutcome { applied })
-}
-
-/// Discover exact recipient refs without creating device-message deliveries or ACKs.
-async fn discover_mls_welcome_for_scope(
-    api: &crate::transport::TransportClient,
-    state: &crate::runtime::input::StateStoreHandle,
-    authority: &arkret_sdk::AccountId,
-    device: &arkret_sdk::DeviceId,
-    scope: &arkret_sdk::ScopeRef,
-) -> Result<usize, String> {
-    tokio::select! {
-        result = discover_mls_welcome_page(api, state, authority, device, scope) => result,
-        _ = crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(12)) => {
-            Err("MLS Welcome discovery is pending; its per-activation time budget elapsed".to_owned())
-        }
-    }
-}
-
-async fn discover_mls_welcome_page(
-    api: &crate::transport::TransportClient,
-    state: &crate::runtime::input::StateStoreHandle,
-    authority: &arkret_sdk::AccountId,
-    device: &arkret_sdk::DeviceId,
-    scope: &arkret_sdk::ScopeRef,
-) -> Result<usize, String> {
-    let session_epoch = crate::identity::device_directory::cache_epoch();
-    let interest = state.read(|store| store.sync_demand_filter());
-    let ensure_current = || {
-        if crate::identity::device_directory::cache_epoch() != session_epoch
-            || !state.read(|store| {
-                store.active_authority().as_ref() == Some(authority)
-                    && store.sync_demand_filter() == interest
-                    && store.persist_error().is_none()
-            })
-        {
-            return Err("MLS Welcome discovery session or selected interest changed".to_owned());
-        }
-        Ok(())
-    };
-    let realm = scope
-        .realm_id_opt()
-        .ok_or_else(|| "MLS discovery requires a Realm".to_owned())?;
-    let circle = scope.circle_id().map(|id| id.as_str());
-    let http = api.sdk_http_client().map_err(|error| error.to_string())?;
-    let mut request = arkret_sdk::MlsWelcomeRefsRequestBody {
-        effective_scope: scope.clone(),
-        mls_group_id: arkret_sdk::Base64UrlString::new(
-            scope
-                .canonical_mls_group_id()
-                .map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?,
-        limit: Some(4),
-        cursor: None,
-    };
-    let key = serde_json::to_string(&(authority, device, scope, &request.mls_group_id))
-        .map_err(|error| error.to_string())?;
-    let mut progress = state.read(|store| store.welcome_discovery_progress(&key));
-    let frontier = state.read(|store| store.seal_view_for_realm(realm.as_str()).frontier);
-    let key_material_hint = local_mls_key_material_hint(authority, device)?;
-    progress.observe_inputs(frontier, key_material_hint);
-    if progress.exhausted {
-        return Ok(0);
-    }
-    request.cursor = progress.cursor.clone();
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let mut applied = 0;
-    // One page and at most four exact artifacts per user-demand activation.
-    // Progress survives interruption, so another activation resumes this scope.
-    if progress.pending.is_empty() {
-        ensure_current()?;
-        let page = match http.mls_welcome_refs(&request).await {
-            Ok(page) => page,
-            Err(error) => {
-                ensure_current()?;
-                if matches!(&error, arkret_sdk::http_client::Error::Api { error, .. }
-                    if error.code() == "cursor_invalid")
-                {
-                    persist_welcome_discovery_progress(state, &key, None).await?;
-                }
-                return Err(error.to_string());
-            }
-        };
-        ensure_current()?;
-        progress.pending = page.welcome_refs;
-        progress.next_cursor = page.next_cursor;
-        if progress.pending.is_empty() {
-            progress.exhausted = true;
-        }
-        persist_welcome_discovery_progress(state, &key, Some(progress.clone())).await?;
-    }
-    for _ in 0..4 {
-        let Some(reference) = progress.pending.first().cloned() else {
-            break;
-        };
-        ensure_current()?;
-        crate::mls::runtime::ensure_existing_account_mls_secret_durable(
-            secure_store.as_ref(),
-            authority,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-        ensure_current()?;
-        let artifact = crate::mls::accepted_artifact::fetch_ref(api, state.clone(), &reference)
-            .await
-            .map_err(|error| error.to_string())?;
-        ensure_current()?;
-        if artifact.event.kind != arkret_sdk::EventKind::MlsWelcome
-            || artifact.request.effective_scope != *scope
-            || artifact.request.mls_group_id != request.mls_group_id
-        {
-            return Err(
-                "Welcome discovery returned an artifact outside its exact scope/group".to_owned(),
-            );
-        }
-        applied +=
-            crate::mls::runtime::converge_accepted_mls_artifacts(state, authority, device).await?;
-        ensure_current()?;
-        progress.pending.remove(0);
-        if progress.pending.is_empty() {
-            progress.cursor = progress.next_cursor.take();
-            progress.exhausted = progress.cursor.is_none();
-        }
-        persist_welcome_discovery_progress(state, &key, Some(progress.clone())).await?;
-        if state.read(|store| {
-            store
-                .mls_checkpoint_for_effective_scope(realm.as_str(), circle)
-                .is_some()
-        }) {
-            return Ok(applied);
-        }
-    }
-    Ok(applied)
-}
-
-async fn persist_welcome_discovery_progress(
-    state: &crate::runtime::input::StateStoreHandle,
-    key: &str,
-    progress: Option<crate::state::MlsWelcomeDiscoveryProgress>,
-) -> Result<(), String> {
-    let barrier = state
-        .write(|store| {
-            store.save_welcome_discovery_progress(key.to_owned(), progress)?;
-            store.begin_durable_flush()
-        })
-        .map_err(|error| error.to_string())?;
-    barrier.wait().await.map_err(|error| error.to_string())
-}
-
-fn terminal_welcome_apply_error(
-    outcome: &crate::mls::runtime::WelcomeApplyOutcome,
-) -> Option<String> {
-    (outcome.failed > 0 && outcome.applied == 0 && outcome.skipped_stale == 0).then(|| {
-        format!(
-            "MLS Welcome could not be applied: {}",
-            outcome
-                .first_error
-                .as_deref()
-                .unwrap_or("unknown MLS Welcome error")
-        )
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn durable_welcome(device_message_id: &str, realm_id: &str) -> Value {
-        serde_json::json!({
-            "device_message_id": device_message_id,
-            "kind": "ak.mls.welcome",
-            "sender_account_id": {
-                "principal_id": "ak:did_core:webvh:alice.example",
-                "station_id": "ak:did_core:webvh:station.example"
-            },
-            "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
-            "recipient_account_id": {
-                "principal_id": "ak:did_core:webvh:bob.example",
-                "station_id": "ak:did_core:webvh:station.example"
-            },
-            "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
-            "sent_at": "2099-01-01T00:00:00.000Z",
-            "expires_at": "2100-01-01T00:00:00.000Z",
-            "content": {
-                "mls_group_id": garth::mls::welcome_admission::mls_group_id_for_realm(realm_id).unwrap(),
-                "ciphertext": "welcome-ciphertext"
-            }
-        })
-    }
-
-    fn welcome_outcome(
-        applied: usize,
-        failed: usize,
-        skipped_stale: usize,
-    ) -> crate::mls::runtime::WelcomeApplyOutcome {
-        crate::mls::runtime::WelcomeApplyOutcome {
-            applied,
-            failed,
-            skipped_stale,
-            first_error: None,
-            consumable_claims: Vec::new(),
+    /// One account-viewer device row.
+    fn device_row(device_id: &str, extra: serde_json::Value) -> Value {
+        let mut row = serde_json::json!({ "device_id": device_id });
+        for (key, value) in extra.as_object().unwrap() {
+            row[key] = value.clone();
         }
+        row
     }
 
     #[test]
-    fn fully_failed_welcome_batch_is_not_silently_treated_as_empty() {
-        let mut outcome = welcome_outcome(0, 1, 0);
-        outcome.first_error = Some("missing KeyPackage private state".to_owned());
-
-        let error = terminal_welcome_apply_error(&outcome).expect("terminal failure");
-        assert!(error.contains("missing KeyPackage private state"));
-        assert!(terminal_welcome_apply_error(&welcome_outcome(1, 1, 0)).is_none());
-        assert!(terminal_welcome_apply_error(&welcome_outcome(0, 0, 0)).is_none());
+    fn a_revoked_device_is_never_reported_as_authorized() {
+        let revoked = device_row(
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+            serde_json::json!({ "authorized": true, "revoked_at": "2026-01-01T00:00:00.000Z" }),
+        );
+        assert!(device_revoked(&revoked));
+        assert_eq!(device_authorization_from_record(&revoked), Some(false));
     }
 
     #[test]
-    fn mls_welcome_ack_requires_backup_upload_and_clean_persist() {
-        let outcome = welcome_outcome(1, 0, 0);
+    fn a_device_row_without_the_authorization_fact_keeps_the_caller_waiting() {
+        let unknown = device_row(
+            "ak:device:0196419b-0000-7000-8000-000000000002",
+            serde_json::json!({}),
+        );
+        assert_eq!(device_authorization_from_record(&unknown), None);
 
-        assert!(!should_ack_mls_welcome_batch(true, &outcome, false, None));
-        assert!(should_ack_mls_welcome_batch(true, &outcome, true, None));
-        assert!(!should_ack_mls_welcome_batch(
-            true,
-            &outcome,
-            true,
-            Some("state write failed"),
+        let authorized = device_row(
+            "ak:device:0196419b-0000-7000-8000-000000000002",
+            serde_json::json!({
+                "device_authorize_event_id":
+                    "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk"
+            }),
+        );
+        assert_eq!(device_authorization_from_record(&authorized), Some(true));
+    }
+
+    #[test]
+    fn the_account_viewer_reports_other_active_devices_only_when_they_are_live() {
+        let viewer = serde_json::json!({
+            "devices": [
+                { "device_id": "ak:device:0196419b-0000-7000-8000-000000000001" },
+                {
+                    "device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
+                    "state": "revoked"
+                },
+            ]
+        });
+        assert!(!account_has_other_active_devices_from_account_viewer(
+            &viewer,
+            "ak:device:0196419b-0000-7000-8000-000000000001"
         ));
-        assert!(!should_ack_mls_welcome_batch(false, &outcome, true, None));
+        assert!(account_has_other_active_devices_from_account_viewer(
+            &viewer,
+            "ak:device:0196419b-0000-7000-8000-000000000002"
+        ));
     }
 
     #[test]
-    fn mls_welcome_ack_rejects_failed_or_unbacked_stale_replay() {
-        let failed = welcome_outcome(1, 1, 0);
-        assert!(!should_ack_mls_welcome_batch(true, &failed, true, None));
-
-        let stale = welcome_outcome(0, 0, 1);
-        assert!(!should_ack_mls_welcome_batch(true, &stale, false, None));
-        assert!(should_ack_mls_welcome_batch(true, &stale, true, None));
-
-        let empty = welcome_outcome(0, 0, 0);
-        assert!(!should_ack_mls_welcome_batch(true, &empty, true, None));
+    fn a_batch_is_acknowledged_only_after_every_message_is_durably_journalled() {
+        // The ACK deletes the server-side copy, so a partially journalled or
+        // unpersisted batch must be redelivered instead of acknowledged.
+        assert!(should_ack_device_message_batch(true, None));
+        assert!(!should_ack_device_message_batch(false, None));
+        assert!(!should_ack_device_message_batch(
+            true,
+            Some("state write failed")
+        ));
     }
 
     #[test]
-    fn bootstrap_merges_realm_welcome_from_durable_dispatcher_inbox() {
-        let realm_id = "ak:realm:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg";
-        let welcome = durable_welcome(
-            "ak:device_message:0196419b-0000-7000-8000-000000000021",
-            realm_id,
-        );
-        let mut messages = serde_json::json!({ "messages": [] });
-
-        assert_eq!(
-            merge_durable_local_mls_welcomes_for_realm(
-                &mut messages,
-                std::slice::from_ref(&welcome),
-                realm_id,
-            )
-            .expect("merge durable welcome"),
-            1
-        );
-        assert_eq!(messages["messages"], serde_json::json!([welcome]));
-    }
-
-    #[test]
-    fn bootstrap_deduplicates_identical_durable_welcome_and_rejects_conflict() {
-        let realm_id = "ak:realm:AZiQUXWgexBvj0pdmSuNERtMTAFCjqds5-eP8K9OsgEo";
-        let welcome = durable_welcome(
-            "ak:device_message:0196419b-0000-7000-8000-000000000022",
-            realm_id,
-        );
-        let mut messages = serde_json::json!({ "messages": [welcome.clone()] });
-
-        assert_eq!(
-            merge_durable_local_mls_welcomes_for_realm(
-                &mut messages,
-                std::slice::from_ref(&welcome),
-                realm_id,
-            )
-            .expect("deduplicate durable welcome"),
-            0
-        );
-        assert_eq!(messages["messages"].as_array().map(Vec::len), Some(1));
-
-        let mut conflicting = welcome;
-        conflicting["content"]["ciphertext"] = Value::String("changed".to_owned());
-        let error =
-            merge_durable_local_mls_welcomes_for_realm(&mut messages, &[conflicting], realm_id)
-                .expect_err("same durable dedup key with changed content must fail closed");
-        assert!(error.contains("device_message_conflict"));
-    }
-
-    #[test]
-    fn bootstrap_ignores_unrelated_and_expired_local_messages() {
-        let realm_id = "ak:realm:AYo4JWk3bfuR2mX8uX3xALbEPXprrdP2ZWF-dKYP01Wf";
-        let mut other_kind = durable_welcome(
-            "ak:device_message:0196419b-0000-7000-8000-000000000023",
-            realm_id,
-        );
-        other_kind["kind"] = Value::String("ak.secret.send".to_owned());
-        let other_realm = durable_welcome(
-            "ak:device_message:0196419b-0000-7000-8000-000000000024",
-            "ak:realm:AVtcXI0sfnw9Pex-qynbBUykPtV8niszMj0Ko75SINJ2",
-        );
-        let mut expired = durable_welcome(
-            "ak:device_message:0196419b-0000-7000-8000-000000000025",
-            realm_id,
-        );
-        expired["expires_at"] = Value::String("2000-01-01T00:00:00.000Z".to_owned());
-        let mut messages = serde_json::json!({ "messages": [] });
-
-        assert_eq!(
-            merge_durable_local_mls_welcomes_for_realm(
-                &mut messages,
-                &[other_kind, other_realm, expired],
-                realm_id,
-            )
-            .expect("ignore non-matching durable messages"),
-            0
-        );
-        assert_eq!(messages["messages"], serde_json::json!([]));
+    fn a_recovery_public_key_backup_is_detected_in_any_series() {
+        let list = serde_json::json!({
+            "backups": [{
+                "backup_kind": "secret_storage",
+                "series_id": "ak:backup_series:0196419b-0000-7000-8000-00000000000a",
+                "series_seq": 0,
+                "encryption": { "recipient_method": "recovery_public_key" },
+                "contents": [{ "item_kind": "mls_account_secret" }],
+            }]
+        });
+        assert!(recovery_public_key_secret_storage_backup_present(&list));
+        assert!(!recovery_public_key_secret_storage_backup_present(
+            &serde_json::json!({ "backups": [] })
+        ));
     }
 }

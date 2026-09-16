@@ -87,28 +87,23 @@ pub(crate) fn strand_projection_assigned_to_relations(
         .collect()
 }
 
-// The `expect` asserts the path-nesting invariant named in its message:
-// `strand_projection_synthesis_content` only yields paths under
-// `tracks.synthesis`.
-#[allow(clippy::expect_used)]
+/// Whether this Strand row's own content arrived encrypted.
+///
+/// The row carries its Description and Synthesis content in exactly one of the
+/// mutually exclusive plaintext / `encrypted_*` slots, so which slot the
+/// projection filled is the complete answer. `None` means no content slot has
+/// arrived yet, which is not evidence of plaintext: callers that could leak a
+/// private field fail closed on it.
 pub(crate) fn strand_projection_security_state(
     strand: &crate::state::projection_views::StrandProjectionView,
 ) -> Option<bool> {
-    let mut value = Map::new();
-    value.insert("fields".to_owned(), Value::Object(strand.fields.clone()));
-    if let Some((content, path)) = strand_projection_description_content(strand) {
-        value.insert(path.to_owned(), content);
-    }
-    if let Some((content, path)) = strand_projection_synthesis_content(strand) {
-        let leaf = path
-            .strip_prefix("tracks.synthesis.")
-            .expect("Synthesis projection paths are nested under tracks.synthesis");
-        value.insert(
-            "tracks".to_owned(),
-            serde_json::json!({"synthesis": {(leaf): content}}),
-        );
-    }
-    garth::strand_projection_security_state(&Value::Object(value))
+    let path = strand_projection_description_content(strand)
+        .or_else(|| strand_projection_synthesis_content(strand))
+        .map(|(_, path)| path)?;
+    Some(matches!(
+        path,
+        KANBAN_ENCRYPTED_CONTENT_PATH | KANBAN_ENCRYPTED_SYNTHESIS_CONTENT_PATH
+    ))
 }
 
 pub(crate) fn strand_body_display_text(value: Option<&Value>) -> String {
@@ -225,7 +220,6 @@ pub(crate) fn card_from_strand_projection_for_actor(
     KanbanCard {
         id: strand.strand_id.clone(),
         rank: strand_projection_placement_string(strand.rank.as_deref()).unwrap_or_default(),
-        position_basis_refs: Vec::new(),
         title: title.clone(),
         description: summary,
         description_body: private_strand_field_text(
@@ -300,6 +294,5 @@ pub(crate) fn card_from_strand_projection_for_actor(
         security_encrypted: strand_projection_security_state(strand),
         state: CardState::Synced,
         lifecycle: strand_lifecycle_from_projection(&strand.state),
-        lifecycle_basis_refs: Vec::new(),
     }
 }

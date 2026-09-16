@@ -155,7 +155,6 @@ pub(super) fn select_server(server_url: String, ctx: ServerSelectionContext) {
             store.set_session_grant(None);
         }
     }
-    crate::authorization_lease::clear_leases();
     // Retire the previous server's SyncEngine. The use_effect's
     // base_url tracking would re-spawn anyway, but bumping here ensures
     // the in-flight long-poll exits before the new URL takes over.

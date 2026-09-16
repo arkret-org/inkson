@@ -18,35 +18,6 @@ fn seed_human_creator_authorization(actor: &str, device: &str) {
     );
 }
 
-fn seed_genesis_governance_proof(
-    state: &mut crate::state::LocalStateStore,
-    realm_id: &str,
-) -> arkret_sdk::MlsGovernanceBindingPayload {
-    crate::mls::governance_proof::seed_test_governance_result(
-        state,
-        realm_id,
-        None,
-        arkret_sdk::base64url_encode(realm_id.as_bytes()),
-        0,
-        0,
-    )
-}
-
-fn seed_next_governance_proof(
-    state: &mut crate::state::LocalStateStore,
-    realm_id: &str,
-) -> arkret_sdk::MlsGovernanceBindingPayload {
-    let snapshot = state.mls_checkpoint_for(realm_id).unwrap();
-    crate::mls::governance_proof::seed_test_governance_result(
-        state,
-        realm_id,
-        None,
-        snapshot.group_id,
-        snapshot.epoch,
-        snapshot.epoch + 1,
-    )
-}
-
 fn seed_current_group_state_ref(
     state: &mut crate::state::LocalStateStore,
     realm_id: &str,

@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 use arkret_models_crypto::{KeyBackup, SecretStorageContentIndex, SecretStorageItemKind};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use garth::mls::backup_selection::mls_account_secret_backup_version;
+use crate::mls::runtime::mls_account_secret_backup_version;
 use serde_json::Value;
 
 use crate::key_backup::{

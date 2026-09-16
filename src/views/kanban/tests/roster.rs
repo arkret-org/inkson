@@ -133,7 +133,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
                 .contains("alice")
         })
         .unwrap();
-    assert_eq!(alice.membership, Some(arkret_sdk::MembershipState::Join));
+    assert_eq!(alice.membership, Some(arkret_sdk::sync::MemberRosterMembership::Join));
     assert_eq!(
         alice.identity_event_ids,
         vec!["ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ".to_owned()]
@@ -152,7 +152,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
                 .starts_with("ak:did_core:webvh:")
         })
         .unwrap();
-    assert_eq!(webvh.membership, Some(arkret_sdk::MembershipState::Knock));
+    assert_eq!(webvh.membership, Some(arkret_sdk::sync::MemberRosterMembership::Knock));
     assert!(webvh.identity_event_ids.is_empty());
     assert!(webvh.member_display_state_digest.is_none());
     // subject_account_id not disclosed for the invite row.
@@ -214,7 +214,7 @@ fn realm_member_roster_keeps_first_duplicate_actor_entry() {
 
     let rows = realm_member_roster(Some(&projection));
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].membership, Some(arkret_sdk::MembershipState::Join));
+    assert_eq!(rows[0].membership, Some(arkret_sdk::sync::MemberRosterMembership::Join));
 }
 
 #[test]
@@ -311,7 +311,7 @@ fn member_display_label_prefers_inline_verified_handle_claim() {
             "ak:did_core:webvh:zQmPairwiseActor",
         )
         .unwrap(),
-        membership: Some(arkret_sdk::MembershipState::Join),
+        membership: Some(arkret_sdk::sync::MemberRosterMembership::Join),
         identity_event_ids: vec![],
         member_display_state_digest: Some(
             "sha256:abababababababababababababababababababababababababababababababab".to_owned(),
@@ -352,7 +352,7 @@ fn inline_handle_claim_for_another_station_is_not_this_members_handle() {
             "ak:did_core:webvh:zQmPairwiseActor",
         )
         .unwrap(),
-        membership: Some(arkret_sdk::MembershipState::Join),
+        membership: Some(arkret_sdk::sync::MemberRosterMembership::Join),
         identity_event_ids: vec![],
         member_display_state_digest: None,
         subject_account_id: Some(here.clone()),
@@ -390,7 +390,7 @@ fn member_display_label_rejects_unverified_or_untrusted_handle_claims() {
             "ak:did_core:webvh:zQmPairwiseActor",
         )
         .unwrap(),
-        membership: Some(arkret_sdk::MembershipState::Join),
+        membership: Some(arkret_sdk::sync::MemberRosterMembership::Join),
         identity_event_ids: vec![],
         member_display_state_digest: None,
         subject_account_id: Some(subject.clone()),
@@ -469,7 +469,7 @@ fn resolved_member_display_uses_persisted_current_account_handle() {
     let did = "did:web:current-account.example";
     let row = RealmMemberRow {
         actor_id: crate::mls_api_helpers::local_account_actor_id(actor).unwrap(),
-        membership: Some(arkret_sdk::MembershipState::Join),
+        membership: Some(arkret_sdk::sync::MemberRosterMembership::Join),
         identity_event_ids: vec![],
         member_display_state_digest: None,
         subject_account_id: None,
@@ -499,7 +499,7 @@ fn member_handle_lookup_never_falls_back_to_the_realm_actor_id() {
     let row = RealmMemberRow {
         actor_id: crate::mls_api_helpers::local_account_actor_id("ak:did_core:webvh:zQmPrincipal")
             .unwrap(),
-        membership: Some(arkret_sdk::MembershipState::Join),
+        membership: Some(arkret_sdk::sync::MemberRosterMembership::Join),
         identity_event_ids: vec![],
         member_display_state_digest: None,
         subject_account_id: None,
@@ -531,7 +531,7 @@ fn member_handle_lookup_uses_the_disclosed_subject_account() {
     let row = RealmMemberRow {
         actor_id: crate::mls_api_helpers::local_account_actor_id("ak:did_core:webvh:zQmPrincipal")
             .unwrap(),
-        membership: Some(arkret_sdk::MembershipState::Join),
+        membership: Some(arkret_sdk::sync::MemberRosterMembership::Join),
         identity_event_ids: vec![],
         member_display_state_digest: None,
         subject_account_id: Some(subject.clone()),
@@ -615,7 +615,7 @@ fn cached_handle_for_another_station_never_reaches_the_member_row() {
         fixture::authority_at_station(principal, "ak:did_core:web:station-b.example");
     let row = RealmMemberRow {
         actor_id: arkret_sdk::ActorId::account(at_station_a.clone()),
-        membership: Some(arkret_sdk::MembershipState::Join),
+        membership: Some(arkret_sdk::sync::MemberRosterMembership::Join),
         identity_event_ids: vec![],
         member_display_state_digest: None,
         subject_account_id: Some(at_station_a.clone()),

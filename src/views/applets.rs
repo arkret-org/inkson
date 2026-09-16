@@ -27,9 +27,8 @@
 
 use std::collections::BTreeSet;
 
-use arkret_models_collaboration::account_lifecycle::AppletRevokeRequestBody;
 use arkret_models_integration::{
-    AppletActorPolicy, AppletApprovalRequest, AppletGhostActorMode,
+    AppletActorPolicy, AppletRevokeRequestBody, AppletApprovalRequest, AppletGhostActorMode,
     AppletInstallAuthoringRequestBasis, AppletInstallCreateRequestBody, AppletInstallPlan,
     AppletInstallPreviewOutcome, AppletInstallPreviewRequestBody, AppletInstallRequestBody,
     AppletManagedActorAuthorRequestBody, AppletManagedActorPurpose, AppletPackage,

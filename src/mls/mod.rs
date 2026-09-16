@@ -21,3 +21,4 @@ pub(crate) mod group_events;
 pub(crate) mod pairwise_identity;
 pub mod persistence;
 pub mod runtime;
+pub(crate) mod welcome_delivery;

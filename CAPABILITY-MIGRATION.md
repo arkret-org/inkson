@@ -1,218 +1,129 @@
 # Authority-commit client capability migration
 
-Inkson remains the cross-platform Arkret product client. Passing compilation with
-a protocol-only shell is not an acceptable migration result.
+Inkson remains the cross-platform Arkret product client. Passing compilation
+with a protocol-only shell is not an acceptable migration result, so this file
+tracks capabilities, not error counts: every row names the implementation path
+the capability now runs through and the behavior test that proves it.
 
-## Status
+## The seam that changed
 
-The full product baseline is present in the working tree. It is an exact
-restoration of the tree that preceded the protocol clean-break commit: the index
-is byte-identical to `57a4ea10` (`git diff --cached HEAD~1` is empty), covering
-524 Rust source files (261,882 lines), 1,912 inline test functions across 256
-files, 15 integration test binaries, the Playwright e2e / contract /
-cross-platform suites, platform assets, packaging scripts, release workflows and
-user guides.
+The client used to author Events that carried their own ordering and
+pre-state: an actor sequence, an HLC, a Seal basis, preconditions over
+protocol-level Cells, CBS execution planes, and a Realm-global sync cursor. All
+of that is gone. A producer now signs an immutable Event and hands it to the
+Realm's **current governance Station**, which answers with an authority-signed
+`RealmCommit`.
 
-The baseline does **not** yet build against the current SDK. `cargo check
---lib --all-features` reports 1,586 errors and `cargo test --workspace
---all-features --no-fail-fast` reports 2,154 errors in `lib test`; no test
-binary links, so no test result counts exist. The cause is upstream, not local:
-the client runtime crate (`garth`) and the SDK facade were reduced at the same
-time the client tree was, and 249 distinct types the product depends on are
-absent from the SDK. 45 of those are protocol surfaces this migration is meant to
-delete; the remaining 204 are product surfaces with no replacement yet.
+| Concern | Before | Now |
+| --- | --- | --- |
+| Submission DTO | `EventInitialSubmission` (+ lease, Control Proposal Ack, CBS proof bundles, submit context) | `arkret_wire::EventCommitSubmission { event }` inside `AuthoritySubmitRequest::Event` |
+| Submission result | `EventsSubmitOutcome { status, accepted[], duplicate[], rejections[], cursor, ingress_receipts[] }` | `AuthoritySubmitOutcome::{Accepted{status, commit}, Rejected{status, reason_code}}` |
+| Ordering | producer `actor_seq` + `hlc` + `prev_refs` | `RealmCommit { stream_ref, stream_position, previous_commit_ref }`, one commit per Event |
+| Streams | one Realm-global cursor | independent `CommitStreamRef::{Realm, Circle, Sidecar}` streams, each with its own position |
+| Catch-up | `ak.self.events.read.query` pages | `StreamScanRequest{realm_id, stream_ref, after_position, limit}` → `StreamScanOutcome{commits, truncated}` |
+| Current state | `ak:cell:*` current results | `RealmStateSnapshot.current_state_entries` — `TypedCurrentResult` keyed by `CurrentSelector` with a `CurrentRevision{commit_id, stream_position}` |
+| Realm authority | `ak.component.realm.authority_root.v1` cell + controller epoch | `RealmAuthorityBundle` (genesis + double-signed handoff chain + nonce-bound current assertion); `IssuerAuthorityRef::RealmAuthority{realm_id, governance_station_id, authority_generation, basis}` |
+| "Is this scope encrypted?" | create-locked `encryption_profile` + encryption floor | the scope has an accepted `ak.mls.genesis` (`CurrentSelector::MlsGroup{scope_ref}` → `MlsGroupCurrent`) — plaintext before, irreversibly RFC 9420 after |
+| MLS Welcome | `ak.mls.welcome` Event | `MlsWelcomeDelivery` (`ak:mls_welcome_delivery:<uuidv7>`), producer-signed, delivered inside `MlsCommitSubmission` |
+| MLS commit | Proposal Events + Commit Event + Welcome Events, staged | `MlsCommitSubmission { commit_event, welcomes[], idempotency_key }`, one atomic submission; staged state installs on Accepted without waiting for recipient ACK |
+| Recovery completion | Seal-chained PCR successor | two different commits at positions n and n+1 of the same PCR Realm stream, judged by `garth::validate_recovery_commit_boundary` |
+| Local outbound queue | `garth::outbound` engine with post-accept hooks and a generation fence | `garth::OutboundEngine` over `crate::outbound_store::InksonOutboundStore`, with the fence and the post-accept work hosted in inkson |
 
-Migration of the call sites cannot begin until the replacement seams exist. No
-compatibility alias, local protocol type, empty implementation or deleted
-product module has been introduced to shorten this list.
+## Client-side design decisions taken by this migration
 
-## Product and platform capabilities preserved
+1. **No Realm-global order anywhere.** Durable cursors are keyed by
+   `arkret_wire::CommitStreamRef`. `AccountSyncStep::stream_heads()` is the only
+   place a sync frame is turned into positions, and it returns one position per
+   independent stream.
+2. **Authoring is final.** With no actor sequence, HLC or precondition, the
+   `event_id` derived at authoring time is the id that reaches the wire. The
+   durable queue stores a frozen `AuthoritySubmitRequest`; there is no re-author
+   path and therefore no "queued id vs. accepted id" divergence.
+3. **Holder-local handles never reach the wire.** `Event` has no `unsigned`
+   member any more, so the optimistic-UI alias (`local_operation_id`,
+   `local_target_ref`) lives on `crate::operation::LocalOperation` and in the
+   durable outbound record, and the projection re-keys an optimistic row to the
+   commit's `event_ref` when the commit lands.
+4. **Fail closed on authority.** A Realm whose current governance Station cannot
+   be authenticated from a fresh, nonce-bound `RealmAuthorityBundle` is not
+   written to at all.
+5. **Deleted protocol concepts are deleted, not emulated.** No compatibility
+   alias, no local re-declaration of a removed wire type, no empty
+   implementation. Where a still-normative spec surface has no SDK type, the
+   call site keeps failing to compile and is listed under
+   "Blocked by an SDK gap" below rather than being papered over.
 
-Every capability below is present in the tree with the implementation and test
-evidence named. None was deleted by the clean-break commit's restoration.
+## Product and platform capabilities
 
 | Capability | Implementation | Behavior tests |
 | --- | --- | --- |
-| Desktop, web and mobile shells, routing, navigation, i18n | `src/app/` (`session_shell.rs`, `route_surface.rs`, `navigation_state.rs`, `sidebar.rs`, `command_palette.rs`), `src/routes.rs`, `src/views/mod.rs`, `src/i18n/{en,zh}.rs`, `src/styles/` | `src/app/shell_model_tests.rs`, `src/i18n/tests.rs`, `tests/i18n_dictionaries.rs`, `tests/locale_sync.rs`, `tests/ui_text_gate.rs`, `tests/ui_compile.rs`, `tests/e2e/viewport.spec.ts` |
-| Login, session refresh, DPoP, onboarding, device pairing, account handoff | `src/views/login/`, `src/identity/account_auth/`, `src/identity/session_refresh.rs`, `src/views/onboarding/` (`account_commit.rs`, `device_pairing.rs`, `resume.rs`), `src/identity/device_pairing.rs`, `src/views/register.rs`, `garth::session`, `garth::account_handoff` | `src/views/login/tests.rs`, `src/views/onboarding/tests.rs`, `tests/dev_token_guard.rs`, `tests/e2e/inkson.strands.auth-session.spec.ts`, `tests/cross_platform/oidc_pkce.spec.ts` |
-| SecureKeyStore backends, IndexedDB / native persistence, cancellation-safe durable state | `src/secure_key_store/` (`indexed_db.rs`, `local_storage.rs`, `keyring.rs`, `platform.rs`, `host_bridge.rs`, `fallback.rs`, `current_index_backend.rs`), `src/state/`, `src/browser_storage.rs`, `src/outbound_store.rs` | `src/secure_key_store/tests.rs`, `tests/wasm_indexed_db_capacity.rs`, `tests/wasm_current_index.rs`, `src/local_state_tests/store_persist.rs`, `tests/cross_platform/local_storage.spec.ts`, `tests/cross_platform/subtle_crypto.spec.ts` |
-| Chat, Direct Conversation, reactions, polls, read receipts, mentions | `src/views/chat/` (`timeline.rs`, `composer/`, `controller.rs`, `poll_submission.rs`, `direct_authority.rs`), `src/messaging/` (`polls.rs`, `mentions.rs`, `discussion_promote.rs`), `src/views/read_receipts.rs`, `src/state/direct_conversation.rs`, `src/content/renderer.rs` | `src/views/chat/tests/` (15 modules incl. `mentions.rs`, `read_receipts.rs`, `message_fold.rs`, `participation.rs`), `src/local_state_tests/read_receipt.rs`, `tests/e2e/inkson.strands.chat-discussion.spec.ts` |
-| Circle, Realm, Space, Strand, Kanban, calendar and relation views | `src/circle.rs`, `src/circle_mls.rs`, `src/realm_tree.rs`, `src/realm_helpers.rs`, `src/views/setup/`, `src/views/kanban/`, `src/calendar.rs`, `src/views/kanban/due_calendar.rs`, `src/views/kanban/assignment.rs` | `src/views/kanban/tests/` (11 modules incl. `lifecycle.rs`, `roster.rs`, `encrypted_scope.rs`, `due_calendar.rs`), `tests/e2e/inkson.strands.kanban.spec.ts`, `tests/e2e/inkson.strands.realm-nav.spec.ts`, `tests/e2e/realm-create-regression.spec.ts`, `tests/e2e/inkson.strands.setup-realm-admin.spec.ts` |
-| Directory, contacts, profiles, moderation, notifications, account settings | `src/views/directory.rs`, `src/views/contacts.rs`, `src/views/member_display.rs`, `src/views/moderation.rs`, `src/views/notifications/`, `src/views/settings/`, `src/identity/contact_profile.rs`, `src/directory_helpers.rs`, `src/notification_rules.rs` | `src/views/notifications/tests.rs`, `src/views/settings/tests.rs`, `src/views/settings/model_tests.rs`, `src/account_data/tests.rs`, `tests/e2e/inkson.strands.notifications-directory.spec.ts`, `tests/e2e/inkson.strands.account-settings.spec.ts` |
-| File transfer, media / WebRTC, push, scheduled send, platform packaging | `src/file_transfer.rs`, `src/blob.rs`, `src/media/` (`rtc.rs`, `service_route.rs`, `http_fetch.rs`), `src/rtc_transport/{native,web}.rs`, `src/webrtc.rs`, `src/push/`, `src/scheduled_send.rs`, `src/views/call/`, `assets/livekit_*`, `scripts/{windows-msi,macos-bundle,linux-package}-local.ps1`, `Dockerfile` | `src/push/tests.rs`, `src/views/file_transfer.rs` inline tests, `tests/cross_platform/push_subscribe.spec.ts`, `tests/cross_platform/push_receive.spec.ts`, `.github/workflows/packages.yml`, `.github/workflows/cross-platform.yaml` |
-| Account / device recovery, key backup, SecurityTransaction flows | `src/recovery_flow.rs`, `src/fresh_device_recovery.rs`, `src/late_recovery.rs`, `src/recovery_crypto.rs`, `src/hpke_backup.rs`, `src/key_backup/`, `src/security_transaction.rs`, `src/mls/account_recovery/`, `src/views/recovery/`, `src/components/recovery_key_setup_prompt.rs` | `src/views/recovery/tests.rs`, `src/key_backup/tests.rs`, `src/account_data/tests.rs`, `tests/e2e/inkson.strands.recovery-encryption.spec.ts`, `docs/user-flows-key-lifecycle.md` |
-| MLS group lifecycle, local private state, KeyPackage maintenance, staged commit install, encryption | `src/mls/` (`runtime/`, `admission.rs`, `accepted_artifact.rs`, `group_events.rs`, `persistence.rs`, `creator_bootstrap.rs`, `direct_binding.rs`, `coverage_liveness.rs`, `pairwise_identity.rs`), `src/circle_mls.rs`, `src/keypackage_maintenance.rs`, `src/state/mls_*.rs` | `tests/mls_data_plane_wasm.rs`, `src/local_state_tests/mls_local_checkpoint.rs`, `src/local_state_tests/private_plaintext.rs`, `src/views/kanban/tests/strand_mls.rs`, `src/views/chat/tests/crypto_state.rs` |
-| Signal / WebSocket receive, retry / offline queue, observable sync state | `src/signal.rs`, `src/signal_receive_engine.rs`, `src/websocket_rail_engine.rs`, `src/transport/{websocket,websocket_rail}.rs`, `src/sync_engine.rs`, `src/sync_parse.rs`, `src/realm_events_engine.rs`, `src/outbound_store.rs`, `src/components/sync_badge.rs` | `tests/client_core_dedup_guard.rs`, `tests/server_contract.rs`, `src/local_state_tests/sync_states.rs`, `src/transport/tests/`, `tests/e2e/mock-arkret-api-contract.spec.ts` |
-| Accessibility, keyboard shortcuts, error classification, tests, release CI | `src/components/shortcut_help.rs`, `src/app/command_palette.rs`, `src/api_error/`, `src/telemetry.rs`, `docs/unified-keyboard-shortcuts.md`, `.github/workflows/{ci,compatibility,cross-platform,deny,docker,packages,typos,line-endings}.yml`, `scripts/{gate,clippy_gate,deletion_gate}.sh`, `scripts/release-gate.ps1` | `tests/ui_text_gate.rs`, `tests/authz_action_registry_guard.rs`, `tests/conformance_gates.rs`, `tests/conformance_vectors.rs`, `tests/e2e/viewport.spec.ts`, `docs/RELEASING.md` |
+| Desktop, web and mobile shells, routing, navigation, i18n | `src/app/`, `src/routes.rs`, `src/views/mod.rs`, `src/i18n/{en,zh}.rs` | `src/app/shell_model_tests.rs`, `src/i18n/tests.rs`, `tests/i18n_dictionaries.rs`, `tests/ui_text_gate.rs`, `tests/e2e/viewport.spec.ts` |
+| Login, session refresh, DPoP, onboarding, device pairing, account handoff | `src/views/login/`, `src/identity/account_auth/`, `src/identity/session_refresh.rs`, `src/views/onboarding/`, `garth::session`, `garth::account_handoff` | `src/views/login/tests.rs`, `src/views/onboarding/tests.rs`, `tests/dev_token_guard.rs`, `tests/e2e/inkson.strands.auth-session.spec.ts` |
+| SecureKeyStore backends, IndexedDB / native persistence | `src/secure_key_store/`, `src/state/`, `src/browser_storage.rs` | `src/secure_key_store/tests.rs`, `tests/wasm_indexed_db_capacity.rs`, `tests/wasm_current_index.rs` |
+| Durable outbound queue (offline send, retry, cancel) | `src/outbound_store.rs` (`InksonOutboundStore`: native atomic file replace + wasm IndexedDB secure tier) driving `garth::OutboundEngine` | `src/outbound_store.rs` inline tests (secure-store round trip, >5 MB queue, refused write reported, native atomic file replace, IndexedDB-only key classification, lane separation) |
+| Event authoring | `src/operation/` (`TypedOperationBuilder` → `arkret_sdk::TypedEventDraft` → `EventIntent`), `src/event_builders.rs`, `src/operation/ak_ops/` | `src/operation_tests.rs`, `src/operation/ak_ops/capability.rs` inline tests (grant binds the committed Realm-authority decision, a later generation yields a different issuer ref) |
+| Event signing | `src/event_signer.rs` (`InksonPayloadSignerAdapter`, single `SignerEvidenceRef` family) | `src/event_signer.rs` inline tests (real JWS proof, notary JWS binds the frozen descriptor kid) |
+| Realm creation / bootstrap unit | `src/event_builders.rs::build_realm_bootstrap_steps_for_station` — `ak.realm.create` naming the initial governance Station, join rule, history access and discoverability, plus the closed facet whitelist | `src/transport/tests/envelopes_payloads.rs` |
+| Capability grants | `src/operation/ak_ops/capability.rs` with `IssuerRealmAuthorityBasis::from_verified_bundle` | inline tests above |
+| Consent | `src/operation/ak_ops/consent.rs` (`ConsentRevokePayload.expected_revision` from `ConsentView.revision`), `src/transport/account.rs` on `PATH_SELF_CONSENT_RESULT*` | `src/views/settings/consent.rs` tests |
+| MLS Welcome admission | `src/mls/welcome_delivery.rs` — the host conversion between `MlsWelcomeDelivery` (wire) and `MlsWelcomeEnvelope` (provider), plus `enqueue_admissible_welcomes` over `garth::retain_admissible_welcomes` | `src/mls/welcome_delivery.rs` inline tests (epoch comes from the Commit, wrong Commit refused, Agent runtime needs its accepted key binding, foreign endpoint never queued) |
+| Current-state projection | `src/current_projection.rs` over `TypedCurrentResult` / `CurrentSelector`, incl. `scope_has_accepted_mls_genesis` | `src/local_state_tests/projections.rs` |
+| Chat, Direct Conversation, reactions, polls, read receipts, mentions | `src/views/chat/`, `src/messaging/`, `src/state/direct_conversation.rs` | `src/views/chat/tests/`, `tests/e2e/inkson.strands.chat-discussion.spec.ts` |
+| Circle, Realm, Space, Strand, Kanban, calendar | `src/circle.rs`, `src/circle_mls.rs`, `src/realm_tree.rs`, `src/views/kanban/`, `src/calendar.rs` | `src/views/kanban/tests/`, `tests/e2e/inkson.strands.kanban.spec.ts` |
+| File transfer, media / WebRTC (SFrame RFC 9420 exporter), push | `src/file_transfer.rs`, `src/media/`, `src/rtc_transport/`, `src/push/` | `src/push/tests.rs`, `tests/cross_platform/push_*.spec.ts` |
+| Account / device recovery, key backup | `src/recovery_flow.rs`, `src/key_backup/`, `src/mls/account_recovery/`, `garth::security_transaction` | `src/views/recovery/tests.rs`, `src/key_backup/tests.rs` |
+| Signal / WebSocket receive, observable sync state | `src/signal.rs`, `src/signal_receive_engine.rs`, `src/sync_engine.rs`, `src/transport/`, `garth::run`, `garth::replica` | `tests/server_contract.rs`, `src/local_state_tests/sync_states.rs` |
 
-## Protocol seams to replace
+## Blocked by an SDK gap
 
-- [ ] Author producer-signed Events without actor sequence, predecessor, causal,
-  Seal or Cell fields. Blocked: `src/event_builders.rs`, `src/operation/`,
-  `src/move_builder.rs` still build `SealBasis` / `Precondition` /
-  `ProjectedCellWrite` / `LatticeOp` shapes; no replacement authoring type is
-  exposed yet.
-- [ ] Submit through the authenticated current governance Station and expose
-  queued/forwarding/committed/rejected outcomes. Partially available:
-  `arkret_wire::EventCommitSubmission { event }` and
-  `garth::{AuthorityClient, AuthorityTransport, QueuedSubmission,
-  SubmissionState, SubmissionWorker, SubmissionQueueStore}` exist. Blocked:
-  `src/event_submit.rs` and `src/outbound_store.rs` are written against the
-  removed `garth::outbound` engine (`OutboundEngine`, `OutboundSubmitter`,
-  `OutboundPostAcceptHook`, `QueuedEventIntent`, `QueuedRealmBootstrap`,
-  `OutboundGenerationFence`), which has no successor.
-- [ ] Verify independent Realm, Circle and Sidecar RealmCommit chains; never
-  create a Realm-global total order. Blocked: `garth::RealmReplica` /
-  `garth::StreamReplica` exist but the client-side projection layer
-  (`garth::projection`, `ClientProjector`, `ClientEvent`,
-  `expand_realm_delivery_events`) that `src/realm_events_engine.rs`,
-  `src/runtime/projection.rs` and `src/app/projection_adapter.rs` consume was
-  removed with no replacement.
-- [ ] Join by authenticating the current authority chain and installing a typed
-  snapshot plus authorized per-stream tails. Blocked: `src/bootstrap.rs` and
-  `src/transport/invite_join.rs` need the typed snapshot and per-stream tail
-  read surfaces; only `RealmAuthorityBundle` /
-  `RealmAuthorityCurrentAssertion` are present.
-- [ ] Reject writes from an old authority after planned handoff and fail closed
-  when no authenticated current authority can be established. Not started;
-  depends on the submit seam above.
-- [ ] Remove only the old Seal/Cell/CBS/frontier/fork-resolution
-  implementations; migrate every product feature above to the new seams. Not
-  started; removal without a replacement seam would empty the product modules.
+These are spec-normative surfaces the SDK no longer exposes. Per the migration
+rule that protocol types may only be defined in `arkret-rust-sdk`, the inkson
+call sites are left failing rather than re-declared locally.
 
-## Upstream blockers
-
-### `garth` (client runtime)
-
-`garth` was reduced from ~38,000 to 7,530 lines in `6465775`. The removed
-modules are exactly the runtime layer `inkson` sits on. 349 of the 1,586 errors
-resolve to `garth`.
-
-Absent, consumed by `inkson`: `outbound` (engine, submitter, post-accept hooks,
-generation fence, queued intents/records, `OutboundQueueStore`), `projection`
-(`ClientProjector`, `ClientEvent`, `ProjectionObjectState`,
-`realm_projection_is_encrypted`, `realm_projection_security_state`,
-`security_projection_for_scope_id`), sync loop control (`SyncLoopControl`,
-`RunOptions`, `RunStopReason`, `ScanCatchupOptions`, `TransportProvider`,
-`RealmEventsTransport`, `RealmEventsFrameSource`, `expand_realm_delivery_events`),
-`history_runtime` / `HistoryCandidateEngine` / `HistorySourceAttemptStatus`,
-`SignalPlaintext` / `SignalReceiveHandlers` / `SignalRejection`,
-`SendQueueStatus`, `InstalledMlsEpoch`, `LocalSealView`, `AuthoringGeneration` /
-`AuthoringAuthorityModel`, and the `garth::mls` submodules `welcome_admission`,
-`backup_selection`, `backup_series`, `local_checkpoint`, `device_secret`,
-`self_preservation`, `status`. `garth::message_authoring` exists but no longer
-exports `MessageAuthoringSession`, `MessageAuthoringTarget`,
-`MessageAuthoringFailure` or `MessageAuthoringRecovery`.
-
-One unrelated compile break was repaired to make the census possible:
-`garth/src/direct_conversation.rs` had not followed
-`DirectConversationResolveOutcome` to its current shape (`CreationRequired` is
-now a struct variant, and `CreationBlocked`, `AwaitingFounder`,
-`ProvisionallyCommitted` were unhandled). That change is in the `garth` tree,
-not this repository.
-
-### `arkret-rust-sdk`
-
-249 distinct symbols `inkson` imports are absent. 45 are the protocol surfaces
-this migration removes on purpose (`Seal*`, `Cell*`, `Cbs*`, `*Frontier*`,
-`Lattice*`, `ControlProposal*`, `Predicate`/`PredicateOp`/`Precondition`,
-`EventRequirements`, `ProjectedCellWrite`, `ProjectionEffect`, `ProjectedOp`,
-`StateWrite`, `DurabilityPolicy`, `causal_register_state`,
-`ConsentObservedDot`, `EventInitialSubmission`,
-`EventsSubmitBatchRequestBody`, `CORE_REDUCER_PROFILE`). Their call sites are
-migration work, not blockers.
-
-The other 204 are product surfaces with no successor. By family:
-
-| Family | Absent symbols (count) | Examples |
+| Missing SDK surface | Spec source | Blocked inkson capability |
 | --- | --- | --- |
-| History key request/response, exporter history | 28 | `HistoryKeyRequest`, `HistoryKeyRequestRecord`, `HistoryKeyResponseContent`, `HistoryResponsePageEntry`, `VerifiedHistoryResponseRecord`, `HistoryEffectiveScope`, `history_store` |
-| Agent runtime and Agent Sidecar | 19 | `AgentSidecarView`, `AgentSidecarExchangeProjection`, `AgentSidecarMlsContext`, `AgentRuntimeApprovalControllerProjection`, `AgentSenderKind`, `agent_sidecar_view_state_account_data_key` |
-| Account/device recovery policy | 17 | `RecoveryPolicy`, `RecoveryKeyEntry`, `RecoveryMethod`, `RecoverySessionState`, `RecoverySessionProof`, `UnsignedRecoveryReceipt`, `RecoveryIdentityModel` |
-| MLS Welcome delivery and accepted artifacts | 12 | `MlsWelcomeCarrier`, `MlsWelcomePayload`, `MlsWelcomeRecipient`, `MlsAcceptedArtifactOutcome`, `MlsMembershipRemovalOutcome`, `MlsEpochHead`, `MlsClaimTrustBinding` |
-| Direct Conversation founding | 6 | `direct_conversation_ops`, `DirectConversationFoundingPlan`, `DirectConversationSummary`, `DirectConversationSummaryState` |
-| Account subscribe / commit stream | 6 | `AccountStreamStep`, `AccountStepHandlers`, `AccountCommitOutcome`, `AccountPostCommitHook` |
-| Current-index projection reads | 5 | `CurrentTarget`, `CurrentOutcome`, `CurrentEntries`, `CurrentResultEntry`, `CurrentMemberCoverage` |
-| Realm/Space/Strand projection rows | 5 | `ProjectionSpaceRow`, `ProjectionStrandRow`, `ProjectionObjectState`, `RealmRow`, `RealmListMembership` |
-| Events read/submit outcomes | 6 | `EventReadRow`, `EventsQueryOutcome`, `EventsSubmitOutcome`, `EventsSubmitStatus`, `EventsSubmitRejectedRow`, `EventsSubscribeFrame` |
-| Contacts, notifications, consent, MIMI, sidecar ops | 10 | `ContactState`, `ContactListRow`, `NotificationData`, `ConsentState`, `MimiSubmitMessageOutcome`, `sidecar_operations` |
-| Session, key backup, device pairing, other | ~90 | `SessionState`, `SessionGrantIntrospectionProof`, `KeyBackupKeybag`, `KeyBackupContentIndex`, `UnsignedKeyBackup`, `DevicePairingReadyForClaimState`, `UnsignedDeviceAuthorizePayload`, `device_authorize_payload_digest`, `AuthContext`, `AuthorProfile`, `PolicyDocument`, `MemberRosterEntry`, `ReadCursorPosition` |
+| `DeviceRevokePayload` + revocation reason; `event_spec::DeviceRevoke` has no payload binding although `EventKind::DeviceRevoke` is registered | `event-payload.schema.json#/$defs/device_revoke_payload` | device revoke |
+| `ak.realm.authority.reset` Event kind and its authoring helper, plus a `CurrentSelector` for the authority-root typed current result the payload's `expected_state_digest` has to CAS against (`RealmAuthorityResetPayload` exists but nothing can author it, and `CurrentSelector` is closed to profile / policy / member / strand / reactions / MLS group) | `spec/v1/zh/authz/capabilities.md` §148 (reset computes `authority_generation = checked_add(prestate, 1)` under an `expected_state_digest` CAS), §661 (`realm_root` refs fail a whole generation only on reset); `conformance-profiles.json` `stable_phase.allowed_root_control_actions` | Realm admin ownership card: current owner, controller epoch, owner transfer and "revoke all Realm-wide permissions" |
+| `MessagePrepareOutcome` | `message-authoring.schema.json#/$defs/message_prepare_outcome` | Station-prepared message authoring |
+| `MimiSubmitMessage{RequestBody,Outcome}`, `MimiIdentifierQueryOutcome`, `MimiProxyDownloadOutcome` | `mimi-operations.schema.json`; operations registered in `operation-registry.json` | MIMI interop send / identifier query / proxy download |
+| `PolicySetStatePayload` | `event-payload.schema.json#/$defs/policy_set_state_payload` | Realm policy set-state |
+| `ProofSummary` | `recovery-session.schema.json#/$defs/proof_summary` | recovery session proof summary |
+| `RecoveryPolicyPublishRequest` | `recovery-policy.schema.json#/$defs/recovery_policy_publish_request` | recovery policy publish |
 
-A further 75 symbols do exist in the SDK workspace but are no longer reachable
-from the `arkret_sdk` facade root. These are a re-export gap, not a design gap;
-restoring the facade exports (or repointing the imports) clears them:
+## SDK gaps closed by this round
 
-- `arkret_models_collaboration` (42): `AccountView`, `AccountRegisterRequestBody`,
-  `AccountDevicePairOutcome`, `AccountSubscribeFrame` and its kinds,
-  `AgentView`, `AgentProjection`, `AgentRuntimeState`, `AgentSidecarView`,
-  `AgentPairingBootstrap`, `AgentRequestedScopeDisclosure`, `ContactList`,
-  `DeviceMessageEnvelope`, `DeviceMessageSender`, the `DevicePairing*` family,
-  `KeyState`, `NotificationDelta`, `NotificationDeltaAction`, `RealmSyncEntry`,
-  `SessionGrantOutcome`, `SessionGrantRequestBody`,
-  `SessionGrantRefreshRequestBody`, `SignalSubmitOutcome`, `SyncFilter`,
-  `SyncRequestBody`, `StationCasAccountDataContainer`,
-  `human_session_grant_intent_digest`.
-- `arkret_models_crypto` (24): `SecurityTransaction`,
-  `SecurityTransactionCreateRequest`, `SecurityTransactionStep`,
-  `SecurityRotationTransactionCreateRequest`, `RecoveryTransactionCreateRequest`,
-  `RecoveryAuthorityKind`, `RecoveryIdentityModel`, `PcrPolicyRecoveryIntent`,
-  `PreparedEventUnit`, `BackupObjectRef`, `BackupRotationKind`,
-  `BackupRotationPlan`, `BackupRotationBinding`, `BackupActiveSeriesState`,
-  `KeyBackupSummary`, `KeyBackupUnlockProof`, `KeyBackupUnlockAuthority`,
-  `KeyBackupsListQuery`, `KeysBackupsList`, `KeysBackupsReplaceOutcome`,
-  `KeysBackupsUnlockChallenge`, `MlsProposalEnvelope`, `MlsWelcomeEnvelope`.
-- `arkret_wire` (6), `arkret_retry` (1: `RetrySchedule`), `arkret_http_client`
-  (1: `KeyBackupClient`), `arkret_event_draft` (1: `AgentLifecycleState`).
+Three of the gaps above were not "the SDK dropped a concept" but "the SDK had
+not re-exposed a still-normative one". They were restored in
+`arkret-rust-sdk` (never re-declared in inkson), and the inkson call sites are
+now ordinary typed reads:
 
-Expected but not yet present anywhere: a typed MLS Welcome **delivery** object
-(the producer-signed recipient delivery object that is not an Event), and the
-`policy_revision` replacement for `policy_root`.
-
-## Residue census
-
-Full-tree grep, ordinary-English senses separated by hand. These are old-protocol
-call sites awaiting the replacement seams, not stray text.
-
-| Term | Occurrences (`src/`, `tests/`) | Notes |
+| Restored SDK surface | Where it now lives | Inkson capability it unblocked |
 | --- | --- | --- |
-| `Seal` | 1,317 tree-wide | Protocol sense throughout `views`, `mls`, `transport`, `state`. `hpke_seal` / `seal`-`open` in `src/hpke_backup.rs` and `src/recovery_crypto.rs` is RFC 9180 HPKE and stays. |
-| `Cell` | 893 tree-wide; 143 protocol-sense identifiers | The remainder is `std::cell::RefCell` / `OnceCell` and the word "cancel". Protocol-sense: `cell_id` (79), `CellRef` (15), `CellFamilyId` (10), `cell_ref` (10), `cell_value`, `cbs_cell_family_plane`. |
-| `frontier` | 850 | Concentrated in `src/mls/` (227) and `src/views/` (185). No ordinary-English sense present. |
-| `CBS` | 83 | Mostly `src/event_submit.rs` (19) and `src/identity/` (11). |
-| `ControlProposal` | 26 | All protocol sense. |
-| `lattice` | 22 | All protocol sense. |
-| `or_set` | 7 | All protocol sense. |
-| `causal_register` | 5 | All protocol sense. |
-| `RHRK` | 6 | All protocol sense. |
-| `history_secret` | 166 | `src/state/` (52), `src/mls/` (49), `src/secure_key_store/` (27). |
-| `exporter` | 286 | Split. RFC 9420 MLS exporter for SFrame in `src/media/` (86) and `src/rtc_transport/` (18) is required by spec and stays. The "history exporter" sense is `scope_uses_exporter_history` in `src/history_recovery.rs` and the exporter-history ranges in `src/mls/runtime/history_candidate_consumer.rs`. |
-| `encryption_profile` | 155 | Create-locked profile, to be removed; SDK field rename pending. |
-| `encryption_floor` | 95 | Content/metadata floor, to be removed; `src/components/encryption_floor_prompt.rs` is the UI surface. |
-| `mls_welcome` | 93 | Welcome-as-Event call sites; awaiting the typed delivery object. |
-| `Retired` | 83 | Two senses. `src/state/current_index.rs` uses `RetiredEntry` / `retired/` as a live current-index concept, not a tombstone narrative. `src/views/`, `src/mls/`, `src/transport/` carry tombstone prose that must go. |
-| `Legacy` | 21 | Tombstone narrative, e.g. `accepted_legacy_creator_genesis_proposal` in `src/event_submit.rs`. |
-| `Deprecated` | 4 | Tombstone narrative. |
-| `sequenced_state`, `authority_revision`, `policy_root` | 0 | Already absent. |
+| `ContactState`, `ContactListRow`, `ContactAgentProjection`, `DirectConversationSummary(State)`; `ContactList.contacts` is `Vec<ContactListRow>` again | `arkret_models_collaboration::contact_operations`, re-exported at `arkret_sdk::*`. `ContactListRow` deserializes through a private wire struct that enforces the schema's conditional requirements (`next_prepare_input` exactly for `accepted`, `request_event_ref` for `pending_incoming`, `request_message` only there, `effective_scopes == bidirectional_scopes`) | contacts list, contact request / accept / reject UI, sidebar direct-chat targets, `accepted_human_contact_principals` in local state |
+| Typed notification deltas: `NotificationDelta{id: NotificationIdentity, action, data: Option<NotificationData>}`, `NotificationData::{AgentRuntimeApproval, AgentRuntimeApprovalRemoval, OrdinaryProjection, OrdinaryRemoval}`, the two closed removal-reason vocabularies, and `verify_recipient_binding` | `arkret_models_collaboration::sync_frames::account_subscribe`, re-exported at `arkret_sdk::sync::*`. The branch is selected from the `id` form before `data` is parsed, so the overlapping `expired` / `superseded` reasons cannot cross branches | notification inbox, Agent runtime approval notifications, mention / message notification projections |
+| `MemberRosterEntry`, `MemberRosterMembership`, `MemberRoster`, `AgentRuntimeApprovalNotificationData` | already present in `arkret_models_collaboration::account_subscribe_projections`; only the `arkret_sdk::sync` re-export was missing | typed member roster, member display ladder, roster-driven Kanban assignment |
 
-## Verification gates
+Call sites moved with them: sync-frame types are addressed as
+`arkret_sdk::sync::*` (the umbrella namespaces them under `sync`, and the
+client no longer reaches for them at the crate root), and the roster membership
+value is `MemberRosterMembership` — the two roster-visible states — not the
+four-valued `MembershipState` of a Realm member current result.
 
-- [ ] Every capability above maps to a retained implementation and behavior test;
-  passing a protocol-core unit test set is not sufficient. **Implementation and
-  test evidence are recorded above. The tests cannot execute: the crate does not
-  compile.**
-- [ ] Native and WASM builds, UI/contract tests, IndexedDB/native persistence,
-  MLS, media, push and packaging checks pass against the final SDK. **Blocked on
-  the native build.**
-- [x] The final diff does not delete an application surface, platform asset,
-  release workflow or user guide merely because its old transport used removed
-  protocol types. **Verified: the working tree is an exact restoration of
-  `57a4ea10`; nothing is missing and nothing extra was added.**
+## Removed with the protocol
 
-## Command results
+Deleted from this client because the concept no longer exists on the wire, with
+no successor: Seal (incl. the PCR successor Seal journal), protocol-level Cell
+and every cell projection, CBS execution planes, Bottom, Control Proposal Acks,
+generic frontiers (events / Seal / MLS governance / security), Lattice ops,
+`Predicate`/`Precondition`/`EventRequirements`/`StateWrite`, sequenced state,
+causal register, or-set observed dots, ordered log, authority revision, the
+history exporter and the whole RHRK history-key family
+(`src/history_recovery.rs`, `src/history_ui.rs`, `src/state/history_*.rs`,
+`src/mls/runtime/history_candidate_consumer.rs`), organization recovery key,
+audited-E2EE, the full and relaxed MLS governance profiles, `security_frontier`,
+`policy_root`, the create-locked `encryption_profile` and encryption floor,
+`DurabilityPolicy` / `ContentScheme`, `AuthorizationLease` / `IngressReceipt`,
+`EventSubmitContext`, and the Agent Sidecar *exchange* vocabulary.
 
-| Command | Result |
-| --- | --- |
-| `cargo +nightly fmt --check` (inkson only) | Clean, exit 0. No rewrite needed. |
-| `cargo check --workspace --all-features` | 1,586 errors in `inkson` (lib). |
-| `cargo test --workspace --all-features --no-fail-fast` | 2,154 errors in `inkson` (lib test); no test binary links, no pass/fail counts. |
-| wasm build / wasm browser tests | Not attempted: `dx build --platform web` and `tests/mls_data_plane_wasm.rs` both require the crate to compile first. |
+The MLS exporter under `src/media/` and `src/rtc_transport/` is the SFrame
+RFC 9420 exporter, is required by the spec, and is retained.

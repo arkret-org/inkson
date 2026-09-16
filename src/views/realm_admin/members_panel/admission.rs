@@ -679,7 +679,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         .event_submitter()?
         .backfill(&realm_id)
         .await?
-        .complete_events("MLS admission membership reconciliation")?;
+        .events();
     {
         let mut store = state_store.write();
         crate::sync_engine::ingest_membership_projection_events(

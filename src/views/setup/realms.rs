@@ -9,8 +9,8 @@ use super::data::{
     SECURITY_CLASS_OPTIONS, option_hint,
 };
 use super::helpers::{
-    content_scheme_constraint_hint, history_access_admits_prejoin, normalize_content_scheme,
-    plaintext_services_for_policy, policy_combination_hint,
+    content_scheme_constraint_hint, encryption_selection_is_e2ee, history_access_admits_prejoin,
+    normalize_content_scheme, plaintext_services_for_policy, policy_combination_hint,
 };
 use super::model::{NEW_REALM_STEPS, NewRealmStep};
 use crate::api_error::is_auth_expired_error;
@@ -202,7 +202,7 @@ pub(super) fn RealmsSection(
     let history_access_value = realm_policy_history_access();
     let encryption_profile_value = realm_encryption_profile();
     let content_scheme_value = realm_content_scheme();
-    let encryption_is_e2ee = garth::encryption_profile_is_encrypted(&encryption_profile_value);
+    let encryption_is_e2ee = encryption_selection_is_e2ee(&encryption_profile_value);
     let history_requires_exporter_aead =
         encryption_is_e2ee && history_access_admits_prejoin(&history_access_value);
     let content_scheme_warning = content_scheme_constraint_hint(
@@ -542,7 +542,7 @@ pub(super) fn RealmsSection(
                                         on_value_change: move |v: Option<String>| {
                                             if let Some(v) = v {
                                                 if history_access_admits_prejoin(&v)
-                                                    && garth::encryption_profile_is_encrypted(
+                                                    && encryption_selection_is_e2ee(
                                                         &realm_encryption_profile(),
                                                     )
                                                 {
@@ -579,7 +579,7 @@ pub(super) fn RealmsSection(
                                         on_value_change: move |v: Option<String>| {
                                             if let Some(v) = v {
                                                 let encrypted =
-                                                    garth::encryption_profile_is_encrypted(&v);
+                                                    encryption_selection_is_e2ee(&v);
                                                 if encrypted
                                                     && history_access_admits_prejoin(
                                                         &realm_policy_history_access(),
@@ -810,7 +810,7 @@ pub(super) fn RealmsSection(
                                         let history_access = realm_policy_history_access();
                                         let encryption_profile = realm_encryption_profile();
                                         let content_scheme = normalize_content_scheme(
-                                            garth::encryption_profile_is_encrypted(
+                                            encryption_selection_is_e2ee(
                                                 &encryption_profile,
                                             ),
                                             &history_access,
@@ -834,7 +834,7 @@ pub(super) fn RealmsSection(
                                         }
                                         // `recovery_material_pending` is a normative hard gate:
                                         // encrypted Realm creation requires a configured recovery path.
-                                        if garth::encryption_profile_is_encrypted(
+                                        if encryption_selection_is_e2ee(
                                             &encryption_profile,
                                         )
                                         {
@@ -1129,7 +1129,7 @@ pub(super) fn RealmsSection(
                                                             &[("id", realm_id.clone())],
                                                         ));
 
-                                                        if garth::encryption_profile_is_encrypted(
+                                                        if encryption_selection_is_e2ee(
                                                             &encryption_profile,
                                                         ) {
                                                             tracing::debug!(
@@ -1213,7 +1213,7 @@ pub(super) fn RealmsSection(
                                                                 )],
                                                             ));
                                                         }
-                                                        if garth::encryption_profile_is_encrypted(
+                                                        if encryption_selection_is_e2ee(
                                                             &encryption_profile,
                                                         ) {
                                                             steps.push(strings.mls_ready_local.clone());
@@ -1227,7 +1227,7 @@ pub(super) fn RealmsSection(
                                                         let message = steps.join(" · ");
                                                         realm_create_busy.set(false);
                                                         realm_state.set(message);
-                                                        if garth::encryption_profile_is_encrypted(
+                                                        if encryption_selection_is_e2ee(
                                                             &encryption_profile,
                                                         ) && let Some(signal) = backup_trigger_signal {
                                                             // Realm bootstrap creates the account MLS secret

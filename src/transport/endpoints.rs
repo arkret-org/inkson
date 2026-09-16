@@ -409,7 +409,7 @@ pub struct AccountEndpoints<'a> {
 impl AccountEndpoints<'_> {
     pub async fn viewer(
         &self,
-    ) -> anyhow::Result<arkret_models_collaboration::account_lifecycle::AccountView> {
+    ) -> anyhow::Result<arkret_models_collaboration::account_operations::AccountView> {
         crate::transport::account::account_viewer(self.transport.http()).await
     }
 

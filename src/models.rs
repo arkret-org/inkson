@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
+use arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry;
 use arkret_sdk::contact_operations::ContactScope;
 pub use arkret_sdk::{
-    ContactAgentProjection, ContactList, ContactListRow, DirectConversationSummary,
-    InteropSurfaceEntry, ServiceDescribe, VerifiedProfileEntry,
+    ContactAgentProjection, ContactList, ContactListRow, ContactState, DirectConversationSummary,
+    DirectConversationSummaryState, InteropSurfaceEntry, ServiceDescribe, VerifiedProfileEntry,
 };
 use arkret_wire::ProfileId;
 use serde::{Deserialize, Serialize};
@@ -205,49 +206,74 @@ pub fn missing_v1_station_requirements(description: &ServiceDescribe) -> Vec<&'s
 // `ak.self.account.read.describe.v1` decodes into the SDK's authoritative
 // `arkret_sdk::ServiceDescribe`; the former inkson-local describe mirror was
 // removed in favor of the wire type.
-/// App runtime state derived from validated canonical account-subscribe frames.
-/// Wire ownership remains in `AccountSubscribeBatch` and `SyncUpdates`; the
-/// JSON map is only the heterogeneous local projection consumed by UI reducers.
+/// App runtime state derived from one validated canonical account-subscribe
+/// frame.
+///
+/// Wire ownership stays in `AccountSubscribeFrame`; the JSON map is only the
+/// heterogeneous local projection consumed by UI reducers. `cursor` is the
+/// account subscription's own opaque resume token — it is never a commit-stream
+/// position and never orders Events across Realms.
 #[derive(Clone, Debug)]
 pub struct AccountSyncStep {
     pub cursor: String,
-    pub updates: arkret_sdk::SyncUpdates,
     /// Canonical SDK Realm entries retained after sync decoding. Product
     /// projections may derive JSON views for heterogeneous reducers, but
     /// security decisions (for example Direct Conversation MLS admission)
     /// must use this typed source.
-    pub realm_entries: BTreeMap<arkret_sdk::RealmId, arkret_sdk::RealmSyncEntry>,
+    pub realm_entries: BTreeMap<arkret_sdk::RealmId, RealmSyncEntry>,
     pub realm_projections: BTreeMap<String, Value>,
 }
 
 impl AccountSyncStep {
-    pub fn from_updates(
+    pub fn from_frame(
         cursor: String,
-        updates: arkret_sdk::SyncUpdates,
+        frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
     ) -> arkret_sdk::Result<Self> {
-        let realm_entries = updates
-            .realm_updates
-            .iter()
-            .map(|update| (update.realm_id.clone(), update.entry.clone()))
-            .collect();
-        let realm_projections = updates
-            .realm_updates
-            .iter()
-            .map(|update| {
-                serde_json::to_value(&update.entry)
-                    .and_then(|mut value| {
-                        project_member_roster_from_sdk_entry(&mut value, &update.entry)?;
-                        Ok((update.realm_id.as_str().to_owned(), value))
-                    })
-                    .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
-            })
-            .collect::<arkret_sdk::Result<BTreeMap<_, _>>>()?;
+        let entries = frame
+            .realms
+            .as_ref()
+            .map(|realms| realms.entries.clone())
+            .unwrap_or_default();
+        let mut realm_entries = BTreeMap::new();
+        let mut realm_projections = BTreeMap::new();
+        for (realm, entry) in entries {
+            let realm_id = arkret_sdk::RealmId::new(realm)?;
+            let mut projection = serde_json::to_value(&entry)
+                .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
+            project_member_roster_from_sdk_entry(&mut projection, &entry)
+                .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
+            realm_projections.insert(realm_id.as_str().to_owned(), projection);
+            realm_entries.insert(realm_id, entry);
+        }
         Ok(Self {
             cursor,
-            updates,
             realm_entries,
             realm_projections,
         })
+    }
+
+    /// Every independent commit stream this step delivered items for, with the
+    /// last position it carried.
+    ///
+    /// The key is the exact [`arkret_wire::CommitStreamRef`]; there is
+    /// deliberately no Realm-global position, so a caller advances each stream's
+    /// own cursor and nothing else.
+    pub fn stream_heads(&self) -> BTreeMap<arkret_wire::CommitStreamRef, u64> {
+        let mut heads: BTreeMap<arkret_wire::CommitStreamRef, u64> = BTreeMap::new();
+        for entry in self.realm_entries.values() {
+            let Some(timeline) = entry.timeline.as_ref() else {
+                continue;
+            };
+            for item in &timeline.commits {
+                heads
+                    .entry(item.commit.stream_ref.clone())
+                    .and_modify(|position| {
+                        *position = (*position).max(item.commit.stream_position);
+                    })
+                    .or_insert(item.commit.stream_position);
+            }
+        }
+        heads
     }
 
     pub fn collaboration_role(&self, realm_id: &str) -> Option<arkret_sdk::CollaborationRealmRole> {
@@ -255,7 +281,9 @@ impl AccountSyncStep {
             .iter()
             .find(|(id, _)| id.as_str() == realm_id)
             .and_then(|(_, entry)| entry.state_at_window_start.as_ref())
-            .and_then(|state| state.realm_metadata.collaboration_role)
+            .and_then(|state| state.get("realm_metadata"))
+            .and_then(|metadata| metadata.get("collaboration_role"))
+            .and_then(|role| serde_json::from_value(role.clone()).ok())
     }
 
     pub fn has_window_start_realm_metadata(&self, realm_id: &str) -> bool {
@@ -272,30 +300,39 @@ impl AccountSyncStep {
 /// would create two competing roster representations in durable client state.
 fn project_member_roster_from_sdk_entry(
     projection: &mut Value,
-    entry: &arkret_sdk::RealmSyncEntry,
+    entry: &RealmSyncEntry,
 ) -> serde_json::Result<()> {
-    let Some(roster) = entry.member_roster.as_ref() else {
+    let Some(roster) = entry.member_roster.as_ref().and_then(Value::as_object) else {
         return Ok(());
     };
     let Some(object) = projection.as_object_mut() else {
         return Ok(());
     };
+    let entries = roster.get("entries").cloned().unwrap_or(Value::Null);
+    let limited = roster
+        .get("limited")
+        .and_then(Value::as_bool)
+        .unwrap_or_default();
+    let next_cursor = roster
+        .get("next_cursor")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
     object.remove("member_roster");
-    object.insert(
-        "member_roster_entries".to_owned(),
-        serde_json::to_value(&roster.entries)?,
-    );
+    object.insert("member_roster_entries".to_owned(), entries);
     object.insert(
         "member_roster_entries_limited".to_owned(),
-        Value::Bool(roster.limited),
+        Value::Bool(limited),
     );
-    if let Some(next_cursor) = roster.next_cursor.as_ref() {
-        object.insert(
-            "member_roster_entries_next_cursor".to_owned(),
-            Value::String(next_cursor.clone()),
-        );
-    } else {
-        object.remove("member_roster_entries_next_cursor");
+    match next_cursor {
+        Some(next_cursor) => {
+            object.insert(
+                "member_roster_entries_next_cursor".to_owned(),
+                Value::String(next_cursor),
+            );
+        }
+        None => {
+            object.remove("member_roster_entries_next_cursor");
+        }
     }
     Ok(())
 }
@@ -491,7 +528,7 @@ mod tests {
                 .unwrap();
         let alice = "ak:did_core:webvh:QmTwPiXhFdKLBT4AvS2cg4hjiCEdwbmgSTRfhGaEKUVR7P";
         let bob = "ak:did_core:webvh:QmQa9ZRrF8geZSqUMGGzE9M7uLRvuQyJ7wWRSXN9qsEiLU";
-        let entry = serde_json::from_value::<arkret_sdk::RealmSyncEntry>(serde_json::json!({
+        let entry = serde_json::from_value::<arkret_sdk::sync::RealmSyncEntry>(serde_json::json!({
             // A since-join reader may not receive the invite.accept Event that
             // established its own membership. The current typed roster is the
             // authoritative projection input in that case.
@@ -511,30 +548,28 @@ mod tests {
             }
         }))
         .unwrap();
-        let step = AccountSyncStep::from_updates(
-            "ak:cursor:account".to_owned(),
-            arkret_sdk::SyncUpdates {
-                realm_updates: vec![arkret_sdk::RealmUpdate {
-                    realm_id: realm_id.clone(),
+        let frame = arkret_sdk::sync::AccountSubscribeFrame {
+            kind: arkret_sdk::sync::AccountSubscribeFrameKind::Delta,
+            cursor: Some("ak:cursor:account".to_owned()),
+            realms: Some(arkret_sdk::sync::AccountSubscribeRealms {
+                entries: std::collections::BTreeMap::from([(
+                    realm_id.as_str().to_owned(),
                     entry,
-                }],
-                malformed_realm_ids: Vec::new(),
-                to_device: Vec::new(),
-                to_device_ack_token: None,
-                to_device_limited: false,
-                to_device_next_cursor: None,
-                to_device_lost: false,
-                device_lists: arkret_sdk::AccountSubscribeDeviceListChanges {
-                    changed_ids: Vec::new(),
-                    left_ids: Vec::new(),
-                },
-                account_data: Vec::new(),
-                station_cas_account_data: Vec::new(),
-                notifications: Vec::new(),
-                partial: false,
-            },
-        )
-        .unwrap();
+                )]),
+            }),
+            to_device: None,
+            device_lists: None,
+            account_data: None,
+            notifications: None,
+            partial: None,
+            priority: None,
+            reconnect_after_ms: None,
+            realm_list: None,
+            realm_list_changes: None,
+            baseline: None,
+            realm_invalidations: None,
+        };
+        let step = AccountSyncStep::from_frame("ak:cursor:account".to_owned(), &frame).unwrap();
 
         let projection = &step.realm_projections[realm_id.as_str()];
         assert!(
@@ -606,26 +641,20 @@ mod tests {
     }
 
     #[test]
-    fn submit_event_outcome_decodes_new_events_submit_wire() {
-        // Soland head 37ce729: {status, accepted[], cursor} — no top-level
-        // event_id / sync_token. This is the shape that previously failed to
-        // decode and broke every event submit ("error decoding response body").
-        let value = serde_json::json!({
-            "status": "accepted",
-            "pending_delivery_count": 0,
-            "accepted": ["ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"],
-            "duplicate": [],
-            "rejections": [],
-            "frontiers": [],
-            "cursor": "sx:cursor-1",
-        });
-        let outcome: super::SubmitEventResult = serde_json::from_value(value).unwrap();
+    fn submit_event_result_reports_the_station_rejection_reason_code() {
+        let outcome: arkret_wire::AuthoritySubmitOutcome = serde_json::from_value(
+            serde_json::json!({"status": "rejected", "reason_code": "policy_violation"}),
+        )
+        .unwrap();
+        let result = super::SubmitEventResult::from(outcome);
+        assert_eq!(result.status, garth::SendQueueStatus::Rejected);
         assert_eq!(
-            outcome.event_id,
-            "ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
+            result.rejection_reason_code.as_deref(),
+            Some("policy_violation")
         );
-        assert_eq!(outcome.status, arkret_sdk::EventsSubmitStatus::Accepted);
-        assert_eq!(outcome.cursor, "sx:cursor-1");
+        assert!(result.commit.is_none());
+        assert!(!result.is_committed());
+        assert!(result.stream_position().is_none());
     }
 
     #[test]
@@ -678,23 +707,6 @@ mod tests {
         let decoded: arkret_sdk::ContactList = serde_json::from_value(value).unwrap();
         assert_eq!(decoded.contacts.len(), 1);
         assert_eq!(decoded.contacts[0].contact_agent_projections.len(), 1);
-    }
-
-    #[test]
-    fn submit_event_outcome_uses_duplicate_id_when_nothing_accepted() {
-        let value = serde_json::json!({
-            "status": "duplicate",
-            "pending_delivery_count": 0,
-            "accepted": [],
-            "duplicate": ["ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"],
-        });
-        let outcome: super::SubmitEventResult = serde_json::from_value(value).unwrap();
-        assert_eq!(
-            outcome.event_id,
-            "ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"
-        );
-        assert_eq!(outcome.status, arkret_sdk::EventsSubmitStatus::Duplicate);
-        assert_eq!(outcome.cursor, "");
     }
 
     #[test]
@@ -798,96 +810,72 @@ mod tests {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// One authorized commit-stream page: the authority-signed `RealmCommit` and
+/// the exact Event it covers, in stream order.
+///
+/// There is deliberately no Realm-global page here. A Realm, each Circle and
+/// each Sidecar own independent streams, so a caller names the stream it is
+/// catching up and this view never mixes two of them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct BackfillView(pub arkret_sdk::EventsQueryOutcome);
+pub struct BackfillView(pub arkret_wire::StreamScanOutcome);
 
 impl BackfillView {
-    /// Require a complete accepted Event log for reducers, authority decisions,
-    /// completeness verification, and cryptographic operations.
-    pub fn complete_events(&self, purpose: &str) -> anyhow::Result<Vec<arkret_sdk::Event>> {
-        require_complete_event_rows(&self.0.events, purpose)
+    /// The stream this page belongs to, or `None` for an empty page.
+    pub fn stream_ref(&self) -> Option<&arkret_wire::CommitStreamRef> {
+        self.0.commits.first().map(|item| &item.commit.stream_ref)
     }
 
-    /// Serialize only complete Events for a non-authoritative display
-    /// projection. Redacted/reference-locked rows intentionally carry too
-    /// little information to rebuild a timeline object, but they must not make
-    /// the chat renderer discard other complete rows from the same page (in
-    /// particular the server-folded redaction tombstone for a Message).
+    /// The last position covered by this page, for the caller's per-stream
+    /// cursor. `None` means the page was empty and the cursor does not move.
+    pub fn last_position(&self) -> Option<u64> {
+        self.0.commits.last().map(|item| item.commit.stream_position)
+    }
+
+    /// The Station reported more commits after this page.
+    pub fn truncated(&self) -> bool {
+        self.0.truncated
+    }
+
+    /// The accepted Events of this page, in commit order.
     ///
-    /// Reducers, MLS recovery and authorization continue to use
-    /// `complete_events` and therefore fail closed on either incomplete row.
+    /// Every item on an authority stream is a complete Event covered by exactly
+    /// one commit, so reducers, authorization decisions and cryptographic
+    /// operations read this directly.
+    pub fn events(&self) -> Vec<arkret_sdk::Event> {
+        self.0
+            .commits
+            .iter()
+            .map(|item| item.event.clone())
+            .collect()
+    }
+
+    /// Serialize the page's Events for a non-authoritative display projection.
     pub fn display_event_values(&self) -> anyhow::Result<Vec<Value>> {
         self.0
-            .events
+            .commits
             .iter()
-            .filter_map(|row| match row {
-                arkret_sdk::EventReadRow::Event(event) => {
-                    Some(serde_json::to_value(event).map_err(Into::into))
-                }
-                arkret_sdk::EventReadRow::Redacted(_)
-                | arkret_sdk::EventReadRow::ReferenceLocked(_) => None,
+            .map(|item| serde_json::to_value(&item.event).map_err(Into::into))
+            .collect()
+    }
+
+    /// The exact committed reference of each Event on this page.
+    pub fn committed_refs(&self) -> Vec<arkret_wire::CommittedEventRef> {
+        self.0
+            .commits
+            .iter()
+            .map(|item| arkret_wire::CommittedEventRef {
+                event_id: item.event.event_id.clone(),
+                commit_id: item.commit.commit_id.clone(),
+                stream_ref: item.commit.stream_ref.clone(),
+                stream_position: item.commit.stream_position,
             })
             .collect()
     }
 }
 
-#[cfg(test)]
-mod backfill_display_tests {
-    use super::*;
-
-    #[test]
-    fn display_projection_skips_opaque_rows_without_rejecting_the_page() {
-        let redacted = serde_json::from_value(serde_json::json!({
-            "view_kind": "redacted_event_view",
-            "event_id": "ak:event:AQ-IyBN9yVn52Yqaah8H-_0fuHhf3ImJTExtFDnU3ebQ",
-            "kind": "ak.message.redact",
-            "realm_id": "ak:realm:AQPaZ0Jo2vyqxYcuCGXtMaCGulqrjFxOxXHsUhcb30Gt",
-            "redaction_reason": "redacted",
-            "hidden_fields": ["payload", "proofs"],
-            "reducer_input": false
-        }))
-        .expect("valid RedactedEventView row");
-        let backfill = BackfillView(arkret_sdk::EventsQueryOutcome {
-            events: vec![redacted],
-            realm_state_snapshot_bootstrap: None,
-            prev_cursor: None,
-            next_cursor: None,
-            has_more: false,
-        });
-
-        assert!(backfill.display_event_values().unwrap().is_empty());
-        assert!(backfill.complete_events("authority replay").is_err());
-    }
-}
-
-pub(crate) fn require_complete_event_rows(
-    rows: &[arkret_sdk::EventReadRow],
-    purpose: &str,
-) -> anyhow::Result<Vec<arkret_sdk::Event>> {
-    rows.iter()
-        .enumerate()
-        .map(|(index, row)| match row {
-            arkret_sdk::EventReadRow::Event(event) => Ok(event.clone()),
-            arkret_sdk::EventReadRow::Redacted(view) => anyhow::bail!(
-                "{purpose} requires complete Events; row {index} ({}) is redacted ({:?})",
-                view.event_id,
-                view.redaction_reason
-            ),
-            arkret_sdk::EventReadRow::ReferenceLocked(stub) => anyhow::bail!(
-                "{purpose} requires complete Events; row {index}{} is reference-locked ({:?})",
-                stub.event_id
-                    .as_ref()
-                    .map(|event_id| format!(" ({event_id})"))
-                    .unwrap_or_default(),
-                stub.reason_code
-            ),
-        })
-        .collect()
-}
-
-impl From<arkret_sdk::EventsQueryOutcome> for BackfillView {
-    fn from(outcome: arkret_sdk::EventsQueryOutcome) -> Self {
+impl From<arkret_wire::StreamScanOutcome> for BackfillView {
+    fn from(outcome: arkret_wire::StreamScanOutcome) -> Self {
         Self(outcome)
     }
 }
@@ -923,7 +911,7 @@ pub use arkret_models_collaboration::governance::authorization::GrantList;
 /// `service-operation-dtos.schema.json#/$defs/ModerationReportOutcome`).
 pub use arkret_models_collaboration::governance::moderation::ModerationReportOutcome;
 pub use arkret_models_collaboration::objects::blob::BlobUploadOutcome;
-pub use arkret_models_collaboration::sync_frames::account_sync::{
+pub use arkret_models_collaboration::device_messages::{
     DeviceMessageEnvelope, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
     DeviceMessagesGetOutcome, DeviceMessagesSendOutcome,
 };
@@ -945,66 +933,100 @@ pub struct RealmPolicyResult {
 
 // ── Device & Crypto ─────────────────────────────────────────────
 
-/// `ak.self.events.command.submit.v1` response.
+/// `ak.self.events.command.submit.v1` result, as this client holds it.
 ///
-/// Decodes the canonical `EventsSubmitOutcome` wire shape and folds it into
-/// the inkson-facing result:
-///   * `event_id` ← first `accepted` (else first `duplicate`)
-///   * `cursor`   ← `cursor` (read-your-writes barrier)
-///   * `status`   ← the `accepted` / `duplicate` / `partial` discriminant
+/// The Station answers one submitted Event with either an authority-signed
+/// `RealmCommit` or a rejection reason code; the durable outbound queue adds the
+/// pre-answer lifecycle (`Queued` / `Forwarding`) and the local terminal states.
+/// `status` is therefore garth's queue vocabulary, and `commit` is the only
+/// evidence that the Event is final.
 ///
-/// Ids stay plain `String`s so synthetic fixture ids do not trip the strict
-/// `EventId` validator.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+/// `event_id` stays a plain `String` so synthetic fixture ids do not trip the
+/// strict `EventId` validator.
+#[derive(Clone, Debug, PartialEq)]
 pub struct SubmitEventResult {
     pub event_id: String,
-    pub status: arkret_sdk::EventsSubmitStatus,
-    #[serde(default)]
-    pub cursor: String,
-    /// Typed `ingress_receipts[]` from the outcome.
-    ///
-    /// These are the only evidence that the Event arrived inside its
-    /// authorization-lease window, so they are kept as the SDK type rather
-    /// than folded into the untyped `receipt` blob: the outbound queue rejects
-    /// an acceptance that carries none, and matches each receipt against the
-    /// lease the item was bound to.
-    #[serde(default)]
-    pub ingress_receipts: Vec<arkret_wire::IngressReceipt>,
+    pub status: garth::SendQueueStatus,
+    /// The authority-signed commit that covers this Event. Present exactly when
+    /// `status` is [`garth::SendQueueStatus::Committed`].
+    pub commit: Option<arkret_wire::RealmCommit>,
+    /// The Station's reason code. Present exactly when `status` is
+    /// [`garth::SendQueueStatus::Rejected`].
+    pub rejection_reason_code: Option<String>,
 }
 
-impl From<arkret_sdk::EventsSubmitOutcome> for SubmitEventResult {
-    fn from(outcome: arkret_sdk::EventsSubmitOutcome) -> Self {
-        let accepted: Vec<String> = outcome
-            .accepted
-            .into_iter()
-            .map(|event_id| event_id.as_str().to_owned())
-            .collect();
-        let duplicate: Vec<String> = outcome
-            .duplicate
-            .into_iter()
-            .map(|event_id| event_id.as_str().to_owned())
-            .collect();
-        let event_id = accepted
-            .first()
-            .cloned()
-            .or_else(|| duplicate.first().cloned())
-            .unwrap_or_default();
+impl SubmitEventResult {
+    pub fn committed(event_id: String, commit: arkret_wire::RealmCommit) -> Self {
         Self {
             event_id,
-            status: outcome.status,
-            cursor: outcome.cursor.unwrap_or_default(),
-            ingress_receipts: outcome.ingress_receipts,
+            status: garth::SendQueueStatus::Committed,
+            commit: Some(commit),
+            rejection_reason_code: None,
+        }
+    }
+
+    pub fn rejected(event_id: String, reason_code: String) -> Self {
+        Self {
+            event_id,
+            status: garth::SendQueueStatus::Rejected,
+            commit: None,
+            rejection_reason_code: Some(reason_code),
+        }
+    }
+
+    pub fn queued(event_id: String) -> Self {
+        Self {
+            event_id,
+            status: garth::SendQueueStatus::Queued,
+            commit: None,
+            rejection_reason_code: None,
+        }
+    }
+
+    pub fn is_committed(&self) -> bool {
+        self.status == garth::SendQueueStatus::Committed
+    }
+
+    /// The independent stream this Event was committed to.
+    pub fn stream_ref(&self) -> Option<&arkret_wire::CommitStreamRef> {
+        self.commit.as_ref().map(|commit| &commit.stream_ref)
+    }
+
+    /// The position this Event occupies in its own stream. There is no
+    /// Realm-global position, so this is only meaningful next to
+    /// [`Self::stream_ref`].
+    pub fn stream_position(&self) -> Option<u64> {
+        self.commit.as_ref().map(|commit| commit.stream_position)
+    }
+}
+
+impl From<arkret_wire::AuthoritySubmitOutcome> for SubmitEventResult {
+    fn from(outcome: arkret_wire::AuthoritySubmitOutcome) -> Self {
+        match outcome {
+            arkret_wire::AuthoritySubmitOutcome::Accepted { commit, .. } => Self {
+                event_id: commit.event_ref.as_str().to_owned(),
+                status: garth::SendQueueStatus::Committed,
+                commit: Some(commit),
+                rejection_reason_code: None,
+            },
+            arkret_wire::AuthoritySubmitOutcome::Rejected { reason_code, .. } => Self {
+                event_id: String::new(),
+                status: garth::SendQueueStatus::Rejected,
+                commit: None,
+                rejection_reason_code: Some(reason_code),
+            },
         }
     }
 }
 
-impl<'de> Deserialize<'de> for SubmitEventResult {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let outcome = arkret_sdk::EventsSubmitOutcome::deserialize(deserializer)?;
-        Ok(outcome.into())
+impl From<&garth::SendQueueItem> for SubmitEventResult {
+    fn from(item: &garth::SendQueueItem) -> Self {
+        Self {
+            event_id: item.event_id().as_str().to_owned(),
+            status: item.status,
+            commit: item.commit().cloned(),
+            rejection_reason_code: item.rejection_reason_code().map(ToOwned::to_owned),
+        }
     }
 }
 

@@ -17,10 +17,94 @@ use arkret_wire::websocket_binding::WebSocketCloseCode;
 use garth::websocket::socket::{
     AuthProofRequest, BoxSocketFuture, WebSocketConnector, WebSocketInbound, WebSocketSocket,
 };
-use garth::websocket::{
-    WebSocketConsumerHandoff, WebSocketConsumerOwner, WebSocketFallbackPolicy,
-    WebSocketHandshakeFailure, WebSocketTransportDecision,
-};
+
+/// What the client does after one WebSocket connection ended.
+///
+/// Garth owns the raw socket only; the retry budget and the fallback decision
+/// are host policy, so they live here. `FallbackHttp` is not an error path:
+/// every stream keeps working on the mandatory HTTP binding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebSocketTransportDecision {
+    RetryWebSocket { after_ms: u32 },
+    FallbackHttp,
+}
+
+/// An upgrade that never became an Arkret WebSocket.
+///
+/// §8.1 gives none of these a WebSocket retry: the descriptor is dropped until
+/// discovery changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebSocketHandshakeFailure {
+    /// The response was not `101 Switching Protocols`.
+    UpgradeStatusNotSwitchingProtocols,
+    /// The service did not select the `arkret.v1` subprotocol.
+    SubprotocolNotSelected,
+    /// An intermediary refused or stripped the upgrade.
+    ProxyRefused,
+}
+
+/// §8.1 retry budgets.
+///
+/// Two independent counters: connections that never reached a usable state, and
+/// connection-level authorization failures. Either budget running out ends the
+/// WebSocket attempt for this session; a connection that reached `welcome`
+/// resets both.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WebSocketFallbackPolicy {
+    restarts_without_welcome: u8,
+    policy_failures: u8,
+}
+
+/// A connection may be restarted twice without ever reaching `welcome`; the
+/// third attempt stays on HTTP.
+const MAX_RESTARTS_WITHOUT_WELCOME: u8 = 2;
+/// A second connection-level authorization failure stays on HTTP.
+const MAX_POLICY_FAILURES: u8 = 1;
+
+impl WebSocketFallbackPolicy {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A connection reached `welcome`: both budgets reset.
+    pub fn welcomed(&mut self) {
+        self.restarts_without_welcome = 0;
+        self.policy_failures = 0;
+    }
+
+    pub fn on_close(
+        &mut self,
+        code: arkret_wire::websocket_binding::WebSocketCloseCode,
+        drain_reconnect_after_ms: Option<u32>,
+    ) -> WebSocketTransportDecision {
+        use arkret_wire::websocket_binding::WebSocketCloseCode;
+        if code.forces_http_fallback() {
+            return WebSocketTransportDecision::FallbackHttp;
+        }
+        if code == WebSocketCloseCode::PolicyViolation {
+            self.policy_failures = self.policy_failures.saturating_add(1);
+            if self.policy_failures > MAX_POLICY_FAILURES {
+                return WebSocketTransportDecision::FallbackHttp;
+            }
+        } else {
+            self.restarts_without_welcome = self.restarts_without_welcome.saturating_add(1);
+            if self.restarts_without_welcome > MAX_RESTARTS_WITHOUT_WELCOME {
+                return WebSocketTransportDecision::FallbackHttp;
+            }
+        }
+        WebSocketTransportDecision::RetryWebSocket {
+            after_ms: drain_reconnect_after_ms.unwrap_or(0),
+        }
+    }
+
+    /// An upgrade failure never buys a WebSocket retry.
+    pub fn on_handshake_failure(
+        &mut self,
+        _failure: WebSocketHandshakeFailure,
+    ) -> WebSocketTransportDecision {
+        WebSocketTransportDecision::FallbackHttp
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WebSocketEndpoint {
@@ -44,7 +128,6 @@ pub const CLIENT_MAX_FRAME_BYTES: u32 = 262_144;
 pub struct WebSocketTransportSelector {
     descriptor: Option<WebSocketEndpoint>,
     policy: WebSocketFallbackPolicy,
-    handoff: WebSocketConsumerHandoff,
 }
 
 impl WebSocketTransportSelector {
@@ -70,7 +153,6 @@ impl WebSocketTransportSelector {
         Self {
             descriptor,
             policy: WebSocketFallbackPolicy::new(),
-            handoff: WebSocketConsumerHandoff::new(),
         }
     }
 
@@ -108,10 +190,6 @@ impl WebSocketTransportSelector {
     ) -> WebSocketTransportDecision {
         self.descriptor = None;
         self.policy.on_handshake_failure(failure)
-    }
-
-    pub fn owner(&self) -> WebSocketConsumerOwner {
-        self.handoff.owner()
     }
 }
 

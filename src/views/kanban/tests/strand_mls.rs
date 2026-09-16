@@ -241,7 +241,7 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
         created_at: None,
         updated_by: None,
         updated_at: None,
-        state: arkret_sdk::ProjectionObjectState::Active,
+        state: arkret_sdk::ObjectState::Active,
     };
     let card = card_from_strand_projection(&strand_view, Some(&ctx));
     assert_eq!(card.synthesis, "recovered synthesis");
@@ -289,7 +289,7 @@ fn encrypted_card_content_is_locked_exactly_when_it_is_unreadable() {
             created_at: None,
             updated_by: None,
             updated_at: None,
-            state: arkret_sdk::ProjectionObjectState::Active,
+            state: arkret_sdk::ObjectState::Active,
         };
 
     // Locked: an envelope with no sidecar and no group to decrypt with.

@@ -1,10 +1,116 @@
-use arkret_sdk::{
-    AccountBaselineChannel as Channel, AccountSubscribeFrame, Event, RealmListMembership, RealmRow,
-    SyncFilter,
-};
+use arkret_sdk::Event;
+use arkret_sdk::sync::{AccountSubscribeFrame, SyncFilter};
 use arkret_wire::Cursor;
 
 use super::*;
+
+/// Baseline delivery channels of the account stream.
+///
+/// The wire baseline segment is an opaque JSON value; this is the host's typed
+/// view of the channel names it carries, used only to track which account-scoped
+/// caches a snapshot has finished replacing. It is not a protocol identifier
+/// set and never reaches the wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AccountBaselineChannel {
+    AccountDataEvents,
+    StationCas,
+    DeviceLists,
+    Notifications,
+}
+
+use AccountBaselineChannel as Channel;
+
+/// Host view of one account baseline segment.
+#[derive(Clone, Debug, Default, Deserialize)]
+struct BaselineSegmentView {
+    snapshot_cursor: Option<Cursor>,
+    #[serde(default)]
+    channels: BTreeSet<Channel>,
+    #[serde(default)]
+    completed_channels: Vec<Channel>,
+}
+
+/// Host view of one Realm-list row.
+///
+/// `revision` is the account Station's own list revision for this row. It is a
+/// per-row monotone counter on the account list projection, never a Realm
+/// commit position: Realm, Circle and Sidecar streams each have their own
+/// position and none of them is exposed here.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct RealmRow {
+    pub realm_id: arkret_sdk::RealmId,
+    pub revision: u64,
+    pub membership: arkret_wire::MembershipState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_strand_id: Option<arkret_sdk::StrandId>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct RealmRemovalView {
+    realm_id: arkret_sdk::RealmId,
+    revision: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct RealmListPageView {
+    snapshot_cursor: Cursor,
+    snapshot_revision: u64,
+    #[serde(default)]
+    items: Vec<RealmRow>,
+    #[serde(default)]
+    next_cursor: Option<Cursor>,
+    #[serde(default)]
+    complete: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct RealmListChangesView {
+    #[serde(default)]
+    upserts: Vec<RealmRow>,
+    #[serde(default)]
+    removals: Vec<RealmRemovalView>,
+}
+
+/// Typed host view of the opaque list/baseline members of one frame.
+///
+/// Parsing fails closed: a member that does not decode is treated as absent
+/// rather than silently half-applied, and the frame is rejected.
+struct FrameViews {
+    realm_list: Option<RealmListPageView>,
+    realm_list_changes: Option<RealmListChangesView>,
+    baseline: Option<BaselineSegmentView>,
+}
+
+impl FrameViews {
+    fn decode(frame: &AccountSubscribeFrame) -> anyhow::Result<Self> {
+        let realm_list = frame
+            .realm_list
+            .as_ref()
+            .map(|page| serde_json::from_value::<RealmListPageView>(page.0.clone()))
+            .transpose()
+            .map_err(|error| anyhow::anyhow!("Realm list page is unreadable: {error}"))?;
+        let realm_list_changes = frame
+            .realm_list_changes
+            .as_ref()
+            .map(|changes| serde_json::from_value::<RealmListChangesView>(changes.0.clone()))
+            .transpose()
+            .map_err(|error| anyhow::anyhow!("Realm list changes are unreadable: {error}"))?;
+        let baseline = frame
+            .baseline
+            .as_ref()
+            .map(|segment| serde_json::from_value::<BaselineSegmentView>(segment.0.clone()))
+            .transpose()
+            .map_err(|error| anyhow::anyhow!("account baseline segment is unreadable: {error}"))?;
+        Ok(Self {
+            realm_list,
+            realm_list_changes,
+            baseline,
+        })
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct DemandSyncState {
@@ -124,29 +230,15 @@ impl LocalStateStore {
             .get(&Channel::AccountDataEvents)
             .is_some_and(|state| state.complete)
     }
+    /// Snapshot of what this device has already accepted, with no new frame
+    /// applied. It carries the account subscription's own resume cursor — never
+    /// a commit-stream position — and the Realm projections already folded.
     pub(crate) fn current_account_projection_step(&mut self) -> crate::models::AccountSyncStep {
-        let account_data = self.current_account_data_events();
+        self.ensure_cached_loaded();
         crate::models::AccountSyncStep {
             cursor: self.cached.sync_cursor.clone().unwrap_or_default(),
             realm_entries: BTreeMap::new(),
-            realm_projections: BTreeMap::new(),
-            updates: arkret_sdk::SyncUpdates {
-                realm_updates: Vec::new(),
-                malformed_realm_ids: Vec::new(),
-                to_device: Vec::new(),
-                to_device_ack_token: None,
-                to_device_limited: false,
-                to_device_next_cursor: None,
-                to_device_lost: false,
-                device_lists: arkret_sdk::AccountSubscribeDeviceListChanges {
-                    changed_ids: Vec::new(),
-                    left_ids: Vec::new(),
-                },
-                account_data,
-                station_cas_account_data: Vec::new(),
-                notifications: Vec::new(),
-                partial: true,
-            },
+            realm_projections: self.cached.realm_tree_projections.clone(),
         }
     }
     pub(crate) fn sync_demand_filter(&self) -> Option<SyncFilter> {
@@ -208,9 +300,10 @@ impl LocalStateStore {
     ) -> anyhow::Result<AccountSubscribeFrame> {
         frame.validate()?;
         self.ensure_cached_loaded();
+        let views = FrameViews::decode(frame)?;
         // Validate every conflict before mutating the cache: LocalStateStore::batch coalesces
         // writes but does not roll back a returned error.
-        if let Some(page) = &frame.realm_list {
+        if let Some(page) = &views.realm_list {
             if self.cached.demand_sync.list_snapshot.as_ref() == Some(&page.snapshot_cursor) {
                 anyhow::ensure!(
                     self.cached.demand_sync.list_revision == page.snapshot_revision,
@@ -218,8 +311,8 @@ impl LocalStateStore {
                 );
             }
         }
-        for row in frame.realm_list.iter().flat_map(|page| &page.items).chain(
-            frame
+        for row in views.realm_list.iter().flat_map(|page| &page.items).chain(
+            views
                 .realm_list_changes
                 .iter()
                 .flat_map(|changes| &changes.upserts),
@@ -236,7 +329,7 @@ impl LocalStateStore {
             .as_ref()
             .and_then(|data| data.station_cas.as_ref())
         {
-            let baseline = frame
+            let baseline = views
                 .baseline
                 .as_ref()
                 .is_some_and(|segment| segment.channels.contains(&Channel::StationCas));
@@ -284,9 +377,9 @@ impl LocalStateStore {
             }
         }
         let mut accepted = frame.clone();
-        if let Some(baseline) = &frame.baseline {
-            if self.cached.demand_sync.global_snapshot.as_ref() != Some(&baseline.snapshot_cursor) {
-                self.cached.demand_sync.global_snapshot = Some(baseline.snapshot_cursor.clone());
+        if let Some(baseline) = &views.baseline {
+            if self.cached.demand_sync.global_snapshot != baseline.snapshot_cursor {
+                self.cached.demand_sync.global_snapshot = baseline.snapshot_cursor.clone();
                 self.cached.demand_sync.channels = [
                     Channel::AccountDataEvents,
                     Channel::StationCas,
@@ -299,12 +392,12 @@ impl LocalStateStore {
             }
         }
         let baseline = |channel| {
-            frame
+            views
                 .baseline
                 .as_ref()
                 .is_some_and(|segment| segment.channels.contains(&channel))
         };
-        if let Some(page) = &frame.realm_list {
+        if let Some(page) = &views.realm_list {
             let state = &mut self.cached.demand_sync;
             if state.list_snapshot.as_ref() != Some(&page.snapshot_cursor) {
                 state.list_snapshot = Some(page.snapshot_cursor.clone());
@@ -342,7 +435,7 @@ impl LocalStateStore {
                 }
             }
         }
-        if let Some(changes) = &frame.realm_list_changes {
+        if let Some(changes) = &views.realm_list_changes {
             for row in &changes.upserts {
                 self.apply_demand_summary(row)?;
             }
@@ -555,11 +648,11 @@ impl LocalStateStore {
         &mut self,
         frame: &AccountSubscribeFrame,
     ) -> anyhow::Result<()> {
-        let Some(segment) = &frame.baseline else {
+        let Some(segment) = FrameViews::decode(frame)?.baseline else {
             return Ok(());
         };
         anyhow::ensure!(
-            self.cached.demand_sync.global_snapshot.as_ref() == Some(&segment.snapshot_cursor),
+            self.cached.demand_sync.global_snapshot == segment.snapshot_cursor,
             "Baseline completion belongs to another snapshot"
         );
         for channel in &segment.completed_channels {
@@ -616,7 +709,7 @@ impl LocalStateStore {
                 }
                 Channel::Notifications => {
                     self.cached.notification_projection.retain(|item| {
-                        !matches!(item, StoredNotification::AgentRuntimeApproval { .. })
+                        item.agent_runtime_approval().is_none()
                             || self
                                 .cached
                                 .demand_sync
@@ -665,7 +758,7 @@ impl LocalStateStore {
         }
         state.summary_removals.remove(&id);
         state.summaries.insert(id.clone(), row.clone());
-        if row.membership == RealmListMembership::Knock {
+        if row.membership != arkret_wire::MembershipState::Join {
             self.cached.realm_tree_projections.remove(&id);
             self.cached.realm_collaboration_roles.remove(&id);
         }
@@ -678,13 +771,7 @@ impl LocalStateStore {
             object.insert("realm_id".into(), Value::String(row.realm_id.to_string()));
             object.insert(
                 "membership".into(),
-                Value::String(
-                    match row.membership {
-                        RealmListMembership::Join => "join",
-                        RealmListMembership::Knock => "knock",
-                    }
-                    .into(),
-                ),
+                serde_json::to_value(row.membership)?,
             );
             object.remove("title");
             object.remove("default_strand_id");

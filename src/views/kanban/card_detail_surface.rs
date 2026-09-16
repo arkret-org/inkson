@@ -677,8 +677,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         let realm = selected_realm_id.clone();
                                                                         let actor = principal_id.clone();
                                                                         let strand_id = card.id.clone();
-                                                                        let lifecycle_basis_refs =
-                                                                            card.lifecycle_basis_refs.clone();
                                                                         move |_| {
                                                                             dispatch_strand_lifecycle(
                                                                                 base.clone(),
@@ -687,7 +685,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                 actor.clone(),
                                                                                 strand_id.clone(),
                                                                                 target,
-                                                                                lifecycle_basis_refs.clone(),
                                                                                 state_store,
                                                                                 board_status,
                                                                             );

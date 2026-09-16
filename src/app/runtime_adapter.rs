@@ -89,7 +89,10 @@ impl LocalStateBackend for SignalLocalStateBackend {
         signal.write().commit_client_delivery(scope, cursor, events)
     }
 
-    fn pending_deliveries(&self, limit: usize) -> arkret_sdk::Result<Vec<garth::PendingDelivery>> {
+    fn pending_deliveries(
+        &self,
+        limit: usize,
+    ) -> arkret_sdk::Result<Vec<garth::PendingDelivery<Vec<garth::ClientEvent>>>> {
         self.store.read().pending_client_deliveries(limit)
     }
 

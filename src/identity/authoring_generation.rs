@@ -9,8 +9,69 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
-pub(crate) use garth::{AuthoringAuthorityModel, AuthoringGeneration};
-use garth::{OutboundGenerationFence, OutboundGenerationFenceDecision};
+/// Which authority a queued write was authored under.
+///
+/// This is holder-local queue vocabulary, not a wire shape: it never leaves the
+/// device and nothing on the authority protocol reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AuthoringAuthorityModel {
+    /// A device accepted by its own principal's current device generation.
+    AcceptedDevice,
+    /// An Agent authoring on a controller's behalf.
+    Agent,
+}
+
+/// The exact authoring authority a queued Event was signed under.
+///
+/// A replay compares this against the freshly fetched keys projection, so a
+/// queued write can never be revived under a superseded device generation or a
+/// delegation the controller has since withdrawn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AuthoringGeneration {
+    pub(crate) authority_model: AuthoringAuthorityModel,
+    pub(crate) authority_principal_id: arkret_sdk::DidCoreId,
+    pub(crate) generation_ref: String,
+}
+
+impl AuthoringGeneration {
+    /// Derive the delegated generation an Agent write is fenced by.
+    ///
+    /// It binds both the controller's own current generation and the exact
+    /// delegation the write claims, so withdrawing either one invalidates every
+    /// queued Agent write authored under it.
+    pub(crate) fn agent(
+        authority_principal_id: &str,
+        controller: &Self,
+        authorization_ref: &str,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            !authorization_ref.is_empty(),
+            "a delegated authoring generation requires the authorization it claims"
+        );
+        let binding = serde_json::json!({
+            "authority_principal_id": authority_principal_id,
+            "controller_principal_id": controller.authority_principal_id.as_str(),
+            "controller_generation_ref": controller.generation_ref,
+            "authorization_ref": authorization_ref,
+        });
+        Ok(Self {
+            authority_model: AuthoringAuthorityModel::Agent,
+            authority_principal_id: arkret_sdk::DidCoreId::new(
+                authority_principal_id.to_owned(),
+            )?,
+            generation_ref: crate::canonical::canonical_sha256(&binding)?,
+        })
+    }
+}
+
+/// What the replay fence decided about one durably queued item.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum GenerationFenceDecision {
+    /// The authoring generation still holds; the item may be forwarded.
+    Current,
+    /// The authoring generation is gone; the item must not be forwarded.
+    Quarantine { reason: String },
+}
 
 fn verified_generation_cache() -> &'static Mutex<BTreeMap<String, AuthoringGeneration>> {
     static CACHE: OnceLock<Mutex<BTreeMap<String, AuthoringGeneration>>> = OnceLock::new();
@@ -34,7 +95,6 @@ pub(crate) fn cache_verified_principal_generation(
             generation.clone(),
         );
     if previous.as_ref().is_some_and(|value| value != generation) {
-        crate::authorization_lease::clear_leases();
     }
 }
 
@@ -201,7 +261,6 @@ pub(crate) fn cache_principal_authoring_generation_from_keys(
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .remove(&principal_generation_cache_key(account_id, device_id));
-            crate::authorization_lease::clear_leases();
             Ok(false)
         }
     }
@@ -266,41 +325,31 @@ fn resolve_principal_authoring_generation_from_keys(
     }
 }
 
+/// Per-item replay decisions resolved once for a whole drain pass.
 pub(crate) struct ResolvedQueueGenerationFence {
-    decisions: BTreeMap<String, OutboundGenerationFenceDecision>,
+    decisions: BTreeMap<arkret_sdk::EventId, GenerationFenceDecision>,
 }
 
 impl ResolvedQueueGenerationFence {
-    pub(crate) fn new(decisions: BTreeMap<String, OutboundGenerationFenceDecision>) -> Self {
+    pub(crate) fn new(decisions: BTreeMap<arkret_sdk::EventId, GenerationFenceDecision>) -> Self {
         Self { decisions }
     }
-}
 
-impl OutboundGenerationFence for ResolvedQueueGenerationFence {
-    fn evaluate(
+    /// The decision for one queued submission.
+    ///
+    /// A queued item with no resolved decision fails closed: the drain pass
+    /// resolves every item it is about to forward, so a missing entry means the
+    /// queue changed under the pass rather than that the item is current.
+    pub(crate) fn evaluate(
         &self,
         item: &garth::SendQueueItem,
-    ) -> garth::Result<OutboundGenerationFenceDecision> {
-        let garth::QueuedRecord::SdkEvent(queued) = &item.record else {
-            return Ok(OutboundGenerationFenceDecision::Current);
-        };
-        let decision = self.decisions.get(&item.transaction_id).ok_or_else(|| {
-            garth::Error::Protocol(format!(
-                "generation fence omitted transaction {}",
-                item.transaction_id
-            ))
-        })?;
-        match decision {
-            OutboundGenerationFenceDecision::Current => {
-                let _ = queued;
-                Ok(OutboundGenerationFenceDecision::Current)
-            }
-            OutboundGenerationFenceDecision::Quarantine { reason } => {
-                Ok(OutboundGenerationFenceDecision::Quarantine {
-                    reason: reason.clone(),
-                })
-            }
-        }
+    ) -> anyhow::Result<&GenerationFenceDecision> {
+        self.decisions.get(item.event_id()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "generation fence omitted queued Event {}",
+                item.event_id().as_str()
+            )
+        })
     }
 }
 

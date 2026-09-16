@@ -37,12 +37,11 @@ pub(crate) fn did_for_request_field(
 
 pub async fn account_viewer(
     http: &arkret_sdk::http_client::Client,
-) -> anyhow::Result<arkret_models_collaboration::account_lifecycle::AccountView> {
+) -> anyhow::Result<arkret_models_collaboration::account_operations::AccountView> {
     let viewer = http
         .account_viewer()
         .await
         .map_err(|error| anyhow::Error::new(error).context("account viewer"))?;
-    crate::identity::device_directory::cache_control_evidence_from_account_viewer(&viewer)?;
     Ok(viewer)
 }
 
@@ -171,7 +170,9 @@ pub async fn update_profile(
             .founding_authorize()
             .realm_id
             != authority_evidence.principal_control_realm_id
-        || authority_evidence.bootstrap_seal.realm_id
+        || authority_evidence.pcr_genesis_commits[0].realm_id
+            != authority_evidence.principal_control_realm_id
+        || authority_evidence.pcr_genesis_commits[1].realm_id
             != authority_evidence.principal_control_realm_id
     {
         anyhow::bail!(
@@ -179,7 +180,7 @@ pub async fn update_profile(
         );
     }
 
-    let (event, accepted_basis) = if let Some(profile) = viewer.profile {
+    let event = if let Some(profile) = viewer.profile {
         let profile = profile.into_inner();
         if patch.is_empty() {
             anyhow::bail!("profile update patch is empty");
@@ -198,20 +199,12 @@ pub async fn update_profile(
                 "accepted account profile and durable authoring evidence select different principal-control realms"
             );
         }
-        let basis = arkret_models_collaboration::account_lifecycle::AccountProfileAcceptedBasis {
-            profile_id: profile_id.clone(),
-            principal_id: principal_id.clone(),
-            principal_control_realm_id: principal_control_realm_id.clone(),
-        };
-        (
-            crate::operation::ak_ops::account_profile_update(
-                &principal_control_realm_id,
-                &authority_evidence.account_id,
-                profile_id,
-                patch,
-            )?,
-            Some(basis),
-        )
+        crate::operation::ak_ops::account_profile_update(
+            &principal_control_realm_id,
+            &authority_evidence.account_id,
+            profile_id,
+            patch,
+        )?
     } else {
         let display_name = display_name
             .map(str::trim)
@@ -249,35 +242,22 @@ pub async fn update_profile(
             updated_by: None,
             updated_at: None,
         };
-        (
-            crate::operation::ak_ops::account_profile_create(
-                &principal_control_realm_id,
-                &authority_evidence.account_id,
-                profile,
-            )?,
-            None,
-        )
+        crate::operation::ak_ops::account_profile_create(
+            &principal_control_realm_id,
+            &authority_evidence.account_id,
+            profile,
+        )?
     };
     let signed = submitter.author_for_direct_submission(&event).await?;
-    let profile_event = crate::authorization_lease::standard_initial_submission(
-        submitter.http(),
-        &signed,
-        signed.digest_suite(),
-        None,
-    )
-    .await?;
-    let body = arkret_models_collaboration::account_lifecycle::AccountUpdateProfileRequestBody {
-        profile_event,
+    let body = arkret_models_collaboration::account_operations::AccountUpdateProfileRequestBody {
+        profile_event: arkret_wire::EventCommitSubmission {
+            event: signed.into_event(),
+        },
     };
-    body.validate_authoring_context(
-        &authority_evidence.account_id,
-        &authority_evidence.principal_control_realm_id,
-        accepted_basis.as_ref(),
-        signed.digest_suite(),
-    )?;
+    body.validate()?;
     submitter
         .http()
-        .account_update_profile(&body, signed.digest_suite())
+        .account_update_profile(&body)
         .await
         .map_err(Into::into)
 }
@@ -580,7 +560,7 @@ pub async fn direct_conversation_resolve(
     peer: &str,
     peer_controller: Option<&str>,
     enable_owned_agent_reply: bool,
-) -> anyhow::Result<arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome> {
+) -> anyhow::Result<arkret_sdk::direct_conversation::DirectConversationResolveOutcome> {
     let authority = state_store
         .read(|store| store.active_authority())
         .ok_or_else(|| anyhow::anyhow!("Direct Conversation requires active account"))?;
@@ -588,7 +568,7 @@ pub async fn direct_conversation_resolve(
     let http = api.http();
     let peer_descriptor = direct_conversation_peer_descriptor(peer, peer_controller)?;
     let peer_actor = peer_descriptor.contact_actor_id();
-    let body = arkret_sdk::direct_conversation_ops::DirectConversationResolveRequestBody {
+    let body = arkret_sdk::direct_conversation::DirectConversationResolveRequestBody {
         peer: peer_descriptor,
     };
     let query_sequence = crate::mls::direct_binding::begin_query(&authority, &body.peer)?;
@@ -625,72 +605,91 @@ pub async fn direct_conversation_resolve(
     Ok(outcome)
 }
 
-/// Submit the exact caller-authored founding unit selected by Garth's runtime-neutral gate.
-/// Ambiguous network failures are retried by passing the same `prepared` value again; this helper
+/// Submit the caller-authored founding Events for a pair the resolver granted
+/// creation authority over.
+///
+/// A RealmCommit covers exactly one Event, so the founding "unit" is submitted
+/// as an ordered sequence of ordinary Event commits rather than one atomic
+/// multi-Event carrier: `ak.realm.create` first, then the members that name it.
+/// Ambiguous network failures are retried by passing the same authored Events
+/// again; the authority is idempotent on a repeated `event_id`. This helper
 /// never authors or substitutes coordinates.
 pub async fn direct_conversation_found(
     submitter: &crate::event_submit::EventSubmitter,
-    resolve: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
-    prepared: arkret_sdk::direct_conversation_ops::DirectConversationFoundingUnitSubmission,
-) -> anyhow::Result<arkret_sdk::direct_conversation_ops::DirectConversationFoundingAcceptanceOutcome>
-{
-    match garth::direct_conversation_founding_action(resolve, Some(prepared))
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?
-    {
-        garth::DirectConversationFoundingAction::Submit(unit) => {
-            submitter
-                .submit_direct_conversation_founding_durable(*unit)
-                .await
-        }
-        _ => Err(anyhow::anyhow!(
-            "Direct Conversation resolve state does not permit founding submission"
-        )),
+    resolve: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
+    authored: Vec<arkret_sdk::AuthoredEvent>,
+) -> anyhow::Result<Vec<crate::models::SubmitEventResult>> {
+    if !matches!(
+        garth::direct_conversation_action(resolve),
+        garth::DirectConversationAction::SubmitCreation { .. }
+    ) {
+        anyhow::bail!("Direct Conversation resolve state does not permit founding submission");
     }
+    let authority = garth::AuthorityClient::new(submitter.http().clone());
+    let mut results = Vec::with_capacity(authored.len());
+    for event in authored {
+        let event = event.into_event();
+        let mut queued = garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
+            arkret_wire::EventCommitSubmission { event },
+        ))
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        authority
+            .submit(
+                &mut queued,
+                &arkret_sdk::http_client::ClientRequestOptions::new(),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let event_id = queued.event_id.to_string();
+        let result = match queued.state {
+            garth::SubmissionState::Committed { commit, .. } => {
+                crate::models::SubmitEventResult::committed(event_id, *commit)
+            }
+            garth::SubmissionState::Rejected { reason_code, .. } => {
+                anyhow::bail!("Direct Conversation founding Event rejected: {reason_code}");
+            }
+            garth::SubmissionState::Queued => {
+                anyhow::bail!("Direct Conversation founding Event was not answered by the authority")
+            }
+        };
+        results.push(result);
+    }
+    Ok(results)
 }
 
-/// Author, sign and durably submit the resolver-authorized closed founding
-/// unit.  The resolver material is copied verbatim; Garth persists the exact
-/// signed carrier before its first network attempt.
+/// Author, sign and submit the resolver-authorized founding Events.
+///
+/// The founding authority evidence is a caller input: the resolver outcome
+/// carries only `expected_contact_revision`, so the pair's root Contact round
+/// evidence (or the controller/Agent provision reference) must be supplied by
+/// the caller that read it. Coordinates are read back by re-resolving after the
+/// last Event commits; the founding submission itself returns only its commits.
 pub async fn create_direct_conversation_from_resolve(
     submitter: &crate::event_submit::EventSubmitter,
     resolve: &arkret_sdk::DirectConversationResolveOutcome,
     founder_account: &arkret_sdk::AccountId,
     peer_account: &arkret_sdk::AccountId,
-) -> anyhow::Result<arkret_sdk::DirectConversationFoundingAcceptanceOutcome> {
-    let arkret_sdk::DirectConversationResolveOutcome::CreationRequired {
-        next_founding_input,
-    } = resolve
-    else {
+    founding_authority: &arkret_sdk::DirectConversationFoundingAuthorityEvidence,
+) -> anyhow::Result<Vec<crate::models::SubmitEventResult>> {
+    if !matches!(
+        resolve,
+        arkret_sdk::DirectConversationResolveOutcome::CreationRequired { .. }
+    ) {
         anyhow::bail!("Direct Conversation resolver did not grant founding authority");
-    };
+    }
     anyhow::ensure!(
         submitter.authority()? == founder_account,
         "Direct Conversation founder differs from the authenticated AccountId"
     );
     let trust_domain = submitter.events_describe().await?.trust_domain;
-    let notary = submitter.current_service_notary().await?;
     let steps = crate::event_builders::build_direct_conversation_founding_steps(
         founder_account,
         peer_account,
-        notary,
         trust_domain,
-        &next_founding_input.founding_authority_evidence,
+        founding_authority,
     )?;
     let signed = submitter.author_event_unit(steps).await?;
-    let events: [arkret_sdk::EventInitialSubmission; 4] = signed
-        .into_iter()
-        .map(|event| arkret_sdk::EventInitialSubmission::online(event.into_event()))
-        .collect::<Vec<_>>()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Direct Conversation founding unit lost its closed length"))?;
-    let prepared = arkret_sdk::DirectConversationFoundingUnitSubmission {
-        unit_kind: arkret_sdk::DirectConversationFoundingUnitKind::DirectConversationFounding,
-        idempotency_key: arkret_sdk::IdempotencyKey::new(crate::operation::uuid_v7())
-            .map_err(anyhow::Error::msg)?,
-        events,
-        cbs_proof_bundles: Vec::new(),
-    };
-    direct_conversation_found(submitter, resolve, prepared).await
+    direct_conversation_found(submitter, resolve, signed).await
 }
 
 fn direct_conversation_peer_descriptor(
@@ -712,8 +711,8 @@ fn direct_conversation_peer_descriptor(
 }
 
 pub(crate) fn direct_conversation_coordinates(
-    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
-) -> Option<&arkret_sdk::direct_conversation_ops::DirectConversationCoordinates> {
+    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
+) -> Option<&arkret_sdk::direct_conversation::DirectConversationCoordinates> {
     outcome.coordinates()
 }
 
@@ -734,9 +733,9 @@ pub(crate) enum DirectConversationEntry {
 }
 
 pub(crate) fn direct_conversation_entry(
-    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
 ) -> DirectConversationEntry {
-    use arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome as Outcome;
+    use arkret_sdk::direct_conversation::DirectConversationResolveOutcome as Outcome;
     match outcome {
         Outcome::CreationRequired { .. } => DirectConversationEntry::ReadyToCreate,
         Outcome::AwaitingFounder { .. } => DirectConversationEntry::AwaitingFounder,
@@ -753,11 +752,11 @@ pub(crate) fn direct_conversation_entry(
 pub(crate) fn direct_conversation_client_local_blockers(
     state_store: &crate::state::LocalStateStore,
     peer: &str,
-    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
 ) -> std::collections::BTreeSet<
-    arkret_sdk::direct_conversation_ops::DirectConversationClientLocalBlocker,
+    arkret_sdk::direct_conversation::DirectConversationClientLocalBlocker,
 > {
-    use arkret_sdk::direct_conversation_ops::DirectConversationClientLocalBlocker as Local;
+    use arkret_sdk::direct_conversation::DirectConversationClientLocalBlocker as Local;
 
     let mut blockers = std::collections::BTreeSet::new();
     if crate::account_data::is_blocked(&state_store.client_blocklist(), peer) {
@@ -785,9 +784,9 @@ pub(crate) fn direct_conversation_client_local_blockers(
 }
 
 pub(crate) fn direct_conversation_entry_with_local_blockers(
-    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
     local_blockers: &std::collections::BTreeSet<
-        arkret_sdk::direct_conversation_ops::DirectConversationClientLocalBlocker,
+        arkret_sdk::direct_conversation::DirectConversationClientLocalBlocker,
     >,
 ) -> DirectConversationEntry {
     let entry = direct_conversation_entry(outcome);
@@ -795,7 +794,7 @@ pub(crate) fn direct_conversation_entry_with_local_blockers(
     // receive its MLS Welcome and converge keys. The chat's verified MLS gate
     // remains responsible for enabling Send.
     if local_blockers.contains(
-        &arkret_sdk::direct_conversation_ops::DirectConversationClientLocalBlocker::PersonalBlocked,
+        &arkret_sdk::direct_conversation::DirectConversationClientLocalBlocker::PersonalBlocked,
     ) && matches!(entry, DirectConversationEntry::Openable)
     {
         DirectConversationEntry::Suspended
@@ -821,7 +820,7 @@ pub(crate) fn cached_direct_conversation_peer(
 /// into an unavailable navigation target.
 fn preserve_resolved_direct_conversation(
     agent_id: &str,
-    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
     reply_enablement: anyhow::Result<()>,
 ) {
     if let Err(error) = reply_enablement {
@@ -839,7 +838,7 @@ async fn ensure_owned_agent_direct_reply(
     http: &arkret_sdk::http_client::Client,
     state_store: &crate::runtime::input::StateStoreHandle,
     agent_id: &str,
-    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
 ) -> anyhow::Result<()> {
     let coordinates = direct_conversation_coordinates(outcome)
         .ok_or_else(|| anyhow::anyhow!("owned-Agent Direct Conversation omitted realm_id"))?;
@@ -931,8 +930,8 @@ fn owned_agent_reply_update_needed(
 /// `identity/consent-model.md` §3 / OpenAPI `ak.self.consent.read.list.v1`.
 pub async fn consent_cells(
     http: &arkret_sdk::http_client::Client,
-) -> anyhow::Result<arkret_sdk::ConsentCellList> {
-    http.get(arkret_wire::PATH_SELF_CONSENT_CELLS)
+) -> anyhow::Result<arkret_sdk::ConsentList> {
+    http.get(arkret_wire::PATH_SELF_CONSENT_RESULTS)
         .await
         .map_err(anyhow::Error::from)
 }
@@ -952,7 +951,7 @@ pub async fn sync_describe(
 }
 
 fn current_account_from_viewer(
-    viewer: arkret_models_collaboration::account_lifecycle::AccountView,
+    viewer: arkret_models_collaboration::account_operations::AccountView,
 ) -> CurrentAccount {
     let display_name = viewer.profile.as_ref().and_then(|profile| {
         let value = profile.display_name.trim();
@@ -972,7 +971,7 @@ fn current_account_from_viewer(
 }
 
 pub(crate) fn primary_handle_from_viewer(
-    viewer: &arkret_models_collaboration::account_lifecycle::AccountView,
+    viewer: &arkret_models_collaboration::account_operations::AccountView,
 ) -> String {
     viewer
         .primary_handle_claim
@@ -1225,49 +1224,51 @@ pub async fn tombstone_contact(
     }
 }
 
-/// Read one holder-private consent cell. Spec OpenAPI
+/// Read one holder-private consent result. Spec OpenAPI
 /// `ak.self.consent.resource.get.v1`.
 ///
-/// The cell is addressed by its exact frozen `consent_peer`, both kinds
+/// The result is addressed by its exact frozen `consent_peer`, both kinds
 /// included. Nothing here reconstructs a peer from a bare DID: an ordinary
 /// Account peer carries its complete ActorId and a Realm-local ephemeral
 /// pairwise peer its `(realm_id, principal_id)` pair, and the two never
-/// address each other's cell.
-pub async fn consent_cell(
+/// address each other's result.
+pub async fn consent_result(
     http: &arkret_sdk::http_client::Client,
     _holder: &str,
     peer: &arkret_sdk::ConsentPeer,
     scope: &str,
-) -> anyhow::Result<arkret_sdk::ConsentCellView> {
+) -> anyhow::Result<arkret_sdk::ConsentView> {
     let peer = serde_json::to_string(peer)?;
     let path = format!(
-        "{}/cell?peer={}&consent_scope={}",
-        arkret_wire::PATH_SELF_CONSENT,
+        "{}?peer={}&consent_scope={}",
+        arkret_wire::PATH_SELF_CONSENT_RESULT,
         crate::wire_helpers::path_component(&peer),
         crate::wire_helpers::path_component(scope.trim()),
     );
-    http.get(&path).await.map_err(anyhow::Error::from)
+    let view: arkret_sdk::ConsentView = http.get(&path).await.map_err(anyhow::Error::from)?;
+    view.validate()?;
+    Ok(view)
 }
 
-/// Grant scoped consent to `peer` from the holder cell. `expires_at` is an
+/// Grant scoped consent to `peer` from the holder result. `expires_at` is an
 /// optional RFC 3339 time window upper bound. Spec OpenAPI
 /// `ak.self.consent.command.grant.v1`.
 ///
-/// The Control Move is authored and signed here: its `consent_id` is the cell
-/// subject and its `event_id` becomes the or_set add dot, so neither is the
-/// server's to choose. A cell that already exists keeps its `consent_id`; a new
-/// one gets a freshly minted producer-allocated id.
+/// The Event is authored and signed here: its `consent_id` is the result
+/// subject, so it is never the server's to choose. A result that already exists
+/// keeps its `consent_id`; a new one gets a freshly minted producer-allocated
+/// id.
 pub async fn grant_consent(
     submitter: &crate::event_submit::EventSubmitter,
     holder: &str,
     peer: &arkret_sdk::ConsentPeer,
     scope: &str,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
-) -> anyhow::Result<arkret_sdk::ConsentCellView> {
-    // Reuse the existing subject when there is one, so a re-grant lands in the
-    // same cell instead of opening a second one for the same (peer, scope).
-    let consent_id = match consent_cell(submitter.http(), holder, peer, scope).await {
-        Ok(cell) => crate::operation::ak_ops::consent_id_from_cell_id(&cell.cell_id)?,
+) -> anyhow::Result<arkret_sdk::ConsentView> {
+    // Reuse the existing subject when there is one, so a re-grant lands on the
+    // same result instead of opening a second one for the same (peer, scope).
+    let consent_id = match consent_result(submitter.http(), holder, peer, scope).await {
+        Ok(view) => view.consent_id,
         Err(_) => arkret_sdk::ConsentId::new_v7_at(crate::clock::now_unix_ms()),
     };
     let holder_did = did_for_request_field("holder", holder)?;
@@ -1283,134 +1284,59 @@ pub async fn grant_consent(
     )?
     .build_sdk_event("inkson")?;
     let signed_event = submitter.author_for_direct_submission(&event).await?;
-    let seal_context = crate::transport::contacts::prepare_principal_successor_seal(
-        submitter.http(),
-        &signed_event,
-    )
-    .await?;
     let body = arkret_sdk::ConsentGrantRequestBody {
-        grant_event: arkret_wire::EventInitialSubmission::online(signed_event.event().clone()),
+        grant_event: arkret_wire::EventCommitSubmission {
+            event: signed_event.into_event(),
+        },
     };
-    let path = format!("{}/cells/grant", arkret_wire::PATH_SELF_CONSENT);
-    let view = submitter
+    body.validate()?;
+    let view: arkret_sdk::ConsentView = submitter
         .http()
-        .post(&path, &body)
+        .post(arkret_wire::PATH_SELF_CONSENT_RESULTS_GRANT, &body)
         .await
         .map_err(anyhow::Error::from)?;
-    crate::transport::contacts::submit_principal_successor_seal(
-        submitter.http(),
-        seal_context,
-        &signed_event,
-    )
-    .await?;
+    view.validate()?;
     Ok(view)
 }
 
 /// Revoke scoped consent from `peer`. Spec OpenAPI
 /// `ak.self.consent.command.revoke.v1`.
 ///
-/// The current cell is read first because the Control Move MUST name the exact
-/// dots being removed; there is nothing the server could substitute for that
-/// without reintroducing the concurrent-revoke race the dot model exists to close.
+/// The current result is read first because the Event MUST carry the exact
+/// revision it supersedes: `ConsentRevokePayload.expected_revision` is the
+/// current-state compare-and-set that closes the concurrent-revoke race, and it
+/// is the Realm stream position of the result's last accepted commit.
 pub async fn revoke_consent(
     submitter: &crate::event_submit::EventSubmitter,
     holder: &str,
     peer: &arkret_sdk::ConsentPeer,
     scope: &str,
-) -> anyhow::Result<arkret_sdk::ConsentCellView> {
-    let cell = consent_cell(submitter.http(), holder, peer, scope).await?;
-    let consent_id = crate::operation::ak_ops::consent_id_from_cell_id(&cell.cell_id)?;
+) -> anyhow::Result<arkret_sdk::ConsentView> {
+    let view = consent_result(submitter.http(), holder, peer, scope).await?;
     let holder_did = did_for_request_field("holder", holder)?;
     let principal_control_realm_id =
         crate::identity::principal_control::resolve_accepted(submitter.http(), &holder_did).await?;
-    wait_for_consent_dots_in_seal(
-        submitter.http(),
-        &principal_control_realm_id,
-        &cell.active_grant_dots,
-    )
-    .await?;
     let event = crate::operation::ak_ops::consent_revoke(
         principal_control_realm_id.as_str(),
         holder.trim(),
-        &consent_id,
-        &cell.active_grant_dots,
+        &view.consent_id,
+        view.revision.stream_position,
     )?
     .build_sdk_event("inkson")?;
     let signed_event = submitter.author_for_direct_submission(&event).await?;
-    let seal_context = crate::transport::contacts::prepare_principal_successor_seal(
-        submitter.http(),
-        &signed_event,
-    )
-    .await?;
     let body = arkret_sdk::ConsentRevokeRequestBody {
-        revoke_event: arkret_wire::EventInitialSubmission::online(signed_event.event().clone()),
+        revoke_event: arkret_wire::EventCommitSubmission {
+            event: signed_event.into_event(),
+        },
     };
-    let path = format!("{}/cells/revoke", arkret_wire::PATH_SELF_CONSENT);
-    let view = submitter
+    body.validate()?;
+    let view: arkret_sdk::ConsentView = submitter
         .http()
-        .post(&path, &body)
+        .post(arkret_wire::PATH_SELF_CONSENT_RESULTS_REVOKE, &body)
         .await
         .map_err(anyhow::Error::from)?;
-    crate::transport::contacts::submit_principal_successor_seal(
-        submitter.http(),
-        seal_context,
-        &signed_event,
-    )
-    .await?;
+    view.validate()?;
     Ok(view)
-}
-
-/// A revoke is an observe-remove Move: its frozen Seal basis must cover every
-/// add dot it names. Event admission can complete just before the successor
-/// control Seal is materialized. New clients submit that Seal synchronously,
-/// while the wait also keeps an immediate Revoke safe when following a grant
-/// accepted by an older client.
-async fn wait_for_consent_dots_in_seal(
-    http: &arkret_sdk::http_client::Client,
-    realm_id: &arkret_sdk::RealmId,
-    dots: &[String],
-) -> anyhow::Result<()> {
-    const ATTEMPTS: usize = 40;
-    const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
-
-    let digests = dots
-        .iter()
-        .map(|dot| {
-            let (event_id, _) = dot
-                .rsplit_once(':')
-                .ok_or_else(|| anyhow::anyhow!("consent dot has no write index: {dot}"))?;
-            Ok(arkret_sdk::EventId::new(event_id.to_owned())?.event_digest())
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    for attempt in 0..ATTEMPTS {
-        let covered = async {
-            let frontier = http.seals_frontier(realm_id.clone()).await?.frontier;
-            let seals = http
-                .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
-                    realm_id: realm_id.clone(),
-                    selection: arkret_sdk::SealResolveSelection::SealRefs {
-                        seal_refs: frontier.seal_basis.leaves,
-                    },
-                    history_traversal_access: None,
-                })
-                .await?
-                .into_seals()?;
-            Ok::<_, anyhow::Error>(digests.iter().all(|digest| {
-                seals.iter().any(|seal| {
-                    seal.delta.contains(digest) || seal.covered_event_digests.contains(digest)
-                })
-            }))
-        }
-        .await;
-        if matches!(covered, Ok(true)) {
-            return Ok(());
-        }
-        if attempt + 1 < ATTEMPTS {
-            crate::runtime_helpers::sleep_for(DELAY).await;
-        }
-    }
-    anyhow::bail!("consent grant dots were not covered by the accepted Seal frontier in time")
 }
 
 /// Open an outbound consent request: ask `holder` to grant the
@@ -1557,7 +1483,7 @@ async fn account_data_set_submission(
     type_key: &str,
     value: Option<Value>,
     expected_revision: u64,
-) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
+) -> anyhow::Result<arkret_wire::Event> {
     let (holder, _) = account_data_holder()?;
     let realm_id =
         crate::identity::principal_control::resolve_accepted(submitter.http(), &holder).await?;
@@ -1577,15 +1503,13 @@ async fn account_data_set_submission(
         ),
     }?;
     let event = builder.build_sdk_event("inkson")?;
-    let authored = submitter
-        .author_independent_events(vec![event.into_intent()])
-        .await?;
     submitter
-        .prepare_initial_submissions(&authored)
+        .author_independent_events(vec![event.into_intent()])
         .await?
         .into_iter()
         .next()
-        .ok_or_else(|| anyhow::anyhow!("account_data submission was not prepared"))
+        .map(arkret_sdk::AuthoredEvent::into_event)
+        .ok_or_else(|| anyhow::anyhow!("account_data submission was not authored"))
 }
 
 /// Apply a domain merge against the latest Account Data value and retry
@@ -1953,7 +1877,7 @@ mod tests {
             now,
             now + chrono::Duration::days(1),
         );
-        let viewer: arkret_models_collaboration::account_lifecycle::AccountView =
+        let viewer: arkret_models_collaboration::account_operations::AccountView =
             serde_json::from_value(json!({
                 "principal_id": "ak:did_core:web:alice.example",
                 "state": "active",
@@ -2003,7 +1927,7 @@ mod tests {
                 claim.status = arkret_models_identity::HandleClaimStatus::Pending;
                 claim.verified_at = None;
             }
-            let viewer: arkret_models_collaboration::account_lifecycle::AccountView =
+            let viewer: arkret_models_collaboration::account_operations::AccountView =
                 serde_json::from_value(json!({
                     "principal_id": "ak:did_core:web:alice.example",
                     "state": "active",
@@ -2018,7 +1942,7 @@ mod tests {
 
     #[test]
     fn account_viewer_projection_does_not_invent_handle() {
-        let viewer: arkret_models_collaboration::account_lifecycle::AccountView =
+        let viewer: arkret_models_collaboration::account_operations::AccountView =
             serde_json::from_value(json!({
                 "principal_id": "ak:did_core:web:alice.example",
                 "state": "active",
@@ -2074,7 +1998,7 @@ mod tests {
 
     #[test]
     fn reply_enablement_failure_does_not_invalidate_resolved_direct_conversation() {
-        let outcome: arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome =
+        let outcome: arkret_sdk::direct_conversation::DirectConversationResolveOutcome =
             serde_json::from_value(json!({
                 "state": "found",
                 "coordinates": {
@@ -2088,7 +2012,7 @@ mod tests {
             }))
             .expect("found Direct Conversation outcome");
 
-        use arkret_sdk::direct_conversation_ops::DirectConversationClientLocalBlocker as Local;
+        use arkret_sdk::direct_conversation::DirectConversationClientLocalBlocker as Local;
         let missing_keys = std::collections::BTreeSet::from([Local::HistoryKeyUnavailable]);
         assert_eq!(
             direct_conversation_entry_with_local_blockers(&outcome, &missing_keys),
@@ -2123,7 +2047,7 @@ mod tests {
 
     #[test]
     fn suspended_direct_conversation_never_offers_recreation() {
-        let outcome: arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome =
+        let outcome: arkret_sdk::direct_conversation::DirectConversationResolveOutcome =
             serde_json::from_value(json!({
                 "state": "suspended",
                 "coordinates": {

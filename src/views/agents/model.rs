@@ -505,7 +505,6 @@ pub fn build_requested_scope_disclosure_for_pairing(
     }
     let signer_resolution_evidence_ref = crate::event_signer::cached_active_event_proof_context(
         arkret_sdk::DigestSuite::Sha256,
-        arkret_sdk::CbsEffectPlane::Control,
     )?
     .signer_resolution_evidence_ref
     .ok_or_else(|| anyhow::anyhow!("verified signer-resolution evidence is unavailable"))?;

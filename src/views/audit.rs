@@ -34,10 +34,7 @@ fn extract_string(value: &Value, key: &str) -> Option<String> {
 
 fn classify_audit_row(operation_id: &str, body: &Value) -> Option<AuditRow> {
     let kind = extract_string(body, "kind")?;
-    if !matches!(
-        kind.as_str(),
-        event_kind_str::AUDIT_ACCESSED | event_kind_str::AUDIT_RYW_RECEIPT
-    ) {
+    if kind.as_str() != event_kind_str::AUDIT_ACCESSED {
         return None;
     }
     Some(AuditRow {
@@ -63,11 +60,6 @@ pub fn AuditPanel() -> Element {
         .iter()
         .filter(|row| row.kind == event_kind_str::AUDIT_ACCESSED)
         .count();
-    let receipt_count = rows
-        .iter()
-        .filter(|row| row.kind == event_kind_str::AUDIT_RYW_RECEIPT)
-        .count();
-
     rsx! {
         div { class: "timeline", "data-testid": "audit-panel", role: "region", "aria-label": tr("audit.title"),
                 div { class: "event",
@@ -80,11 +72,6 @@ pub fn AuditPanel() -> Element {
                         strong { {tr("audit.access_events")} }
                         span { "data-testid": "audit-accessed-count", "{attested_count}" }
                         div { class: "muted", {tr("audit.access_events_hint")} }
-                    }
-                    div { class: "metric",
-                        strong { {tr("audit.write_receipts")} }
-                        span { "data-testid": "audit-receipt-count", "{receipt_count}" }
-                        div { class: "muted", {tr("audit.write_receipts_hint")} }
                     }
                     div { class: "metric",
                         strong { {tr("audit.total_observed")} }

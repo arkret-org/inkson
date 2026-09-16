@@ -99,7 +99,6 @@ pub struct PollCard {
     /// One Vec per option containing the complete ActorIds that currently vote for
     /// it. Same ordering as `options`.
     pub votes: Vec<Vec<arkret_sdk::ActorId>>,
-    pub response_heads: std::collections::BTreeMap<arkret_sdk::ActorId, Vec<arkret_sdk::Hash>>,
     pub max_selections: u64,
     pub closed: bool,
 }
@@ -123,7 +122,6 @@ impl PollCard {
             question: draft.question.trim().to_owned(),
             options,
             votes,
-            response_heads: Default::default(),
             max_selections: u64::from(draft.max_selections.max(1)),
             closed: false,
         }
@@ -175,7 +173,6 @@ impl PollCard {
             message_id,
             question: definition.question_text().to_owned(),
             votes: vec![Vec::new(); options.len()],
-            response_heads: Default::default(),
             options,
             max_selections: definition.poll.max_selections,
             closed: false,

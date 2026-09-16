@@ -8,22 +8,9 @@ use crate::test_support as fixture;
 fn genesis_governance_binding() -> arkret_sdk::MlsGovernanceBindingPayload {
     let realm_id =
         arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19").unwrap();
-    let security_frontier_digest = arkret_sdk::Hash::new(
-        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    )
-    .unwrap();
-    // Genesis installs epoch 0 (governance binding epoch 0 -> 0).
-    arkret_sdk::MlsGovernanceBindingPayload::realm(
-        realm_id,
-        0,
-        0,
-        security_frontier_digest,
-        arkret_sdk::ContentScheme::MlsRfc9420,
-        None,
-        arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
-        arkret_sdk::CORE_REDUCER_PROFILE,
-    )
-    .unwrap()
+    // Genesis is the only transition with no base group state: epoch 0 -> 0,
+    // key-access revision 0, and no `base_group_state_ref`.
+    arkret_sdk::MlsGovernanceBindingPayload::realm(realm_id, None, 0, 0, 0).unwrap()
 }
 
 #[test]
@@ -34,7 +21,6 @@ fn build_mls_genesis_payload_has_required_fields() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
-    super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     let summary = ensure_creator_mls_checkpoint(
         &mut state,
@@ -108,7 +94,6 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
-    super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     let fresh = ensure_creator_mls_checkpoint(
         &mut state,
@@ -144,7 +129,6 @@ fn only_unaccepted_epoch_zero_snapshot_can_be_recreated() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
-    super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     ensure_creator_mls_checkpoint(
         &mut state,

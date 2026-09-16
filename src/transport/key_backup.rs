@@ -29,8 +29,11 @@ impl crate::transport::TransportClient {
             .await?;
         let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
-        arkret_sdk::KeyBackupClient::new(self.sdk_http_client()?)
-            .put_key_backup(backup_id.as_str(), &record)
+        if record.backup_id != backup_id {
+            anyhow::bail!("key backup path id does not match envelope backup_id");
+        }
+        arkret_sdk::http_client::KeyBackupClient::new(self.sdk_http_client()?)
+            .put_key_backup(&record)
             .await
             .map_err(anyhow::Error::from)
     }
@@ -46,8 +49,11 @@ impl crate::transport::TransportClient {
             .await?;
         let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
-        let response = arkret_sdk::KeyBackupClient::new(self.sdk_http_client()?)
-            .put_key_backup(backup_id.as_str(), &record)
+        if record.backup_id != backup_id {
+            anyhow::bail!("key backup path id does not match envelope backup_id");
+        }
+        let response = arkret_sdk::http_client::KeyBackupClient::new(self.sdk_http_client()?)
+            .put_key_backup(&record)
             .await
             .map_err(anyhow::Error::from)?;
         Ok((response, record))
@@ -72,12 +78,19 @@ impl crate::transport::TransportClient {
         Ok(record)
     }
 
+    /// Bind the envelope to this device's accepted `ak.device.authorize` and
+    /// sign it.
+    ///
+    /// `auth_data` is a closed required member of the key-backup envelope, so
+    /// the trust anchor is written in place and the detached signature is taken
+    /// over the canonical envelope with `auth_data.signature` removed
+    /// ([`arkret_sdk::KeyBackup::signing_payload_bytes`]).
     async fn attach_key_backup_current_device_trust_anchor(
         &self,
-        payload: arkret_sdk::KeyBackup,
+        mut payload: arkret_sdk::KeyBackup,
         signer: &Arc<crate::event_signer::InksonEventSigner>,
     ) -> anyhow::Result<arkret_sdk::KeyBackup> {
-        if payload.auth_data.is_some() {
+        if !payload.auth_data.signature.as_str().is_empty() {
             anyhow::bail!("key backup builder must provide an unsigned envelope");
         }
         let signer_device_id = signer
@@ -129,21 +142,20 @@ impl crate::transport::TransportClient {
         let Some(event_id) = viewer_event_id.or(query_event_id) else {
             anyhow::bail!("current device has no accepted device.authorize event");
         };
-        let auth = arkret_sdk::UnsignedKeyBackupAuthData::new(
+        payload.auth_data = arkret_sdk::KeyBackupAuthData {
             device_id,
-            arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
-                .map_err(anyhow::Error::msg)?,
-            arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
-            event_id,
-        )?;
-        let unsigned = arkret_sdk::UnsignedKeyBackup::new(payload, auth)?;
-        let signature = signer.sign_raw(&unsigned.signing_payload_bytes()?)?;
-        unsigned
-            .attach_signature(
-                arkret_sdk::Base64UrlString::new(B64.encode(signature))
-                    .map_err(anyhow::Error::msg)?,
+            verification_method: arkret_sdk::DidUrl::new(
+                signer.verification_method().to_owned(),
             )
-            .map_err(anyhow::Error::from)
+            .map_err(anyhow::Error::msg)?,
+            signature_algorithm: arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
+            signature: payload.auth_data.signature,
+            device_authorize_event_id: event_id,
+        };
+        let signature = signer.sign_raw(&payload.signing_payload_bytes()?)?;
+        payload.auth_data.signature =
+            arkret_sdk::Base64UrlString::new(B64.encode(signature)).map_err(anyhow::Error::msg)?;
+        Ok(payload)
     }
 
     pub async fn list_key_backups(&self) -> anyhow::Result<arkret_sdk::KeysBackupsList> {
@@ -181,15 +193,16 @@ impl crate::transport::TransportClient {
 
     /// Publish or rotate the principal's signed recovery policy.
     ///
-    /// The request is the canonical `ak.policy.set` EventInitialSubmission
-    /// required by `ak.root.identity.recovery_policy.command.publish.v1`.
+    /// The request is the canonical `ak.policy.set` single-Event commit
+    /// submission required by
+    /// `ak.root.identity.recovery_policy.command.publish.v1`
+    /// (`recovery-policy.schema.json#/$defs/recovery_policy_publish_request`).
     pub async fn put_recovery_policy(
         &self,
-        body: &arkret_sdk::RecoveryPolicyPublishRequest,
-        digest_suite: arkret_sdk::DigestSuite,
+        body: &arkret_wire::EventCommitSubmission,
     ) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
         self.sdk_http_client()?
-            .identity_recovery_policy_publish(body, digest_suite)
+            .post("/_arkret/root/identity/recovery-policy", body)
             .await
             .map_err(anyhow::Error::from)
     }

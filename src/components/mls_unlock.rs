@@ -137,8 +137,13 @@ pub fn MlsUnlockPrompt(
                 .await;
             let result = match payload_result {
                 Ok((payload, active_policy)) => {
+                    // The restorable set is the account's own key-backup
+                    // envelopes: the account MLS secret and the private
+                    // plaintext sidecar. The RHRK history-secret family was
+                    // removed with the protocol, so there is no separate
+                    // history-backup count to report any more.
                     let history_count =
-                        crate::mls::account_recovery::select_mls_history_backups(&payload).len();
+                        crate::mls::runtime::all_secret_storage_backups(&payload).len();
                     try_set_signal(restore_payload_cache, Some(payload.clone()));
                     tracing::warn!(
                         target: "mls_unlock",

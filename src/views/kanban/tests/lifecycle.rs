@@ -4,28 +4,28 @@ use super::*;
 #[test]
 fn projection_lifecycle_values_map_to_renderer_enums() {
     assert_eq!(
-        space_container_state_from_projection(&arkret_sdk::ProjectionSpaceState::Active),
+        space_container_state_from_projection(&arkret_sdk::SpaceState::Active),
         SpaceContainerLifecycleState::Active
     );
     assert_eq!(
-        space_container_state_from_projection(&arkret_sdk::ProjectionSpaceState::Archived),
+        space_container_state_from_projection(&arkret_sdk::SpaceState::Archived),
         SpaceContainerLifecycleState::Archived
     );
     assert_eq!(
-        space_container_state_from_projection(&arkret_sdk::ProjectionSpaceState::Tombstoned),
+        space_container_state_from_projection(&arkret_sdk::SpaceState::Tombstoned),
         SpaceContainerLifecycleState::Tombstoned
     );
 
     assert_eq!(
-        strand_lifecycle_from_projection(&arkret_sdk::ProjectionObjectState::Active),
+        strand_lifecycle_from_projection(&arkret_sdk::ObjectState::Active),
         StrandLifecycleState::Active
     );
     assert_eq!(
-        strand_lifecycle_from_projection(&arkret_sdk::ProjectionObjectState::Archived),
+        strand_lifecycle_from_projection(&arkret_sdk::ObjectState::Archived),
         StrandLifecycleState::Archived
     );
     assert_eq!(
-        strand_lifecycle_from_projection(&arkret_sdk::ProjectionObjectState::Redacted),
+        strand_lifecycle_from_projection(&arkret_sdk::ObjectState::Redacted),
         StrandLifecycleState::Redacted
     );
 }

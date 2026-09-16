@@ -22,17 +22,18 @@ impl MessageStreamHub {
         try_consume_context::<Self>()
     }
 
-    /// Applies a frame only after the caller has verified the Signal envelope,
-    /// decrypted it, and authorized both `ak.message.stream.send` and
-    /// `ak.message.create` at the envelope's `seal_ref`.
+    /// Applies a frame only after the receiver has admitted the Signal
+    /// (envelope, producer proof, AEAD, sequence) and the sink has authorized
+    /// both `ak.message.stream.send` and `ak.message.create` for the verified
+    /// sender in this scope.
     pub fn apply_authorized(
         &mut self,
-        plaintext: &garth::SignalPlaintext,
+        signal: &crate::runtime::projection::AdmittedSignal,
         observed_at: chrono::DateTime<chrono::Utc>,
     ) -> garth::Result<garth::MessageStreamApplyOutcome> {
         self.projection
             .write()
-            .apply(plaintext, &allow_authorized_frame, observed_at)
+            .apply(&signal.payload, &allow_authorized_frame, observed_at)
     }
 
     /// Removes a preview only after the durable Event and its verified sender

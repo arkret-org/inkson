@@ -6,7 +6,7 @@ impl LocalStateStore {
         authority: &arkret_sdk::AccountId,
         realm: &str,
         strands: Option<Vec<arkret_sdk::StrandId>>,
-        mut cells: Vec<arkret_sdk::CellRef>,
+        mut selectors: Vec<arkret_wire::CurrentSelector>,
     ) {
         let mut demand = self
             .product_current_demand
@@ -15,14 +15,16 @@ impl LocalStateStore {
         if let Some(mut strands) = strands {
             strands.sort();
             strands.dedup();
-            cells.sort();
-            cells.dedup();
+            selectors.sort_by_key(|selector| {
+                serde_json::to_string(selector).unwrap_or_default()
+            });
+            selectors.dedup();
             assert!(strands.len() <= 32, "product demand exceeds protocol bound");
             assert!(
-                cells.len() <= 256,
-                "product cell demand exceeds local bound"
+                selectors.len() <= 256,
+                "product current-selector demand exceeds local bound"
             );
-            *demand = Some((authority.clone(), realm.to_owned(), strands, cells));
+            *demand = Some((authority.clone(), realm.to_owned(), strands, selectors));
         } else if demand
             .as_ref()
             .is_some_and(|(a, r, ..)| a == authority && r == realm)
@@ -44,17 +46,21 @@ impl LocalStateStore {
             .map(|(_, _, strands, _)| strands.clone())
     }
 
-    pub(crate) fn product_current_cells(
+    /// Extra typed current selectors the active product view is demanding on
+    /// top of the Realm-required ones. Each is a domain coordinate the Station
+    /// answers with its own `CurrentRevision`; there is no Realm-global
+    /// revision to demand.
+    pub(crate) fn product_current_selectors(
         &self,
         authority: &arkret_sdk::AccountId,
         realm: &str,
-    ) -> Vec<arkret_sdk::CellRef> {
+    ) -> Vec<arkret_wire::CurrentSelector> {
         self.product_current_demand
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .as_ref()
             .filter(|(a, r, ..)| a == authority && r == realm)
-            .map(|(_, _, _, cells)| cells.clone())
+            .map(|(_, _, _, selectors)| selectors.clone())
             .unwrap_or_default()
     }
 
@@ -65,7 +71,7 @@ impl LocalStateStore {
     pub(crate) fn install_current_product_view(
         &mut self,
         realm_id: &str,
-        entries: Vec<arkret_sdk::CurrentResultEntry>,
+        entries: Vec<arkret_wire::TypedCurrentResult>,
         ready: bool,
     ) -> anyhow::Result<()> {
         self.ensure_cached_loaded();
@@ -204,7 +210,7 @@ impl LocalStateStore {
     /// local cache instead of lingering as ghost entries in the sidebar.
     ///
     /// Also prunes the auxiliary per-Realm caches (`drafts`,
-    /// `seal_views`, `read_cursors`, `realm_remarks`,
+    /// `stream_cursors`, `read_cursors`, `realm_remarks`,
     /// `mls_local_checkpoints`, `move_submissions` keyed by Realm, the
     /// `read_receipt_*_overrides`, `read_receipt_policy_snapshots`,
     /// `realm_watch_levels`, and any leftover encrypted-message draft) so a
@@ -248,7 +254,10 @@ impl LocalStateStore {
         self.cached.realm_tree_projections.remove(projection_id);
         self.cached.realm_collaboration_roles.remove(projection_id);
         self.cached.realm_destroy_receipts.remove(projection_id);
-        self.cached.seal_views.remove(projection_id);
+        self.cached
+            .stream_cursors
+            .retain(|_, head| head.stream_ref.realm_id().as_str() != projection_id);
+        self.cached.realm_authority_basis.remove(projection_id);
         self.cached.realm_remarks.remove(projection_id);
         self.cached.mls_local_checkpoints.remove(projection_id);
         self.cached.realm_watch_levels.remove(projection_id);
@@ -273,15 +282,38 @@ impl LocalStateStore {
             .retain(|_, record| record.realm_id != projection_id);
     }
 
-    /// True when the latest cached realm-tree projection declares an
-    /// MLS-backed encryption profile. Used by membership/admin surfaces
-    /// to decide whether a membership frontier change must pause sends
-    /// until an MLS commit covers it.
+    /// True when the Realm's own default scope has an accepted
+    /// `ak.mls.genesis` in the cached typed current results.
+    ///
+    /// This is the single client-side judgement of "is this scope encrypted":
+    /// a scope is plaintext until its own genesis commits and is irreversibly
+    /// standard RFC 9420 afterwards. There is no create-locked encryption
+    /// profile or encryption floor to read.
     pub fn realm_projection_is_mls_encrypted(&self, realm_id: &str) -> bool {
+        let Ok(realm) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
+            return false;
+        };
+        let entries = self.cached_current_entries(realm_id);
+        crate::current_projection::scope_has_accepted_mls_genesis(
+            &entries,
+            &arkret_sdk::ScopeRef::Realm { realm_id: realm },
+        )
+    }
+
+    /// Typed current results last installed for `realm_id` by
+    /// [`Self::install_current_product_view`].
+    pub(crate) fn cached_current_entries(
+        &self,
+        realm_id: &str,
+    ) -> Vec<arkret_wire::TypedCurrentResult> {
         self.load()
             .realm_tree_projections
             .get(realm_id)
-            .is_some_and(garth::realm_projection_is_encrypted)
+            .and_then(|projection| projection.get("current"))
+            .and_then(|current| {
+                serde_json::from_value::<Vec<arkret_wire::TypedCurrentResult>>(current.clone()).ok()
+            })
+            .unwrap_or_default()
     }
 
     /// Joined-actor projection hint when account sync explicitly says the

@@ -197,7 +197,8 @@ pub(crate) fn kanban_operations_from_client_events(
 fn kanban_operation_from_typed(event: &arkret_sdk::Event) -> Option<RawOperationRecord> {
     let local_event = LocalKanbanEvent::from_sdk_event(event)?;
     let operation_id = event.event_id.as_str().to_owned();
-    let local_target_ref = arkret_sdk::schema::derived_object_id(event);
+    let local_target_ref =
+        arkret_sdk::schema::derived_object_id_for_kind(event.kind.as_str(), &event.event_id);
     // Final authoring changes a create's content-bound Event id, so the
     // producer's draft-time object handle (`unsigned.local_target_ref`, kept
     // verbatim by the server) usually differs from the accepted id. Keep that

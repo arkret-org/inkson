@@ -56,20 +56,12 @@ const TO_DEVICE_RECEIPTS_MAX: usize = 4096;
 // the `crate::state::*` public paths and the `impl LocalStateStore` /
 // tests `use super::*` resolution unchanged.
 mod types;
-pub use garth::LocalSealView;
 pub use types::*;
 
 mod mls_sidecar;
-pub(crate) use mls_sidecar::{
-    PendingHistorySecrets, mls_scope_checkpoint_key, mls_scope_checkpoint_key_for_group,
-};
+pub(crate) use mls_sidecar::{mls_scope_checkpoint_key, mls_scope_checkpoint_key_for_group};
 
-mod history_candidates;
-mod history_runtime;
-mod history_source_outbox;
 mod identity_links;
-pub(crate) use history_runtime::{InksonHistoryRuntimeStore, history_runtime};
-pub(crate) use history_source_outbox::{InksonHistorySourceBlobStore, history_source_outbox};
 
 mod agent_evidence;
 mod direct_conversation;
@@ -155,7 +147,7 @@ pub struct LocalStateStore {
                 arkret_sdk::AccountId,
                 String,
                 Vec<arkret_sdk::StrandId>,
-                Vec<arkret_sdk::CellRef>,
+                Vec<arkret_wire::CurrentSelector>,
             )>,
         >,
     >,
@@ -201,7 +193,7 @@ pub struct LocalStateStore {
     /// Runtime-only unified Sidecar projection. Its inputs come exclusively
     /// from decrypted Account Data and deterministic accepted private-history
     /// folds; persisted caches remain rebuildable accelerators.
-    sidecar_projection_fold: garth::projection::SidecarProjectionFold,
+    sidecar_projection_fold: crate::sidecar::SidecarProjectionFold,
     pending_projection_commands: std::collections::VecDeque<LocalProjectionCommand>,
     #[cfg(not(target_arch = "wasm32"))]
     path: PathBuf,
@@ -312,7 +304,7 @@ impl Default for LocalStateStore {
             corrupt_account_scopes: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
-            sidecar_projection_fold: garth::projection::SidecarProjectionFold::default(),
+            sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default(),
             pending_projection_commands: std::collections::VecDeque::new(),
             #[cfg(not(target_arch = "wasm32"))]
             path: default_state_path(),
@@ -374,7 +366,7 @@ impl LocalStateStore {
 
     pub(crate) fn sidecar_projection_fold_snapshot(
         &self,
-    ) -> garth::projection::SidecarProjectionFold {
+    ) -> crate::sidecar::SidecarProjectionFold {
         self.sidecar_projection_fold.clone()
     }
 
@@ -618,7 +610,7 @@ impl LocalStateStore {
             corrupt_account_scopes: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
-            sidecar_projection_fold: garth::projection::SidecarProjectionFold::default(),
+            sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default(),
             pending_projection_commands: std::collections::VecDeque::new(),
             path: path.into(),
         }
@@ -1036,7 +1028,6 @@ fn e2ee_safe_persist_state_with_policy(
     if strip_credentials {
         stripped.session_grant = None;
     }
-    stripped.history_secrets.clear();
     stripped.mls_private_plaintext.clear();
     stripped.mls_decrypted_plaintext.clear();
     stripped.authenticated_identity_links.clear();

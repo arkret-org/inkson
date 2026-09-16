@@ -126,14 +126,14 @@ pub(crate) fn recovery_key_filename_from_handles(handles: &[String]) -> String {
     recovery_key_filename(&localpart)
 }
 
-type LocalAuthoritativeHistoryBackupRecords = Vec<(
-    arkret_sdk::HistoryEffectiveScope,
-    Vec<arkret_sdk::LocalAuthoritativeHistorySecret>,
-)>;
-
 /// Per-account payload carried by the shared scheduler. Credentials, the
-/// latest portable history and sidecar snapshots, and the cached sidecar tail
-/// used to chain the next upload.
+/// latest sidecar snapshot, and the cached sidecar tail used to chain the next
+/// upload.
+///
+/// The portable `mls_history` records this payload used to carry belonged to
+/// the RHRK history-secret family, which was removed with the protocol: an
+/// account's recoverable MLS material is now the account secret plus the
+/// private plaintext sidecar.
 #[derive(Clone, Default)]
 struct MlsRecoveryBackupPayload {
     base_url: String,
@@ -142,8 +142,6 @@ struct MlsRecoveryBackupPayload {
     principal_control_realm_id: Option<arkret_sdk::RealmId>,
     actor_id: String,
     device_id: String,
-    recovery_public_key: Vec<u8>,
-    latest_history_records: LocalAuthoritativeHistoryBackupRecords,
     latest_sidecar_json: Option<Vec<u8>>,
     cached_previous_body: Option<serde_json::Value>,
 }
@@ -233,7 +231,7 @@ pub(crate) fn schedule_mls_recovery_backups_after_encrypted_write(
         return;
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let (sidecar_json, history_records, recovery_public_key, principal_control_realm_id) = {
+    let (sidecar_json, principal_control_realm_id) = {
         let store = state_store.read();
         if !mls_recovery_backup_configured(&store) {
             return;
@@ -246,32 +244,20 @@ pub(crate) fn schedule_mls_recovery_backups_after_encrypted_write(
                     return;
                 }
             };
-        let Some(recovery_public_key) = crate::views::recovery::local_recovery_public_key(&store)
-        else {
+        // The recoverable material is wrapped under the account secret, which
+        // only exists once recovery is configured; without the recovery public
+        // key there is nothing this device may upload yet.
+        if crate::views::recovery::local_recovery_public_key(&store).is_none() {
             return;
-        };
-        let history_records = match store
-            .local_authoritative_history_secrets_for_backup(secure_store.as_ref(), &authority)
-        {
-            Ok(records) => records,
-            Err(error) => {
-                tracing::warn!(%error, "local-authoritative MLS history backup snapshot failed");
-                return;
-            }
-        };
+        }
         let sidecar_json =
             (!store.private_plaintext_is_empty()).then(|| store.private_plaintext_snapshot_json());
-        (
-            sidecar_json,
-            history_records,
-            recovery_public_key,
-            principal_control_realm_id,
-        )
+        (sidecar_json, principal_control_realm_id)
     };
-    if sidecar_json.is_none() && history_records.is_empty() {
+    let Some(sidecar_json) = sidecar_json else {
         return;
-    }
-    let digest_input = match serde_json::to_vec(&(&sidecar_json, &history_records)) {
+    };
+    let digest_input = match serde_json::to_vec(&sidecar_json) {
         Ok(input) => input,
         Err(error) => {
             tracing::warn!(%error, "MLS recovery backup digest input could not be encoded");
@@ -287,9 +273,7 @@ pub(crate) fn schedule_mls_recovery_backups_after_encrypted_write(
         payload.principal_control_realm_id = Some(principal_control_realm_id);
         payload.actor_id = actor_id;
         payload.device_id = device_id;
-        payload.recovery_public_key = recovery_public_key;
-        payload.latest_history_records = history_records;
-        payload.latest_sidecar_json = sidecar_json;
+        payload.latest_sidecar_json = Some(sidecar_json);
         // `cached_previous_body` is preserved across reschedules.
     });
     if should_spawn {
@@ -320,9 +304,8 @@ async fn run_mls_recovery_backup_job(key: String) {
         }
         let upload_digest = job.latest_digest.clone();
         let rerun = match upload_mls_recovery_backup_job_snapshot(job).await {
-            Ok((history_count, sidecar)) => {
+            Ok(sidecar) => {
                 tracing::debug!(
-                    history_count,
                     sidecar_backup_id = ?sidecar
                         .as_ref()
                         .map(|(backup_id, _)| backup_id.as_str()),
@@ -354,7 +337,7 @@ async fn run_mls_recovery_backup_job(key: String) {
 
 async fn upload_mls_recovery_backup_job_snapshot(
     job: MlsRecoveryBackupJob,
-) -> anyhow::Result<(usize, Option<(String, serde_json::Value)>)> {
+) -> anyhow::Result<Option<(String, serde_json::Value)>> {
     let MlsRecoveryBackupPayload {
         base_url,
         token,
@@ -362,8 +345,6 @@ async fn upload_mls_recovery_backup_job_snapshot(
         principal_control_realm_id,
         actor_id,
         device_id,
-        recovery_public_key,
-        latest_history_records,
         latest_sidecar_json,
         cached_previous_body,
     } = job.payload;
@@ -373,17 +354,6 @@ async fn upload_mls_recovery_backup_job_snapshot(
         .ok_or_else(|| anyhow::anyhow!("MLS backup job omitted frozen PCR authority"))?;
     with_authed_api(&base_url, token, |api| async move {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let history_count = crate::mls::account_recovery::upload_local_authoritative_mls_history_records_with_recovery_public_key(
-            &api,
-            latest_history_records,
-            &authority,
-            &principal_control_realm_id,
-            &actor_id,
-            &device_id,
-            &recovery_public_key,
-        )
-        .await?
-        .len();
         let sidecar = if let Some(latest_sidecar_json) = latest_sidecar_json {
             let previous_body = match cached_previous_body {
                 Some(body) => Some(body),
@@ -410,7 +380,7 @@ async fn upload_mls_recovery_backup_job_snapshot(
         } else {
             None
         };
-        Ok::<_, anyhow::Error>((history_count, sidecar))
+        Ok::<_, anyhow::Error>(sidecar)
     })
     .await
     .map_err(|err| anyhow::anyhow!(err.display_diagnostic()))
@@ -695,13 +665,6 @@ fn upload_mls_backup_with_recovery_key(
     generated_in_this_flow: bool,
 ) {
     let mut state_store_for_marker = state_store;
-    let history_records = {
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        state_store
-            .read()
-            .local_authoritative_history_secrets_for_backup(secure_store.as_ref(), &authority)
-            .map_err(anyhow::Error::msg)
-    };
     let Some(recovery_material_evidence) = state_store.read().recovery_material_evidence() else {
         try_set_signal(status, "Frozen PCR authority evidence is required");
         return;
@@ -744,19 +707,6 @@ fn upload_mls_backup_with_recovery_key(
                 &actor,
                 &device,
                 &recovery_secret,
-            )
-            .await?;
-            let (_, recovery_public_key) =
-                crate::hpke_backup::derive_recovery_keypair_from_recovery_key(&recovery_secret)
-                    .map_err(|error| anyhow::anyhow!("derive recovery HPKE keypair: {error}"))?;
-            crate::mls::account_recovery::upload_local_authoritative_mls_history_records_with_recovery_public_key(
-                &api,
-                history_records?,
-                &authority,
-                &principal_control_realm_id,
-                &actor,
-                &device,
-                &recovery_public_key,
             )
             .await?;
             Ok::<_, anyhow::Error>(backup_id)

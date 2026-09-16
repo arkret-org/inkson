@@ -134,7 +134,7 @@ fn parse_valid_until(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         .map(|dt| dt.with_timezone(&chrono::Utc))
 }
 
-fn parse_consent_rows(value: &arkret_sdk::ConsentCellList, holder: &str) -> Vec<ConsentRow> {
+fn parse_consent_rows(value: &arkret_sdk::ConsentList, holder: &str) -> Vec<ConsentRow> {
     value
         .consent_cell_views
         .iter()

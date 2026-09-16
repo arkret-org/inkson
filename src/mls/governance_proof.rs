@@ -1,20 +1,22 @@
-use std::collections::{BTreeMap, BTreeSet};
+//! Host-side construction of the `governance_binding` an `ak.mls.genesis` /
+//! `ak.mls.commit` Event carries, plus the verified leaf attribution that a
+//! group needs after every transition.
+//!
+//! There is no governance proof round-trip any more: the accepted `RealmCommit`
+//! on the scope's own stream is the ordering and governance authority, so the
+//! coordinates a producer must bind come straight from the scope's current MLS
+//! group state (`CurrentSelector::MlsGroup`) in the authority-signed Realm
+//! snapshot, and from the exact accepted base transition this client already
+//! installed.
+//!
+//! Member attribution is the other half. `ArkretMlsGroup` clears its leaf
+//! bindings whenever it merges an accepted Commit, and the SDK refuses every
+//! roster read until the caller installs the complete post-transition map. The
+//! host is the only party that can build that map, because it holds both the
+//! pre-transition bindings and the checked KeyPackage claim evidence for every
+//! newly added leaf.
 
-pub(crate) fn bind_sidecar_scope(
-    base: &arkret_sdk::MlsGovernanceBindingPayload,
-    sidecar_binding: arkret_sdk::SidecarMlsBinding,
-) -> arkret_wire::Result<arkret_sdk::MlsGovernanceBindingPayload> {
-    arkret_sdk::MlsGovernanceBindingPayload::sidecar(
-        base.realm_id().clone(),
-        sidecar_binding.sidecar_id.clone(),
-        base.previous_epoch(),
-        base.next_epoch(),
-        base.security_frontier_digest().clone(),
-        sidecar_binding,
-        base.binding_profile(),
-        base.reducer_profile(),
-    )
-}
+use std::collections::BTreeMap;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) trait GovernanceProofStateStorePlatform: Send + Sync {}
@@ -42,427 +44,72 @@ impl GovernanceProofStateStore for crate::runtime::input::StateStoreHandle {
     }
 }
 
-pub(crate) fn frontier_request(
-    state_store: &crate::state::LocalStateStore,
-    realm_id: &str,
-    circle_id: Option<&str>,
-    mls_group_id: impl Into<String>,
-    previous_epoch: u64,
-    next_epoch: u64,
-    local_mls_leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
-) -> Result<arkret_sdk::MlsGovernanceFrontierRequestBody, String> {
-    let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
-        .map_err(|error| format!("invalid MLS governance proof Realm id: {error}"))?;
-    let effective_scope = match circle_id
-        .map(str::trim)
-        .filter(|circle_id| !circle_id.is_empty())
-    {
-        Some(circle_id) => arkret_wire::ScopeRef::Circle {
-            realm_id: realm_id.clone(),
-            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
-                .map_err(|error| format!("invalid MLS governance proof Circle id: {error}"))?,
-        },
-        None => arkret_wire::ScopeRef::Realm {
-            realm_id: realm_id.clone(),
-        },
-    };
-    frontier_request_for_scope(
-        state_store,
-        effective_scope,
-        mls_group_id,
-        previous_epoch,
-        next_epoch,
-        local_mls_leaves,
-    )
+/// The MLS governance binding for an epoch-zero `ak.mls.genesis`.
+///
+/// Genesis is the only transition with no base group state, and it always
+/// declares key-access revision zero: the scope has no accepted membership
+/// revision to cover before its own group exists.
+pub(crate) fn genesis_binding(
+    effective_scope: &arkret_sdk::ScopeRef,
+) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
+    arkret_sdk::MlsGovernanceBindingPayload::new(effective_scope.clone(), None, 0, 0, 0)
+        .map_err(|error| format!("invalid MLS Genesis governance binding: {error}"))
 }
 
-pub(crate) fn frontier_request_for_scope(
+/// The MLS governance binding for a `previous_epoch -> next_epoch` transition.
+///
+/// `base_group_state_ref` is the accepted `ak.mls.genesis` / `ak.mls.commit`
+/// Event that materialized `previous_epoch` for this exact scope and group; the
+/// client refuses to author a transition it cannot name that base for.
+/// `key_access_revision` is the scope's current key-access revision as the
+/// Station published it, so an accepted Commit records exactly which membership
+/// revision its new epoch covers.
+pub(crate) fn binding_for_transition(
     state_store: &crate::state::LocalStateStore,
-    effective_scope: arkret_sdk::ScopeRef,
-    mls_group_id: impl Into<String>,
+    effective_scope: &arkret_sdk::ScopeRef,
+    mls_group_id: &str,
     previous_epoch: u64,
     next_epoch: u64,
-    local_mls_leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
-) -> Result<arkret_sdk::MlsGovernanceFrontierRequestBody, String> {
-    let realm_id = effective_scope
-        .realm_id_opt()
-        .cloned()
-        .ok_or_else(|| "MLS governance proof rejects RealmGenesis scope".to_owned())?;
-    let mls_group_id = arkret_sdk::Base64UrlString::new(mls_group_id.into())
-        .map_err(|error| format!("invalid MLS group id: {error}"))?;
-    let mut target_leaves = state_store
-        .seal_view_for_realm(realm_id.as_str())
-        .frontier
-        .into_iter()
-        .map(|seal| {
-            arkret_sdk::SealId::new(seal)
-                .map_err(|error| format!("invalid accepted Seal frontier id: {error}"))
+) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
+    if previous_epoch == 0 && next_epoch == 0 {
+        return genesis_binding(effective_scope);
+    }
+    let base_group_state_ref =
+        state_store.mls_group_state_ref_for_scope(effective_scope, mls_group_id, previous_epoch)?;
+    let key_access_revision = current_key_access_revision(state_store, effective_scope)?;
+    arkret_sdk::MlsGovernanceBindingPayload::new(
+        effective_scope.clone(),
+        Some(base_group_state_ref),
+        previous_epoch,
+        next_epoch,
+        key_access_revision,
+    )
+    .map_err(|error| format!("invalid MLS transition governance binding: {error}"))
+}
+
+/// The key-access revision the scope's current MLS group state declares.
+///
+/// A scope whose snapshot has not delivered `CurrentSelector::MlsGroup` yet has
+/// no authoritative revision. That is not a licence to guess: authoring a
+/// transition that under-declares its coverage would silently leave a
+/// membership change uncovered, so the read fails closed.
+pub(crate) fn current_key_access_revision(
+    state_store: &crate::state::LocalStateStore,
+    effective_scope: &arkret_sdk::ScopeRef,
+) -> Result<u64, String> {
+    state_store
+        .current_mls_group_for_scope(effective_scope)
+        .map(|current| current.current_key_access_revision)
+        .ok_or_else(|| {
+            "MLS authoring requires the scope's current key-access revision".to_owned()
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    target_leaves.sort();
-    target_leaves.dedup();
-    let seal_basis = arkret_sdk::SealBasis {
-        leaves: target_leaves,
-    };
-    seal_basis
-        .validate_protocol_bounds()
-        .map_err(|error| format!("MLS governance proof has no complete target basis: {error}"))?;
-    let base_group_state_ref = if previous_epoch == 0 && next_epoch == 0 {
-        None
-    } else {
-        Some(
-            state_store
-                .mls_group_state_ref_for_scope(
-                    &effective_scope,
-                    mls_group_id.as_str(),
-                    previous_epoch,
-                )
-                .map_err(|error| {
-                    format!(
-                        "MLS governance successor proof requires the accepted base group state: {error}"
-                    )
-                })?,
-        )
-    };
-    let genesis = previous_epoch == 0 && next_epoch == 0;
-    let accepted_genesis_exists = genesis
-        && state_store
-            .mls_group_state_ref_for_scope(&effective_scope, mls_group_id.as_str(), 0)
-            .is_ok();
-    let proposed_group_genesis_binding = if genesis && !accepted_genesis_exists {
-        Some(proposed_group_genesis_binding(
-            state_store,
-            &effective_scope,
-        )?)
-    } else {
-        None
-    };
-    let request = arkret_sdk::MlsGovernanceFrontierRequestBody {
-        effective_scope,
-        mls_group_id,
-        local_mls_leaves,
-        seal_basis,
-        base_group_state_ref,
-        proposed_group_genesis_binding,
-        previous_epoch,
-        next_epoch,
-    };
-    request
-        .validate()
-        .map_err(|error| format!("invalid MLS governance proof request: {error}"))?;
-    Ok(request)
 }
 
-fn proposed_group_genesis_binding(
-    state_store: &crate::state::LocalStateStore,
-    effective_scope: &arkret_sdk::ScopeRef,
-) -> Result<arkret_sdk::ProposedMlsGroupGenesisBinding, String> {
-    let realm_id = effective_scope
-        .realm_id_opt()
-        .ok_or_else(|| "MLS governance scope has no Realm".to_owned())?;
-    let (content_scheme, durability_policy) = match effective_scope {
-        arkret_sdk::ScopeRef::Realm { .. } => {
-            let state = state_store.load();
-            let projection = state
-                .realm_tree_projections
-                .get(realm_id.as_str())
-                .ok_or_else(|| {
-                    "pre-Genesis MLS proposal requires the accepted Realm projection".to_owned()
-                })?;
-            if let Some(proposal) = direct_conversation_genesis_proposal(projection) {
-                return Ok(proposal);
-            }
-            let explicit_scheme =
-                crate::realm_tree::realm_projection_pre_genesis_content_scheme(projection);
-            let durability = projection
-                .get("durability_policy")
-                .or_else(|| projection.pointer("/summary/durability_policy"))
-                .filter(|value| !value.is_null())
-                .map(|value| {
-                    serde_json::from_value::<arkret_wire::DurabilityPolicy>(value.clone())
-                        .map_err(|error| format!("invalid proposed durability policy: {error}"))
-                })
-                .transpose()?;
-            // Older interrupted creator transactions may predate the durable
-            // preservation of the local pre-Genesis selector.  The accepted
-            // `all_history_for_current_members` facet is nevertheless a
-            // one-way protocol implication: realm-and-space.md §2.3 forbids
-            // that policy with `mls_rfc9420`, so an MLS-backed Realm can only
-            // have proposed `mls_exporter_aead_v1`. Inkson's creator surface
-            // has never offered organization-key custody and therefore paired
-            // that choice with the explicit `none` durability value. This is
-            // recovery of the exact legacy creator intent, not a general
-            // content-scheme default; `since_join` remains ambiguous and fails
-            // closed when its persisted selector is absent.
-            let (scheme, durability) = match explicit_scheme {
-                Some(scheme) => (scheme, durability),
-                None if legacy_creator_binding_is_implied_by_history(projection) => (
-                    "mls_exporter_aead_v1".to_owned(),
-                    Some(arkret_wire::DurabilityPolicy::None),
-                ),
-                None => {
-                    return Err(
-                        "pre-Genesis MLS proposal requires an explicit content scheme".to_owned(),
-                    );
-                }
-            };
-            (scheme, durability)
-        }
-        // A pre-Genesis proposal is the local creator's authoring intent, and
-        // Genesis admission later requires the signed binding to equal it
-        // byte-for-byte. Inkson persists that intent for a Realm it created
-        // (`realm_projection_pre_genesis_content_scheme`) but not for a Circle,
-        // so there is nothing to resubmit here. The Station's
-        // `ak.component.mls.epoch.v1` value cannot stand in: before Genesis it
-        // is exactly `null`, and once it carries a head this branch must not
-        // run at all.
-        arkret_sdk::ScopeRef::Circle { .. } => {
-            return Err(
-                match state_store.accepted_mls_epoch_binding(effective_scope) {
-                    garth::InstalledMlsEpoch::Accepted(_) => {
-                        "the Circle MLS group already has an accepted Genesis".to_owned()
-                    }
-                    _ => "pre-Genesis Circle proposal has no persisted local content scheme"
-                        .to_owned(),
-                },
-            );
-        }
-        _ => return Err("unsupported MLS governance effective scope".to_owned()),
-    };
-    let content_scheme = match content_scheme.as_str() {
-        "mls_rfc9420" => arkret_wire::ContentScheme::MlsRfc9420,
-        "mls_exporter_aead_v1" => arkret_wire::ContentScheme::MlsExporterAeadV1,
-        value => return Err(format!("unregistered proposed MLS content scheme {value}")),
-    };
-    let proposal = arkret_sdk::ProposedMlsGroupGenesisBinding {
-        content_scheme,
-        durability_policy,
-    };
-    proposal
-        .validate()
-        .map_err(|error| format!("invalid proposed MLS Genesis binding: {error}"))?;
-    Ok(proposal)
-}
-
-fn legacy_creator_binding_is_implied_by_history(projection: &serde_json::Value) -> bool {
-    if !garth::realm_projection_is_encrypted(projection) {
-        return false;
-    }
-    let null = serde_json::Value::Null;
-    [
-        projection,
-        projection.get("summary").unwrap_or(&null),
-        projection.get("object").unwrap_or(&null),
-        projection.get("realm").unwrap_or(&null),
-        projection.get("metadata").unwrap_or(&null),
-    ]
-    .into_iter()
-    .any(|container| {
-        container
-            .get("history_access")
-            .and_then(serde_json::Value::as_str)
-            == Some("all_history_for_current_members")
-    })
-}
-
-/// The current Direct Conversation profile fixes the exporter scheme. This
-/// is authoring input to the 0->0 proof query, never an accepted binding or a
-/// send-readiness shortcut. The application selects no organization recovery
-/// for a private conversation; the accepted MLS Genesis locks that choice.
-fn direct_conversation_genesis_proposal(
-    projection: &serde_json::Value,
-) -> Option<arkret_sdk::ProposedMlsGroupGenesisBinding> {
-    let genesis = crate::realm_tree::realm_projection_genesis_value(projection)?;
-    let object = serde_json::from_value::<arkret_sdk::RealmGenesis>(genesis.clone()).ok()?;
-    arkret_models_collaboration::objects::direct_conversation::DirectConversationRealmRole::validate(&object).ok()?;
-    Some(arkret_sdk::ProposedMlsGroupGenesisBinding {
-        content_scheme: arkret_wire::ContentScheme::MlsExporterAeadV1,
-        durability_policy: Some(arkret_wire::DurabilityPolicy::None),
-    })
-}
-
-pub(crate) async fn fetch_and_cache_frontier<S: GovernanceProofStateStore>(
-    api: &crate::transport::TransportClient,
-    state_store: S,
-    request: &arkret_sdk::MlsGovernanceFrontierRequestBody,
-    leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
-) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
-    if request.local_mls_leaves != leaves {
-        return Err("MLS authoring leaf intent changed".to_owned());
-    }
-    let authority = state_store
-        .with_read(|store| store.active_authority())
-        .ok_or_else(|| "MLS authoring requires an active account".to_owned())?;
-    let epoch = crate::identity::device_directory::cache_epoch();
-    let http = api.sdk_http_client().map_err(|error| error.to_string())?;
-    let outcome = http
-        .mls_governance_frontier(request)
-        .await
-        .map_err(|error| error.to_string())?;
-    let binding = outcome.governance_binding.clone();
-    state_store.with_write(|store| {
-        let realm = request
-            .effective_scope
-            .realm_id_opt()
-            .ok_or_else(|| "MLS authoring scope has no Realm".to_owned())?;
-        if store.active_authority().as_ref() != Some(&authority)
-            || epoch != crate::identity::device_directory::cache_epoch()
-            || store.seal_view_for_realm(realm.as_str()).frontier
-                != request
-                    .seal_basis
-                    .leaves
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-        {
-            return Err(
-                "MLS authoring response arrived after account or frontier changed".to_owned(),
-            );
-        }
-        store.cache_mls_governance_result(request.clone(), outcome)
-    })?;
-    Ok(binding)
-}
-
-pub(crate) async fn refresh_realm_frontier_with_http<S: GovernanceProofStateStore>(
-    http: &arkret_sdk::http_client::Client,
-    state_store: S,
-    realm_id: &str,
-) -> Result<arkret_sdk::DigestSuite, String> {
-    let authority = state_store
-        .with_read(|store| store.active_authority())
-        .ok_or_else(|| "Realm frontier requires an active account".to_owned())?;
-    let epoch = crate::identity::device_directory::cache_epoch();
-    let realm = arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| error.to_string())?;
-    // Realm admission can precede the first asynchronous control Seal.
-    // Retry only that registered transient condition, never an auth failure
-    // or a malformed frontier. Keep the original session pinned while waiting.
-    let mut attempt = 0;
-    let result = loop {
-        if state_store
-            .with_read(|store| store.active_authority())
-            .as_ref()
-            != Some(&authority)
-            || epoch != crate::identity::device_directory::cache_epoch()
-        {
-            return Err("Realm frontier wait cancelled after its session changed".to_owned());
-        }
-        match http.seals_frontier(realm.clone()).await {
-            Ok(result) => break result.frontier,
-            Err(error) => {
-                let Some(delay) = frontier_retry_delay(&error, attempt) else {
-                    return Err(error.to_string());
-                };
-                attempt += 1;
-                crate::runtime_helpers::sleep_for(delay).await;
-            }
-        }
-    };
-    if result.realm_id != realm {
-        return Err("Station frontier returned another Realm".to_owned());
-    }
-    let suite = result.live_digest_suite;
-    state_store.with_write(|store| {
-        if store.active_authority().as_ref() != Some(&authority)
-            || epoch != crate::identity::device_directory::cache_epoch()
-        {
-            return Err("Realm frontier arrived after its session changed".to_owned());
-        }
-        store.cache_realm_governance_frontier(result)
-    })?;
-    Ok(suite)
-}
-
-fn frontier_retry_delay(
-    error: &arkret_sdk::http_client::Error,
-    attempt: u32,
-) -> Option<std::time::Duration> {
-    (error.error_code().is_some_and(|code| {
-        code.as_str() == arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE
-    }) && attempt < 8)
-        .then(|| std::time::Duration::from_millis((250_u64 << attempt).min(2_000)))
-}
-
-#[cfg(test)]
-mod frontier_wait_tests {
-    use super::*;
-
-    #[test]
-    fn frontier_wait_is_bounded_and_does_not_retry_other_failures() {
-        let pending = arkret_sdk::http_client::Error::Api {
-            status: 503,
-            error: Box::new(arkret_sdk::Problem::from_code(
-                "frontier_unavailable",
-                "Realm has no accepted Seal",
-            )),
-        };
-        let delays = (0..8)
-            .map(|attempt| frontier_retry_delay(&pending, attempt).unwrap().as_millis())
-            .collect::<Vec<_>>();
-        assert_eq!(delays, [250, 500, 1000, 2000, 2000, 2000, 2000, 2000]);
-        assert!(frontier_retry_delay(&pending, 8).is_none());
-        for code in ["unauthorized", "not_found", "param_invalid"] {
-            let error = arkret_sdk::http_client::Error::Api {
-                status: 403,
-                error: Box::new(arkret_sdk::Problem::from_code(code, "terminal")),
-            };
-            assert!(frontier_retry_delay(&error, 0).is_none());
-        }
-    }
-}
-
-pub(crate) fn cached_frontier_binding(
-    store: &crate::state::LocalStateStore,
-    request: &arkret_sdk::MlsGovernanceFrontierRequestBody,
-) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
-    store
-        .cached_mls_governance_result_entry(request, chrono::Utc::now())?
-        .map(|entry| entry.outcome.governance_binding)
-        .ok_or_else(|| "MLS authoring result is missing or stale".to_owned())
-}
-
-pub(crate) fn cached_verified_binding_for_transition(
-    state_store: &crate::state::LocalStateStore,
-    effective_scope: &arkret_sdk::ScopeRef,
-    mls_group_id: &str,
-    previous_epoch: u64,
-    next_epoch: u64,
-) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
-    state_store.cached_mls_governance_binding_for_transition(
-        effective_scope,
-        mls_group_id,
-        previous_epoch,
-        next_epoch,
-        chrono::Utc::now(),
-    )
-}
-
-/// Read the exact accepted MLS epoch CAS head from the own-Station result.
-/// A producer must bind a Commit's
-/// `head_eq` predicate to this whole registered value; the scalar epoch is
-/// only one member of that value and is not a Cell head.
-pub(crate) async fn station_mls_epoch_head(
-    state_store: &crate::state::LocalStateStore,
-    effective_scope: &arkret_sdk::ScopeRef,
-    mls_group_id: &str,
-) -> Result<serde_json::Value, String> {
-    let local = state_store.load();
-    for entry in local.mls_governance_results.values() {
-        if &entry.request.effective_scope == effective_scope
-            && entry.request.mls_group_id.as_str() == mls_group_id
-        {
-            if let Some(entry) = state_store
-                .cached_mls_governance_result_entry(&entry.request, chrono::Utc::now())?
-            {
-                if let Some(head) = entry.outcome.epoch_head {
-                    return serde_json::to_value(head).map_err(|error| error.to_string());
-                }
-            }
-        }
-    }
-    Err("MLS authoring requires the Station's exact current epoch head".to_owned())
-}
-
+/// The verified authority a newly occupied MLS leaf binds to.
+///
+/// A human device leaf binds to its accepted `ak.device.authorize` Event; an
+/// Agent runtime leaf binds to its endpoint identity, which already carries the
+/// accepted `ak.agent.key.authorize` reference.
 #[derive(Clone, Debug)]
 pub(crate) struct MlsLeafAuthorityHint {
     pub(crate) endpoint: arkret_sdk::MlsEndpointIdentity,
@@ -496,108 +143,44 @@ pub(crate) fn claimed_actor_id(
         return Ok(arkret_sdk::ActorId::service(claim.principal_id.clone()));
     }
     // Agent and human-device claims produce the same account ActorId. An Agent
-    // is a Station-carried account (`client-preferences.md` "actor" targets),
-    // and `validate_target_claim_evidence` above has already refused any Agent
-    // claim whose `agent_id` is not literally `principal_id`, so there is no
-    // second principal to project here.
+    // is a Station-carried account, and `validate_target_claim_evidence` above
+    // has already refused any Agent claim whose `agent_id` is not literally
+    // `principal_id`, so there is no second principal to project here.
     Ok(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
         claim.principal_id.clone(),
         receipt.destination_id.clone(),
     )))
 }
 
-/// The caller supplies the exact artifact, not just an epoch or equal binding.
-pub(crate) fn install_accepted_transition_leaf_bindings(
-    state_store: &crate::state::LocalStateStore,
+/// Install the complete verified leaf-binding map for the group's current
+/// epoch.
+///
+/// `previous` is the exact binding map the group held before the transition
+/// (read with `verified_leaf_bindings()` before merging the accepted Commit, or
+/// carried across from the restored snapshot). A leaf that is still occupied by
+/// the identical RFC 9420 credential and signature key keeps its verified
+/// binding; every newly occupied leaf must be covered by `authority_hints`,
+/// which come from checked KeyPackage claim evidence. A leaf that neither
+/// matches a retained binding nor has verified Add authority fails closed
+/// rather than being attributed from BasicCredential bytes alone.
+pub(crate) fn install_post_transition_leaf_bindings(
     group: &mut arkret_sdk::ArkretMlsGroup,
-    artifact_ref: &arkret_sdk::EventId,
-) -> Result<(), String> {
-    let accepted = state_store
-        .cached_mls_accepted_artifact(artifact_ref)
-        .ok_or_else(|| "MLS artifact historical authority is unavailable".to_owned())?;
-    if &accepted.request.artifact_ref != artifact_ref || &accepted.event.event_id != artifact_ref {
-        return Err("MLS authority cache belongs to another artifact".to_owned());
-    }
-    let transition_ref = if accepted.event.kind == arkret_sdk::EventKind::MlsWelcome {
-        let welcome: arkret_sdk::MlsWelcomePayload = serde_json::from_value(
-            serde_json::to_value(&accepted.event.payload).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-        welcome.commit_ref
-    } else {
-        accepted.event.event_id.clone()
-    };
-    if accepted.outcome.transition_head.transition_ref != transition_ref {
-        return Err("MLS authority cache names another accepted transition".to_owned());
-    }
-    accepted
-        .outcome
-        .validate_for_request(&accepted.request)
-        .map_err(|error| format!("invalid accepted MLS authority: {error}"))?;
-    group
-        .install_accepted_leaf_bindings(&accepted.outcome)
-        .map_err(|error| format!("install accepted MLS authority: {error}"))
-}
-
-pub(crate) fn install_authored_transition_leaf_bindings(
-    state_store: &crate::state::LocalStateStore,
-    group: &mut arkret_sdk::ArkretMlsGroup,
-    binding: &arkret_sdk::MlsGovernanceBindingPayload,
+    previous: &[arkret_sdk::MlsVerifiedLeafBinding],
     authority_hints: &[MlsLeafAuthorityHint],
 ) -> Result<(), String> {
-    let state = state_store.load();
-    let mut matches = state
-        .mls_governance_results
-        .values()
-        .filter(|entry| {
-            &entry.outcome.governance_binding == binding
-                && entry.request.mls_group_id.as_str() == group.group_id()
-                && entry.request.next_epoch == group.epoch()
-        })
-        .filter_map(|entry| {
-            state_store
-                .cached_mls_governance_result_entry(&entry.request, chrono::Utc::now())
-                .transpose()
-        });
-    let entry = matches
-        .next()
-        .transpose()?
-        .ok_or_else(|| "authored MLS transition has no Station leaf input".to_owned())?;
-    if matches.next().is_some() {
-        return Err("authored MLS transition has conflicting leaf inputs".to_owned());
-    }
-    let frontier_leaves = entry.request.local_mls_leaves.clone();
-
-    let author_leaves = group
-        .active_author_leaves()
-        .into_iter()
-        .map(|leaf| (leaf.leaf_index, leaf))
-        .collect::<BTreeMap<_, _>>();
-    if author_leaves.len() != frontier_leaves.len() {
-        return Err(
-            "accepted transition leaf set does not cover the post-transition MLS tree".to_owned(),
-        );
-    }
-    let retained_bindings = group
-        .retained_verified_leaf_bindings()
-        .map_err(|error| format!("read retained MLS leaf bindings: {error}"))?
-        .into_iter()
+    let retained = previous
+        .iter()
         .map(|binding| (binding.leaf_index, binding))
         .collect::<BTreeMap<_, _>>();
-    let mut installed = Vec::with_capacity(author_leaves.len());
-    for frontier_leaf in &frontier_leaves {
-        let author_leaf = author_leaves
-            .get(&frontier_leaf.leaf_index)
-            .ok_or_else(|| "accepted transition leaf set names an empty MLS leaf".to_owned())?;
-        let arkret_sdk::AuthorLeafCredential::Basic { identity } = &author_leaf.credential else {
+    let mut installed = Vec::new();
+    for leaf in group.active_author_leaves() {
+        let arkret_sdk::mls::AuthorLeafCredential::Basic { identity } = &leaf.credential else {
             return Err("accepted Arkret MLS leaf does not use BasicCredential".to_owned());
         };
-        if identity.as_slice() != frontier_leaf.credential_ref.as_bytes() {
-            return Err(
-                "accepted transition credential differs from the post-transition leaf".to_owned(),
-            );
-        }
-        let signature_key: [u8; 32] = author_leaf
+        let credential = std::str::from_utf8(identity)
+            .map_err(|_| "MLS leaf credential is not UTF-8".to_owned())?
+            .to_owned();
+        let signature_key: [u8; 32] = leaf
             .signature_key
             .as_slice()
             .try_into()
@@ -606,536 +189,148 @@ pub(crate) fn install_authored_transition_leaf_bindings(
         let signature_key_b64 =
             arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(signature_key))
                 .map_err(|error| format!("invalid accepted MLS leaf key: {error}"))?;
-        let credential = frontier_leaf.credential_ref.as_str();
 
-        if let Some(retained) = retained_bindings.get(&frontier_leaf.leaf_index) {
-            if retained.actor_id != frontier_leaf.actor_id
-                || retained.credential_ref != frontier_leaf.credential_ref
-                || retained.signature_key != signature_key_b64
-            {
-                return Err(
-                    "retained MLS authority differs from the accepted transition leaf".to_owned(),
-                );
-            }
-            installed.push(retained.clone());
+        if let Some(binding) = retained.get(&leaf.leaf_index)
+            && binding.credential_ref.as_str() == credential
+            && binding.signature_key == signature_key_b64
+        {
+            installed.push((*binding).clone());
             continue;
         }
 
-        let (endpoint, device_authorize_event_id) = if let Ok(device_id) =
-            arkret_sdk::DeviceId::new(credential.to_owned())
-        {
-            let endpoint = arkret_sdk::MlsEndpointIdentity::human_device(
-                frontier_leaf.actor_id.signing_principal_id().clone(),
-                device_id.clone(),
-            );
-            let mut hints = authority_hints
-                .iter()
-                .filter(|hint| hint.endpoint == endpoint);
-            let hinted = hints.next();
-            if hints.next().is_some() {
-                return Err("ordinary MLS leaf has duplicate authority hints".to_owned());
-            }
-            let authority = if let Some(hint) = hinted {
-                hint.device_authorize_event_id.clone().ok_or_else(|| {
+        let (actor_id, endpoint, device_authorize_event_id) =
+            if arkret_sdk::DeviceId::new(credential.clone()).is_ok() {
+                let mut matches = authority_hints.iter().filter(|hint| {
+                    matches!(
+                        &hint.endpoint,
+                        arkret_sdk::MlsEndpointIdentity::HumanDevice { device_id, .. }
+                            if device_id.as_str() == credential
+                    )
+                });
+                let hint = matches
+                    .next()
+                    .ok_or_else(|| "new ordinary MLS leaf has no verified Add authority".to_owned())?;
+                if matches.next().is_some() {
+                    return Err("ordinary MLS leaf has duplicate authority hints".to_owned());
+                }
+                let authority = hint.device_authorize_event_id.clone().ok_or_else(|| {
                     "ordinary MLS leaf authority hint omits device authorization Event".to_owned()
-                })?
-            } else {
-                return Err("new ordinary MLS leaf has no verified Add authority".to_owned());
-            };
-            (endpoint, Some(authority))
-        } else if credential.starts_with("ak:did_core:key:") {
-            let expected_actor = format!("ak:did_core:key:{multibase}");
-            if credential != expected_actor
-                || frontier_leaf.actor_id.signing_principal_id().as_str() != credential
-            {
-                return Err(
-                    "minimal-metadata MLS credential does not name its exact leaf key".to_owned(),
-                );
-            }
-            let method = arkret_sdk::DidUrl::new(format!("did:key:{multibase}#{multibase}"))
-                .map_err(|error| format!("invalid pairwise MLS method: {error}"))?;
-            (
-                arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
-                    frontier_leaf.actor_id.signing_principal_id().clone(),
+                })?;
+                let actor = hint_actor_id(hint)?;
+                (actor, hint.endpoint.clone(), Some(authority))
+            } else if credential.starts_with("ak:did_core:key:") {
+                // A minimal-metadata pairwise leaf names its own leaf key as its
+                // principal, so it carries its verification inline and needs no
+                // separate Add-authority Event.
+                if credential != format!("ak:did_core:key:{multibase}") {
+                    return Err(
+                        "minimal-metadata MLS credential does not name its exact leaf key"
+                            .to_owned(),
+                    );
+                }
+                let pairwise = arkret_sdk::DidCoreId::new(credential.clone())
+                    .map_err(|error| format!("invalid pairwise MLS principal: {error}"))?;
+                let method = arkret_sdk::DidUrl::new(format!("did:key:{multibase}#{multibase}"))
+                    .map_err(|error| format!("invalid pairwise MLS method: {error}"))?;
+                let endpoint = arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
+                    pairwise.clone(),
                     method,
                 )
-                .map_err(|error| format!("invalid pairwise MLS endpoint: {error}"))?,
-                None,
-            )
-        } else {
-            if frontier_leaf.actor_id.signing_principal_id().as_str() != credential {
-                return Err("Agent MLS credential differs from its principal".to_owned());
-            }
-            let mut hints = authority_hints.iter().filter(|hint| {
-                matches!(
-                    &hint.endpoint,
-                    arkret_sdk::MlsEndpointIdentity::AgentRuntime { agent_id, .. }
-                        if agent_id == frontier_leaf.actor_id.signing_principal_id()
-                )
-            });
-            let hint = hints
-                .next()
-                .ok_or_else(|| "Agent MLS leaf has no verified authority hint".to_owned())?;
-            if hints.next().is_some() {
-                return Err("Agent MLS leaf has duplicate authority hints".to_owned());
-            }
-            (hint.endpoint.clone(), None)
-        };
+                .map_err(|error| format!("invalid pairwise MLS endpoint: {error}"))?;
+                (arkret_sdk::ActorId::service(pairwise), endpoint, None)
+            } else {
+                let mut matches = authority_hints.iter().filter(|hint| {
+                    matches!(
+                        &hint.endpoint,
+                        arkret_sdk::MlsEndpointIdentity::AgentRuntime { agent_id, .. }
+                            if agent_id.as_str() == credential
+                    )
+                });
+                let hint = matches
+                    .next()
+                    .ok_or_else(|| "Agent MLS leaf has no verified authority hint".to_owned())?;
+                if matches.next().is_some() {
+                    return Err("Agent MLS leaf has duplicate authority hints".to_owned());
+                }
+                (hint_actor_id(hint)?, hint.endpoint.clone(), None)
+            };
+
         installed.push(arkret_sdk::MlsVerifiedLeafBinding {
-            leaf_index: frontier_leaf.leaf_index,
-            actor_id: frontier_leaf.actor_id.clone(),
+            leaf_index: leaf.leaf_index,
+            actor_id,
             endpoint,
-            credential_ref: frontier_leaf.credential_ref.clone(),
+            credential_ref: arkret_sdk::NonEmptyString::new(credential)
+                .map_err(|error| format!("invalid MLS leaf credential ref: {error}"))?,
             signature_key: signature_key_b64,
             device_authorize_event_id,
         });
     }
     group
         .install_verified_leaf_bindings(installed)
-        .map_err(|error| format!("install accepted T3 MLS leaf bindings: {error}"))
+        .map_err(|error| format!("install accepted MLS leaf bindings: {error}"))
 }
 
-#[cfg(test)]
-pub(crate) fn seed_test_governance_result(
-    state_store: &mut crate::state::LocalStateStore,
-    realm_id: &str,
-    circle_id: Option<&str>,
-    mls_group_id: impl Into<String>,
-    previous_epoch: u64,
-    next_epoch: u64,
-) -> arkret_sdk::MlsGovernanceBindingPayload {
-    let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap();
-    let effective_scope = match circle_id {
-        Some(circle_id) => arkret_sdk::ScopeRef::Circle {
-            realm_id: realm_id.clone(),
-            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).unwrap(),
-        },
-        None => arkret_sdk::ScopeRef::Realm {
-            realm_id: realm_id.clone(),
-        },
-    };
-    let mls_group_id = arkret_sdk::Base64UrlString::new(mls_group_id.into()).unwrap();
-    let anchor = arkret_sdk::SealId::new(
-        "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    )
-    .unwrap();
-    let basis = arkret_sdk::SealBasis {
-        leaves: vec![anchor.clone()],
-    };
-    state_store.set_realm_seal_view(
-        realm_id.as_str(),
-        crate::state::LocalSealView {
-            frontier: vec![anchor.to_string()],
-            ..Default::default()
-        },
-    );
-    let base_group_state_ref = if previous_epoch == 0 && next_epoch == 0 {
-        None
-    } else {
-        let event_id =
-            arkret_sdk::EventId::new("ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml")
-                .unwrap();
-        state_store
-            .record_mls_group_state_ref_for_scope(
-                &effective_scope,
-                mls_group_id.as_str(),
-                previous_epoch,
-                event_id.clone(),
-            )
-            .unwrap();
-        Some(event_id)
-    };
-    let proposed_group_genesis_binding = if previous_epoch == 0 && next_epoch == 0 {
-        proposed_group_genesis_binding(state_store, &effective_scope).ok()
-    } else {
-        None
-    };
-    let request = arkret_sdk::MlsGovernanceFrontierRequestBody {
-        effective_scope,
-        mls_group_id,
-        local_mls_leaves: seed_test_security_frontier_leaves(),
-        seal_basis: basis.clone(),
-        base_group_state_ref,
-        proposed_group_genesis_binding,
-        previous_epoch,
-        next_epoch,
-    };
-    request.validate().unwrap();
-    let root = arkret_sdk::Hash::new(
-        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    )
-    .unwrap();
-    let genesis_binding = request
-        .proposed_group_genesis_binding
-        .as_ref()
-        .map(arkret_sdk::MlsGroupGenesisBinding::from_proposal)
-        .transpose()
-        .unwrap()
-        .unwrap_or(arkret_sdk::MlsGroupGenesisBinding {
-            content_scheme: arkret_wire::ContentScheme::MlsRfc9420,
-            durability_policy: None,
-        });
-    let binding =
-        binding_from_station_fixture(&request, root.clone(), &genesis_binding, None).unwrap();
-    let epoch_head =
-        request
-            .base_group_state_ref
-            .as_ref()
-            .map(|reference| arkret_sdk::MlsEpochHead {
-                transition_ref: reference.clone(),
-                transition_event_digest: reference.event_digest(),
-                mls_transition_digest: reference.event_digest(),
-                effective_scope: request.effective_scope.clone(),
-                mls_group_id: request.mls_group_id.clone(),
-                previous_epoch: previous_epoch.saturating_sub(1),
-                next_epoch: previous_epoch,
-                content_scheme: binding.content_scheme(),
-            });
-    let result = arkret_sdk::MlsGovernanceFrontierOutcome {
-        query_digest: request.query_digest().unwrap(),
-        live_digest_suite: arkret_sdk::DigestSuite::Sha256,
-        governance_binding: binding.clone(),
-        epoch_head,
-    };
-    state_store
-        .cache_mls_governance_result(request, result)
-        .unwrap();
-    binding
+/// The complete member identity an authority hint stands for.
+///
+/// Every hint endpoint carries its signing principal; an account actor needs the
+/// Station half too, which the claim receipt already pinned when the hint was
+/// built, so this keeps the endpoint's own principal projection and lets the
+/// caller override it with [`claimed_actor_id`] where the full account is known.
+fn hint_actor_id(hint: &MlsLeafAuthorityHint) -> Result<arkret_sdk::ActorId, String> {
+    Ok(arkret_sdk::ActorId::service(
+        hint.endpoint.actor_id().clone(),
+    ))
 }
 
-#[cfg(test)]
-pub(crate) fn seed_test_security_frontier_leaves() -> Vec<arkret_sdk::MlsSecurityFrontierLeaf> {
-    vec![arkret_sdk::MlsSecurityFrontierLeaf {
-        leaf_index: 0,
-        actor_id: crate::mls_api_helpers::local_account_actor_id(
-            "ak:did_core:webvh:z6mkfixturealice:alice.example",
-        )
-        .unwrap(),
-        credential_ref: arkret_sdk::NonEmptyString::new(
-            "did:webvh:z6mkfixturealice:alice.example#device-1",
-        )
-        .unwrap(),
-    }]
-}
-
-#[cfg(test)]
-fn binding_from_station_fixture(
-    request: &arkret_sdk::MlsGovernanceFrontierRequestBody,
-    security_frontier_digest: arkret_sdk::Hash,
-    group_genesis_binding: &arkret_sdk::MlsGroupGenesisBinding,
-    sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
-) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
-    let binding = match &request.effective_scope {
-        arkret_wire::ScopeRef::Realm { realm_id } => {
-            arkret_sdk::MlsGovernanceBindingPayload::realm(
-                realm_id.clone(),
-                request.previous_epoch,
-                request.next_epoch,
-                security_frontier_digest,
-                group_genesis_binding.content_scheme,
-                group_genesis_binding.durability_policy,
-                arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
-                arkret_sdk::CORE_REDUCER_PROFILE,
-            )
-        }
-        arkret_wire::ScopeRef::Circle {
-            realm_id,
-            circle_id,
-        } => arkret_sdk::MlsGovernanceBindingPayload::circle(
-            realm_id.clone(),
-            circle_id.clone(),
-            request.previous_epoch,
-            request.next_epoch,
-            security_frontier_digest,
-            group_genesis_binding.content_scheme,
-            group_genesis_binding.durability_policy,
-            arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
-            arkret_sdk::CORE_REDUCER_PROFILE,
-        ),
-        arkret_wire::ScopeRef::Sidecar {
-            realm_id,
-            sidecar_id,
-        } => arkret_sdk::MlsGovernanceBindingPayload::sidecar(
-            realm_id.clone(),
-            sidecar_id.clone(),
-            request.previous_epoch,
-            request.next_epoch,
-            security_frontier_digest,
-            sidecar_binding.cloned().ok_or_else(|| {
-                "Sidecar MLS proof requires the accepted Sidecar binding".to_owned()
-            })?,
-            arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
-            arkret_sdk::CORE_REDUCER_PROFILE,
-        ),
-        _ => return Err("unsupported MLS governance effective scope".to_owned()),
-    };
-    binding.map_err(|error| format!("construct verified MLS governance binding: {error}"))
-}
-
-pub(crate) fn singleton_security_frontier_leaf(
-    actor_id: &arkret_sdk::ActorId,
-    device_id: &str,
-) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
-    Ok(vec![arkret_sdk::MlsSecurityFrontierLeaf {
-        leaf_index: 0,
-        actor_id: actor_id.clone(),
-        credential_ref: arkret_sdk::NonEmptyString::new(device_id.to_owned())
-            .map_err(|error| format!("MLS leaf credential ref is invalid: {error}"))?,
-    }])
-}
-
-pub(crate) fn current_security_frontier_leaves(
-    state_store: &crate::state::LocalStateStore,
-    realm_id: &str,
-    circle_id: Option<&str>,
-    authority: &arkret_sdk::AccountId,
-    device_id: &arkret_sdk::DeviceId,
-) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
-    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
-        .map_err(|error| format!("invalid MLS Realm id: {error}"))?;
-    let effective_scope = match circle_id {
-        Some(circle_id) => arkret_sdk::ScopeRef::Circle {
-            realm_id: realm,
-            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
-                .map_err(|error| format!("invalid MLS Circle id: {error}"))?,
-        },
-        None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
-    };
-    current_security_frontier_leaves_for_scope(state_store, &effective_scope, authority, device_id)
-}
-
-pub(crate) fn current_security_frontier_leaves_for_scope(
-    state_store: &crate::state::LocalStateStore,
-    effective_scope: &arkret_sdk::ScopeRef,
-    authority: &arkret_sdk::AccountId,
-    device_id: &arkret_sdk::DeviceId,
-) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
-    let snapshot = state_store
-        .mls_checkpoint_for_scope(effective_scope)
-        .ok_or_else(|| "MLS security frontier requires a local group snapshot".to_owned())?;
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let secret = crate::mls::runtime::load_device_checkpoint_secret(
-        secure_store.as_ref(),
-        authority,
-        device_id,
-    )
-    .map_err(|error| format!("load MLS snapshot secret for frontier: {error}"))?;
-    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
-        .map_err(|error| format!("restore MLS group for frontier: {error}"))?;
-    group
-        .security_frontier_leaves()
-        .map_err(|error| format!("derive MLS security frontier leaves: {error}"))
-}
-
-pub(crate) fn preview_security_frontier_with_added_keypackages(
-    state_store: &crate::state::LocalStateStore,
-    effective_scope: &arkret_sdk::ScopeRef,
-    authority: &arkret_sdk::AccountId,
-    device_id: &arkret_sdk::DeviceId,
-    records: &[arkret_sdk::MlsKeyPackageRecord],
-    actors: &[arkret_sdk::ActorId],
-) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
-    let snapshot = state_store
-        .mls_checkpoint_for_scope(effective_scope)
-        .ok_or_else(|| "MLS security frontier requires a local group snapshot".to_owned())?;
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let secret = crate::mls::runtime::load_device_checkpoint_secret(
-        secure_store.as_ref(),
-        authority,
-        device_id,
-    )
-    .map_err(|error| format!("load MLS snapshot secret for Add preview: {error}"))?;
-    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
-        .map_err(|error| format!("restore MLS group for Add preview: {error}"))?;
-    group
-        .preview_member_admission_security_frontier(
-            records,
-            actors,
-            effective_scope.realm_id_opt().is_some_and(|realm| {
-                state_store.realm_collaboration_role(realm.as_str())
-                    == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
-            }),
-        )
-        .map_err(|error| format!("stage exact MLS Add frontier: {error}"))
-}
-
-pub(crate) fn security_frontier_without_leaves(
-    mut leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
-    removed: &[u32],
-) -> Vec<arkret_sdk::MlsSecurityFrontierLeaf> {
-    let removed = removed.iter().collect::<BTreeSet<_>>();
-    leaves.retain(|leaf| !removed.contains(&leaf.leaf_index));
-    leaves
-}
-
-#[cfg(test)]
-mod removal_frontier_tests {
-    use super::*;
-
-    #[test]
-    fn removing_one_leaf_preserves_another_leaf_for_the_same_actor() {
-        let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
-        let actors = ["alpha.example", "alpha.example"].map(|station| {
-            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-                principal.clone(),
-                arkret_sdk::DidCoreId::new(format!("ak:did_core:web:{station}")).unwrap(),
-            ))
-        });
-        let leaves = actors
+/// Install the post-transition bindings using the exact accepted member
+/// identities the caller resolved, overriding the endpoint-only projection for
+/// every leaf whose complete `ActorId` is known.
+pub(crate) fn install_post_transition_leaf_bindings_with_actors(
+    group: &mut arkret_sdk::ArkretMlsGroup,
+    previous: &[arkret_sdk::MlsVerifiedLeafBinding],
+    authority_hints: &[MlsLeafAuthorityHint],
+    actors: &[(arkret_sdk::MlsEndpointIdentity, arkret_sdk::ActorId)],
+) -> Result<(), String> {
+    install_post_transition_leaf_bindings(group, previous, authority_hints)?;
+    if actors.is_empty() {
+        return Ok(());
+    }
+    let mut bindings = group
+        .verified_leaf_bindings()
+        .map_err(|error| format!("read installed MLS leaf bindings: {error}"))?;
+    for binding in &mut bindings {
+        if let Some((_, actor)) = actors
             .iter()
-            .enumerate()
-            .map(|(index, actor)| arkret_sdk::MlsSecurityFrontierLeaf {
-                leaf_index: index as u32,
-                actor_id: actor.clone(),
-                credential_ref: arkret_sdk::NonEmptyString::new(format!("device-{index}")).unwrap(),
-            })
-            .collect();
-        let retained = security_frontier_without_leaves(leaves, &[0]);
-        assert_eq!(retained.len(), 1);
-        assert_eq!(retained[0].actor_id, actors[1]);
-        assert_eq!(retained[0].leaf_index, 1);
+            .find(|(endpoint, _)| endpoint == &binding.endpoint)
+        {
+            binding.actor_id = actor.clone();
+        }
     }
+    group
+        .install_verified_leaf_bindings(bindings)
+        .map_err(|error| format!("install accepted MLS member identities: {error}"))
 }
 
 #[cfg(test)]
-mod direct_conversation_genesis_tests {
-    use serde_json::json;
-
+mod tests {
     use super::*;
-
-    const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-
-    fn projection() -> serde_json::Value {
-        json!({"current": {"entries": [{
-            "selector": {
-                "scope_ref": {"kind": "realm", "realm_id": REALM},
-                "cell_id": "ak:cell:ak.component.realm.genesis.v1:null"
-            },
-            "result": {"status": "value", "value": {
-                "schema": "ak.schema.realm_genesis.v1",
-                "purpose": "direct_conversation",
-                "genesis_salt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                "trust_domain": "ak:trust_domain:example.net",
-                "schema_refs": ["ak.schema.realm.v1", "ak.profile.direct_conversation_realm.v1"],
-                "reducer_profile": "ak.reducer.core.v1",
-                "digest_algorithm": "sha256",
-                "security_class": "standard",
-                "encryption_profile": "mls_rfc9420",
-                "notary": {"signer": {
-                    "actor_id": {"kind": "account", "account_id": {
-                        "principal_id": "ak:did_core:web:alice.example",
-                        "station_id": "ak:did_core:web:station.example"
-                    }},
-                    "verification_method": "did:web:alice.example#key-1",
-                    "key_kind": "ed25519_raw32", "jose_algorithm": "Ed25519",
-                    "frozen_public_key_b64u": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-                }, "max_clock_error_ms": 1000}
-            }}
-        }]}})
-    }
-
-    #[test]
-    fn direct_conversation_genesis_proposes_exporter_without_claiming_accepted_binding() {
-        let projection = projection();
-        let proposal = direct_conversation_genesis_proposal(&projection).unwrap();
-        proposal.validate().unwrap();
-        assert_eq!(
-            proposal.content_scheme,
-            arkret_wire::ContentScheme::MlsExporterAeadV1
-        );
-        assert_eq!(
-            proposal.durability_policy,
-            Some(arkret_wire::DurabilityPolicy::None)
-        );
-        assert_eq!(
-            crate::realm_tree::realm_projection_pre_genesis_content_scheme(&projection),
-            None
-        );
-    }
-
-    #[test]
-    fn direct_conversation_genesis_requires_both_canonical_purpose_and_profile() {
-        let mut wrong_purpose = projection();
-        wrong_purpose["current"]["entries"][0]["result"]["value"]["purpose"] =
-            json!("collaboration");
-        assert!(direct_conversation_genesis_proposal(&wrong_purpose).is_none());
-        let mut missing_profile = projection();
-        missing_profile["current"]["entries"][0]["result"]["value"]["schema_refs"] =
-            json!(["ak.schema.realm.v1"]);
-        assert!(direct_conversation_genesis_proposal(&missing_profile).is_none());
-        assert!(
-            direct_conversation_genesis_proposal(&json!({"purpose":"direct_conversation"}))
-                .is_none()
-        );
-    }
-}
-
-#[cfg(test)]
-mod interrupted_creator_genesis_tests {
-    use serde_json::json;
-
-    use super::*;
-    use crate::state::LocalStateStore;
-
-    const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-
-    fn store_with_projection(name: &str, projection: serde_json::Value) -> LocalStateStore {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let mut store = LocalStateStore::with_path(
-            std::env::temp_dir().join(format!("inkson-governance-{name}-{stamp}.json")),
-        );
-        store.save_realm_tree_projection(REALM, projection);
-        store
-    }
 
     fn scope() -> arkret_sdk::ScopeRef {
         arkret_sdk::ScopeRef::Realm {
-            realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
+            )
+            .unwrap(),
         }
     }
 
     #[test]
-    fn accepted_all_history_repairs_only_the_legacy_exporter_none_intent() {
-        let store = store_with_projection(
-            "legacy-exporter",
-            json!({
-                "summary": {
-                    "encryption_profile": "mls_rfc9420",
-                    "history_access": "all_history_for_current_members"
-                }
-            }),
-        );
-
-        let proposal = proposed_group_genesis_binding(&store, &scope()).unwrap();
-        assert_eq!(
-            proposal.content_scheme,
-            arkret_wire::ContentScheme::MlsExporterAeadV1
-        );
-        assert_eq!(
-            proposal.durability_policy,
-            Some(arkret_wire::DurabilityPolicy::None)
-        );
-    }
-
-    #[test]
-    fn ambiguous_since_join_without_a_persisted_selector_stays_closed() {
-        let store = store_with_projection(
-            "ambiguous-since-join",
-            json!({
-                "summary": {
-                    "encryption_profile": "mls_rfc9420",
-                    "history_access": "since_join"
-                }
-            }),
-        );
-
-        assert!(
-            proposed_group_genesis_binding(&store, &scope())
-                .unwrap_err()
-                .contains("requires an explicit content scheme")
-        );
+    fn a_genesis_binding_is_epoch_zero_without_a_base_state() {
+        let binding = genesis_binding(&scope()).unwrap();
+        assert_eq!(binding.previous_epoch(), 0);
+        assert_eq!(binding.next_epoch(), 0);
+        assert_eq!(binding.key_access_revision(), 0);
+        assert!(binding.base_group_state_ref().is_none());
+        assert_eq!(binding.effective_scope(), &scope());
     }
 }

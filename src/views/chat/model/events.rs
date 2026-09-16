@@ -659,81 +659,21 @@ fn revision_event_id(revision: &ChatMessage) -> Option<arkret_sdk::EventId> {
     arkret_sdk::EventId::new(revision.id.clone()).ok()
 }
 
-fn event_causal_graph(events: &[Value]) -> BTreeMap<arkret_sdk::Hash, Vec<arkret_sdk::Hash>> {
-    events
-        .iter()
-        .filter_map(|event| {
-            let event_id = value_string_at(event, &["event_id", "id"])
-                .and_then(|value| arkret_sdk::EventId::new(value.to_owned()).ok())?;
-            let mut parents = event
-                .get("causal_refs")
-                .map(|value| {
-                    value
-                        .as_array()?
-                        .iter()
-                        .map(|value| arkret_sdk::Hash::new(value.as_str()?.to_owned()).ok())
-                        .collect::<Option<Vec<_>>>()
-                })
-                .unwrap_or_else(|| Some(Vec::new()))?;
-            parents.sort();
-            parents.dedup();
-            Some((event_id.event_digest(), parents))
-        })
-        .collect()
-}
-
-fn revision_winner_event_id(
-    revisions: &[ChatMessage],
-    graph: &BTreeMap<arkret_sdk::Hash, Vec<arkret_sdk::Hash>>,
-) -> Option<arkret_sdk::EventId> {
-    let writes = revisions
-        .iter()
-        .map(|revision| {
-            let event_id = revision_event_id(revision)?;
-            let causal_refs = graph.get(&event_id.event_digest())?.clone();
-            Some(
-                arkret_sdk::StateWrite::new(
-                    event_id,
-                    arkret_sdk::LatticeOp {
-                        op_type: arkret_sdk::LatticeOpType::Set,
-                        value: Some(Value::String(revision.id.clone())),
-                        ..arkret_sdk::LatticeOp::empty()
-                    },
-                )
-                // A message-revision Event has exactly one registered causal
-                // register write. Its causal_refs therefore are the exact
-                // same-Cell predecessors; a missing predecessor keeps the
-                // projection unavailable instead of silently lowering depth.
-                .with_supersedes(causal_refs),
-            )
-        })
-        .collect::<Option<Vec<_>>>()?;
-    arkret_sdk::causal_register_state(&writes)
-        .ok()
-        .map(|state| state.winner.event_id)
-}
-
+/// Apply a message's accepted revisions to its row.
+///
+/// A message revision is one typed target updated in Commit order
+/// (`authz/event-auth-state-resolution.md` section 6), so the last accepted
+/// revision this client folded is the displayed value. Earlier revisions are
+/// still applied first, so fields only the older revision wrote survive, and
+/// they are never presented as a second current value.
 fn fold_revision_group(
     messages: &mut [ChatMessage],
     target_ref: &str,
-    mut revisions: Vec<ChatMessage>,
-    graph: &BTreeMap<arkret_sdk::Hash, Vec<arkret_sdk::Hash>>,
+    revisions: Vec<ChatMessage>,
 ) -> bool {
-    let Some(winner_id) = revision_winner_event_id(&revisions, graph) else {
+    let Some(winner_id) = revisions.last().and_then(revision_event_id) else {
         return false;
     };
-    // Retain every authenticated revision as history, but apply the unique
-    // max(depth, full EventId bytes) winner last so input/arrival order cannot
-    // change the displayed value.
-    revisions.sort_by_key(|revision| {
-        let event_id = revision_event_id(revision);
-        let is_winner = event_id.as_ref() == Some(&winner_id);
-        let presentation = event_id
-            .map(|event_id| event_id.token_bytes().to_vec())
-            .unwrap_or_else(|| revision.id.as_bytes().to_vec());
-        (is_winner, presentation)
-    });
-
     let Some(index) = messages
         .iter()
         .position(|message| message_matches_target_ref(message, target_ref))
@@ -773,18 +713,12 @@ fn fold_event_list_into_chat_messages(
         }
         push_or_merge_create_message(&mut durable_messages, message);
     }
-    let graph = event_causal_graph(events);
     pending_revisions.retain(|target_ref, revisions| {
-        !fold_revision_group(
-            &mut durable_messages,
-            target_ref,
-            std::mem::take(revisions),
-            &graph,
-        )
+        !fold_revision_group(&mut durable_messages, target_ref, std::mem::take(revisions))
     });
     merge_chat_messages(&mut messages, durable_messages);
     for (target_ref, revisions) in pending_revisions {
-        if !fold_revision_group(&mut messages, &target_ref, revisions.clone(), &graph)
+        if !fold_revision_group(&mut messages, &target_ref, revisions.clone())
             && let Some(revision) = revisions.into_iter().find(|revision| revision.redacted)
         {
             // Account sync projects one logical row per message_id. When the
@@ -1758,11 +1692,11 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<crate::messaging::polls::PollCard> {
     let mut cards = Vec::<crate::messaging::polls::PollCard>::new();
-    use arkret_models_collaboration::poll::{
-        PollPartition, PollResponseFact, PollResponseSet, validate_poll_selections,
-    };
-    let mut facts = PollResponseSet::default();
-    let mut responses = Vec::new();
+    // One responder's answer to one poll is a single typed target updated in
+    // Commit order (`authz/event-auth-state-resolution.md` section 6), so the
+    // last accepted response this client folded is that responder's answer.
+    // Earlier responses stay in the log and never add a second vote.
+    let mut responses: Vec<(PollPartitionKey, arkret_sdk::ActorId, Vec<String>)> = Vec::new();
     let mut card_scopes = std::collections::BTreeMap::new();
     for event in events {
         let candidates = message_candidates(event);
@@ -1847,25 +1781,6 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
                 })
             })
             .flatten();
-        if let Some((digest, _, envelope)) = &identity {
-            let kind = envelope.get("kind").and_then(Value::as_str);
-            let known_content_kind = content
-                .as_ref()
-                .and_then(|c| c.get("kind"))
-                .and_then(Value::as_str)
-                .or_else(|| {
-                    candidates
-                        .iter()
-                        .find_map(|c| c.pointer("/content/kind").and_then(Value::as_str))
-                });
-            if kind.is_some_and(|kind| kind != "ak.message.create")
-                || known_content_kind.is_some_and(|kind| {
-                    kind != "ak.content.poll.response" && kind != "ak.content.encrypted"
-                })
-            {
-                let _ = facts.observe_non_response(digest.clone());
-            }
-        }
         let Some(content) = content else {
             continue;
         };
@@ -1887,27 +1802,18 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
         }
         let definition = match block {
             arkret_models_collaboration::events_payloads::PollContentBlock::Response(block) => {
-                if let (Some((digest, actor_id, envelope)), Some((realm_id, scope_circle_id))) =
+                if let (Some((_, actor_id, _)), Some((realm_id, scope_circle_id))) =
                     (identity, scope)
                 {
-                    if let Ok(causal_refs) = serde_json::from_value::<Vec<arkret_sdk::Hash>>(
-                        envelope
-                            .get("causal_refs")
-                            .cloned()
-                            .unwrap_or_else(|| serde_json::json!([])),
-                    ) {
-                        responses.push((
-                            digest,
-                            PollPartition {
-                                realm_id,
-                                scope_circle_id,
-                                poll_ref: block.poll_response.poll_ref,
-                                actor_id,
-                            },
-                            causal_refs,
-                            block.poll_response.selections,
-                        ));
-                    }
+                    responses.push((
+                        PollPartitionKey {
+                            realm_id,
+                            scope_circle_id,
+                            poll_ref: block.poll_response.poll_ref,
+                        },
+                        actor_id,
+                        block.poll_response.selections,
+                    ));
                 }
                 continue;
             }
@@ -1942,7 +1848,11 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
         }
         cards.push(card);
     }
-    for (digest, partition, causal_refs, selections) in responses {
+    let mut settled = std::collections::BTreeMap::new();
+    for (partition, actor_id, selections) in responses {
+        settled.insert((partition, actor_id), selections);
+    }
+    for ((partition, actor), selections) in settled {
         let key = (
             partition.realm_id.clone(),
             partition.scope_circle_id.clone(),
@@ -1951,53 +1861,43 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
         let Some(index) = card_scopes.get(&key).copied() else {
             continue;
         };
-        let card = &cards[index];
-        let answers = card
+        let answers = cards[index]
             .options
             .iter()
             .map(|option| option.id.clone())
-            .collect();
-        let Ok(selections) = validate_poll_selections(
-            &selections,
-            &answers,
-            usize::try_from(card.max_selections).unwrap_or(usize::MAX),
-        ) else {
-            continue;
-        };
-        if facts
-            .insert(
-                digest,
-                PollResponseFact {
-                    partition,
-                    selections,
-                    causal_refs: causal_refs.into_iter().collect(),
-                },
-            )
-            .is_err()
-        {
-            return Vec::new();
+            .collect::<std::collections::BTreeSet<_>>();
+        let max_selections = usize::try_from(cards[index].max_selections).unwrap_or(usize::MAX);
+        let mut chosen = std::collections::BTreeSet::new();
+        for selection in &selections {
+            if !answers.contains(selection) {
+                chosen.clear();
+                break;
+            }
+            chosen.insert(selection.clone());
         }
-    }
-    for (partition, outcome) in facts.project() {
-        let key = (
-            partition.realm_id,
-            partition.scope_circle_id,
-            partition.poll_ref.clone(),
-        );
-        let Some(index) = card_scopes.get(&key).copied() else {
+        if chosen.len() != selections.len() || chosen.len() > max_selections {
             continue;
-        };
+        }
         let card = &mut cards[index];
-        let actor = partition.actor_id;
-        card.response_heads
-            .insert(actor.clone(), outcome.heads.into_iter().collect());
         for (option, voters) in card.options.iter().zip(card.votes.iter_mut()) {
-            if outcome.selections.contains(&option.id) {
+            if chosen.contains(&option.id) {
                 voters.push(actor.clone());
             }
         }
     }
     cards
+}
+
+/// The `(Realm, Circle scope, poll)` a response belongs to.
+///
+/// A poll tallies inside exactly one effective scope, so the scope is part of
+/// the key: a response signed in a Circle never counts toward the Realm-scoped
+/// card of the same poll.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct PollPartitionKey {
+    realm_id: arkret_sdk::RealmId,
+    scope_circle_id: Option<arkret_sdk::CircleId>,
+    poll_ref: arkret_sdk::MessageId,
 }
 
 pub(crate) fn shared_message_pins_from_raw_operations(

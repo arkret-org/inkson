@@ -28,15 +28,15 @@ pub(crate) fn discussion_channel_for_strand(strand_id: &str) -> Option<ChannelEn
     })
 }
 
+/// One Discussion channel from the Station's current result for a Strand.
+///
+/// The snapshot carries the whole Strand object under `CurrentSelector::Strand`
+/// at an exact signed revision, so nothing here re-derives the value from
+/// Event order.
 pub(crate) fn channel_from_current_strand(
     realm_id: &str,
-    entry: &arkret_sdk::CurrentResultEntry,
+    strand: arkret_sdk::Strand,
 ) -> Option<ChannelEntity> {
-    entry
-        .selector()
-        .validate_for_realm(&arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?)
-        .ok()?;
-    let strand = crate::current_projection::unique_strand_head(entry)?;
     if strand.realm_id.as_str() != realm_id || !strand.tracks.contains_key("discussion") {
         return None;
     }
@@ -84,14 +84,20 @@ pub(crate) fn channels_from_local_state(
     state: &ClientLocalState,
     selected_realm_id: &str,
 ) -> Vec<ChannelEntity> {
-    state
-        .realm_tree_projections
-        .get(selected_realm_id)
-        .and_then(|projection| projection.get("current"))
-        .and_then(|value| serde_json::from_value::<arkret_sdk::CurrentEntries>(value.clone()).ok())
+    let Some(projection) = state.realm_tree_projections.get(selected_realm_id) else {
+        return Vec::new();
+    };
+    crate::views::helpers::projection_current_state_entries(projection)
         .into_iter()
-        .flat_map(|current| current.entries.into_iter())
-        .filter_map(|entry| channel_from_current_strand(selected_realm_id, &entry))
+        .filter_map(|entry| match entry {
+            arkret_wire::TypedCurrentResult::Value {
+                selector: arkret_wire::CurrentSelector::Strand { .. },
+                value,
+                ..
+            } => serde_json::from_value::<arkret_sdk::Strand>(value).ok(),
+            _ => None,
+        })
+        .filter_map(|strand| channel_from_current_strand(selected_realm_id, strand))
         .collect()
 }
 

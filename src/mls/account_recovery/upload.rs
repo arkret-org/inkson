@@ -1,8 +1,10 @@
 //! Backup / rotation upload flow and superseded-backup cleanup.
 
 use anyhow::{Result, anyhow};
-use arkret_wire::BackupRotationKind;
-use garth::mls::backup_selection::select_mls_private_plaintext_backup;
+use arkret_sdk::BackupRotationKind;
+use crate::mls::runtime::{
+    active_secret_storage_series_id_for, backup_series_seq_of, select_mls_private_plaintext_backup,
+};
 use garth::mls::backup_series::fresh_backup_id;
 use serde_json::Value;
 
@@ -240,13 +242,13 @@ async fn fetch_active_series_tail(
 ) -> Result<Option<Value>> {
     let wire_kind = super::rotation_transaction::wire_backup_kind(backup_kind);
     let class = arkret_sdk::BackupKind::try_from(wire_kind).map_err(|error| anyhow!(error))?;
-    let series_id = match garth::mls::backup_selection::active_series_id_for_backup_class(
+    let series_id = match active_secret_storage_series_id_for(
         list_payload,
         class,
     ) {
         Some(series_id) => series_id.to_owned(),
         None => {
-            let series_ids = garth::mls::backup_selection::iter_backup_bodies(list_payload)
+            let series_ids = crate::mls::runtime::iter_backup_bodies(list_payload)
                 .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(wire_kind))
                 .filter_map(|body| body.get("series_id").and_then(Value::as_str))
                 .collect::<std::collections::BTreeSet<_>>();
@@ -264,10 +266,10 @@ async fn fetch_active_series_tail(
             .to_owned()
         }
     };
-    let metadata = garth::mls::backup_selection::iter_backup_bodies(list_payload)
+    let metadata = crate::mls::runtime::iter_backup_bodies(list_payload)
         .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(wire_kind))
         .filter(|body| body.get("series_id").and_then(Value::as_str) == Some(series_id.as_str()))
-        .max_by_key(|body| garth::mls::backup_series::backup_series_seq(body))
+        .max_by_key(|body| backup_series_seq_of(body))
         .ok_or_else(|| anyhow!("authoritative {wire_kind} series has no backup envelope"))?;
     if metadata.get("ciphertext").and_then(Value::as_str).is_some() {
         return Ok(Some(metadata.clone()));
@@ -487,126 +489,6 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         .map_err(|err| anyhow!("mark uploaded account MLS secret verified: {err}"))?;
 
     Ok(account_backup_id)
-}
-
-/// Upload one history-only envelope per local effective scope. The source set
-/// is taken exclusively from the accepted-artifact store, so received member,
-/// RHRK, portable-backup candidates and Event-local bindings are structurally
-/// unable to enter this path.
-pub async fn upload_local_authoritative_mls_history_backups_with_recovery_public_key(
-    api: &crate::transport::TransportClient,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    state_store: &crate::state::LocalStateStore,
-    authority: &arkret_sdk::AccountId,
-    control_realm: &arkret_sdk::RealmId,
-    actor_id: &str,
-    device_id: &str,
-    recovery_public_key: &[u8],
-) -> Result<Vec<String>> {
-    let grouped = state_store
-        .local_authoritative_history_secrets_for_backup(secure_store, authority)
-        .map_err(anyhow::Error::msg)?;
-    upload_local_authoritative_mls_history_records_with_recovery_public_key(
-        api,
-        grouped,
-        authority,
-        control_realm,
-        actor_id,
-        device_id,
-        recovery_public_key,
-    )
-    .await
-}
-
-pub(crate) async fn upload_local_authoritative_mls_history_records_with_recovery_public_key(
-    api: &crate::transport::TransportClient,
-    grouped: Vec<(
-        arkret_sdk::HistoryEffectiveScope,
-        Vec<arkret_sdk::LocalAuthoritativeHistorySecret>,
-    )>,
-    authority: &arkret_sdk::AccountId,
-    control_realm: &arkret_sdk::RealmId,
-    actor_id: &str,
-    device_id: &str,
-    recovery_public_key: &[u8],
-) -> Result<Vec<String>> {
-    if grouped.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let active_policy = crate::recovery_flow::fetch_active_recovery_policy(api)
-        .await
-        .map_err(|error| anyhow!("fetch active recovery policy for history backup: {error}"))?
-        .ok_or_else(|| anyhow!("active recovery policy is required for history backup"))?;
-    let (recovery_key_ref, recovery_policy_id, recovery_policy_version) =
-        active_recovery_backup_recipient(&active_policy, authority, actor_id, recovery_public_key)?;
-    let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
-    let mut previous = fetch_active_series_tail(
-        api,
-        &list_payload,
-        actor_id,
-        device_id,
-        BackupRotationKind::MlsHistory,
-    )
-    .await?;
-    let creates_initial_series = previous.is_none();
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let mut uploaded = Vec::with_capacity(grouped.len());
-    let mut series_id = None;
-
-    for (effective_scope, secrets) in grouped {
-        let cipher_suite = secrets
-            .first()
-            .ok_or_else(|| anyhow!("history backup scope has no local-authoritative secrets"))?
-            .mls_ciphersuite
-            .as_str();
-        let kdf_nh = usize::from(arkret_sdk::registered_mls_ciphersuite_kdf_nh(cipher_suite)?);
-        let keybag = arkret_state::history_backup::pack_local_authoritative_history_backup(
-            &effective_scope,
-            &secrets,
-            kdf_nh,
-        )?;
-        let backup_id = fresh_backup_id();
-        let frontier_ref = if previous.is_some() {
-            Some(current_backup_frontier_ref(api, control_realm, authority, device_id).await?)
-        } else {
-            None
-        };
-        let body = crate::key_backup::build_recovery_public_key_history_backup_body_in_series(
-            &backup_id,
-            &arkret_sdk::ActorId::account(authority.clone()),
-            device_id,
-            recovery_public_key,
-            &recovery_key_ref,
-            keybag,
-            (recovery_policy_id.as_str(), recovery_policy_version),
-            None,
-            previous.as_ref(),
-            frontier_ref,
-        )?;
-        series_id = Some(body.series_id.to_string());
-        let (_, sent_body) = api
-            .put_key_backup_returning_sent_body(&backup_id, body, &signer)
-            .await
-            .map_err(|error| anyhow!("upload local-authoritative MLS history backup: {error}"))?;
-        previous = Some(serde_json::to_value(sent_body)?);
-        uploaded.push(backup_id);
-    }
-
-    if creates_initial_series && let Some(series_id) = series_id {
-        ensure_initial_active_series(
-            api,
-            control_realm,
-            authority,
-            actor_id,
-            device_id,
-            BackupRotationKind::MlsHistory,
-            &series_id,
-        )
-        .await?;
-    }
-    Ok(uploaded)
 }
 
 /// X5.3 — wrap the entire local-plaintext sidecar map behind a KEK derived from

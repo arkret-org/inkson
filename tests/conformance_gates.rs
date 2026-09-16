@@ -273,7 +273,6 @@ fn authored_realm_bootstrap(
             test_genesis_salt(),
             TEST_ACTOR_ID,
             TEST_SERVICE_DID,
-            common::test_notary(TEST_SERVICE_DID),
             "https://server.example",
             "Engineering",
             None,
@@ -464,18 +463,11 @@ fn build_realm_create_event_matches_event_schema() {
     let envelope = event_builders::build_realm_create_event(
         test_genesis_salt(),
         TEST_ACTOR_ID,
-        common::test_notary(TEST_SERVICE_DID),
-        "Engineering",
-        Some("Roadmap work"),
         "listed",
         "invite",
         "since_join",
-        "mls_rfc9420",
         "standard",
-        "restricted",
-        "sha256",
         "ak:trust_domain:server.example",
-        None,
     )
     .expect("build_realm_create_event succeeds");
     let envelope = wire_envelope(envelope);
@@ -750,7 +742,6 @@ fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object
 fn agent_pcr_prepare_builds_an_exact_ref_free_create() {
     select_authoring_station();
     let agent_did = arkret_sdk::Did::new("did:web:agent.example").unwrap();
-    let root_public_key = common::test_inception_root_key_multibase(agent_did.as_str());
     let events = common::author_unit(
         event_builders::build_agent_pcr_bootstrap_steps(
             agent_did.as_str(),
@@ -759,7 +750,7 @@ fn agent_pcr_prepare_builds_an_exact_ref_free_create() {
                 method_history_head: format!("sha256:{}", "8".repeat(64)),
                 version_id: "1-Qmfixture".to_owned(),
             },
-            event_builders::agent_inception_notary(&agent_did, &root_public_key).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
             TEST_ACTOR_ID,
             "did:web:alice.example#delegation-0",
             "ak:trust_domain:server.example",

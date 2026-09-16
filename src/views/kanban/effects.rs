@@ -45,7 +45,7 @@ async fn fetch_kanban_projection_snapshot(
         .event_submitter()?
         .backfill(realm_id)
         .await?
-        .complete_events("kanban current projection")?;
+        .events();
     // A Realm backfill can carry senders absent from account sync. Populate
     // their verified device authority before the synchronous decrypt/render
     // path runs, using the same proof resolver as the discussion backfill.
@@ -644,7 +644,7 @@ pub(super) fn KanbanEffects(
                                 .event_submitter()?
                                 .backfill(&realm_for_fetch)
                                 .await?
-                                .complete_events("kanban MLS sidecar restore projection")?;
+                                .events();
                             Ok((payload, events))
                         })
                         .await;

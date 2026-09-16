@@ -14,7 +14,7 @@ pub struct SpaceContainerProjectionView {
     pub kind: String,
     #[serde(default)]
     pub title: String,
-    pub state: arkret_sdk::ProjectionSpaceState,
+    pub state: arkret_wire::SpaceState,
     #[serde(default)]
     pub rank: Option<String>,
     #[serde(default)]
@@ -108,7 +108,7 @@ pub struct StrandProjectionView {
     #[serde(default)]
     pub rsvps: Vec<RsvpCellProjectionView>,
     /// Object lifecycle from the authoritative projection contract.
-    pub state: arkret_sdk::ProjectionObjectState,
+    pub state: arkret_wire::ObjectState,
     #[serde(default)]
     pub created_by: Option<String>,
     #[serde(default)]

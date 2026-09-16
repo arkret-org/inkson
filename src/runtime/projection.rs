@@ -70,6 +70,50 @@ impl ProjectionSink for ProjectionRouter {
 
 type LocalBoxFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>>;
 
+/// One admitted, sender-bound Signal, as the product sinks consume it.
+///
+/// `garth::SignalReceiver` verifies the Station-issued delivery authority, the
+/// producer proof, the AEAD and the per-endpoint sequence, then hands back the
+/// typed closed profile plus the verified sender domain. This carrier is the
+/// host-side pairing of the two, with the envelope instants the TTL projections
+/// need: the rail carries no durable coordinates, so there is nothing else to
+/// retain.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AdmittedSignal {
+    /// The verified sender actor, endpoint and scope the sequence high-water
+    /// was enforced against.
+    pub domain: arkret_sdk::SignalSequenceDomain,
+    /// The registered closed profile this plaintext parsed as. Consumers match
+    /// this union; hand-parsing a Signal body by field name is forbidden.
+    pub payload: arkret_sdk::SignalPlaintext,
+    /// The earlier of the outer `expires_at` and `sent_at + ttl_ms`, as the
+    /// receiver computed it. The rail carries no durable coordinates, so this
+    /// is the only instant a TTL projection needs.
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl AdmittedSignal {
+    pub fn kind(&self) -> arkret_sdk::SignalPlaintextKind {
+        self.payload.kind()
+    }
+
+    pub fn payload_sequence(&self) -> u64 {
+        self.payload.payload_sequence()
+    }
+
+    pub fn actor_id(&self) -> &arkret_sdk::ActorId {
+        &self.domain.sender_actor_id
+    }
+
+    pub fn scope_ref(&self) -> &arkret_sdk::ScopeRef {
+        &self.domain.scope_ref
+    }
+
+    pub fn sender_endpoint(&self) -> &arkret_sdk::SignalSequenceEndpoint {
+        &self.domain.endpoint
+    }
+}
+
 /// Product routes for admitted Signal plaintext.
 ///
 /// The Signal receive engine performs every protocol-level check (envelope,
@@ -83,7 +127,7 @@ pub trait SignalProductSink {
     /// directory key and the moderation action before it may ring a user.
     fn call_signal<'a>(
         &'a self,
-        envelope: &'a arkret_wire::SignalEnvelope,
+        signal: &'a AdmittedSignal,
         body: serde_json::Value,
     ) -> LocalBoxFuture<'a>;
 
@@ -91,7 +135,7 @@ pub trait SignalProductSink {
     /// `signal.md` §7.1 makes the recipient re-verify `ak.message.stream.send`
     /// and the target `ak.message.create` at the envelope's `seal_ref` before
     /// any body may be shown.
-    fn message_stream<'a>(&'a self, plaintext: &'a garth::SignalPlaintext) -> LocalBoxFuture<'a>;
+    fn message_stream<'a>(&'a self, plaintext: &'a AdmittedSignal) -> LocalBoxFuture<'a>;
 
     /// One decrypted `ak.receipt.read` plaintext. Synchronous: the receipt is a
     /// UI hint whose only gate is the envelope admission that already ran, and
@@ -104,7 +148,7 @@ pub trait SignalProductSink {
     /// receives the policy instead of assuming the transport already filtered.
     fn read_receipt(
         &self,
-        plaintext: &garth::SignalPlaintext,
+        plaintext: &AdmittedSignal,
         policy: &arkret_sdk::ReadReceiptPolicy,
     );
 
@@ -121,19 +165,19 @@ pub struct NoopSignalProductSink;
 impl SignalProductSink for NoopSignalProductSink {
     fn call_signal<'a>(
         &'a self,
-        _envelope: &'a arkret_wire::SignalEnvelope,
+        _signal: &'a AdmittedSignal,
         _body: serde_json::Value,
     ) -> LocalBoxFuture<'a> {
         Box::pin(async {})
     }
 
-    fn message_stream<'a>(&'a self, _plaintext: &'a garth::SignalPlaintext) -> LocalBoxFuture<'a> {
+    fn message_stream<'a>(&'a self, _plaintext: &'a AdmittedSignal) -> LocalBoxFuture<'a> {
         Box::pin(async {})
     }
 
     fn read_receipt(
         &self,
-        _plaintext: &garth::SignalPlaintext,
+        _plaintext: &AdmittedSignal,
         _policy: &arkret_sdk::ReadReceiptPolicy,
     ) {
     }
@@ -165,21 +209,21 @@ impl SignalProductRouter {
 impl SignalProductSink for SignalProductRouter {
     fn call_signal<'a>(
         &'a self,
-        envelope: &'a arkret_wire::SignalEnvelope,
+        signal: &'a AdmittedSignal,
         body: serde_json::Value,
     ) -> LocalBoxFuture<'a> {
         let sink = Rc::clone(&self.sink.borrow());
-        Box::pin(async move { sink.call_signal(envelope, body).await })
+        Box::pin(async move { sink.call_signal(signal, body).await })
     }
 
-    fn message_stream<'a>(&'a self, plaintext: &'a garth::SignalPlaintext) -> LocalBoxFuture<'a> {
+    fn message_stream<'a>(&'a self, plaintext: &'a AdmittedSignal) -> LocalBoxFuture<'a> {
         let sink = Rc::clone(&self.sink.borrow());
         Box::pin(async move { sink.message_stream(plaintext).await })
     }
 
     fn read_receipt(
         &self,
-        plaintext: &garth::SignalPlaintext,
+        plaintext: &AdmittedSignal,
         policy: &arkret_sdk::ReadReceiptPolicy,
     ) {
         self.sink.borrow().read_receipt(plaintext, policy);

@@ -190,47 +190,59 @@ mod tests {
     }
 }
 
-/// Install the Station's `ak.component.mls.epoch.v1` current value for one
-/// effective scope, the only source a client may read the group's create-locked
-/// `content_scheme` from once Genesis is accepted.
-pub(crate) fn install_accepted_mls_epoch(
+/// Install the authority-signed `CurrentSelector::MlsGroup` result for one
+/// effective scope.
+///
+/// This is the single client-side evidence that a scope has an accepted
+/// `ak.mls.genesis` and is therefore irreversibly RFC 9420: there is no
+/// create-locked content scheme, encryption profile or epoch cell any more, so
+/// the fixture installs exactly the current result the Realm snapshot carries.
+pub(crate) fn install_accepted_mls_group(
     state: &mut crate::state::LocalStateStore,
     effective_scope: &arkret_sdk::ScopeRef,
-    content_scheme: &str,
+) {
+    install_accepted_mls_group_at_epoch(state, effective_scope, 0, 0);
+}
+
+/// The same current result at an explicit epoch and key-access revision, for
+/// tests that need a group past its genesis epoch.
+pub(crate) fn install_accepted_mls_group_at_epoch(
+    state: &mut crate::state::LocalStateStore,
+    effective_scope: &arkret_sdk::ScopeRef,
+    epoch: u64,
+    key_access_revision: u64,
 ) {
     let realm_id = effective_scope.realm_id_opt().unwrap().to_string();
-    let group_id = effective_scope.canonical_mls_group_id().unwrap();
-    let cell_id = arkret_state::mls_cells::mls_epoch_cell_id(effective_scope, &group_id).unwrap();
-    let transition_ref =
+    let genesis_ref =
         arkret_sdk::EventId::new("ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml").unwrap();
-    let digest = transition_ref.event_digest();
     let entry = serde_json::json!({
-        "selector": {"scope_ref": effective_scope, "cell_id": cell_id},
-        "target": {"kind": "realm"},
-        "revision": 1,
-        "result": {"status": "value", "value": {
-            "transition_ref": transition_ref,
-            "transition_event_digest": digest,
-            "mls_transition_digest": digest,
+        "selector": {"kind": "mls_group", "scope_ref": effective_scope},
+        "revision": {
+            "commit_id": "ak:realm_commit:0196419b-0000-7000-8000-000000000002",
+            "stream_position": 1,
+        },
+        "value": {
             "effective_scope": effective_scope,
-            "mls_group_id": group_id,
-            "previous_epoch": 0,
-            "next_epoch": 0,
-            "content_scheme": content_scheme,
-        }},
+            "genesis_event_ref": genesis_ref,
+            "current_mls_commit_event_ref": genesis_ref,
+            "epoch": epoch,
+            "current_key_access_revision": key_access_revision,
+            "covered_key_access_revision": key_access_revision,
+            "public_tree_ref": format!("ak:blob:sha256:{}", "a".repeat(64)),
+        },
     });
     let mut projection = state
         .realm_tree_projection(&realm_id)
         .unwrap_or_else(|| serde_json::json!({}));
     // Add to whatever the fixture already installed: one Realm view carries the
-    // Realm's own cells plus one epoch cell per MLS group it owns.
+    // Realm's own current results plus one MLS group result per scope it owns.
     let mut entries = projection
-        .pointer("/current/entries")
+        .get("current")
         .and_then(serde_json::Value::as_array)
         .cloned()
         .unwrap_or_default();
-    entries.retain(|existing| existing.pointer("/selector") != entry.pointer("/selector"));
+    entries.retain(|existing| existing.get("selector") != entry.get("selector"));
     entries.push(entry);
-    projection["current"]["entries"] = serde_json::Value::Array(entries);
+    projection["current"] = serde_json::Value::Array(entries);
     state.save_realm_tree_projection(&realm_id, projection);
 }

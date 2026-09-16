@@ -15,10 +15,16 @@ impl LocalStateStore {
         kind: impl Into<String>,
         state: MoveSubmissionState,
         reason: Option<String>,
-        seal_ref: Option<String>,
+        observed_stream_head: Option<String>,
     ) -> MoveSubmissionRecord {
         self.record_move_submission_with_event_id(
-            move_id, None, realm_id, kind, state, reason, seal_ref,
+            move_id,
+            None,
+            realm_id,
+            kind,
+            state,
+            reason,
+            observed_stream_head,
         )
     }
 
@@ -32,7 +38,7 @@ impl LocalStateStore {
         kind: impl Into<String>,
         state: MoveSubmissionState,
         reason: Option<String>,
-        seal_ref: Option<String>,
+        observed_stream_head: Option<String>,
     ) -> MoveSubmissionRecord {
         self.ensure_cached_loaded();
         let move_id = move_id.into();
@@ -44,7 +50,7 @@ impl LocalStateStore {
             state,
             submitted_at: Utc::now(),
             reason,
-            seal_ref,
+            observed_stream_head,
         };
         self.cached.move_submissions.insert(move_id, record.clone());
         let _ = self.flush();
@@ -62,50 +68,46 @@ impl LocalStateStore {
             .map(|(key, _)| key.clone())
     }
 
-    /// Apply per-event protocol states from a per-Realm sync projection.
-    /// Spec source: `service-surface.md §5.3`, where each reducer-input
-    /// Event may carry `event_id`, `event_state`, and an optional reason code.
-    pub fn ingest_move_event_states(&mut self, realm_id: &str, body: &Value) -> usize {
-        let Some(entries) = body.get("event_states").and_then(|v| v.as_array()) else {
-            return 0;
-        };
+    /// Fold one authority submission outcome into the tracked Move.
+    ///
+    /// The governance Station's `RealmCommit` (or its typed rejection) is the
+    /// only state source: there is no per-Event "state" field on a sync
+    /// projection to read, and a Move that has not been committed stays
+    /// pending. `PendingMlsBinding` is preserved because it is a local
+    /// send-gate, not a submission verdict.
+    pub fn apply_move_submission_result(
+        &mut self,
+        result: &crate::models::SubmitEventResult,
+    ) -> bool {
         self.ensure_cached_loaded();
-        let mut updated = 0usize;
-        for entry in entries {
-            let Ok(entry) = serde_json::from_value::<
-                arkret_models_collaboration::sync_frames::account_sync::RealmSyncEventState,
-            >(entry.clone()) else {
-                continue;
-            };
-            let event_id = entry.event_id.as_str();
-            let reason = entry.event_state_reason_code;
-            let state =
-                MoveSubmissionState::from_submit_state(&entry.event_state, reason.as_deref());
-            let Some(record_key) = self.move_submission_lookup_key(event_id) else {
-                continue;
-            };
-            let Some(record) = self.cached.move_submissions.get_mut(&record_key) else {
-                continue;
-            };
-            if record.realm_id != realm_id {
-                continue;
-            }
-            record.event_id.get_or_insert_with(|| event_id.to_owned());
-            if state == MoveSubmissionState::PendingSeal
-                && record.state == MoveSubmissionState::Effective
-            {
-                continue;
-            }
-            record.state = state;
-            if reason.is_some() {
-                record.reason = reason;
-            }
-            updated += 1;
+        let Some(record_key) = self.move_submission_lookup_key(&result.event_id) else {
+            return false;
+        };
+        let Some(record) = self.cached.move_submissions.get_mut(&record_key) else {
+            return false;
+        };
+        record
+            .event_id
+            .get_or_insert_with(|| result.event_id.clone());
+        if let Some(commit) = &result.commit {
+            record.observed_stream_head = Some(format!(
+                "{}@{}",
+                crate::state::commit_stream_key(&commit.stream_ref),
+                commit.stream_position
+            ));
         }
-        if updated > 0 {
-            let _ = self.flush();
+        let state = MoveSubmissionState::from_send_queue_status(result.status);
+        if record.state == MoveSubmissionState::PendingMlsBinding
+            && state == MoveSubmissionState::Effective
+        {
+            // The Event committed, but the local MLS gate is still open. Event
+            // lifecycle and MLS epoch lifecycle are distinct.
+            return false;
         }
-        updated
+        record.state = state;
+        record.reason = result.rejection_reason_code.clone();
+        let _ = self.flush();
+        true
     }
 
     /// Read all tracked Moves for a specific Realm, sorted by submit
@@ -128,15 +130,6 @@ impl LocalStateStore {
             self.load().move_submissions.into_values().collect();
         out.sort_by_key(|r| std::cmp::Reverse(r.submitted_at));
         out
-    }
-
-    /// True when at least one tracked Move in `realm_id` is in
-    /// `NotaryPaused`. Drives the Realm-wide "waiting for recovery notary"
-    /// banner described in the M4 ticket.
-    pub fn realm_has_paused_notary(&self, realm_id: &str) -> bool {
-        self.move_submissions_for_realm(realm_id)
-            .iter()
-            .any(|record| record.state == MoveSubmissionState::NotaryPaused)
     }
 
     /// True when at least one tracked Move targeting `realm_id` is

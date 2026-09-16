@@ -101,7 +101,7 @@ pub fn build_confidential_discussion_relation_op(
 /// The object id an authored create Event derives, or an error naming the kind
 /// that derives none.
 pub fn derived_id(event: &arkret_sdk::AuthoredEvent) -> anyhow::Result<String> {
-    arkret_sdk::schema::derived_object_id(event)
+    arkret_sdk::schema::derived_object_id_for_kind(event.kind.as_str(), &event.event_id)
         .ok_or_else(|| anyhow::anyhow!("{} derives no object id", event.kind.as_str()))
 }
 

@@ -1,8 +1,14 @@
-//! Realm authority-root and CBS authoring decisions.
+//! Realm founding-authority facts read from the Realm's own commit stream.
+//!
+//! The governance-authority protocol has no projected authority cell and no
+//! producer-side authorization claim for a Realm owner: the owner authorizes
+//! with its own actor identity and the current governance Station evaluates
+//! that against the committed Realm projection. What remains here is the small
+//! set of immutable facts the Realm genesis Event itself carries.
 
 use super::*;
 
-/// Authority facts pinned by a Realm's accepted `ak.realm.create`.
+/// Authority facts pinned by a Realm's committed `ak.realm.create`.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum RealmCreateAuthority {
     Root { controller: arkret_sdk::ActorId },
@@ -38,49 +44,35 @@ pub(super) fn realm_create_authority_from_events(
     })
 }
 
-pub(super) fn realm_create_is_encrypted_from_events(
+/// Whether a scope has already activated standard RFC 9420 encryption.
+///
+/// The only admissible test is the presence of an accepted `ak.mls.genesis`
+/// for that exact scope: activation is irreversible and a Realm create carries
+/// no encryption choice any more.
+pub(super) fn scope_has_accepted_mls_genesis(
     events: &[arkret_sdk::Event],
-    realm_id: &str,
-) -> Option<bool> {
-    events.iter().find_map(|event| {
-        if event.realm_id.as_str() != realm_id || event.kind != arkret_sdk::EventKind::RealmCreate {
-            return None;
-        }
-        event
-            .payload
-            .get("object")
-            .and_then(|object| object.get("encryption_profile"))
-            .and_then(serde_json::Value::as_str)
-            .map(|profile| profile == "mls_rfc9420")
+    scope_ref: &arkret_sdk::ScopeRef,
+) -> bool {
+    events.iter().any(|event| {
+        event.kind == arkret_sdk::EventKind::MlsGenesis && &event.scope_ref == scope_ref
     })
 }
 
-/// Recover the creator proposal used by Inkson's legacy Realm wizard only
-/// when the accepted founding unit makes it unambiguous. The wizard paired
-/// `all_history_for_current_members` with exporter content and explicit
-/// `durability_policy=none`; the protocol independently forbids that history
-/// policy with standard RFC 9420 content. Multiple history facets or
-/// `since_join` deliberately remain unresolved.
-pub(super) fn legacy_creator_genesis_proposal_from_events(
-    events: &[arkret_sdk::Event],
-    realm_id: &str,
-) -> Option<arkret_sdk::ProposedMlsGroupGenesisBinding> {
-    if realm_create_is_encrypted_from_events(events, realm_id) != Some(true) {
-        return None;
-    }
-    let history = events
-        .iter()
-        .filter(|event| {
-            event.realm_id.as_str() == realm_id && event.kind.as_str() == "ak.realm.history_access"
-        })
-        .map(|event| event.payload.get("to").and_then(serde_json::Value::as_str))
-        .collect::<Vec<_>>();
-    if history.as_slice() != [Some("all_history_for_current_members")] {
-        return None;
-    }
-    Some(arkret_sdk::ProposedMlsGroupGenesisBinding {
-        content_scheme: arkret_wire::ContentScheme::MlsExporterAeadV1,
-        durability_policy: Some(arkret_wire::DurabilityPolicy::None),
+/// [`scope_has_accepted_mls_genesis`] read from a typed Realm state snapshot.
+pub(super) fn snapshot_scope_has_mls_group(
+    snapshot: &arkret_wire::RealmStateSnapshot,
+    scope_ref: &arkret_sdk::ScopeRef,
+) -> bool {
+    snapshot.current_state_entries.iter().any(|entry| {
+        let selector = match entry {
+            arkret_wire::TypedCurrentResult::Value { selector, .. }
+            | arkret_wire::TypedCurrentResult::MessageReactions { selector, .. } => selector,
+        };
+        matches!(
+            selector,
+            arkret_wire::CurrentSelector::MlsGroup { scope_ref: entry_scope }
+                if entry_scope == scope_ref
+        )
     })
 }
 
@@ -89,110 +81,91 @@ pub(super) fn realm_owner_covers_event_kind(kind: &str) -> bool {
         .is_some_and(|descriptor| descriptor.target_event_kinds.contains(&kind))
 }
 
-/// Whether a direct controller-authored Event may claim the Realm authority
-/// root. Root-control-only actions are intentionally absent from the ordinary
-/// `ak.realm.owner` aggregate: the root cell is their sole authority, not one
-/// possible owner capability. They still must be stamped with that root claim.
-pub(super) fn realm_authority_root_covers_event_kind(kind: &str) -> bool {
-    arkret_schema::capability_action(kind).is_some_and(|descriptor| descriptor.root_control_only)
-        || realm_owner_covers_event_kind(kind)
-}
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
 
-/// Return the registered authority-root claim for direct Realm-root authoring.
-#[allow(clippy::expect_used)]
-pub(super) fn realm_authority_root_claim(
-    intent: &EventIntent,
-    authority: Option<&RealmCreateAuthority>,
-) -> Option<arkret_sdk::AuthorizationRef> {
-    if intent.authorization_ref().is_some()
-        || intent.executed_by().is_some()
-        || intent.applet_id().is_some()
-        || !realm_authority_root_covers_event_kind(intent.kind().as_str())
-    {
-        return None;
+    use super::*;
+
+    fn realm_id() -> arkret_sdk::RealmId {
+        arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned())
+            .unwrap()
     }
-    match authority? {
-        RealmCreateAuthority::Root { controller } if controller == intent.actor_id() => Some(
-            arkret_sdk::AuthorizationRef::new(arkret_wire::REALM_AUTHORITY_ROOT_CELL)
-                .expect("realm authority-root constant must be valid"),
-        ),
-        _ => None,
-    }
-}
 
-/// Execution lane selected by the intent's actual registered writes.
-pub(super) fn cbs_effect_plane_for_intent(
-    intent: &EventIntent,
-) -> anyhow::Result<Option<CbsEffectPlane>> {
-    arkret_sdk::classify_intent_execution(intent).map_err(anyhow::Error::from)
-}
-
-/// Producer-evidence family for one human-authored intent. Actor-private
-/// Events have no CBS write plane, so the shared closed selector supplies only
-/// their registry-defined Data exception.
-pub(super) fn signer_evidence_plane_for_intent(
-    intent: &EventIntent,
-) -> anyhow::Result<CbsEffectPlane> {
-    crate::event_signer::event_signer_evidence_plane(
-        intent.kind(),
-        cbs_effect_plane_for_intent(intent)?,
-    )
-    .map_err(anyhow::Error::from)
-}
-
-/// Check the projection's aggregate lane, retaining atomic mixed D/S commands.
-pub(super) fn validate_projected_cbs_plane(
-    event: &arkret_sdk::AuthoredEvent,
-) -> anyhow::Result<()> {
-    let Some(plane) = arkret_schema::classify_event_execution(event.event())? else {
-        return Ok(());
-    };
-    let digest_suite = event.digest_suite();
-    let event = event.event();
-    // Inkson's Realm-owner grant surface authors direct `realm_root` grants.
-    // The schema projector still requires an explicit resolver so that a
-    // future grant-ref dependency cannot silently acquire invented ancestry;
-    // an empty resolver derives direct roots and fails closed for grant refs.
-    let mut projected_plane = None;
-    for write in arkret_sdk::schema::project_registered_cell_writes_with_authority_resolver(
-        event,
-        digest_suite,
-        &|_| None,
-    )
-    .map_err(|error| anyhow::anyhow!("cell-write projection failed: {error}"))?
-    {
-        let cell = arkret_sdk::CellId::from_ref(&write.cell_id)
-            .map_err(|error| anyhow::anyhow!("projected cell is invalid: {error}"))?;
-        let cell_plane = cbs_cell_family_plane(cell.component()).ok_or_else(|| {
-            anyhow::anyhow!(
-                "projected cell references unknown cell family {}",
-                cell.component()
-            )
-        })?;
-        if projected_plane.is_none() || cell_plane == CbsEffectPlane::Control {
-            projected_plane = Some(cell_plane);
+    fn event(kind: arkret_sdk::EventKind, scope_ref: arkret_sdk::ScopeRef) -> arkret_sdk::Event {
+        arkret_sdk::Event {
+            event_id: arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [7; 32]),
+            kind,
+            realm_id: realm_id(),
+            scope_ref,
+            actor_id: arkret_sdk::ActorId::service(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+            ),
+            executed_by: None,
+            authorization_ref: None,
+            applet_id: None,
+            external_ref: None,
+            created_at: chrono::Utc::now(),
+            refs: Vec::new(),
+            payload: BTreeMap::from([("object".to_owned(), json!({}))]),
+            proofs: Vec::new(),
         }
     }
-    if projected_plane != Some(plane) {
-        anyhow::bail!(
-            "event {} projects {projected_plane:?} writes but declares {plane:?} execution",
-            event.event_id
+
+    #[test]
+    fn encryption_is_decided_by_an_accepted_mls_genesis_for_the_exact_scope() {
+        let realm_scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id(),
+        };
+        let circle_scope = arkret_sdk::ScopeRef::Circle {
+            realm_id: realm_id(),
+            circle_id: arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [9; 32],
+            )),
+        };
+        let events = vec![
+            event(arkret_sdk::EventKind::RealmCreate, realm_scope.clone()),
+            event(arkret_sdk::EventKind::MlsGenesis, circle_scope.clone()),
+        ];
+
+        assert!(scope_has_accepted_mls_genesis(&events, &circle_scope));
+        assert!(
+            !scope_has_accepted_mls_genesis(&events, &realm_scope),
+            "a sibling scope's genesis must never activate this scope"
         );
     }
-    Ok(())
-}
 
-/// Freeze the authority references for an ordinary Event after checking the local signer identity.
-pub(super) fn ordinary_event_auth_context(
-    intent: &EventIntent,
-    authority_refs: Vec<arkret_sdk::SealId>,
-) -> anyhow::Result<arkret_sdk::AuthContext> {
-    let actor_id = intent.executed_by().unwrap_or_else(|| intent.actor_id());
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("active signer is required for ordinary Event authoring"))?;
-    let did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
-    if arkret_sdk::project_did_to_core_id(&did)? != *actor_id.signing_principal_id() {
-        anyhow::bail!("active signer did does not project to the Event signing principal");
+    #[test]
+    fn realm_create_authority_reads_the_founding_actor() {
+        let realm_scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id(),
+        };
+        let create = event(arkret_sdk::EventKind::RealmCreate, realm_scope);
+        let expected = create.actor_id.clone();
+
+        assert_eq!(
+            realm_create_authority_from_events(&[create], realm_id().as_str()),
+            Some(RealmCreateAuthority::Root {
+                controller: expected
+            })
+        );
     }
-    Ok(arkret_sdk::AuthContext { authority_refs })
+
+    #[test]
+    fn direct_conversation_purpose_is_not_an_ordinary_realm_owner() {
+        let realm_scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id(),
+        };
+        let mut create = event(arkret_sdk::EventKind::RealmCreate, realm_scope);
+        create.payload.insert(
+            "object".to_owned(),
+            json!({ "purpose": "direct_conversation" }),
+        );
+
+        assert_eq!(
+            realm_create_authority_from_events(&[create], realm_id().as_str()),
+            Some(RealmCreateAuthority::DirectConversation)
+        );
+    }
 }

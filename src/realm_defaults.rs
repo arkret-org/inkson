@@ -1,10 +1,14 @@
 //! Realm creation defaults shared by UI and event builders.
+//!
+//! These are holder-local presentation tokens, not wire values. A Realm scope
+//! is plaintext until its own accepted `ak.mls.genesis`, after which it is
+//! irreversibly standard RFC 9420; there is no create-locked encryption profile
+//! or encryption floor on the wire any more.
 
+/// The default the create wizard preselects: activate MLS for the new Realm by
+/// authoring its `ak.mls.genesis` as part of the bootstrap unit.
 pub const RECOMMENDED_REALM_ENCRYPTION_PROFILE: &str = "mls_rfc9420";
-pub const RECOMMENDED_REALM_ENCRYPTION_FLOOR: &str = "e2ee_required";
 
-/// Same value as [`RECOMMENDED_REALM_ENCRYPTION_FLOOR`], as the SDK enum the
-/// typed payloads take. The string form stays because several UI comparisons
-/// read the floor back out of untyped projections.
-pub const RECOMMENDED_REALM_ENCRYPTION_FLOOR_TYPED: arkret_sdk::EncryptionFloor =
-    arkret_sdk::EncryptionFloor::E2eeRequired;
+/// The holder-facing label for "every shared write in this Realm is end-to-end
+/// encrypted", i.e. the Realm scope has an accepted `ak.mls.genesis`.
+pub const RECOMMENDED_REALM_ENCRYPTION_FLOOR: &str = "e2ee_required";

@@ -19,9 +19,6 @@ pub struct CircleCreateOptions<'a> {
     pub directory_visibility: arkret_sdk::CircleDirectoryVisibility,
     pub join_rule: arkret_sdk::CircleJoinRule,
     pub history_access: arkret_sdk::HistoryAccess,
-    pub encryption_profile: arkret_sdk::EncryptionProfile,
-    pub content_scheme: Option<arkret_sdk::ContentScheme>,
-    pub durability_policy: Option<arkret_sdk::DurabilityPolicy>,
 }
 
 /// Build a canonical `ak.circle.member.state` Control Move.
@@ -151,39 +148,10 @@ pub fn circle_create(
     circle.directory_visibility = options.directory_visibility;
     circle.join_rule = options.join_rule;
     circle.history_access = options.history_access;
-    circle.encryption_profile = options.encryption_profile;
-    match (&circle.encryption_profile, options.content_scheme) {
-        (arkret_sdk::EncryptionProfile::None, None) => {
-            anyhow::ensure!(
-                options.durability_policy.is_none(),
-                "plaintext Circle cannot declare durability_policy"
-            );
-        }
-        (
-            arkret_sdk::EncryptionProfile::MlsRfc9420,
-            Some(arkret_sdk::ContentScheme::MlsRfc9420),
-        ) => {
-            anyhow::ensure!(
-                options.durability_policy.is_none(),
-                "standard MLS Circle cannot declare durability_policy"
-            );
-        }
-        (
-            arkret_sdk::EncryptionProfile::MlsRfc9420,
-            Some(arkret_sdk::ContentScheme::MlsExporterAeadV1),
-        ) => {
-            anyhow::ensure!(
-                options.durability_policy.is_some(),
-                "exporter MLS Circle requires durability_policy"
-            );
-        }
-        (arkret_sdk::EncryptionProfile::MlsRfc9420, None) => {
-            anyhow::bail!("MLS-backed Circle requires content_scheme");
-        }
-        _ => anyhow::bail!("Circle encryption_profile is not registered"),
-    }
-    circle.content_scheme = options.content_scheme;
-    circle.durability_policy = options.durability_policy;
+    // A Circle scope is plaintext until its own accepted `ak.mls.genesis`
+    // irreversibly activates standard RFC 9420 for it. `mls_group_id` is set by
+    // that accepted genesis, never by the creator, so the create payload
+    // deliberately carries no encryption selection at all.
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::CircleCreate,
     >(

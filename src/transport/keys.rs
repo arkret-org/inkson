@@ -49,22 +49,27 @@ pub async fn list_devices(
 }
 
 /// Send a one-shot device-message envelope to a target actor/device queue.
-/// The caller prepares `content` (which may itself be a signed proof); this
-/// wraps it in the typed `DeviceMessagesSendRequestBody` and POSTs it — the
-/// envelope carries no additional signing.
-pub async fn send_device_message<K: arkret_sdk::DeviceMessageSpec>(
+///
+/// Device messages are not Realm Events and never enter an authority commit
+/// stream: the queue carries an opaque `content` map under a protocol `kind`.
+/// The caller prepares `content` (which may itself be a signed or sealed
+/// object); this wraps it in the typed `DeviceMessagesSendRequestBody` and
+/// POSTs it — the envelope adds no signing of its own.
+pub async fn send_device_message(
     http: &arkret_sdk::http_client::Client,
     txn_id: &str,
+    kind: arkret_wire::ProtocolKind,
     target_actor: &arkret_sdk::ActorId,
     target_device_id: &str,
     expires_at: &str,
-    content: K::Content,
+    content: std::collections::BTreeMap<String, serde_json::Value>,
 ) -> anyhow::Result<DeviceMessagesSendOutcome> {
     let message_id = arkret_sdk::DeviceMessageId::new_v7_at(crate::clock::now_unix_ms());
-    send_device_message_with_id::<K>(
+    send_device_message_with_id(
         http,
         txn_id,
         message_id,
+        kind,
         target_actor,
         target_device_id,
         expires_at,
@@ -81,14 +86,15 @@ pub async fn send_device_message<K: arkret_sdk::DeviceMessageSpec>(
 /// the same value here, so the ciphertext, the envelope and the durable queue
 /// row all carry one id. Minting a second id at send time would break the AAD.
 #[allow(clippy::too_many_arguments)]
-pub async fn send_device_message_with_id<K: arkret_sdk::DeviceMessageSpec>(
+pub async fn send_device_message_with_id(
     http: &arkret_sdk::http_client::Client,
     txn_id: &str,
     message_id: arkret_sdk::DeviceMessageId,
+    kind: arkret_wire::ProtocolKind,
     target_actor: &arkret_sdk::ActorId,
     target_device_id: &str,
     expires_at: &str,
-    content: K::Content,
+    content: std::collections::BTreeMap<String, serde_json::Value>,
 ) -> anyhow::Result<DeviceMessagesSendOutcome> {
     target_actor.validate()?;
     let account_id = target_actor
@@ -100,8 +106,18 @@ pub async fn send_device_message_with_id<K: arkret_sdk::DeviceMessageSpec>(
     }
     let target_device_id = arkret_sdk::DeviceId::new(target_device_id.to_owned())?;
     let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)?.with_timezone(&chrono::Utc);
-    let payload = arkret_sdk::TypedDeviceMessageTarget::<K>::new(message_id, expires_at, content)?
-        .single_recipient(account_id.principal_id.clone(), target_device_id)?;
+    let target = arkret_sdk::DeviceMessageTarget {
+        device_message_id: message_id,
+        kind,
+        expires_at,
+        content,
+    };
+    let payload = arkret_sdk::DeviceMessagesSendRequestBody {
+        messages: std::collections::BTreeMap::from([(
+            account_id.principal_id.clone(),
+            std::collections::BTreeMap::from([(target_device_id, target)]),
+        )]),
+    };
     http.send_device_messages(txn_id, &payload)
         .await
         .map_err(anyhow::Error::from)

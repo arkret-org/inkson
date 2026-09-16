@@ -18,6 +18,8 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use dioxus::prelude::*;
+
+use crate::runtime::projection::AdmittedSignal;
 use serde_json::Value;
 
 /// Inbound invite presented to the user as a ring. Set on the hub when an
@@ -156,22 +158,26 @@ pub struct DecodedCallSignal {
 /// a required field. This product adapter is reached only from
 /// [`garth::SignalReceiver`] after the envelope's structure, current sender
 /// authority, proof, expiry, replay state and AEAD have all been admitted.
-pub fn decode_call_signal(
-    envelope: &arkret_wire::SignalEnvelope,
-    plaintext: &Value,
-) -> Option<DecodedCallSignal> {
-    let body = serde_json::from_value::<arkret_sdk::CallSignalPlaintext>(plaintext.clone()).ok()?;
+pub fn decode_call_signal(signal: &AdmittedSignal) -> Option<DecodedCallSignal> {
+    // The closed profile the receiver already parsed. A call signal delivered
+    // under any other profile is not a call signal, and `signal.md` §1.1
+    // forbids recovering one by field name.
+    let arkret_sdk::SignalPlaintext::CallSignal(body) = &signal.payload else {
+        return None;
+    };
+    // Call routing addresses a human device; an Agent-key endpoint has no
+    // device coordinate to ring and is not a call participant.
+    let arkret_sdk::SignalSequenceEndpoint::AccountDevice { device_id } = signal.sender_endpoint()
+    else {
+        return None;
+    };
     Some(DecodedCallSignal {
-        realm_id: envelope.realm_id.as_str().to_owned(),
+        realm_id: signal.scope_ref().realm_id().as_str().to_owned(),
         call_id: body.call_id.as_str().to_owned(),
         seq: body.seq,
-        sender_actor: envelope
-            .sender_actor_id
-            .signing_principal_id()
-            .as_str()
-            .to_owned(),
-        sender_device: envelope.sender_device_id.as_ref()?.as_str().to_owned(),
-        signal: body.signal,
+        sender_actor: signal.actor_id().signing_principal_id().as_str().to_owned(),
+        sender_device: device_id.as_str().to_owned(),
+        signal: body.signal.clone(),
     })
 }
 
@@ -184,17 +190,17 @@ pub fn decode_call_signal(
 ///
 /// Envelope admission belongs exclusively to [`garth::SignalReceiver`] and
 /// Inkson's verified-governance receive gate. In particular, moderation has
-/// already been evaluated independently at both the declared and current Seal
-/// bases before this product adapter is reached. A current server authz query
+/// already been evaluated independently against the Realm's current
+/// governance authority before this product adapter is reached. A current server authz query
 /// here would be a second, weaker authority source and could disagree with the
 /// exact accepted bases that admitted the plaintext.
 pub async fn route_decrypted_call_signals(
     hub: &mut CallSignalHub,
-    signals: &[(arkret_wire::SignalEnvelope, Value)],
+    signals: &[AdmittedSignal],
     local_actor: &str,
 ) {
-    for (envelope, plaintext) in signals {
-        let Some(decoded) = decode_call_signal(envelope, plaintext) else {
+    for signal in signals {
+        let Some(decoded) = decode_call_signal(signal) else {
             continue;
         };
         // Self-echo: skip verification + routing entirely (we trust our own

@@ -28,20 +28,15 @@ pub fn invite_create_structured(
             .with_extension("role", json!(role))
             .map_err(|err| anyhow::anyhow!("invalid invite extension: {err}"))?;
     }
-    // governance-objects.md section 5.3: the create MUST claim the invitee's
-    // Realm live-target slot in the same Control Move, asserting that it is
-    // free. Two concurrent invites for one account then contend on this one
-    // cell instead of each minting its own Invite, and the loser is refused
-    // with `invite_live_target_occupied` rather than silently creating a
-    // second live invite.
-    let live_target = arkret_sdk::InviteLiveTargetSlot::Free
-        .precondition(&payload.invitee_account_id)
-        .map_err(|err| anyhow::anyhow!("invite live-target precondition: {err}"))?;
+    // governance-objects.md section 5.3: an invitee holds at most one live
+    // Realm invite. The current governance Station evaluates that against its
+    // own committed current state and refuses the loser of two concurrent
+    // invites with `invite_live_target_occupied`; a producer Event carries no
+    // precondition of its own.
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::InviteCreate>(
             realm_id, actor, payload,
-        )
-        .preconditions(vec![live_target]),
+        ),
     )
 }
 
@@ -60,7 +55,6 @@ pub fn invite_accept(
 ) -> anyhow::Result<TypedOperationBuilder> {
     let invite_id_typed = arkret_sdk::InviteId::new(invite_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invite_id not canonical {invite_id:?}: {err}"))?;
-    let release = live_target_release_precondition(&invite_id_typed, invitee_account_id.as_ref())?;
     let payload = arkret_sdk::InviteAcceptPayload {
         invite_id: invite_id_typed,
         invitee_account_id,
@@ -71,31 +65,10 @@ pub fn invite_accept(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::InviteAccept>(
             realm_id, actor, payload,
         )
-        .preconditions(release)
         .target_ref(invite_id.to_string()),
     )
 }
 
-/// The `head_eq` precondition a Move releasing the live-target slot must carry.
-///
-/// The slot stores the occupying `ak.invite.create` Event id verbatim, in
-/// `ak:event:` form. Asserting the `ak:invite:` spelling of the very same
-/// 33-octet token compares unequal forever and strands the slot, so the
-/// retype happens once inside the SDK helper and never at a call site here.
-/// A Move that derives no release write (a third-party invite, or a
-/// `send_failed` revoke) carries no precondition.
-fn live_target_release_precondition(
-    invite_id: &arkret_sdk::InviteId,
-    invitee_account_id: Option<&arkret_sdk::AccountId>,
-) -> anyhow::Result<Vec<arkret_sdk::Precondition>> {
-    let Some(invitee_account_id) = invitee_account_id else {
-        return Ok(Vec::new());
-    };
-    arkret_sdk::InviteLiveTargetSlot::held_by_invite(invite_id)
-        .precondition(invitee_account_id)
-        .map(|precondition| vec![precondition])
-        .map_err(|err| anyhow::anyhow!("invite live-target release precondition: {err}"))
-}
 
 /// Build a `ak.invite.cancel` Control Move.
 ///
@@ -119,13 +92,10 @@ pub fn invite_cancel(
     reason: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let (payload, invite_id_ref) = invite_cancel_payload(invite_id, invitee, target_state, reason)?;
-    let release =
-        live_target_release_precondition(&payload.invite_id, Some(&payload.invitee_account_id))?;
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::InviteCancel>(
             realm_id, actor, payload,
         )
-        .preconditions(release)
         .target_ref(invite_id_ref),
     )
 }
@@ -175,13 +145,10 @@ pub fn invite_cancel_for_station(
     reason: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let (payload, invite_id_ref) = invite_cancel_payload(invite_id, invitee, target_state, reason)?;
-    let release =
-        live_target_release_precondition(&payload.invite_id, Some(&payload.invitee_account_id))?;
     Ok(
         TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::InviteCancel>(
             realm_id, actor, station_id, payload,
         )
-        .preconditions(release)
         .target_ref(invite_id_ref),
     )
 }
@@ -241,7 +208,6 @@ pub fn invite_revoke(
         "invalidated_by_rate_limit" => arkret_sdk::InviteRevokeTargetState::InvalidatedByRateLimit,
         _ => unreachable!("validated invite revoke target state"),
     };
-    let release = live_target_release_precondition(&invite_id, invitee_account_id.as_ref())?;
     let payload = arkret_sdk::InviteRevokePayload {
         invite_id,
         invitee_account_id,
@@ -253,7 +219,6 @@ pub fn invite_revoke(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::InviteRevoke>(
             realm_id, actor, payload,
         )
-        .preconditions(release)
         .target_ref(invite_id_ref),
     )
 }

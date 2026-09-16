@@ -4,8 +4,7 @@
 //! submodule of `local_state` (via `#[cfg(test)] #[path = ...] mod tests;`),
 //! so `super` here still resolves to the `local_state` module. The
 //! `pub(super) use super::*;` below re-exports every visible `local_state`
-//! item (its public types, the `pub use seal_view::*` re-exports, and the
-//! `pub(crate)` `storage_util` helpers)
+//! item (its public types and the `pub(crate)` `storage_util` helpers)
 //! down to the topic submodules. Private fields of `LocalStateStore`
 //! (`cached`, `path`) remain reachable because private visibility extends to
 //! the whole module subtree, so the grandchild test modules can touch them
@@ -15,7 +14,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(super) use super::*;
 
-mod history_candidates;
 mod identity;
 mod mls_local_checkpoint;
 mod move_submission;
@@ -24,7 +22,6 @@ mod private_plaintext;
 mod projections;
 mod read_receipt;
 mod remark;
-mod seal_view;
 mod store_persist;
 mod sync_states;
 
@@ -99,91 +96,15 @@ pub(super) fn temp_state_path(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("inkson-state-{name}-{stamp}.json"))
 }
 
-pub(super) fn snapshot_event_id(suffix: &str) -> arkret_sdk::EventId {
-    let seed = u8::from_str_radix(&suffix[suffix.len() - 2..], 16).unwrap();
-    arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [seed; 32])
+/// A commit-stream head on a Realm's own stream, for tests that need a
+/// per-stream cursor rather than a Realm-global position (there is none).
+pub(super) fn realm_stream_head(realm_id: &str, position: u64) -> arkret_wire::CommitStreamHead {
+    arkret_wire::CommitStreamHead {
+        stream_ref: arkret_wire::CommitStreamRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
+        },
+        stream_position: position,
+        commit_id: arkret_wire::RealmCommitId::from_digest([position as u8; 32]),
+    }
 }
 
-pub(super) fn snapshot_hash(seed: u8) -> arkret_sdk::Hash {
-    arkret_sdk::Hash::new(format!("sha256:{}", format!("{seed:02x}").repeat(32))).unwrap()
-}
-
-pub(super) fn realm_state_snapshot_manifest_for_items(
-    items: Vec<arkret_sdk::RealmStateSnapshotMaterializedItem>,
-) -> (
-    arkret_sdk::RealmStateSnapshotManifest,
-    Vec<arkret_sdk::RealmStateSnapshotChunkPayload>,
-) {
-    let realm_state_snapshot_id = arkret_sdk::RealmStateSnapshotId::new(
-        "ak:realm_state_snapshot:01904100-0000-7000-8000-0000000000aa",
-    )
-    .unwrap();
-    let realm_id =
-        arkret_sdk::RealmId::new("ak:realm:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml").unwrap();
-    let service_id = crate::mls_api_helpers::principal_core_id("did:web:server.example").unwrap();
-    let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
-    let eligibility_context = arkret_sdk::SnapshotEligibilityContext {
-        authority_refs: Vec::new(),
-        closure_command_refs: Vec::new(),
-        reducer_contract_digest: snapshot_hash(7),
-    };
-    let built = arkret_sdk::build_realm_state_snapshot_chunks(
-        &realm_state_snapshot_id,
-        arkret_sdk::CORE_REDUCER_PROFILE,
-        items,
-        4096,
-        arkret_sdk::SnapshotReplayEvidence {
-            eligibility_context: eligibility_context.clone(),
-            replay_events: Vec::new(),
-            replay_authority_refs: Vec::new(),
-        },
-    )
-    .unwrap();
-    let chunk_payloads = built
-        .iter()
-        .map(|chunk| chunk.payload.clone())
-        .collect::<Vec<_>>();
-    let chunks = built
-        .into_iter()
-        .map(|chunk| chunk.descriptor)
-        .collect::<Vec<_>>();
-    let created_at = Utc::now();
-    let mut manifest = arkret_sdk::RealmStateSnapshotManifest {
-        eligibility_context,
-        id: realm_state_snapshot_id,
-        realm_id,
-        reducer_profile: arkret_sdk::CORE_REDUCER_PROFILE.to_owned(),
-        schema_profile_refs: vec!["ak.profile.core_event_store.v1".to_owned()],
-        state_digest,
-        frontier: arkret_sdk::RealmStateSnapshotFrontier {
-            event_ids: vec![snapshot_event_id("0000000000a2")],
-            timeline_hlc: arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
-        },
-        event_set_commitment: arkret_sdk::EventSetCommitment {
-            algorithm: arkret_sdk::EventSetCommitmentAlgorithm::MerkleEventSetV1,
-            root: snapshot_hash(9),
-            covered_event_count: 2,
-            actor_seq_ranges: Vec::new(),
-        },
-        chunks,
-        security_class: arkret_sdk::RealmStateSnapshotSecurityClass::Standard,
-        verification_hints: None,
-        created_by: arkret_sdk::ActorId::service(service_id.clone()),
-        created_at,
-        authority_binding: arkret_sdk::AuthorityBinding {
-            authority_kind: arkret_sdk::RealmStateSnapshotAuthorityKind::RealmPolicySnapshotIssuer,
-            auth_state_digest: snapshot_hash(1),
-            auth_frontier: vec![snapshot_event_id("0000000000a2")],
-            checked_at: created_at,
-            witness_attestations: Vec::new(),
-        },
-        signature: arkret_sdk::DetachedJwsProof::ed25519(
-            arkret_sdk::DidUrl::new("did:web:server.example#snapshot").unwrap(),
-            snapshot_hash(2),
-            created_at,
-            "header..signature".to_owned(),
-        ),
-    };
-    manifest.signature.payload_digest = manifest.expected_signature_digest().unwrap();
-    (manifest, chunk_payloads)
-}

@@ -656,44 +656,39 @@ fn secure_cache_bootstrap_persists_live_values_when_no_entry_exists_yet() {
 }
 
 #[test]
-fn history_secret_is_never_written_to_plaintext_state() {
-    use base64::Engine as _;
-
-    let effective_scope = arkret_sdk::HistoryEffectiveScope::Realm {
-        realm_id: arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
-            .unwrap(),
-    };
-    let mut by_epoch = BTreeMap::new();
-    by_epoch.insert(
-        7,
-        arkret_sdk::LocalAuthoritativeHistorySecret {
-            mls_group_id: effective_scope.canonical_mls_group_id().unwrap(),
-            effective_scope,
-            epoch: 7,
-            mls_ciphersuite: arkret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned(),
-            local_state_ref: "inkson.mls_snapshot.v1:test-7".to_owned(),
-            transition_ref: arkret_sdk::EventId::new(
-                "ak:event:AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-            )
-            .unwrap(),
-            transition_event_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
-                .unwrap(),
-            mls_transition_digest: arkret_sdk::Hash::new(format!("sha256:{}", "2".repeat(64)))
-                .unwrap(),
-            secret_b64u: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"history-secret"),
-        },
-    );
+fn mls_plaintext_is_never_written_to_plaintext_state() {
+    // The RHRK history-secret family is gone with the protocol, but the
+    // invariant it protected is not: decrypted MLS material and the pairwise
+    // identity links derived from it live only in the hardened E2EE cache and
+    // must never reach the plaintext persistence tier.
     let mut state = ClientLocalState::default();
-    state.history_secrets.insert(
+    state.mls_private_plaintext.insert(
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
-        by_epoch,
+        BTreeMap::from([(
+            "ak:strand:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8".to_owned(),
+            BTreeMap::from([("body".to_owned(), "\"secret-plaintext-body\"".to_owned())]),
+        )]),
+    );
+    state.mls_decrypted_plaintext.insert(
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
+        BTreeMap::from([(
+            "sha256:6161616161616161616161616161616161616161616161616161616161616161".to_owned(),
+            "secret-decrypted-body".to_owned(),
+        )]),
     );
 
     let persisted = e2ee_safe_persist_state(&state);
     assert!(
-        persisted.history_secrets.is_empty(),
-        "history_secret must never enter plaintext persistence"
+        persisted.mls_private_plaintext.is_empty(),
+        "authored MLS plaintext must never enter plaintext persistence"
     );
+    assert!(
+        persisted.mls_decrypted_plaintext.is_empty(),
+        "received MLS plaintext must never enter plaintext persistence"
+    );
+    let json = serde_json::to_string(&persisted).unwrap();
+    assert!(!json.contains("secret-plaintext-body"));
+    assert!(!json.contains("secret-decrypted-body"));
 }
 
 #[test]

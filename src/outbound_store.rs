@@ -1,16 +1,16 @@
-//! Product storage adapter for Garth's durable outbound queue.
+//! Product storage adapter for garth's durable outbound queue.
 //!
-//! Each queue item carries the authoritative `(realm_id, actor_id)` authoring
-//! partition. Physical queues are additionally partitioned by the exact
-//! [`arkret_sdk::AccountId`] that owns the authenticated session; actor ids
-//! never serve as account-storage coordinates.
+//! One queue item is one `AuthoritySubmitRequest` frozen at authoring time plus
+//! its retry ledger. Physical queues are partitioned by the exact
+//! [`arkret_sdk::AccountId`] that owns the authenticated session and by lane;
+//! actor ids never serve as account-storage coordinates.
 //!
-//! Native clients use Garth's atomic `FileStore`. Web clients persist the same
-//! SDK `SendQueueSnapshot` shape in the IndexedDB + non-extractable
-//! SubtleCrypto encrypted entries store — the tier the per-account main state
-//! already uses — so a queue of signed, not-yet-accepted Events is ciphertext
-//! at rest and is not charged against the ~5 MB localStorage per-origin quota
-//! that a single queue can exhaust on its own.
+//! Native clients persist an atomically replaced JSON file under the app data
+//! directory. Web clients persist the same `SendQueueSnapshot` shape in the
+//! IndexedDB + non-extractable SubtleCrypto entries store — the tier the
+//! per-account main state already uses — so a queue of signed, not-yet-committed
+//! Events is ciphertext at rest and is not charged against the ~5 MB
+//! localStorage per-origin quota that a single queue can exhaust on its own.
 
 use garth::OutboundQueueStore;
 use garth::outbound::BoxOutboundFuture;
@@ -40,16 +40,28 @@ fn secure_outbound_store()
 }
 
 /// Serialize asynchronous read-modify-write operations to prevent lost updates.
-#[cfg(target_arch = "wasm32")]
 fn outbound_write_gate() -> &'static tokio::sync::Mutex<()> {
     static GATE: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
     GATE.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-/// One read-modify-write of a queue against an explicit store.
+fn decode_snapshot(raw: Option<&str>) -> garth::Result<garth::SendQueueSnapshot> {
+    match raw {
+        Some(raw) => serde_json::from_str(raw)
+            .map_err(|error| garth::Error::Protocol(format!("decode outbound queue: {error}"))),
+        None => Ok(garth::SendQueueSnapshot::default()),
+    }
+}
+
+fn encode_snapshot(queue: &garth::SendQueue) -> garth::Result<String> {
+    serde_json::to_string(&queue.snapshot())
+        .map_err(|error| garth::Error::Protocol(format!("encode outbound queue: {error}")))
+}
+
+/// One read-modify-write of a queue against an explicit secure store.
 ///
-/// Only the `SecureKeyStore` port is involved, so this compiles on every
-/// target and the native unit tests drive it against in-memory and
+/// Only the `SecureKeyStore` port is involved, so this compiles on every target
+/// and the native unit tests drive it against in-memory and
 /// deliberately-failing stores instead of a browser.
 #[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
 async fn mutate_queue_in_store<R>(
@@ -60,21 +72,16 @@ async fn mutate_queue_in_store<R>(
     let stored = store
         .get_secret(storage_key)
         .map_err(|error| garth::Error::Protocol(format!("read outbound queue: {error}")))?;
-    let snapshot = match stored.as_deref() {
-        Some(raw) => serde_json::from_str(raw)
-            .map_err(|error| garth::Error::Protocol(format!("decode outbound queue: {error}")))?,
-        None => garth::SendQueueSnapshot::default(),
-    };
-    let mut queue = garth::SendQueue::from_snapshot(snapshot)?;
+    let mut queue = garth::SendQueue::from_snapshot(decode_snapshot(stored.as_deref())?);
     let result = mutation(&mut queue)?;
-    let encoded = serde_json::to_string(&queue.snapshot())
-        .map_err(|error| garth::Error::Protocol(format!("encode outbound queue: {error}")))?;
+    let encoded = encode_snapshot(&queue)?;
     // `OutboundQueueStore` exposes reads through the same mutation closure as
     // writes. In particular, `OutboundEngine::snapshot()` lands here. Do not
     // turn an unchanged read into a full AES-GCM + IndexedDB commit while the
     // process-wide outbound gate is held: besides being unnecessary, that can
     // serialize an ordinary Event behind unrelated secure-store maintenance.
-    if stored.as_deref() == Some(encoded.as_str()) || (stored.is_none() && queue.is_empty()) {
+    if stored.as_deref() == Some(encoded.as_str()) || (stored.is_none() && queue.items().is_empty())
+    {
         return Ok(result);
     }
     store
@@ -83,39 +90,85 @@ async fn mutate_queue_in_store<R>(
         .map_err(|error| {
             garth::Error::Protocol(format!(
                 "persist outbound queue ({} item(s), {} encoded bytes): {error}",
-                queue.len(),
+                queue.items().len(),
                 encoded.len(),
             ))
         })?;
     Ok(result)
 }
 
+/// One read-modify-write of a queue held in a file that is replaced atomically.
+///
+/// garth's own `FileStore` covers cursors, the event cache and the signing-stamp
+/// floor; the outbound queue is a host-owned durable surface, so its file layout
+/// belongs here next to the browser tier it mirrors.
 #[cfg(not(target_arch = "wasm32"))]
-static NATIVE_OUTBOUND_STORES: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::BTreeMap<std::path::PathBuf, garth::FileStore>>,
-> = std::sync::OnceLock::new();
+async fn mutate_queue_in_file<R>(
+    path: &std::path::Path,
+    mutation: impl FnOnce(&mut garth::SendQueue) -> garth::Result<R>,
+) -> garth::Result<R> {
+    let stored = match std::fs::read_to_string(path) {
+        Ok(raw) => Some(raw),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(garth::Error::Protocol(format!(
+                "read outbound queue {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    let mut queue = garth::SendQueue::from_snapshot(decode_snapshot(stored.as_deref())?);
+    let result = mutation(&mut queue)?;
+    let encoded = encode_snapshot(&queue)?;
+    if stored.as_deref() == Some(encoded.as_str()) || (stored.is_none() && queue.items().is_empty())
+    {
+        return Ok(result);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            garth::Error::Protocol(format!(
+                "create outbound queue directory {}: {error}",
+                parent.display()
+            ))
+        })?;
+    }
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, encoded.as_bytes()).map_err(|error| {
+        garth::Error::Protocol(format!(
+            "stage outbound queue {}: {error}",
+            temporary.display()
+        ))
+    })?;
+    std::fs::rename(&temporary, path).map_err(|error| {
+        garth::Error::Protocol(format!("persist outbound queue {}: {error}", path.display()))
+    })?;
+    Ok(result)
+}
 
 #[derive(Clone)]
 pub(crate) struct InksonOutboundStore {
     #[cfg(not(target_arch = "wasm32"))]
-    inner: garth::FileStore,
+    path: std::path::PathBuf,
     #[cfg(target_arch = "wasm32")]
     storage_key: String,
 }
 
+/// Durable queues are split by what has to happen after the Station answers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OutboundLane {
+    /// Ordinary producer Events. A commit ends the item's life.
     Standard,
-    MlsDurablePostAccept,
-    MlsHostOnly,
+    /// `ak.mls.commit` submissions. The commit Event and its Welcome
+    /// deliveries are one atomic submission, and an accepted commit still owes
+    /// the local install of the staged group state.
+    MlsCommit,
 }
 
 impl OutboundLane {
     fn suffix(self) -> &'static str {
         match self {
             Self::Standard => "standard",
-            Self::MlsDurablePostAccept => "mls-durable-post-accept",
-            Self::MlsHostOnly => "mls-host-only",
+            Self::MlsCommit => "mls-commit",
         }
     }
 }
@@ -141,24 +194,11 @@ impl InksonOutboundStore {
         let scope = outbound_storage_scope(authority, lane)?;
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let path = crate::state::app_data_dir()
-                .join("outbound")
-                .join(format!("{scope}.json"));
-            let stores = NATIVE_OUTBOUND_STORES
-                .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
-            let mut stores = stores.lock().map_err(|error| {
-                arkret_sdk::Error::Protocol(format!("native outbound store registry: {error}"))
-            })?;
-            let inner = match stores.get(&path) {
-                Some(store) => store.clone(),
-                None => {
-                    let store = garth::FileStore::open(&path)
-                        .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
-                    stores.insert(path, store.clone());
-                    store
-                }
-            };
-            Ok(Self { inner })
+            Ok(Self {
+                path: crate::state::app_data_dir()
+                    .join("outbound")
+                    .join(format!("{scope}.json")),
+            })
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -179,7 +219,10 @@ impl OutboundQueueStore for InksonOutboundStore {
     {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.inner.mutate_outbound(mutation)
+            Box::pin(async move {
+                let _write_guard = outbound_write_gate().lock().await;
+                mutate_queue_in_file(&self.path, mutation).await
+            })
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -247,64 +290,48 @@ mod tests {
 
     const FIXTURE_REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
-    /// One valid queued write. Kept deliberately ordinary: these tests are
-    /// about the storage adapter, so the record only has to be something
-    /// `SendQueue::from_snapshot` will accept back.
-    fn fixture_record() -> garth::QueuedRecord {
+    /// One valid queued submission. Kept deliberately ordinary: these tests are
+    /// about the storage adapter, so the submission only has to be something
+    /// `SendQueue::enqueue` accepts and `from_snapshot` reads back.
+    fn fixture_submission(nth: usize) -> garth::QueuedSubmission {
         let actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
         ));
-        let event: arkret_sdk::Event = serde_json::from_value(serde_json::json!({
-            "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            "kind": "ak.presence",
-            "realm_id": FIXTURE_REALM,
-            "scope_ref": {"kind": "realm", "realm_id": FIXTURE_REALM},
-            "actor_id": actor_id,
-            "actor_seq": 1,
-            "created_at": "2026-05-19T00:00:00.000Z",
-            "hlc": "01970e589d21-0001-a13f9c2e",
-            "prev_refs": [],
-            "payload": {"actor_id": actor_id, "state": "online"},
-            "proofs": []
-        }))
-        .unwrap();
-        garth::QueuedRecord::SdkEvent(Box::new(
-            garth::QueuedSdkEvent::unauthored(
-                garth::QueuedEventIntent::new(
-                    arkret_event_draft::EventIntent::from_authored(&event),
-                    arkret_sdk::DigestSuite::Sha256,
-                ),
-                "local-operation".to_owned(),
-                "attempt".to_owned(),
-                None,
-                garth::AuthoringGeneration {
-                    authority_model: garth::AuthoringAuthorityModel::AcceptedDevice,
-                    authority_principal_id: arkret_sdk::DidCoreId::new(
-                        "ak:did_core:web:alice.example".to_owned(),
-                    )
-                    .unwrap(),
-                    generation_ref: "1-QmCurrent".to_owned(),
+        let payload = arkret_sdk::MessageCreatePayload::with_content(
+            arkret_sdk::StrandId::new("ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df")
+                .unwrap(),
+            "discussion",
+            arkret_sdk::ContentBlock::text(format!("queued fixture {nth}")),
+        );
+        let event =
+            arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MessageCreate>::new(
+                arkret_sdk::ScopeRef::Realm {
+                    realm_id: fixture::realm_id(FIXTURE_REALM),
                 },
-                None,
+                actor_id,
+                payload,
             )
-            .unwrap(),
+            .unwrap()
+            .author_with_digest_suite(
+                chrono::DateTime::from_timestamp_millis(
+                    1_760_000_000_000 + i64::try_from(nth).unwrap_or(0),
+                )
+                .unwrap(),
+                arkret_sdk::DigestSuite::Sha256,
+            )
+            .unwrap()
+            .into_event();
+        garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
+            arkret_wire::EventCommitSubmission { event },
         ))
+        .expect("fixture submission is structurally valid")
     }
 
     fn enqueue_items(queue: &mut garth::SendQueue, count: usize) {
-        let realm = fixture::realm_id(FIXTURE_REALM);
         let now = chrono::Utc::now();
         for index in 0..count {
-            queue
-                .enqueue(
-                    Some(format!("txn-{index}")),
-                    realm.clone(),
-                    fixture_record(),
-                    Vec::new(),
-                    now,
-                )
-                .unwrap();
+            queue.enqueue(fixture_submission(index), now).unwrap();
         }
     }
 
@@ -358,13 +385,13 @@ mod tests {
 
         let enqueued = mutate_queue_in_store(&store, key, |queue| {
             enqueue_items(queue, 3);
-            Ok(queue.len())
+            Ok(queue.items().len())
         })
         .await
         .unwrap();
         assert_eq!(enqueued, 3);
 
-        let reloaded = mutate_queue_in_store(&store, key, |queue| Ok(queue.len()))
+        let reloaded = mutate_queue_in_store(&store, key, |queue| Ok(queue.items().len()))
             .await
             .unwrap();
         assert_eq!(reloaded, 3, "a persisted queue must reload with every item");
@@ -394,18 +421,17 @@ mod tests {
         );
 
         let (items, first, last) = mutate_queue_in_store(&store, key, |queue| {
-            let items = queue.active_items();
+            let items = queue.items();
             Ok((
-                queue.len(),
-                items.first().unwrap().transaction_id.clone(),
-                items.last().unwrap().transaction_id.clone(),
+                items.len(),
+                items.first().unwrap().event_id().clone(),
+                items.last().unwrap().event_id().clone(),
             ))
         })
         .await
         .unwrap();
         assert_eq!(items, 2048);
-        assert_eq!(first, "txn-0");
-        assert_eq!(last, "txn-2047");
+        assert_ne!(first, last, "every queued item keeps its own Event identity");
     }
 
     #[tokio::test]
@@ -433,11 +459,37 @@ mod tests {
         let item_count = mutate_queue_in_store(
             &RefusingStore,
             "inkson.outbound.v1::nsA.standard",
-            |queue| Ok(queue.len()),
+            |queue| Ok(queue.items().len()),
         )
         .await
         .expect("an unchanged empty queue must not attempt durable persistence");
         assert_eq!(item_count, 0);
+    }
+
+    #[tokio::test]
+    async fn a_native_queue_file_is_replaced_atomically_and_reloads() {
+        let directory = std::env::temp_dir().join(format!(
+            "inkson-outbound-{}",
+            arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms())
+        ));
+        let path = directory.join("standard.json");
+
+        mutate_queue_in_file(&path, |queue| {
+            enqueue_items(queue, 4);
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert!(
+            !path.with_extension("json.tmp").exists(),
+            "the staged file must be renamed, not left behind"
+        );
+
+        let reloaded = mutate_queue_in_file(&path, |queue| Ok(queue.items().len()))
+            .await
+            .unwrap();
+        assert_eq!(reloaded, 4);
+        std::fs::remove_dir_all(&directory).ok();
     }
 
     #[test]
@@ -467,7 +519,7 @@ mod tests {
         );
         assert_ne!(
             outbound_storage_scope(&authority, OutboundLane::Standard).unwrap(),
-            outbound_storage_scope(&authority, OutboundLane::MlsDurablePostAccept).unwrap()
+            outbound_storage_scope(&authority, OutboundLane::MlsCommit).unwrap()
         );
     }
 }

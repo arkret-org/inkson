@@ -323,67 +323,6 @@ fn member_handle_cache_records_fresh_negative_lookup() {
     assert!(entry.primary_handle.is_none());
 }
 
-/// `authority_binding.witness_attestations[]` is a closed
-/// `{witness_id, proof}` object, and the proof commits to the SDK's canonical
-/// witness projection — a separate object family from the manifest signature.
-/// Nothing here is assembled locally.
-#[test]
-fn witness_attestations_are_built_from_the_sdk_witness_projection() {
-    // `realm-state-snapshot-schema.md` section 3: items are reducer cells, never rendered
-    // objects. The Realm genesis log is a sequenced security cell.
-    let items = vec![
-        arkret_sdk::RealmStateSnapshotMaterializedItem::new(
-            arkret_sdk::CellRef::new("ak:cell:ak.component.realm.create.v1:null").unwrap(),
-            arkret_sdk::CanonicalCellState::SequencedState(arkret_sdk::CanonicalSequencedState {
-                revision_event_id: snapshot_event_id("genesis"),
-                value: json!([]),
-            }),
-        )
-        .unwrap(),
-    ];
-    let (mut manifest, _chunks) = realm_state_snapshot_manifest_for_items(items);
-    // A non-witness-quorum manifest carries no attestations at all.
-    manifest.validate_witness_attestation_shape().unwrap();
-
-    manifest.authority_binding.authority_kind =
-        arkret_sdk::RealmStateSnapshotAuthorityKind::WitnessQuorum;
-    let attestations = ["did:web:witness-a.example", "did:web:witness-b.example"]
-        .into_iter()
-        .map(|did| {
-            let witness_id = crate::mls_api_helpers::principal_core_id(did).unwrap();
-            let digest = manifest.witness_attestation_digest(&witness_id).unwrap();
-            arkret_sdk::realm_state_snapshot::RealmStateSnapshotWitnessAttestation {
-                witness_id,
-                proof: arkret_sdk::DetachedJwsProof::ed25519(
-                    arkret_sdk::DidUrl::new(format!("{did}#witness")).unwrap(),
-                    digest,
-                    manifest.created_at,
-                    "header..signature".to_owned(),
-                ),
-            }
-        })
-        .collect();
-    manifest.authority_binding.witness_attestations = attestations;
-    manifest.validate_witness_attestation_shape().unwrap();
-
-    // The witness transcript excludes every signature, so it is not the
-    // manifest signing payload.
-    assert_ne!(
-        manifest.authority_binding.witness_attestations[0]
-            .proof
-            .payload_digest,
-        manifest.expected_signature_digest().unwrap()
-    );
-
-    // Order is a schema condition, never normalized away.
-    manifest.authority_binding.witness_attestations.reverse();
-    let error = manifest.validate_witness_attestation_shape().unwrap_err();
-    assert_eq!(
-        error.code,
-        arkret_sdk::RealmStateSnapshotValidationCode::SchemaViolation
-    );
-}
-
 #[test]
 fn retain_realm_tree_projections_prunes_per_realm_caches() {
     let path = temp_state_path("retain-prunes");
@@ -394,7 +333,7 @@ fn retain_realm_tree_projections_prunes_per_realm_caches() {
     // Seed three realms with overlapping per-realm caches.
     for id in [KEEP, DROP_A, DROP_B] {
         store.save_realm_tree_projection(id, serde_json::json!({"name": id}));
-        store.set_realm_seal_view(id, LocalSealView::default());
+        store.record_stream_head(realm_stream_head(id, 1));
         store.set_realm_muted(id, true);
     }
     // Independently keyed records that should follow the prune.
@@ -427,8 +366,23 @@ fn retain_realm_tree_projections_prunes_per_realm_caches() {
     let state = store.load();
     assert_eq!(state.realm_tree_projections.len(), 1);
     assert!(state.realm_tree_projections.contains_key(KEEP));
-    assert!(!state.seal_views.contains_key(DROP_A));
-    assert!(state.seal_views.contains_key(KEEP));
+    let surviving_streams: Vec<&arkret_wire::CommitStreamRef> = state
+        .stream_cursors
+        .values()
+        .map(|head| &head.stream_ref)
+        .collect();
+    assert!(
+        !surviving_streams
+            .iter()
+            .any(|stream_ref| stream_ref.realm_id().as_str() == DROP_A),
+        "pruned realm stream cursor should be gone: {surviving_streams:?}",
+    );
+    assert!(
+        surviving_streams
+            .iter()
+            .any(|stream_ref| stream_ref.realm_id().as_str() == KEEP),
+        "kept realm stream cursor should survive: {surviving_streams:?}",
+    );
     assert!(!state.realm_watch_levels.contains_key(DROP_B));
     assert!(state.realm_watch_levels.contains_key(KEEP));
     let kept_marker_keys: Vec<&str> = state.read_cursors.keys().map(String::as_str).collect();
@@ -459,7 +413,6 @@ fn forget_realm_tree_projection_clears_a_single_space() {
     let mut store = LocalStateStore::with_path(path);
     for id in ["ak:space:gone", "ak:space:stay"] {
         store.save_realm_tree_projection(id, serde_json::json!({}));
-        store.set_realm_seal_view(id, LocalSealView::default());
     }
 
     store.forget_realm_tree_projection("ak:space:gone");

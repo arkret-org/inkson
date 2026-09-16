@@ -10,14 +10,30 @@ use std::collections::{BTreeMap, BTreeSet};
 use arkret_models_collaboration::governance::invite_addressing::InviteDeliveryEntry;
 #[cfg(test)]
 use arkret_models_collaboration::governance::operation_wire::Invite;
-use arkret_sdk::{
-    MemberRosterEntry, MembershipState, Notification, NotificationData, NotificationDelta,
-    NotificationDeltaAction, NotificationIdentity, NotificationKind, NotificationState, RealmId,
-    RealmSyncEntry,
-};
+use arkret_sdk::sync::{NotificationDelta, NotificationDeltaAction, RealmSyncEntry};
+use arkret_sdk::{MembershipState, Notification, NotificationKind, RealmId};
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::state::{StoredInviteNotification, StoredNotification};
+
+/// Host view of one member-roster row of a Realm sync entry.
+///
+/// The wire roster is carried as an opaque projection value, so this is the
+/// closed shape the client is willing to read out of it. Anything that does not
+/// parse leaves the Realm out of the joined set rather than granting membership
+/// the client cannot prove.
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct MemberRosterEntry {
+    pub actor_id: arkret_sdk::ActorId,
+    pub membership: MembershipState,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct MemberRosterView {
+    #[serde(default)]
+    entries: Vec<MemberRosterEntry>,
+}
 
 /// Realms whose typed roster records this actor's membership as exactly
 /// `join`.
@@ -104,12 +120,15 @@ impl JoinedRealmIds {
 }
 
 pub(crate) fn actor_is_joined_member(entry: &RealmSyncEntry, actor: &arkret_sdk::ActorId) -> bool {
-    entry.member_roster.as_ref().is_some_and(|roster| {
-        roster
-            .entries
-            .iter()
-            .any(|member| member.actor_id == *actor && member.membership == MembershipState::Join)
-    })
+    entry
+        .member_roster
+        .as_ref()
+        .and_then(|roster| serde_json::from_value::<MemberRosterView>(roster.clone()).ok())
+        .is_some_and(|roster| {
+            roster.entries.iter().any(|member| {
+                member.actor_id == *actor && member.membership == MembershipState::Join
+            })
+        })
 }
 
 pub(crate) fn notification_kind_wire(kind: &NotificationKind) -> &'static str {
@@ -170,22 +189,39 @@ pub(crate) fn apply_notification_projection(
 ) {
     for delta in deltas {
         let id = delta.id.as_str();
-        match (delta.action, delta.data.as_ref()) {
-            (
-                NotificationDeltaAction::Upsert,
-                Some(NotificationData::AgentRuntimeApproval(data)),
-            ) => {
-                let NotificationIdentity::AgentApproval(notification_id) = &delta.id else {
+        match delta.action {
+            NotificationDeltaAction::Upsert => {
+                // One closed object covers both notification branches: an
+                // ordinary source-Event projection and the account-artifact row
+                // that announces an open Agent runtime-key approval. The wire
+                // delta carries no second typed payload to reconcile.
+                let notification = match serde_json::from_value::<Notification>(delta.data.clone())
+                {
+                    Ok(notification) => notification,
+                    Err(error) => {
+                        tracing::error!(
+                            notification_id = id,
+                            %error,
+                            "discarding a notification delta that is not a closed Notification"
+                        );
+                        continue;
+                    }
+                };
+                if notification.id.as_str() != id {
                     tracing::error!(
                         notification_id = id,
-                        "Agent approval notification has a projection identity"
+                        "notification delta id does not address its own payload"
                     );
                     continue;
-                };
-                let replacement = StoredNotification::AgentRuntimeApproval {
-                    id: notification_id.clone(),
-                    data: data.clone(),
-                };
+                }
+                if notification.actor_id != *recipient_actor {
+                    tracing::error!(
+                        notification_id = id,
+                        "notification is addressed to another actor"
+                    );
+                    continue;
+                }
+                let replacement = StoredNotification::Event { notification };
                 if let Some(existing) = current
                     .iter_mut()
                     .find(|candidate| candidate.notification_id() == id)
@@ -195,48 +231,8 @@ pub(crate) fn apply_notification_projection(
                     current.push(replacement);
                 }
             }
-            (NotificationDeltaAction::Upsert, Some(NotificationData::OrdinaryProjection(data))) => {
-                let (Some(recipient_account_id), NotificationIdentity::Projection(delivered_id)) =
-                    (recipient_actor.as_account_id(), &delta.id)
-                else {
-                    tracing::error!(
-                        notification_id = id,
-                        "ordinary notification is not bound to an account projection id"
-                    );
-                    continue;
-                };
-                let notification = match data.clone().into_notification(
-                    recipient_account_id,
-                    delivered_id.clone(),
-                    NotificationState::Unread,
-                ) {
-                    Ok(notification) => StoredNotification::Event { notification },
-                    Err(error) => {
-                        tracing::error!(
-                            notification_id = id,
-                            %error,
-                            "discarding ordinary notification with an invalid recipient binding"
-                        );
-                        continue;
-                    }
-                };
-                if let Some(existing) = current
-                    .iter_mut()
-                    .find(|candidate| candidate.notification_id() == id)
-                {
-                    *existing = notification;
-                } else {
-                    current.push(notification);
-                }
-            }
-            (NotificationDeltaAction::Remove, _) => {
+            NotificationDeltaAction::Remove => {
                 current.retain(|candidate| candidate.notification_id() != id);
-            }
-            _ => {
-                tracing::error!(
-                    notification_id = id,
-                    "SDK admitted an invalid notification delta branch"
-                );
             }
         }
     }

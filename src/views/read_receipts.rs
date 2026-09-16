@@ -134,20 +134,20 @@ impl ReadReceiptHub {
     /// here rather than rendered.
     pub fn apply_authorized(
         &mut self,
-        plaintext: &garth::SignalPlaintext,
+        signal: &crate::runtime::projection::AdmittedSignal,
         policy: &arkret_sdk::ReadReceiptPolicy,
         local_actor_id: &str,
     ) -> bool {
-        // The typed closed profile, selected by `kind` in the SDK dispatch. No
+        // The typed closed profile the receiver already selected. No
         // field-name parse: `signal.md` §1.1 forbids it, and a receipt that did
         // not validate against `ak.schema.read_receipt.v1` never gets here.
-        let Some(receipt) = plaintext.read_receipt() else {
+        let arkret_sdk::SignalPlaintext::ReadReceipt(receipt) = &signal.payload else {
             return false;
         };
         if !read_receipt_is_displayable(receipt, policy, local_actor_id) {
             return false;
         }
-        let Some((key, message_id)) = strand_read_position(plaintext, receipt) else {
+        let Some((key, message_id)) = strand_read_position(signal, receipt) else {
             return false;
         };
         self.projection
@@ -202,7 +202,7 @@ fn read_receipt_is_displayable(
 /// The Strand read position one decrypted receipt names, or `None` when it does
 /// not name one.
 fn strand_read_position(
-    plaintext: &garth::SignalPlaintext,
+    signal: &crate::runtime::projection::AdmittedSignal,
     receipt: &arkret_sdk::ReadReceipt,
 ) -> Option<(ReadPositionKey, String)> {
     if receipt.read_scope.kind != arkret_sdk::ReadScopeKind::Strand {
@@ -220,7 +220,7 @@ fn strand_read_position(
     // this view rewrite an id prefix by hand.
     Some((
         ReadPositionKey {
-            realm_id: plaintext.scope_ref.realm_id().as_str().to_owned(),
+            realm_id: signal.scope_ref().realm_id().as_str().to_owned(),
             scope_ref: scope_ref.to_owned(),
             actor_id: receipt.actor_id.signing_principal_id().as_str().to_owned(),
         },
@@ -350,37 +350,32 @@ mod tests {
         .expect("a minimal read receipt is valid")
     }
 
-    fn receipt(body: serde_json::Value) -> garth::SignalPlaintext {
+    fn receipt(body: serde_json::Value) -> crate::runtime::projection::AdmittedSignal {
         let serde_json::Value::Object(body) = body else {
             unreachable!("test body must be an object");
         };
         let at = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
-        garth::SignalPlaintext {
+        crate::runtime::projection::AdmittedSignal {
+            domain: arkret_sdk::SignalSequenceDomain {
+                sender_actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:a")
+                    .unwrap(),
+                endpoint: arkret_sdk::SignalSequenceEndpoint::AccountDevice {
+                    device_id: arkret_sdk::DeviceId::new(
+                        "ak:device:01904100-0000-7000-8000-000000000002",
+                    )
+                    .unwrap(),
+                },
+                scope_ref: arkret_sdk::ScopeRef::Realm {
+                    realm_id: arkret_sdk::RealmId::new(
+                        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                    )
+                    .unwrap(),
+                },
+            },
             // The parsed profile is what the routing reads, so it has to carry
             // the same `read_scope` the test body varies rather than a fixed one.
-            payload: arkret_models_collaboration::signal_plaintext::SignalPlaintext::ReadReceipt(
-                typed_receipt(&body),
-            ),
-            kind: "ak.receipt.read".to_owned(),
-            actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:a").unwrap(),
-            payload_sequence: 3,
-            ttl_ms: None,
-            sent_at: at,
+            payload: arkret_sdk::SignalPlaintext::ReadReceipt(typed_receipt(&body)),
             expires_at: at + chrono::Duration::seconds(30),
-            scope_ref: arkret_sdk::ScopeRef::Realm {
-                realm_id: arkret_sdk::RealmId::new(
-                    "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                )
-                .unwrap(),
-            },
-            seal_ref: arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64)))
-                .unwrap(),
-            sender_endpoint: arkret_sdk::SignalSequenceEndpoint::AccountDevice {
-                device_id: arkret_sdk::DeviceId::new(
-                    "ak:device:01904100-0000-7000-8000-000000000002",
-                )
-                .unwrap(),
-            },
         }
     }
 

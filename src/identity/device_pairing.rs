@@ -360,7 +360,10 @@ pub async fn verify_authorized_pairing_event_for_authority(
     if event.realm_id != pcr {
         anyhow::bail!("authorized pairing Event is outside the principal control Realm");
     }
-    crate::event_submit::require_server_sealed_event(http, &event).await?;
+    // Finality is the authority-signed RealmCommit that carries this exact
+    // Event in the PCR's own stream; there is no separate proposal or Seal
+    // readback to consult.
+    crate::event_submit::require_committed_event_with(http, &event).await?;
     let payload: arkret_sdk::DeviceAuthorizePayload =
         serde_json::from_value(serde_json::to_value(&event.payload)?)?;
     if payload.device_id != attestation.device_id

@@ -27,7 +27,7 @@ pub(super) fn use_direct_authority(
         spawn(async move {
             let state = crate::app::runtime_adapter::state_store_handle(state_store);
             let result=crate::transport::auth::with_authed_sdk_client(&base_url,credential,|http|async move {
-                let outcome=http.direct_conversation_resolve(&arkret_sdk::direct_conversation_ops::DirectConversationResolveRequestBody{peer:peer.clone()}).await?;
+                let outcome=http.direct_conversation_resolve(&arkret_sdk::direct_conversation::DirectConversationResolveRequestBody{peer:peer.clone()}).await?;
                 anyhow::ensure!(outcome.coordinates().is_none_or(|coordinates|coordinates.realm_id.as_str()==realm_id),"Direct Conversation query returned another Realm");
                 crate::mls::direct_binding::install_resolved_message_context(&http,&state,&authority,epoch,query_sequence,peer,&outcome).await
             }).await;

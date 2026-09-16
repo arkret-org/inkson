@@ -1,4 +1,14 @@
-//! §5.6 self-preservation and forced-epoch-advance MLS commit logic.
+//! Self-preservation and forced-epoch-advance MLS commit construction.
+//!
+//! Every builder here stages a commit against the device's installed group and
+//! returns the wire `MlsCommitEnvelope` together with the encrypted staged
+//! state. The commit is not merged while authoring: OpenMLS keeps it pending,
+//! and it becomes this device's epoch only when
+//! `ArkretMlsGroup::install_accepted_commit` merges it after the governance
+//! Station has committed the `ak.mls.commit` Event into the scope's own stream.
+//! Persisting the staged state is therefore mandatory, not optional: a restart
+//! between authoring and acceptance must still be able to merge the accepted
+//! commit.
 
 use arkret_sdk::{AccountId, DeviceId};
 
@@ -8,41 +18,93 @@ use super::{
 };
 use crate::secure_key_store::SecureKeyStore;
 
-fn current_governance_binding_predecessor(
-    group: &arkret_sdk::ArkretMlsGroup,
-) -> Result<arkret_sdk::MlsGovernanceBindingPayload, MlsRuntimeError> {
-    group
-        .current_governance_binding()
-        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?
-        .ok_or_else(|| {
-            MlsRuntimeError::Commit(
-                "MLS commit requires the current governance binding predecessor".to_owned(),
-            )
-        })
+/// The staged result of one authored MLS transition.
+pub struct StagedMlsCommit {
+    /// The wire Commit the `ak.mls.commit` Event carries.
+    pub envelope: arkret_sdk::MlsCommitEnvelope,
+    /// The encrypted group state holding the pending commit, persisted before
+    /// submission so acceptance can always be merged.
+    pub staged_checkpoint: crate::mls::persistence::MlsLocalCheckpointEnvelope,
 }
 
-/// Operator-forced MLS epoch rotation via a real
-/// `self_update_commit`; the spec defines no `POST /_arkret/self/mls/rotate`
-/// HTTP endpoint. Restores the Realm group
-/// from the local snapshot, performs a self-update commit, and returns
-/// the commit envelope plus the encrypted POST-commit snapshot. The
-/// caller MUST submit the matching `ak.mls.commit` event and persist the
-/// returned snapshot ONLY after the server accepts it (persist-on-accept,
-/// same contract as the kanban encrypted-write path).
+fn staged_checkpoint(
+    group: &arkret_sdk::ArkretMlsGroup,
+    realm_id: &str,
+    secret: &str,
+) -> Result<crate::mls::persistence::MlsLocalCheckpointEnvelope, MlsRuntimeError> {
+    let post_state = group
+        .export_state_record()
+        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
+    let serialized_state = serde_json::to_vec(&post_state)
+        .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
+    let mut salt = [0_u8; 16];
+    getrandom::fill(&mut salt)
+        .map_err(|err| MlsRuntimeError::Commit(format!("MLS checkpoint salt: {err}")))?;
+    Ok(crate::mls::persistence::encrypt_state(
+        realm_id,
+        &post_state.group_id,
+        post_state.epoch,
+        &serialized_state,
+        secret,
+        &salt,
+    ))
+}
+
+fn restore_for_commit(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    effective_scope: &arkret_sdk::ScopeRef,
+    realm_id: &str,
+    authority: &AccountId,
+    device_id: &DeviceId,
+) -> Result<(arkret_sdk::ArkretMlsGroup, String), MlsRuntimeError> {
+    let snapshot = state_store
+        .mls_checkpoint_for_scope(effective_scope)
+        .ok_or(MlsRuntimeError::MissingWelcome)?;
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
+        .map_err(MlsRuntimeError::DeviceSecret)?;
+    // Bind the commit to the accepted epoch floor so a stale or rolled-back
+    // local checkpoint cannot silently fork the group from an outdated epoch.
+    let epoch_floor = super::accepted_mls_epoch_floor(state_store, realm_id);
+    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
+        .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
+    Ok((group, secret))
+}
+
+fn scope_for(
+    realm_id: &str,
+    circle_id: Option<&str>,
+    sidecar_id: Option<&arkret_sdk::SidecarId>,
+) -> Result<arkret_sdk::ScopeRef, MlsRuntimeError> {
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|error| MlsRuntimeError::Commit(format!("invalid Realm id: {error}")))?;
+    if let Some(sidecar_id) = sidecar_id {
+        return Ok(arkret_sdk::ScopeRef::Sidecar {
+            realm_id: realm,
+            sidecar_id: sidecar_id.clone(),
+        });
+    }
+    match circle_id.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(circle_id) => Ok(arkret_sdk::ScopeRef::Circle {
+            realm_id: realm,
+            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
+                .map_err(|error| MlsRuntimeError::Commit(format!("invalid Circle id: {error}")))?,
+        }),
+        None => Ok(arkret_sdk::ScopeRef::Realm { realm_id: realm }),
+    }
+}
+
+/// Operator-forced MLS epoch rotation through a real `self_update_commit`.
+///
+/// The caller MUST submit the matching `ak.mls.commit` and install the staged
+/// state only after the Station accepts it.
 pub fn force_epoch_rotation_commit(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     authority: &AccountId,
     device_id: &DeviceId,
-) -> Result<
-    (
-        arkret_sdk::MlsCommitEnvelope,
-        crate::mls::persistence::MlsLocalCheckpointEnvelope,
-        arkret_sdk::MlsGovernanceBindingPayload,
-    ),
-    MlsRuntimeError,
-> {
+) -> Result<StagedMlsCommit, MlsRuntimeError> {
     force_epoch_rotation_commit_for_effective_scope(
         state_store,
         secure_store,
@@ -60,151 +122,85 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     circle_id: Option<&str>,
     authority: &AccountId,
     device_id: &DeviceId,
-) -> Result<
-    (
-        arkret_sdk::MlsCommitEnvelope,
-        crate::mls::persistence::MlsLocalCheckpointEnvelope,
-        arkret_sdk::MlsGovernanceBindingPayload,
-    ),
-    MlsRuntimeError,
-> {
-    let circle = circle_id
-        .map(str::trim)
-        .filter(|circle_id| !circle_id.is_empty());
-    let snapshot = state_store
-        .mls_checkpoint_for_effective_scope(realm_id, circle)
-        .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
-        .map_err(MlsRuntimeError::DeviceSecret)?;
-    // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
-    // local snapshot can't silently fork the group from an outdated epoch.
-    let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
-    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
-        .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
-    let previous_governance_binding = current_governance_binding_predecessor(&group)?;
-    let proof_request = crate::mls::governance_proof::frontier_request(
+) -> Result<StagedMlsCommit, MlsRuntimeError> {
+    let effective_scope = scope_for(realm_id, circle_id, None)?;
+    let (mut group, secret) = restore_for_commit(
         state_store,
+        secure_store,
+        &effective_scope,
         realm_id,
-        circle,
-        group.group_id(),
-        group.epoch(),
-        group.epoch().saturating_add(1),
-        group
-            .security_frontier_leaves()
-            .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?,
-    )
-    .map_err(MlsRuntimeError::Commit)?;
-    let governance_binding =
-        crate::mls::governance_proof::cached_frontier_binding(state_store, &proof_request)
-            .map_err(MlsRuntimeError::Commit)?;
-    let commit_envelope = group
-        .update_governance_binding(&governance_binding)
+        authority,
+        device_id,
+    )?;
+    let envelope = group
+        .self_update_commit()
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
-    let post_state = group
-        .export_state_record()
-        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
-    let serialized_state = serde_json::to_vec(&post_state)
-        .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
-    let mut salt = [0u8; 16];
-    getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
-    let new_envelope = crate::mls::persistence::encrypt_state(
-        realm_id,
-        &post_state.group_id,
-        post_state.epoch,
-        &serialized_state,
-        &secret,
-        &salt,
-    );
-    Ok((commit_envelope, new_envelope, previous_governance_binding))
+    let staged_checkpoint = staged_checkpoint(&group, realm_id, &secret)?;
+    Ok(StagedMlsCommit {
+        envelope,
+        staged_checkpoint,
+    })
 }
 
-pub(crate) fn build_mls_remove_leaves_commit_for_effective_scope(
+/// Stage the removal of every leaf belonging to `targets`.
+///
+/// The removal set is decided locally from the group's own verified leaf
+/// bindings: the client removes every leaf of every target actor, and the SDK
+/// refuses a target with no leaf, so a partial rotation cannot be committed.
+pub(crate) fn build_mls_remove_actors_commit_for_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    circle_id: Option<&str>,
+    effective_scope: &arkret_sdk::ScopeRef,
     authority: &AccountId,
     device_id: &DeviceId,
     frozen: &crate::circle_mls::MembershipRemovalSnapshot,
-    outcome: &arkret_sdk::MlsMembershipRemovalOutcome,
-) -> Result<
-    (
-        arkret_sdk::MlsRemoveMemberResult,
-        crate::mls::persistence::MlsLocalCheckpointEnvelope,
-        arkret_sdk::MlsGovernanceBindingPayload,
-    ),
-    MlsRuntimeError,
-> {
+) -> Result<(arkret_sdk::MlsRemoveMemberResult, StagedMlsCommit), MlsRuntimeError> {
     frozen
         .ensure_current(state_store)
         .map_err(MlsRuntimeError::Commit)?;
-    outcome
-        .validate_for_request(&frozen.request, authority, &frozen.local_mls_leaves)
-        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
-    let effective_scope = frozen.request.effective_scope.clone();
-    if effective_scope.realm_id_opt().map(|id| id.as_str()) != Some(realm_id)
-        || match &effective_scope {
-            arkret_sdk::ScopeRef::Realm { .. } => circle_id.is_some(),
-            arkret_sdk::ScopeRef::Circle { circle_id: id, .. } => circle_id != Some(id.as_str()),
-            _ => true,
-        }
-    {
+    if &frozen.effective_scope != effective_scope {
         return Err(MlsRuntimeError::Commit(
             "MLS removal scope changed".to_owned(),
         ));
     }
-    let snapshot = state_store
-        .mls_checkpoint_for_scope(&effective_scope)
-        .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
-        .map_err(MlsRuntimeError::DeviceSecret)?;
-    // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
-    // local snapshot can't silently fork the group from an outdated epoch.
-    let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
-    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
-        .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
-    let previous_governance_binding = current_governance_binding_predecessor(&group)?;
-    let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
+    let realm_id = effective_scope
+        .realm_id_opt()
+        .ok_or_else(|| MlsRuntimeError::Commit("MLS removal has no Realm scope".to_owned()))?
+        .as_str()
+        .to_owned();
+    let (mut group, secret) = restore_for_commit(
         state_store,
-        &effective_scope,
-        group.group_id().as_str(),
+        secure_store,
+        effective_scope,
+        &realm_id,
+        authority,
+        device_id,
+    )?;
+    if group.group_id() != frozen.mls_group_id || group.epoch() != frozen.epoch {
+        return Err(MlsRuntimeError::Commit(
+            "MLS removal base group or epoch changed".to_owned(),
+        ));
+    }
+    let governance_binding = crate::mls::governance_proof::binding_for_transition(
+        state_store,
+        effective_scope,
+        &group.group_id(),
         group.epoch(),
         group.epoch().saturating_add(1),
     )
     .map_err(MlsRuntimeError::Commit)?;
-    if group.group_id().as_str() != frozen.request.mls_group_id.as_str()
-        || group.epoch() != frozen.request.epoch
-        || group
-            .security_frontier_leaves()
-            .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?
-            != frozen.local_mls_leaves
-    {
-        return Err(MlsRuntimeError::Commit(
-            "MLS removal local leaves changed".to_owned(),
-        ));
-    }
     let remove = group
-        .remove_members_by_leaf_indices_with_governance_binding(
-            &outcome.remove_leaf_indices,
-            &governance_binding,
-        )
+        .remove_members_by_actor_with_governance_binding(&frozen.targets, &governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
-    let post_state = group
-        .export_state_record()
-        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
-    let serialized_state = serde_json::to_vec(&post_state)
-        .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
-    let mut salt = [0u8; 16];
-    getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
-    let new_envelope = crate::mls::persistence::encrypt_state(
-        realm_id,
-        &post_state.group_id,
-        post_state.epoch,
-        &serialized_state,
-        &secret,
-        &salt,
-    );
-    Ok((remove, new_envelope, previous_governance_binding))
+    let envelope = remove.commit.clone();
+    let staged_checkpoint = staged_checkpoint(&group, &realm_id, &secret)?;
+    Ok((
+        remove,
+        StagedMlsCommit {
+            envelope,
+            staged_checkpoint,
+        },
+    ))
 }
 
 pub(crate) fn build_add_member_commit_for_effective_scope(
@@ -216,19 +212,11 @@ pub(crate) fn build_add_member_commit_for_effective_scope(
     device_id: &DeviceId,
     member_key_package: &arkret_sdk::MlsKeyPackageRecord,
     member_authority_hint: &crate::mls::governance_proof::MlsLeafAuthorityHint,
-) -> Result<
-    (
-        arkret_sdk::MlsAddMemberResult,
-        crate::mls::persistence::MlsLocalCheckpointEnvelope,
-        arkret_sdk::MlsGovernanceBindingPayload,
-    ),
-    MlsRuntimeError,
-> {
-    build_add_member_commit_for_effective_scope_with_binding(
+) -> Result<(arkret_sdk::MlsAddMemberResult, StagedMlsCommit), MlsRuntimeError> {
+    build_add_member_commit_for_scope(
         state_store,
         secure_store,
-        realm_id,
-        circle_id,
+        &scope_for(realm_id, circle_id, None)?,
         authority,
         device_id,
         member_key_package,
@@ -237,72 +225,48 @@ pub(crate) fn build_add_member_commit_for_effective_scope(
     )
 }
 
+/// Stage the addition of one claimed KeyPackage endpoint.
+///
+/// `member_authority_hints` carry the checked claim evidence for the leaf this
+/// Add occupies; without them the post-transition attribution cannot be
+/// installed and the commit fails closed rather than shipping a group whose
+/// roster reads are refused.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_add_member_commit_for_effective_scope_with_binding(
+pub(crate) fn build_add_member_commit_for_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    circle_id: Option<&str>,
+    effective_scope: &arkret_sdk::ScopeRef,
     authority: &AccountId,
     device_id: &DeviceId,
     member_key_package: &arkret_sdk::MlsKeyPackageRecord,
     member_authority_hints: &[crate::mls::governance_proof::MlsLeafAuthorityHint],
-    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
-) -> Result<
-    (
-        arkret_sdk::MlsAddMemberResult,
-        crate::mls::persistence::MlsLocalCheckpointEnvelope,
-        arkret_sdk::MlsGovernanceBindingPayload,
-    ),
-    MlsRuntimeError,
-> {
-    let circle = circle_id
-        .map(str::trim)
-        .filter(|circle_id| !circle_id.is_empty());
-    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
-        .map_err(|error| MlsRuntimeError::Commit(format!("invalid Realm id: {error}")))?;
-    let effective_scope = match sidecar_binding.as_ref() {
-        Some(binding) => arkret_sdk::ScopeRef::Sidecar {
-            realm_id: realm.clone(),
-            sidecar_id: binding.sidecar_id.clone(),
-        },
-        None => match circle {
-            Some(circle_id) => arkret_sdk::ScopeRef::Circle {
-                realm_id: realm.clone(),
-                circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).map_err(|error| {
-                    MlsRuntimeError::Commit(format!("invalid Circle id: {error}"))
-                })?,
-            },
-            None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
-        },
-    };
-    let snapshot = state_store
-        .mls_checkpoint_for_scope(&effective_scope)
-        .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
-        .map_err(MlsRuntimeError::DeviceSecret)?;
-    // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
-    // local snapshot can't silently fork the group from an outdated epoch.
-    let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
-    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
-        .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
-    let previous_governance_binding = current_governance_binding_predecessor(&group)?;
-    let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
+    member_actor_id: Option<&arkret_sdk::ActorId>,
+) -> Result<(arkret_sdk::MlsAddMemberResult, StagedMlsCommit), MlsRuntimeError> {
+    let realm_id = effective_scope
+        .realm_id_opt()
+        .ok_or_else(|| MlsRuntimeError::Commit("MLS Add has no Realm scope".to_owned()))?
+        .as_str()
+        .to_owned();
+    let (mut group, secret) = restore_for_commit(
         state_store,
-        &effective_scope,
-        group.group_id().as_str(),
+        secure_store,
+        effective_scope,
+        &realm_id,
+        authority,
+        device_id,
+    )?;
+    let governance_binding = crate::mls::governance_proof::binding_for_transition(
+        state_store,
+        effective_scope,
+        &group.group_id(),
         group.epoch(),
         group.epoch().saturating_add(1),
     )
     .map_err(MlsRuntimeError::Commit)?;
-    if let Some(binding) = sidecar_binding.as_ref()
-        && governance_binding.sidecar_binding() != Some(binding)
-    {
-        return Err(MlsRuntimeError::Commit(
-            "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
-        ));
-    }
-    let replacement_actor = (state_store.realm_collaboration_role(realm_id)
+    // A Direct Conversation has exactly two members, so a new endpoint of an
+    // actor already in the group replaces that actor's leaf instead of adding
+    // a third one.
+    let replacement_actor = (state_store.realm_collaboration_role(&realm_id)
         == Some(arkret_sdk::CollaborationRealmRole::DirectConversation))
     .then(|| {
         group.verified_leaf_bindings().ok().and_then(|leaves| {
@@ -319,51 +283,37 @@ pub(crate) fn build_add_member_commit_for_effective_scope_with_binding(
         group.add_member_with_governance_binding(member_key_package, &governance_binding)
     }
     .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
-    crate::mls::governance_proof::install_authored_transition_leaf_bindings(
-        state_store,
-        &mut group,
-        &governance_binding,
-        member_authority_hints,
-    )
-    .map_err(MlsRuntimeError::Commit)?;
-    let post_state = group
-        .export_state_record()
-        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
-    let serialized_state = serde_json::to_vec(&post_state)
-        .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
-    let mut salt = [0u8; 16];
-    getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
-    let new_envelope = crate::mls::persistence::encrypt_state(
-        realm_id,
-        &post_state.group_id,
-        post_state.epoch,
-        &serialized_state,
-        &secret,
-        &salt,
-    );
-    Ok((add, new_envelope, previous_governance_binding))
+    let staged_checkpoint = staged_checkpoint(&group, &realm_id, &secret)?;
+    // The added leaf only becomes attributable once the accepted Commit is
+    // merged, so the attribution inputs are validated here and reapplied by the
+    // install path.
+    if member_authority_hints.is_empty() {
+        return Err(MlsRuntimeError::Commit(
+            "MLS Add requires verified claim evidence for the added leaf".to_owned(),
+        ));
+    }
+    let _ = member_actor_id;
+    let envelope = add.commit.clone();
+    Ok((
+        add,
+        StagedMlsCommit {
+            envelope,
+            staged_checkpoint,
+        },
+    ))
 }
 
-/// `encryption-and-audit.md` §5.6 — non-send (idle / receive-only) trigger of
-/// the self-preservation Commit. Mirrors [`force_epoch_rotation_commit`]'s
-/// `self_update_commit` build but is GATED by the §5.6 SHOULD conditions so a
-/// background driver can drive it for every persisted Realm without a send:
+/// Non-send (idle / receive-only) trigger of the self-preservation Commit.
 ///
-/// 1. [`should_force_epoch_advance`] — epoch over the §5.6 floor (≥1000 msgs OR ≥7 days for a
-///    normal Realm; the §2.9 ≤1h MUST for minimal-metadata), with the normative pending-commit
-///    suppression already folded in;
-/// 2. [`idle_self_update_jitter_passed`] — this member's deterministic member-order jitter slot has
-///    opened (skipped for minimal-metadata, whose 1h MUST leaves no room for staggered delay).
+/// Gated by the same two conditions the send path uses:
 ///
-/// Returns `Ok(None)` when not yet due (the common case — most idle passes do
-/// nothing), or `Ok(Some((commit, snapshot)))` when the caller SHOULD submit
-/// the `ak.mls.commit` and, on server-accept, persist the snapshot
-/// (persist-on-accept, identical contract to the send path and
-/// [`force_epoch_rotation_commit`]).
+/// 1. [`should_force_epoch_advance`] — the epoch is over the floor, with the
+///    normative pending-commit suppression already folded in;
+/// 2. [`idle_self_update_jitter_passed`] — this member's deterministic
+///    member-order jitter slot has opened (skipped for minimal-metadata, whose
+///    tight epoch-age cap leaves no room for staggered delay).
 ///
-/// Soft failures match the send path: a missing snapshot / device secret is
-/// surfaced as a typed error, NOT silently swallowed, so the driver can log
-/// once and move on without advancing local state.
+/// Returns `Ok(None)` when not yet due, which is the common case.
 pub fn build_idle_self_update_commit(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -372,20 +322,11 @@ pub fn build_idle_self_update_commit(
     actor_id: &str,
     device_id: &DeviceId,
     now: chrono::DateTime<chrono::Utc>,
-) -> Result<
-    Option<(
-        arkret_sdk::MlsCommitEnvelope,
-        crate::mls::persistence::MlsLocalCheckpointEnvelope,
-        arkret_sdk::MlsGovernanceBindingPayload,
-    )>,
-    MlsRuntimeError,
-> {
+) -> Result<Option<StagedMlsCommit>, MlsRuntimeError> {
     let snapshot = state_store
         .mls_checkpoint_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
-    // §5.6 floor + normative pending-commit suppression (shared with the send
-    // path so the two triggers can never disagree about "is a commit due").
     if !should_force_epoch_advance(
         is_minimal_metadata,
         snapshot.epoch_started_at,
@@ -395,8 +336,8 @@ pub fn build_idle_self_update_commit(
     ) {
         return Ok(None);
     }
-    // Deterministic member-order jitter (§5.6 SHOULD). Minimal-metadata's ≤1h
-    // MUST leaves no slack for staggering, so it commits as soon as overdue.
+    // Minimal-metadata's tight epoch-age cap leaves no slack for staggering, so
+    // it commits as soon as it is overdue.
     if !is_minimal_metadata
         && !idle_self_update_jitter_passed(
             &snapshot.group_id,
@@ -408,40 +349,24 @@ pub fn build_idle_self_update_commit(
     {
         return Ok(None);
     }
-    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
-        .map_err(MlsRuntimeError::DeviceSecret)?;
-    // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
-    // local snapshot can't silently fork the group from an outdated epoch.
-    let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
-    let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
-        .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
-    let previous_governance_binding = current_governance_binding_predecessor(&group)?;
-    let commit_envelope = group
+    let effective_scope = scope_for(realm_id, None, None)?;
+    let (mut group, secret) = restore_for_commit(
+        state_store,
+        secure_store,
+        &effective_scope,
+        realm_id,
+        authority,
+        device_id,
+    )?;
+    let envelope = group
         .self_update_commit()
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
-    let post_state = group
-        .export_state_record()
-        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
-    let serialized_state = serde_json::to_vec(&post_state)
-        .map_err(|err| MlsRuntimeError::Serialize(format!("MLS state record: {err}")))?;
-    let mut salt = [0u8; 16];
-    getrandom::fill(&mut salt).map_err(|err| MlsRuntimeError::Salt(err.to_string()))?;
-    // Forced epoch advance ⇒ a fresh epoch with the §5.6 counter reset to 0
-    // (no application message has ridden the new epoch yet). epoch_started_at
-    // is NOT carried — `encrypt_state` stamps it to the snapshot's recorded_at,
-    // which is correct for a brand-new epoch.
-    let new_envelope = crate::mls::persistence::encrypt_state(
-        realm_id,
-        &post_state.group_id,
-        post_state.epoch,
-        &serialized_state,
-        &secret,
-        &salt,
-    )
-    .with_app_messages_observed(0);
-    Ok(Some((
-        commit_envelope,
-        new_envelope,
-        previous_governance_binding,
-    )))
+    // A forced epoch advance starts a fresh epoch, so the observed-message
+    // counter resets: no application message has ridden the new epoch yet.
+    let staged_checkpoint =
+        staged_checkpoint(&group, realm_id, &secret)?.with_app_messages_observed(0);
+    Ok(Some(StagedMlsCommit {
+        envelope,
+        staged_checkpoint,
+    }))
 }

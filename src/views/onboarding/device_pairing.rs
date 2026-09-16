@@ -192,7 +192,7 @@ async fn finalize_device_setup_pairing(
         })
         .await?;
     if outcome.device_pairing_request_id != *request_id
-        || outcome.state != arkret_sdk::DevicePairingReadyForClaimState::ReadyForClaim
+        || outcome.state != arkret_sdk::DevicePairingState::ReadyForClaim
     {
         anyhow::bail!("device pairing finalize did not report this request ready for claim");
     }

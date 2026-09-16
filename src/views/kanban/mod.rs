@@ -40,44 +40,33 @@ use drag_drop_controller::*;
 use due_calendar::*;
 use effects::KanbanEffects;
 use model::*;
-pub(crate) use model::{calendar_schedule_revision_winner, strand_views_from_ops};
+pub(crate) use model::strand_views_from_ops;
 
-fn current_board_cell_demand(
-    columns: &[KanbanColumn],
-    selected_board: Option<&str>,
-) -> Vec<arkret_sdk::CellRef> {
-    let mut cells = BTreeSet::new();
-    let spaces = selected_board
-        .into_iter()
-        .chain(columns.iter().map(|column| column.id.as_str()))
-        .filter(|id| arkret_sdk::SpaceId::new((*id).to_owned()).is_ok());
-    for space_id in spaces {
-        for family in [
-            "ak.component.space.metadata.v1",
-            "ak.component.space.lifecycle.v1",
-            "ak.component.space.parent.v1",
-        ] {
-            if let Ok(cell) = arkret_sdk::CellRef::new(format!("ak:cell:{family}:{space_id}")) {
-                cells.insert(cell);
-            }
-        }
-    }
-    for relation_id in columns
-        .iter()
-        .flat_map(|column| &column.cards)
-        .flat_map(|card| &card.assigned_to_relations)
-        .map(|relation| relation.relation_id.as_str())
-    {
-        for family in [
-            "ak.component.relation.v1",
-            "ak.component.relation.lifecycle.v1",
-        ] {
-            if let Ok(cell) = arkret_sdk::CellRef::new(format!("ak:cell:{family}:{relation_id}")) {
-                cells.insert(cell);
-            }
-        }
-    }
-    cells.into_iter().take(256).collect()
+/// Holder-local queue key for one Strand's placement on one Board.
+///
+/// A Strand can sit on several Boards with independent placements, so the Board
+/// id is part of the key. This addresses the local optimistic queue only; it is
+/// never sent and never derived from.
+pub(crate) fn strand_position_queue_key(board_space_id: &str, strand_id: &str) -> String {
+    format!("{board_space_id}#{strand_id}")
+}
+
+/// Placement the author observed before writing, copied into the payload's own
+/// `expected_position` compare-and-swap guard.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StrandPositionExpectation {
+    /// The Strand is not yet placed on the target Board.
+    Initial,
+    /// The Strand currently sits at `(list_space_id, rank)` on that Board.
+    At { list_space_id: String, rank: String },
+}
+
+/// Placement this write asks for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StrandPositionEffect {
+    SetPosition { list_space_id: String, rank: String },
+    /// The Strand leaves the target Board.
+    Remove,
 }
 
 #[cfg(test)]
@@ -1067,26 +1056,7 @@ pub fn KanbanPanel(
                 decrypt_ctx.as_ref(),
                 &self_actor_id,
             );
-            let entries = decrypt_store
-                .load()
-                .realm_tree_projections
-                .get(&seed_realm_id)
-                .and_then(|value| value.get("current"))
-                .and_then(|value| {
-                    serde_json::from_value::<arkret_sdk::CurrentEntries>(value.clone()).ok()
-                })
-                .map(|current| current.entries)
-                .unwrap_or_default();
-            install_current_strand_positions(
-                &mut cols,
-                &entries,
-                &projected_strands,
-                &board_id,
-                decrypt_ctx.as_ref(),
-                &self_actor_id,
-            );
-            install_current_strand_lifecycles(&mut cols, &entries);
-            install_current_space_cells(&mut cols, &entries);
+            let entries = decrypt_store.realm_current_state_entries(&seed_realm_id);
             install_current_card_sources(
                 &mut cols,
                 &entries,
@@ -1120,14 +1090,9 @@ pub fn KanbanPanel(
         let realm = local_realm_id.clone();
         move || {
             let (strands, _) = current_page();
-            let selected = selected_board();
-            let cells = current_board_cell_demand(
-                &columns(),
-                selected.as_ref().map(arkret_sdk::SpaceId::as_str),
-            );
             state_store
                 .read()
-                .set_product_current_demand(&authority, &realm, Some(strands), cells);
+                .set_product_current_demand(&authority, &realm, Some(strands), Vec::new());
         }
     });
     use_drop({
@@ -1234,14 +1199,13 @@ pub fn KanbanPanel(
         } else {
             projection_realm_id.as_str()
         };
-        garth::security_projection_for_scope_id(&state.realm_tree_projections, scope_id)
+        crate::views::helpers::scope_security_state(&state.realm_tree_projections, scope_id)
             .or_else(|| {
-                garth::security_projection_for_scope_id(
+                crate::views::helpers::scope_security_state(
                     &state.realm_tree_projections,
                     &selected_realm_id,
                 )
             })
-            .and_then(garth::realm_projection_security_state)
     };
     // Fail-closed `bool` projection for the non-guard consumers (security
     // badge display, the per-card encrypt decision): when the Realm security
@@ -2034,7 +1998,7 @@ pub fn KanbanPanel(
                     let optimistic_local_id = arkret_sdk::StrandId::new(card.id.clone()).is_err();
                     optimistic_local_id
                         || (current_card_ids.contains(&card.id)
-                            && card.position_basis_refs.len() == 1)
+                            && card.authoring_basis.is_some())
                 })
                 {
                             div {
@@ -2116,13 +2080,11 @@ pub fn KanbanPanel(
                                     let card_id = card.id.clone();
                                     let column_id = column.id.clone();
                                     let from_rank = card.rank.clone();
-                                    let position_basis_refs = card.position_basis_refs.clone();
                                     move |_| {
                                         dragging_card.set(Some(DraggedCard {
                                             card_id: card_id.clone(),
                                             from_column_id: column_id.clone(),
                                             from_rank: from_rank.clone(),
-                                            position_basis_refs: position_basis_refs.clone(),
                                         }));
                                     }
                                 },
@@ -2271,8 +2233,6 @@ pub fn KanbanPanel(
                                                     let realm = selected_realm_id.clone();
                                                     let actor = principal_id.clone();
                                                     let strand_id = card.id.clone();
-                                                    let lifecycle_basis_refs =
-                                                        card.lifecycle_basis_refs.clone();
                                                     move |evt: dioxus::events::MouseEvent| {
                                                         evt.stop_propagation();
                                                         if !card_settled {
@@ -2288,7 +2248,6 @@ pub fn KanbanPanel(
                                                             actor.clone(),
                                                             strand_id.clone(),
                                                             StrandLifecycleState::Archived,
-                                                            lifecycle_basis_refs.clone(),
                                                             state_store,
                                                             board_status,
                                                         );
@@ -2737,8 +2696,6 @@ pub fn KanbanPanel(
                                                         let realm = selected_realm_id.clone();
                                                         let actor = principal_id.clone();
                                                         let strand_id = row.card.id.clone();
-                                                        let lifecycle_basis_refs =
-                                                            row.card.lifecycle_basis_refs.clone();
                                                         move |_| {
                                                             dispatch_strand_lifecycle(
                                                                 base.clone(),
@@ -2747,7 +2704,6 @@ pub fn KanbanPanel(
                                                                 actor.clone(),
                                                                 strand_id.clone(),
                                                                 StrandLifecycleState::Active,
-                                                                lifecycle_basis_refs.clone(),
                                                                 state_store,
                                                                 board_status,
                                                             );

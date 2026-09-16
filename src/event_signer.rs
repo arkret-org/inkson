@@ -48,7 +48,7 @@
 //! guard then routes through their backend instead of the in-process
 //! seed.
 
-use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use arkret_sdk::signatures::proof::EventSigner as SdkEventSigner;
 use arkret_sdk::{Did, DidUrl, Hash, PayloadSigner, WireError};
@@ -61,276 +61,7 @@ use ed25519_dalek::{Signer as _, SigningKey};
 use crate::identity::verification_method_controller;
 use crate::operation::{Audience, AuthoredEvent, ProofMode, current_proof_mode};
 
-pub(crate) const PCR_SUCCESSOR_JOURNAL_KEY_PREFIX: &str = "pcr.pending_successor.v1.";
-
-static PCR_SUCCESSOR_LOCKS: LazyLock<
-    Mutex<std::collections::BTreeMap<String, Weak<tokio::sync::Mutex<()>>>>,
-> = LazyLock::new(|| Mutex::new(std::collections::BTreeMap::new()));
-
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PendingPcrSuccessor {
-    verification_method: String,
-    signer_key: Option<String>,
-    request: arkret_sdk::SealPrepareRequestBody,
-    seal: Option<arkret_sdk::Seal>,
-}
-
-fn pcr_successor_journal_key(
-    realm_id: &arkret_sdk::RealmId,
-    predecessor_ref: &arkret_sdk::SealId,
-) -> anyhow::Result<String> {
-    let identity = serde_json::json!({
-        "realm_id": realm_id,
-        "predecessor_ref": predecessor_ref,
-    });
-    let digest = arkret_sdk::canonical::canonical_sha256(&identity)?;
-    Ok(format!(
-        "{PCR_SUCCESSOR_JOURNAL_KEY_PREFIX}{}",
-        digest.trim_start_matches("sha256:")
-    ))
-}
-
-fn pcr_successor_lock(key: &str) -> Arc<tokio::sync::Mutex<()>> {
-    let mut locks = PCR_SUCCESSOR_LOCKS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    locks.retain(|_, lock| lock.strong_count() > 0);
-    if let Some(lock) = locks.get(key).and_then(Weak::upgrade) {
-        return lock;
-    }
-    let lock = Arc::new(tokio::sync::Mutex::new(()));
-    locks.insert(key.to_owned(), Arc::downgrade(&lock));
-    lock
-}
-
-fn active_pcr_journal_scope(
-    signer: &InksonEventSigner,
-) -> anyhow::Result<crate::secure_key_store::UserLocalStore> {
-    let active = crate::secure_key_store::active_device_seed_scope()
-        .ok_or_else(|| anyhow::anyhow!("PCR signing requires an active account/device scope"))?;
-    anyhow::ensure!(
-        signer.device_id() == Some(active.device_id.as_str()),
-        "PCR journal device differs from the active signer"
-    );
-    crate::secure_key_store::UserLocalStore::new(active.authority, active.device_id)
-        .map_err(Into::into)
-}
-
-fn validate_pending_pcr_successor(
-    pending: &PendingPcrSuccessor,
-    signer: &InksonEventSigner,
-    realm_id: &arkret_sdk::RealmId,
-    predecessor_ref: &arkret_sdk::SealId,
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        pending.verification_method == signer.verification_method()
-            && pending.signer_key == signer.public_key_base64url(),
-        "PCR successor journal belongs to a replaced signer"
-    );
-    pending.request.validate()?;
-    anyhow::ensure!(
-        pending.request.realm_id == *realm_id
-            && pending.request.predecessor_ref == *predecessor_ref,
-        "PCR successor journal changed its signing position"
-    );
-    if let Some(seal) = &pending.seal {
-        seal.validate_structural()?;
-        seal.validate_id(seal.state_root.digest_suite()?)?;
-        anyhow::ensure!(
-            seal.realm_id == *realm_id
-                && seal.predecessor_ref.as_ref() == Some(predecessor_ref)
-                && seal.delta == pending.request.event_digests,
-            "PCR successor journal Seal differs from its frozen request"
-        );
-    }
-    Ok(())
-}
-
-fn is_prepare_fence_not_found(error: &arkret_sdk::http_client::Error) -> bool {
-    matches!(
-        error,
-        arkret_sdk::http_client::Error::Api { status: 404, .. }
-    ) && error.error_code() == Some(arkret_sdk::ErrorCode::NotFound)
-}
-
-fn is_prepare_slot_fenced(error: &arkret_sdk::http_client::Error) -> bool {
-    error.error_code() == Some(arkret_sdk::ErrorCode::SealSignerSlotFenced)
-}
-
-async fn recover_pcr_successor_fence(
-    http: &arkret_sdk::http_client::Client,
-    signer: &InksonEventSigner,
-    realm_id: &arkret_sdk::RealmId,
-    predecessor_ref: &arkret_sdk::SealId,
-    intended_event_digests: &[arkret_sdk::Hash],
-) -> Result<arkret_sdk::SealPrepareFenceResultOutcome, arkret_sdk::http_client::Error> {
-    let recovered = http
-        .seals_prepare_fence_result(&arkret_sdk::SealPrepareFenceResultRequestBody {
-            realm_id: realm_id.clone(),
-            predecessor_ref: predecessor_ref.clone(),
-        })
-        .await?;
-    if recovered.frozen_request.event_digests != intended_event_digests {
-        return Err(arkret_sdk::http_client::Error::Protocol(
-            "recovered PCR prepare request does not match the current signer intent".to_owned(),
-        ));
-    }
-    let pending = PendingPcrSuccessor {
-        verification_method: signer.verification_method().to_owned(),
-        signer_key: signer.public_key_base64url(),
-        request: recovered.frozen_request.clone(),
-        seal: None,
-    };
-    validate_pending_pcr_successor(&pending, signer, realm_id, predecessor_ref)
-        .map_err(|error| arkret_sdk::http_client::Error::Protocol(error.to_string()))?;
-    Ok(recovered)
-}
-
-pub(crate) async fn prepare_and_sign_pcr_successor(
-    http: &arkret_sdk::http_client::Client,
-    actor_id: &arkret_sdk::ActorId,
-    realm_id: &arkret_sdk::RealmId,
-    predecessor_ref: arkret_sdk::SealId,
-    event_digests: Vec<arkret_sdk::Hash>,
-) -> anyhow::Result<arkret_sdk::Seal> {
-    let signer =
-        active_signer().ok_or_else(|| anyhow::anyhow!("active PCR device signer is required"))?;
-    let scope = active_pcr_journal_scope(signer.as_ref())?;
-    anyhow::ensure!(
-        actor_id.as_account_id() == Some(scope.authority()),
-        "PCR successor actor differs from the active account authority"
-    );
-    let logical_key = pcr_successor_journal_key(realm_id, &predecessor_ref)?;
-    let storage_key = scope.secret_key(&logical_key);
-    let _lock = pcr_successor_lock(&storage_key).lock_owned().await;
-    let store = crate::secure_key_store::default_secure_key_store("inkson");
-    let mut recovered_outcome = None;
-    let mut pending = match scope.load_secret(store.as_ref(), &logical_key)? {
-        Some(raw) => {
-            let pending: PendingPcrSuccessor = serde_json::from_str(&raw)?;
-            validate_pending_pcr_successor(&pending, signer.as_ref(), realm_id, &predecessor_ref)?;
-            pending
-        }
-        None => {
-            let pending = match recover_pcr_successor_fence(
-                http,
-                signer.as_ref(),
-                realm_id,
-                &predecessor_ref,
-                &event_digests,
-            )
-            .await
-            {
-                Ok(recovered) => {
-                    let pending = PendingPcrSuccessor {
-                        verification_method: signer.verification_method().to_owned(),
-                        signer_key: signer.public_key_base64url(),
-                        request: recovered.frozen_request,
-                        seal: None,
-                    };
-                    recovered_outcome = Some(recovered.frozen_outcome);
-                    pending
-                }
-                Err(error) if is_prepare_fence_not_found(&error) => {
-                    let device_id = signer
-                        .device_id()
-                        .ok_or_else(|| anyhow::anyhow!("PCR signer requires a bound device"))?;
-                    let request = arkret_sdk::SealPrepareRequestBody {
-                        realm_id: realm_id.clone(),
-                        predecessor_ref: predecessor_ref.clone(),
-                        event_digests: event_digests.clone(),
-                        hlc: crate::signing_stamp::issue_protocol_hlc(
-                            actor_id.signing_principal_id().as_str(),
-                            device_id,
-                            realm_id.as_str(),
-                        )?,
-                    };
-                    request.validate()?;
-                    PendingPcrSuccessor {
-                        verification_method: signer.verification_method().to_owned(),
-                        signer_key: signer.public_key_base64url(),
-                        request,
-                        seal: None,
-                    }
-                }
-                Err(error) => return Err(error.into()),
-            };
-            scope
-                .save_secret_durable(
-                    store.as_ref(),
-                    &logical_key,
-                    &serde_json::to_string(&pending)?,
-                )
-                .await?;
-            pending
-        }
-    };
-    if let Some(seal) = pending.seal {
-        return Ok(seal);
-    }
-    let mut request = pending.request.clone();
-    let prepared = match recovered_outcome {
-        Some(prepared) => prepared,
-        None => match http.seals_prepare(&request).await {
-            Ok(prepared) => prepared,
-            Err(error) if is_prepare_slot_fenced(&error) => {
-                let recovered = recover_pcr_successor_fence(
-                    http,
-                    signer.as_ref(),
-                    realm_id,
-                    &predecessor_ref,
-                    &event_digests,
-                )
-                .await?;
-                request = recovered.frozen_request;
-                pending.request = request.clone();
-                scope
-                    .save_secret_durable(
-                        store.as_ref(),
-                        &logical_key,
-                        &serde_json::to_string(&pending)?,
-                    )
-                    .await?;
-                recovered.frozen_outcome
-            }
-            Err(error) => return Err(error.into()),
-        },
-    };
-    let seal = signer
-        .sign_prepared_pcr_seal(actor_id, &request, &prepared)
-        .map_err(anyhow::Error::from)?;
-    pending.seal = Some(seal.clone());
-    scope
-        .save_secret_durable(
-            store.as_ref(),
-            &logical_key,
-            &serde_json::to_string(&pending)?,
-        )
-        .await?;
-    Ok(seal)
-}
-
-/// Remove the exact retry journal only after the Station has confirmed the
-/// signed successor. An uncertain submit deliberately leaves it in place.
-pub(crate) async fn clear_prepared_pcr_successor(seal: &arkret_sdk::Seal) -> anyhow::Result<()> {
-    let predecessor_ref = seal
-        .predecessor_ref
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("PCR successor journal cannot clear a genesis Seal"))?;
-    let signer =
-        active_signer().ok_or_else(|| anyhow::anyhow!("active PCR device signer is required"))?;
-    let scope = active_pcr_journal_scope(signer.as_ref())?;
-    let logical_key = pcr_successor_journal_key(&seal.realm_id, predecessor_ref)?;
-    let storage_key = scope.secret_key(&logical_key);
-    let _lock = pcr_successor_lock(&storage_key).lock_owned().await;
-    crate::secure_key_store::default_secure_key_store("inkson")
-        .delete_secret_durable(&storage_key)
-        .await?;
-    Ok(())
-}
-
-/// Errors produced by the active-write signing pipeline.
+/// Why a signing attempt could not produce a producer proof.
 #[derive(Debug, thiserror::Error)]
 pub enum EventSignerError {
     /// The active runtime [`ProofMode`] expects a real signer but none
@@ -402,7 +133,6 @@ impl ProducerProofContext {
 
 pub(crate) fn cached_active_event_proof_context(
     digest_suite: arkret_sdk::DigestSuite,
-    plane: arkret_sdk::CbsEffectPlane,
 ) -> Result<ProducerProofContext, EventSignerError> {
     let signer = active_signer().ok_or(EventSignerError::MissingSigner {
         mode: "active-device",
@@ -434,7 +164,6 @@ pub(crate) fn cached_active_event_proof_context(
     let evidence_ref = crate::identity::device_directory::retained_device_authoring_evidence(
         &scope.authority.to_string(),
         device_id,
-        plane,
     )
     .filter(|(retained_key, _)| retained_key == &public_key)
     .map(|(_, evidence_ref)| evidence_ref)
@@ -446,30 +175,6 @@ pub(crate) fn cached_active_event_proof_context(
     Ok(ProducerProofContext::new()
         .with_digest_suite(digest_suite)
         .with_signer_resolution_evidence_ref(evidence_ref))
-}
-
-/// Select the immutable human-device evidence family fixed by the Event
-/// registry. Realm Events use their projected CBS plane. The closed
-/// actor-private set has no CBS cell writes, but its producer proof is defined
-/// to use the Data `account_device` root. No other unclassified kind may borrow
-/// that exception.
-pub(crate) fn event_signer_evidence_plane(
-    kind: &arkret_sdk::EventKind,
-    registered_plane: Option<arkret_sdk::CbsEffectPlane>,
-) -> Result<arkret_sdk::CbsEffectPlane, EventSignerError> {
-    if let Some(plane) = registered_plane {
-        return Ok(plane);
-    }
-    match kind {
-        arkret_sdk::EventKind::AccountBlocklist
-        | arkret_sdk::EventKind::AccountDataSet
-        | arkret_sdk::EventKind::DevicePushRoute
-        | arkret_sdk::EventKind::ReadCursorAdvance => Ok(arkret_sdk::CbsEffectPlane::Data),
-        _ => Err(EventSignerError::Encoding(format!(
-            "{} has no registered signer-evidence plane",
-            kind.as_str()
-        ))),
-    }
 }
 
 #[cfg(test)]
@@ -552,7 +257,16 @@ impl PayloadSigner for InksonPayloadSignerAdapter<'_> {
         })
     }
 
-    fn sign_notary_payload_with_digest_suite(
+}
+
+impl InksonPayloadSignerAdapter<'_> {
+    /// Sign under the exact frozen verification method, binding it as the
+    /// protected-header `kid`.
+    ///
+    /// The ordinary Event proof above uses an alg-only protected header; a
+    /// signature that has to be checked against one pinned method must
+    /// additionally name it, so the two headers stay distinct.
+    pub(crate) fn sign_payload_with_kid_and_digest_suite(
         &self,
         canonical_bytes: &[u8],
         digest_suite: arkret_sdk::canonical::DigestSuite,
@@ -570,54 +284,6 @@ impl PayloadSigner for InksonPayloadSignerAdapter<'_> {
             created_at: crate::clock::now_utc(),
             jws,
         })
-    }
-}
-
-/// Seal-only adapter whose protected header binds the exact frozen notary
-/// verification method as `kid`.
-///
-/// Event proofs deliberately use [`InksonPayloadSignerAdapter`] and its
-/// alg-only protected header. A Seal has a different wire contract: its `kid`
-/// must equal both `SealSignature.verification_method` and the predecessor-state
-/// frozen descriptor. Keeping the adapters distinct prevents either proof
-/// profile from silently inheriting the other one's header shape.
-struct InksonSealSignerAdapter<'a> {
-    owner: &'a InksonEventSigner,
-    did: Did,
-    verification_method: DidUrl,
-}
-
-impl PayloadSigner for InksonSealSignerAdapter<'_> {
-    fn signer_did(&self) -> &Did {
-        &self.did
-    }
-
-    fn verification_method_id(&self) -> &DidUrl {
-        &self.verification_method
-    }
-
-    fn sign_payload(&self, canonical_bytes: &[u8]) -> Result<PayloadSignature, WireError> {
-        let jws = self
-            .owner
-            .detached_jws_over_payload_with_kid(self.verification_method.as_str(), canonical_bytes)
-            .map_err(|error| WireError::Protocol(error.to_string()))?;
-        Ok(PayloadSignature {
-            verification_method: self.verification_method.clone(),
-            payload_digest: Hash::new(arkret_sdk::canonical::sha256_digest(canonical_bytes))?,
-            created_at: crate::clock::now_utc(),
-            jws,
-        })
-    }
-
-    fn sign_notary_payload_with_digest_suite(
-        &self,
-        canonical_bytes: &[u8],
-        digest_suite: arkret_sdk::canonical::DigestSuite,
-    ) -> Result<PayloadSignature, WireError> {
-        let mut signature = self.sign_payload(canonical_bytes)?;
-        signature.payload_digest =
-            Hash::new(arkret_sdk::canonical::digest(digest_suite, canonical_bytes))?;
-        Ok(signature)
     }
 }
 
@@ -801,14 +467,7 @@ impl InksonEventSigner {
         #[cfg(test)]
         let context = test_producer_proof_context(event.digest_suite());
         #[cfg(not(test))]
-        let context = {
-            let plane = event_signer_evidence_plane(
-                &event.kind,
-                arkret_schema::classify_event_execution(event.event())
-                    .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
-            )?;
-            cached_active_event_proof_context(event.digest_suite(), plane)?
-        };
+        let context = cached_active_event_proof_context(event.digest_suite())?;
         self.sign_envelope_with_context(event, context)
     }
 
@@ -888,105 +547,6 @@ impl InksonEventSigner {
             *guard = Some(crate::clock::now_utc());
         }
         Ok(())
-    }
-
-    /// Build the first B-model principal-control Seal with this device key.
-    /// The signer identity is rebound to the principal and the verification
-    /// method is the explicit `<principal>#<device_id>` session binding.
-    pub fn sign_self_principal_bootstrap_seal(
-        &self,
-        create: &arkret_sdk::Event,
-        authorize: &arkret_sdk::Event,
-        hlc: arkret_sdk::Hlc,
-    ) -> Result<arkret_sdk::Seal, EventSignerError> {
-        let device_id = self.device_id.as_deref().ok_or_else(|| {
-            EventSignerError::Encoding(
-                "principal bootstrap Seal requires a bound device_id".to_owned(),
-            )
-        })?;
-        let signer = InksonSealSignerAdapter {
-            owner: self,
-            did: self.did_for_actor(&create.actor_id)?,
-            verification_method: DidUrl::new(format!("{}#{device_id}", self.signer_did))
-                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
-        };
-        arkret_bootstrap::build_self_principal_bootstrap_seal(
-            create,
-            authorize,
-            hlc,
-            &signer,
-            &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
-        )
-        .map_err(|error| EventSignerError::Backend(error.to_string()))
-    }
-
-    pub(crate) fn sign_prepared_pcr_seal(
-        &self,
-        actor_id: &arkret_sdk::ActorId,
-        request: &arkret_sdk::SealPrepareRequestBody,
-        prepared: &arkret_sdk::SealPrepareOutcome,
-    ) -> Result<arkret_sdk::Seal, EventSignerError> {
-        let device_id = self.device_id.as_deref().ok_or_else(|| {
-            EventSignerError::Encoding("PCR signing requires a bound device".to_owned())
-        })?;
-        let signer = InksonSealSignerAdapter {
-            owner: self,
-            did: self.did_for_actor(actor_id)?,
-            verification_method: DidUrl::new(format!("{}#{device_id}", self.signer_did))
-                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
-        };
-        prepared
-            .sign(request, &signer)
-            .map_err(|error| EventSignerError::Backend(error.to_string()))
-    }
-
-    /// Sign the exact first new-generation Seal frozen by a recovery
-    /// transaction's dedicated prepare.
-    ///
-    /// This deliberately does NOT go through [`prepare_and_sign_pcr_successor`]:
-    /// `ak.self.seals.command.prepare.v1` is not reachable from a recovery
-    /// SessionGrant, so the ordinary `SealPrepareRequestBody` path would always
-    /// answer `capability_denied`. The body arrives inside the prepared plan
-    /// instead, already fenced at its signing slot.
-    ///
-    /// The commit transcript is built by the single SDK helper every other f=0
-    /// PCR successor uses, so this device never selects a signing view of its
-    /// own: the `view` the PCR `f=0` profile fixes at `0` is a property of that
-    /// one transcript, not a value this call can get wrong.
-    pub(crate) fn sign_recovery_first_generation_seal(
-        &self,
-        principal_did: &Did,
-        body: arkret_wire::UnsignedSeal,
-        digest_suite: arkret_sdk::DigestSuite,
-    ) -> Result<arkret_sdk::Seal, EventSignerError> {
-        let signer = InksonSealSignerAdapter {
-            owner: self,
-            did: principal_did.clone(),
-            verification_method: self.verification_method_for_principal(principal_did)?,
-        };
-        arkret_sdk::Seal::sign_with_signer(body, digest_suite, &signer)
-            .map_err(|error| EventSignerError::Backend(error.to_string()))
-    }
-
-    pub fn sign_agent_pcr_bootstrap_seal(
-        &self,
-        controller_did: &arkret_sdk::Did,
-        events: &[arkret_sdk::Event],
-        hlc: arkret_sdk::Hlc,
-    ) -> Result<arkret_sdk::Seal, EventSignerError> {
-        let device_id = self.device_id.as_deref().ok_or_else(|| {
-            EventSignerError::Encoding("Agent PCR bootstrap requires a bound device".to_owned())
-        })?;
-        let signer = InksonSealSignerAdapter {
-            owner: self,
-            did: controller_did.clone(),
-            verification_method: DidUrl::new(format!("{controller_did}#{device_id}"))
-                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
-        };
-        arkret_bootstrap::build_agent_pcr_bootstrap_seal(events, hlc, &signer, &|event| {
-            crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
-        })
-        .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 
     /// Produce a detached JWS (`<b64u header>..<b64u sig>`) over `bytes`
@@ -1268,7 +828,7 @@ pub fn bind_active_signer_device_id(
 ///
 /// During first registration the key is created under its local `did:key`
 /// identity before the principal DID exists. Once the principal is known,
-/// Event and Seal proofs must name `<principal>#<device_id>` while continuing
+/// Event and notary proofs must name `<principal>#<device_id>` while continuing
 /// to use that same key material.
 pub fn bind_active_signer_principal_device_id(
     principal_did: &Did,
@@ -1539,7 +1099,8 @@ mod tests {
     ) -> AuthoredEvent {
         message_operation(actor_id, body)
             .into_intent()
-            .author_with_digest_suite(1, crate::operation::test_authoring_hlc(), digest_suite)
+            .with_created_at(crate::operation::test_authoring_created_at())
+            .author_with_digest_suite(digest_suite)
             .expect("a test intent finalizes")
     }
 
@@ -1561,72 +1122,6 @@ mod tests {
 
     fn producer_proof(event: &arkret_sdk::Event) -> &arkret_sdk::ProducerEventProof {
         event.proofs.first().expect("producer proof")
-    }
-
-    #[test]
-    fn pcr_successor_journal_keeps_one_exact_request_per_signing_position() {
-        let realm = arkret_sdk::RealmId::new(TEST_REALM_ID.to_owned()).unwrap();
-        let predecessor =
-            arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32))).unwrap();
-        let other_predecessor =
-            arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "22".repeat(32))).unwrap();
-        assert_eq!(
-            pcr_successor_journal_key(&realm, &predecessor).unwrap(),
-            pcr_successor_journal_key(&realm, &predecessor).unwrap()
-        );
-        assert_ne!(
-            pcr_successor_journal_key(&realm, &predecessor).unwrap(),
-            pcr_successor_journal_key(&realm, &other_predecessor).unwrap()
-        );
-
-        let signer = build_ed25519_device_signer([31; 32], "did:web:alice.example", TEST_DEVICE_ID);
-        let pending = PendingPcrSuccessor {
-            verification_method: signer.verification_method().to_owned(),
-            signer_key: signer.public_key_base64url(),
-            request: arkret_sdk::SealPrepareRequestBody {
-                realm_id: realm.clone(),
-                predecessor_ref: predecessor.clone(),
-                event_digests: vec![
-                    arkret_sdk::Hash::new(format!("sha256:{}", "33".repeat(32))).unwrap(),
-                ],
-                hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
-            },
-            seal: None,
-        };
-        validate_pending_pcr_successor(&pending, &signer, &realm, &predecessor).unwrap();
-        let replaced =
-            build_ed25519_device_signer([32; 32], "did:web:alice.example", TEST_DEVICE_ID);
-        assert!(validate_pending_pcr_successor(&pending, &replaced, &realm, &predecessor).is_err());
-    }
-
-    #[test]
-    fn signer_evidence_plane_closes_actor_private_events_to_data() {
-        for kind in [
-            arkret_sdk::EventKind::AccountBlocklist,
-            arkret_sdk::EventKind::AccountDataSet,
-            arkret_sdk::EventKind::DevicePushRoute,
-            arkret_sdk::EventKind::ReadCursorAdvance,
-        ] {
-            assert_eq!(
-                event_signer_evidence_plane(&kind, None).unwrap(),
-                arkret_sdk::CbsEffectPlane::Data,
-                "{}",
-                kind.as_str()
-            );
-        }
-        assert!(
-            event_signer_evidence_plane(&arkret_sdk::EventKind::MessageCreate, None).is_err(),
-            "ordinary Realm Events must not inherit the actor-private Data exception"
-        );
-        assert_eq!(
-            event_signer_evidence_plane(
-                &arkret_sdk::EventKind::SpaceUpdate,
-                Some(arkret_sdk::CbsEffectPlane::Control),
-            )
-            .unwrap(),
-            arkret_sdk::CbsEffectPlane::Control,
-            "a registered CBS plane is authoritative"
-        );
     }
 
     #[test]
@@ -1834,39 +1329,67 @@ mod tests {
             .expect("signature verifies over JWS signing input");
     }
 
+    /// The kid-bearing payload signature binds the exact verification method
+    /// it was produced under, and verifies against that method's key.
+    ///
+    /// The SDK used to ship a frozen-descriptor verifier for this shape. That
+    /// descriptor was part of the removed notary model, so the binding is
+    /// checked here against the JWS itself: protected header, payload digest,
+    /// and the signature over the standard JWS signing input.
     #[test]
-    fn seal_signer_binds_and_verifies_the_frozen_descriptor_kid() {
+    fn kid_bound_payload_signature_names_and_verifies_its_verification_method() {
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use ed25519_dalek::Verifier as _;
+
         let seed = [21_u8; 32];
         let principal = Did::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap();
         let verification_method = DidUrl::new(format!("{principal}#{TEST_DEVICE_ID}")).unwrap();
         let owner = build_ed25519_device_signer(seed, principal.as_str(), TEST_DEVICE_ID);
-        let signer = InksonSealSignerAdapter {
+        let signer = InksonPayloadSignerAdapter {
             owner: &owner,
             did: principal.clone(),
             verification_method: verification_method.clone(),
         };
         let canonical_body = br#"{"realm_id":"fixture"}"#;
-        let signature: arkret_sdk::SealSignature =
-            signer.sign_payload(canonical_body).unwrap().into();
-        let public_key = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
-        let descriptor = arkret_sdk::NotarySignerDescriptor {
-            actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-                arkret_sdk::project_did_to_core_id(&principal).unwrap(),
-                arkret_sdk::project_did_to_core_id(&principal).unwrap(),
-            )),
-            verification_method,
-            key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
-            jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
-            frozen_public_key_b64u: arkret_sdk::base64url_encode(public_key),
-        };
+        let signature = signer
+            .sign_payload_with_kid_and_digest_suite(
+                canonical_body,
+                arkret_sdk::canonical::DigestSuite::Sha256,
+            )
+            .unwrap();
 
-        arkret_signatures::verify_frozen_notary_signature(
-            &signature,
-            &descriptor,
-            canonical_body,
-            arkret_sdk::canonical::DigestSuite::Sha256,
-        )
-        .expect("Seal JWS must bind and verify against the frozen descriptor");
+        assert_eq!(signature.verification_method, verification_method);
+        assert_eq!(
+            signature.payload_digest.as_str(),
+            arkret_sdk::canonical::digest(
+                arkret_sdk::canonical::DigestSuite::Sha256,
+                canonical_body
+            )
+        );
+
+        let parts: Vec<&str> = signature.jws.split('.').collect();
+        assert_eq!(parts.len(), 3);
+        assert!(parts[1].is_empty(), "the payload segment stays detached");
+        let header: serde_json::Value =
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[0]).expect("header b64"))
+                .expect("header json");
+        assert_eq!(
+            header,
+            json!({"alg": "Ed25519", "kid": verification_method.as_str()}),
+            "a kid-bound signature names the exact method it was frozen against"
+        );
+
+        let signing_input = format!("{}.{}", parts[0], URL_SAFE_NO_PAD.encode(canonical_body));
+        let raw = URL_SAFE_NO_PAD.decode(parts[2]).expect("signature b64");
+        let raw: [u8; 64] = raw.as_slice().try_into().expect("Ed25519 signature is 64 bytes");
+        SigningKey::from_bytes(&seed)
+            .verifying_key()
+            .verify(
+                signing_input.as_bytes(),
+                &ed25519_dalek::Signature::from_bytes(&raw),
+            )
+            .expect("the JWS verifies under the key the kid names");
     }
 
     #[test]

@@ -61,23 +61,6 @@ pub fn mls_commit_with_governance(
     )
 }
 
-/// `ak.mls.proposal` event for a durable MLS membership-change intent.
-pub fn mls_proposal_with_governance(
-    realm_id: &str,
-    actor: &str,
-    group_id: &str,
-    payload: &arkret_sdk::MlsProposalPayload,
-) -> anyhow::Result<TypedOperationBuilder> {
-    Ok(
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::MlsProposal>(
-            realm_id,
-            actor,
-            payload.clone(),
-        )
-        .target_ref(group_id.to_owned()),
-    )
-}
-
 /// `ak.mls.genesis` event installing an MLS group at epoch 0. Emitted
 /// once when a creator's local group is first observed by the server so
 /// the canonical audit record and creator Security Frontier binding exist and
@@ -94,26 +77,6 @@ pub fn mls_genesis_with_governance(
 ) -> anyhow::Result<TypedOperationBuilder> {
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::MlsGenesis>(
-            realm_id,
-            actor,
-            payload.clone(),
-        )
-        .target_ref(group_id.to_owned()),
-    )
-}
-
-/// `ak.mls.welcome` event carrying the durable Welcome claim envelope and
-/// opaque Welcome ciphertext. As with the other closed MLS payloads, this
-/// boundary accepts only the SDK wire type so schema changes fail at compile
-/// time in consumers.
-pub fn mls_welcome_with_governance(
-    realm_id: &str,
-    actor: &str,
-    group_id: &str,
-    payload: &arkret_sdk::MlsWelcomePayload,
-) -> anyhow::Result<TypedOperationBuilder> {
-    Ok(
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::MlsWelcome>(
             realm_id,
             actor,
             payload.clone(),

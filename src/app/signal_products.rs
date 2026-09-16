@@ -13,12 +13,12 @@ use dioxus::prelude::*;
 
 use crate::runtime::projection::SignalProductSink;
 
-/// How long one `(scope, sender, seal_ref, action)` authorization verdict is
-/// reused. `signal.md` §7.1 binds the re-check to the envelope's `seal_ref`,
-/// which is already part of the key, so this only bounds how stale a verdict
-/// under an unchanged basis may get. A message-stream producer may emit five
-/// frames a second per stream, so an uncached check would turn one preview
-/// into a per-frame authz round trip.
+/// How long one `(realm, sender, action)` authorization verdict is reused.
+/// There is no Seal basis to bind the re-check to any more: the Station
+/// answers an authz check against the Realm's current committed projection, so
+/// the TTL is the whole staleness bound. A message-stream producer may emit
+/// five frames a second per stream, so an uncached check would turn one
+/// preview into a per-frame authz round trip.
 const AUTHZ_VERDICT_TTL_MS: u64 = 30_000;
 
 /// Hard cap on cached verdicts, evicting the oldest first.
@@ -26,11 +26,10 @@ const MAX_AUTHZ_VERDICTS: usize = 256;
 
 fn signal_authorization_cache_key(
     actor: &arkret_sdk::ActorId,
-    seal: &arkret_sdk::SealId,
     action: &str,
     realm: &arkret_sdk::RealmId,
 ) -> String {
-    format!("{realm}|{actor}|{seal}|{action}")
+    format!("{realm}|{actor}|{action}")
 }
 
 fn signal_authorization_request(
@@ -121,23 +120,19 @@ impl AppSignalProductSink {
     }
 
     /// Fail-closed authorization probe for one product action, memoized per
-    /// `(realm, sender, seal_ref, action)`. A transport failure is a denial:
-    /// §7.1 forbids showing a body whose authorization could not be verified.
+    /// `(realm, sender, action)`. A transport failure is a denial: §7.1
+    /// forbids showing a body whose authorization could not be verified.
     async fn action_allowed(
         &self,
-        plaintext: &garth::SignalPlaintext,
+        signal: &crate::runtime::projection::AdmittedSignal,
         action: &str,
         realm_id: &str,
     ) -> bool {
         let Ok(resource_realm_id) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
             return false;
         };
-        let key = signal_authorization_cache_key(
-            &plaintext.actor_id,
-            &plaintext.seal_ref,
-            action,
-            &resource_realm_id,
-        );
+        let key =
+            signal_authorization_cache_key(signal.actor_id(), action, &resource_realm_id);
         if let Some(allowed) = self.cached_verdict(&key) {
             return allowed;
         }
@@ -147,7 +142,7 @@ impl AppSignalProductSink {
         // Admission already authenticated the full sender Actor. Reconstructing
         // an account from its principal and our Station would query a different
         // participant, losing the verified account's Station binding.
-        let request = signal_authorization_request(&plaintext.actor_id, action, resource_realm_id);
+        let request = signal_authorization_request(signal.actor_id(), action, resource_realm_id);
         let allowed = match api.sdk_http_client() {
             Ok(http) => http
                 .authz_check(&request)
@@ -165,43 +160,47 @@ type LocalBoxFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = ()>
 impl SignalProductSink for AppSignalProductSink {
     fn call_signal<'a>(
         &'a self,
-        envelope: &'a arkret_wire::SignalEnvelope,
-        body: serde_json::Value,
+        signal: &'a crate::runtime::projection::AdmittedSignal,
+        _body: serde_json::Value,
     ) -> LocalBoxFuture<'a> {
         Box::pin(async move {
             let mut hub = self.call_hub;
             let local_actor = self.principal_id.peek().clone();
             crate::views::call_signals::route_decrypted_call_signals(
                 &mut hub,
-                std::slice::from_ref(&(envelope.clone(), body)),
+                std::slice::from_ref(signal),
                 crate::app::principal_id_text(&local_actor),
             )
             .await;
         })
     }
 
-    fn message_stream<'a>(&'a self, plaintext: &'a garth::SignalPlaintext) -> LocalBoxFuture<'a> {
+    fn message_stream<'a>(
+        &'a self,
+        signal: &'a crate::runtime::projection::AdmittedSignal,
+    ) -> LocalBoxFuture<'a> {
         Box::pin(async move {
-            let realm_id = plaintext.scope_ref.realm_id().as_str().to_owned();
+            let realm_id = signal.scope_ref().realm_id().as_str().to_owned();
             // §7.1 — the sender must hold BOTH the preview action and the
             // authorization the final Message create needs. Neither is
             // observable from the outer envelope, so the recipient re-checks
-            // them at the Seal basis before any body reaches a surface.
+            // both against the Realm's current authority before any body
+            // reaches a surface.
             for action in [
                 arkret_sdk::CapabilityActionId::MESSAGE_STREAM_SEND,
                 arkret_sdk::CapabilityActionId::MESSAGE_CREATE,
             ] {
-                if !self.action_allowed(plaintext, action, &realm_id).await {
+                if !self.action_allowed(signal, action, &realm_id).await {
                     tracing::debug!(
                         action,
-                        actor = %plaintext.actor_id,
-                        "dropping message stream preview: sender is not authorized at seal_ref"
+                        actor = %signal.actor_id(),
+                        "dropping message stream preview: sender is not currently authorized"
                     );
                     return;
                 }
             }
             let mut hub = self.message_hub;
-            if let Err(error) = hub.apply_authorized(plaintext, crate::clock::now_utc()) {
+            if let Err(error) = hub.apply_authorized(signal, crate::clock::now_utc()) {
                 tracing::debug!(%error, "message stream preview frame was not applied");
             }
         })
@@ -209,7 +208,7 @@ impl SignalProductSink for AppSignalProductSink {
 
     fn read_receipt(
         &self,
-        plaintext: &garth::SignalPlaintext,
+        signal: &crate::runtime::projection::AdmittedSignal,
         policy: &arkret_sdk::ReadReceiptPolicy,
     ) {
         // No further authorization probe: unlike a message-stream preview, a
@@ -223,11 +222,7 @@ impl SignalProductSink for AppSignalProductSink {
         // read the receipt to apply them.
         let local_actor = self.principal_id.peek().clone();
         let mut hub = self.read_receipt_hub;
-        hub.apply_authorized(
-            plaintext,
-            policy,
-            crate::app::principal_id_text(&local_actor),
-        );
+        hub.apply_authorized(signal, policy, crate::app::principal_id_text(&local_actor));
     }
 
     fn advance_clock(&self, now: chrono::DateTime<chrono::Utc>) {
@@ -256,14 +251,12 @@ mod tests {
         let realm =
             arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
                 .unwrap();
-        let seal = arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64))).unwrap();
         let mut keys = std::collections::BTreeSet::new();
         for actor in actors {
             let request = signal_authorization_request(&actor, "ak.message.create", realm.clone());
             assert_eq!(request.actor_id, actor);
             assert!(keys.insert(signal_authorization_cache_key(
                 &actor,
-                &seal,
                 "ak.message.create",
                 &realm,
             )));

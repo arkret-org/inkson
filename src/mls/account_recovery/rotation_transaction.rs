@@ -2,14 +2,14 @@ use anyhow::{Context, Result, anyhow};
 pub(super) use arkret_models_collaboration::events_payloads::key_backup::ControllerBackupTrustAnchor;
 use arkret_models_collaboration::events_payloads::key_backup::resolve_controller_backup_trust_anchor;
 use arkret_models_crypto::{BackupKind, BackupSeriesEraseRequestBody, BackupSeriesEraseStatus};
+use arkret_sdk::{BackupObjectRef, BackupRotationKind, SecurityTransactionStep};
 use arkret_wire::{
-    BackupObjectRef, BackupRotationKind, BackupSeriesId, Base64UrlString, Did,
-    EventsSubmitBatchRequestBody, Hash, LeaseBasisRef, RiskTier, SchemaId, SecurityTransactionStep,
-    TransactionId, UnsignedClientStepAttestation,
+    BackupSeriesId, Base64UrlString, Did, EventsSubmitBatchRequestBody, Hash, LeaseBasisRef,
+    RiskTier, SchemaId, TransactionId, UnsignedClientStepAttestation,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use garth::mls::backup_selection::{active_series_id_for_backup_class, iter_backup_bodies};
+use crate::mls::runtime::{active_secret_storage_series_id_for, iter_backup_bodies};
 use garth::mls::backup_series::fresh_backup_id;
 use garth::{PutSecretOptions, SecretClass, SecretDurability, SecureKeyStore};
 use serde_json::Value;
@@ -228,11 +228,11 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         .iter()
         .map(arkret_sdk::AuthoredEvent::digest_suite)
         .collect::<Vec<_>>();
-    crate::authorization_lease::acquire_for_events(&http, &envelopes, &digest_suites).await?;
+    crate::pcr_authority::acquire_for_events(&http, &envelopes, &digest_suites).await?;
     let mut submissions = Vec::with_capacity(envelopes.len());
     for (event, digest_suite) in envelopes.iter().zip(digest_suites.iter().copied()) {
         submissions.push(
-            crate::authorization_lease::delayed_initial_submission(&http, event, digest_suite)
+            crate::pcr_authority::delayed_initial_submission(&http, event, digest_suite)
                 .await?,
         );
     }
@@ -367,7 +367,7 @@ async fn drive_security_rotation(
     actor_id: &str,
     current_device_id: &str,
     target_device_id: &str,
-    transaction: &mut arkret_wire::SecurityTransaction,
+    transaction: &mut arkret_sdk::SecurityTransaction,
 ) -> Result<CompletedSecurityRotation> {
     let http = api.sdk_http_client()?;
     let submitter = api.event_submitter()?;
@@ -417,7 +417,7 @@ async fn drive_security_rotation(
             .await?;
         let digest_suite = erase_frontier.live_digest_suite;
         let erase_basis_leaf = erase_frontier.sole_leaf()?.clone();
-        let erase_lease = crate::authorization_lease::acquire_for_intent(
+        let erase_lease = crate::pcr_authority::acquire_for_intent(
             &http,
             arkret_wire::AuthorizationLeaseIssueIntent {
                 scope_ref: arkret_sdk::ScopeRef::Realm {
@@ -626,7 +626,7 @@ fn clear_pending_rotation(secure_store: &dyn SecureKeyStore, target_device_id: &
     }
 }
 
-fn rotation_backup_count(transaction: &arkret_wire::SecurityTransaction) -> Result<usize> {
+fn rotation_backup_count(transaction: &arkret_sdk::SecurityTransaction) -> Result<usize> {
     let plan = transaction
         .security_rotation_plan()
         .ok_or_else(|| anyhow!("server returned a non-rotation transaction plan"))?;
@@ -756,7 +756,7 @@ fn prepare_class(
     new_backup_bodies: Vec<arkret_sdk::KeyBackup>,
 ) -> Result<PreparedRotationBackupClass> {
     let class = BackupKind::try_from(wire_kind).map_err(|error| anyhow!(error))?;
-    let previous_series_id = active_series_id_for_backup_class(list_payload, class)
+    let previous_series_id = active_secret_storage_series_id_for(list_payload, class)
         .ok_or_else(|| anyhow!("no authoritative {wire_kind} series is available"))?;
     let previous_series_id = BackupSeriesId::new(previous_series_id.to_owned())?;
     let expected_kind = match backup_kind {

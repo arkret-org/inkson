@@ -689,3 +689,76 @@ mod tests {
         );
     }
 }
+
+/// The authority-signed typed current results a Realm projection carries.
+///
+/// `crate::current_projection::install_bounded_view` stores the snapshot's
+/// `current_state_entries` under `current`, so this is the one read path from
+/// a stored projection body to the Station's selected values.
+pub(crate) fn projection_current_state_entries(
+    projection: &serde_json::Value,
+) -> Vec<arkret_wire::TypedCurrentResult> {
+    projection
+        .get("current")
+        .and_then(|entries| {
+            serde_json::from_value::<Vec<arkret_wire::TypedCurrentResult>>(entries.clone()).ok()
+        })
+        .unwrap_or_default()
+}
+
+/// Home Realm of a stored projection body, falling back to the key it is
+/// stored under.
+fn projection_home_realm_id(projection: &serde_json::Value, stored_under: &str) -> String {
+    projection
+        .get("realm_id")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            projection
+                .get("summary")
+                .and_then(|summary| summary.get("realm_id"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|realm_id| !realm_id.is_empty())
+        .unwrap_or(stored_under)
+        .to_owned()
+}
+
+/// Whether the Realm-default scope of `realm_id` has activated MLS.
+///
+/// A scope is plaintext until its own accepted `ak.mls.genesis` and
+/// irreversibly standard RFC 9420 afterwards, so the presence of the Station's
+/// `MlsGroup` current result for that scope is the whole judgement. `None`
+/// means the Realm's snapshot has not been installed yet — never "plaintext";
+/// gates that could leak plaintext must fail closed on it.
+pub(crate) fn realm_scope_security_state(
+    projections: &std::collections::BTreeMap<String, serde_json::Value>,
+    realm_id: &str,
+) -> Option<bool> {
+    let realm_id = realm_id.trim();
+    let projection = projections.get(realm_id)?;
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?;
+    let entries = projection_current_state_entries(projection);
+    Some(crate::current_projection::scope_has_accepted_mls_genesis(
+        &entries,
+        &arkret_sdk::ScopeRef::Realm { realm_id: realm },
+    ))
+}
+
+/// [`realm_scope_security_state`] for an id that may name a Realm or one of the
+/// containers stored beside it.
+///
+/// Only Realm, Circle and Sidecar are security scopes, so a Space or board id
+/// resolves through its stored body's home Realm rather than pretending to
+/// carry a scope of its own.
+pub(crate) fn scope_security_state(
+    projections: &std::collections::BTreeMap<String, serde_json::Value>,
+    scope_id: &str,
+) -> Option<bool> {
+    let scope_id = scope_id.trim();
+    if scope_id.is_empty() {
+        return None;
+    }
+    let projection = projections.get(scope_id)?;
+    realm_scope_security_state(projections, &projection_home_realm_id(projection, scope_id))
+}

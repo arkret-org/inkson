@@ -25,26 +25,25 @@ pub async fn report(
     if principal_id != authority.principal_id {
         anyhow::bail!("moderation reporter does not belong to the authenticated account");
     }
+    // The Station forwards this exact producer-signed Event through ordinary
+    // Event admission, so the wire carrier is the single-Event commit
+    // submission DTO rather than a report-specific envelope.
     let signed = submitter.author_for_direct_submission(&event).await?;
-    let report_event = crate::authorization_lease::standard_initial_submission(
-        submitter.http(),
-        &signed,
-        signed.digest_suite(),
-        None,
-    )
-    .await?;
-    let body = arkret_sdk::ModerationReportRequestBody { report_event };
+    let body = arkret_sdk::ModerationReportRequestBody {
+        report_event: arkret_wire::EventCommitSubmission {
+            event: signed.into_event(),
+        },
+    };
     body.validate_authoring_context(
         authority,
         &arkret_sdk::ModerationReportAcceptedTargetBasis {
             target_ref: target_ref.to_owned(),
             effective_scope,
         },
-        signed.digest_suite(),
     )?;
     submitter
         .http()
-        .moderation_report(&body, signed.digest_suite())
+        .moderation_report(&body)
         .await
         .map_err(anyhow::Error::from)
 }

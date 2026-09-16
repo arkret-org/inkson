@@ -41,30 +41,24 @@ impl StationFeature {
         match self {
             Self::Discussion => &[
                 SelfEventsReadScanV1,
-                SelfEventsReadResolveV1,
+                SelfEventsResourceGetV1,
                 SelfEventsStreamSubscribeV1,
             ],
             Self::Board => &[
                 SelfEventsReadScanV1,
-                SelfEventsReadResolveV1,
+                SelfEventsResourceGetV1,
                 SelfEventsStreamSubscribeV1,
                 SelfSpaceReadListV1,
                 SelfStrandReadListV1,
             ],
             Self::CreateRealm => &[
                 ServerReadDescribeV1,
-                SelfEventsReadDescribeV1,
                 SelfEventsCommandSubmitV1,
+                SelfEventsReadScanV1,
                 OpenServiceReadResolutionV1,
                 SelfSignerKeysReadResolveV1,
-                SelfSealsCommandPrepareV1,
-                SelfSealsCommandSubmitV1,
             ],
-            Self::CreateSpace => &[
-                SelfEventsReadDescribeV1,
-                SelfEventsCommandSubmitV1,
-                SelfSealsCommandPrepareV1,
-            ],
+            Self::CreateSpace => &[SelfEventsCommandSubmitV1, SelfEventsReadScanV1],
             Self::Circles => &[SelfCircleReadListV1],
             Self::PublishKeyPackage => &[
                 SelfKeysKeypackagesUploadCreateV1,
@@ -73,17 +67,14 @@ impl StationFeature {
             Self::MlsAdmission => &[
                 SelfKeysKeypackagesCommandClaimV1,
                 SelfKeysKeypackagesCommandConsumeV1,
-                SelfSealsReadHistoryAuthorityV1,
-                SelfSealsReadMlsGovernanceProofV1,
                 SelfEventsCommandSubmitV1,
+                SelfEventsReadScanV1,
             ],
             Self::WelcomeBootstrap => &[
                 SelfDeviceMessagesReadListV1,
                 SelfDeviceMessagesCommandAckV1,
                 SelfKeysKeypackagesCommandConsumeV1,
-                SelfSealsReadMlsWelcomeRefsV1,
-                SelfSealsReadMlsAcceptedArtifactV1,
-                SelfSealsReadMlsGovernanceProofV1,
+                SelfEventsReadScanV1,
             ],
         }
     }
@@ -146,7 +137,6 @@ mod tests {
     #[test]
     fn realm_creation_does_not_require_identity_resolver_or_upload_transport() {
         let description = station(&[
-            "ak.operation_bundle.station.current_signer_evidence.v1",
             "ak.operation_bundle.station.describe.v1",
             "ak.operation_bundle.station.http_core.v1",
         ]);
@@ -157,17 +147,35 @@ mod tests {
     }
 
     #[test]
-    fn missing_signer_evidence_blocks_creation_but_not_reading_or_verification() {
-        let description = station(&[
-            "ak.operation_bundle.station.describe.v1",
-            "ak.operation_bundle.station.http_core.v1",
-        ]);
+    fn missing_describe_bundle_blocks_creation_but_not_reading_or_key_publication() {
+        let description = station(&["ak.operation_bundle.station.http_core.v1"]);
         assert_eq!(
             StationFeature::CreateRealm.missing_requirements(Some(&description)),
-            vec!["ak.self.signer_keys.read.resolve.v1 (http_json)"]
+            vec!["ak.server.read.describe.v1 (http_json)"]
         );
         assert!(StationFeature::Discussion.ready(Some(&description)));
         assert!(StationFeature::PublishKeyPackage.ready(Some(&description)));
+    }
+
+    #[test]
+    fn every_baseline_operation_is_a_live_registry_operation() {
+        for feature in [
+            StationFeature::Discussion,
+            StationFeature::Board,
+            StationFeature::CreateRealm,
+            StationFeature::CreateSpace,
+            StationFeature::Circles,
+            StationFeature::PublishKeyPackage,
+            StationFeature::MlsAdmission,
+            StationFeature::WelcomeBootstrap,
+        ] {
+            for operation in feature.operations() {
+                assert_eq!(
+                    ServiceOperationId::from_wire(operation.as_str()),
+                    Some(*operation)
+                );
+            }
+        }
     }
 
     #[test]

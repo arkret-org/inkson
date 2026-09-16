@@ -98,8 +98,6 @@ impl OptimisticRealmTreeProjection {
             collaboration_role,
             encryption_floor,
         } = input;
-        let durability_policy = (content_scheme == "mls_exporter_aead_v1")
-            .then_some(arkret_sdk::DurabilityPolicy::None);
         // Realm metadata is mirrored at the body top level *and* under
         // `summary` because the two have different readers, and neither set
         // covers the other:
@@ -125,7 +123,6 @@ impl OptimisticRealmTreeProjection {
             members: members.clone(),
             encryption_profile: encryption_profile.clone(),
             content_scheme: content_scheme.clone(),
-            durability_policy,
             history_access: history_access.clone(),
             plaintext_visible_services: plaintext_visible_services.clone(),
             collaboration_role,
@@ -139,7 +136,6 @@ impl OptimisticRealmTreeProjection {
                 discoverability,
                 encryption_profile,
                 content_scheme,
-                durability_policy,
                 history_access,
                 plaintext_visible_services,
                 owner,
@@ -185,8 +181,6 @@ pub(crate) struct RealmProjectionBody {
     members: Vec<String>,
     encryption_profile: String,
     content_scheme: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    durability_policy: Option<arkret_sdk::DurabilityPolicy>,
     history_access: String,
     plaintext_visible_services: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -209,8 +203,6 @@ struct RealmProjectionSummary {
     discoverability: String,
     encryption_profile: String,
     content_scheme: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    durability_policy: Option<arkret_sdk::DurabilityPolicy>,
     history_access: String,
     plaintext_visible_services: Vec<String>,
     owner: String,
@@ -247,22 +239,38 @@ struct ProjectionEventFeed {
     events: Vec<Value>,
 }
 
-// The two JSON field accessors moved to garth alongside the projection
-// security-state reader that is their main consumer; re-exported here so the
-// existing `crate::realm_tree::` paths keep resolving.
-pub(crate) use garth::projection::string_field;
-
-/// The closed `ak.schema.realm_genesis.v1` object the Station publishes as the
-/// current `ak.component.realm.genesis.v1` value.
+/// First non-empty string among `keys`, read straight off a projection body.
 ///
-/// This cell is the only authority for the create-locked identity/security
-/// core (`realm-and-space.md` §2.5). The client reads the single published
-/// value and never reconstructs it from Events: the retired `state` /
-/// `state_after` containers are gone from the wire, and re-deriving a current
-/// value from Event arrival order is exactly the raw-latest reduction the
-/// current-result contract removed.
+/// The local Realm projection is a heterogeneous JSON view assembled from the
+/// account subscription; this is the one accessor every reader goes through so
+/// a key spelling cannot drift between call sites.
+pub(crate) fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
+    let object = value.as_object()?;
+    keys.iter().find_map(|key| {
+        object
+            .get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|found| !found.is_empty())
+            .map(ToOwned::to_owned)
+    })
+}
+
+/// The closed `ak.schema.realm_genesis.v1` object carried by the Realm's own
+/// `ak.realm.create` Event at position 0 of its Realm stream.
+///
+/// It is the only authority for the create-locked identity core
+/// (`realm-and-space.md` §2.5). The sync layer installs it verbatim under
+/// `genesis` when it reads that first commit; nothing here reconstructs it from
+/// later Events, because re-deriving a current value from arrival order is
+/// exactly what the authority-commit model removed.
 pub(crate) fn realm_projection_genesis_value(body: &Value) -> Option<&Value> {
-    garth::installed_cell_value(body, crate::current_projection::REQUIRED_REALM_CELLS[0])
+    body.as_object()?.get("genesis").filter(|genesis| {
+        genesis
+            .get("schema")
+            .and_then(Value::as_str)
+            .is_some_and(|schema| schema == arkret_wire::SchemaId::REALM_GENESIS_V1)
+    })
 }
 
 /// Return the create-locked control purpose only when the accepted Realm
@@ -941,8 +949,6 @@ mod tests {
         );
         assert_eq!(body["content_scheme"], "mls_exporter_aead_v1");
         assert_eq!(body["summary"]["content_scheme"], "mls_exporter_aead_v1");
-        assert_eq!(body["durability_policy"], "none");
-        assert_eq!(body["summary"]["durability_policy"], "none");
         assert_eq!(body["history_access"], "all_history_for_current_members");
         assert_eq!(
             body["summary"]["history_access"],
@@ -974,8 +980,6 @@ mod tests {
         assert!(body.get("metadata_encryption_floor").is_none());
         assert!(body["summary"].get("content_encryption_floor").is_none());
         assert!(body["summary"].get("metadata_encryption_floor").is_none());
-        assert!(body.get("durability_policy").is_none());
-        assert!(body["summary"].get("durability_policy").is_none());
     }
 
     #[test]

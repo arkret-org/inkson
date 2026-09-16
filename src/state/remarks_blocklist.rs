@@ -84,7 +84,7 @@ impl LocalStateStore {
         }
         self.cached.accepted_human_contact_principals = contacts
             .iter()
-            .filter(|contact| contact.state == arkret_sdk::ContactState::Accepted)
+            .filter(|contact| contact.state == crate::models::ContactState::Accepted)
             .filter_map(|contact| match &contact.peer {
                 arkret_sdk::contact_operations::ContactPeer::Human { account_id } => {
                     Some(account_id.principal_id.to_string())
@@ -364,75 +364,62 @@ impl LocalStateStore {
         }
     }
 
-    /// Get the latest verified Seal view for a Realm. An empty frontier means
-    /// no authority basis is available; callers must not synthesize one.
-    pub fn seal_view_for_realm(&self, realm_id: &str) -> LocalSealView {
-        self.load()
-            .seal_views
-            .get(realm_id)
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    /// Replace the Seal view snapshot for a Realm. Called from the sync
-    /// path once the `/sync` response surfaces the projection's Seal
-    /// view. Tests use this to seed Move-frontier behavior.
-    pub fn set_realm_seal_view(&mut self, realm_id: impl Into<String>, view: LocalSealView) {
-        self.ensure_cached_loaded();
-        let realm_id = realm_id.into();
-        if self.cached.seal_views.get(&realm_id) == Some(&view) {
-            return; // seal view unchanged — skip flush
-        }
-        self.cached.mls_governance_results.retain(|_, entry| {
-            entry
-                .request
-                .effective_scope
-                .realm_id_opt()
-                .map(|id| id.as_str())
-                != Some(realm_id.as_str())
-                || entry
-                    .request
-                    .seal_basis
-                    .leaves
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    == view.frontier
-        });
-        self.cached.mls_accepted_artifacts.retain(|_, entry| {
-            entry.event.realm_id.as_str() != realm_id.as_str()
-                || entry.observed_frontier == view.frontier
-        });
-        self.cached.seal_views.insert(realm_id, view);
-        let _ = self.flush();
-    }
-
-    /// Fold a per-Realm `/sync` body into the stored Seal view.
+    /// Read cursor for one independent commit stream.
     ///
-    /// This is the ONLY entry point the sync path may use. `client-sync.md`
-    /// defines no Seal view on the Realm delta, so a body without `seal_view`
-    /// says nothing about the frontier; replacing the stored view with the
-    /// resulting empty one would drop the authoritative frontier obtained from
-    /// `ak.self.seals.read.frontier.v1` and make [`Self::set_realm_seal_view`]
-    /// evict every verified MLS governance proof for the Realm. See
-    /// [`LocalSealView::merged_from_sync_body`].
-    pub fn merge_realm_seal_view_from_sync_body(&mut self, realm_id: &str, body: &Value) {
-        let merged = self
-            .seal_view_for_realm(realm_id)
-            .merged_from_sync_body(body);
-        self.set_realm_seal_view(realm_id.to_owned(), merged);
+    /// Absence means this device has verified nothing on that stream yet;
+    /// callers must scan from the start rather than assume a position.
+    pub fn stream_head(
+        &self,
+        stream_ref: &arkret_wire::CommitStreamRef,
+    ) -> Option<arkret_wire::CommitStreamHead> {
+        self.load()
+            .stream_cursors
+            .get(&commit_stream_key(stream_ref))
+            .cloned()
     }
 
-    /// All known Seal views — handy for app-wide UI banners.
-    pub fn seal_views(&self) -> BTreeMap<String, LocalSealView> {
-        self.load().seal_views
+    /// Advance one stream's cursor. A head that does not strictly advance the
+    /// stored position is ignored: commit streams are linear and monotone, and
+    /// a backwards head would re-open already-verified positions.
+    pub fn record_stream_head(&mut self, head: arkret_wire::CommitStreamHead) -> bool {
+        self.ensure_cached_loaded();
+        let key = commit_stream_key(&head.stream_ref);
+        if let Some(current) = self.cached.stream_cursors.get(&key)
+            && current.stream_position >= head.stream_position
+        {
+            return false;
+        }
+        self.cached.stream_cursors.insert(key, head);
+        let _ = self.flush();
+        true
     }
 
-    /// The Realm's one last verified safety head. Empty and competing
-    /// lineages both return `None` and must remain pending.
-    pub fn confirmed_seal_ref_for_realm(&self, realm_id: &str) -> Option<String> {
-        self.seal_view_for_realm(realm_id)
-            .confirmed_seal_ref()
-            .map(ToOwned::to_owned)
+    /// Every commit-stream cursor this device holds, keyed by
+    /// [`commit_stream_key`]. There is deliberately no aggregate position.
+    pub fn stream_heads(&self) -> BTreeMap<String, arkret_wire::CommitStreamHead> {
+        self.load().stream_cursors
+    }
+
+    /// Verified current governance authority for a Realm, when one has been
+    /// established. `None` means authority is unknown and every authority-bound
+    /// decision must fail closed.
+    pub fn realm_authority_basis(&self, realm_id: &str) -> Option<PersistedRealmAuthorityBasis> {
+        self.load().realm_authority_basis.get(realm_id).cloned()
+    }
+
+    /// Install the outcome of validating a nonce-bound `RealmAuthorityBundle`.
+    /// A lower generation never overwrites a higher one: authority generations
+    /// are monotone, so an older bundle is stale evidence, not a handoff back.
+    pub fn record_realm_authority_basis(&mut self, basis: PersistedRealmAuthorityBasis) -> bool {
+        self.ensure_cached_loaded();
+        let key = basis.realm_id.to_string();
+        if let Some(current) = self.cached.realm_authority_basis.get(&key)
+            && current.current_generation > basis.current_generation
+        {
+            return false;
+        }
+        self.cached.realm_authority_basis.insert(key, basis);
+        let _ = self.flush();
+        true
     }
 }

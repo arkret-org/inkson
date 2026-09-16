@@ -63,7 +63,8 @@ struct AcceptedChatMessageOperation<'a> {
     message_id: &'a str,
     mentions: &'a [Value],
     reply_to: Option<&'a str>,
-    status: &'a arkret_sdk::EventsSubmitStatus,
+    /// Send-queue lifecycle of the submission that produced this row.
+    status: &'a garth::SendQueueStatus,
 }
 
 fn principal_core_key(value: &str) -> Option<String> {
@@ -81,14 +82,32 @@ fn same_principal_core(left: &str, right: &str) -> bool {
         .is_some_and(|left| principal_core_key(right).as_deref() == Some(left.as_str()))
 }
 
+/// The signed-in actor's own watch level for one Strand.
+///
+/// The Realm snapshot has no watch selector, so this folds the Strand's own
+/// accepted `ak.strand.watch.set` writes in Commit order
+/// (`authz/event-auth-state-resolution.md` section 6). `Loading` means no
+/// Strand current result has arrived yet, so the picker stays disabled rather
+/// than presenting the schema default as an observed answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum WatchCurrentProjection {
     Loading,
     Settled {
         level: WatchLevel,
-        basis_refs: Vec<arkret_sdk::Hash>,
+        /// Prior value for the payload's `expected_value` compare-and-swap
+        /// guard; `None` when the cell has never been written.
+        expected: Option<arkret_sdk::StrandWatchExpectedValue>,
     },
     Unavailable,
+}
+
+fn watch_level_from_wire(value: arkret_sdk::StrandWatchLevel) -> WatchLevel {
+    match value {
+        arkret_sdk::StrandWatchLevel::MentionsOnly => WatchLevel::MentionsOnly,
+        arkret_sdk::StrandWatchLevel::Participating => WatchLevel::Participating,
+        arkret_sdk::StrandWatchLevel::All => WatchLevel::All,
+        arkret_sdk::StrandWatchLevel::Muted => WatchLevel::Muted,
+    }
 }
 
 fn current_watch_projection(
@@ -97,63 +116,58 @@ fn current_watch_projection(
     strand_id: &str,
     actor_id: &str,
 ) -> WatchCurrentProjection {
-    let Ok(cell) = ak_ops::strand_watch_cell_ref(strand_id, actor_id) else {
+    let Ok(strand) = arkret_sdk::StrandId::new(strand_id.to_owned()) else {
         return WatchCurrentProjection::Unavailable;
     };
-    let Some(projection) = state_store.realm_tree_projection(realm_id) else {
+    let entries = state_store.realm_current_state_entries(realm_id);
+    if crate::current_projection::current_strand(&entries, &strand).is_none() {
         return WatchCurrentProjection::Loading;
-    };
-    let Ok(current) = serde_json::from_value::<arkret_sdk::CurrentEntries>(
-        projection.get("current").cloned().unwrap_or(Value::Null),
-    ) else {
-        return WatchCurrentProjection::Loading;
-    };
-    let target_matches = |entry: &&arkret_sdk::CurrentResultEntry| matches!(entry.target(), arkret_sdk::CurrentTarget::Strand { strand_id: id } if id.as_str() == strand_id);
-    let object_cell = format!("ak:cell:ak.component.strand.object.v1:{strand_id}");
-    let object_is_loaded = current
-        .entries
-        .iter()
-        .any(|entry| entry.selector().cell_id.as_str() == object_cell && target_matches(&entry));
-    let mut matching = current
-        .entries
-        .iter()
-        .filter(|entry| entry.selector().cell_id == cell && target_matches(entry));
-    let Some(entry) = matching.next() else {
-        return if object_is_loaded {
-            WatchCurrentProjection::Settled {
-                level: WatchLevel::MentionsOnly,
-                basis_refs: Vec::new(),
-            }
-        } else {
-            WatchCurrentProjection::Loading
-        };
-    };
-    if matching.next().is_some() {
-        return WatchCurrentProjection::Unavailable;
     }
-    match entry.result() {
-        arkret_sdk::CurrentOutcome::Value { value, source } => {
-            let value = value.as_json();
-            let level = match value.get("level").and_then(Value::as_str) {
-                Some("mentions_only") | None => WatchLevel::MentionsOnly,
-                Some("participating") => WatchLevel::Participating,
-                Some("all") => WatchLevel::All,
-                Some("muted") => WatchLevel::Muted,
-                Some(_) => return WatchCurrentProjection::Unavailable,
-            };
-            WatchCurrentProjection::Settled {
-                level,
-                basis_refs: source
-                    .as_ref()
-                    .map(|source| vec![source.event_id.event_digest()])
-                    .unwrap_or_default(),
-            }
+    // Later writes supersede earlier ones at the same typed target, so the last
+    // accepted write this client folded is the current value.
+    let mut settled: Option<arkret_sdk::StrandWatchSetPayload> = None;
+    for record in state_store.load().raw_operations {
+        if record.realm_id.as_deref().map(str::trim) != Some(realm_id.trim()) {
+            continue;
         }
-        arkret_sdk::CurrentOutcome::Removed => WatchCurrentProjection::Settled {
-            level: WatchLevel::MentionsOnly,
-            basis_refs: Vec::new(),
+        if record.payload.get("kind").and_then(Value::as_str)
+            != Some(event_kind_str::STRAND_WATCH_SET)
+        {
+            continue;
+        }
+        let Some(body) = record
+            .payload
+            .get("body")
+            .or_else(|| record.payload.get("payload"))
+        else {
+            continue;
+        };
+        let Ok(payload) =
+            serde_json::from_value::<arkret_sdk::StrandWatchSetPayload>(body.clone())
+        else {
+            continue;
+        };
+        if payload.strand_id != strand
+            || !same_principal_core(payload.watcher_actor_id.signing_principal_id().as_str(), actor_id)
+        {
+            continue;
+        }
+        settled = Some(payload);
+    }
+    match settled {
+        // `strand-and-message.md` section 8.3: a cleared cell is the schema
+        // default, and the clearing write is the observed prior value.
+        Some(payload) => WatchCurrentProjection::Settled {
+            level: payload.level.map(watch_level_from_wire).unwrap_or(WatchLevel::MentionsOnly),
+            expected: payload.level.map(|level| arkret_sdk::StrandWatchExpectedValue {
+                level,
+                level_public: payload.level_public,
+            }),
         },
-        arkret_sdk::CurrentOutcome::Unavailable { .. } => WatchCurrentProjection::Unavailable,
+        None => WatchCurrentProjection::Settled {
+            level: WatchLevel::MentionsOnly,
+            expected: None,
+        },
     }
 }
 
@@ -647,10 +661,10 @@ struct OwnedAgentSidecarEnsureResult {
 struct PendingNativeSidecarCommit {
     operation_id: arkret_sdk::ProtocolOperationId,
     sidecar_id: arkret_sdk::SidecarId,
-    source_context_ref: arkret_sdk::sidecar_operations::SidecarContextRef,
-    expected_phase: arkret_sdk::sidecar_operations::SidecarAcceptedPhase,
+    source_context_ref: arkret_sdk::SidecarContextRef,
+    expected_phase: arkret_sdk::SidecarEnsureAcceptedPhase,
     expires_at: chrono::DateTime<chrono::Utc>,
-    request: arkret_sdk::sidecar_operations::SidecarEnsureRequestBody,
+    request: arkret_sdk::SidecarEnsureRequestBody,
 }
 
 fn pending_native_sidecar_commit_key(
@@ -699,14 +713,14 @@ fn validate_native_prepared_sidecar_binding(
     {
         anyhow::bail!("native Sidecar context attach draft has the wrong signed scope");
     }
-    let attach: arkret_sdk::sidecar_operations::SidecarContextAttachPayload =
+    let attach: arkret_sdk::SidecarContextAttachPayload =
         serde_json::from_value(serde_json::Value::Object(
             context_attach_event.payload.clone().into_iter().collect(),
         ))?;
     attach.validate()?;
     if attach.sidecar_id != *sidecar_id
         || attach.source_context_ref
-            != (arkret_sdk::sidecar_operations::SidecarContextRef::Strand {
+            != (arkret_sdk::SidecarContextRef::Strand {
                 strand_id: source_strand_id.clone(),
             })
     {
@@ -726,35 +740,29 @@ fn validate_native_prepared_sidecar_binding(
 }
 
 fn accepted_native_sidecar_id(
-    outcome: &arkret_sdk::sidecar_operations::SidecarEnsureOutcome,
+    outcome: &arkret_sdk::SidecarEnsureOutcome,
     expected_operation_id: &arkret_sdk::ProtocolOperationId,
-    expected_phase: arkret_sdk::sidecar_operations::SidecarAcceptedPhase,
+    expected_phase: arkret_sdk::SidecarEnsureAcceptedPhase,
     expected_sidecar_id: &arkret_sdk::SidecarId,
-    expected_source_context: &arkret_sdk::sidecar_operations::SidecarContextRef,
+    expected_source_context: &arkret_sdk::SidecarContextRef,
 ) -> anyhow::Result<arkret_sdk::SidecarId> {
-    outcome.validate()?;
     match outcome {
-        arkret_sdk::sidecar_operations::SidecarEnsureOutcome::Accepted {
-            operation_id,
-            accepted_phase,
-            sidecar_id,
-            source_context_ref,
-            access_readiness,
-            ..
-        } if operation_id == expected_operation_id
-            && *accepted_phase == expected_phase
-            && sidecar_id == expected_sidecar_id
-            && source_context_ref == expected_source_context =>
+        arkret_sdk::SidecarEnsureOutcome::Accepted(accepted)
+            if accepted.operation_id == *expected_operation_id
+                && accepted.accepted_phase == expected_phase
+                && accepted.sidecar_id == *expected_sidecar_id
+                && accepted.source_context_ref == *expected_source_context =>
         {
-            if *access_readiness == arkret_sdk::AgentSidecarAccessReadiness::Failed {
+            if accepted.access_readiness == arkret_sdk::AgentSidecarAccessReadiness::Failed {
                 anyhow::bail!("native Sidecar ensure completed with failed access readiness");
             }
-            Ok(sidecar_id.clone())
+            Ok(accepted.sidecar_id.clone())
         }
-        arkret_sdk::sidecar_operations::SidecarEnsureOutcome::Accepted { .. } => {
+        arkret_sdk::SidecarEnsureOutcome::Accepted(_) => {
             anyhow::bail!("native Sidecar accepted outcome changed its reserved binding")
         }
-        arkret_sdk::sidecar_operations::SidecarEnsureOutcome::Prepared { .. } => {
+        arkret_sdk::SidecarEnsureOutcome::PreparedNew(_)
+        | arkret_sdk::SidecarEnsureOutcome::PreparedExisting(_) => {
             anyhow::bail!("native Sidecar commit returned another prepared outcome")
         }
     }
@@ -791,13 +799,9 @@ fn sign_prepared_sidecar_event(
     {
         anyhow::bail!("active Sidecar signer is not bound to the authenticated controller device");
     }
-    let plane = crate::event_signer::event_signer_evidence_plane(
-        &event.kind,
-        arkret_schema::classify_event_execution(event.event())?,
-    )?;
     signer.sign_sdk_event_with_context(
         &mut event,
-        crate::event_signer::cached_active_event_proof_context(digest_suite, plane)?,
+        crate::event_signer::cached_active_event_proof_context(digest_suite)?,
     )?;
     let signed_digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
     if signed_digest != draft.event_digest
@@ -847,7 +851,7 @@ async fn ensure_owned_agent_sidecar(
     }
 
     let nonce = uuid_v7();
-    let context_ref = arkret_sdk::sidecar_operations::SidecarContextRef::Strand {
+    let context_ref = arkret_sdk::SidecarContextRef::Strand {
         strand_id: source_strand.clone(),
     };
     let pending_key = pending_native_sidecar_commit_key(controller.as_str(), realm_id, strand_id);
@@ -874,9 +878,9 @@ async fn ensure_owned_agent_sidecar(
                 .map_err(anyhow::Error::msg)?
         }
     };
-    let prepare = arkret_sdk::sidecar_operations::SidecarEnsureRequestBody::Prepare(
-        arkret_sdk::sidecar_operations::SidecarEnsurePrepareRequestBody {
-            phase: arkret_sdk::sidecar_operations::SidecarPreparePhase::Prepare,
+    let prepare = arkret_sdk::SidecarEnsureRequestBody::Prepare(
+        arkret_sdk::SidecarEnsurePrepareRequestBody {
+            phase: arkret_sdk::SidecarEnsurePreparePhase::Prepare,
             operation_id: operation_id.clone(),
             idempotency_key: arkret_sdk::IdempotencyKey::new(nonce).map_err(anyhow::Error::msg)?,
             source_realm_id: source_realm.clone(),
@@ -914,21 +918,21 @@ async fn ensure_owned_agent_sidecar(
                     .agent_sidecar_ensure(&prepare)
                     .await
                     .map_err(anyhow::Error::from)?;
+                let idempotency_key =
+                    arkret_sdk::IdempotencyKey::new(uuid_v7()).map_err(anyhow::Error::msg)?;
                 match prepared {
-                arkret_sdk::sidecar_operations::SidecarEnsureOutcome::Accepted { .. } => {
+                arkret_sdk::SidecarEnsureOutcome::Accepted(_) => {
                     anyhow::bail!("native Sidecar prepare skipped its signed reservation ceremony")
                 }
-                arkret_sdk::sidecar_operations::SidecarEnsureOutcome::Prepared { prepared } => {
-                    let idempotency_key = arkret_sdk::IdempotencyKey::new(uuid_v7())
-                        .map_err(anyhow::Error::msg)?;
-                    match prepared {
-                        arkret_sdk::sidecar_operations::SidecarPreparedOutcome::New {
+                        arkret_sdk::SidecarEnsureOutcome::PreparedNew(
+                            arkret_sdk::SidecarEnsurePreparedNewOutcome {
                             operation_id,
                             reservation_handle,
                             expires_at,
                             create_event_draft,
                             context_attach_event_draft,
-                        } => {
+                            ..
+                        }) => {
                             if operation_id != ceremony_operation_id
                                 || expires_at <= crate::clock::now_utc()
                             {
@@ -961,9 +965,9 @@ async fn ensure_owned_agent_sidecar(
                                 &ceremony_controller_did,
                                 &ceremony_realm,
                             )?;
-                            let request = arkret_sdk::sidecar_operations::SidecarEnsureRequestBody::Commit(
-                                arkret_sdk::sidecar_operations::SidecarEnsureCommitRequestBody {
-                                    phase: arkret_sdk::sidecar_operations::SidecarCommitPhase::Commit,
+                            let request = arkret_sdk::SidecarEnsureRequestBody::Commit(
+                                arkret_sdk::SidecarEnsureCommitRequestBody {
+                                    phase: arkret_sdk::SidecarEnsureCommitPhase::Commit,
                                     operation_id: ceremony_operation_id.clone(),
                                     idempotency_key,
                                     reservation_handle,
@@ -975,7 +979,7 @@ async fn ensure_owned_agent_sidecar(
                                 operation_id: ceremony_operation_id.clone(),
                                 sidecar_id: sidecar_id.clone(),
                                 source_context_ref: ceremony_context.clone(),
-                                expected_phase: arkret_sdk::sidecar_operations::SidecarAcceptedPhase::Commit,
+                                expected_phase: arkret_sdk::SidecarEnsureAcceptedPhase::Commit,
                                 expires_at,
                                 request: request.clone(),
                             };
@@ -990,18 +994,20 @@ async fn ensure_owned_agent_sidecar(
                                 barrier.wait().await?;
                             }
                             (
-                                arkret_sdk::sidecar_operations::SidecarAcceptedPhase::Commit,
+                                arkret_sdk::SidecarEnsureAcceptedPhase::Commit,
                                 sidecar_id,
                                 request,
                             )
                         }
-                        arkret_sdk::sidecar_operations::SidecarPreparedOutcome::Existing {
+                        arkret_sdk::SidecarEnsureOutcome::PreparedExisting(
+                            arkret_sdk::SidecarEnsurePreparedExistingOutcome {
                             operation_id,
                             reservation_handle,
                             expires_at,
                             sidecar_id,
                             context_attach_event_draft,
-                        } => {
+                            ..
+                        }) => {
                             if operation_id != ceremony_operation_id
                                 || expires_at <= crate::clock::now_utc()
                             {
@@ -1023,9 +1029,9 @@ async fn ensure_owned_agent_sidecar(
                                 &ceremony_controller_did,
                                 &ceremony_realm,
                             )?;
-                            let request = arkret_sdk::sidecar_operations::SidecarEnsureRequestBody::Attach(
-                                arkret_sdk::sidecar_operations::SidecarEnsureAttachRequestBody {
-                                    phase: arkret_sdk::sidecar_operations::SidecarAttachPhase::Attach,
+                            let request = arkret_sdk::SidecarEnsureRequestBody::Attach(
+                                arkret_sdk::SidecarEnsureAttachRequestBody {
+                                    phase: arkret_sdk::SidecarEnsureAttachPhase::Attach,
                                     operation_id: ceremony_operation_id.clone(),
                                     idempotency_key,
                                     reservation_handle,
@@ -1036,7 +1042,7 @@ async fn ensure_owned_agent_sidecar(
                                 operation_id: ceremony_operation_id.clone(),
                                 sidecar_id: sidecar_id.clone(),
                                 source_context_ref: ceremony_context.clone(),
-                                expected_phase: arkret_sdk::sidecar_operations::SidecarAcceptedPhase::Attach,
+                                expected_phase: arkret_sdk::SidecarEnsureAcceptedPhase::Attach,
                                 expires_at,
                                 request: request.clone(),
                             };
@@ -1051,13 +1057,11 @@ async fn ensure_owned_agent_sidecar(
                                 barrier.wait().await?;
                             }
                             (
-                                arkret_sdk::sidecar_operations::SidecarAcceptedPhase::Attach,
+                                arkret_sdk::SidecarEnsureAcceptedPhase::Attach,
                                 sidecar_id,
                                 request,
                             )
                         }
-                    }
-                }
                 }
             };
             let accepted = http
@@ -1112,12 +1116,9 @@ async fn ensure_owned_agent_sidecar(
     Ok(Some(OwnedAgentSidecarEnsureResult { sidecar_id, view }))
 }
 
-fn sidecar_mls_binding(view: &arkret_sdk::AgentSidecarView) -> arkret_sdk::SidecarMlsBinding {
-    arkret_sdk::SidecarMlsBinding {
-        sidecar_id: view.sidecar.id.clone(),
-        participant_authority_digest: view.mls_context.participant_authority_digest.clone(),
-        control_frontier: view.mls_context.control_frontier.clone(),
-    }
+/// The Sidecar scope's MLS coordinates as the Station published them.
+fn sidecar_mls_binding(view: &arkret_sdk::AgentSidecarView) -> arkret_sdk::AgentSidecarMlsContext {
+    view.mls_context.clone()
 }
 
 struct SourceRoutedSidecarMessageOutcome {
@@ -1223,7 +1224,7 @@ async fn submit_source_routed_sidecar_message(
         .as_ref()
         .map(|pending| pending.request_context.clone())
         .unwrap_or(arkret_sdk::AgentSidecarExchangeRequestContext {
-            source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
+            source_track_ref: arkret_sdk::SidecarSourceTrackRef {
                 realm_id: view.sidecar.realm_id.clone(),
                 strand_id: arkret_sdk::StrandId::new(attached_source_strand_id.to_owned())?,
                 track_name: "discussion".to_owned(),
@@ -1233,19 +1234,17 @@ async fn submit_source_routed_sidecar_message(
                 device_id.as_str(),
                 source_realm_id,
             )?,
-            client_order_key: arkret_sdk::NonEmptyString::new(uuid_v7())
-                .map_err(anyhow::Error::msg)?,
+            client_order_key: uuid_v7(),
             addressed_agent_ids: addressed.clone(),
-            completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
             coordinator_agent_id: (addressed.len() > 1).then(|| addressed[0].clone()),
-            source_event_id: source_event_id
+            source_checkpoint_anchor_id: source_event_id
                 .filter(|anchor| !anchor.trim().is_empty())
                 .and_then(|anchor| arkret_sdk::EventId::new(anchor.to_owned()).ok()),
         });
     let exchange_id = prior
         .as_ref()
         .map(|pending| pending.exchange_id.clone())
-        .unwrap_or(arkret_sdk::AgentSidecarExchangeId::new(uuid_v7())?);
+        .unwrap_or_else(uuid_v7);
     let binding = arkret_sdk::AgentSidecarEventExchangeBinding::request(
         exchange_id.clone(),
         request_context.clone(),
@@ -1772,9 +1771,11 @@ pub fn ChatPanel(
         .unwrap_or(0);
     let selected_realm_security_encrypted = {
         let state = state_store.read().load();
-        garth::security_projection_for_scope_id(&state.realm_tree_projections, &selected_realm_id)
-            .map(garth::realm_projection_is_encrypted)
-            .unwrap_or(false)
+        crate::views::helpers::realm_scope_security_state(
+            &state.realm_tree_projections,
+            &selected_realm_id,
+        )
+        .unwrap_or(false)
     };
     // The first-class Sidecar contract requires an independent MLS backing scope.
     // The private Strand only carries its internal scope id, so ordinary Realm

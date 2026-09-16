@@ -4,7 +4,6 @@ use crate::ephemeral::validate_outgoing_registered_event_payload;
 use crate::event_builders::{
     build_member_state_transition_event, build_realm_bootstrap_steps_for_station,
     build_realm_create_event, build_realm_state_event_for_station, build_space_create_event,
-    test_authority_notary,
 };
 use crate::operation::TypedOperationBuilder;
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
@@ -38,7 +37,6 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
-            test_authority_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Engineering",
             Some("Roadmap work"),
@@ -232,37 +230,56 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
 }
 
 #[test]
-fn plaintext_realm_create_does_not_claim_e2ee_floors() {
+fn realm_create_carries_only_the_closed_genesis_members() {
     let envelope = build_realm_create_event(
         test_genesis_salt(),
         "did:web:alice.example",
-        test_authority_notary("did:web:server.example").unwrap(),
-        "Public updates",
-        None,
         "listed",
         "public",
         "all_history_for_current_members",
-        "none",
         "standard",
-        "open",
-        "sha256",
         "ak:trust_domain:server.example",
-        None,
     )
     .unwrap();
 
-    assert_eq!(envelope.payload()["object"]["encryption_profile"], "none");
-    assert!(
-        envelope.payload()["object"]
-            .get("content_encryption_floor")
-            .is_none()
+    let object = envelope.payload()["object"]
+        .as_object()
+        .expect("the genesis object is a JSON object")
+        .clone();
+    // `ak.schema.realm_genesis.v1` is closed: these nine members and nothing
+    // else for a Collaboration Realm. Title, alias, discovery policy and the
+    // plaintext service surface are their own facet follow-ups in the same
+    // bootstrap unit, never members of the create.
+    let mut members = object.keys().cloned().collect::<Vec<_>>();
+    members.sort();
+    assert_eq!(
+        members,
+        vec![
+            "genesis_salt".to_owned(),
+            "governance_station_id".to_owned(),
+            "initial_discoverability".to_owned(),
+            "initial_history_access".to_owned(),
+            "initial_join_rule".to_owned(),
+            "purpose".to_owned(),
+            "schema".to_owned(),
+            "security_class".to_owned(),
+            "trust_domain".to_owned(),
+        ]
     );
-    assert!(
-        envelope.payload()["object"]
-            .get("metadata_encryption_floor")
-            .is_none()
-    );
-    assert!(envelope.payload()["object"].get("created_at").is_none());
+    // Encryption is not a creation-time claim: a scope becomes encrypted only
+    // through its own committed `ak.mls.genesis`, so no floor or profile can
+    // be asserted here.
+    for removed in [
+        "encryption_profile",
+        "content_encryption_floor",
+        "metadata_encryption_floor",
+        "created_at",
+    ] {
+        assert!(
+            object.get(removed).is_none(),
+            "the genesis object must not carry {removed}"
+        );
+    }
 }
 
 #[test]
@@ -272,7 +289,6 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
         test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
-        test_authority_notary("did:web:server.example").unwrap(),
         "https://server.example",
         "Strict history",
         None,
@@ -304,7 +320,6 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
-            test_authority_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Strict history",
             None,
@@ -351,7 +366,6 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
-            test_authority_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Engineering",
             None,
@@ -536,7 +550,6 @@ fn realm_bootstrap_payloads_match_spec_schema() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
-            test_authority_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Engineering",
             Some("Roadmap work"),

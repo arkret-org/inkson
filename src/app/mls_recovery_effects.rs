@@ -180,9 +180,8 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                         };
                         let history_payload_for_local_restore = if has_local_account_secret {
                             Some(
-                                crate::mls::account_recovery::fetch_mls_history_restore_payload_with_unlock_proof(
+                                crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
                                     &api,
-                                    &payload,
                                     &actor_for_sidecar_restore,
                                     &device_for_sidecar_restore,
                                 )

@@ -14,6 +14,65 @@ use zeroize::Zeroize;
 use super::*;
 use crate::notification_rules::{DndSettings, WatchLevel};
 
+/// Canonical local map key for one independent commit stream.
+///
+/// Realm, Circle and Sidecar streams are separate linear logs; this key keeps
+/// them separate in local state so no code path can accidentally merge two
+/// streams into a single cursor.
+pub fn commit_stream_key(stream_ref: &arkret_wire::CommitStreamRef) -> String {
+    match stream_ref {
+        arkret_wire::CommitStreamRef::Realm { realm_id } => format!("realm/{}", realm_id.as_str()),
+        arkret_wire::CommitStreamRef::Circle {
+            realm_id,
+            circle_id,
+        } => format!("circle/{}/{}", realm_id.as_str(), circle_id.as_str()),
+        arkret_wire::CommitStreamRef::Sidecar {
+            realm_id,
+            sidecar_id,
+        } => format!("sidecar/{}/{}", realm_id.as_str(), sidecar_id.as_str()),
+    }
+}
+
+/// Locally cached result of validating one `RealmAuthorityBundle`.
+///
+/// This is host state, not a wire object: the bundle itself is re-fetched and
+/// re-validated against a fresh nonce whenever authority matters. What is kept
+/// here is only the outcome a client needs to reject writes signed by a
+/// superseded Station — the current service, its generation, and the committed
+/// Events that anchor the chain.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedRealmAuthorityBasis {
+    pub realm_id: arkret_sdk::RealmId,
+    pub current_service_id: arkret_sdk::DidCoreId,
+    pub current_generation: u64,
+    /// `ak.realm.create` as committed at Realm stream position 0.
+    pub genesis_ref: arkret_wire::CommittedEventRef,
+    /// Committed authority-change Event of the most recent handoff, absent
+    /// while the Realm is still on its founding generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_authority_change_ref: Option<arkret_wire::CommittedEventRef>,
+    pub validated_at: DateTime<Utc>,
+}
+
+impl PersistedRealmAuthorityBasis {
+    /// Reject a commit that was not produced by the currently established
+    /// authority. After a handoff the superseded Station keeps its signing key,
+    /// so generation equality is the load-bearing check and the authority ref
+    /// must name the exact genesis or change Event of that generation.
+    pub fn accepts(&self, commit: &arkret_wire::RealmCommit) -> bool {
+        if commit.realm_id != self.realm_id || commit.authority_generation != self.current_generation
+        {
+            return false;
+        }
+        let expected = self
+            .last_authority_change_ref
+            .as_ref()
+            .unwrap_or(&self.genesis_ref);
+        commit.authority_ref
+            == arkret_wire::RealmCommitAuthorityRef::GenesisOrChangeEvent(expected.event_id.clone())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawOperationRecord {
     pub operation_id: String,
@@ -65,10 +124,6 @@ pub enum StoredNotification {
     Event {
         notification: arkret_sdk::Notification,
     },
-    AgentRuntimeApproval {
-        id: arkret_sdk::NotificationId,
-        data: arkret_sdk::AgentRuntimeApprovalNotificationData,
-    },
     Invite {
         invite: StoredInviteNotification,
     },
@@ -100,7 +155,6 @@ impl StoredNotification {
     pub fn notification_id(&self) -> String {
         match self {
             Self::Event { notification } => notification.id.as_str().to_owned(),
-            Self::AgentRuntimeApproval { id, .. } => id.as_str().to_owned(),
             Self::Invite { invite } => format!("invite:{}", invite.invite_id.as_str()),
         }
     }
@@ -108,7 +162,6 @@ impl StoredNotification {
     pub fn notification_kind(&self) -> arkret_sdk::NotificationKind {
         match self {
             Self::Event { notification } => notification.notification_kind.clone(),
-            Self::AgentRuntimeApproval { .. } => arkret_sdk::NotificationKind::Agent,
             Self::Invite { .. } => arkret_sdk::NotificationKind::Invite,
         }
     }
@@ -121,7 +174,6 @@ impl StoredNotification {
                 }
                 arkret_sdk::NotificationSource::AccountArtifact(_) => None,
             },
-            Self::AgentRuntimeApproval { .. } => None,
             Self::Invite { invite } => Some(invite.realm_id.as_str()),
         }
     }
@@ -134,7 +186,7 @@ impl StoredNotification {
                 }
                 arkret_sdk::NotificationSource::AccountArtifact(_) => None,
             },
-            Self::AgentRuntimeApproval { .. } | Self::Invite { .. } => None,
+            Self::Invite { .. } => None,
         }
     }
 
@@ -146,34 +198,44 @@ impl StoredNotification {
                 }
                 arkret_sdk::NotificationSource::AccountArtifact(_) => None,
             },
-            Self::AgentRuntimeApproval { .. } | Self::Invite { .. } => None,
+            Self::Invite { .. } => None,
         }
     }
 
     pub fn created_at(&self) -> DateTime<Utc> {
         match self {
             Self::Event { notification } => notification.created_at,
-            Self::AgentRuntimeApproval { data, .. } => data.requested_at,
             Self::Invite { invite } => invite.created_at,
         }
     }
 
+    /// Account-artifact coordinate of an open Agent runtime-key approval.
+    ///
+    /// The wire notification carries only the artifact kind and the
+    /// account-private approval id; the Agent, its requested scope and the
+    /// pairing expiry are read from the authenticated Agent view keyed by that
+    /// id, never from the notification row.
     pub fn agent_runtime_approval(
         &self,
     ) -> Option<(
-        &arkret_sdk::NotificationId,
-        &arkret_sdk::AgentRuntimeApprovalNotificationData,
+        &arkret_sdk::NotificationIdentity,
+        &arkret_sdk::NotificationAccountArtifact,
     )> {
         match self {
-            Self::AgentRuntimeApproval { id, data } => Some((id, data)),
-            Self::Event { .. } | Self::Invite { .. } => None,
+            Self::Event { notification } => match &notification.source {
+                arkret_sdk::NotificationSource::AccountArtifact(source) => {
+                    Some((&notification.id, &source.source_account_artifact))
+                }
+                arkret_sdk::NotificationSource::Event(_) => None,
+            },
+            Self::Invite { .. } => None,
         }
     }
 
     pub fn invite(&self) -> Option<&StoredInviteNotification> {
         match self {
             Self::Invite { invite } => Some(invite),
-            Self::Event { .. } | Self::AgentRuntimeApproval { .. } => None,
+            Self::Event { .. } => None,
         }
     }
 }
@@ -408,29 +470,28 @@ fn encode_did_key(signing_key: &SigningKey) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MoveSubmissionState {
-    PendingSeal,
+    PendingCommit,
     Effective,
-    FailedPrecondition,
-    ProjectionUnresolved,
-    RejectedSeal,
-    NotaryPaused,
+    Rejected,
     PendingMlsBinding,
 }
 
 impl MoveSubmissionState {
-    /// Interpret non-authoritative progress labels without creating success.
-    /// The wire `failed_bottom` diagnostic maps to a registered domain-level
-    /// projection ambiguity, never ordinary causal-register concurrency.
-    /// Unknown labels and purported terminal success remain pending until an
-    /// independent verified acceptance path establishes the result.
-    pub fn from_submit_state(state: &str, _reason: Option<&str>) -> Self {
-        match state {
-            "failed_precondition" => Self::FailedPrecondition,
-            "failed_bottom" => Self::ProjectionUnresolved,
-            "rejected_seal" => Self::RejectedSeal,
-            "notary_paused" => Self::NotaryPaused,
-            "pending_mls_binding" => Self::PendingMlsBinding,
-            _ => Self::PendingSeal,
+    /// Map a durable send-queue status onto the user-visible submission state.
+    ///
+    /// The governance Station is the only source of a terminal answer: a Move
+    /// is effective exactly when its Event carries an authority-signed
+    /// `RealmCommit`, and rejected exactly when the Station refused it. Queued
+    /// and forwarding items stay pending; no local label can promote them.
+    pub fn from_send_queue_status(status: garth::SendQueueStatus) -> Self {
+        match status {
+            garth::SendQueueStatus::Queued | garth::SendQueueStatus::Forwarding => {
+                Self::PendingCommit
+            }
+            garth::SendQueueStatus::Committed => Self::Effective,
+            garth::SendQueueStatus::Rejected
+            | garth::SendQueueStatus::Failed
+            | garth::SendQueueStatus::Cancelled => Self::Rejected,
         }
     }
 
@@ -439,12 +500,9 @@ impl MoveSubmissionState {
     /// repr so log lines + CSS classes stay aligned.
     pub fn slug(self) -> &'static str {
         match self {
-            Self::PendingSeal => "pending_seal",
+            Self::PendingCommit => "pending_commit",
             Self::Effective => "effective",
-            Self::FailedPrecondition => "failed_precondition",
-            Self::ProjectionUnresolved => "projection_unresolved",
-            Self::RejectedSeal => "rejected_seal",
-            Self::NotaryPaused => "notary_paused",
+            Self::Rejected => "rejected",
             Self::PendingMlsBinding => "pending_mls_binding",
         }
     }
@@ -453,12 +511,9 @@ impl MoveSubmissionState {
     /// uses Chinese copy). Surfaces in message status pills / banners.
     pub fn label_zh(self) -> &'static str {
         match self {
-            Self::PendingSeal => "待 Seal",
+            Self::PendingCommit => "待提交",
             Self::Effective => "已生效",
-            Self::FailedPrecondition => "前置条件失败",
-            Self::ProjectionUnresolved => "投影尚未收敛",
-            Self::RejectedSeal => "Seal 拒绝",
-            Self::NotaryPaused => "Notary 暂停",
+            Self::Rejected => "治理方拒绝",
             Self::PendingMlsBinding => "MLS 绑定待覆盖",
         }
     }
@@ -466,20 +521,16 @@ impl MoveSubmissionState {
     /// CSS-friendly badge class.
     pub fn badge_class(self) -> &'static str {
         match self {
-            Self::PendingSeal => "badge amber",
+            Self::PendingCommit => "badge amber",
             Self::Effective => "badge green",
-            Self::FailedPrecondition => "badge red",
-            Self::ProjectionUnresolved => "badge amber",
-            Self::RejectedSeal => "badge red",
-            Self::NotaryPaused => "badge red",
+            Self::Rejected => "badge red",
             Self::PendingMlsBinding => "badge amber",
         }
     }
 
-    /// True when diagnostic details describe a failed admission or invalid Seal.
-    /// This does not establish a terminal command decision.
+    /// True when the governance Station refused the submission.
     pub fn is_failed(self) -> bool {
-        matches!(self, Self::FailedPrecondition | Self::RejectedSeal)
+        matches!(self, Self::Rejected)
     }
 }
 
@@ -498,11 +549,13 @@ pub struct MoveSubmissionRecord {
     pub submitted_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    /// Optional last-known seal frontier head the Move was bound to.
-    /// Surfaces in the failure detail so an operator can correlate the
-    /// rejected Move to the predecessor that conflicted.
+    /// Head of the scope's own commit stream observed when the Move was
+    /// submitted, as `"<stream key>@<stream_position>"`. Each Realm, Circle
+    /// and Sidecar owns an independent stream, so this is never a Realm-global
+    /// position. It surfaces in the failure detail so an operator can
+    /// correlate a rejected Move to the exact predecessor it raced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seal_ref: Option<String>,
+    pub observed_stream_head: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -514,29 +567,6 @@ pub struct RealmStateSnapshotSyncStatus {
     pub source_event_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub degraded_reason: Option<String>,
-}
-
-/// Session-local response to one exact MLS authoring intent.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct CachedMlsGovernanceResult {
-    pub request: arkret_sdk::MlsGovernanceFrontierRequestBody,
-    pub outcome: arkret_sdk::MlsGovernanceFrontierOutcome,
-    pub session_epoch: u64,
-    pub received_at: DateTime<Utc>,
-}
-
-/// Session-local Station result and exact MLS crypto inputs. Never a governance checkpoint.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct CachedMlsAcceptedArtifact {
-    pub request: arkret_sdk::MlsAcceptedArtifactRequestBody,
-    pub outcome: arkret_sdk::MlsAcceptedArtifactOutcome,
-    pub event: arkret_sdk::Event,
-    pub transition: arkret_sdk::Event,
-    pub proposals: BTreeMap<arkret_sdk::EventId, arkret_sdk::Event>,
-    pub authority: arkret_sdk::AccountId,
-    pub session_epoch: u64,
-    pub observed_frontier: Vec<String>,
-    pub received_at: DateTime<Utc>,
 }
 
 /// Closed result of the client-local accepted-device normalization performed
@@ -657,10 +687,6 @@ pub struct PendingPrincipalRegistration {
     /// Verified terminal PCR genesis receipt returned with the Standard grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pcr_genesis_receipt: Option<arkret_sdk::EventBatchReceipt>,
-    /// Exact device-signed bootstrap Seal, durably frozen before its first
-    /// submission so recovery resumes the same bytes after response loss.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pcr_bootstrap_seal: Option<arkret_sdk::Seal>,
     pub genesis_created_at: String,
     pub genesis_hlc: String,
     /// Random create-time salt committed by `ak.realm.create`. Realm identity
@@ -685,7 +711,11 @@ pub struct RecoveryMaterialEvidence {
     pub device_id: arkret_sdk::DeviceId,
     pub principal_control_realm_id: arkret_sdk::RealmId,
     pub pcr_genesis_unit: arkret_wire::PcrGenesisUnit,
-    pub bootstrap_seal: arkret_sdk::Seal,
+    /// Authority-committed coordinates of the two PCR genesis Events, in the
+    /// exact order the unit declares them. They sit at positions 0 and 1 of the
+    /// principal control Realm's own commit stream and are the only durable
+    /// proof that the unit was accepted whole.
+    pub pcr_genesis_commits: [arkret_wire::CommittedEventRef; 2],
     /// Public account authority pair used for controller-authorized operations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub controller_authority: Option<arkret_sdk::AccountId>,
@@ -793,9 +823,8 @@ pub struct PersistedDeviceAuthoringAuthority {
     pub account_id: arkret_sdk::AccountId,
     pub device_id: arkret_sdk::DeviceId,
     pub device_projection: arkret_models_crypto::VerifiedDeviceProjection,
-    pub data_signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
-    pub control_signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
-    pub authoring_generation: garth::AuthoringGeneration,
+    pub signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
+    pub authoring_generation: crate::identity::authoring_generation::AuthoringGeneration,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -956,11 +985,18 @@ pub struct ClientLocalState {
     /// policy is `required` or `disabled`.
     #[serde(default)]
     pub read_receipt_policy_snapshots: BTreeMap<String, ReadReceiptPolicySnapshot>,
-    /// Latest verified Realm safety view from `/sync`. Safety-event builders
-    /// may use its sole confirmed head as a precondition; ordinary events use
-    /// it only as the authority evidence captured in `AuthContext`.
+    /// Per-commit-stream read cursors, keyed by [`commit_stream_key`].
+    ///
+    /// A Realm, each Circle and each Sidecar own separate linear streams and
+    /// the protocol defines no Realm-global position, so this map is the only
+    /// persisted progress model: one `stream_position` per stream, never an
+    /// aggregate cursor. Callers drive each stream's tail independently
+    /// through `AuthorityClient::scan`.
     #[serde(default)]
-    pub seal_views: BTreeMap<String, LocalSealView>,
+    pub stream_cursors: BTreeMap<String, arkret_wire::CommitStreamHead>,
+    /// Verified current governance authority per Realm, keyed by realm id.
+    #[serde(default)]
+    pub realm_authority_basis: BTreeMap<String, PersistedRealmAuthorityBasis>,
     #[serde(default)]
     pub push_registration: Option<PushRegistrationState>,
     /// Per-device ed25519 identity. Generated + persisted on first access
@@ -1015,12 +1051,6 @@ pub struct ClientLocalState {
     #[serde(default, rename = "mls_snapshots")]
     pub mls_local_checkpoints:
         BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
-    /// Checkpoint-proven MLS artifacts committed through Garth's single
-    /// durable consumer. The ready index in this snapshot is authoritative;
-    /// `mls_local_checkpoints` only retains pre-accept authoring state and
-    /// receive-chain snapshots that have not advanced the winning epoch.
-    #[serde(default)]
-    pub accepted_mls_artifacts: garth::VersionedAcceptedMlsArtifactState,
     /// Pre-decrypt MLS checkpoints retained until the combined secure entry
     /// (advanced snapshot + decrypted plaintext cache) is durably confirmed.
     /// These envelopes are already device-secret-encrypted; keeping the oldest
@@ -1065,21 +1095,10 @@ pub struct ClientLocalState {
     /// forever.
     #[serde(default)]
     pub mls_coverage_stale: BTreeMap<String, MlsCoverageStale>,
-    /// Bounded cache of complete, locally verified near-current MLS governance
-    /// frontier outcomes. Keys are canonical query digests; values expire
-    /// quickly and are invalidated when sync observes a different accepted
-    /// Seal head.
-    #[serde(skip)]
-    pub mls_governance_results: BTreeMap<String, CachedMlsGovernanceResult>,
     #[serde(default)]
     pub direct_conversation_peers: BTreeMap<String, arkret_sdk::contact_operations::ContactPeer>,
     #[serde(skip)]
     pub(crate) direct_message_contexts: BTreeMap<String, super::DirectMessageContext>,
-    #[serde(skip)]
-    pub realm_governance_frontiers:
-        BTreeMap<String, (u64, DateTime<Utc>, arkret_sdk::RealmSealFrontierView)>,
-    #[serde(skip)]
-    pub mls_accepted_artifacts: BTreeMap<String, CachedMlsAcceptedArtifact>,
     #[serde(default)]
     pub mls_welcome_discovery: BTreeMap<String, super::MlsWelcomeDiscoveryProgress>,
     #[serde(default)]
@@ -1139,43 +1158,6 @@ pub struct ClientLocalState {
     /// persists only in the hardened E2EE cache.
     #[serde(default, skip_serializing)]
     pub(crate) authenticated_identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
-    /// Per-(effective scope, MLS group, epoch) closed local-authoritative
-    /// records exported by the SDK from a verified local MLS post-state.
-    ///
-    /// Keyed `canonical scope/group key -> epoch -> secret`. Durable persistence
-    /// must go through the hardened secure store; this inline field is only a transient memory
-    /// fallback and is never serialized into plaintext account-state storage.
-    /// Like the other MLS sidecars this is device-local. External history-key,
-    /// recovery-archive, and portable-backup material belongs in the separate
-    /// bounded candidate ledger and never promotes this authoritative map.
-    ///
-    /// Nested string-keyed maps (not a `(String, u64)` tuple key) because
-    /// `serde_json` rejects non-string map keys — the store flushes to JSON, so
-    /// a tuple key would silently fail to persist. `u64` epoch keys serialize as
-    /// strings, which round-trips cleanly.
-    #[serde(default, skip_serializing)]
-    pub history_secrets:
-        BTreeMap<String, BTreeMap<u64, arkret_sdk::LocalAuthoritativeHistorySecret>>,
-    /// Replay-verified MLS ciphersuite for each retained history-secret epoch.
-    /// The minimal encrypted envelope intentionally carries no algorithm
-    /// selector, so group-free history decryption must use this exact frozen
-    /// value rather than a current registry default or an identifier prefix.
-    #[serde(default)]
-    pub history_epoch_cipher_suites: BTreeMap<String, BTreeMap<u64, String>>,
-    /// Garth-owned bounded external candidate ledger. Secret bytes remain in
-    /// the hardened secure store and never enter this metadata snapshot.
-    #[serde(default)]
-    pub(crate) history_candidate_state: arkret_sdk::history_store::HistoryMaterialLedger,
-    /// Crash-safe history request/response-stream state. The revision is used
-    /// for compare-and-swap updates so concurrent recovery effects cannot roll
-    /// response dispositions or acknowledgement high-water marks backward.
-    #[serde(default)]
-    pub(crate) history_runtime_state: garth::VersionedHistoryRuntimeSnapshot,
-    /// Crash-safe source response attempts. Canonical signed records live as
-    /// content-addressed secure-store blobs; this snapshot is the atomic ready
-    /// marker and receipt/state-machine ledger.
-    #[serde(default)]
-    pub(crate) history_source_outbox_state: garth::VersionedHistorySourceOutboxSnapshot,
     /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
@@ -1465,7 +1447,8 @@ impl Default for ClientLocalState {
             read_receipt_strand_overrides: BTreeMap::new(),
             read_receipt_strand_display_overrides: BTreeMap::new(),
             read_receipt_policy_snapshots: BTreeMap::new(),
-            seal_views: BTreeMap::new(),
+            stream_cursors: BTreeMap::new(),
+            realm_authority_basis: BTreeMap::new(),
             push_registration: None,
             local_identity: None,
             device_authoring_authority: None,
@@ -1477,7 +1460,6 @@ impl Default for ClientLocalState {
             recovery_material_evidence: None,
             pending_account_handoff: None,
             mls_local_checkpoints: BTreeMap::new(),
-            accepted_mls_artifacts: garth::VersionedAcceptedMlsArtifactState::default(),
             mls_receive_recovery_checkpoints: BTreeMap::new(),
             mls_genesis_emitted: BTreeSet::new(),
             mls_group_state_refs: BTreeMap::new(),
@@ -1485,11 +1467,8 @@ impl Default for ClientLocalState {
             mls_historical_checkpoints: BTreeMap::new(),
             historical_agent_signer_keys: BTreeMap::new(),
             mls_coverage_stale: BTreeMap::new(),
-            mls_governance_results: BTreeMap::new(),
             direct_conversation_peers: BTreeMap::new(),
             direct_message_contexts: BTreeMap::new(),
-            realm_governance_frontiers: BTreeMap::new(),
-            mls_accepted_artifacts: BTreeMap::new(),
             mls_welcome_discovery: BTreeMap::new(),
             current_generation: 0,
             current_reset_required: false,
@@ -1497,11 +1476,6 @@ impl Default for ClientLocalState {
             mls_private_plaintext: BTreeMap::new(),
             mls_decrypted_plaintext: BTreeMap::new(),
             authenticated_identity_links: BTreeMap::new(),
-            history_secrets: BTreeMap::new(),
-            history_epoch_cipher_suites: BTreeMap::new(),
-            history_candidate_state: arkret_sdk::history_store::HistoryMaterialLedger::default(),
-            history_runtime_state: garth::VersionedHistoryRuntimeSnapshot::default(),
-            history_source_outbox_state: garth::VersionedHistorySourceOutboxSnapshot::default(),
             realm_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             accepted_human_contact_principals: BTreeSet::new(),

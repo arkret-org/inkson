@@ -65,8 +65,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
     let mls_coverage_repair_in_flight = use_signal(std::collections::BTreeSet::<String>::new);
     let accepted_artifact_basis_seen = use_signal(|| Option::<String>::None);
     let accepted_artifact_convergence_in_flight = use_signal(|| false);
-    let history_recovery_poll_tick = use_signal(|| 0_u64);
-    let history_recovery_in_flight = use_signal(|| false);
 
     {
         let ready = secure_store_bootstrap_ready;
@@ -76,6 +74,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         let mut in_flight = accepted_artifact_convergence_in_flight;
         let mut convergence_error = last_error;
         let convergence_store = state_store;
+        let convergence_token = token;
         use_effect(move || {
             let Some(account) = active_account() else {
                 return;
@@ -84,6 +83,11 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             let actor = account.principal_id().to_string();
             let device = account.device_id.clone();
             let authority = account.authority.clone();
+            let base = account.server_url.to_string();
+            let session = convergence_token();
+            if session.trim().is_empty() {
+                return;
+            }
             if !ready()
                 || !sync_ready()
                 || cursor.trim().is_empty()
@@ -101,46 +105,32 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             spawn(async move {
                 let convergence_store =
                     crate::app::runtime_adapter::state_store_handle(convergence_store);
-                match crate::mls::runtime::converge_accepted_mls_artifacts(
-                    &convergence_store,
-                    &authority,
-                    &device,
-                )
-                .await
+                // Resolving the accepted Commit a pending Welcome names is a
+                // read of the scope's own independent stream, so convergence
+                // needs an authenticated client, not only the local store.
+                let converged = match crate::transport::auth::authed_api_ready(&base, session).await
                 {
+                    Ok(api) => {
+                        crate::mls::runtime::converge_accepted_mls_artifacts(
+                            &api,
+                            &convergence_store,
+                            &authority,
+                            &device,
+                        )
+                        .await
+                    }
+                    Err(error) => Err(error.to_string()),
+                };
+                match converged {
                     Ok(applied) => {
                         if applied > 0 {
                             tracing::info!(applied, "accepted MLS artifacts converged durably");
                         }
-                        match crate::mls::runtime::converge_external_history_candidate_decryptions(
-                            &convergence_store,
-                            &authority,
-                            &actor,
-                            &device,
-                            chrono::Utc::now(),
-                        ) {
-                            Ok(opened) if opened > 0 => {
-                                tracing::info!(
-                                    opened,
-                                    "external history candidates opened accepted Events"
-                                );
-                            }
-                            Ok(_) => {}
-                            Err(error) => {
-                                tracing::warn!(%error, "external history candidate convergence is pending");
-                                convergence_error.set(Some(crate::history_ui::status_message(
-                                    crate::history_ui::HistoryUiReason::ResponseVerificationPending,
-                                    &format!("external candidate convergence: {error}"),
-                                )));
-                            }
-                        }
                     }
                     Err(error) => {
                         tracing::warn!(%error, "accepted MLS artifact convergence is pending");
-                        convergence_error.set(Some(crate::history_ui::status_message(
-                            crate::history_ui::HistoryUiReason::ResponseVerificationPending,
-                            &format!("accepted artifact convergence: {error}"),
-                        )));
+                        convergence_error
+                            .set(Some(format!("accepted artifact convergence: {error}")));
                         crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(5)).await;
                         if basis_seen.peek().as_deref() == Some(basis.as_str()) {
                             basis_seen.set(None);
@@ -148,94 +138,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     }
                 }
                 in_flight.set(false);
-            });
-        });
-    }
-
-    {
-        let ready = secure_store_bootstrap_ready;
-        let sync_ready = sync_bootstrap_complete;
-        let mut poll_tick = history_recovery_poll_tick;
-        let mut in_flight = history_recovery_in_flight;
-        let mut recovery_error = last_error;
-        let recovery_store = state_store;
-        use_effect(move || {
-            let Some(account) = active_account() else {
-                return;
-            };
-            let _ = poll_tick();
-            let base = account.server_url.to_string();
-            let credential = token();
-            let did = account.did().clone();
-            let device = account.device_id.clone();
-            let authority = account.authority.clone();
-            if !ready()
-                || !sync_ready()
-                || base.trim().is_empty()
-                || credential.trim().is_empty()
-                || *in_flight.peek()
-            {
-                return;
-            }
-            in_flight.set(true);
-            spawn(async move {
-                let result = crate::transport::auth::with_authed_api(
-                    &base,
-                    credential,
-                    move |api| async move {
-                        let secure_store =
-                            crate::secure_key_store::default_secure_key_store("inkson");
-                        let recovery_store =
-                            crate::app::runtime_adapter::state_store_handle(recovery_store);
-                        let outcome = crate::history_recovery::converge_member_history_recovery(
-                            &recovery_store,
-                            &api,
-                            secure_store,
-                            &authority,
-                            &did,
-                            &device,
-                            crate::clock::now_utc_canonical(),
-                        )
-                        .await?;
-                        let opened =
-                            crate::mls::runtime::converge_external_history_candidate_decryptions(
-                                &recovery_store,
-                                &authority,
-                                did.as_str(),
-                                &device,
-                                crate::clock::now_utc_canonical(),
-                            )
-                            .map_err(anyhow::Error::msg)?;
-                        if outcome
-                            != crate::history_recovery::HistoryRecoveryConvergenceOutcome::default()
-                            || opened > 0
-                        {
-                            tracing::info!(
-                                requests = outcome.requests_created_or_resumed,
-                                source_attempts_staged = outcome.source_attempts_staged,
-                                source_attempts_completed = outcome.source_attempts_completed,
-                                response_records_installed = outcome.response_records_installed,
-                                pending_errors = outcome.pending_errors,
-                                opened,
-                                "private history-key recovery tick completed"
-                            );
-                        }
-                        Ok(())
-                    },
-                )
-                .await
-                .map_err(|error| anyhow::anyhow!(error.display()));
-                if let Err(error) = result {
-                    let detail = error.to_string();
-                    tracing::warn!(%error, "private history-key convergence remains pending");
-                    recovery_error.set(Some(crate::history_ui::status_message(
-                        crate::history_ui::classify_runtime_error(&detail),
-                        &detail,
-                    )));
-                }
-                crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(10)).await;
-                in_flight.set(false);
-                poll_tick.set(poll_tick().wrapping_add(1));
             });
         });
     }
@@ -786,7 +688,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             let recovery_key_fingerprint =
                 crate::views::recovery::local_recovery_key_fingerprint(&state_for_bootstrap_key)
                     .unwrap_or_default();
-            let local_pending_welcome_hint = crate::mls::runtime::local_mls_welcome_hint_for_realm(
+            let local_pending_welcome_hint = crate::mls::welcome_delivery::local_mls_welcome_hint_for_realm(
                 &state_for_bootstrap_key.welcome_inbox_for_scope(&arkret_sdk::ScopeRef::Realm {
                     realm_id: realm_id.clone(),
                 }),

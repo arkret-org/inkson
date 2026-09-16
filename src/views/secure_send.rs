@@ -567,7 +567,7 @@ pub(crate) async fn build_sidecar_exchange_control_send(
         .map_err(|error| format!("Sidecar close encrypted envelope build failed: {error}"))?;
         let payload = arkret_sdk::AgentSidecarExchangeControlPayload {
             sidecar_id: plan_sidecar_id,
-            source_context_ref: arkret_sdk::sidecar_operations::SidecarContextRef::Strand {
+            source_context_ref: arkret_sdk::SidecarContextRef::Strand {
                 strand_id: source_strand_id,
             },
             encrypted_payload,

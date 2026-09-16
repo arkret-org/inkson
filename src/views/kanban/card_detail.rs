@@ -719,13 +719,20 @@ pub(super) fn dispatch_calendar_rsvp(
         board_status.set("cannot build RSVP: resolve the current Card first".to_owned());
         return;
     }
-    let Some((_, source_event)) = card.authoring_basis.clone() else {
-        board_status.set("cannot build RSVP: waiting for the complete current Card".to_owned());
+    // calendar-event.md section 8.5: an authoring client that cannot read the
+    // deterministic schedule winner MUST refuse to construct the RSVP. The
+    // winner arrives on the Strand projection; there is no Event-log traversal
+    // to fall back on, because a producer Event carries no causal edges and the
+    // client keeps no Realm-global order to walk.
+    let schedule_basis_refs = card.calendar_schedule_basis_refs();
+    if schedule_basis_refs.len() != 1 {
+        board_status.set(
+            "cannot build RSVP: calendar_schedule_unavailable - no readable schedule winner"
+                .to_owned(),
+        );
         return;
-    };
-    board_status.set("resolving the observed calendar schedule".to_owned());
-    let api_token = token();
-    let submit_token = api_token.clone();
+    }
+    let submit_token = token();
     let strand_id = card.primary_strand_id.clone();
     let calendar = card.calendar.clone();
     let rsvp_occurrence = (!occurrence.trim().is_empty()
@@ -742,83 +749,19 @@ pub(super) fn dispatch_calendar_rsvp(
             return;
         }
     };
-    let build_base = base_url.clone();
     let build_realm_id = realm_id.clone();
     let build_actor_id = actor_id.clone();
-    let Some(digest_suite) = state_store.read().station_realm_digest_suite(&realm_id) else {
-        board_status.set("cannot build RSVP: waiting for the Realm Station frontier".to_owned());
-        return;
-    };
     spawn(async move {
-        let built = with_authed_api(&build_base, api_token, |api| async move {
-            // Resolve only the frozen object's source closure. Never attach a
-            // newly observed frontier to the calendar value captured by the UI.
-            let mut pending = std::collections::BTreeSet::from([source_event.event_digest()]);
-            let mut seen = std::collections::BTreeSet::new();
-            let mut events = Vec::new();
-            while !pending.is_empty() {
-                if seen.len() + pending.len() > 4096 {
-                    anyhow::bail!("calendar source closure exceeds the local authoring budget");
-                }
-                let batch = pending.iter().take(64).cloned().collect::<Vec<_>>();
-                for digest in &batch {
-                    pending.remove(digest);
-                }
-                let outcome = api
-                    .http()
-                    .events_resolve(&arkret_sdk::EventsResolveRequestBody {
-                        event_ids: Vec::new(),
-                        event_digests: batch.clone(),
-                        include_payload: Some(true),
-                        history_traversal_access: None,
-                        max_response_bytes: Some(8_388_608),
-                    })
-                    .await?;
-                if !outcome.missing.is_empty() || !outcome.unauthorized.is_empty() {
-                    anyhow::bail!("calendar source closure is unavailable");
-                }
-                let mut returned = std::collections::BTreeSet::new();
-                for event in outcome.events {
-                    let digest =
-                        arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
-                    if !batch.contains(&digest) || !returned.insert(digest.clone()) {
-                        anyhow::bail!("calendar source resolve returned an unexpected Event");
-                    }
-                    seen.insert(digest);
-                    if event.kind != arkret_sdk::EventKind::StrandCreate {
-                        for reference in &event.causal_refs {
-                            if !seen.contains(reference) {
-                                pending.insert(reference.clone());
-                            }
-                        }
-                    }
-                    events.push(event);
-                }
-                pending.retain(|digest| !seen.contains(digest));
-                if returned.len() != batch.len() {
-                    anyhow::bail!("calendar source resolve returned an incomplete batch");
-                }
-            }
-            let schedule_winner = calendar_schedule_revision_winner_at_source(
-                &events,
-                &strand_id,
-                digest_suite,
-                &source_event,
-            )?;
-            // The actor frontier and HLC belong to the authoring boundary; the
-            // builder only states what the user chose.
-            calendar_rsvp_operation(
-                &build_realm_id,
-                &build_actor_id,
-                &strand_id,
-                status,
-                &occurrence,
-                &calendar,
-                vec![schedule_winner],
-                current_rsvp_source,
-            )
-        })
-        .await;
+        let built = calendar_rsvp_operation(
+            &build_realm_id,
+            &build_actor_id,
+            &strand_id,
+            status,
+            &occurrence,
+            &calendar,
+            schedule_basis_refs,
+            current_rsvp_source,
+        );
         match built {
             Ok(event) => {
                 let operation_id = event.local_operation_id().to_string();
@@ -864,12 +807,11 @@ pub(super) fn dispatch_calendar_rsvp(
                     return;
                 };
                 let accepted_event_id = response.event_id.clone();
-                let causal_refs = body
+                let observed_schedule_winner = body
                     .entry
                     .schedule_basis_refs
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>();
+                    .first()
+                    .map(ToString::to_string);
                 state_store.write().upsert_raw_operation(
                     accepted_event_id.clone(),
                     Some(realm_id),
@@ -884,8 +826,7 @@ pub(super) fn dispatch_calendar_rsvp(
                         ),
                         "write_state": "synced",
                         "body": body,
-                        "causal_refs": causal_refs.clone(),
-                        "locally_observed_schedule_winner": causal_refs[0],
+                        "locally_observed_schedule_winner": observed_schedule_winner,
                     }),
                 );
                 board_status.set(format!(

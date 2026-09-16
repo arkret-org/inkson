@@ -123,10 +123,10 @@ fn notification_baseline_segments_preserve_previous_segment_and_upsert_by_id() {
     let arkret_sdk::NotificationSource::Event(source) = &notification.source else {
         unreachable!()
     };
-    let delta = arkret_sdk::NotificationDelta::try_new(
+    let delta = arkret_sdk::sync::NotificationDelta::try_new(
         notification.id.clone(),
-        arkret_sdk::NotificationDeltaAction::Upsert,
-        Some(arkret_sdk::NotificationData::OrdinaryProjection(Box::new(
+        arkret_sdk::sync::NotificationDeltaAction::Upsert,
+        Some(arkret_sdk::sync::NotificationData::OrdinaryProjection(Box::new(
             arkret_sdk::OrdinaryProjectionContent {
                 realm_id: source.realm_id.clone().unwrap(),
                 source_event_id: source.source_event_id.clone(),
@@ -241,7 +241,7 @@ fn pending_invites_are_hydrated_as_notifications() {
 fn visible_realm_preview_does_not_masquerade_as_joined_membership() {
     let actor_id = "ak:did_core:webvh:z6mkfixture:bob.example";
     let entry = |membership: &str| {
-        serde_json::from_value::<arkret_sdk::RealmSyncEntry>(json!({
+        serde_json::from_value::<arkret_sdk::sync::RealmSyncEntry>(json!({
             "member_roster": {
                 "entries": [{
                     "actor_id": {"kind": "account", "account_id": {
@@ -264,7 +264,7 @@ fn visible_realm_preview_does_not_masquerade_as_joined_membership() {
     assert!(actor_is_joined_member(&entry("join"), &account_actor));
     assert!(!actor_is_joined_member(&entry("knock"), &account_actor));
     assert!(!actor_is_joined_member(
-        &arkret_sdk::RealmSyncEntry::default(),
+        &arkret_sdk::sync::RealmSyncEntry::default(),
         &account_actor
     ));
     // The same principal joined at another Station is a different account and
@@ -771,7 +771,7 @@ fn notification_sources_use_typed_subscribe_deltas_only() {
     let fallback = raw_notifications_from_sources(None, &account_data);
     assert!(fallback.is_empty());
 
-    let server_empty = Vec::<arkret_sdk::NotificationDelta>::new();
+    let server_empty = Vec::<arkret_sdk::sync::NotificationDelta>::new();
     assert_eq!(
         raw_notifications_from_sources(Some(&server_empty), &account_data).len(),
         0
@@ -790,24 +790,24 @@ fn notification_sources_use_typed_subscribe_deltas_only() {
         updated_at: notification.updated_at,
     };
     let subscribe_delta = vec![
-        arkret_sdk::NotificationDelta::try_new(
+        arkret_sdk::sync::NotificationDelta::try_new(
             notification.id.clone(),
-            arkret_sdk::NotificationDeltaAction::Upsert,
-            Some(arkret_sdk::NotificationData::OrdinaryProjection(Box::new(
+            arkret_sdk::sync::NotificationDeltaAction::Upsert,
+            Some(arkret_sdk::sync::NotificationData::OrdinaryProjection(Box::new(
                 ordinary,
             ))),
         )
         .unwrap(),
-        arkret_sdk::NotificationDelta::try_new(
+        arkret_sdk::sync::NotificationDelta::try_new(
             arkret_sdk::NotificationIdentity::AgentApproval(
                 arkret_sdk::NotificationId::new(
                     "ak:notification:01964137-0000-7000-8000-000000000004",
                 )
                 .unwrap(),
             ),
-            arkret_sdk::NotificationDeltaAction::Upsert,
-            Some(arkret_sdk::NotificationData::AgentRuntimeApproval(
-                arkret_sdk::AgentRuntimeApprovalNotificationData {
+            arkret_sdk::sync::NotificationDeltaAction::Upsert,
+            Some(arkret_sdk::sync::NotificationData::AgentRuntimeApproval(
+                arkret_sdk::sync::AgentRuntimeApprovalNotificationData {
                     approval_request_id: arkret_sdk::OpaqueLocalId::new(
                         "agent_runtime_approval:01964137-0000-7000-8000-000000000005",
                     )
@@ -865,10 +865,10 @@ fn ordinary_notification_with_another_recipient_id_is_discarded() {
         crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:localhost".to_owned()).unwrap(),
     );
-    let delta = arkret_sdk::NotificationDelta::try_new(
+    let delta = arkret_sdk::sync::NotificationDelta::try_new(
         content.derive_id(&other).unwrap().into(),
-        arkret_sdk::NotificationDeltaAction::Upsert,
-        Some(arkret_sdk::NotificationData::OrdinaryProjection(Box::new(
+        arkret_sdk::sync::NotificationDeltaAction::Upsert,
+        Some(arkret_sdk::sync::NotificationData::OrdinaryProjection(Box::new(
             content,
         ))),
     )

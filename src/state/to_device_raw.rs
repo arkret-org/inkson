@@ -509,21 +509,21 @@ impl LocalStateStore {
             // Rebuild only during bounded inbox maintenance, never per Realm read.
             let mut index: BTreeMap<String, Vec<usize>> = BTreeMap::new();
             for (position, message) in self.cached.to_device_inbox.iter().enumerate() {
-                if message.get("kind").and_then(Value::as_str) != Some(event_kind_str::MLS_WELCOME)
-                {
-                    continue;
-                }
-                let Some(scope) = message
+                // A Welcome is not an Event and carries no Event kind: it is a
+                // producer-signed `MlsWelcomeDelivery` recipient object. The
+                // only sound test is whether the delivery parses closed and
+                // passes its own shape validation.
+                let Some(delivery) = message
                     .get("content")
-                    .and_then(|content| content.get("governance_binding"))
-                    .and_then(|binding| binding.get("effective_scope"))
-                    .and_then(|scope| {
-                        serde_json::from_value::<arkret_sdk::ScopeRef>(scope.clone()).ok()
+                    .and_then(|content| {
+                        serde_json::from_value::<arkret_wire::MlsWelcomeDelivery>(content.clone())
+                            .ok()
                     })
+                    .filter(|delivery| delivery.validate_shape().is_ok())
                 else {
                     continue;
                 };
-                if let Ok(key) = serde_json::to_string(&scope) {
+                if let Ok(key) = serde_json::to_string(&delivery.effective_scope) {
                     index.entry(key).or_default().push(position);
                 }
             }
@@ -884,7 +884,7 @@ fn raw_payload_is_redaction_tombstone(payload: &Value) -> bool {
 mod durable_inbox_tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use arkret_models_collaboration::sync_frames::account_sync::{
+    use arkret_models_collaboration::sync_frames::account_subscribe::{
         NotificationDelta, NotificationDeltaAction,
     };
     use serde_json::json;

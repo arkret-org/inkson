@@ -277,34 +277,6 @@ async fn dispatch_due_plan(
     plan: &DueScheduledSendPlan,
 ) -> anyhow::Result<bool> {
     let scheduled_send_id = plan.value.scheduled_send_id.clone();
-    let outbound = garth::OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
-        authority,
-        crate::outbound_store::OutboundLane::Standard,
-    )?);
-    let existing = outbound
-        .snapshot()
-        .await?
-        .items
-        .into_iter()
-        .find(|item| item.transaction_id == scheduled_send_id.as_str());
-    if let Some(existing) = existing {
-        if existing.status == garth::SendQueueStatus::Sent {
-            retire_scheduled_send_plan(
-                submitter,
-                state_store,
-                &plan.account_data_key,
-                scheduled_send_id.as_str(),
-            )
-            .await?;
-            return Ok(true);
-        }
-        // The frozen dispatch record is still in flight; the drain above owns
-        // its byte-exact retry. Re-authoring here would trip the queue's
-        // immutable-intent guard, which is the spec-required failure mode for
-        // diverging retry bytes.
-        return Ok(false);
-    }
-
     let state = state_store.read(|store| store.load());
     let Some(realm_id) = scheduled_send_target_realm(&state, &plan.value) else {
         tracing::warn!(
@@ -314,30 +286,56 @@ async fn dispatch_due_plan(
         );
         return Ok(false);
     };
-    let event =
-        crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
-            realm_id,
-            actor_id,
-            plan.value.message_payload.clone(),
-        )
-        .target_ref(plan.value.message_payload.strand_id.as_str())
-        .build_sdk_event("inkson")?;
-    // Authoring completes every producer-signed envelope field (actor frontier,
-    // HLC, CBS basis) and derives the one content-bound EventId — only now do
-    // the final Event / Message identities exist (spec §4).
-    // `submit_scheduled_send_event` then freezes and persists the exact
-    // canonical signed bytes before the first network submit.
-    let signed = submitter.author_for_direct_submission(&event).await?;
-    let authoring_generation =
-        crate::identity::authoring_generation::resolve_event_authoring_generation(
-            submitter.http(),
-            &crate::identity::authoring_generation::EventAuthorityFacts::from_intent(
-                event.intent(),
-            ),
-        )
+    // The dispatch Event is authored at the plan's own `send_at`, not at the
+    // wall-clock instant the tick happened to run. A producer Event derives
+    // its identity from exactly its content, so pinning the authoring time to
+    // the plan makes the dispatch identity a pure function of the plan: a tick
+    // after a crash re-derives the same `event_id` and therefore recognises
+    // the frozen queue item instead of authoring a second message.
+    let signed = submitter
+        .author_for_direct_submission(&scheduled_send_operation(&plan.value, &realm_id, actor_id)?)
         .await?;
+    let event_id = signed.event_id().clone();
+
+    let outbound = garth::OutboundEngine::new(
+        crate::outbound_store::InksonOutboundStore::open(
+            authority,
+            crate::outbound_store::OutboundLane::Standard,
+        )?,
+        crate::event_submit::InksonHostClock,
+    );
+    let existing = outbound
+        .snapshot()
+        .await?
+        .items
+        .into_iter()
+        .find(|item| item.event_id() == &event_id);
+    if let Some(existing) = existing {
+        if existing.status == garth::SendQueueStatus::Committed {
+            retire_scheduled_send_plan(
+                submitter,
+                state_store,
+                &plan.account_data_key,
+                scheduled_send_id.as_str(),
+            )
+            .await?;
+            return Ok(true);
+        }
+        if existing.status.is_terminal() {
+            tracing::warn!(
+                scheduled_send_id = %scheduled_send_id,
+                status = ?existing.status,
+                "scheduled-send dispatch reached a terminal non-committed state"
+            );
+            return Ok(false);
+        }
+        // The frozen dispatch record is still in flight; the drain above owns
+        // its byte-exact retry.
+        return Ok(false);
+    }
+
     match submitter
-        .submit_scheduled_send_event(scheduled_send_id.clone(), signed, authoring_generation)
+        .submit_scheduled_send_event(scheduled_send_id.clone(), signed)
         .await
     {
         Ok(_) => {
@@ -352,8 +350,8 @@ async fn dispatch_due_plan(
         }
         Err(error) => {
             // `DurablyQueuedError` means the signed bytes are frozen in the
-            // durable queue and the network result is pending; the plan stays
-            // so the next tick can observe the queue item reaching `Sent`.
+            // durable queue and the authority result is pending; the plan stays
+            // so the next tick can observe the queue item reaching `Committed`.
             tracing::debug!(
                 scheduled_send_id = %scheduled_send_id,
                 error = %format!("{error:#}"),
@@ -362,6 +360,30 @@ async fn dispatch_due_plan(
             Ok(false)
         }
     }
+}
+
+/// Build the dispatch write for one plan, pinned to the plan's own `send_at`.
+fn scheduled_send_operation(
+    value: &arkret_sdk::ScheduledSendValue,
+    realm_id: &str,
+    actor_id: &str,
+) -> anyhow::Result<crate::operation::LocalOperation> {
+    let send_at = DateTime::parse_from_rfc3339(&value.send_at)
+        .map_err(|error| anyhow::anyhow!("scheduled_send send_at is not RFC 3339: {error}"))?
+        .with_timezone(&Utc);
+    let operation =
+        crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
+            realm_id,
+            actor_id,
+            value.message_payload.clone(),
+        )
+        .target_ref(value.message_payload.strand_id.as_str())
+        .build_sdk_event("inkson")?;
+    let local_operation_id = operation.local_operation_id().clone();
+    Ok(
+        crate::operation::LocalOperation::new(operation.into_intent().with_created_at(send_at))
+            .with_local_operation_id(local_operation_id),
+    )
 }
 
 #[cfg(test)]

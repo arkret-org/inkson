@@ -14,7 +14,7 @@
 //!
 //! This module is split by responsibility:
 //! - [`backup_body`] — build / decrypt the on-wire backup envelopes.
-//! - [`restore`] — fetch + restore flow (account secret, history, sidecar).
+//! - [`restore`] — fetch + restore flow (account secret, private sidecar).
 //! - [`upload`] — backup / rotation upload flow and superseded cleanup.
 
 mod backup_body;
@@ -23,15 +23,16 @@ mod restore;
 mod rotation_transaction;
 mod upload;
 
-// Backup classification, series selection and the series chain are wire-shape
-// decisions, owned by garth.
-pub use garth::mls::backup_selection::{
+// Which stored envelope a restoring client may open is host runtime logic on
+// top of the shared active-series rule in `garth::mls::backup_selection`.
+pub(crate) use crate::mls::runtime::{
     is_mls_account_secret_backup, is_mls_private_plaintext_backup,
     is_passphrase_account_secret_backup, is_recovery_public_key_account_secret_backup,
     mls_account_secret_backup_version, select_mls_account_secret_backup,
-    select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
-    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
+    select_mls_account_secret_recovery_public_key_backup, select_mls_private_plaintext_backup,
+    select_preferred_mls_account_secret_backup,
 };
+// The series chain itself is a wire-shape decision, owned by garth.
 pub(crate) use garth::mls::backup_series::series_supersedes_digest;
 
 #[cfg(test)]
@@ -49,7 +50,7 @@ pub(crate) use recovery_transaction::{
 };
 pub use restore::{
     RestoreReport, auto_restore_mls_history_with_passphrase, fetch_mls_account_secret_backup,
-    fetch_mls_history_restore_payload_with_unlock_proof, fetch_mls_restore_payload,
+    fetch_mls_restore_payload,
     fetch_mls_restore_payload_after_encrypted_projection,
     fetch_mls_restore_payload_after_projection,
     fetch_mls_restore_payload_with_recovery_session_unlock_proof,
@@ -59,10 +60,8 @@ pub use restore::{
     restore_mls_history_with_recovery_key_from_payload,
 };
 pub(crate) use rotation_transaction::execute_device_revoke_security_rotation;
-pub(crate) use upload::upload_local_authoritative_mls_history_records_with_recovery_public_key;
 pub use upload::{
     fetch_mls_private_plaintext_backup_body,
-    upload_local_authoritative_mls_history_backups_with_recovery_public_key,
     upload_mls_account_secret_backup_with_passphrase,
     upload_mls_account_secret_backup_with_recovery_key,
     upload_mls_account_secret_backup_with_recovery_public_key, upload_mls_private_plaintext_backup,

@@ -276,39 +276,6 @@ fn terminal_session_grant_message(message: &str) -> bool {
             || message.contains("rejected"))
 }
 
-pub fn is_actor_seq_cas_conflict_error(error: &anyhow::Error) -> bool {
-    actor_seq_cas_conflict_details(error).is_some()
-}
-
-// Invariant assertions: each `expect` message names the check that
-// establishes it a few lines earlier. Rewriting them as `?` would add
-// error paths no caller can reach.
-#[allow(clippy::expect_used)]
-/// Return the closed actor-chain CAS details only when the service explicitly
-/// proves that the submitted immutable Event was not accepted.
-pub fn actor_seq_cas_conflict_details(
-    error: &anyhow::Error,
-) -> Option<arkret_sdk::EventsActorCasConflictProblem> {
-    api_error_status_and_envelope(error)
-        .is_some_and(|(status, envelope)| {
-            status == StatusCode::CONFLICT
-                && envelope.code() == arkret_sdk::error_codes::ErrorCode::CAS_CONFLICT
-        })
-        .then(|| {
-            serde_json::to_value(
-                &api_error_status_and_envelope(error)
-                    .expect("checked above")
-                    .1
-                    .extensions,
-            )
-            .ok()
-            .and_then(|value| serde_json::from_value(value).ok())
-            .filter(|details: &arkret_sdk::EventsActorCasConflictProblem| {
-                details.validate().is_ok()
-            })
-        })?
-}
-
 /// Recognise a `rate_limited` (HTTP 429) error envelope from the
 /// server and return its advertised `retry_after_ms` so callers can
 /// sleep for the server-suggested duration instead of the generic
