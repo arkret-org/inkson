@@ -215,7 +215,7 @@ impl crate::transport::TransportClient {
     pub async fn create_recovery_session(
         &self,
         body: &arkret_models_crypto::RecoverySessionCreateRequestBody,
-    ) -> anyhow::Result<arkret_sdk::RecoverySessionState> {
+    ) -> anyhow::Result<arkret_sdk::RecoverySession> {
         body.validate()?;
         self.sdk_http_client()?
             .post("/_arkret/root/identity/recovery-sessions", body)
@@ -227,7 +227,7 @@ impl crate::transport::TransportClient {
     pub async fn recovery_session(
         &self,
         recovery_session_id: &str,
-    ) -> anyhow::Result<arkret_sdk::RecoverySessionState> {
+    ) -> anyhow::Result<arkret_sdk::RecoverySession> {
         self.sdk_http_client()?
             .get(&format!(
                 "/_arkret/root/identity/recovery-sessions/{recovery_session_id}"

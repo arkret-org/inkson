@@ -1304,35 +1304,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn realm_projection_encryption_state_uses_profile_and_visibility() {
-        assert!(garth::realm_projection_is_encrypted(&json!({
-            "summary": {"encryption_profile": "mls_rfc9420"}
-        })));
-        assert!(garth::realm_projection_is_encrypted(&json!({
-            "plaintext_visibility": {"default": "encrypted"}
-        })));
-        assert!(!garth::realm_projection_is_encrypted(&json!({
-            "encryption_profile": "none"
-        })));
-        assert!(!garth::realm_projection_is_encrypted(&json!({
-            "summary": {"title": "Projection without encryption metadata"}
-        })));
-        assert!(garth::realm_projection_is_encrypted(&json!({
-            "state_at_window_start": {
-                "e2ee_epoch": {"epoch": 0, "key_ref": "mock-key:realm"}
-            }
-        })));
-        assert!(!garth::realm_projection_is_encrypted(&json!({
-            "state_at_window_start": {"e2ee_epoch": null}
-        })));
-        assert!(garth::realm_projection_is_encrypted(
-            &installed_genesis_projection(
-                "ak:realm:AWgGCEbMHnelRQfzqg1C_onV9Ej_FdpdAZyM_JoFgAd3",
-                json!({"encryption_profile": "mls_rfc9420"}),
-            )
-        ));
-    }
+    // The former `realm_projection_encryption_state_uses_profile_and_visibility`
+    // test asserted the create-locked `encryption_profile`, the
+    // `plaintext_visibility` default and the `state_at_window_start.e2ee_epoch`
+    // window — three wire members that no longer exist. The successor judgement
+    // ("the scope has an accepted `ak.mls.genesis`") is
+    // `LocalStateStore::realm_projection_is_mls_encrypted`, covered positively
+    // and negatively in `src/local_state_tests/projections.rs`.
 
     #[test]
     fn is_realm_or_space_projection_id_matches_realm_and_space_prefixes() {

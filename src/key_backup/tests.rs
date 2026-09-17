@@ -40,12 +40,8 @@ fn build_recovery_vault_backup_body(
         "recovery_vault",
         &SecretStorageContentIndex {
             item_kind: SecretStorageItemKind::PrivateAccountState,
-            realm_id: None,
-            from_epoch: None,
-            to_epoch: None,
             secret_id: Some("inkson_recovery_vault_payload".to_owned()),
             secret_version: None,
-            extra: Default::default(),
         },
     )
 }
@@ -161,12 +157,8 @@ fn successor_binds_the_current_device_without_breaking_the_series() {
         b"second",
         &SecretStorageContentIndex {
             item_kind: SecretStorageItemKind::PrivateAccountState,
-            realm_id: None,
-            from_epoch: None,
-            to_epoch: None,
             secret_id: Some("inkson_recovery_vault_payload".to_owned()),
             secret_version: None,
-            extra: Default::default(),
         },
         &arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap(),
         2,
@@ -426,12 +418,8 @@ fn recovery_public_key_backup_round_trips_and_validates() {
         "recovery_vault",
         &SecretStorageContentIndex {
             item_kind: SecretStorageItemKind::MlsAccountSecret,
-            realm_id: None,
-            from_epoch: None,
-            to_epoch: None,
             secret_id: Some("inkson_mls_account_secret".to_owned()),
             secret_version: Some(1),
-            extra: Default::default(),
         },
         b"opaque account secret bytes",
         Some(("ak:policy:01964137-0000-7000-8000-000000000077", 1)),

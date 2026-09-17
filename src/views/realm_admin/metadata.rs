@@ -36,7 +36,14 @@ fn projection_home_realm_for_admin(
         .unwrap_or_else(|| crate::operation::trim_realm_id(subject_id))
 }
 
-fn canonical_realm_profile(body: Option<&Value>) -> Option<arkret_sdk::WindowStartRealmMetadata> {
+// `WindowStartRealmMetadata` is live (`account-subscribe-frame.schema.json`
+// still carries `state_at_window_start`) but the `arkret` umbrella re-exports
+// only `sync_frames::{account_subscribe, current_results, realm_state_snapshot}`
+// under `arkret_sdk::sync`, not `sync_frames::account_sync`, so it is named
+// through the owning crate here.
+fn canonical_realm_profile(
+    body: Option<&Value>,
+) -> Option<arkret_models_collaboration::sync_frames::account_sync::WindowStartRealmMetadata> {
     let metadata = body?.pointer("/state_at_window_start/realm_metadata")?;
     serde_json::from_value(metadata.clone()).ok()
 }

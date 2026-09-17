@@ -620,7 +620,7 @@ fn validate_active_policy_key_material(
 }
 
 pub fn build_recovery_unlock_proof_from_words(
-    session: &arkret_sdk::RecoverySessionState,
+    session: &arkret_sdk::RecoverySession,
     policy: &RecoveryPolicySummary,
     recovery_words: &str,
 ) -> anyhow::Result<arkret_sdk::RecoverySessionProof> {

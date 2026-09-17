@@ -78,7 +78,7 @@ pub fn build_key_backup_unlock_proof(
     backup: &arkret_sdk::KeyBackupSummary,
     principal_id: &str,
     requesting_device_id: &str,
-    recovery_session: Option<&arkret_sdk::RecoverySessionState>,
+    recovery_session: Option<&arkret_sdk::RecoverySession>,
     challenge: Option<&arkret_sdk::KeysBackupsUnlockChallenge>,
     audience: &str,
     signer: &std::sync::Arc<crate::event_signer::InksonEventSigner>,
@@ -199,7 +199,7 @@ pub async fn fetch_key_backup_with_recovery_session_unlock_proof(
     backup_metadata: &Value,
     principal_id: &str,
     requesting_device_id: &str,
-    recovery_session: &arkret_sdk::RecoverySessionState,
+    recovery_session: &arkret_sdk::RecoverySession,
 ) -> anyhow::Result<Value> {
     recovery_session.validate()?;
     if recovery_session.account_id.principal_id.as_str() != principal_id
@@ -226,7 +226,7 @@ async fn fetch_key_backup_with_unlock_proof(
     backup_metadata: &Value,
     principal_id: &str,
     requesting_device_id: &str,
-    recovery_session: Option<&arkret_sdk::RecoverySessionState>,
+    recovery_session: Option<&arkret_sdk::RecoverySession>,
     signer: Option<&std::sync::Arc<crate::event_signer::InksonEventSigner>>,
 ) -> anyhow::Result<Value> {
     let backoff_scope = key_backup_unlock_backoff_scope(api, principal_id)?;

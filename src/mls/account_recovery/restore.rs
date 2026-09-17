@@ -286,7 +286,7 @@ pub async fn fetch_mls_restore_payload_with_recovery_session_unlock_proof(
     api: &crate::transport::TransportClient,
     actor_id: &str,
     device_id: &str,
-    recovery_session: &arkret_sdk::RecoverySessionState,
+    recovery_session: &arkret_sdk::RecoverySession,
 ) -> Result<Value> {
     let payload = fetch_mls_restore_payload_after_projection(api, actor_id).await?;
     hydrate_mls_restore_payload_with_unlock_proof(
@@ -304,7 +304,7 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
     payload: Value,
     actor_id: &str,
     device_id: &str,
-    recovery_session: Option<&arkret_sdk::RecoverySessionState>,
+    recovery_session: Option<&arkret_sdk::RecoverySession>,
 ) -> Result<Value> {
     let mut full_backups = Vec::new();
     for entry in payload

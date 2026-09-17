@@ -2196,8 +2196,12 @@ pub(crate) fn presence_maps_from_sync_events(
         let entry = presence_by_actor.entry(actor).or_default();
         entry.0.push(state);
         if let Some(message) = sync_presence_status_message(event) {
+            // `expires_at` rather than `sent_at`: the Signal receive engine no
+            // longer publishes a sender instant (see `live_body_value`), and
+            // the effective expiry orders one actor's presence bodies the same
+            // way for a fixed TTL profile.
             let candidate = (
-                sync_presence_timestamp(event, "sent_at"),
+                sync_presence_timestamp(event, "expires_at"),
                 event
                     .get("device_id")
                     .and_then(Value::as_str)

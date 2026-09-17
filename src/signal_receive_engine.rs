@@ -36,7 +36,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use garth::signal::{SignalReceiveOutcome, SignalReceiver, SignalSink, SignalStreamStopReason};
-use garth::RetrySchedule;
+use garth::{RetrySchedule, RunOptions, SyncLoopControl, TransportProvider};
 use serde_json::Value;
 
 use crate::config::MultiProfileConfig;
@@ -301,7 +301,7 @@ pub fn live_signal_projection_key(signal: &AdmittedSignal) -> garth::Result<Stri
 struct InksonSignalSink {
     state_store: crate::runtime::input::StateStoreHandle,
     products: SignalProductRouter,
-    live: Mutex<garth::LiveSignalProjection>,
+    live: Mutex<LiveSignalProjection>,
 }
 
 impl SignalSink for InksonSignalSink {
@@ -389,9 +389,9 @@ impl InksonSignalSink {
     /// `read-receipts.md` §2.5 says an undeclared policy means.
     fn realm_read_receipt_policy(
         &self,
-        plaintext: &garth::SignalPlaintext,
+        signal: &AdmittedSignal,
     ) -> arkret_sdk::ReadReceiptPolicy {
-        let realm_id = plaintext.scope_ref.realm_id().as_str().to_owned();
+        let realm_id = signal.scope_ref().realm_id().as_str().to_owned();
         let snapshot = self
             .state_store
             .read(|store| store.read_receipt_policy_for_realm(&realm_id));
@@ -415,13 +415,13 @@ impl InksonSignalSink {
         policy
     }
 
-    fn apply_live_body(&self, plaintext: &garth::SignalPlaintext) -> garth::Result<()> {
-        let body = live_body_value(plaintext)?;
+    fn apply_live_body(&self, signal: &AdmittedSignal) -> garth::Result<()> {
+        let body = live_body_value(signal)?;
         let now = crate::clock::now_utc();
         let Ok(mut live) = self.live.lock() else {
             return Ok(());
         };
-        if !live.apply_plaintext(plaintext, body, now)? {
+        if !live.apply_admitted(signal, body, now)? {
             return Ok(());
         }
         let bodies = live.bodies();
@@ -434,8 +434,8 @@ impl InksonSignalSink {
 
 /// Serialize the already-admitted SDK profile for product adapters that still
 /// consume JSON. Dispatch remains on the typed union; no raw body is retained.
-fn decrypted_body_value(plaintext: &garth::SignalPlaintext) -> garth::Result<Value> {
-    let body = match &plaintext.payload {
+fn decrypted_body_value(signal: &AdmittedSignal) -> garth::Result<Value> {
+    let body = match &signal.payload {
         arkret_models_collaboration::signal_plaintext::SignalPlaintext::Presence(payload) => {
             serde_json::to_value(payload)
         }
@@ -465,19 +465,19 @@ fn decrypted_body_value(plaintext: &garth::SignalPlaintext) -> garth::Result<Val
 /// Only for payload profiles whose consumer accepts an open object. A closed
 /// `deny_unknown_fields` plaintext (call signalling) must get
 /// [`decrypted_body_value`] instead.
-fn live_body_value(plaintext: &garth::SignalPlaintext) -> garth::Result<Value> {
-    let Value::Object(mut body) = decrypted_body_value(plaintext)? else {
+fn live_body_value(signal: &AdmittedSignal) -> garth::Result<Value> {
+    let Value::Object(mut body) = decrypted_body_value(signal)? else {
         return Err(garth::Error::Protocol(
             "admitted Signal plaintext must serialize as an object".to_owned(),
         ));
     };
     body.insert(
         "actor_id".to_owned(),
-        serde_json::to_value(&plaintext.actor_id).map_err(|error| {
+        serde_json::to_value(signal.actor_id()).map_err(|error| {
             garth::Error::Protocol(format!("serialize Signal ActorId: {error}"))
         })?,
     );
-    match &plaintext.sender_endpoint {
+    match signal.sender_endpoint() {
         arkret_sdk::SignalSequenceEndpoint::AccountDevice { device_id } => {
             body.insert(
                 "device_id".to_owned(),
@@ -491,16 +491,17 @@ fn live_body_value(plaintext: &garth::SignalPlaintext) -> garth::Result<Value> {
             );
         }
     }
-    body.insert(
-        "sent_at".to_owned(),
-        Value::String(arkret_sdk::canonical::format_timestamp_canonical(
-            plaintext.sent_at,
-        )),
-    );
+    // No `sent_at`: the admitted outcome carries the receiver-computed
+    // effective expiry (the earlier of the envelope expiry and
+    // `sent_at + ttl_ms`) and never the sender's own instant, so a `sent_at`
+    // here could only be guessed back out of a TTL that may not be the binding
+    // constraint. Consumers that need "which of this actor's live bodies is the
+    // newest" order by `expires_at`, which is the same order for a fixed TTL
+    // profile and is comparable across endpoints.
     body.insert(
         "expires_at".to_owned(),
         Value::String(arkret_sdk::canonical::format_timestamp_canonical(
-            plaintext.expires_at,
+            signal.expires_at,
         )),
     );
     Ok(Value::Object(body))
@@ -541,7 +542,7 @@ pub async fn run_signal_receive_engine(
     let sink = InksonSignalSink {
         state_store: ctx.state_store.clone(),
         products: ctx.products.clone(),
-        live: Mutex::new(garth::LiveSignalProjection::new()),
+        live: Mutex::new(LiveSignalProjection::new()),
     };
     let mut restart_backoff = RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING);
     while provider.is_active() {
@@ -558,6 +559,9 @@ pub async fn run_signal_receive_engine(
                     min_backoff: BACKOFF_FLOOR,
                     max_backoff: BACKOFF_CEILING,
                     jitter_ratio: 0.2,
+                    // The per-instance jitter seed is the SDK's; this loop has
+                    // no reason to vary it and must not silently pin it to 0.
+                    ..RunOptions::default()
                 },
             )
             .await;

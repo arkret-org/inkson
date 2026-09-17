@@ -739,7 +739,7 @@ pub fn finish_agent_key_authorization_for_pairing(
 fn validate_runtime_approval_candidate(
     request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<()> {
-    let digest = arkret_models_collaboration::agent_operations::agent_runtime_key_binding_digest(
+    let digest = arkret_models_collaboration::agent_scope::agent_runtime_key_binding_digest(
         &request.agent_id,
         &request.pairing_request_id,
         &request.verification_method,

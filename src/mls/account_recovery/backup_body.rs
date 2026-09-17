@@ -100,12 +100,8 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
         "recovery_vault",
         &SecretStorageContentIndex {
             item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND,
-            realm_id: None,
-            from_epoch: None,
-            to_epoch: None,
             secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
             secret_version: Some(account_secret_version),
-            extra: Default::default(),
         },
     )
 }
@@ -131,12 +127,8 @@ pub fn build_mls_account_secret_backup_successor_body_with_kek_and_version(
         account_secret.as_bytes(),
         &SecretStorageContentIndex {
             item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND,
-            realm_id: None,
-            from_epoch: None,
-            to_epoch: None,
             secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
             secret_version: Some(account_secret_version),
-            extra: Default::default(),
         },
         frontier_digest,
         device_generation_ref,
@@ -182,12 +174,8 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
         "recovery_vault",
         &SecretStorageContentIndex {
             item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND,
-            realm_id: None,
-            from_epoch: None,
-            to_epoch: None,
             secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
             secret_version: None,
-            extra: Default::default(),
         },
     )
 }
@@ -211,12 +199,8 @@ pub fn build_mls_private_plaintext_backup_successor_body_with_kek(
         sidecar_json,
         &SecretStorageContentIndex {
             item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND,
-            realm_id: None,
-            from_epoch: None,
-            to_epoch: None,
             secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
             secret_version: None,
-            extra: Default::default(),
         },
         frontier_digest,
         device_generation_ref,
@@ -282,12 +266,8 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
         "recovery_vault",
         &SecretStorageContentIndex {
             item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND,
-            realm_id: None,
-            from_epoch: None,
-            to_epoch: None,
             secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
             secret_version: Some(account_secret_version),
-            extra: Default::default(),
         },
         account_secret.as_bytes(),
         Some(recovery_policy_ref),

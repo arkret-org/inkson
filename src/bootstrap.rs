@@ -55,11 +55,16 @@ pub(crate) fn has_bootstrap_refresh_material(
 }
 
 pub(crate) fn local_state_has_encrypted_realm(state_store: &LocalStateStore) -> bool {
+    // A scope is encrypted exactly when its own `ak.mls.genesis` is accepted in
+    // the cached typed current results; there is no create-locked
+    // `encryption_profile` to read off the stored projection any more. The
+    // judgement lives in one place, so ask the store per Realm rather than
+    // re-deriving it from the projection JSON here.
     state_store
         .load()
         .realm_tree_projections
-        .values()
-        .any(garth::realm_projection_is_encrypted)
+        .keys()
+        .any(|realm_id| state_store.realm_projection_is_mls_encrypted(realm_id))
 }
 
 pub(crate) fn local_mls_epoch_floor_all(state_store: &LocalStateStore) -> u64 {

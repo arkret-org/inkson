@@ -31,12 +31,8 @@ fn public_content_item(item: &SecretStorageSecret) -> anyhow::Result<KeyBackupCo
     Ok(KeyBackupContentIndex::SecretStorage(
         SecretStorageContentIndex {
             item_kind: item.item_kind,
-            realm_id: None,
-            from_epoch: None,
-            to_epoch: None,
             secret_id: Some(item.secret_id.clone()),
             secret_version: item.secret_version()?,
-            extra: Default::default(),
         },
     ))
 }

@@ -496,7 +496,7 @@ mod agent_tests {
             key_digest: None,
         };
         let runtime_key_binding_digest =
-            arkret_models_collaboration::agent_operations::agent_runtime_key_binding_digest(
+            arkret_models_collaboration::agent_scope::agent_runtime_key_binding_digest(
                 &agent_id,
                 &pairing_request_id,
                 &verification_method,
@@ -763,7 +763,7 @@ mod agent_tests {
 fn canonical_candidate_fixture(raw: &str) -> String {
     let mut request = super::model::parse_runtime_key_approval_request(raw).unwrap();
     request.runtime_key_binding_digest =
-        arkret_models_collaboration::agent_operations::agent_runtime_key_binding_digest(
+        arkret_models_collaboration::agent_scope::agent_runtime_key_binding_digest(
             &request.agent_id,
             &request.pairing_request_id,
             &request.verification_method,

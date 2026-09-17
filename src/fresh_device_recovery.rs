@@ -3,19 +3,27 @@
 //! Fresh-device account recovery is authorized by the accepted PCR policy;
 //! the replacement device proves possession of its key in the closed unit.
 
+// The security-transaction DTO family lives in `arkret-models-crypto`, not in
+// `arkret-wire`: `arkret-wire` keeps the transport envelopes and the generated
+// identifier newtypes, while the recovery/rotation plan shapes are model types.
 use arkret_models_crypto::{
-    ClientStepAttestationArtifact, RecoveryBackupClassUnlocked, RecoveryProofSummary,
-    RecoveryReceiptOutcome, RecoveryTerminalCommit, RecoveryWelcomeRealmSummary,
-    SecurityTransactionContinueRequest, UnsignedRecoveryReceipt, UnsignedRecoveryReceiptBody,
+    BackupObjectRef, BackupRotationBinding, BackupRotationKind, BackupRotationPlan,
+    ClientStepAttestationArtifact, PreparedEventUnit, RecoveryBackupClassUnlocked,
+    RecoveryProofSummary, RecoveryReceiptOutcome, RecoveryTerminalCommit,
+    RecoveryTransactionCreateRequest, RecoveryWelcomeRealmSummary,
+    SecurityRotationTransactionCreateRequest, SecurityTransaction,
+    SecurityTransactionContinueRequest, SecurityTransactionCreateRequest,
+    SecurityTransactionPreparedPlan, SecurityTransactionStep, UnsignedRecoveryReceipt,
+    UnsignedRecoveryReceiptBody,
+    // Still missing from the SDK — see "Blocked by an SDK gap" in
+    // CAPABILITY-MIGRATION.md. Left importing so the gap fails loudly here
+    // instead of being re-declared locally.
+    RecoveryPreparedPlan, UnsignedClientStepAttestation,
 };
 use arkret_wire::{
-    BackupObjectRef, BackupRotationBinding, BackupRotationKind, BackupRotationPlan, BackupSeriesId,
-    CanonicalPublicMaterial, Did, EventId, EventsSubmitBatchRequestBody, Hash,
-    IssueRecoveryCompletionGrantOutcome, IssueRecoveryCompletionGrantRequest, PreparedEventUnit,
-    RecoveryPreparedPlan, RecoveryTransactionCreateRequest, SealId,
-    SecurityRotationTransactionCreateRequest, SecurityTransaction,
-    SecurityTransactionCreateRequest, SecurityTransactionPreparedPlan, SecurityTransactionStep,
-    TransactionId, UnsignedClientStepAttestation,
+    BackupSeriesId, CanonicalPublicMaterial, Did, EventId, EventsSubmitBatchRequestBody, Hash,
+    IssueRecoveryCompletionGrantOutcome, IssueRecoveryCompletionGrantRequest, SealId,
+    TransactionId,
 };
 use garth::{SecurityTransactionEngine, SecurityTransactionStore, SecurityTransactionTransport};
 use zeroize::{Zeroize, Zeroizing};

@@ -1334,13 +1334,26 @@ async fn run_circle_scope_rotate_pass(
 
         if let Ok(circles) = circles {
             for circle in circles.circle_views {
-                if circle.state == arkret_sdk::CircleState::Active
-                    && circle.encryption_profile == arkret_sdk::EncryptionProfile::MlsRfc9420
-                {
-                    scopes.push(arkret_sdk::ScopeRef::Circle {
-                        realm_id: realm.clone(),
-                        circle_id: circle.circle_id,
-                    });
+                if circle.state != arkret_sdk::CircleState::Active {
+                    continue;
+                }
+                // There is no create-locked `encryption_profile` on a Circle
+                // any more: a scope is plaintext until its own
+                // `ak.mls.genesis` is accepted and irreversibly RFC 9420
+                // afterwards, so the typed current results are what decide
+                // whether this scope has RFC MLS leaves to reconcile at all.
+                let scope = arkret_sdk::ScopeRef::Circle {
+                    realm_id: realm.clone(),
+                    circle_id: circle.circle_id,
+                };
+                let has_mls_genesis = ctx.state_store.read(|store| {
+                    crate::current_projection::scope_has_accepted_mls_genesis(
+                        &store.cached_current_entries(realm.as_str()),
+                        &scope,
+                    )
+                });
+                if has_mls_genesis {
+                    scopes.push(scope);
                 }
             }
         }

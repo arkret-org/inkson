@@ -25,9 +25,9 @@ fn non_empty(value: String) -> anyhow::Result<NonEmptyString> {
 
 pub(crate) struct PreparedPcrPolicyRecovery {
     pub create_request: RecoveryTransactionCreateRequest,
-    pub proof_summary: arkret_sdk::ProofSummary,
+    pub proof_summary: arkret_models_crypto::RecoverySessionProofSummary,
     pub recovery_private_key: Zeroizing<[u8; 32]>,
-    pub verified_session: arkret_sdk::RecoverySessionState,
+    pub verified_session: arkret_sdk::RecoverySession,
 }
 
 pub(crate) struct CompletedFreshDeviceRecovery {
@@ -39,7 +39,7 @@ pub(crate) struct CompletedFreshDeviceRecovery {
 pub(crate) async fn prepare_pcr_policy_recovery(
     api: &crate::transport::TransportClient,
     principal_did: &arkret_sdk::Did,
-    session: &arkret_sdk::RecoverySessionState,
+    session: &arkret_sdk::RecoverySession,
     proof_outcome: &arkret_sdk::RecoverySessionProofSubmitOutcome,
     recovery_words: &str,
 ) -> anyhow::Result<PreparedPcrPolicyRecovery> {
@@ -300,7 +300,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
 }
 
 fn exact_device_reanchor_payload(
-    session: &arkret_sdk::RecoverySessionState,
+    session: &arkret_sdk::RecoverySession,
     previous_device_generation: u64,
     new_device_generation: u64,
     replacement_authorize_payload_digest: Hash,
@@ -385,7 +385,7 @@ pub(crate) async fn execute_pcr_policy_recovery(
     api: &crate::transport::TransportClient,
     state_store: &crate::runtime::input::StateStoreHandle,
     principal_did: &arkret_sdk::Did,
-    session: &arkret_sdk::RecoverySessionState,
+    session: &arkret_sdk::RecoverySession,
     proof_outcome: &arkret_sdk::RecoverySessionProofSubmitOutcome,
     recovery_words: &str,
 ) -> anyhow::Result<CompletedFreshDeviceRecovery> {

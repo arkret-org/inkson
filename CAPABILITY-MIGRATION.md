@@ -87,8 +87,26 @@ call sites are left failing rather than re-declared locally.
 | `MessagePrepareOutcome` | `message-authoring.schema.json#/$defs/message_prepare_outcome` | Station-prepared message authoring |
 | `MimiSubmitMessage{RequestBody,Outcome}`, `MimiIdentifierQueryOutcome`, `MimiProxyDownloadOutcome` | `mimi-operations.schema.json`; operations registered in `operation-registry.json` | MIMI interop send / identifier query / proxy download |
 | `PolicySetStatePayload` | `event-payload.schema.json#/$defs/policy_set_state_payload` | Realm policy set-state |
-| `ProofSummary` | `recovery-session.schema.json#/$defs/proof_summary` | recovery session proof summary |
 | `RecoveryPolicyPublishRequest` | `recovery-policy.schema.json#/$defs/recovery_policy_publish_request` | recovery policy publish |
+| `SidecarMlsBinding` (7 sites, `src/sidecar.rs`) | `sidecar-operations.schema.json` | Agent Sidecar MLS binding |
+| `MAX_PEER_RESOLVE_RESPONSE_BYTES` (3 sites, `src/transport/`) | `events-resolve` peer response ceiling | peer resolve response bound |
+| `CommandOutcome` / `command_unit_outcome` / `server_command_unit_outcome` (6 sites) | `command-unit.schema.json` | command unit result handling |
+| `BackupSeriesErase{Outcome,RequestBody}` (3 sites, `src/key_backup/`) | `key-backup.schema.json` | backup series erase |
+| `DeviceReanchorPayload` (1 site, `src/fresh_device_recovery.rs`) | `event-payload.schema.json#/$defs/device_reanchor_payload`; `ak.device.reanchor` is the one action a recovery publication authority context may allow | fresh-device recovery re-anchor |
+| `RecoveryPreparedPlan`, `UnsignedClientStepAttestation`, `RecoveryBackupClassUnlocked`, `build_recovery_unlock_proof`, `current_signer_evidence`, `signed_event_digest_claim`, `build_self_principal_pcr_genesis_unit`, `agent_inception_notary`, `CORE_REDUCER_PROFILE` | recovery / security-transaction and principal-genesis schemas | fresh-device recovery, PCR genesis, agent inception |
+
+`ProofSummary` was removed from this table: it was a misdiagnosis. The type
+exists as `arkret_models_crypto::RecoverySessionProofSummary` (the session's
+summary, carrying `verification_method`) alongside
+`arkret_models_crypto::RecoveryProofSummary` (the transaction's, carrying
+`quorum_participant_count`); inkson was naming a third, nonexistent one.
+Likewise `BackupRotationKind`, `BackupRotationPlan`, `PreparedEventUnit`,
+`agent_runtime_key_binding_digest` and `WindowStartRealmMetadata` are present
+in the SDK and were import-path problems, not gaps. Of those,
+`WindowStartRealmMetadata` is real but unreachable through the umbrella:
+`arkret_sdk::sync` re-exports `sync_frames::{account_subscribe,
+current_results, realm_state_snapshot}` and not `sync_frames::account_sync`,
+so the call site names `arkret_models_collaboration` directly.
 
 ## SDK gaps closed by this round
 
@@ -108,6 +126,69 @@ Call sites moved with them: sync-frame types are addressed as
 client no longer reaches for them at the crate root), and the roster membership
 value is `MemberRosterMembership` — the two roster-visible states — not the
 four-valued `MembershipState` of a Realm member current result.
+
+## The error count this repo reports is a compiler artifact, not a measurement
+
+Measured on 2026-09-17 against `arkret-rust-sdk@39aa9932` / `garth@90765ab`
+with `cargo check -p inkson --all-targets --keep-going`.
+
+`rustc` aborts after item-signature collection when any item signature fails to
+resolve, so **no function body in the crate is ever type-checked** while a
+single unresolved path remains in a signature position. The handoff's
+"lib 271 + lib test 432 = 703" was produced in that state: it counted
+resolution-phase errors only.
+
+Resolving four signature-position paths (`garth::{RunOptions, SyncLoopControl,
+TransportProvider}` in `src/signal_receive_engine.rs`,
+`agent_operations` -> `agent_scope` in `src/views/agents/model.rs`,
+`arkret_wire` -> `arkret_models_crypto` in `src/fresh_device_recovery.rs`,
+`WindowStartRealmMetadata` in `src/views/realm_admin/metadata.rs`) let body
+checking run for the first time and exposed ~1050 further errors that were
+always there:
+
+| Phase | Before this round | After |
+| --- | --- | --- |
+| resolution (`E0432/E0433/E0425/E0422/E0412/E0603/...`) | 379 | 383 |
+| body / type checking (`E0599/E0609/E0560/E0061/E0308/E0277/...`) | 63 | 990 |
+| `cargo` totals, lib / lib test | 271 / 432 | 807 / 1305 |
+
+The "after" number is larger because the compiler now sees more of the crate,
+not because the crate regressed: the resolution-phase count is flat, and no
+error message present after this round is absent from a run with these fixes
+reverted except the six this round newly unmasked. Any per-repo error count
+quoted for this migration should be assumed to be a lower bound until that
+repo's signatures all resolve.
+
+## Blocked on the typed current result family (spec section 4)
+
+Not registered as SDK gaps: these wait on `result_writes[]` reaching the event
+kinds that would write the family, and on the `CurrentSelector` /
+`ResolvedCellState` projection shape being settled. Nothing here should be
+implemented locally first.
+
+| Inkson call sites | Waits on |
+| --- | --- |
+| `src/state/current_index.rs` (71 errors; `TypedCurrentResult::{revision, target}` at :1605-:1606, `CleanupTask.target` at :1552, and the projector arity from :1570 onward) | whether a typed current result carries its own `CurrentRevision` and target, or is addressed only through `CurrentSelector`. The whole local current index is written against the former. |
+| `src/operation/../operation_tests.rs` :586, :927, :969, :988, :1042, :1060, :1081; `src/transport/tests/envelopes_payloads.rs` :123, :144, :159, :213, :443, :453, :463 | the `*_cell_writes` / `cell_write_projector` family (`pre_authoring_cell_writes`, `project_registered_cell_writes(_with_pre_state)`, `direct_registered_cell_writes`) — 6 of 147 event kinds have `result_writes[]` today |
+| `src/views/realm_admin/admin_panel*`, `src/transport/realm_write.rs:817` (`RealmAuthorityRootValue`, `REALM_AUTHORITY_RESET`, `build_realm_authority_reset_intent`) | the authority-root typed current result and a `CurrentSelector` for it; see the `ak.realm.authority.reset` row under "Blocked by an SDK gap" |
+| `src/sync_engine.rs` `run_circle_scope_rotate_pass`; `src/circle_mls.rs` `MembershipRemovalSnapshot.{request, local_mls_leaves}` | the `member_state` family, one of the 7 registered families with no writer. The pass's premise was "local membership projections are never negative authority for an MLS Remove"; the successor authority is the member roster current result. |
+| `src/calendar.rs:21`, `src/views/kanban/tests/calendar_event.rs:161` (`calendar_schedule_revision_winner(_at_source)`) | `strand` family — registered, no writer |
+| `src/identity/principal_genesis.rs` :153, :206 (`composite_subject`, `seed_test_governance_result`) | the governance result seeding shape |
+
+## Residue of removed protocol mechanisms, not yet excised
+
+These are call sites of concepts listed under "Removed with the protocol" that
+still exist in inkson. They are not gaps and not section-4 blocked: each needs
+its mechanism removed and its successor path wired, which is more than a
+rename, so none of it was done as part of a naming pass.
+
+| Residue | Inkson sites | Successor |
+| --- | --- | --- |
+| Seal family (`Seal`, `SealId`, `SealPrepareRequestBody`, `RealmSealFrontierView`, `RecoverySession.accepted_seal_frontier`, `prepare_and_sign_pcr_successor`, `clear_prepared_pcr_successor`) | ~20 sites, mostly `src/mls/account_recovery/*`, `src/recovery_flow.rs` | `RealmCommit`; recovery completion is the two-consecutive-positions boundary already wired in `garth::validate_recovery_commit_boundary` |
+| governance / Seal / security frontier preflight (`refresh_realm_governance_frontier`, `seals_frontier_realm_{head,view}`, `seals_frontier_agent_head`, `frontier_request`, `fetch_and_cache_frontier`, `current_security_frontier_leaves`, `preview_security_frontier_with_added_keypackages`, `singleton_security_frontier_leaf`) | `src/event_submit.rs` consumers (15 sites), `src/views/realm_admin/members_panel/admission.rs` (33 errors) | `MlsCommitSubmission` + `src/mls/welcome_delivery.rs`; the admission flow's frontier preflight has no successor and should be deleted outright |
+| Agent Sidecar *exchange* vocabulary (`AgentSidecarExchangeId`, `SidecarExchange{Request,Agent,Control}Fact`, `fold_sidecar_exchange`, `evaluate_sidecar_exchange_cache`, `agent_sidecar_exchange_event_set_digest`, `MESSAGE_METADATA_SIDECAR_EXCHANGE_BINDING_KEY`) | `src/sidecar.rs` (102 errors), `src/views/agents/{bootstrap,admin/controller}.rs` | none — the vocabulary was removed with no successor |
+| RHRK history-secret family (`LocalAuthoritativeHistorySecret`, `PendingHistorySecrets`, `KeyBackupFrontierRef`, `derive_and_retain_realm_history_secret`, `KeyBackupKeybag::MlsHistory`, `HistorySecretRange`) | `src/key_backup/*`, `src/mls/account_recovery/backup_body.rs`, `src/key_backup/tests.rs:467` | none; the history exporter scheme was removed while the RFC 9420 RTC/Signal/reaction/blob labels were kept |
+| `EventInitialSubmission` / `EventsSubmitOutcome` / `AuthorizationLease` / Control Proposal Ack (`events_submit_rejected_for_reason`, `ensure_events_submit_accepted`, `acquire_for_{events,intent}`, `delayed_initial_submission`, `is_actor_seq_cas_conflict_error`, `ControlProposalAck::issue_with_signer`) | `src/transport/*`, `src/mls/account_recovery/recovery_transaction.rs:210-:230` | `EventCommitSubmission` / `AuthoritySubmitOutcome`; `PublicationAuthorityContext.authority_commit_id` replaces `authority_set_ref.authority_set_digest` |
 
 ## Removed with the protocol
 
