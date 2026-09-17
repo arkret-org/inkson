@@ -5,17 +5,17 @@
 //! has committed its Event into the scope's own independent commit stream. The
 //! client never asks a separate endpoint whether a transition was accepted: a
 //! locally authored Commit pairs its Event with the `RealmCommit` the submit
-//! returned, and a remote transition arrives as a `StreamItem` on the scope's
-//! stream. Both shapes are the same `arkret_wire::StreamItem`, so this module
+//! returned, and a remote transition arrives as a `StreamRow` on the scope's
+//! stream. Both shapes are the same `arkret_wire::StreamRow`, so this module
 //! takes that and nothing else.
 
-use arkret_wire::{CommittedEventRef, StreamItem};
+use arkret_wire::{CommittedEventRef, StreamRow};
 
 /// One accepted `ak.mls.genesis` / `ak.mls.commit` with the exact commit
 /// coordinate that ordered it.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AcceptedMlsTransition {
-    pub(crate) item: StreamItem,
+    pub(crate) item: StreamRow,
     pub(crate) effective_scope: arkret_sdk::ScopeRef,
     pub(crate) mls_group_id: String,
     pub(crate) previous_epoch: u64,
@@ -39,14 +39,14 @@ impl AcceptedMlsTransition {
     }
 }
 
-/// Read one accepted stream item as an MLS transition.
+/// Read one accepted stream row as an MLS transition.
 ///
 /// Every cross-check the installer depends on happens here: the commit must
 /// bind this exact Event in this exact scope stream, the payload's governance
 /// binding must name the same scope, and the group id must be the one derived
 /// from that scope. A transition that fails any of them is refused rather than
 /// installed under a scope it does not belong to.
-pub(crate) fn accepted_mls_transition(item: &StreamItem) -> Result<AcceptedMlsTransition, String> {
+pub(crate) fn accepted_mls_transition(item: &StreamRow) -> Result<AcceptedMlsTransition, String> {
     item.validate_shape()
         .map_err(|error| format!("accepted MLS transition is malformed: {error}"))?;
     let binding = match item.event.kind {
@@ -94,7 +94,7 @@ pub(crate) fn accepted_from_submission(
     event: arkret_sdk::Event,
     commit: arkret_wire::RealmCommit,
 ) -> Result<AcceptedMlsTransition, String> {
-    accepted_mls_transition(&StreamItem { commit, event })
+    accepted_mls_transition(&StreamRow { commit, event })
 }
 
 fn event_payload<T: serde::de::DeserializeOwned>(

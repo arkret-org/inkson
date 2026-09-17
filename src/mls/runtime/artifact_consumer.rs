@@ -2,7 +2,7 @@
 //!
 //! An MLS transition is installable exactly when the governance Station has
 //! committed its Event into the scope's own independent commit stream, so every
-//! entry point here takes the accepted `StreamItem` (or, for a Welcome, the
+//! entry point here takes the accepted `StreamRow` (or, for a Welcome, the
 //! producer-signed delivery plus the accepted Commit it names). Nothing asks a
 //! separate endpoint whether a transition was accepted, and nothing installs
 //! provider state that is not bound to an exact commit coordinate.
@@ -11,7 +11,7 @@
 //! commit whose base epoch this device does not hold is left for a later pass
 //! rather than applied out of order.
 
-use arkret_wire::StreamItem;
+use arkret_wire::StreamRow;
 
 use crate::mls::accepted_artifact::{AcceptedMlsTransition, accepted_mls_transition};
 use crate::mls::governance_proof::MlsLeafAuthorityHint;
@@ -41,7 +41,7 @@ pub(crate) async fn install_accepted_transition(
     state: &StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-    item: &StreamItem,
+    item: &StreamRow,
     authority_hints: &[MlsLeafAuthorityHint],
 ) -> Result<MlsInstallOutcome, String> {
     let transition = accepted_mls_transition(item)?;
@@ -130,7 +130,7 @@ pub(crate) async fn install_accepted_welcome(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     delivery: &arkret_wire::MlsWelcomeDelivery,
-    accepted_commit: &StreamItem,
+    accepted_commit: &StreamRow,
     authority_hints: &[MlsLeafAuthorityHint],
 ) -> Result<MlsInstallOutcome, String> {
     let transition = accepted_mls_transition(accepted_commit)?;
@@ -282,7 +282,7 @@ pub(crate) async fn converge_accepted_mls_artifacts(
 async fn accepted_commit_for_welcome(
     api: &crate::transport::TransportClient,
     delivery: &arkret_wire::MlsWelcomeDelivery,
-) -> Result<Option<StreamItem>, String> {
+) -> Result<Option<StreamRow>, String> {
     let stream_ref = arkret_wire::CommitStreamRef::from_scope(&delivery.effective_scope, None)
         .map_err(|error| format!("MLS Welcome scope has no commit stream: {error}"))?;
     let submitter = api

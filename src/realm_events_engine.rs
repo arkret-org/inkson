@@ -20,7 +20,7 @@
 //! and advances each of them on its own. A stream is drained by repeating the
 //! scan while the Station reports `truncated`.
 //!
-//! The Station answers a scan with whole [`arkret_wire::StreamItem`]s (the
+//! The Station answers a scan with whole [`arkret_wire::StreamRow`]s (the
 //! authority `RealmCommit` plus the exact Event it covers), so every row this
 //! engine folds is complete: there is no second "resolve the payload" round
 //! trip on the follow path.
@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use garth::{
     AuthorityClient, ClientEvent, ClientProjector, CommitStreamRef, CommittedDelta, CursorScope,
-    CursorStore, DecodedInbound, InboundDecoder, RealmReplica, RetrySchedule, StreamItem,
+    CursorStore, DecodedInbound, InboundDecoder, RealmReplica, RetrySchedule, StreamRow,
     StreamScanRequest,
 };
 
@@ -132,14 +132,14 @@ impl ClientProjector for RealmIngestProjector {
 /// Every row carries its own [`arkret_wire::CommitStreamRef`] and
 /// `stream_position` inside [`CommittedDelta`], so nothing here has to invent a
 /// cross-stream ordering to represent them.
-fn stream_items_to_client_events(
+fn stream_rows_to_client_events(
     realm_id: &arkret_sdk::RealmId,
-    commits: Vec<StreamItem>,
+    commits: Vec<StreamRow>,
 ) -> garth::Result<Vec<ClientEvent>> {
     let decoder = InboundDecoder::new();
     let mut batch = Vec::with_capacity(commits.len());
     for item in commits {
-        let delta = CommittedDelta::from_stream_item(realm_id.clone(), item)?;
+        let delta = CommittedDelta::from_stream_row(realm_id.clone(), item)?;
         if let DecodedInbound::Message(message) = decoder.decode_event((*delta.event).clone()) {
             batch.push(ClientEvent::Message(message));
         }
@@ -396,7 +396,7 @@ where
         };
         let outcome = authority.scan(&request).await?;
         let truncated = outcome.truncated;
-        let batch = stream_items_to_client_events(realm_id, outcome.commits.clone())?;
+        let batch = stream_rows_to_client_events(realm_id, outcome.commits.clone())?;
         // `apply_scan` re-validates the window against the installed head, so
         // a Station that answers with a gap or a replayed prefix is rejected
         // before anything is folded or checkpointed.

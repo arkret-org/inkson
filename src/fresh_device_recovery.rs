@@ -290,7 +290,7 @@ where
             anyhow::bail!("recovery completion grant requires a completed transaction");
         }
         let completion_attestation = resource
-            .terminal_result
+            .terminal_outcome
             .as_ref()
             .and_then(|result| result.completion_attestation.clone())
             .ok_or_else(|| anyhow::anyhow!("completed recovery omitted its attestation"))?;

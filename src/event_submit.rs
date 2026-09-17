@@ -1421,7 +1421,7 @@ impl EventSubmitter {
                 authority_hints,
                 state_store,
             } => {
-                let stream_item = arkret_wire::StreamItem {
+                let stream_row = arkret_wire::StreamRow {
                     commit: commit.clone(),
                     event: queued_event(item).clone(),
                 };
@@ -1429,7 +1429,7 @@ impl EventSubmitter {
                     state_store,
                     authority,
                     device_id,
-                    &stream_item,
+                    &stream_row,
                     authority_hints,
                 )
                 .await
