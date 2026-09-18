@@ -464,7 +464,7 @@ fn roster_account_for(
 ///
 /// The ruling behind that choice:
 ///
-/// `review/spec-done/2026-09-05-1310-agent-selector-mention-has-no-normative-station-source.md`
+/// `tasks/spec-done/2026-09-05-1310-agent-selector-mention-has-no-normative-station-source.md`
 async fn resolve_agent_selector_mentions(
     mentions_enabled: bool,
     base_url: &str,

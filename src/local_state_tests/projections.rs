@@ -262,7 +262,7 @@ fn member_handle_cache_is_realm_and_digest_scoped() {
 /// account at another Station, so the handle cache MUST NOT answer for a
 /// second Station out of the first Station's entry. This is the store half of
 /// the ruling recorded in
-/// `review/spec-done/2026-09-04-2153-member-roster-subject-carrier-prose-and-schema-disagree.md`.
+/// `tasks/spec-done/2026-09-04-2153-member-roster-subject-carrier-prose-and-schema-disagree.md`.
 #[test]
 fn member_handle_cache_never_crosses_stations_for_one_principal() {
     let path = temp_state_path("member-handle-cache-station-isolation");

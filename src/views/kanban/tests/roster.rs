@@ -600,7 +600,7 @@ fn directory_answer_for_another_station_is_not_a_match() {
 }
 
 /// Negative case locked by
-/// `review/spec-done/2026-09-04-2153-member-roster-subject-carrier-prose-and-schema-disagree.md`:
+/// `tasks/spec-done/2026-09-04-2153-member-roster-subject-carrier-prose-and-schema-disagree.md`:
 /// one principal with accounts at two Stations is two subjects. A handle
 /// cached for the Station-B account MUST NOT decorate the Station-A member
 /// row, and the row MUST still raise its own lookup instead of reusing that
