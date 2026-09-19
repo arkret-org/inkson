@@ -292,7 +292,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     .await?;
     let creates_initial_series = previous_account_backup.is_none();
     // Fresh backup_id per immutable series link.
-    let account_backup_id = fresh_backup_id();
+    let account_backup_id = fresh_backup_id().map_err(anyhow::Error::from)?;
 
     let kek = derive_vault_kek(passphrase).map_err(|err| anyhow!("derive KEK: {err}"))?;
     let signer = crate::event_signer::active_signer()
@@ -302,7 +302,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         let frontier =
             current_backup_frontier_ref(api, control_realm, authority, device_id).await?;
         build_mls_account_secret_backup_successor_body_with_kek_and_version(
-            &account_backup_id,
+            account_backup_id.as_str(),
             &predecessor,
             device_id,
             &kek,
@@ -313,7 +313,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         )?
     } else {
         build_mls_account_secret_backup_body_with_kek_and_version(
-            &account_backup_id,
+            account_backup_id.as_str(),
             authority,
             device_id,
             &kek,
@@ -322,7 +322,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         )?
     };
     let account_series_id = account_body.series_id.to_string();
-    api.put_key_backup(&account_backup_id, account_body, &signer)
+    api.put_key_backup(account_backup_id.as_str(), account_body, &signer)
         .await
         .map_err(|err| anyhow!("upload account MLS secret backup: {err}"))?;
     if creates_initial_series {
@@ -340,7 +340,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     crate::mls::runtime::mark_account_mls_secret_verified(secure_store, authority)
         .map_err(|err| anyhow!("mark uploaded account MLS secret verified: {err}"))?;
 
-    Ok(account_backup_id)
+    Ok(account_backup_id.to_string())
 }
 
 /// Upload an HPKE `recovery_public_key` account-secret backup derived from the
@@ -416,7 +416,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         active_recovery_backup_recipient(active_policy, authority, actor_id, recovery_public_key)?;
     let recovery_policy_ref = (recovery_policy_id.as_str(), recovery_policy_version);
 
-    let account_backup_id = fresh_backup_id();
+    let account_backup_id = fresh_backup_id().map_err(anyhow::Error::from)?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let frontier_ref = if previous_account_backup.is_some() {
@@ -425,7 +425,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         None
     };
     let account_body = build_mls_account_secret_recovery_public_key_backup_in_series(
-        &account_backup_id,
+        account_backup_id.as_str(),
         authority,
         device_id,
         recovery_public_key,
@@ -437,7 +437,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         frontier_ref,
     )?;
     let account_series_id = account_body.series_id.to_string();
-    api.put_key_backup(&account_backup_id, account_body, &signer)
+    api.put_key_backup(account_backup_id.as_str(), account_body, &signer)
         .await
         .map_err(|err| anyhow!("upload recovery-key account MLS secret backup: {err}"))?;
     if creates_initial_series {
@@ -455,7 +455,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     crate::mls::runtime::mark_account_mls_secret_verified(secure_store, authority)
         .map_err(|err| anyhow!("mark uploaded account MLS secret verified: {err}"))?;
 
-    Ok(account_backup_id)
+    Ok(account_backup_id.to_string())
 }
 
 /// X5.3 — wrap the entire local-plaintext sidecar map behind a KEK derived from
@@ -544,7 +544,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
     let kek =
         derive_vault_kek(stored.secret.as_bytes()).map_err(|err| anyhow!("derive KEK: {err}"))?;
     // Fresh backup_id per immutable series link.
-    let backup_id = fresh_backup_id();
+    let backup_id = fresh_backup_id().map_err(anyhow::Error::from)?;
 
     let previous_backup = match previous_backup {
         Some(previous) => Some(previous.clone()),
@@ -568,7 +568,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         let frontier =
             current_backup_frontier_ref(api, control_realm, authority, device_id).await?;
         build_mls_private_plaintext_backup_successor_body_with_kek(
-            &backup_id,
+            backup_id.as_str(),
             &predecessor,
             device_id,
             &kek,
@@ -578,7 +578,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         )?
     } else {
         build_mls_private_plaintext_backup_body_with_kek(
-            &backup_id,
+            backup_id.as_str(),
             authority,
             device_id,
             &kek,
@@ -586,7 +586,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         )?
     };
     let (_, sent_body) = api
-        .put_key_backup_returning_sent_body(&backup_id, body, &signer)
+        .put_key_backup_returning_sent_body(backup_id.as_str(), body, &signer)
         .await
         .map_err(|err| anyhow!("upload private plaintext backup: {err}"))?;
     let series_id = sent_body.series_id.to_string();
@@ -603,7 +603,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         .await?;
     }
 
-    Ok((backup_id, serde_json::to_value(sent_body)?))
+    Ok((backup_id.to_string(), serde_json::to_value(sent_body)?))
 }
 
 #[cfg(test)]
@@ -743,5 +743,15 @@ mod tests {
             .unwrap_err();
             assert!(error.to_string().contains("uniquely match"));
         }
+    }
+
+    #[test]
+    fn upload_backup_ids_are_formal_typed_ids() {
+        let backup_id = super::fresh_backup_id().unwrap();
+        let reparsed = arkret_sdk::BackupId::new(backup_id.to_string()).unwrap();
+        assert_eq!(reparsed, backup_id);
+
+        let foreign_namespace = backup_id.as_str().replacen("ak:backup:", "ak:event:", 1);
+        assert!(arkret_sdk::BackupId::new(foreign_namespace).is_err());
     }
 }
