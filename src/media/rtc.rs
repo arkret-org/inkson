@@ -82,6 +82,10 @@ pub enum RtcClientError {
     /// The Realm policy did not authorize this media service to see
     /// plaintext media.
     MediaPlaintextServiceNotAuthorised,
+    /// A decrypting media join was attempted before the client displayed the
+    /// prominent plaintext-service warning and recorded the user's explicit
+    /// confirmation.
+    MediaPlaintextWarningRequired,
     /// The local MLS governance binding does not cover the current media
     /// plaintext / policy cell values.
     MlsGovernanceBindingStale,
@@ -111,6 +115,7 @@ impl RtcClientError {
             }
             Self::MediaServiceBindingUncovered => "media_service_binding_uncovered",
             Self::MediaPlaintextServiceNotAuthorised => "media_plaintext_service_not_authorised",
+            Self::MediaPlaintextWarningRequired => "media_plaintext_warning_required",
             Self::MlsGovernanceBindingStale => "mls_governance_binding_stale",
             Self::DesktopMediaUnavailable => "desktop_media_unavailable",
         }
@@ -136,6 +141,7 @@ impl RtcClientError {
             Self::MediaPlaintextServiceNotAuthorised => {
                 "error.call.media_plaintext_service_not_authorised"
             }
+            Self::MediaPlaintextWarningRequired => "error.call.media_plaintext_warning_required",
             Self::MlsGovernanceBindingStale => "error.call.mls_governance_binding_stale",
             Self::DesktopMediaUnavailable => "error.call.desktop_media_unavailable",
         }
@@ -159,6 +165,7 @@ impl RtcClientError {
             }
             "media_service_binding_uncovered" => Self::MediaServiceBindingUncovered,
             "media_plaintext_service_not_authorised" => Self::MediaPlaintextServiceNotAuthorised,
+            "media_plaintext_warning_required" => Self::MediaPlaintextWarningRequired,
             "mls_governance_binding_stale" => Self::MlsGovernanceBindingStale,
             "desktop_media_unavailable" => Self::DesktopMediaUnavailable,
             _ => return None,
@@ -239,6 +246,14 @@ pub struct MediaJoinRequest {
     /// covered by the current MLS governance binding. Token/ICE issuer anchors
     /// are not trusted until this verifies.
     pub governance_evidence: Option<MediaGovernanceEvidence>,
+    /// Whether the selected media role asks the service to receive plaintext
+    /// frame keys. This is an intent bit, never authority: when true, all
+    /// three canonical plaintext-media gates must pass before token exchange
+    /// or frame-key publication. Keeping the intent independent from the
+    /// accepted policy is what lets the client reject a backend downgrade
+    /// attempt instead of silently treating an unauthorized request as an
+    /// opaque relay.
+    pub media_service_decryption_requested: bool,
 }
 
 impl MediaJoinRequest {
@@ -359,14 +374,14 @@ impl MediaGovernanceEvidence {
             return Err(RtcClientError::FocusMismatch);
         }
 
-        if self.media_service_decrypts_enabled() {
+        if request.media_service_decryption_requested {
             self.verify_plaintext_media_authorization(service_id)?;
         }
         Ok(())
     }
 
     fn verify_plaintext_media_authorization(&self, service_id: &str) -> Result<(), RtcClientError> {
-        if !self.media_plaintext_ui_confirmed {
+        if !self.media_service_decrypts_enabled() {
             return Err(RtcClientError::MediaPlaintextServiceNotAuthorised);
         }
         let plaintext_payload = self
@@ -385,9 +400,59 @@ impl MediaGovernanceEvidence {
         if !authorized {
             return Err(RtcClientError::MediaPlaintextServiceNotAuthorised);
         }
+        if !self.media_plaintext_ui_confirmed {
+            return Err(RtcClientError::MediaPlaintextWarningRequired);
+        }
 
         Ok(())
     }
+}
+
+/// A successful pass through the media join's production governance gate.
+///
+/// The value is intentionally opaque: callers cannot construct it without
+/// validating the current Realm policy, the exact SFU DID allowlist entry and
+/// the per-join plaintext warning acknowledgement. The real join path retains
+/// this authorization across token and ICE verification, then uses it at the
+/// single frame-key publication point.
+#[derive(Debug)]
+pub struct AuthorizedMediaJoin<'a> {
+    request: &'a MediaJoinRequest,
+    ids: TypedJoinIds,
+}
+
+impl AuthorizedMediaJoin<'_> {
+    /// Publish one MLS-exporter frame key to the verified media transport.
+    ///
+    /// Refused joins never obtain this value and therefore cannot reach the
+    /// exporter. A successful call evaluates the exporter exactly once for
+    /// the local sender at this boundary.
+    pub fn publish_frame_key(
+        &self,
+        mls_exporter: &impl MlsExporterSource,
+        participant_id: &str,
+    ) -> Result<zeroize::Zeroizing<Vec<u8>>, RtcClientError> {
+        let frame_context = FrameKeyContext {
+            realm_id: self.ids.realm_id.clone(),
+            call_id: self.ids.call_id.clone(),
+            focus_id: self.request.focus_id.clone(),
+            epoch_id: self.request.epoch_id,
+            participant_id: participant_id.to_owned(),
+            device_id: self.ids.device_id.clone(),
+        };
+        derive_frame_key(mls_exporter, &frame_context)
+            .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)
+    }
+}
+
+/// Validate the production join preconditions before any token request or
+/// media-key publication occurs.
+pub fn authorize_media_join(
+    request: &MediaJoinRequest,
+) -> Result<AuthorizedMediaJoin<'_>, RtcClientError> {
+    let ids = request.typed_ids()?;
+    request.verify_governance_evidence()?;
+    Ok(AuthorizedMediaJoin { request, ids })
 }
 
 fn media_service_payload_service_id(payload: &Value) -> Option<&str> {
@@ -460,6 +525,7 @@ fn normalize_verification_method_kid(service_did: &str, method: &str) -> String 
     }
 }
 
+#[derive(Debug)]
 struct TypedJoinIds {
     realm_id: RealmId,
     call_id: CallId,
@@ -599,8 +665,11 @@ pub async fn join_call_media(
     request: &MediaJoinRequest,
     mls_exporter: &impl MlsExporterSource,
 ) -> Result<JoinedMediaSession, RtcClientError> {
-    let ids = request.typed_ids()?;
-    request.verify_governance_evidence()?;
+    // Mint the opaque authorization before any external request. In
+    // particular, an unauthorized decrypting role cannot obtain a backend
+    // token and cannot reach the exporter-backed key publication boundary.
+    let authorization = authorize_media_join(request)?;
+    let ids = &authorization.ids;
     let anchors = request.anchors()?;
 
     // CALL-1 — token exchange + anchored verification.
@@ -669,16 +738,7 @@ pub async fn join_call_media(
     // MEDIA-1 — SFrame frame key from the live MLS exporter. The
     // participant_id is the verified SFU-local handle from the
     // token binding, so the key is sender-bound per §8.1.
-    let frame_context = FrameKeyContext {
-        realm_id: ids.realm_id.clone(),
-        call_id: ids.call_id.clone(),
-        focus_id: request.focus_id.clone(),
-        epoch_id: request.epoch_id,
-        participant_id: verification.participant_id.clone(),
-        device_id: ids.device_id.clone(),
-    };
-    let frame_key = derive_frame_key(mls_exporter, &frame_context)
-        .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
+    let frame_key = authorization.publish_frame_key(mls_exporter, &verification.participant_id)?;
 
     Ok(JoinedMediaSession {
         backend_kind: "livekit".to_owned(),
@@ -815,6 +875,7 @@ fn classify_protocol_error(err: &arkret_signatures::Error) -> RtcClientError {
         RtcClientError::RecordingArtifactPipelineBypassed,
         RtcClientError::MediaServiceBindingUncovered,
         RtcClientError::MediaPlaintextServiceNotAuthorised,
+        RtcClientError::MediaPlaintextWarningRequired,
         RtcClientError::MlsGovernanceBindingStale,
         RtcClientError::ParticipantBindingInvalid,
     ];
@@ -833,6 +894,7 @@ fn classify_protocol_error(err: &arkret_signatures::Error) -> RtcClientError {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::BTreeSet;
 
     use serde_json::json;
@@ -871,6 +933,7 @@ mod tests {
             RtcClientError::TranscriptionArtifactPipelineBypassed,
             RtcClientError::MediaServiceBindingUncovered,
             RtcClientError::MediaPlaintextServiceNotAuthorised,
+            RtcClientError::MediaPlaintextWarningRequired,
             RtcClientError::MlsGovernanceBindingStale,
             RtcClientError::DesktopMediaUnavailable,
         ] {
@@ -892,6 +955,7 @@ mod tests {
             media_service_ids: Vec::new(),
             verified_media_routes: Vec::new(),
             governance_evidence: None,
+            media_service_decryption_requested: false,
         };
         assert_eq!(
             request.media_service_core_ids().unwrap_err(),
@@ -913,8 +977,84 @@ mod tests {
         let request = governed_join_request(Some(media_governance_evidence(true, false)));
         assert_eq!(
             request.verify_governance_evidence(),
-            Err(RtcClientError::MediaPlaintextServiceNotAuthorised)
+            Err(RtcClientError::MediaPlaintextWarningRequired)
         );
+    }
+
+    #[test]
+    fn requested_media_plaintext_requires_policy_authorization() {
+        let mut request = governed_join_request(Some(media_governance_evidence(false, false)));
+        request.media_service_decryption_requested = true;
+        assert_eq!(
+            authorize_media_join(&request).unwrap_err(),
+            RtcClientError::MediaPlaintextServiceNotAuthorised
+        );
+    }
+
+    #[test]
+    fn requested_media_plaintext_requires_service_allowlist_entry() {
+        let mut evidence = media_governance_evidence(true, true);
+        evidence.plaintext_visible_services_payload = None;
+        let request = governed_join_request(Some(evidence));
+        assert_eq!(
+            authorize_media_join(&request).unwrap_err(),
+            RtcClientError::MediaPlaintextServiceNotAuthorised
+        );
+    }
+
+    struct CountingExporter {
+        calls: Cell<usize>,
+    }
+
+    impl CountingExporter {
+        fn new() -> Self {
+            Self {
+                calls: Cell::new(0),
+            }
+        }
+    }
+
+    impl MlsExporterSource for CountingExporter {
+        fn export_secret(
+            &self,
+            _label: &str,
+            _context: &[u8],
+            length: usize,
+        ) -> arkret_crypto::Result<zeroize::Zeroizing<Vec<u8>>> {
+            self.calls.set(self.calls.get() + 1);
+            Ok(zeroize::Zeroizing::new(vec![0x5a; length]))
+        }
+    }
+
+    #[test]
+    fn rejected_plaintext_joins_cannot_publish_a_media_key() {
+        let exporter = CountingExporter::new();
+
+        let mut missing_policy =
+            governed_join_request(Some(media_governance_evidence(false, false)));
+        missing_policy.media_service_decryption_requested = true;
+        assert!(authorize_media_join(&missing_policy).is_err());
+
+        let mut missing_allowlist_evidence = media_governance_evidence(true, true);
+        missing_allowlist_evidence.plaintext_visible_services_payload = None;
+        let missing_allowlist = governed_join_request(Some(missing_allowlist_evidence));
+        assert!(authorize_media_join(&missing_allowlist).is_err());
+
+        let missing_warning = governed_join_request(Some(media_governance_evidence(true, false)));
+        assert!(authorize_media_join(&missing_warning).is_err());
+
+        assert_eq!(exporter.calls.get(), 0);
+
+        let authorized = governed_join_request(Some(media_governance_evidence(true, true)));
+        let permit = authorize_media_join(&authorized).unwrap();
+        let key = permit
+            .publish_frame_key(
+                &exporter,
+                "ak:rtc_participant:00000000-0000-7000-8000-000000000001",
+            )
+            .unwrap();
+        assert_eq!(key.len(), 32);
+        assert_eq!(exporter.calls.get(), 1);
     }
 
     #[test]
@@ -948,6 +1088,9 @@ mod tests {
     fn governed_join_request(
         governance_evidence: Option<MediaGovernanceEvidence>,
     ) -> MediaJoinRequest {
+        let media_service_decryption_requested = governance_evidence
+            .as_ref()
+            .is_some_and(MediaGovernanceEvidence::media_service_decrypts_enabled);
         MediaJoinRequest {
             realm_id: "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned(),
             call_id: "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz".to_owned(),
@@ -959,6 +1102,7 @@ mod tests {
             media_service_ids: vec!["ak:did_core:web:media.example".to_owned()],
             verified_media_routes: Vec::new(),
             governance_evidence,
+            media_service_decryption_requested,
         }
     }
 
@@ -995,13 +1139,10 @@ mod tests {
         let governance_binding = MlsGovernanceBindingPayload::realm(
             RealmId::new("ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned())
                 .unwrap(),
+            Some(arkret_sdk::EventId::from_digest([0x42; 32])),
             6,
             7,
-            arkret_sdk::Hash::new(format!("sha256:{}", "00".repeat(32))).unwrap(),
-            arkret_sdk::ContentScheme::MlsRfc9420,
-            None,
-            arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
-            arkret_sdk::CORE_REDUCER_PROFILE,
+            3,
         )
         .unwrap();
         MediaGovernanceEvidence {

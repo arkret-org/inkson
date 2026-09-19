@@ -76,6 +76,10 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
         "此媒体服务无权处理未加密的媒体内容,连接已被拒绝。",
     );
     dict.set(
+        "error.call.media_plaintext_warning_required",
+        "加入可解密媒体的通话前必须显示安全警告并获得本次明确确认。",
+    );
+    dict.set(
         "error.call.mls_governance_binding_stale",
         "该通话的授权记录已过期,与当前媒体策略不符,连接已被拒绝。请重新加入通话。",
     );

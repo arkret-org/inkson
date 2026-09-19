@@ -340,6 +340,9 @@ pub fn CallPanel(
                 // its invite only after the transport produces the real SDP
                 // offer; the closed signal model intentionally forbids a
                 // placeholder invite without an offer.
+                let media_service_decryption_requested = governance_evidence
+                    .as_ref()
+                    .is_some_and(|evidence| evidence.media_service_decrypts_enabled());
                 let join = MediaJoinRequest {
                     realm_id: realm_id.clone(),
                     call_id: call.clone(),
@@ -355,6 +358,7 @@ pub fn CallPanel(
                     media_service_ids,
                     verified_media_routes,
                     governance_evidence,
+                    media_service_decryption_requested,
                 };
                 match join_and_build_transport(
                     &base,
@@ -791,6 +795,9 @@ pub fn CallPanel(
                                                         return;
                                                     }
                                                 };
+                                            let media_service_decryption_requested = governance_evidence
+                                                .as_ref()
+                                                .is_some_and(|evidence| evidence.media_service_decrypts_enabled());
                                             let join = MediaJoinRequest {
                                                 realm_id: realm_id.clone(),
                                                 call_id: call.clone(),
@@ -802,6 +809,7 @@ pub fn CallPanel(
                                                 media_service_ids,
                                                 verified_media_routes,
                                                 governance_evidence,
+                                                media_service_decryption_requested,
                                             };
                                             match join_and_build_transport(
                                                 &base,

@@ -2184,6 +2184,10 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
         "This media service isn't allowed to handle unencrypted media, so the connection was refused.",
     );
     dict.set(
+        "error.call.media_plaintext_warning_required",
+        "Show the plaintext-media security warning and obtain explicit confirmation before joining this call.",
+    );
+    dict.set(
         "error.call.mls_governance_binding_stale",
         "The call's approval record is out of date for the current media policy, so the connection was refused. Rejoin the call to refresh it.",
     );
