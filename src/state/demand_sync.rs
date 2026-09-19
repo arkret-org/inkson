@@ -1,3 +1,6 @@
+use arkret_models_collaboration::sync_frames::account_subscribe::{
+    AgentDraftPendingIntentChange, AgentDraftPendingIntentContainer,
+};
 use arkret_sdk::Event;
 use arkret_sdk::sync::{AccountSubscribeFrame, SyncFilter};
 use arkret_wire::Cursor;
@@ -17,6 +20,7 @@ pub(crate) enum AccountBaselineChannel {
     StationCas,
     DeviceLists,
     Notifications,
+    AgentDraftPendingIntents,
 }
 
 use AccountBaselineChannel as Channel;
@@ -160,6 +164,7 @@ fn baseline_channel(
         Wire::StationCas => Channel::StationCas,
         Wire::DeviceLists => Channel::DeviceLists,
         Wire::Notifications => Channel::Notifications,
+        Wire::AgentDraftPendingIntents => Channel::AgentDraftPendingIntents,
     }
 }
 
@@ -179,7 +184,31 @@ pub(crate) struct DemandSyncState {
     account_events: BTreeMap<String, Event>,
     device_ids: BTreeSet<String>,
     cas_removals: BTreeMap<String, u64>,
+    #[serde(default)]
+    agent_draft_pending_intents: BTreeMap<String, StoredAgentDraftPendingIntent>,
+    #[serde(default)]
+    agent_draft_pending_projection_position: Option<u64>,
+    #[serde(default)]
+    agent_draft_pending_delta_fingerprint: Option<String>,
+    #[serde(default)]
+    agent_draft_pending_baseline: Option<AgentDraftPendingBaselineState>,
     details: BTreeMap<String, DetailState>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredAgentDraftPendingIntent {
+    value: Value,
+    removed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentDraftPendingBaselineState {
+    snapshot_cursor: String,
+    snapshot_cut_position: u64,
+    next_page_offset: Option<u64>,
+    terminal_page_seen: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -196,6 +225,145 @@ struct DetailState {
     invalidation_revision: u64,
     invalidated: bool,
     complete: bool,
+}
+
+fn pending_required(value: &Value, field: &str) -> anyhow::Result<Value> {
+    value
+        .get(field)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("pending-intent value lacks {field}"))
+}
+
+fn pending_intent_key(value: &Value, removed: bool) -> anyhow::Result<String> {
+    let identity = if removed {
+        value
+            .get("key")
+            .ok_or_else(|| anyhow::anyhow!("pending-intent removal lacks key"))?
+    } else {
+        value
+    };
+    serde_json::to_string(&serde_json::json!([
+        pending_required(identity, "controller_account_id")?,
+        pending_required(identity, "agent_id")?,
+        pending_required(identity, "draft_id")?,
+    ]))
+    .map_err(Into::into)
+}
+
+fn pending_core_identity(value: &Value, removed: bool) -> anyhow::Result<Value> {
+    let identity = if removed {
+        value
+            .get("key")
+            .ok_or_else(|| anyhow::anyhow!("pending-intent removal lacks key"))?
+    } else {
+        value
+    };
+    Ok(serde_json::json!([
+        pending_required(identity, "controller_account_id")?,
+        pending_required(identity, "agent_id")?,
+        pending_required(identity, "draft_id")?,
+        pending_required(value, "accepted_event_id")?,
+        pending_required(value, "canonical_event_digest")?,
+        pending_required(value, "content_digest")?,
+        pending_required(value, "expires_at")?,
+    ]))
+}
+
+fn pending_full_create_identity(value: &Value) -> anyhow::Result<Value> {
+    Ok(serde_json::json!([
+        pending_core_identity(value, false)?,
+        pending_required(value, "proposed_action")?,
+        pending_required(value, "target")?,
+        pending_required(value, "created_at")?,
+    ]))
+}
+
+fn pending_terminal_metadata(value: &Value) -> anyhow::Result<Value> {
+    let state = value
+        .get("state")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("pending-intent value lacks state"))?;
+    match state {
+        "consumed" => Ok(serde_json::json!([
+            state,
+            pending_required(value, "consumption")?
+        ])),
+        "expired" => Ok(serde_json::json!([
+            state,
+            pending_required(value, "expired_at")?
+        ])),
+        _ => anyhow::bail!("pending-intent terminal metadata has a non-terminal state"),
+    }
+}
+
+fn pending_intent_change_parts(
+    item: &AgentDraftPendingIntentChange,
+) -> anyhow::Result<(String, Value, bool)> {
+    let (value, removed) = match item {
+        AgentDraftPendingIntentChange::Upsert(value) => (serde_json::to_value(value)?, false),
+        AgentDraftPendingIntentChange::Remove(value) => (serde_json::to_value(value)?, true),
+    };
+    let key = pending_intent_key(&value, removed)?;
+    Ok((key, value, removed))
+}
+
+fn install_pending_intent_change(
+    records: &mut BTreeMap<String, StoredAgentDraftPendingIntent>,
+    key: String,
+    value: Value,
+    removed: bool,
+) -> anyhow::Result<()> {
+    let Some(previous) = records.get(&key) else {
+        records.insert(key, StoredAgentDraftPendingIntent { value, removed });
+        return Ok(());
+    };
+    anyhow::ensure!(
+        pending_core_identity(&previous.value, previous.removed)?
+            == pending_core_identity(&value, removed)?,
+        "Agent draft pending-intent create-once identity changed"
+    );
+    if previous.removed {
+        anyhow::ensure!(
+            removed && previous.value == value,
+            "Agent draft pending-intent removal cannot be resurrected or changed"
+        );
+        return Ok(());
+    }
+
+    let previous_state = previous
+        .value
+        .get("state")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("stored pending-intent lacks state"))?;
+    let next_state = value
+        .get("state")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("pending-intent change lacks state"))?;
+    if removed {
+        if previous_state != "available" {
+            anyhow::ensure!(
+                pending_terminal_metadata(&previous.value)? == pending_terminal_metadata(&value)?,
+                "Agent draft pending-intent removal changed terminal outcome"
+            );
+        }
+    } else if next_state == "available" {
+        anyhow::ensure!(
+            previous_state == "available" && previous.value == value,
+            "Agent draft pending-intent terminal state cannot return to available"
+        );
+    } else if previous_state == "available" {
+        anyhow::ensure!(
+            pending_full_create_identity(&previous.value)? == pending_full_create_identity(&value)?,
+            "Agent draft pending-intent terminal update changed create-once metadata"
+        );
+    } else {
+        anyhow::ensure!(
+            previous.value == value,
+            "Agent draft pending-intent terminal outcome changed"
+        );
+    }
+    records.insert(key, StoredAgentDraftPendingIntent { value, removed });
+    Ok(())
 }
 
 impl DemandSyncState {
@@ -253,6 +421,9 @@ impl LocalStateStore {
         state.list_seen.clear();
         state.global_snapshot = None;
         state.channels.clear();
+        state.agent_draft_pending_projection_position = None;
+        state.agent_draft_pending_delta_fingerprint = None;
+        state.agent_draft_pending_baseline = None;
         for detail in state.details.values_mut() {
             detail.invalidated = true;
             detail.complete = false;
@@ -280,6 +451,18 @@ impl LocalStateStore {
             .channels
             .get(&Channel::AccountDataEvents)
             .is_some_and(|state| state.complete)
+    }
+    /// Dedicated controller-private Agent draft projection. Values have already
+    /// passed the SDK's closed live | terminal-redacted decoder; removal
+    /// tombstones stay internal so callers cannot mistake them for live rows.
+    pub(crate) fn agent_draft_pending_intents(&self) -> Vec<Value> {
+        self.cached
+            .demand_sync
+            .agent_draft_pending_intents
+            .values()
+            .filter(|record| !record.removed)
+            .map(|record| record.value.clone())
+            .collect()
     }
     /// Snapshot of what this device has already accepted, with no new frame
     /// applied. It carries the account subscription's own resume cursor — never
@@ -438,10 +621,12 @@ impl LocalStateStore {
                     Channel::StationCas,
                     Channel::DeviceLists,
                     Channel::Notifications,
+                    Channel::AgentDraftPendingIntents,
                 ]
                 .into_iter()
                 .map(|channel| (channel, BaselineChannelState::default()))
                 .collect();
+                self.cached.demand_sync.agent_draft_pending_baseline = None;
             }
         }
         let baseline = |channel| {
@@ -666,6 +851,7 @@ impl LocalStateStore {
                 )
             });
         }
+        self.apply_agent_draft_pending_intent_channel(&mut accepted, &views)?;
         if let Some(devices) = &mut accepted.device_lists {
             let mut changed = Vec::new();
             for id in std::mem::take(&mut devices.changed_ids) {
@@ -695,6 +881,144 @@ impl LocalStateStore {
             devices.left_ids = left;
         }
         Ok(accepted)
+    }
+
+    fn apply_agent_draft_pending_intent_channel(
+        &mut self,
+        frame: &mut AccountSubscribeFrame,
+        views: &FrameViews,
+    ) -> anyhow::Result<()> {
+        let Some(container) = frame.agent_draft_pending_intents.as_mut() else {
+            return Ok(());
+        };
+        let fingerprint = serde_json::to_string(container)?;
+        let mut records = self.cached.demand_sync.agent_draft_pending_intents.clone();
+        let mut channel_state = self
+            .cached
+            .demand_sync
+            .channels
+            .get(&Channel::AgentDraftPendingIntents)
+            .cloned();
+        let mut baseline_progress = self.cached.demand_sync.agent_draft_pending_baseline.clone();
+
+        let (is_baseline, items) = match container {
+            AgentDraftPendingIntentContainer::Delta {
+                projection_position,
+                items,
+            } => {
+                if let Some(previous) = self
+                    .cached
+                    .demand_sync
+                    .agent_draft_pending_projection_position
+                {
+                    anyhow::ensure!(
+                        *projection_position >= previous,
+                        "Agent draft pending-intent projection position regressed"
+                    );
+                    if *projection_position == previous {
+                        anyhow::ensure!(
+                            self.cached
+                                .demand_sync
+                                .agent_draft_pending_delta_fingerprint
+                                .as_deref()
+                                == Some(fingerprint.as_str()),
+                            "Agent draft pending-intent position changed content"
+                        );
+                        items.clear();
+                        return Ok(());
+                    }
+                }
+                (false, items)
+            }
+            AgentDraftPendingIntentContainer::Baseline {
+                snapshot_cut_position,
+                page_offset,
+                next_page_offset,
+                items,
+            } => {
+                let snapshot_cursor = views
+                    .baseline
+                    .as_ref()
+                    .map(|segment| segment.snapshot_cursor.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("pending-intent baseline lacks snapshot"))?;
+                if let Some(progress) = &baseline_progress {
+                    anyhow::ensure!(
+                        progress.snapshot_cursor == snapshot_cursor,
+                        "Agent draft pending-intent page belongs to another snapshot"
+                    );
+                    anyhow::ensure!(
+                        progress.snapshot_cut_position == *snapshot_cut_position,
+                        "Agent draft pending-intent snapshot changed cut position"
+                    );
+                    anyhow::ensure!(
+                        !progress.terminal_page_seen,
+                        "Agent draft pending-intent baseline continued after its terminal page"
+                    );
+                    anyhow::ensure!(
+                        progress.next_page_offset == Some(*page_offset),
+                        "Agent draft pending-intent baseline page offset is not contiguous"
+                    );
+                } else {
+                    anyhow::ensure!(
+                        *page_offset == 0,
+                        "Agent draft pending-intent baseline must begin at offset zero"
+                    );
+                }
+                baseline_progress = Some(AgentDraftPendingBaselineState {
+                    snapshot_cursor: snapshot_cursor.to_owned(),
+                    snapshot_cut_position: *snapshot_cut_position,
+                    next_page_offset: *next_page_offset,
+                    terminal_page_seen: next_page_offset.is_none(),
+                });
+                (true, items)
+            }
+        };
+
+        let mut retained_items = Vec::with_capacity(items.len());
+        for item in std::mem::take(items) {
+            let (key, value, removed) = pending_intent_change_parts(&item)?;
+            let accepted = if let Some(state) = &mut channel_state {
+                if is_baseline {
+                    state.seen.insert(key.clone());
+                    !state.complete && !state.mutated.contains(&key)
+                } else {
+                    if !state.complete {
+                        state.mutated.insert(key.clone());
+                    }
+                    true
+                }
+            } else {
+                true
+            };
+            if !accepted {
+                continue;
+            }
+            install_pending_intent_change(&mut records, key, value, removed)?;
+            retained_items.push(item);
+        }
+        *items = retained_items;
+
+        self.cached.demand_sync.agent_draft_pending_intents = records;
+        if let Some(state) = channel_state {
+            self.cached
+                .demand_sync
+                .channels
+                .insert(Channel::AgentDraftPendingIntents, state);
+        }
+        self.cached.demand_sync.agent_draft_pending_baseline = baseline_progress;
+        if let AgentDraftPendingIntentContainer::Delta {
+            projection_position,
+            ..
+        } = container
+        {
+            self.cached
+                .demand_sync
+                .agent_draft_pending_projection_position = Some(*projection_position);
+            self.cached
+                .demand_sync
+                .agent_draft_pending_delta_fingerprint = Some(fingerprint);
+        }
+        Ok(())
     }
 
     pub(crate) fn finish_account_demand_frame(
@@ -780,6 +1104,51 @@ impl LocalStateStore {
                         .cloned()
                         .collect();
                     self.cached.demand_sync.device_ids = retained;
+                }
+                Channel::AgentDraftPendingIntents => {
+                    let progress = self
+                        .cached
+                        .demand_sync
+                        .agent_draft_pending_baseline
+                        .as_ref()
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("pending-intent completion lacks baseline progress")
+                        })?;
+                    anyhow::ensure!(
+                        progress.terminal_page_seen && progress.next_page_offset.is_none(),
+                        "pending-intent completion requires its terminal page"
+                    );
+                    let retained = self
+                        .cached
+                        .demand_sync
+                        .channels
+                        .get(channel)
+                        .map(|state| {
+                            state
+                                .seen
+                                .union(&state.mutated)
+                                .cloned()
+                                .collect::<BTreeSet<_>>()
+                        })
+                        .unwrap_or_default();
+                    self.cached
+                        .demand_sync
+                        .agent_draft_pending_intents
+                        .retain(|key, record| record.removed || retained.contains(key));
+                    let cut = progress.snapshot_cut_position;
+                    self.cached
+                        .demand_sync
+                        .agent_draft_pending_projection_position = Some(
+                        self.cached
+                            .demand_sync
+                            .agent_draft_pending_projection_position
+                            .unwrap_or(0)
+                            .max(cut),
+                    );
+                    self.cached
+                        .demand_sync
+                        .agent_draft_pending_delta_fingerprint = None;
+                    self.cached.demand_sync.agent_draft_pending_baseline = None;
                 }
             }
             if let Some(state) = self.cached.demand_sync.channels.get_mut(channel) {
@@ -879,6 +1248,8 @@ mod tests {
 
     use super::*;
     const REALM: &str = "ak:realm:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg";
+    const EVENT: &str = "ak:event:AQJmSg1s9QyzppFeJL40dN92YVHZeLdBBt3UWHa9XNOD";
+    const KEY: &str = "ak.agent.draft.v1:29zs6Yu_GblluGkdTEDf8gWy8fRlKv2Am4Ms91DB-U8:HpcHzfESu5dFt2Is2QQ2Tp_c7hfh4SZtz4pKrbxp0_s";
     fn frame(value: Value) -> AccountSubscribeFrame {
         serde_json::from_value(value).unwrap()
     }
@@ -902,6 +1273,277 @@ mod tests {
         }
         store.finish_account_demand_frame(&accepted).unwrap();
         accepted
+    }
+    fn pending_live(draft_id: &str) -> Value {
+        json!({
+            "schema":"ak.schema.agent_draft_pending_intent.v1",
+            "controller_account_id":{
+                "principal_id":"ak:did_core:web:controller.example",
+                "station_id":"ak:did_core:web:station.example"
+            },
+            "agent_id":"ak:did_core:web:agent.example",
+            "draft_id":draft_id,
+            "proposed_action":"ak.message.create",
+            "target":{"kind":"realm","realm_id":REALM},
+            "content_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "content_handoff":{
+                "scheme":"ak.hpke_x25519_aead_chacha20poly1305.v1",
+                "recipients":[{
+                    "recipient_device_id":"ak:device:01964137-0000-7000-8000-000000000000",
+                    "recipient_hpke_key_digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                    "enc":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                    "ciphertext":"AAAAAAAAAAAAAAAAAAAAAA",
+                    "ciphertext_digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333"
+                }]
+            },
+            "canonical_event_digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444",
+            "accepted_event_id":EVENT,
+            "expires_at":"2026-09-20T03:00:00.000Z",
+            "created_at":"2026-09-20T01:00:00.000Z",
+            "state":"available"
+        })
+    }
+    fn pending_consumed(draft_id: &str) -> Value {
+        let mut value = pending_live(draft_id);
+        let object = value.as_object_mut().unwrap();
+        object.remove("content_handoff");
+        object.insert("state".into(), json!("consumed"));
+        object.insert(
+            "consumption".into(),
+            json!({
+                "account_data_set_event_id":EVENT,
+                "account_data_key":KEY,
+                "accepted_revision":1,
+                "consumed_at":"2026-09-20T01:30:00.000Z"
+            }),
+        );
+        value
+    }
+    fn pending_removal(draft_id: &str) -> Value {
+        json!({
+            "key":{
+                "controller_account_id":{
+                    "principal_id":"ak:did_core:web:controller.example",
+                    "station_id":"ak:did_core:web:station.example"
+                },
+                "agent_id":"ak:did_core:web:agent.example",
+                "draft_id":draft_id
+            },
+            "accepted_event_id":EVENT,
+            "canonical_event_digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444",
+            "content_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "expires_at":"2026-09-20T03:00:00.000Z",
+            "state":"consumed",
+            "consumption":{
+                "account_data_set_event_id":EVENT,
+                "account_data_key":KEY,
+                "accepted_revision":1,
+                "consumed_at":"2026-09-20T01:30:00.000Z"
+            },
+            "removed_at":"2026-09-20T04:00:00.000Z"
+        })
+    }
+    fn pending_delta(position: u64, action: &str, value: Value) -> AccountSubscribeFrame {
+        frame(json!({
+            "kind":"delta",
+            "cursor":format!("ak:cursor:pending-{position}"),
+            "agent_draft_pending_intents":{
+                "mode":"delta",
+                "projection_position":position,
+                "items":[{"action":action,"value":value}]
+            }
+        }))
+    }
+    fn pending_baseline(
+        snapshot: &str,
+        cut: u64,
+        offset: u64,
+        next: Option<u64>,
+        complete: bool,
+        items: Vec<Value>,
+    ) -> AccountSubscribeFrame {
+        frame(json!({
+            "kind":"delta",
+            "cursor":format!("ak:cursor:{snapshot}-{offset}"),
+            "baseline":{
+                "snapshot_cursor":format!("ak:cursor:{snapshot}"),
+                "channels":["agent_draft_pending_intents"],
+                "completed_channels":if complete { json!(["agent_draft_pending_intents"]) } else { json!([]) }
+            },
+            "agent_draft_pending_intents":{
+                "mode":"baseline",
+                "snapshot_cut_position":cut,
+                "page_offset":offset,
+                "next_page_offset":next,
+                "items":items
+            }
+        }))
+    }
+
+    #[test]
+    fn pending_intent_baseline_delta_terminal_and_removal_are_monotone() {
+        let mut store = store();
+        apply(
+            &mut store,
+            &pending_delta(6, "upsert", pending_live("draft-stale")),
+        );
+        apply(
+            &mut store,
+            &pending_baseline(
+                "pending-snapshot",
+                7,
+                0,
+                Some(1),
+                false,
+                vec![json!({"action":"upsert","value":pending_live("draft-001")})],
+            ),
+        );
+        assert!(
+            store
+                .agent_draft_pending_intents()
+                .into_iter()
+                .find(|value| value["draft_id"] == "draft-001")
+                .unwrap()["content_handoff"]
+                .is_object()
+        );
+
+        apply(
+            &mut store,
+            &pending_delta(8, "upsert", pending_consumed("draft-001")),
+        );
+        let terminal = store
+            .agent_draft_pending_intents()
+            .into_iter()
+            .find(|value| value["draft_id"] == "draft-001")
+            .unwrap();
+        assert_eq!(terminal["state"], "consumed");
+        assert!(terminal.get("content_handoff").is_none());
+        assert_eq!(terminal["accepted_event_id"], EVENT);
+        assert!(terminal["consumption"].is_object());
+
+        let accepted = apply(
+            &mut store,
+            &pending_baseline(
+                "pending-snapshot",
+                7,
+                1,
+                None,
+                true,
+                vec![json!({"action":"upsert","value":pending_live("draft-001")})],
+            ),
+        );
+        let AgentDraftPendingIntentContainer::Baseline { items, .. } =
+            accepted.agent_draft_pending_intents.unwrap()
+        else {
+            panic!("baseline expected")
+        };
+        assert!(
+            items.is_empty(),
+            "older baseline cannot restore live ciphertext"
+        );
+        assert_eq!(store.agent_draft_pending_intents().len(), 1);
+        assert_eq!(store.agent_draft_pending_intents()[0]["state"], "consumed");
+
+        apply(
+            &mut store,
+            &pending_delta(9, "remove", pending_removal("draft-001")),
+        );
+        assert!(store.agent_draft_pending_intents().is_empty());
+        let tombstone = store
+            .cached
+            .demand_sync
+            .agent_draft_pending_intents
+            .values()
+            .next()
+            .unwrap();
+        assert!(tombstone.removed);
+        assert_eq!(tombstone.value["state"], "consumed");
+        assert!(tombstone.value.get("content_handoff").is_none());
+
+        assert!(
+            store
+                .prepare_account_demand_frame(&pending_delta(
+                    10,
+                    "upsert",
+                    pending_live("draft-001")
+                ))
+                .is_err(),
+            "a retained removal tombstone forbids resurrection"
+        );
+    }
+
+    #[test]
+    fn pending_intent_offsets_reset_on_resync_and_prune_only_at_completion() {
+        let mut store = store();
+        assert!(
+            store
+                .prepare_account_demand_frame(&pending_baseline(
+                    "bad-offset",
+                    3,
+                    2,
+                    None,
+                    true,
+                    vec![]
+                ))
+                .is_err()
+        );
+        apply(
+            &mut store,
+            &pending_baseline(
+                "first-cut",
+                3,
+                0,
+                Some(1),
+                false,
+                vec![json!({"action":"upsert","value":pending_live("draft-001")})],
+            ),
+        );
+        assert!(
+            store
+                .cached
+                .demand_sync
+                .agent_draft_pending_baseline
+                .is_some()
+        );
+        assert_eq!(store.agent_draft_pending_intents().len(), 1);
+
+        store.reset_account_demand_progress();
+        assert!(
+            store
+                .cached
+                .demand_sync
+                .agent_draft_pending_baseline
+                .is_none()
+        );
+        assert_eq!(store.agent_draft_pending_intents().len(), 1);
+        apply(
+            &mut store,
+            &pending_baseline("fresh-cut", 4, 0, None, true, vec![]),
+        );
+        assert!(store.agent_draft_pending_intents().is_empty());
+        assert!(store.cached.demand_sync.channels[&Channel::AgentDraftPendingIntents].complete);
+    }
+
+    #[test]
+    fn notification_and_to_device_carriers_never_create_pending_intents() {
+        let mut store = store();
+        apply(
+            &mut store,
+            &frame(json!({
+                "kind":"delta",
+                "cursor":"ak:cursor:other-carriers",
+                "notifications":{"items":[]},
+                "to_device":{"messages":[]}
+            })),
+        );
+        assert!(store.agent_draft_pending_intents().is_empty());
+        assert!(
+            store
+                .cached
+                .demand_sync
+                .agent_draft_pending_intents
+                .is_empty()
+        );
     }
     #[test]
     fn older_list_page_cannot_resurrect_live_removal() {
