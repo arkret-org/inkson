@@ -9,7 +9,7 @@
 //! stream. Both shapes are the same `arkret_wire::StreamRow`, so this module
 //! takes that and nothing else.
 
-use arkret_wire::{CommittedEventRef, StreamRow};
+use arkret_wire::{CommittedEventRef, MlsGroupId, StreamRow};
 
 /// One accepted `ak.mls.genesis` / `ak.mls.commit` with the exact commit
 /// coordinate that ordered it.
@@ -17,7 +17,7 @@ use arkret_wire::{CommittedEventRef, StreamRow};
 pub(crate) struct AcceptedMlsTransition {
     pub(crate) item: StreamRow,
     pub(crate) effective_scope: arkret_sdk::ScopeRef,
-    pub(crate) mls_group_id: String,
+    pub(crate) mls_group_id: MlsGroupId,
     pub(crate) previous_epoch: u64,
     pub(crate) next_epoch: u64,
 }
@@ -49,7 +49,7 @@ impl AcceptedMlsTransition {
 pub(crate) fn accepted_mls_transition(item: &StreamRow) -> Result<AcceptedMlsTransition, String> {
     item.validate_shape()
         .map_err(|error| format!("accepted MLS transition is malformed: {error}"))?;
-    let binding = match item.event.kind {
+    let binding = match &item.event.kind {
         arkret_sdk::EventKind::MlsGenesis => {
             let payload: arkret_sdk::MlsGenesisPayload = event_payload(&item.event)?;
             payload

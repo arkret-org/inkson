@@ -52,7 +52,7 @@ pub(crate) async fn install_accepted_transition(
     let installed = state.read(|store| {
         store.mls_checkpoint_for_scope_and_group(
             &transition.effective_scope,
-            &transition.mls_group_id,
+            transition.mls_group_id.as_str(),
         )
     });
     if let Some(installed) = installed.as_ref()
@@ -62,7 +62,7 @@ pub(crate) async fn install_accepted_transition(
         return Ok(MlsInstallOutcome::AlreadyCurrent);
     }
 
-    let group = match transition.event().kind {
+    let group = match &transition.event().kind {
         arkret_sdk::EventKind::MlsGenesis => {
             // Genesis carries no MLS message: the creator already holds the
             // epoch-zero group it published, and a non-creator only ever joins
@@ -138,7 +138,7 @@ pub(crate) async fn install_accepted_welcome(
     if let Some(installed) = state.read(|store| {
         store.mls_checkpoint_for_scope_and_group(
             &transition.effective_scope,
-            &transition.mls_group_id,
+            transition.mls_group_id.as_str(),
         )
     }) && installed.epoch >= transition.next_epoch
     {
@@ -361,17 +361,18 @@ async fn persist_installed_group(
         .ok_or_else(|| "accepted MLS transition has no Realm scope".to_owned())?
         .clone();
     let post_state = group.export_state_record().map_err(describe)?;
-    if post_state.group_id != transition.mls_group_id || post_state.epoch != transition.next_epoch {
-        return Err(
-            "installed MLS state differs from the accepted transition group or epoch".to_owned(),
-        );
-    }
+    validate_installed_coordinate(
+        &post_state.group_id,
+        post_state.epoch,
+        &transition.mls_group_id,
+        transition.next_epoch,
+    )?;
     let mut salt = [0_u8; 16];
     getrandom::fill(&mut salt).map_err(describe)?;
     let encoded = serde_json::to_vec(&post_state).map_err(describe)?;
     let envelope = crate::mls::persistence::encrypt_state(
         realm_id.as_str(),
-        &post_state.group_id,
+        post_state.group_id.as_str(),
         post_state.epoch,
         &encoded,
         snapshot_secret,
@@ -383,6 +384,20 @@ async fn persist_installed_group(
     })?;
     barrier.wait().await.map_err(describe)?;
     Ok(MlsInstallOutcome::Applied)
+}
+
+fn validate_installed_coordinate(
+    installed_group_id: &arkret_wire::MlsGroupId,
+    installed_epoch: u64,
+    accepted_group_id: &arkret_wire::MlsGroupId,
+    accepted_epoch: u64,
+) -> Result<(), String> {
+    if installed_group_id != accepted_group_id || installed_epoch != accepted_epoch {
+        return Err(
+            "installed MLS state differs from the accepted transition group or epoch".to_owned(),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -484,6 +499,22 @@ mod tests {
                 authority().principal_id.clone(),
                 device_id()
             )
+        );
+    }
+
+    #[test]
+    fn installed_state_must_match_the_exact_accepted_group_and_epoch() {
+        let accepted_group = arkret_wire::MlsGroupId::new("A".repeat(43)).unwrap();
+        let another_group = arkret_wire::MlsGroupId::new("B".repeat(43)).unwrap();
+
+        assert!(validate_installed_coordinate(&accepted_group, 7, &accepted_group, 7).is_ok());
+        assert_eq!(
+            validate_installed_coordinate(&another_group, 7, &accepted_group, 7).unwrap_err(),
+            "installed MLS state differs from the accepted transition group or epoch"
+        );
+        assert_eq!(
+            validate_installed_coordinate(&accepted_group, 6, &accepted_group, 7).unwrap_err(),
+            "installed MLS state differs from the accepted transition group or epoch"
         );
     }
 }
