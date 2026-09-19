@@ -11,26 +11,32 @@ fn to_device_sender_dedup_key(
     sender: &arkret_sdk::DeviceMessageSender,
     device_message_id: &arkret_sdk::DeviceMessageId,
 ) -> String {
-    let sender_identity = match sender {
-        arkret_sdk::DeviceMessageSender::Device {
-            sender_account_id, ..
+    match sender {
+        arkret_sdk::DeviceMessageSender::Account {
+            sender_account_id,
+            sender_device_id,
         } => format!(
-            "account:{}:{}",
+            "account:{}:{}|{}|{}",
             sender_account_id.principal_id.as_str(),
-            sender_account_id.station_id.as_str()
+            sender_account_id.station_id.as_str(),
+            sender_device_id.as_str(),
+            device_message_id.as_str()
         ),
         arkret_sdk::DeviceMessageSender::Agent {
             sender_agent_id, ..
-        } => format!("agent:{}", sender_agent_id.as_str()),
-        arkret_sdk::DeviceMessageSender::Service { sender_id } => {
-            format!("service:{}", sender_id.as_str())
+        } => format!(
+            "agent:{}|{}",
+            sender_agent_id.as_str(),
+            device_message_id.as_str()
+        ),
+        arkret_sdk::DeviceMessageSender::Station { sender_id } => {
+            format!(
+                "station:{}|{}",
+                sender_id.as_str(),
+                device_message_id.as_str()
+            )
         }
-    };
-    format!(
-        "{sender_identity}|{}|{}",
-        sender.endpoint_id(),
-        device_message_id.as_str()
-    )
+    }
 }
 
 pub(crate) fn to_device_envelope_dedup_key(envelope: &arkret_sdk::DeviceMessageEnvelope) -> String {
@@ -280,40 +286,83 @@ mod dedup_key_tests {
     use super::*;
 
     #[test]
-    fn typed_sender_branches_have_distinct_stable_dedup_keys() {
+    fn typed_sender_branches_use_the_closed_protocol_dedup_coordinates() {
         let message_id = arkret_sdk::DeviceMessageId::new(
             "ak:device_message:0196419b-0000-7000-8000-000000000071".to_owned(),
         )
         .unwrap();
         let senders = [
-            serde_json::json!({
+            (
+                serde_json::json!({
                 "sender_account_id": {
                     "principal_id": "ak:did_core:webvh:z6mkfixturealice",
                     "station_id": "ak:did_core:webvh:z6mkfixturestation"
                 },
                 "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001"
-            }),
-            serde_json::json!({
+                }),
+                "account:ak:did_core:webvh:z6mkfixturealice:ak:did_core:webvh:z6mkfixturestation|ak:device:0196419b-0000-7000-8000-000000000001|ak:device_message:0196419b-0000-7000-8000-000000000071",
+            ),
+            (
+                serde_json::json!({
                 "sender_agent_id": "ak:did_core:webvh:z6mkfixtureagent",
                 "sender_agent_verification_method":
                     "did:webvh:z6mkfixtureagent:agent.example#agent-key-1",
                 "sender_agent_key_authorize_event_id":
                     "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e"
-            }),
-            serde_json::json!({
+                }),
+                "agent:ak:did_core:webvh:z6mkfixtureagent|ak:device_message:0196419b-0000-7000-8000-000000000071",
+            ),
+            (
+                serde_json::json!({
                 "sender_id": "ak:did_core:webvh:z6mkfixturestation"
-            }),
+                }),
+                "station:ak:did_core:webvh:z6mkfixturestation|ak:device_message:0196419b-0000-7000-8000-000000000071",
+            ),
         ];
         let keys = senders
             .into_iter()
-            .map(|value| {
+            .map(|(value, expected)| {
                 let sender: arkret_sdk::DeviceMessageSender =
                     serde_json::from_value(value).unwrap();
-                to_device_sender_dedup_key(&sender, &message_id)
+                let key = to_device_sender_dedup_key(&sender, &message_id);
+                assert_eq!(key, expected);
+                key
             })
             .collect::<BTreeSet<_>>();
 
         assert_eq!(keys.len(), 3);
-        assert!(keys.iter().all(|key| key.ends_with(message_id.as_str())));
+    }
+
+    #[test]
+    fn agent_reauthorization_does_not_change_the_protocol_dedup_coordinate() {
+        let message_id = arkret_sdk::DeviceMessageId::new(
+            "ak:device_message:0196419b-0000-7000-8000-000000000071".to_owned(),
+        )
+        .unwrap();
+        let sender = |method: &str, event_id: &str| {
+            serde_json::from_value::<arkret_sdk::DeviceMessageSender>(serde_json::json!({
+                "sender_agent_id": "ak:did_core:webvh:z6mkfixtureagent",
+                "sender_agent_verification_method": method,
+                "sender_agent_key_authorize_event_id": event_id
+            }))
+            .unwrap()
+        };
+
+        assert_eq!(
+            to_device_sender_dedup_key(
+                &sender(
+                    "did:webvh:z6mkfixtureagent:agent.example#agent-key-1",
+                    "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e"
+                ),
+                &message_id
+            ),
+            to_device_sender_dedup_key(
+                &sender(
+                    "did:webvh:z6mkfixtureagent:agent.example#agent-key-2",
+                    "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"
+                ),
+                &message_id
+            )
+        );
     }
 }
