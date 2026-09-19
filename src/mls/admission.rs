@@ -561,6 +561,9 @@ mod tests {
         requester: &str,
         claim_request_id: &str,
     ) -> arkret_sdk::PeerKeyPackageClaimReceipt {
+        let intended_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap();
+        let mls_group_id = garth::mls::mls_group_id_for_realm(&intended_realm_id)
+            .expect("test Realm scope must derive a canonical MLS group id");
         let request = arkret_sdk::PeerKeyPackagesClaimUnsignedRequest {
             claim_request_id: arkret_sdk::Base64UrlString::new(claim_request_id.to_owned())
                 .unwrap(),
@@ -568,16 +571,12 @@ mod tests {
                 claim.principal_id.clone(),
                 arkret_sdk::DidCoreId::new("ak:did_core:web:ps.example").unwrap(),
             )),
-            intended_realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
+            intended_realm_id,
             requester_account_id: Some(arkret_sdk::AccountId::new(
                 crate::mls_api_helpers::principal_core_id(requester).unwrap(),
                 arkret_sdk::DidCoreId::new("ak:did_core:web:ps.example").unwrap(),
             )),
-            mls_group_id: arkret_sdk::NonEmptyString::new(
-                garth::mls::mls_group_id_for_realm(realm_id)
-                    .expect("test Realm scope must derive a canonical MLS group id"),
-            )
-            .unwrap(),
+            mls_group_id,
             claim_purpose: arkret_sdk::PeerKeyPackageClaimPurpose::RealmMembership,
             required_capabilities: claim
                 .capabilities
