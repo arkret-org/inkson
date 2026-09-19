@@ -85,8 +85,10 @@ pub enum EventSignerError {
     RawSigningUnavailable,
 }
 
-/// Domain/audience binding carried by the producer proof and included in the
-/// canonical proof-binding bytes that the detached JWS signs.
+/// Producer-proof domain/audience binding plus the pre-authoring signer
+/// evidence checkpoint used by the surrounding authority decision. The
+/// checkpoint is not a producer-proof member; current v1 proofs bind the
+/// verification method directly.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProducerProofContext {
     pub domain: Option<String>,
@@ -256,7 +258,26 @@ impl PayloadSigner for InksonPayloadSignerAdapter<'_> {
             .map_err(|error| WireError::Protocol(error.to_string()))?,
         })
     }
+}
 
+impl SdkEventSigner for InksonPayloadSignerAdapter<'_> {
+    fn sign(
+        &self,
+        bytes: &[u8],
+    ) -> std::result::Result<Vec<u8>, arkret_sdk::signatures::proof::SignerError> {
+        self.owner
+            .inner
+            .sign(bytes)
+            .map_err(|error| arkret_sdk::signatures::proof::SignerError::Backend(error.to_string()))
+    }
+
+    fn algorithm(&self) -> &str {
+        self.owner.inner.algorithm()
+    }
+
+    fn verification_method(&self) -> &str {
+        self.verification_method.as_str()
+    }
 }
 
 impl InksonPayloadSignerAdapter<'_> {
@@ -529,18 +550,15 @@ impl InksonEventSigner {
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
             verification_method: verification_method.clone(),
         };
-        let mut options = match context.signer_resolution_evidence_ref {
-            Some(evidence_ref) => arkret_sdk::signatures::SignEventOptions::new(evidence_ref),
-            None => arkret_sdk::signatures::SignEventOptions::for_native_unit(),
-        }
-        .with_created_at(proof_created_at);
+        let mut options =
+            arkret_sdk::signatures::SignEventOptions::new().with_created_at(proof_created_at);
         if let Some(domain) = context.domain {
             options = options.with_domain(domain);
         }
         if let Some(audience) = proof_audience {
             options = options.with_audience(audience);
         }
-        arkret_sdk::signatures::sign_event(event, &signer, &verification_method, options)
+        arkret_sdk::signatures::sign_event(event, &signer, options)
             .map_err(|error| EventSignerError::Backend(error.to_string()))?;
 
         if let Ok(mut guard) = self.last_signed_at.lock() {
@@ -1382,7 +1400,10 @@ mod tests {
 
         let signing_input = format!("{}.{}", parts[0], URL_SAFE_NO_PAD.encode(canonical_body));
         let raw = URL_SAFE_NO_PAD.decode(parts[2]).expect("signature b64");
-        let raw: [u8; 64] = raw.as_slice().try_into().expect("Ed25519 signature is 64 bytes");
+        let raw: [u8; 64] = raw
+            .as_slice()
+            .try_into()
+            .expect("Ed25519 signature is 64 bytes");
         SigningKey::from_bytes(&seed)
             .verifying_key()
             .verify(
@@ -1599,6 +1620,43 @@ mod tests {
         Ed25519DetachedJwsVerifier::new()
             .verify(&proof_binding_bytes, &sig, &public_key)
             .expect("SDK verifier accepts domain/audience-bound proof");
+    }
+
+    #[test]
+    fn signer_resolution_evidence_stays_out_of_producer_proof_bytes() {
+        let _g = reset();
+        let signer =
+            build_ed25519_device_signer([22u8; 32], "did:web:evidence.example", TEST_DEVICE_ID);
+        let mut without_evidence = message_event("did:web:evidence.example", "same event");
+        let mut with_evidence = without_evidence.clone();
+        let proof_created_at = without_evidence.created_at;
+        let context = ProducerProofContext::new()
+            .with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+            .with_domain("ak:trust_domain:server.example");
+
+        signer
+            .sign_sdk_event_with_context_at(
+                &mut without_evidence,
+                context.clone(),
+                proof_created_at,
+            )
+            .unwrap();
+        signer
+            .sign_sdk_event_with_context_at(
+                &mut with_evidence,
+                context.with_signer_resolution_evidence_ref(
+                    test_producer_proof_context(arkret_sdk::DigestSuite::Sha256)
+                        .signer_resolution_evidence_ref
+                        .unwrap(),
+                ),
+                proof_created_at,
+            )
+            .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(producer_proof(&without_evidence)).unwrap(),
+            serde_json::to_value(producer_proof(&with_evidence)).unwrap()
+        );
     }
 
     #[test]
