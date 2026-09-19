@@ -61,7 +61,8 @@ pub(super) async fn recover_bound_principal_device(
     let possession = arkret_models_crypto::RecoveryDevicePossessionTranscript {
         schema: "ak.identity.recovery_device_possession.v1".to_owned(),
         session_grant_id: recovery_grant_id,
-        session_grant_cnf_jkt: recovery_grant_jkt,
+        session_grant_cnf_jkt: arkret_sdk::Base64UrlString::new(recovery_grant_jkt)
+            .map_err(anyhow::Error::msg)?,
         requesting_device_public_key_did: requesting_key.clone(),
         request_id: arkret_sdk::RequestId::new(handoff.request_id.clone())?,
         account_id: arkret_sdk::AccountId::new(
@@ -79,10 +80,18 @@ pub(super) async fn recover_bound_principal_device(
         }),
     };
     let signature = signer.sign_raw(&possession.signing_bytes()?)?;
-    let create = possession.into_request(
-        arkret_sdk::Base64UrlString::new(arkret_sdk::canonical::base64url_encode(signature))
-            .map_err(anyhow::Error::msg)?,
-    )?;
+    let create = arkret_models_crypto::RecoverySessionCreateRequestBody {
+        request_id: possession.request_id.clone(),
+        account_id: possession.account_id.clone(),
+        requesting_device_id: possession.requesting_device_id.clone(),
+        requesting_device_public_key_did: possession.requesting_device_public_key_did.clone(),
+        requesting_device_signature: arkret_sdk::Base64UrlString::new(
+            arkret_sdk::canonical::base64url_encode(signature),
+        )
+        .map_err(anyhow::Error::msg)?,
+        trust_domain: possession.trust_domain.clone(),
+        expected_recovery_policy_ref: possession.expected_recovery_policy_ref.clone(),
+    };
     let session = api.create_recovery_session(&create).await?;
     anyhow::ensure!(
         session.requesting_device_public_key_did == requesting_key
@@ -257,42 +266,22 @@ pub(super) async fn issue_recovery_completion_grant(
         .build()?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let workflow = crate::fresh_device_recovery::FreshDeviceRecovery::new(
-        crate::security_transaction::security_transaction_engine(account_http, secure_store),
+        crate::security_transaction::security_transaction_engine(
+            account_http.clone(),
+            secure_store,
+        ),
     );
-    let (outcome, initial_session) = match workflow
-        .retry_byte_identical_completion_grant(transaction_id)
-        .await?
-    {
-        Some(outcome) => {
-            let local = workflow
-                .local_state(transaction_id)?
-                .ok_or_else(|| anyhow::anyhow!("recovery grant request is not durable"))?;
-            let canonical = local
-                .accepted_completion_grant_request
-                .as_ref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("retry outcome omitted its durable initial-session request")
-                })?;
-            let request: arkret_wire::IssueRecoveryCompletionGrantRequest =
-                serde_json::from_slice(canonical)?;
-            let initial_session = serde_json::from_value(request.initial_session)?;
-            (outcome, initial_session)
-        }
-        None => {
-            let initial_session = arkret_sdk::InitialSessionGrantIntent {
-                device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
-                session_public_key: holder.canonical_session_public_jwk()?,
-                audience_id: handoff.audience_id.clone(),
-            };
-            initial_session.validate()?;
-            let request = workflow
-                .build_completion_grant_issuance(transaction_id, initial_session.clone())?;
-            let outcome = workflow
-                .issue_completion_grant(transaction_id, &request)
-                .await?;
-            (outcome, initial_session)
-        }
+    let initial_session = arkret_sdk::InitialSessionGrantIntent {
+        device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
+        session_public_key: holder.canonical_session_public_jwk()?,
+        audience_id: handoff.audience_id.clone(),
     };
+    initial_session.validate()?;
+    let request =
+        workflow.build_completion_grant_issuance(transaction_id, initial_session.clone())?;
+    let outcome = account_http
+        .issue_recovery_completion_grant(&request)
+        .await?;
     let session_grant_outcome = serde_json::from_value(outcome.session_grant_outcome)?;
     let session = garth::SessionGrantState::from_initial_registration_outcome(
         &initial_session,

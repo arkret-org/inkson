@@ -169,17 +169,13 @@ fn audit_public_transaction_state(state: &DurableSecurityTransaction) -> garth::
             &pending.canonical_request,
         )?;
     }
-    if let Some(accepted) = &state.accepted_terminal_continue {
-        audit_canonical_public_json("accepted_terminal_continue", accepted)?;
-    }
-    if let Some(pending) = &state.pending_erase_request {
-        audit_canonical_public_json("pending_erase_request", pending)?;
-    }
-    if let Some(pending) = &state.pending_completion_grant_request {
-        audit_canonical_public_json("pending_completion_grant_request", pending)?;
-    }
-    if let Some(accepted) = &state.accepted_completion_grant_request {
-        audit_canonical_public_json("accepted_completion_grant_request", accepted)?;
+    if let Some(receipt) = state.completed_recovery_receipt()? {
+        let canonical = arkret_sdk::canonical::canonical_json_bytes(&receipt).map_err(|error| {
+            garth::Error::Protocol(format!(
+                "encode completed recovery receipt for secret audit: {error}"
+            ))
+        })?;
+        audit_canonical_public_json("completed_recovery_receipt", &canonical)?;
     }
     if let Some(resource) = &state.last_observed_resource {
         let value = serde_json::to_value(resource).map_err(|error| {
@@ -299,8 +295,52 @@ impl SecurityTransactionStore for InksonSecurityTransactionStore {
     }
 }
 
+#[derive(Clone)]
+pub struct InksonSecurityTransactionTransport {
+    client: arkret_sdk::http_client::Client,
+}
+
+impl InksonSecurityTransactionTransport {
+    fn new(client: arkret_sdk::http_client::Client) -> Self {
+        Self { client }
+    }
+}
+
+impl garth::SecurityTransactionTransport for InksonSecurityTransactionTransport {
+    async fn create(
+        &self,
+        request: &arkret_models_crypto::SecurityTransactionCreateRequest,
+    ) -> garth::Result<arkret_models_crypto::SecurityTransaction> {
+        self.client
+            .create_security_transaction(request)
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
+    }
+
+    async fn get(
+        &self,
+        transaction_id: &arkret_sdk::TransactionId,
+    ) -> garth::Result<arkret_models_crypto::SecurityTransaction> {
+        self.client
+            .get_security_transaction(transaction_id)
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
+    }
+
+    async fn continue_transaction(
+        &self,
+        transaction_id: &arkret_sdk::TransactionId,
+        request: &arkret_models_crypto::SecurityTransactionContinueRequest,
+    ) -> garth::Result<arkret_models_crypto::SecurityTransaction> {
+        self.client
+            .continue_security_transaction(transaction_id, request)
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
+    }
+}
+
 pub type InksonSecurityTransactionEngine = garth::SecurityTransactionEngine<
-    arkret_sdk::http_client::Client,
+    InksonSecurityTransactionTransport,
     InksonSecurityTransactionStore,
 >;
 
@@ -308,7 +348,10 @@ pub fn security_transaction_engine(
     client: arkret_sdk::http_client::Client,
     secure_store: Arc<dyn SecureKeyStore + Send + Sync>,
 ) -> InksonSecurityTransactionEngine {
-    garth::SecurityTransactionEngine::new(client, InksonSecurityTransactionStore::new(secure_store))
+    garth::SecurityTransactionEngine::new(
+        InksonSecurityTransactionTransport::new(client),
+        InksonSecurityTransactionStore::new(secure_store),
+    )
 }
 
 #[cfg(test)]
@@ -370,10 +413,7 @@ mod tests {
             canonical_create_request: br#"{"prepared_plan":"public"}"#.to_vec(),
             staged_secret_ref: Some("secure-store://recovery/staged-1".to_owned()),
             pending_continue: None,
-            accepted_terminal_continue: None,
-            pending_erase_request: None,
-            pending_completion_grant_request: None,
-            accepted_completion_grant_request: None,
+            completed_recovery_receipt: None,
             last_observed_resource: None,
         };
         store.save(&state).await.unwrap();
@@ -385,6 +425,75 @@ mod tests {
         assert_eq!(loaded.staged_secret_ref, state.staged_secret_ref);
         store.remove(&transaction_id).unwrap();
         assert!(store.load(&transaction_id).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn adapter_round_trips_completed_recovery_receipt_exactly() {
+        let _scope = activate_test_scope();
+        let secure_store: Arc<dyn SecureKeyStore + Send + Sync> =
+            Arc::new(garth::MemorySecureKeyStore::new());
+        let store = InksonSecurityTransactionStore::new(secure_store);
+        let transaction_id =
+            arkret_sdk::TransactionId::new("ak:transaction:01904100-0000-7000-8000-abcdefabcda1")
+                .unwrap();
+        let receipt = serde_json::json!({
+            "schema": "ak.schema.recovery_receipt.v1",
+            "receipt_id": "ak:receipt:01904100-0000-7000-8000-abcdefabcda2",
+            "transaction_id": transaction_id,
+            "transaction_request_digest": format!("sha256:{}", "1".repeat(64)),
+            "prepared_plan_digest": format!("sha256:{}", "2".repeat(64)),
+            "account_id": {
+                "principal_id": "ak:did_core:webvh:z6mkfixtureprincipalexample",
+                "station_id": "ak:did_core:webvh:z6mkfixtureserviceexample"
+            },
+            "recovery_session_id": "ak:recovery_session:01904100-0000-7000-8000-abcdefabcda3",
+            "policy_id": "ak:policy:01904100-0000-7000-8000-abcdefabcda4",
+            "policy_version": 1,
+            "trust_domain": "ak:trust_domain:fixture.example",
+            "new_device_id": "ak:device:01904100-0000-7000-8000-abcdefabcda5",
+            "identity_model": "pcr_policy",
+            "recovery_authority_kind": "pcr_policy",
+            "previous_model_generation_ref": 7,
+            "result_model_generation_ref": 8,
+            "authorization_event_id": "ak:event:AWKDhmQTc5zyfilaLwPF3xnhoZAjxSha7Z-6grioN9aW",
+            "reanchor_event_id": "ak:event:AR8bu-n-kOOB3nRUvYuIEglCX5B-JpFaNTex9gxs_cWY",
+            "proof_summary": {
+                "kind": "recovery_unlock",
+                "proof_digest": format!("sha256:{}", "3".repeat(64))
+            },
+            "unlocked_backups": [],
+            "welcome_count": 0,
+            "outcome": "completed",
+            "started_at": "2026-09-19T10:00:00.000Z",
+            "completed_at": "2026-09-19T10:00:01.000Z",
+            "auth_data": {
+                "verification_method": "did:web:alice.example#device-1",
+                "signature_algorithm": "Ed25519",
+                "signature": "AA"
+            }
+        });
+        let canonical_receipt = arkret_sdk::canonical::canonical_json_bytes(&receipt).unwrap();
+        let state: DurableSecurityTransaction = serde_json::from_value(serde_json::json!({
+            "transaction_id": transaction_id,
+            "canonical_create_request": arkret_sdk::canonical::canonical_json_bytes(
+                &serde_json::json!({"kind": "recovery"}),
+            ).unwrap(),
+            "staged_secret_ref": null,
+            "pending_continue": null,
+            "completed_recovery_receipt": {
+                "canonical_receipt": canonical_receipt,
+            },
+            "last_observed_resource": null,
+        }))
+        .unwrap();
+
+        store.save(&state).await.unwrap();
+        let restored = store.load(&transaction_id).unwrap().unwrap();
+
+        assert_eq!(
+            serde_json::to_value(restored.completed_recovery_receipt().unwrap().unwrap()).unwrap(),
+            receipt
+        );
     }
 
     #[tokio::test]
@@ -451,10 +560,7 @@ mod tests {
                 br#"{"binding":{"plaintext_keybag":"synthetic-sensitive-material"}}"#.to_vec(),
             staged_secret_ref: Some("secure-store://recovery/staged-2".to_owned()),
             pending_continue: None,
-            accepted_terminal_continue: None,
-            pending_erase_request: None,
-            pending_completion_grant_request: None,
-            accepted_completion_grant_request: None,
+            completed_recovery_receipt: None,
             last_observed_resource: None,
         };
 
@@ -484,10 +590,7 @@ mod tests {
             .unwrap(),
             staged_secret_ref: Some("secure-store://recovery/staged-3".to_owned()),
             pending_continue: None,
-            accepted_terminal_continue: None,
-            pending_erase_request: None,
-            pending_completion_grant_request: None,
-            accepted_completion_grant_request: None,
+            completed_recovery_receipt: None,
             last_observed_resource: None,
         };
 
@@ -495,43 +598,6 @@ mod tests {
 
         assert!(error.contains("recovery mnemonic"), "{error}");
         assert!(!error.contains(&mnemonic), "{error}");
-        assert!(store.load(&transaction_id).unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn adapter_audits_pending_erase_request_before_persistence() {
-        let _scope = activate_test_scope();
-        let secure_store: Arc<dyn SecureKeyStore + Send + Sync> =
-            Arc::new(garth::MemorySecureKeyStore::new());
-        let store = InksonSecurityTransactionStore::new(secure_store);
-        let transaction_id =
-            arkret_sdk::TransactionId::new("ak:transaction:01904100-0000-7000-8000-abcdefabcdee")
-                .unwrap();
-        let state = DurableSecurityTransaction {
-            transaction_id: transaction_id.clone(),
-            canonical_create_request: br#"{"prepared_plan":"public"}"#.to_vec(),
-            staged_secret_ref: None,
-            pending_continue: None,
-            accepted_terminal_continue: None,
-            pending_erase_request: Some(
-                arkret_sdk::canonical::canonical_json_bytes(
-                    &serde_json::json!({"mls_secret": "must-not-persist"}),
-                )
-                .unwrap(),
-            ),
-            pending_completion_grant_request: None,
-            accepted_completion_grant_request: None,
-            last_observed_resource: None,
-        };
-
-        let error = store.save(&state).await.unwrap_err().to_string();
-
-        assert!(error.contains("forbidden secret field"), "{error}");
-        assert!(
-            error.contains("pending_erase_request.mls_secret"),
-            "{error}"
-        );
-        assert!(!error.contains("must-not-persist"), "{error}");
         assert!(store.load(&transaction_id).unwrap().is_none());
     }
 
@@ -555,10 +621,7 @@ mod tests {
             .unwrap(),
             staged_secret_ref: Some("secure-store://recovery/staged-4".to_owned()),
             pending_continue: None,
-            accepted_terminal_continue: None,
-            pending_erase_request: None,
-            pending_completion_grant_request: None,
-            accepted_completion_grant_request: None,
+            completed_recovery_receipt: None,
             last_observed_resource: None,
         };
 
