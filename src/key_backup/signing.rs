@@ -53,10 +53,7 @@ pub fn verify_key_backup_auth_data(
     verifying_key: &VerifyingKey,
 ) -> Result<(), String> {
     backup.validate().map_err(|error| error.to_string())?;
-    let auth = backup
-        .auth_data
-        .as_ref()
-        .ok_or_else(|| "auth_data is required".to_owned())?;
+    let auth = &backup.auth_data;
     if auth.signature_algorithm != arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519 {
         return Err("auth_data.signature_algorithm must be Ed25519".to_owned());
     }
@@ -99,8 +96,9 @@ pub fn build_key_backup_unlock_proof(
     );
     let issued_at = crate::clock::now_utc();
     let (authority, challenge_bytes, expires_at, method) = if let Some(session) = recovery_session {
+        session.validate_shape()?;
         anyhow::ensure!(
-            session.state == arkret_sdk::SessionState::Verified
+            session.state == arkret_sdk::RecoverySessionState::Verified
                 && session.expires_at > issued_at
                 && session.account_id == account
                 && session.requesting_device_id == device_id,
@@ -118,8 +116,7 @@ pub fn build_key_backup_unlock_proof(
             arkret_sdk::KeyBackupUnlockAuthority::RecoverySession {
                 recovery_session_id: session.recovery_session_id.clone(),
             },
-            arkret_sdk::Base64UrlString::new(session.challenge.to_string())
-                .map_err(anyhow::Error::msg)?,
+            session.challenge.clone(),
             session.expires_at,
             format!("{did}#{multibase}"),
         )
@@ -131,7 +128,7 @@ pub fn build_key_backup_unlock_proof(
                 && challenge.requesting_device_id == device_id
                 && challenge.backup_id == backup.backup_id
                 && challenge.series_id == backup.series_id
-                && challenge.ciphertext_digest.as_str() == backup.ciphertext_digest
+                && challenge.ciphertext_digest == backup.ciphertext_digest
                 && challenge.audience.as_str() == audience
                 && challenge.service_id == account.station_id
                 && challenge.operation == "ak.self.keys.backups.command.unlock.v1"
@@ -149,31 +146,36 @@ pub fn build_key_backup_unlock_proof(
             signer.verification_method().to_owned(),
         )
     };
-    let auth = arkret_sdk::UnsignedKeyBackupUnlockProofAuthData::new(
-        arkret_sdk::DidUrl::new(method).map_err(anyhow::Error::msg)?,
-        arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
-    )?;
-    let unsigned = arkret_sdk::UnsignedKeyBackupUnlockProof::new(
+    let mut proof = arkret_sdk::KeyBackupUnlockProof {
+        schema: arkret_sdk::KeyBackupUnlockProof::SCHEMA.to_owned(),
         authority,
-        account.clone(),
-        device_id,
-        backup.backup_id.clone(),
-        backup.backup_kind,
-        backup.series_id.clone(),
-        arkret_sdk::Hash::new(backup.ciphertext_digest.clone())?,
-        challenge_bytes,
-        account.station_id,
-        arkret_sdk::NonEmptyString::new(audience.to_owned()).map_err(anyhow::Error::msg)?,
+        account_id: account.clone(),
+        requesting_device_id: device_id,
+        backup_id: backup.backup_id.clone(),
+        backup_kind: backup.backup_kind,
+        series_id: backup.series_id.clone(),
+        ciphertext_digest: backup.ciphertext_digest.clone(),
+        challenge: challenge_bytes,
+        service_id: account.station_id,
+        audience: arkret_sdk::NonEmptyString::new(audience.to_owned())
+            .map_err(anyhow::Error::msg)?,
         issued_at,
         expires_at,
-        auth,
-    )?;
-    let signature = signer.sign_raw(&unsigned.signing_payload_bytes()?)?;
-    unsigned
-        .attach_signature(
-            arkret_sdk::Base64UrlString::new(B64.encode(signature)).map_err(anyhow::Error::msg)?,
-        )
-        .map_err(anyhow::Error::from)
+        auth_data: arkret_sdk::KeyBackupUnlockProofAuthData {
+            verification_method: arkret_sdk::DidUrl::new(method).map_err(anyhow::Error::msg)?,
+            signature_algorithm: arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
+            // The signature is excluded from the canonical transcript. A
+            // schema-shaped placeholder lets the current closed public type
+            // produce those bytes before the exact signature is attached.
+            signature: arkret_sdk::Base64UrlString::new(B64.encode([0u8; 64]))
+                .map_err(anyhow::Error::msg)?,
+        },
+    };
+    let signature = signer.sign_raw(&proof.signing_payload_bytes()?)?;
+    proof.auth_data.signature =
+        arkret_sdk::Base64UrlString::new(B64.encode(signature)).map_err(anyhow::Error::msg)?;
+    proof.validate()?;
+    Ok(proof)
 }
 
 pub async fn fetch_key_backup_with_device_unlock_proof(
@@ -201,10 +203,13 @@ pub async fn fetch_key_backup_with_recovery_session_unlock_proof(
     requesting_device_id: &str,
     recovery_session: &arkret_sdk::RecoverySession,
 ) -> anyhow::Result<Value> {
-    recovery_session.validate()?;
+    recovery_session.validate_shape()?;
     if recovery_session.account_id.principal_id.as_str() != principal_id
         || recovery_session.requesting_device_id.as_str() != requesting_device_id
-        || !matches!(recovery_session.state, arkret_sdk::SessionState::Verified)
+        || !matches!(
+            recovery_session.state,
+            arkret_sdk::RecoverySessionState::Verified
+        )
     {
         anyhow::bail!("key backup unlock recovery session binding mismatch");
     }
@@ -416,6 +421,8 @@ fn clear_key_backup_unlock_memory() {
 mod tests {
     use std::sync::Arc;
 
+    use serde_json::json;
+
     use super::*;
 
     #[tokio::test]
@@ -431,13 +438,15 @@ mod tests {
             actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
                 .unwrap(),
             device_id: None,
-            backup_kind: arkret_sdk::BackupKind::MlsHistory,
+            backup_kind: arkret_sdk::BackupKind::SecretStorage,
             backup_version: "kb_1".to_owned(),
             created_at: chrono::Utc::now(),
             updated_at: None,
             expires_at: None,
-            ciphertext_digest:
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            ciphertext_digest: arkret_sdk::Hash::new(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .unwrap(),
             encryption: arkret_sdk::KeyBackupSummaryEncryption {
                 recipient_method: arkret_sdk::KeyBackupRecipientMethod::SecretStorageKey,
                 recipient_key_ref: Some("mls_group_secrets_backup_key".to_owned()),
@@ -447,8 +456,6 @@ mod tests {
             )
             .unwrap(),
             series_seq: 0,
-            recovery_policy_ref: None,
-            contents: Vec::new(),
         };
 
         let account = backup.actor_id.as_account_id().unwrap().clone();
@@ -465,7 +472,7 @@ mod tests {
             .unwrap(),
             backup_id: backup.backup_id.clone(),
             series_id: backup.series_id.clone(),
-            ciphertext_digest: arkret_sdk::Hash::new(backup.ciphertext_digest.clone()).unwrap(),
+            ciphertext_digest: backup.ciphertext_digest.clone(),
             audience: arkret_sdk::NonEmptyString::new("https://station.example").unwrap(),
             service_id: account.station_id,
             request_id: arkret_sdk::Base64UrlString::new(B64.encode([2u8; 16])).unwrap(),
@@ -517,6 +524,151 @@ mod tests {
         assert_eq!(
             decoded.signing_payload_bytes().unwrap(),
             proof.signing_payload_bytes().unwrap()
+        );
+    }
+
+    #[test]
+    fn recovery_session_unlock_uses_frozen_device_key_and_rejects_pending_session() {
+        let signer = Arc::new(crate::event_signer::build_ed25519_device_signer(
+            [12u8; 32],
+            "did:web:alice.example",
+            "ak:device:0196419b-0000-7000-8000-000000000003",
+        ));
+        let backup = arkret_sdk::KeyBackupSummary {
+            backup_id: arkret_sdk::BackupId::new("ak:backup:0196419b-0000-7000-8000-000000000001")
+                .unwrap(),
+            actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
+                .unwrap(),
+            device_id: None,
+            backup_kind: arkret_sdk::BackupKind::SecretStorage,
+            backup_version: "kb_1".to_owned(),
+            created_at: chrono::Utc::now(),
+            updated_at: None,
+            expires_at: None,
+            ciphertext_digest: arkret_sdk::Hash::new(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .unwrap(),
+            encryption: arkret_sdk::KeyBackupSummaryEncryption {
+                recipient_method: arkret_sdk::KeyBackupRecipientMethod::SecretStorageKey,
+                recipient_key_ref: Some("mls_group_secrets_backup_key".to_owned()),
+            },
+            series_id: arkret_sdk::BackupSeriesId::new(
+                "ak:backup_series:0196419b-0000-7000-8000-000000000002",
+            )
+            .unwrap(),
+            series_seq: 0,
+        };
+        let account = backup.actor_id.as_account_id().unwrap().clone();
+        let multibase = signer.public_key_multibase().unwrap();
+        let frozen_did = format!("did:key:{multibase}");
+        let verification_method = format!("{frozen_did}#{multibase}");
+        let realm_id =
+            arkret_sdk::RealmId::new("ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5")
+                .unwrap();
+        let commit_id = arkret_sdk::RealmCommitId::from_digest([9; 32]);
+        let now = crate::clock::now_utc();
+        let mut session_value = json!({
+            "schema": "ak.schema.recovery_session.v1",
+            "request_id": "ak:request:0198ff00-0000-7000-8000-00000000000b",
+            "recovery_session_id": "ak:recovery_session:0198ff00-0000-7000-8000-00000000000c",
+            "session_grant_id": "ak:session_grant:Af0GheZX08ev4L1fQoFdngIpe5c_9Lk7SQqfN4jztzDW",
+            "session_grant_cnf_jkt": "Q25mSmt0Rml4dHVyZVZhbHVlMDAwMDAwMDAwMDAwMDAwMDAwMA",
+            "account_id": account,
+            "requesting_device_id": "ak:device:0196419b-0000-7000-8000-000000000003",
+            "requesting_device_public_key_did": frozen_did,
+            "trust_domain": "ak:trust_domain:example.net",
+            "policy_id": "ak:policy:0198ff00-0000-7000-8000-000000000001",
+            "policy_version": 1,
+            "identity_model": "pcr_policy",
+            "current_device_generation_ref": 3,
+            "device_generation_status": "active",
+            "realm_stream_head": {
+                "stream_ref": {"kind": "realm", "realm_id": realm_id},
+                "stream_position": 12,
+                "commit_id": commit_id
+            },
+            "publication_authority_context": {
+                "authority_commit_id": commit_id,
+                "scope_ref": {"kind": "realm", "realm_id": realm_id},
+                "authority_set_policy": {
+                    "schema": "ak.schema.authority_set_policy.v1",
+                    "authority_set_id": "ak.authority_set.principal_control.v1",
+                    "policy_kind": "principal_control",
+                    "scope_ref": {"kind": "realm", "realm_id": realm_id},
+                    "source_commit_id": commit_id,
+                    "authorization_rules": [{
+                        "rule_id": "identity_recovery",
+                        "issuer_role": "identity_recovery",
+                        "allowed_actions": ["ak.device.reanchor"],
+                        "issuers": [{"verification_method": verification_method}],
+                        "threshold": 1
+                    }]
+                },
+                "allowed_actions": ["ak.device.reanchor"]
+            },
+            "publication_authority_context_digest":
+                "sha256:abababababababababababababababababababababababababababababababab",
+            "challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "state": "verified",
+            "proof_summary": {
+                "kind": "recovery_unlock",
+                "proof_digest":
+                    "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+                "verification_method": verification_method
+            },
+            "expires_at": now + chrono::Duration::minutes(10),
+            "created_at": now - chrono::Duration::minutes(1),
+            "updated_at": now
+        });
+        let session: arkret_sdk::RecoverySession =
+            serde_json::from_value(session_value.clone()).unwrap();
+
+        let proof = build_key_backup_unlock_proof(
+            &backup,
+            "did:web:alice.example",
+            "ak:device:0196419b-0000-7000-8000-000000000003",
+            Some(&session),
+            None,
+            "https://station.example",
+            &signer,
+        )
+        .unwrap();
+        assert!(matches!(
+            proof.authority,
+            arkret_sdk::KeyBackupUnlockAuthority::RecoverySession { .. }
+        ));
+        assert_eq!(
+            proof.auth_data.verification_method.as_str(),
+            verification_method
+        );
+        assert_eq!(proof.challenge.as_str(), session.challenge.as_str());
+        assert_eq!(proof.expires_at, session.expires_at);
+        let signature =
+            Signature::from_slice(&B64.decode(proof.auth_data.signature.as_str()).unwrap())
+                .unwrap();
+        ed25519_dalek::SigningKey::from_bytes(&[12u8; 32])
+            .verifying_key()
+            .verify_strict(&proof.signing_payload_bytes().unwrap(), &signature)
+            .unwrap();
+
+        session_value["state"] = json!("pending");
+        session_value
+            .as_object_mut()
+            .unwrap()
+            .remove("proof_summary");
+        let pending: arkret_sdk::RecoverySession = serde_json::from_value(session_value).unwrap();
+        assert!(
+            build_key_backup_unlock_proof(
+                &backup,
+                "did:web:alice.example",
+                "ak:device:0196419b-0000-7000-8000-000000000003",
+                Some(&pending),
+                None,
+                "https://station.example",
+                &signer,
+            )
+            .is_err()
         );
     }
 
