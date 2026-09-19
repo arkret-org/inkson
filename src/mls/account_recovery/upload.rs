@@ -1,10 +1,10 @@
 //! Backup / rotation upload flow and superseded-backup cleanup.
 
-use anyhow::{Result, anyhow};
-use arkret_sdk::BackupRotationKind;
 use crate::mls::runtime::{
     active_secret_storage_series_id_for, backup_series_seq_of, select_mls_private_plaintext_backup,
 };
+use anyhow::{Result, anyhow};
+use arkret_sdk::BackupRotationKind;
 use garth::mls::backup_series::fresh_backup_id;
 use serde_json::Value;
 
@@ -148,8 +148,7 @@ async fn ensure_initial_active_series(
             "backup pointer response belongs to another account or PCR"
         ));
     }
-    let kind = arkret_sdk::BackupKind::try_from(wire_kind).map_err(anyhow::Error::msg)?;
-    let active = current.pointer(kind).series_id().map(|id| id.as_str());
+    let active = current.secret_storage.series_id().map(|id| id.as_str());
     if let Some(active) = active {
         if active == series_id {
             return Ok(());
@@ -160,16 +159,14 @@ async fn ensure_initial_active_series(
     }
 
     let submitter = api.event_submitter()?;
-    // This is a new ordinary PCR Control authoring boundary. A concurrent
-    // account reconnect can advance the device-cache epoch after recovery
-    // policy publication, invalidating the earlier onboarding snapshot. Read
-    // and cache the Station frontier again here instead of borrowing that
-    // stale checkpoint for the active-series Event.
-    submitter
-        .refresh_realm_governance_frontier(control_realm.as_str())
-        .await?;
-    let frontier = submitter
-        .seals_frontier_realm_head(control_realm.as_str())
+    // This is a new ordinary PCR Control authoring boundary. Resolve the
+    // authenticated Realm stream head immediately before authoring so the
+    // signed active-series record names the exact RealmCommit checkpoint it
+    // observed, rather than carrying a removed Seal/frontier surrogate.
+    let source_realm_commit_id = submitter
+        .current_stream_head_for(&arkret_sdk::ScopeRef::Realm {
+            realm_id: control_realm.clone(),
+        })
         .await?;
     let trust_anchor = super::rotation_transaction::current_controller_backup_trust_anchor(
         &http, authority, device_id,
@@ -183,50 +180,13 @@ async fn ensure_initial_active_series(
         series_id,
         1,
         &[],
-        &frontier,
+        &source_realm_commit_id,
         &trust_anchor,
     )?;
-    // The active-series Event id exists once it is authored; the batch submit
-    // reports the accepted ids, so the successor Seal binds the Event that was
-    // actually accepted.
-    let account_actor = event.actor_id().clone();
-    let accepted = submitter
-        .submit_sdk_events_batch(control_realm.as_str(), vec![event.into_intent()], None)
-        .await?;
-    let active_series_event_id = accepted
-        .accepted
-        .first()
-        .or_else(|| accepted.duplicate.first())
-        .cloned()
-        .ok_or_else(|| {
-            anyhow::anyhow!("key-backup active-series submit returned no accepted Event id")
-        })?;
-    let active_series_digest = active_series_event_id.event_digest();
-    let seal = crate::event_signer::prepare_and_sign_pcr_successor(
-        &http,
-        &account_actor,
-        control_realm,
-        frontier.id.clone(),
-        vec![active_series_digest.clone()],
-    )
-    .await?;
-    let seal_outcome = http.events_submit_seal(&seal).await?;
-    if seal_outcome.seal_id != seal.id
-        || seal_outcome.accepted_event_digests != seal.delta
-        || seal_outcome.post_state_root != seal.state_root
-    {
+    let accepted = submitter.submit_sdk_event(&event).await?;
+    if !accepted.is_committed() {
         return Err(anyhow!(
-            "Station returned a mismatched key-backup active-series Seal outcome"
-        ));
-    }
-    crate::event_signer::clear_prepared_pcr_successor(&seal).await?;
-    if !seal_outcome
-        .accepted_event_digests
-        .iter()
-        .any(|digest| digest == &active_series_digest)
-    {
-        return Err(anyhow!(
-            "Station did not seal the {wire_kind} active-series Event"
+            "Station did not commit the {wire_kind} active-series Event"
         ));
     }
 
@@ -242,10 +202,7 @@ async fn fetch_active_series_tail(
 ) -> Result<Option<Value>> {
     let wire_kind = super::rotation_transaction::wire_backup_kind(backup_kind);
     let class = arkret_sdk::BackupKind::try_from(wire_kind).map_err(|error| anyhow!(error))?;
-    let series_id = match active_secret_storage_series_id_for(
-        list_payload,
-        class,
-    ) {
+    let series_id = match active_secret_storage_series_id_for(list_payload, class) {
         Some(series_id) => series_id.to_owned(),
         None => {
             let series_ids = crate::mls::runtime::iter_backup_bodies(list_payload)

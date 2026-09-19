@@ -1,3 +1,4 @@
+use crate::mls::runtime::{active_secret_storage_series_id_for, iter_backup_bodies};
 use anyhow::{Context, Result, anyhow};
 pub(super) use arkret_models_collaboration::events_payloads::key_backup::ControllerBackupTrustAnchor;
 use arkret_models_collaboration::events_payloads::key_backup::resolve_controller_backup_trust_anchor;
@@ -9,7 +10,6 @@ use arkret_wire::{
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use crate::mls::runtime::{active_secret_storage_series_id_for, iter_backup_bodies};
 use garth::mls::backup_series::fresh_backup_id;
 use garth::{PutSecretOptions, SecretClass, SecretDurability, SecureKeyStore};
 use serde_json::Value;
@@ -184,10 +184,12 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let frontier = submitter
         .seals_frontier_realm_view(control_realm.as_str())
         .await?;
-    // The active-series pointer binds the accepted Seal's own signed roots, so
-    // the frontier leaf is resolved rather than trusting a service root hint.
-    let frontier_seal = submitter
-        .seals_frontier_realm_head(control_realm.as_str())
+    // The active-series pointer binds the exact accepted PCR RealmCommit that
+    // was current when the replacement series was selected.
+    let source_realm_commit_id = submitter
+        .current_stream_head_for(&arkret_sdk::ScopeRef::Realm {
+            realm_id: control_realm.clone(),
+        })
         .await?;
     let revoke = crate::operation::ak_ops::device_revoke(
         control_realm.as_str(),
@@ -208,7 +210,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
             class.new_series_id.as_str(),
             active_pointer_version(&list_payload, class.backup_kind)? + 1,
             std::slice::from_ref(&class.previous_series_id),
-            &frontier_seal,
+            &source_realm_commit_id,
             &trust_anchor,
         )?);
     }
@@ -232,8 +234,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let mut submissions = Vec::with_capacity(envelopes.len());
     for (event, digest_suite) in envelopes.iter().zip(digest_suites.iter().copied()) {
         submissions.push(
-            crate::pcr_authority::delayed_initial_submission(&http, event, digest_suite)
-                .await?,
+            crate::pcr_authority::delayed_initial_submission(&http, event, digest_suite).await?,
         );
     }
     let revoke_submission = EventsSubmitBatchRequestBody {
@@ -675,7 +676,6 @@ fn active_pointer_version(list_payload: &Value, kind: BackupRotationKind) -> Res
 pub(super) fn wire_backup_kind(kind: BackupRotationKind) -> &'static str {
     match kind {
         BackupRotationKind::SecretStorage => "secret_storage",
-        BackupRotationKind::MlsHistory => "mls_history",
     }
 }
 
@@ -700,7 +700,7 @@ pub(super) fn build_active_series_event(
     series_id: &str,
     pointer_version: u64,
     previous_series_ids: &[BackupSeriesId],
-    frontier: &arkret_sdk::Seal,
+    source_realm_commit_id: &arkret_sdk::RealmCommitId,
     trust_anchor: &ControllerBackupTrustAnchor,
 ) -> Result<crate::operation::LocalOperation> {
     let signer = crate::event_signer::active_signer()
@@ -715,7 +715,6 @@ pub(super) fn build_active_series_event(
     let verification_method = signer.verification_method_for_principal(&principal_did)?;
     let backup_kind = match kind {
         BackupRotationKind::SecretStorage => BackupKind::SecretStorage,
-        BackupRotationKind::MlsHistory => BackupKind::MlsHistory,
     };
     let unsigned = arkret_sdk::UnsignedKeyBackupActiveSeries::new(
         arkret_sdk::ActorId::account(account_id.clone()),
@@ -723,8 +722,7 @@ pub(super) fn build_active_series_event(
         BackupSeriesId::new(series_id.to_owned())?,
         pointer_version,
         previous_series_ids.to_vec(),
-        frontier.control_event_set_root.clone(),
-        Some(frontier.id.clone()),
+        source_realm_commit_id.clone(),
         crate::clock::now_utc(),
         verification_method,
         trust_anchor.clone(),
@@ -761,7 +759,6 @@ fn prepare_class(
     let previous_series_id = BackupSeriesId::new(previous_series_id.to_owned())?;
     let expected_kind = match backup_kind {
         BackupRotationKind::SecretStorage => BackupKind::SecretStorage,
-        BackupRotationKind::MlsHistory => BackupKind::MlsHistory,
     };
     if new_backup_bodies.is_empty()
         || new_backup_bodies
@@ -887,41 +884,7 @@ mod rotation_resume_tests {
             "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h".to_owned(),
         )
         .unwrap();
-        let zero_hash = Hash::new(format!("sha256:{}", "00".repeat(32))).unwrap();
-        let frontier = arkret_sdk::Seal {
-            id: arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "00".repeat(32))).unwrap(),
-            realm_id: realm_id.clone(),
-            predecessor_ref: None,
-            delta: Vec::new(),
-            data_delta: Vec::new(),
-            data_event_set_root: arkret_wire::empty_data_event_set_root(
-                arkret_sdk::DigestSuite::Sha256,
-            )
-            .unwrap(),
-            control_event_set_root: zero_hash.clone(),
-            state_root: zero_hash.clone(),
-            notary_seq: 0,
-            availability_receipt_digests: Vec::new(),
-            covered_event_digests: Vec::new(),
-            previous_state_root: None,
-            previous_digest_algorithm: None,
-            notary_signature: arkret_sdk::SealSignature {
-                verification_method: arkret_sdk::DidUrl::new(verification_method).unwrap(),
-                payload_digest: zero_hash,
-                jws: String::new(),
-            },
-            sealed_at: chrono::Utc::now(),
-            hlc: arkret_sdk::Hlc::new("01970e589d21-0005-a13f9c2e").unwrap(),
-            configuration_ref: arkret_sdk::EventId::new(
-                "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD".to_owned(),
-            )
-            .unwrap(),
-            command_results: Vec::new(),
-            authorization_closures: Vec::new(),
-            data_closure_announcements: Vec::new(),
-            data_closures: Vec::new(),
-            existence_anchors: Vec::new(),
-        };
+        let source_realm_commit_id = arkret_sdk::RealmCommitId::from_digest([7; 32]);
         let trust_anchor = ControllerBackupTrustAnchor {
             authorize_event_id: arkret_sdk::EventId::new(
                 "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD".to_owned(),
@@ -938,7 +901,7 @@ mod rotation_resume_tests {
             "ak:backup_series:01964137-1000-7000-8000-0000000000a1",
             1,
             &[],
-            &frontier,
+            &source_realm_commit_id,
             &trust_anchor,
         )
         .unwrap();
@@ -951,6 +914,15 @@ mod rotation_resume_tests {
             operation.actor_id().route_service_id(),
             &account_id.station_id
         );
+        assert_eq!(
+            operation.payload()["source_commit_ref"]["realm_commit_id"],
+            source_realm_commit_id.as_str()
+        );
+        assert_eq!(
+            operation.payload()["source_commit_ref"]["device_generation_ref"],
+            1
+        );
+        assert!(operation.payload().get("source_ref").is_none());
 
         let other_account = arkret_sdk::AccountId::new(
             arkret_sdk::project_did_to_core_id(
@@ -967,7 +939,7 @@ mod rotation_resume_tests {
             "ak:backup_series:01964137-1000-7000-8000-0000000000a1",
             1,
             &[],
-            &frontier,
+            &source_realm_commit_id,
             &trust_anchor,
         )
         .unwrap_err();

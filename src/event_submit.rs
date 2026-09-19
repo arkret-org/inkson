@@ -1628,7 +1628,7 @@ impl EventSubmitter {
     /// `signal.md` binds an envelope to the stream head its sender observed,
     /// and the current governance Station's authority bundle is where that
     /// head is authenticated.
-    async fn current_stream_head_for(
+    pub(crate) async fn current_stream_head_for(
         &self,
         scope_ref: &arkret_sdk::ScopeRef,
     ) -> anyhow::Result<arkret_wire::RealmCommitId> {
