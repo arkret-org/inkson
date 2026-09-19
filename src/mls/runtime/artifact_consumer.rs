@@ -103,10 +103,7 @@ pub(crate) async fn install_accepted_transition(
             group
         }
         other => {
-            return Err(format!(
-                "MLS install received a {} Event",
-                other.as_str()
-            ));
+            return Err(format!("MLS install received a {} Event", other.as_str()));
         }
     };
     persist_installed_group(
@@ -159,9 +156,12 @@ pub(crate) async fn install_accepted_welcome(
     )
     .map_err(describe)?
     .ok_or_else(|| "accepted Welcome KeyPackage private state is unavailable".to_owned())?;
-    let identity =
-        arkret_sdk::ArkretMlsIdentity::restore_from_private_state(endpoint.clone(), &private_state)
-            .map_err(describe)?;
+    let identity = arkret_sdk::ArkretMlsIdentity::restore_from_private_state(
+        delivery.recipient_actor_id.clone(),
+        endpoint.clone(),
+        &private_state,
+    )
+    .map_err(describe)?;
     if identity.endpoint_identity() != endpoint {
         return Err(
             "accepted MLS Welcome is not addressed to the locally persisted KeyPackage endpoint"
@@ -257,8 +257,15 @@ pub(crate) async fn converge_accepted_mls_artifacts(
                 continue;
             }
         };
-        match install_accepted_welcome(state, authority, device_id, &delivery, &accepted_commit, &[])
-            .await
+        match install_accepted_welcome(
+            state,
+            authority,
+            device_id,
+            &delivery,
+            &accepted_commit,
+            &[],
+        )
+        .await
         {
             Ok(MlsInstallOutcome::Applied) => applied += 1,
             Ok(_) => {}
@@ -322,7 +329,7 @@ fn welcome_endpoint_identity(
             device_id: recipient,
         } => {
             if recipient != device_id
-                || delivery.recipient_actor_id.signing_principal_id() != &authority.principal_id
+                || delivery.recipient_actor_id != arkret_sdk::ActorId::account(authority.clone())
             {
                 return Err("MLS Welcome delivery is addressed to another device".to_owned());
             }
@@ -333,9 +340,9 @@ fn welcome_endpoint_identity(
         }
         // An Agent runtime Welcome is installed by that Agent's own runtime,
         // never by a human device acting on its behalf.
-        arkret_wire::MlsWelcomeRecipientEndpoint::AgentRuntime { .. } => Err(
-            "an Agent runtime Welcome is not installable by a human device endpoint".to_owned(),
-        ),
+        arkret_wire::MlsWelcomeRecipientEndpoint::AgentRuntime { .. } => {
+            Err("an Agent runtime Welcome is not installable by a human device endpoint".to_owned())
+        }
     }
 }
 
@@ -441,9 +448,8 @@ mod tests {
         let other =
             arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002".to_owned())
                 .unwrap();
-        let delivery = welcome_delivery(arkret_wire::MlsWelcomeRecipientEndpoint::Device {
-            device_id: other,
-        });
+        let delivery =
+            welcome_delivery(arkret_wire::MlsWelcomeRecipientEndpoint::Device { device_id: other });
         assert!(welcome_endpoint_identity(&delivery, &authority(), &device_id()).is_err());
     }
 
@@ -452,6 +458,18 @@ mod tests {
         let delivery = welcome_delivery(arkret_wire::MlsWelcomeRecipientEndpoint::AgentRuntime {
             verification_method: arkret_sdk::DidUrl::new("did:web:agent.example#key-1").unwrap(),
         });
+        assert!(welcome_endpoint_identity(&delivery, &authority(), &device_id()).is_err());
+    }
+
+    #[test]
+    fn a_welcome_with_the_right_principal_but_wrong_station_is_rejected() {
+        let mut delivery = welcome_delivery(arkret_wire::MlsWelcomeRecipientEndpoint::Device {
+            device_id: device_id(),
+        });
+        delivery.recipient_actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            authority().principal_id,
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example".to_owned()).unwrap(),
+        ));
         assert!(welcome_endpoint_identity(&delivery, &authority(), &device_id()).is_err());
     }
 

@@ -201,7 +201,7 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
                 arkret_sdk::DidUrl::new(material.signer.verification_method().to_owned())
                     .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?;
             arkret_sdk::ArkretMlsIdentity::new_minimal_metadata_pairwise(
-                material.actor_id.clone(),
+                arkret_sdk::ActorId::service(material.actor_id.clone()),
                 verification_method,
                 arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(
                     ed25519_dalek::SigningKey::from_bytes(&material.signing_seed()),
@@ -209,11 +209,8 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
             )
             .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?
         } else {
-            crate::mls_api_helpers::ordinary_mls_identity(
-                authority.principal_id.clone(),
-                device_id.clone(),
-            )
-            .map_err(MlsRuntimeError::Identity)?
+            crate::mls_api_helpers::ordinary_mls_identity(authority.clone(), device_id.clone())
+                .map_err(MlsRuntimeError::Identity)?
         };
     let governance_binding = crate::mls::governance_proof::genesis_binding(&effective_scope)
         .map_err(MlsRuntimeError::Genesis)?;

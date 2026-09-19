@@ -41,7 +41,12 @@ impl LocalMlsDevice {
     fn new(principal_id: &str, device_id: &str) -> anyhow::Result<Self> {
         Ok(Self {
             identity: Some(ArkretMlsIdentity::new_test_human_device(
-                principal_core_id(principal_id)?,
+                arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                    principal_core_id(principal_id)?,
+                    arkret_sdk::DidCoreId::new(
+                        "ak:did_core:web:wasm-test-station.example".to_owned(),
+                    )?,
+                )),
                 DeviceId::new(device_id.to_owned())?,
             )?),
             group: None,

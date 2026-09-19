@@ -631,11 +631,9 @@ async fn publish_fresh_local_mls_key_package_batch(
     let mut records = Vec::with_capacity(count);
     let mut local_entries = Vec::with_capacity(count);
     for _ in 0..count {
-        let identity = crate::mls_api_helpers::ordinary_mls_identity(
-            authority.principal_id.clone(),
-            device_id.clone(),
-        )
-        .map_err(|error| format!("create MLS identity: {error}"))?;
+        let identity =
+            crate::mls_api_helpers::ordinary_mls_identity(authority.clone(), device_id.clone())
+                .map_err(|error| format!("create MLS identity: {error}"))?;
         let record = identity
             .key_package_record()
             .map_err(|error| format!("create MLS KeyPackage: {error}"))?;
@@ -809,7 +807,7 @@ pub(crate) async fn ensure_pairwise_mls_key_package_published(
         arkret_sdk::DidUrl::new(material.signer.verification_method().to_owned())
             .map_err(|error| format!("invalid pairwise MLS verification method: {error}"))?;
     let identity = arkret_sdk::ArkretMlsIdentity::new_minimal_metadata_pairwise(
-        material.actor_id.clone(),
+        arkret_sdk::ActorId::service(material.actor_id.clone()),
         verification_method,
         arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(
             ed25519_dalek::SigningKey::from_bytes(&material.signing_seed()),

@@ -1184,7 +1184,8 @@ pub(crate) fn verified_chat_sender_domain_for_realm(
 }
 
 /// The §2.10.3 minimal-metadata branch: bind the Event proof to exactly one
-/// active BasicCredential leaf whose identity equals `utf8(actor_id)` and
+/// active BasicCredential leaf whose identity equals
+/// `UTF8(RFC8785_JCS(complete ActorId))` and
 /// whose `signature_key` equals the proof key, at the envelope epoch. Every
 /// failure fails closed (`minimal_metadata_author_credential_invalid`
 /// semantics → the row is never rendered as a verified author); a local
@@ -1221,13 +1222,14 @@ fn verify_minimal_metadata_chat_author(
             ChatProofVerdict::Unattributed
         };
     };
-    let actor = envelope
-        .get("actor_id")
-        .and_then(actor_principal_from_value)
-        .unwrap_or_default();
-    let Ok(actor_id) = arkret_sdk::DidCoreId::new(actor) else {
+    let Ok(actor_id) = serde_json::from_value::<arkret_sdk::ActorId>(
+        envelope.get("actor_id").cloned().unwrap_or(Value::Null),
+    ) else {
         return ChatProofVerdict::Rejected;
     };
+    if actor_id.validate().is_err() {
+        return ChatProofVerdict::Rejected;
+    }
     // The envelope's encrypted-content coordinates are the trust-anchor
     // selector; a proof-bearing minimal-metadata content row without them has
     // no leaf to bind to.

@@ -469,13 +469,13 @@ fn two_member_group_with_bob_snapshot(
     Vec<arkret_sdk::MlsEndpointIdentity>,
 ) {
     let alice = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
-        crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+        crate::test_support::account_actor("did:web:alice.example"),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
     let bob = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
-        crate::mls_api_helpers::principal_core_id(bob_actor).unwrap(),
+        crate::test_support::account_actor(bob_actor),
         arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
     )
     .unwrap();
@@ -1006,7 +1006,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
     let store = MemorySecureKeyStore::new();
     let secret = load_or_create_account_mls_secret(&store, &fixture::authority(actor)).unwrap();
     let identity = ArkretMlsIdentity::new_test_human_device(
-        crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+        crate::test_support::account_actor(actor),
         DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();
@@ -1125,4 +1125,3 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
 }
 
 // ── accepted MLS binding (`ak.component.mls.epoch.v1`) ─────────────────
-

@@ -279,9 +279,9 @@ fn welcome_recipient_endpoint(
         // `MlsWelcomeRecipientEndpoint` has no minimal-metadata pairwise
         // variant, so a delivery cannot be addressed to a pairwise endpoint.
         // Fail closed rather than mislabel the recipient as a device.
-        arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => Err(
-            "a Welcome delivery cannot address a minimal-metadata pairwise endpoint".to_owned(),
-        ),
+        arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
+            Err("a Welcome delivery cannot address a minimal-metadata pairwise endpoint".to_owned())
+        }
     }
 }
 
@@ -453,6 +453,7 @@ mod tests {
         arkret_sdk::KeyPackageClaimRecord {
             claim_id: "keypackage-test:Y2xhaW0tbm9uY2U".to_owned(),
             keypackage_ref: record.keypackage_ref.as_str().to_owned(),
+            actor_id: record.actor_id.clone(),
             principal_id,
             device_id: Some(device_id),
             agent_id: None,
@@ -539,7 +540,7 @@ mod tests {
     #[test]
     fn claimed_actor_uses_receipt_station_not_inviter_station() {
         let bob = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
-            crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap(),
+            crate::test_support::account_actor("did:web:bob.example"),
             arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000b1").unwrap(),
         )
         .unwrap();
@@ -657,7 +658,7 @@ mod tests {
         let alice = "did:web:alice.example";
         let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b1";
         let bob_identity = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
-            crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap(),
+            crate::test_support::account_actor("did:web:bob.example"),
             arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
         )
         .unwrap();

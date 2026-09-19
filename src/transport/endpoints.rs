@@ -148,7 +148,7 @@ impl MlsEndpoints<'_> {
         };
         if records
             .iter()
-            .any(|record| record.endpoint != first.endpoint)
+            .any(|record| record.endpoint != first.endpoint || record.actor_id != first.actor_id)
         {
             anyhow::bail!("KeyPackage upload batch mixes endpoint identities");
         }
@@ -157,6 +157,7 @@ impl MlsEndpoints<'_> {
             .map(crate::mls_api_helpers::mls_key_package_record_upload_entry)
             .collect::<anyhow::Result<Vec<_>>>()?;
         let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
+            actor_id: first.actor_id.clone(),
             principal_id,
             device_id: Some(device_id),
             pairwise_verification_method: None,
@@ -191,6 +192,7 @@ impl MlsEndpoints<'_> {
             _ => anyhow::bail!("pairwise KeyPackage publish requires a pairwise endpoint"),
         };
         let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
+            actor_id: record.actor_id.clone(),
             principal_id,
             device_id: None,
             pairwise_verification_method: Some(pairwise_verification_method),

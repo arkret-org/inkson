@@ -246,7 +246,7 @@ pub(crate) fn verify_cached_event(
                 group_id: binding.group_id,
                 epoch: binding.epoch,
                 group_state_ref: binding.group_state_ref,
-                signer_id: &selector.agent_id,
+                signer_actor_id: &selector.agent_actor_id,
                 signing_key: &key,
                 agent_key_authorize_event_id: &entry.key.authorization_ref,
             };

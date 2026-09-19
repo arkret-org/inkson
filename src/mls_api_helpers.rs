@@ -4,12 +4,13 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 pub(crate) fn ordinary_mls_identity(
-    principal_id: arkret_sdk::DidCoreId,
+    authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
 ) -> Result<arkret_sdk::ArkretMlsIdentity, String> {
+    let actor_id = arkret_sdk::ActorId::account(authority);
     #[cfg(test)]
     {
-        arkret_sdk::ArkretMlsIdentity::new_test_human_device(principal_id, device_id)
+        arkret_sdk::ArkretMlsIdentity::new_test_human_device(actor_id, device_id)
             .map_err(|error| error.to_string())
     }
     #[cfg(not(test))]
@@ -24,7 +25,7 @@ pub(crate) fn ordinary_mls_identity(
             .clone_raw_signing_key()
             .map_err(|error| error.to_string())?;
         arkret_sdk::ArkretMlsIdentity::new_human_device(
-            principal_id,
+            actor_id,
             device_id,
             arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(signing_key),
         )
@@ -209,6 +210,16 @@ pub(crate) fn sign_keypackage_revoke_batch(
 pub(crate) fn mls_key_package_record_upload_entry(
     record: &arkret_sdk::MlsKeyPackageRecord,
 ) -> anyhow::Result<arkret_sdk::KeyPackageUploadEntry> {
+    let keypackage = arkret_sdk::base64url_decode(record.keypackage.as_bytes())?;
+    let leaf = arkret_sdk::mls::author_leaf_from_key_package_bytes(&keypackage, 0)?;
+    let arkret_sdk::mls::AuthorLeafCredential::Basic { identity } = leaf.credential else {
+        anyhow::bail!("uploaded KeyPackage does not carry an Arkret BasicCredential");
+    };
+    let credential_actor = arkret_sdk::decode_mls_basic_credential_identity(&identity)?;
+    anyhow::ensure!(
+        credential_actor == record.actor_id,
+        "uploaded KeyPackage credential differs from record actor_id"
+    );
     arkret_sdk::mls_key_package_record_upload_entry(record).map_err(anyhow::Error::msg)
 }
 
@@ -255,9 +266,19 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
         _ => anyhow::bail!("KeyPackage claim has an incomplete or mixed endpoint identity"),
     };
     let keypackage = arkret_sdk::base64url_decode(claim.keypackage.as_bytes())?;
+    let leaf = arkret_sdk::mls::author_leaf_from_key_package_bytes(&keypackage, 0)?;
+    let arkret_sdk::mls::AuthorLeafCredential::Basic { identity } = leaf.credential else {
+        anyhow::bail!("claimed KeyPackage does not carry an Arkret BasicCredential");
+    };
+    let credential_actor = arkret_sdk::decode_mls_basic_credential_identity(&identity)?;
+    anyhow::ensure!(
+        credential_actor == claim.actor_id,
+        "claimed KeyPackage credential differs from claim actor_id"
+    );
     let keypackage_ref = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&keypackage))?;
     Ok(arkret_sdk::MlsKeyPackageRecord {
         keypackage_id: claim.keypackage_ref.as_str().to_owned(),
+        actor_id: claim.actor_id.clone(),
         endpoint,
         keypackage: claim.keypackage.clone(),
         keypackage_ref,
@@ -580,6 +601,7 @@ mod tests {
         arkret_sdk::KeyPackageClaimRecord {
             claim_id: "claim".to_owned(),
             keypackage_ref: record.keypackage_ref.as_str().to_owned(),
+            actor_id: record.actor_id.clone(),
             principal_id,
             device_id: Some(device_id),
             agent_id: None,
@@ -645,7 +667,7 @@ mod tests {
         let verification_method =
             arkret_sdk::DidUrl::new(material.signer.verification_method().to_owned()).unwrap();
         let identity = arkret_sdk::ArkretMlsIdentity::new_minimal_metadata_pairwise(
-            material.actor_id.clone(),
+            arkret_sdk::ActorId::service(material.actor_id.clone()),
             verification_method.clone(),
             arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(
                 ed25519_dalek::SigningKey::from_bytes(&material.signing_seed()),
@@ -655,6 +677,7 @@ mod tests {
         let record = identity.key_package_record().unwrap();
         let entry = mls_key_package_record_upload_entry(&record).unwrap();
         let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
+            actor_id: record.actor_id.clone(),
             principal_id: material.actor_id.clone(),
             device_id: None,
             pairwise_verification_method: Some(verification_method.clone()),
@@ -678,9 +701,14 @@ mod tests {
         let device =
             arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002".to_owned())
                 .unwrap();
-        let identity =
-            arkret_sdk::ArkretMlsIdentity::new_test_human_device(principal.clone(), device)
-                .unwrap();
+        let identity = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                principal.clone(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:station.example".to_owned()).unwrap(),
+            )),
+            device,
+        )
+        .unwrap();
         let record = identity.key_package_record().unwrap();
         let method = arkret_sdk::DidUrl::new("did:web:agent.example#runtime-key").unwrap();
         let mut claim = claim_for(&record, method.as_str());
@@ -701,6 +729,42 @@ mod tests {
                 verification_method: method,
                 agent_key_authorize_event_id: authorization_ref,
             }
+        );
+    }
+
+    #[test]
+    fn claim_actor_must_equal_the_keypackage_credential_actor() {
+        let principal = principal_core_id("did:web:bob.example").unwrap();
+        let identity = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                principal.clone(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:station-a.example".to_owned()).unwrap(),
+            )),
+            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000003".to_owned())
+                .unwrap(),
+        )
+        .unwrap();
+        let record = identity.key_package_record().unwrap();
+        let mut claim = claim_for(&record, "did:web:bob.example#device");
+        claim.actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            principal,
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station-b.example".to_owned()).unwrap(),
+        ));
+
+        let error = keypackage_claim_record_to_mls_record(&claim).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("credential differs from claim actor_id")
+        );
+
+        let mut mismatched_record = record;
+        mismatched_record.actor_id = claim.actor_id;
+        let error = mls_key_package_record_upload_entry(&mismatched_record).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("credential differs from record actor_id")
         );
     }
 }

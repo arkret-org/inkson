@@ -17,15 +17,14 @@
 //!
 //! The envelope uses ChaCha20-Poly1305 AEAD, which builds cleanly on wasm32:
 //!
-//! * **Key derivation:** HKDF-SHA256 with the per-envelope salt and the device
-//!   checkpoint secret as input keying material. The resulting 32-byte key
-//!   feeds the ChaCha20-Poly1305 AEAD directly.
-//! * **Symmetric layer:** ChaCha20-Poly1305 AEAD with a fresh 12-byte random
-//!   nonce per envelope, stored alongside the ciphertext.
-//! * **Tamper detection:** the AEAD's Poly1305 tag covers the ciphertext, and
-//!   `(magic, salt, epoch, recorded_at)` is bound into `additional_data`, so an
-//!   attacker who rewrites the recorded epoch to bypass the freshness check
-//!   trips AEAD verification instead of decrypting under a forged epoch.
+//! * **Key derivation:** HKDF-SHA256 with the per-envelope salt and the device checkpoint secret as
+//!   input keying material. The resulting 32-byte key feeds the ChaCha20-Poly1305 AEAD directly.
+//! * **Symmetric layer:** ChaCha20-Poly1305 AEAD with a fresh 12-byte random nonce per envelope,
+//!   stored alongside the ciphertext.
+//! * **Tamper detection:** the AEAD's Poly1305 tag covers the ciphertext, and `(magic, salt, epoch,
+//!   recorded_at)` is bound into `additional_data`, so an attacker who rewrites the recorded epoch
+//!   to bypass the freshness check trips AEAD verification instead of decrypting under a forged
+//!   epoch.
 
 use arkret_models_crypto::MlsGroupStateRecord;
 use arkret_wire::EventId;
@@ -394,7 +393,12 @@ mod tests {
             .carry_epoch_started_at(&first);
         assert!(advanced.epoch_started_at >= first.epoch_started_at);
         assert_eq!(advanced.app_messages_observed, 0);
-        assert_eq!(advanced.with_app_messages_observed(12).app_messages_observed, 12);
+        assert_eq!(
+            advanced
+                .with_app_messages_observed(12)
+                .app_messages_observed,
+            12
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -406,7 +410,7 @@ mod tests {
         use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
         let identity = ArkretMlsIdentity::new_test_human_device(
-            crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+            crate::test_support::account_actor("did:web:alice.example"),
             DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
         )
         .unwrap();

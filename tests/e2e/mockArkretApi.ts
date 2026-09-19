@@ -1581,7 +1581,7 @@ export async function mockArkretApi(
             {
               leaf_index: 0,
               principal_id: accountPrincipalCoreId,
-              credential_ref: currentDeviceId,
+              actor_id: accountActorId,
             },
           ],
         },

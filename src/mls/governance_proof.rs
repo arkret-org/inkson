@@ -100,9 +100,7 @@ pub(crate) fn current_key_access_revision(
     state_store
         .current_mls_group_for_scope(effective_scope)
         .map(|current| current.current_key_access_revision)
-        .ok_or_else(|| {
-            "MLS authoring requires the scope's current key-access revision".to_owned()
-        })
+        .ok_or_else(|| "MLS authoring requires the scope's current key-access revision".to_owned())
 }
 
 /// The verified authority a newly occupied MLS leaf binds to.
@@ -112,6 +110,7 @@ pub(crate) fn current_key_access_revision(
 /// accepted `ak.agent.key.authorize` reference.
 #[derive(Clone, Debug)]
 pub(crate) struct MlsLeafAuthorityHint {
+    pub(crate) actor_id: arkret_sdk::ActorId,
     pub(crate) endpoint: arkret_sdk::MlsEndpointIdentity,
     pub(crate) device_authorize_event_id: Option<arkret_sdk::EventId>,
 }
@@ -126,6 +125,7 @@ pub(crate) fn leaf_authority_hint_from_claim(
         .map_err(|error| format!("invalid claimed MLS endpoint: {error}"))?
         .endpoint;
     Ok(MlsLeafAuthorityHint {
+        actor_id: claim.actor_id.clone(),
         endpoint,
         device_authorize_event_id: claim.device_authorize_event_id.clone(),
     })
@@ -139,17 +139,14 @@ pub(crate) fn claimed_actor_id(
 ) -> Result<arkret_sdk::ActorId, String> {
     arkret_sdk::validate_target_claim_evidence(claim, receipt)
         .map_err(|error| format!("invalid target claim evidence: {error}"))?;
-    if claim.pairwise_verification_method.is_some() {
-        return Ok(arkret_sdk::ActorId::service(claim.principal_id.clone()));
+    let account = claim
+        .actor_id
+        .as_account_id()
+        .ok_or_else(|| "claimed KeyPackage actor_id is not an account".to_owned())?;
+    if account.station_id != receipt.destination_id {
+        return Err("claimed KeyPackage actor_id differs from receipt destination".to_owned());
     }
-    // Agent and human-device claims produce the same account ActorId. An Agent
-    // is a Station-carried account, and `validate_target_claim_evidence` above
-    // has already refused any Agent claim whose `agent_id` is not literally
-    // `principal_id`, so there is no second principal to project here.
-    Ok(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-        claim.principal_id.clone(),
-        receipt.destination_id.clone(),
-    )))
+    Ok(claim.actor_id.clone())
 }
 
 /// Install the complete verified leaf-binding map for the group's current
@@ -177,90 +174,47 @@ pub(crate) fn install_post_transition_leaf_bindings(
         let arkret_sdk::mls::AuthorLeafCredential::Basic { identity } = &leaf.credential else {
             return Err("accepted Arkret MLS leaf does not use BasicCredential".to_owned());
         };
-        let credential = std::str::from_utf8(identity)
-            .map_err(|_| "MLS leaf credential is not UTF-8".to_owned())?
-            .to_owned();
+        let credential_actor = arkret_sdk::decode_mls_basic_credential_identity(identity)
+            .map_err(|error| format!("invalid MLS leaf ActorId credential: {error}"))?;
         let signature_key: [u8; 32] = leaf
             .signature_key
             .as_slice()
             .try_into()
             .map_err(|_| "accepted MLS leaf signature key is not Ed25519".to_owned())?;
-        let multibase = arkret_sdk::ed25519_pubkey_to_did_key_multibase(&signature_key);
         let signature_key_b64 =
             arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(signature_key))
                 .map_err(|error| format!("invalid accepted MLS leaf key: {error}"))?;
 
         if let Some(binding) = retained.get(&leaf.leaf_index)
-            && binding.credential_ref.as_str() == credential
+            && binding.actor_id == credential_actor
             && binding.signature_key == signature_key_b64
         {
             installed.push((*binding).clone());
             continue;
         }
 
-        let (actor_id, endpoint, device_authorize_event_id) =
-            if arkret_sdk::DeviceId::new(credential.clone()).is_ok() {
-                let mut matches = authority_hints.iter().filter(|hint| {
-                    matches!(
-                        &hint.endpoint,
-                        arkret_sdk::MlsEndpointIdentity::HumanDevice { device_id, .. }
-                            if device_id.as_str() == credential
-                    )
-                });
-                let hint = matches
-                    .next()
-                    .ok_or_else(|| "new ordinary MLS leaf has no verified Add authority".to_owned())?;
-                if matches.next().is_some() {
-                    return Err("ordinary MLS leaf has duplicate authority hints".to_owned());
-                }
-                let authority = hint.device_authorize_event_id.clone().ok_or_else(|| {
+        let mut matches = authority_hints
+            .iter()
+            .filter(|hint| hint.actor_id == credential_actor);
+        let hint = matches
+            .next()
+            .ok_or_else(|| "new MLS leaf has no verified Add authority".to_owned())?;
+        if matches.next().is_some() {
+            return Err("new MLS leaf has duplicate authority hints".to_owned());
+        }
+        let device_authorize_event_id = match &hint.endpoint {
+            arkret_sdk::MlsEndpointIdentity::HumanDevice { .. } => {
+                Some(hint.device_authorize_event_id.clone().ok_or_else(|| {
                     "ordinary MLS leaf authority hint omits device authorization Event".to_owned()
-                })?;
-                let actor = hint_actor_id(hint)?;
-                (actor, hint.endpoint.clone(), Some(authority))
-            } else if credential.starts_with("ak:did_core:key:") {
-                // A minimal-metadata pairwise leaf names its own leaf key as its
-                // principal, so it carries its verification inline and needs no
-                // separate Add-authority Event.
-                if credential != format!("ak:did_core:key:{multibase}") {
-                    return Err(
-                        "minimal-metadata MLS credential does not name its exact leaf key"
-                            .to_owned(),
-                    );
-                }
-                let pairwise = arkret_sdk::DidCoreId::new(credential.clone())
-                    .map_err(|error| format!("invalid pairwise MLS principal: {error}"))?;
-                let method = arkret_sdk::DidUrl::new(format!("did:key:{multibase}#{multibase}"))
-                    .map_err(|error| format!("invalid pairwise MLS method: {error}"))?;
-                let endpoint = arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
-                    pairwise.clone(),
-                    method,
-                )
-                .map_err(|error| format!("invalid pairwise MLS endpoint: {error}"))?;
-                (arkret_sdk::ActorId::service(pairwise), endpoint, None)
-            } else {
-                let mut matches = authority_hints.iter().filter(|hint| {
-                    matches!(
-                        &hint.endpoint,
-                        arkret_sdk::MlsEndpointIdentity::AgentRuntime { agent_id, .. }
-                            if agent_id.as_str() == credential
-                    )
-                });
-                let hint = matches
-                    .next()
-                    .ok_or_else(|| "Agent MLS leaf has no verified authority hint".to_owned())?;
-                if matches.next().is_some() {
-                    return Err("Agent MLS leaf has duplicate authority hints".to_owned());
-                }
-                (hint_actor_id(hint)?, hint.endpoint.clone(), None)
-            };
+                })?)
+            }
+            _ => None,
+        };
 
         installed.push(arkret_sdk::MlsVerifiedLeafBinding {
             leaf_index: leaf.leaf_index,
-            actor_id,
-            endpoint,
-            credential_ref: arkret_sdk::NonEmptyString::new(credential)
-                .map_err(|error| format!("invalid MLS leaf credential ref: {error}"))?,
+            actor_id: credential_actor,
+            endpoint: hint.endpoint.clone(),
             signature_key: signature_key_b64,
             device_authorize_event_id,
         });
@@ -268,47 +222,6 @@ pub(crate) fn install_post_transition_leaf_bindings(
     group
         .install_verified_leaf_bindings(installed)
         .map_err(|error| format!("install accepted MLS leaf bindings: {error}"))
-}
-
-/// The complete member identity an authority hint stands for.
-///
-/// Every hint endpoint carries its signing principal; an account actor needs the
-/// Station half too, which the claim receipt already pinned when the hint was
-/// built, so this keeps the endpoint's own principal projection and lets the
-/// caller override it with [`claimed_actor_id`] where the full account is known.
-fn hint_actor_id(hint: &MlsLeafAuthorityHint) -> Result<arkret_sdk::ActorId, String> {
-    Ok(arkret_sdk::ActorId::service(
-        hint.endpoint.actor_id().clone(),
-    ))
-}
-
-/// Install the post-transition bindings using the exact accepted member
-/// identities the caller resolved, overriding the endpoint-only projection for
-/// every leaf whose complete `ActorId` is known.
-pub(crate) fn install_post_transition_leaf_bindings_with_actors(
-    group: &mut arkret_sdk::ArkretMlsGroup,
-    previous: &[arkret_sdk::MlsVerifiedLeafBinding],
-    authority_hints: &[MlsLeafAuthorityHint],
-    actors: &[(arkret_sdk::MlsEndpointIdentity, arkret_sdk::ActorId)],
-) -> Result<(), String> {
-    install_post_transition_leaf_bindings(group, previous, authority_hints)?;
-    if actors.is_empty() {
-        return Ok(());
-    }
-    let mut bindings = group
-        .verified_leaf_bindings()
-        .map_err(|error| format!("read installed MLS leaf bindings: {error}"))?;
-    for binding in &mut bindings {
-        if let Some((_, actor)) = actors
-            .iter()
-            .find(|(endpoint, _)| endpoint == &binding.endpoint)
-        {
-            binding.actor_id = actor.clone();
-        }
-    }
-    group
-        .install_verified_leaf_bindings(bindings)
-        .map_err(|error| format!("install accepted MLS member identities: {error}"))
 }
 
 #[cfg(test)]

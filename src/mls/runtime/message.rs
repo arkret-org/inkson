@@ -259,10 +259,12 @@ fn authenticate_received_identity_link(
     let identity_link: arkret_sdk::IdentityLink = serde_json::from_slice(plaintext).ok()?;
     identity_link.validate_minimal().ok()?;
     let canonical = arkret_sdk::canonical::canonical_json_bytes(&identity_link).ok()?;
+    let pairwise_actor = arkret_sdk::ActorId::service(identity_link.pairwise_actor_id.clone());
+    let pairwise_credential = arkret_sdk::mls_basic_credential_identity(&pairwise_actor).ok()?;
     let trusted_domain = state_store.load().server_trust_domain?;
     if canonical != plaintext
         || identity_link.status != arkret_sdk::IdentityLinkStatus::Active
-        || identity_link.pairwise_actor_id.as_str().as_bytes() != verified_sender_domain
+        || pairwise_credential.as_slice() != verified_sender_domain
         || identity_link.trust_domain.as_str() != trusted_domain
         || effective_scope.realm_id_opt()? != &identity_link.realm_id
         || identity_link.mls_group_id.as_deref() != Some(payload.group_id.as_str())
@@ -300,7 +302,7 @@ fn authenticate_received_identity_link(
             && matches!(
                 &leaf.credential,
                 arkret_sdk::mls::AuthorLeafCredential::Basic { identity }
-                    if identity.as_slice() == identity_link.pairwise_actor_id.as_str().as_bytes()
+                    if identity.as_slice() == pairwise_credential.as_slice()
             )
     });
     let leaf = matching.next()?;
@@ -590,18 +592,11 @@ pub fn ordinary_agent_mls_author_view(
         let arkret_sdk::mls::AuthorLeafCredential::Basic { identity } = &leaf.credential else {
             continue;
         };
-        let Ok(identity) = std::str::from_utf8(identity) else {
-            continue;
-        };
-        let Ok(signer_id) = arkret_sdk::Did::new(identity.to_owned()) else {
-            continue;
-        };
-        let Ok(signer_core) = arkret_sdk::project_did_to_core_id(&signer_id) else {
+        let Ok(signer_actor) = arkret_sdk::decode_mls_basic_credential_identity(identity) else {
             continue;
         };
         let Some(identity) = leaves.iter().find(|binding| {
-            binding.leaf_index == leaf.leaf_index
-                && binding.actor_id.signing_principal_id() == &signer_core
+            binding.leaf_index == leaf.leaf_index && binding.actor_id == signer_actor
         }) else {
             continue;
         };
