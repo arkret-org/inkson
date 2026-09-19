@@ -4,17 +4,21 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 
 fn key_backup_authorized_event_ref_for_device(
-    viewer: &arkret_sdk::AccountView,
+    devices: &[arkret_sdk::AccountDeviceSummary],
     device_id: &arkret_sdk::DeviceId,
 ) -> Option<arkret_sdk::EventId> {
-    viewer
-        .devices
+    devices
         .iter()
         .find(|device| {
             &device.device_id == device_id
                 && device.status == arkret_sdk::DeviceSummaryStatus::Active
         })
-        .and_then(|device| device.authorized_event_ref.clone())
+        .and_then(|device| {
+            device
+                .authorization_ref
+                .as_ref()
+                .map(|reference| reference.event_id.clone())
+        })
 }
 
 impl crate::transport::TransportClient {
@@ -106,9 +110,9 @@ impl crate::transport::TransportClient {
         }
         let http = self.sdk_http_client()?;
         let viewer = crate::transport::keys::list_devices(&http).await.ok();
-        let viewer_event_id = viewer
-            .as_ref()
-            .and_then(|viewer| key_backup_authorized_event_ref_for_device(viewer, &device_id));
+        let viewer_event_id = viewer.as_ref().and_then(|viewer| {
+            key_backup_authorized_event_ref_for_device(&viewer.devices, &device_id)
+        });
         let query_event_id = if viewer_event_id.is_none() {
             let account_id = payload
                 .actor_id
@@ -144,10 +148,8 @@ impl crate::transport::TransportClient {
         };
         payload.auth_data = arkret_sdk::KeyBackupAuthData {
             device_id,
-            verification_method: arkret_sdk::DidUrl::new(
-                signer.verification_method().to_owned(),
-            )
-            .map_err(anyhow::Error::msg)?,
+            verification_method: arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
+                .map_err(anyhow::Error::msg)?,
             signature_algorithm: arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
             signature: payload.auth_data.signature,
             device_authorize_event_id: event_id,
@@ -208,15 +210,15 @@ impl crate::transport::TransportClient {
     }
 
     /// 6.3 — open a recovery session bound to the active policy. `body` is the
-    /// `recovery-session.schema.json` `create_request`
-    /// (`principal_id`, `requesting_device_id`, `trust_domain`, optional
-    /// `expected_recovery_policy_ref`). The server derives the A/B model and
-    /// authoritative generation snapshot; the client cannot self-report them.
+    /// closed `recovery_session_create_request_body`: exact AccountId,
+    /// replacement device id/key, possession signature, trust domain and an
+    /// optional accepted-policy CAS hint. The server derives the identity model
+    /// and authoritative generation snapshot; the client cannot self-report
+    /// them.
     pub async fn create_recovery_session(
         &self,
         body: &arkret_models_crypto::RecoverySessionCreateRequestBody,
     ) -> anyhow::Result<arkret_sdk::RecoverySession> {
-        body.validate()?;
         self.sdk_http_client()?
             .post("/_arkret/root/identity/recovery-sessions", body)
             .await
@@ -267,5 +269,78 @@ impl crate::transport::TransportClient {
             .unlock_key_backup(&backup_id, &body)
             .await
             .map_err(anyhow::Error::from)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn backup_trust_anchor_uses_active_device_committed_authorization_event() {
+        let device_id =
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001").unwrap();
+        let event_id =
+            arkret_sdk::EventId::new("ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e")
+                .unwrap();
+        let active: arkret_sdk::AccountDeviceSummary = serde_json::from_value(json!({
+            "device_id": device_id,
+            "status": "active",
+            "verification_state": "verified",
+            "verification_source": "pairing_code",
+            "authorization_ref": {
+                "event_id": event_id,
+                "commit_id": arkret_sdk::RealmCommitId::from_digest([7; 32]),
+                "stream_ref": {
+                    "kind": "realm",
+                    "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+                },
+                "stream_position": 1
+            }
+        }))
+        .unwrap();
+        let expected = active.authorization_ref.as_ref().unwrap().event_id.clone();
+
+        assert_eq!(
+            key_backup_authorized_event_ref_for_device(&[active], &device_id),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn backup_trust_anchor_rejects_non_active_or_uncommitted_device() {
+        let device_id =
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001").unwrap();
+        let revoked: arkret_sdk::AccountDeviceSummary = serde_json::from_value(json!({
+            "device_id": device_id,
+            "status": "revoked",
+            "verification_state": "verified",
+            "verification_source": "recovery",
+            "authorization_ref": {
+                "event_id": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
+                "commit_id": arkret_sdk::RealmCommitId::from_digest([7; 32]),
+                "stream_ref": {
+                    "kind": "realm",
+                    "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+                },
+                "stream_position": 1
+            }
+        }))
+        .unwrap();
+        let active_without_commit: arkret_sdk::AccountDeviceSummary =
+            serde_json::from_value(json!({
+                "device_id": device_id,
+                "status": "active",
+                "verification_state": "unresolved"
+            }))
+            .unwrap();
+
+        assert!(key_backup_authorized_event_ref_for_device(&[revoked], &device_id).is_none());
+        assert!(
+            key_backup_authorized_event_ref_for_device(&[active_without_commit], &device_id)
+                .is_none()
+        );
     }
 }
