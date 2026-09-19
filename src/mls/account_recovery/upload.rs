@@ -71,7 +71,8 @@ fn active_recovery_backup_recipient(
         .policy
         .as_ref()
         .ok_or_else(|| anyhow!("active recovery policy omitted its signed key configuration"))?;
-    body.validate()?;
+    policy.validate_shape()?;
+    body.validate_shape()?;
     if body.policy_id != policy.policy_id
         || body.account_id != policy.account_id
         || body.version != policy.version
@@ -85,35 +86,44 @@ fn active_recovery_backup_recipient(
         .map_err(|_| anyhow!("recovery public key must contain exactly 32 bytes"))?;
     let multikey = arkret_crypto::identity_root::x25519_public_multikey(raw);
     let now = crate::clock::now_utc();
+    if body.not_before.is_some_and(|not_before| now < not_before)
+        || body.expires_at.is_some_and(|expires_at| now >= expires_at)
+    {
+        return Err(anyhow!(
+            "active recovery policy is outside its validity interval"
+        ));
+    }
     let matches = body
-        .active_hpke_recipients(now)
-        .into_iter()
+        .methods
+        .iter()
+        .filter_map(|method| match method {
+            arkret_sdk::RecoveryMethod::RecoveryUnlock { keys } => Some(keys.as_slice()),
+            _ => None,
+        })
+        .flatten()
         .filter(|entry| {
-            entry.public_key_multibase.as_str() == multikey
-                && entry.not_before <= now
+            let agreement = &entry.backup_hpke;
+            entry.not_before <= now
                 && now < entry.expires_at
                 && entry.revoked_at.is_none_or(|revoked_at| now < revoked_at)
-                && entry
+                && agreement.public_key_multibase == multikey
+                && agreement.not_before <= now
+                && now < agreement.expires_at
+                && agreement
+                    .revoked_at
+                    .is_none_or(|revoked_at| now < revoked_at)
+                && agreement
                     .hpke_suites
-                    .contains(&arkret_sdk::RecoveryHpkeSuite::X25519ChaCha20Poly1305)
+                    .contains(&arkret_sdk::RecoveryBackupHpkeSuite::X25519AeadChacha20Poly1305V1)
         })
         .collect::<Vec<_>>();
-    let [agreement] = matches.as_slice() else {
+    let [entry] = matches.as_slice() else {
         return Err(anyhow!(
             "recovery public key must uniquely match one active backup-HPKE agreement in the accepted policy"
         ));
     };
-    if !body
-        .signing_keys()
-        .into_iter()
-        .any(|entry| entry.backup_hpke.key_agreement_ref == agreement.key_agreement_ref)
-    {
-        return Err(anyhow!(
-            "active backup-HPKE agreement is not paired with a recovery proof key"
-        ));
-    }
     Ok((
-        agreement.key_agreement_ref.to_string(),
+        entry.backup_hpke.key_agreement_ref.to_string(),
         policy.policy_id.to_string(),
         policy.version,
     ))
@@ -594,4 +604,144 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
     }
 
     Ok((backup_id, serde_json::to_value(sent_body)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{TimeZone as _, Utc};
+
+    use super::active_recovery_backup_recipient;
+
+    fn policy_summary(
+        public_key: &[u8; 32],
+        signing_revoked: bool,
+        suite: arkret_sdk::RecoveryBackupHpkeSuite,
+    ) -> (arkret_sdk::RecoveryPolicySummary, arkret_sdk::AccountId) {
+        let account_id = arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkholder").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        );
+        let policy_id =
+            arkret_sdk::PolicyId::new("ak:policy:019b1000-0000-7000-8000-000000000001").unwrap();
+        let trust_domain =
+            arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example").unwrap();
+        let not_before = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        let expires_at = Utc.timestamp_opt(2_000_000_000, 0).unwrap();
+        let methods = vec![arkret_sdk::RecoveryMethod::RecoveryUnlock {
+            keys: vec![arkret_sdk::RecoveryKeyEntry {
+                verification_method: arkret_sdk::DidUrl::new(
+                    "did:webvh:z6mkholder#recovery-proof-1",
+                )
+                .unwrap(),
+                public_key_multibase: "z6MkgYhM6gL4zCv3DEv4bL3TqgH4A5yMSXPKfHKqzrMzqJK8".to_owned(),
+                signature_algorithm: arkret_sdk::RecoverySignatureAlgorithm::Ed25519,
+                not_before,
+                expires_at,
+                revoked_at: signing_revoked.then_some(not_before),
+                backup_hpke: arkret_sdk::RecoveryKeyAgreementEntry {
+                    key_agreement_ref: arkret_sdk::DidUrl::new(
+                        "did:webvh:z6mkholder#backup-hpke-1",
+                    )
+                    .unwrap(),
+                    key_agreement_algorithm: arkret_sdk::RecoveryKeyAgreementAlgorithm::X25519,
+                    public_key_multibase: arkret_crypto::identity_root::x25519_public_multikey(
+                        public_key,
+                    ),
+                    hpke_suites: vec![suite],
+                    r#use: arkret_sdk::RecoveryKeyAgreementUse::BackupHpke,
+                    not_before,
+                    expires_at,
+                    revoked_at: None,
+                },
+            }],
+        }];
+        let policy = arkret_sdk::RecoveryPolicy {
+            schema: arkret_sdk::SchemaId::RECOVERY_POLICY_V1.to_owned(),
+            policy_id: policy_id.clone(),
+            account_id: account_id.clone(),
+            version: 1,
+            supersedes_id: None,
+            trust_domain: trust_domain.clone(),
+            cooldown_seconds: None,
+            issued_at: not_before,
+            not_before: Some(not_before),
+            expires_at: Some(expires_at),
+            auth_data: arkret_sdk::RecoveryPolicyAuthData {
+                verification_method: arkret_sdk::DidUrl::new(
+                    "did:webvh:z6mkholder#recovery-proof-1",
+                )
+                .unwrap(),
+                signature_algorithm: arkret_sdk::RecoverySignatureAlgorithm::Ed25519,
+                signature: arkret_sdk::Base64UrlString::new("AA".to_owned()).unwrap(),
+            },
+            methods: methods.clone(),
+            extra: Default::default(),
+        };
+        (
+            arkret_sdk::RecoveryPolicySummary {
+                policy_id,
+                account_id: account_id.clone(),
+                version: 1,
+                acceptance_basis_ref: arkret_sdk::RealmCommitId::from_digest([3; 32]),
+                recovery_policy_ref: None,
+                trust_domain,
+                supersedes_id: None,
+                issued_at: not_before,
+                expires_at: Some(expires_at),
+                accepted_at: Some(not_before),
+                policy: Some(policy),
+                methods,
+            },
+            account_id,
+        )
+    }
+
+    #[test]
+    fn recovery_backup_recipient_uses_the_inline_policy_entry() {
+        let public_key = [7; 32];
+        let (policy, account_id) = policy_summary(
+            &public_key,
+            false,
+            arkret_sdk::RecoveryBackupHpkeSuite::X25519AeadChacha20Poly1305V1,
+        );
+
+        let (key_ref, policy_id, version) = active_recovery_backup_recipient(
+            &policy,
+            &account_id,
+            account_id.principal_id.as_str(),
+            &public_key,
+        )
+        .unwrap();
+
+        assert_eq!(key_ref, "did:webvh:z6mkholder#backup-hpke-1");
+        assert_eq!(policy_id, "ak:policy:019b1000-0000-7000-8000-000000000001");
+        assert_eq!(version, 1);
+    }
+
+    #[test]
+    fn recovery_backup_recipient_rejects_revoked_proof_key_or_wrong_suite() {
+        let public_key = [7; 32];
+        let cases = [
+            (
+                true,
+                arkret_sdk::RecoveryBackupHpkeSuite::X25519AeadChacha20Poly1305V1,
+            ),
+            (
+                false,
+                arkret_sdk::RecoveryBackupHpkeSuite::X25519AeadAes256GcmV1,
+            ),
+        ];
+
+        for (signing_revoked, suite) in cases {
+            let (policy, account_id) = policy_summary(&public_key, signing_revoked, suite);
+            let error = active_recovery_backup_recipient(
+                &policy,
+                &account_id,
+                account_id.principal_id.as_str(),
+                &public_key,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("uniquely match"));
+        }
+    }
 }
