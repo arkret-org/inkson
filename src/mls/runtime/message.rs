@@ -602,16 +602,15 @@ pub fn ordinary_agent_mls_author_view(
         };
         for entry in historical_keys
             .iter()
-            .filter(|entry| entry.key.actor == identity.actor_id)
+            .filter(|entry| entry.actor == identity.actor_id)
         {
-            let Ok(key) =
-                arkret_sdk::base64url_decode(entry.key.public_key_b64u.as_str().as_bytes())
+            let Ok(key) = arkret_sdk::base64url_decode(entry.public_key_b64u.as_str().as_bytes())
             else {
                 continue;
             };
             if key == leaf.signature_key {
                 leaf_authorization_refs
-                    .push((leaf.leaf_index, entry.key.authorization_ref.clone()));
+                    .push((leaf.leaf_index, entry.authorization_ref.event_id.clone()));
             }
         }
     }

@@ -264,16 +264,17 @@ impl AccountSyncStep {
     pub fn stream_heads(&self) -> BTreeMap<arkret_wire::CommitStreamRef, u64> {
         let mut heads: BTreeMap<arkret_wire::CommitStreamRef, u64> = BTreeMap::new();
         for entry in self.realm_entries.values() {
-            let Some(timeline) = entry.timeline.as_ref() else {
+            let Some(committed_events) = entry.committed_events.as_ref() else {
                 continue;
             };
-            for item in &timeline.commits {
+            for item in committed_events {
+                let commit = item.commit();
                 heads
-                    .entry(item.commit.stream_ref.clone())
+                    .entry(commit.stream_ref.clone())
                     .and_modify(|position| {
-                        *position = (*position).max(item.commit.stream_position);
+                        *position = (*position).max(commit.stream_position);
                     })
-                    .or_insert(item.commit.stream_position);
+                    .or_insert(commit.stream_position);
             }
         }
         heads

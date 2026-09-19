@@ -101,12 +101,21 @@ impl ClientProjector for RealmIngestProjector {
                 .filter_map(|event| accepted_direct_message_final(event, digest_suite, store))
                 .collect::<Vec<_>>()
         });
-        let changed = self.state_store.write(|store| {
-            crate::sync_engine::ingest_kanban_events(store, &self.realm_id, &batch)
-                + crate::sync_engine::ingest_message_events(store, &self.realm_id, &batch)
-                + crate::sync_engine::ingest_membership_events(store, &self.realm_id, &batch)
-                + crate::sync_engine::ingest_moderation_events(store, &batch)
-        });
+        let changed = self.state_store.write(|store| -> garth::Result<usize> {
+            crate::identity::agent_signer_evidence::index_verified_committed_events(store, &batch)
+                .map_err(garth::Error::Protocol)
+                .map(|indexed| {
+                    indexed
+                        + crate::sync_engine::ingest_kanban_events(store, &self.realm_id, &batch)
+                        + crate::sync_engine::ingest_message_events(store, &self.realm_id, &batch)
+                        + crate::sync_engine::ingest_membership_events(
+                            store,
+                            &self.realm_id,
+                            &batch,
+                        )
+                        + crate::sync_engine::ingest_moderation_events(store, &batch)
+                })
+        })?;
         // The local fold above is the durable gate. A preview is never
         // removed merely because a frame with the same message id was
         // observed on the wire.

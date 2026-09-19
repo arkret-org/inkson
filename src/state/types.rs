@@ -789,14 +789,32 @@ pub struct MlsCoverageStale {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct HistoricalAgentEventCandidate {
+    pub recipient_account_id: arkret_sdk::AccountId,
+    pub realm_id: arkret_sdk::RealmId,
+    pub target_ref: arkret_wire::CommittedEventRef,
+    pub accepted_event: arkret_sdk::Event,
+    pub agent_actor_id: arkret_sdk::ActorId,
+    pub agent_id: arkret_sdk::DidCoreId,
+    pub verification_method: arkret_sdk::DidUrl,
+    pub receiver_id: arkret_sdk::DidCoreId,
+    pub indexed_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CachedHistoricalAgentSignerKey {
     pub recipient_account_id: arkret_sdk::AccountId,
     pub realm_id: arkret_sdk::RealmId,
-    pub event_id: arkret_sdk::EventId,
+    pub target_ref: arkret_wire::CommittedEventRef,
     pub receiver_id: arkret_sdk::DidCoreId,
     pub accepted_at: chrono::DateTime<chrono::Utc>,
-    pub producer_signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
-    pub key: arkret_sdk::StationSigningKey,
+    pub actor: arkret_sdk::ActorId,
+    pub verification_method: arkret_sdk::DidUrl,
+    pub public_key_b64u: arkret_sdk::Base64UrlString,
+    pub authorization_ref: arkret_wire::CommittedEventRef,
+    pub revision: arkret_wire::CurrentRevision,
+    pub governance_generation: u64,
     pub cached_at_unix_ms: u64,
 }
 
@@ -1080,10 +1098,20 @@ pub struct ClientLocalState {
     #[serde(default, rename = "mls_historical_snapshots")]
     pub mls_historical_checkpoints:
         BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
-    /// Bounded Station signing results for exact historical Event admissions.
-    /// Current authority is queried per verification and is never persisted here.
+    /// Exact historical Agent Events observed through a verified committed-row
+    /// carrier. A bare Event found in a current projection never enters this
+    /// index.
     #[serde(default)]
-    pub historical_agent_signer_keys: BTreeMap<String, CachedHistoricalAgentSignerKey>,
+    pub historical_agent_event_candidates: BTreeMap<String, HistoricalAgentEventCandidate>,
+    /// Bounded self-query results keyed by the complete historical target
+    /// coordinate. The returned authorization coordinate is retained
+    /// independently and is never substituted for the target.
+    ///
+    /// The v2 at-rest name intentionally does not decode the former bare
+    /// EventId cache. Old entries are ignored and re-fetched only after an
+    /// exact committed row has rebuilt the candidate index.
+    #[serde(default)]
+    pub historical_agent_signer_keys_v2: BTreeMap<String, CachedHistoricalAgentSignerKey>,
     /// `encryption-and-audit.md` §2.4.1 `epoch_update_required` — effective
     /// scopes whose last E2EE application ordinary Event was refused with
     /// `mls_governance_binding_stale`, keyed by
@@ -1474,7 +1502,8 @@ impl Default for ClientLocalState {
             mls_group_state_refs: BTreeMap::new(),
             mls_historical_group_state_refs: BTreeMap::new(),
             mls_historical_checkpoints: BTreeMap::new(),
-            historical_agent_signer_keys: BTreeMap::new(),
+            historical_agent_event_candidates: BTreeMap::new(),
+            historical_agent_signer_keys_v2: BTreeMap::new(),
             mls_coverage_stale: BTreeMap::new(),
             direct_conversation_peers: BTreeMap::new(),
             direct_message_contexts: BTreeMap::new(),

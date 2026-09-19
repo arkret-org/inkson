@@ -697,7 +697,7 @@ impl InksonAccountProjector {
                     let result = (|| -> anyhow::Result<_> {
                         let staged =
                             store.prepare_account_demand_frame(current_stage.filtered_frame())?;
-                        let effects = apply_account_frame_payload(store, &response, &self.ctx);
+                        let effects = apply_account_frame_payload(store, &response, &self.ctx)?;
                         if changed_device_accounts(&response.device_lists())
                             .contains(&local_account)
                         {
@@ -790,23 +790,26 @@ impl InksonAccountProjector {
             tracing::debug!(?error, "account post-commit deferred MLS outbound drain");
         }
 
+        let agent_evidence_changed =
+            crate::identity::agent_signer_evidence::prefetch_durable_historical_agent_keys(
+                http,
+                &self.ctx.state_store,
+            )
+            .await;
+
         // A bounded account-sync poll is also the retry clock for durable
         // outbound work. Its empty business delta must not suppress a due
         // RetryAt item; projection work below still remains delta-driven.
         if response.is_empty() {
+            if agent_evidence_changed {
+                refresh_projection_events_from_sync_response(response, &self.ctx);
+            }
             return Ok(());
         }
         let api = TransportClient::from_http(
             http.clone(),
             crate::transport::RequestContext::new(self.ctx.token.get()),
         );
-        let agent_evidence_changed =
-            crate::identity::agent_signer_evidence::prefetch_from_realm_projections(
-                http,
-                &response.step.realm_projections,
-                &self.ctx.state_store,
-            )
-            .await;
         let state_store_for_profiles = self.ctx.state_store.clone();
         let device_keys_changed = prefetch_persistent_event_sender_keys(
             &api,
@@ -3105,8 +3108,23 @@ fn apply_account_frame_payload(
     store: &mut LocalStateStore,
     response: &AccountFrameStep,
     ctx: &SyncEngineContext,
-) -> (Option<String>, bool) {
+) -> anyhow::Result<(Option<String>, bool)> {
     let mut realm_projection_changed = false;
+    // Historical signer targets are admitted only from the typed committed
+    // rows of the verified account frame. The current projection below is a
+    // display/reducer input and is never recursively searched for Events.
+    for (realm_id, entry) in &response.step.realm_entries {
+        let Some(committed_events) = entry.committed_events.as_ref() else {
+            continue;
+        };
+        for view in committed_events {
+            realm_projection_changed |=
+                crate::identity::agent_signer_evidence::index_verified_committed_event(
+                    store, realm_id, view,
+                )
+                .map_err(anyhow::Error::msg)?;
+        }
+    }
     // Apply explicit Realm deltas; baseline completion is reconciled separately
     // by the demand-sync reducer.
     for (id, body) in &response.step.realm_projections {
@@ -3152,5 +3170,5 @@ fn apply_account_frame_payload(
         &arkret_sdk::ActorId::account(ctx.account.authority.clone()),
     );
 
-    (synced_theme, realm_projection_changed)
+    Ok((synced_theme, realm_projection_changed))
 }
