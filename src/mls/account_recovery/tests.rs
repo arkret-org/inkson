@@ -37,10 +37,9 @@ fn authority() -> arkret_sdk::AccountId {
     crate::test_support::authority_at_station(ACTOR, crate::test_support::SERVER_STATION_ID)
 }
 
-fn backup_frontier_ref() -> arkret_sdk::KeyBackupFrontierRef {
-    arkret_sdk::KeyBackupFrontierRef {
-        frontier_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
-        seal_ref: Some(format!("ak:seal:sha256:{}", "b".repeat(64))),
+fn backup_source_commit_ref() -> arkret_sdk::KeyBackupSourceCommitRef {
+    arkret_sdk::KeyBackupSourceCommitRef {
+        realm_commit_id: arkret_sdk::RealmCommitId::from_digest([7; 32]),
         device_generation_ref: 1,
     }
 }
@@ -99,6 +98,7 @@ fn wrap() -> Value {
             DEVICE,
             &kek,
             ACCOUNT_SECRET,
+            None,
         )
         .unwrap(),
     ))
@@ -285,6 +285,7 @@ fn round_trips_even_when_random_bytes_would_need_url_safe_alphabet() {
             DEVICE,
             &kek,
             &secret,
+            None,
         )
         .unwrap();
         let body = key_backup_wire(&body);
@@ -424,7 +425,7 @@ fn verify_series_chain_rejects_missing_intermediate() {
 fn verify_series_chain_accepts_well_formed_successor() {
     let genesis = wrap();
     let predecessor: arkret_sdk::KeyBackup = serde_json::from_value(genesis.clone()).unwrap();
-    let frontier = backup_frontier_ref();
+    let source_commit_ref = backup_source_commit_ref();
     let successor = build_mls_account_secret_backup_successor_body_with_kek_and_version(
         "ak:backup:01964137-0000-7000-8000-0000000000d2",
         &predecessor,
@@ -432,14 +433,25 @@ fn verify_series_chain_accepts_well_formed_successor() {
         &derive_vault_kek(PASSPHRASE).unwrap(),
         ACCOUNT_SECRET,
         2,
-        &frontier.frontier_digest,
-        frontier.device_generation_ref,
+        Some(source_commit_ref.clone()),
     )
     .expect("SDK successor builder must seal the final series identity");
     let successor = key_backup_wire(&successor);
 
     verify_series_chain(&successor, &[genesis, successor.clone()])
         .expect("an SDK-built successor must verify");
+    let successor_envelope: arkret_sdk::KeyBackup =
+        serde_json::from_value(successor.clone()).unwrap();
+    assert_eq!(successor_envelope.series_seq, predecessor.series_seq + 1);
+    assert_eq!(
+        successor_envelope.supersedes_id.as_ref(),
+        Some(&predecessor.backup_id)
+    );
+    assert!(successor_envelope.supersedes_digest.is_some());
+    assert_eq!(
+        successor_envelope.source_commit_ref.as_ref(),
+        Some(&source_commit_ref)
+    );
     assert_eq!(
         decrypt_mls_account_secret_backup(PASSPHRASE, &successor).unwrap(),
         ACCOUNT_SECRET.as_bytes(),
@@ -456,17 +468,17 @@ fn private_plaintext_successor_is_sealed_with_final_series_metadata() {
         DEVICE,
         &kek,
         br#"{"realm":{"strand":{"title":"first"}}}"#,
+        None,
     )
     .unwrap();
-    let frontier = backup_frontier_ref();
+    let source_commit_ref = backup_source_commit_ref();
     let successor = super::backup_body::build_mls_private_plaintext_backup_successor_body_with_kek(
         "ak:backup:01964137-0000-7000-8000-00000000caf1",
         &genesis,
         DEVICE,
         &kek,
         br#"{"realm":{"strand":{"title":"successor"}}}"#,
-        &frontier.frontier_digest,
-        frontier.device_generation_ref,
+        Some(source_commit_ref),
     )
     .unwrap();
     let successor_wire = key_backup_wire(&successor);
@@ -567,7 +579,7 @@ fn recovery_public_key_successor_is_sealed_with_final_series_metadata() {
         2,
         recovery_policy_ref,
         Some(&genesis_wire),
-        Some(backup_frontier_ref()),
+        Some(backup_source_commit_ref()),
     )
     .unwrap();
 
@@ -840,6 +852,7 @@ fn wrap_sidecar() -> (Vec<u8>, Value) {
         DEVICE,
         &kek,
         &json,
+        None,
     )
     .unwrap();
     (json, sign_wire_envelope(key_backup_wire(&body)))

@@ -25,26 +25,39 @@ fn passphrase_is_blank(passphrase: &[u8]) -> bool {
             .unwrap_or(false)
 }
 
-async fn current_backup_frontier_ref(
+fn key_backup_source_commit_ref(
+    realm_commit_id: arkret_sdk::RealmCommitId,
+    device_generation_ref: u64,
+) -> Result<arkret_sdk::KeyBackupSourceCommitRef> {
+    if device_generation_ref == 0 {
+        return Err(anyhow!(
+            "key backup source_commit_ref device generation must be positive"
+        ));
+    }
+    Ok(arkret_sdk::KeyBackupSourceCommitRef {
+        realm_commit_id,
+        device_generation_ref,
+    })
+}
+
+async fn current_backup_source_commit_ref(
     api: &crate::transport::TransportClient,
     control_realm: &arkret_sdk::RealmId,
     authority: &arkret_sdk::AccountId,
     device_id: &str,
-) -> Result<arkret_sdk::KeyBackupFrontierRef> {
+) -> Result<arkret_sdk::KeyBackupSourceCommitRef> {
     let http = api.sdk_http_client()?;
     let trust_anchor = super::rotation_transaction::current_controller_backup_trust_anchor(
         &http, authority, device_id,
     )
     .await?;
-    let seal = api
+    let realm_commit_id = api
         .event_submitter()?
-        .seals_frontier_realm_head(control_realm.as_str())
+        .current_stream_head_for(&arkret_sdk::ScopeRef::Realm {
+            realm_id: control_realm.clone(),
+        })
         .await?;
-    Ok(arkret_sdk::KeyBackupFrontierRef {
-        frontier_digest: seal.control_event_set_root,
-        seal_ref: Some(seal.id.to_string()),
-        device_generation_ref: trust_anchor.generation_ref,
-    })
+    key_backup_source_commit_ref(realm_commit_id, trust_anchor.generation_ref)
 }
 
 fn typed_backup_predecessor(previous: &Value) -> Result<arkret_sdk::KeyBackup> {
@@ -299,8 +312,8 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let account_body = if let Some(previous) = previous_account_backup.as_ref() {
         let predecessor = typed_backup_predecessor(previous)?;
-        let frontier =
-            current_backup_frontier_ref(api, control_realm, authority, device_id).await?;
+        let source_commit_ref =
+            current_backup_source_commit_ref(api, control_realm, authority, device_id).await?;
         build_mls_account_secret_backup_successor_body_with_kek_and_version(
             account_backup_id.as_str(),
             &predecessor,
@@ -308,8 +321,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
             &kek,
             &stored.secret,
             stored.version,
-            &frontier.frontier_digest,
-            frontier.device_generation_ref,
+            Some(source_commit_ref),
         )?
     } else {
         build_mls_account_secret_backup_body_with_kek_and_version(
@@ -319,6 +331,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
             &kek,
             &stored.secret,
             stored.version,
+            Some(current_backup_source_commit_ref(api, control_realm, authority, device_id).await?),
         )?
     };
     let account_series_id = account_body.series_id.to_string();
@@ -419,11 +432,8 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     let account_backup_id = fresh_backup_id().map_err(anyhow::Error::from)?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let frontier_ref = if previous_account_backup.is_some() {
-        Some(current_backup_frontier_ref(api, control_realm, authority, device_id).await?)
-    } else {
-        None
-    };
+    let source_commit_ref =
+        Some(current_backup_source_commit_ref(api, control_realm, authority, device_id).await?);
     let account_body = build_mls_account_secret_recovery_public_key_backup_in_series(
         account_backup_id.as_str(),
         authority,
@@ -434,7 +444,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         stored.version,
         recovery_policy_ref,
         previous_account_backup.as_ref(),
-        frontier_ref,
+        source_commit_ref,
     )?;
     let account_series_id = account_body.series_id.to_string();
     api.put_key_backup(account_backup_id.as_str(), account_body, &signer)
@@ -565,16 +575,15 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let body = if let Some(previous) = previous_backup.as_ref() {
         let predecessor = typed_backup_predecessor(previous)?;
-        let frontier =
-            current_backup_frontier_ref(api, control_realm, authority, device_id).await?;
+        let source_commit_ref =
+            current_backup_source_commit_ref(api, control_realm, authority, device_id).await?;
         build_mls_private_plaintext_backup_successor_body_with_kek(
             backup_id.as_str(),
             &predecessor,
             device_id,
             &kek,
             sidecar_json,
-            &frontier.frontier_digest,
-            frontier.device_generation_ref,
+            Some(source_commit_ref),
         )?
     } else {
         build_mls_private_plaintext_backup_body_with_kek(
@@ -583,6 +592,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
             device_id,
             &kek,
             sidecar_json,
+            Some(current_backup_source_commit_ref(api, control_realm, authority, device_id).await?),
         )?
     };
     let (_, sent_body) = api
@@ -611,6 +621,42 @@ mod tests {
     use chrono::{TimeZone as _, Utc};
 
     use super::active_recovery_backup_recipient;
+
+    #[test]
+    fn source_checkpoint_has_one_closed_wire_shape() {
+        let source =
+            super::key_backup_source_commit_ref(arkret_sdk::RealmCommitId::from_digest([7; 32]), 4)
+                .unwrap();
+        let wire = serde_json::json!({"source_commit_ref": source});
+        assert!(wire.get("source_ref").is_none());
+        assert_eq!(wire["source_commit_ref"]["device_generation_ref"], 4);
+        assert!(
+            wire["source_commit_ref"]
+                .get("committed_event_ref")
+                .is_none()
+        );
+
+        assert!(
+            serde_json::from_value::<arkret_sdk::KeyBackupSourceCommitRef>(serde_json::json!({
+                "realm_commit_id": arkret_sdk::RealmCommitId::from_digest([7; 32]),
+                "device_generation_ref": "4"
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<arkret_sdk::KeyBackupSourceCommitRef>(serde_json::json!({
+                "committed_event_ref": {
+                    "event_id": "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD"
+                },
+                "device_generation_ref": 4
+            }))
+            .is_err()
+        );
+        assert!(
+            super::key_backup_source_commit_ref(arkret_sdk::RealmCommitId::from_digest([7; 32]), 0)
+                .is_err()
+        );
+    }
 
     fn policy_summary(
         public_key: &[u8; 32],

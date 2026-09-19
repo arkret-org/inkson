@@ -43,6 +43,7 @@ fn build_recovery_vault_backup_body(
             secret_id: Some("inkson_recovery_vault_payload".to_owned()),
             secret_version: None,
         },
+        None,
     )
 }
 
@@ -149,6 +150,10 @@ fn successor_binds_the_current_device_without_breaking_the_series() {
     let root = test_root();
     let predecessor =
         build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"first").unwrap();
+    let source_commit_ref = arkret_sdk::KeyBackupSourceCommitRef {
+        realm_commit_id: arkret_sdk::RealmCommitId::from_digest([7; 32]),
+        device_generation_ref: 2,
+    };
     let successor = build_passphrase_kdf_backup_successor_body(
         "ak:backup:01964137-0000-7000-8000-00000000bef0",
         &predecessor,
@@ -160,8 +165,7 @@ fn successor_binds_the_current_device_without_breaking_the_series() {
             secret_id: Some("inkson_recovery_vault_payload".to_owned()),
             secret_version: None,
         },
-        &arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap(),
-        2,
+        Some(source_commit_ref.clone()),
     )
     .unwrap();
 
@@ -174,6 +178,11 @@ fn successor_binds_the_current_device_without_breaking_the_series() {
     assert_eq!(
         successor.supersedes_id.as_ref(),
         Some(&predecessor.backup_id)
+    );
+    assert!(successor.supersedes_digest.is_some());
+    assert_eq!(
+        successor.source_commit_ref.as_ref(),
+        Some(&source_commit_ref)
     );
     let opened =
         open_passphrase_kdf_backup_body(b"correct horse battery staple", &wire(&successor))

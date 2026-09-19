@@ -1,10 +1,10 @@
 //! Build, decrypt, and classify the on-wire account-recovery backup envelopes.
 
+use crate::mls::runtime::mls_account_secret_backup_version;
 use anyhow::{Result, anyhow};
 use arkret_models_crypto::{KeyBackup, SecretStorageContentIndex, SecretStorageItemKind};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use crate::mls::runtime::mls_account_secret_backup_version;
 use serde_json::Value;
 
 use crate::key_backup::{
@@ -66,6 +66,7 @@ pub fn build_mls_account_secret_backup_body_with_kek(
     device_id: &str,
     kek: &VaultKek,
     account_secret: &str,
+    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
     build_mls_account_secret_backup_body_with_kek_and_version(
         backup_id,
@@ -74,6 +75,7 @@ pub fn build_mls_account_secret_backup_body_with_kek(
         kek,
         account_secret,
         crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION,
+        source_commit_ref,
     )
 }
 
@@ -86,6 +88,7 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
     kek: &VaultKek,
     account_secret: &str,
     account_secret_version: u32,
+    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
     // Spec §7.5: item identifiers are set before sealing so the SDK-derived
     // AAD binds the real `mls_account_secret` item. Post-seal relabeling would
@@ -103,11 +106,12 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
             secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
             secret_version: Some(account_secret_version),
         },
+        source_commit_ref,
     )
 }
 
 /// Build the next passphrase-recoverable account-secret envelope after the
-/// predecessor series and current PCR frontier have been resolved.
+/// predecessor series and optional accepted source checkpoint have been resolved.
 #[allow(clippy::too_many_arguments)]
 pub fn build_mls_account_secret_backup_successor_body_with_kek_and_version(
     backup_id: &str,
@@ -116,8 +120,7 @@ pub fn build_mls_account_secret_backup_successor_body_with_kek_and_version(
     kek: &VaultKek,
     account_secret: &str,
     account_secret_version: u32,
-    frontier_digest: &arkret_sdk::Hash,
-    device_generation_ref: u64,
+    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
     crate::key_backup::build_passphrase_kdf_backup_successor_body(
         backup_id,
@@ -130,8 +133,7 @@ pub fn build_mls_account_secret_backup_successor_body_with_kek_and_version(
             secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
             secret_version: Some(account_secret_version),
         },
-        frontier_digest,
-        device_generation_ref,
+        source_commit_ref,
     )
 }
 
@@ -163,6 +165,7 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
     device_id: &str,
     kek: &VaultKek,
     sidecar_json: &[u8],
+    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
     build_passphrase_kdf_backup_body(
         backup_id,
@@ -177,19 +180,19 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
             secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
             secret_version: None,
         },
+        source_commit_ref,
     )
 }
 
-/// Build the next private-plaintext sidecar envelope with its series and PCR
-/// frontier identity fixed before the SDK seals the plaintext keybag.
+/// Build the next private-plaintext sidecar envelope with its predecessor link
+/// and optional accepted source checkpoint fixed before sealing.
 pub fn build_mls_private_plaintext_backup_successor_body_with_kek(
     backup_id: &str,
     predecessor: &KeyBackup,
     device_id: &str,
     kek: &VaultKek,
     sidecar_json: &[u8],
-    frontier_digest: &arkret_sdk::Hash,
-    device_generation_ref: u64,
+    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
     crate::key_backup::build_passphrase_kdf_backup_successor_body(
         backup_id,
@@ -202,8 +205,7 @@ pub fn build_mls_private_plaintext_backup_successor_body_with_kek(
             secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
             secret_version: None,
         },
-        frontier_digest,
-        device_generation_ref,
+        source_commit_ref,
     )
 }
 
@@ -254,7 +256,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
     account_secret_version: u32,
     recovery_policy_ref: (&str, u64),
     previous_series_tail: Option<&Value>,
-    frontier_ref: Option<arkret_sdk::KeyBackupFrontierRef>,
+    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
     crate::key_backup::build_recovery_public_key_backup_body_in_series(
         backup_id,
@@ -273,7 +275,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
         Some(recovery_policy_ref),
         None,
         previous_series_tail,
-        frontier_ref,
+        source_commit_ref,
     )
 }
 

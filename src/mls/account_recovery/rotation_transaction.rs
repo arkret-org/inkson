@@ -76,6 +76,7 @@ pub(crate) fn prepare_rotation_backup_material(
         &kek,
         &rotation.new_secret,
         rotation.new_version,
+        None,
     )?;
     let account_body = sign_rotation_key_backup(account_body, signer, trust_anchor)?;
     let secret_storage = prepare_class(

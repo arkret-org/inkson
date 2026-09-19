@@ -58,6 +58,7 @@ pub fn build_passphrase_kdf_backup_body(
     class: BackupKind,
     subdomain: &str,
     item: &SecretStorageContentIndex,
+    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
     let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
         .map_err(|error| anyhow::anyhow!("backup_id: {error}"))?;
@@ -72,6 +73,7 @@ pub fn build_passphrase_kdf_backup_body(
         subdomain,
         root,
         vec![plaintext_item(item, secret)?],
+        source_commit_ref,
     )
     .map_err(|error| anyhow::anyhow!("build key backup: {error}"))?;
     envelope
@@ -92,8 +94,7 @@ pub fn build_passphrase_kdf_backup_successor_body(
     root: &VaultKek,
     secret: &[u8],
     item: &SecretStorageContentIndex,
-    frontier_digest: &arkret_sdk::Hash,
-    device_generation_ref: u64,
+    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
     let envelope = arkret_crypto::backup::build_key_backup_successor_envelope(
         arkret_sdk::BackupId::new(backup_id.to_owned())?,
@@ -102,8 +103,7 @@ pub fn build_passphrase_kdf_backup_successor_body(
         "kb_1",
         root,
         vec![plaintext_item(item, secret)?],
-        frontier_digest.as_str(),
-        device_generation_ref,
+        source_commit_ref,
     )
     .map_err(|error| anyhow::anyhow!("build key backup successor: {error}"))?;
     envelope
@@ -168,7 +168,7 @@ pub fn build_recovery_public_key_backup_body_in_series(
     recovery_policy_ref: Option<(&str, u64)>,
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
-    frontier_ref: Option<arkret_sdk::KeyBackupFrontierRef>,
+    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
     build_recovery_public_key_backup_body_for_items_in_series(
         backup_id,
@@ -182,7 +182,7 @@ pub fn build_recovery_public_key_backup_body_in_series(
         recovery_policy_ref,
         series_id,
         previous_series_tail,
-        frontier_ref,
+        source_commit_ref,
     )
 }
 
@@ -201,7 +201,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
     recovery_policy_ref: Option<(&str, u64)>,
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
-    frontier_ref: Option<arkret_sdk::KeyBackupFrontierRef>,
+    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
     if plaintext_items.is_empty() {
         anyhow::bail!("recovery_public_key backup requires at least one content item");
@@ -225,7 +225,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
         recovery_policy_ref,
         series_id,
         previous_series_tail,
-        frontier_ref,
+        source_commit_ref,
     )
 }
 
@@ -242,7 +242,7 @@ pub fn build_recovery_public_key_history_backup_body_in_series(
     recovery_policy_ref: (&str, u64),
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
-    frontier_ref: Option<arkret_sdk::KeyBackupFrontierRef>,
+    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
     let KeyBackupKeybag::MlsHistory {
         effective_scope,
@@ -275,7 +275,7 @@ pub fn build_recovery_public_key_history_backup_body_in_series(
         Some(recovery_policy_ref),
         series_id,
         previous_series_tail,
-        frontier_ref,
+        source_commit_ref,
     )
 }
 
@@ -293,7 +293,7 @@ fn build_recovery_public_key_backup_body_for_keybag_in_series(
     recovery_policy_ref: Option<(&str, u64)>,
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
-    frontier_ref: Option<arkret_sdk::KeyBackupFrontierRef>,
+    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
     if keybag.backup_kind() != class || keybag.item_count() == 0 {
         anyhow::bail!("key backup keybag does not match its envelope class");
@@ -344,7 +344,7 @@ fn build_recovery_public_key_backup_body_for_keybag_in_series(
         series_seq: 0,
         supersedes_id: None,
         supersedes_digest: None,
-        frontier_ref,
+        source_commit_ref,
         recovery_policy_ref: recovery_policy_ref
             .map(|(policy_id, policy_version)| {
                 arkret_sdk::PolicyId::new(policy_id.to_owned()).map(|policy_id| {
@@ -358,9 +358,6 @@ fn build_recovery_public_key_backup_body_for_keybag_in_series(
         extra: Default::default(),
     };
     if let Some(previous) = previous_series_tail {
-        if body.frontier_ref.is_none() {
-            anyhow::bail!("key backup successor requires frontier_ref before encryption");
-        }
         let predecessor = serde_json::from_value::<KeyBackup>(previous.clone())
             .map_err(|error| anyhow::anyhow!("typed key backup predecessor: {error}"))?;
         body.series_id = predecessor.series_id;
