@@ -93,14 +93,27 @@ pub(crate) async fn current_requester_device_authorize_event_id(
     let account = crate::transport::keys::list_devices(http)
         .await
         .map_err(|error| format!("load current device authorization: {error}"))?;
-    account
-        .devices
-        .into_iter()
-        .find(|device| device.device_id == device_id)
-        .and_then(|device| device.authorized_event_ref)
-        .ok_or_else(|| {
+    requester_device_authorize_event_id(&account.devices, &device_id).ok_or_else(|| {
             "current requester device has no accepted device.authorize Event; Welcome authoring is fail-closed"
                 .to_owned()
+        })
+}
+
+fn requester_device_authorize_event_id(
+    devices: &[arkret_sdk::AccountDeviceSummary],
+    device_id: &arkret_sdk::DeviceId,
+) -> Option<arkret_sdk::EventId> {
+    devices
+        .iter()
+        .find(|device| {
+            &device.device_id == device_id
+                && device.status == arkret_sdk::DeviceSummaryStatus::Active
+        })
+        .and_then(|device| {
+            device
+                .authorization_ref
+                .as_ref()
+                .map(|reference| reference.event_id.clone())
         })
 }
 
@@ -438,6 +451,77 @@ mod tests {
     use crate::state::isolated_store_for_tests;
 
     const REALM: &str = "ak:realm:Aa8_CTduEn4HY_7QtwQ1Ct3QH2pg-9mfHGxJfGOYYHxx";
+
+    fn requester_device_summary(
+        device_id: &arkret_sdk::DeviceId,
+        status: &str,
+        authorization_ref: Option<serde_json::Value>,
+    ) -> arkret_sdk::AccountDeviceSummary {
+        let mut value = serde_json::json!({
+            "device_id": device_id,
+            "status": status,
+            "verification_state": if authorization_ref.is_some() { "verified" } else { "unresolved" },
+            "verification_source": if authorization_ref.is_some() {
+                serde_json::Value::String("pairing_code".to_owned())
+            } else {
+                serde_json::Value::Null
+            }
+        });
+        if let Some(authorization_ref) = authorization_ref {
+            value["authorization_ref"] = authorization_ref;
+        }
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn welcome_requester_uses_active_device_committed_authorization_event() {
+        let device_id =
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001").unwrap();
+        let event_id =
+            arkret_sdk::EventId::new("ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e")
+                .unwrap();
+        let active = requester_device_summary(
+            &device_id,
+            "active",
+            Some(serde_json::json!({
+                "event_id": event_id,
+                "commit_id": arkret_sdk::RealmCommitId::from_digest([7; 32]),
+                "stream_ref": {
+                    "kind": "realm",
+                    "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+                },
+                "stream_position": 1
+            })),
+        );
+        let expected = active.authorization_ref.as_ref().unwrap().event_id.clone();
+
+        assert_eq!(
+            requester_device_authorize_event_id(&[active], &device_id),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn welcome_requester_rejects_revoked_or_uncommitted_device() {
+        let device_id =
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001").unwrap();
+        let authorization_ref = serde_json::json!({
+            "event_id": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
+            "commit_id": arkret_sdk::RealmCommitId::from_digest([7; 32]),
+            "stream_ref": {
+                "kind": "realm",
+                "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+            },
+            "stream_position": 1
+        });
+        let revoked = requester_device_summary(&device_id, "revoked", Some(authorization_ref));
+        let active_without_commit = requester_device_summary(&device_id, "active", None);
+
+        assert!(requester_device_authorize_event_id(&[revoked], &device_id).is_none());
+        assert!(
+            requester_device_authorize_event_id(&[active_without_commit], &device_id).is_none()
+        );
+    }
 
     fn claim_from_key_package(
         record: &arkret_sdk::MlsKeyPackageRecord,
