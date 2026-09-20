@@ -381,7 +381,7 @@ pub(super) fn projected_realm_membership_hint(
     };
     let joined = crate::views::member_display::realm_member_roster(Some(projection))
         .into_iter()
-        .filter(|member| member.membership == Some(arkret_sdk::MembershipState::Join))
+        .filter(|member| member.membership == Some(arkret_sdk::sync::MemberRosterMembership::Join))
         .map(|member| member.actor_id.to_string())
         .collect();
     let completeness = if projection

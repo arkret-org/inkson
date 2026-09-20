@@ -515,6 +515,18 @@ mod agent_tests {
         assert_eq!(disclosure.agent_id, agent_actor_id);
         assert_eq!(disclosure.controller_principal_id, controller_actor_id);
         assert_eq!(disclosure.requested_scope, key_state.requested_scope);
+        assert_eq!(disclosure.proofs.len(), 1);
+        assert_eq!(
+            disclosure.proofs[0].payload_digest,
+            disclosure.payload_digest().unwrap()
+        );
+        assert!(disclosure.proofs[0].validate_production().is_ok());
+        assert!(
+            serde_json::to_value(&disclosure.proofs[0])
+                .unwrap()
+                .get("event_digest")
+                .is_none()
+        );
 
         let expected_pairing_digest =
             arkret_models_collaboration::agent_operations::agent_key_pairing_request_binding_digest(

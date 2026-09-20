@@ -16,8 +16,8 @@ use arkret_sdk::{
     AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap,
     AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection, CapabilityActionId,
     Did, DidCoreId, DidUrl, GrantConstraint, GrantConstraintEffect, GrantConstraintKind,
-    GrantConstraintSubkind, Hash, KeyState, NonEmptyString, OpaqueLocalId, ProducerEventProof,
-    RealmId, RequestId, ServiceOperationId,
+    GrantConstraintSubkind, Hash, KeyState, NonEmptyString, OpaqueLocalId, PayloadProof, RealmId,
+    RequestId, ServiceOperationId,
 };
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -34,23 +34,26 @@ pub fn build_agent_provision_intent(
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let created_at = crate::clock::now_utc();
     let controller_actor_id = arkret_sdk::project_did_to_core_id(controller_did)?;
+    let authored = arkret_bootstrap::build_agent_provision_intent(
+        &controller_actor_id,
+        controller_realm_id,
+        agent_id,
+        principal_control_realm_id,
+        controller_authorization_ref,
+        agent_slug,
+        requested_scope_digest,
+        HandleVisibility::Private,
+        None,
+        arkret_bootstrap::AgentProvisionIntentOptions {
+            controller_station_id: controller_station_id.clone(),
+            created_at,
+        },
+    )?;
+    // The bootstrap builder finalizes producer content, while the shared
+    // submitter owns signing and Station admission. Reconstruct only that
+    // exact producer intent, never a retired Seal basis.
     Ok(crate::operation::LocalOperation::new(
-        arkret_bootstrap::build_agent_provision_intent(
-            &controller_actor_id,
-            controller_realm_id,
-            agent_id,
-            principal_control_realm_id,
-            controller_authorization_ref,
-            agent_slug,
-            requested_scope_digest,
-            HandleVisibility::Private,
-            None,
-            arkret_bootstrap::AgentProvisionIntentOptions {
-                controller_station_id: controller_station_id.clone(),
-                created_at,
-                seal_basis: None,
-            },
-        )?,
+        arkret_event_draft::EventIntent::from_authored(&authored),
     ))
 }
 
@@ -502,10 +505,6 @@ pub fn build_requested_scope_disclosure_for_pairing(
     if expires_at <= issued_at {
         anyhow::bail!("runtime key request has expired");
     }
-    let signer_resolution_evidence_ref =
-        crate::event_signer::cached_active_event_proof_context(arkret_sdk::DigestSuite::Sha256)?
-            .signer_resolution_evidence_ref
-            .ok_or_else(|| anyhow::anyhow!("verified signer-resolution evidence is unavailable"))?;
     let mut disclosure = AgentRequestedScopeDisclosure {
         schema: arkret_sdk::SchemaId::AgentRequestedScopeDisclosureV1,
         request_id: RequestId::new(format!("ak:request:{request_uuid}"))?,
@@ -519,11 +518,10 @@ pub fn build_requested_scope_disclosure_for_pairing(
             .map_err(anyhow::Error::msg)?,
         issued_at,
         expires_at,
-        proofs: vec![ProducerEventProof {
+        proofs: vec![PayloadProof {
             kind: "detached_jws".to_owned(),
             verification_method: verification_method.clone(),
-            event_digest: Hash::new(format!("sha256:{}", "0".repeat(64)))?,
-            signer_resolution_evidence_ref: Some(signer_resolution_evidence_ref),
+            payload_digest: Hash::new(format!("sha256:{}", "0".repeat(64)))?,
             created_at: issued_at,
             domain: None,
             audience: None,
@@ -531,7 +529,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
             jws: String::new(),
         }],
     };
-    disclosure.proofs[0].event_digest = disclosure.payload_digest()?;
+    disclosure.proofs[0].payload_digest = disclosure.payload_digest()?;
     let binding = disclosure.canonical_proof_binding_bytes(&disclosure.proofs[0])?;
     disclosure.proofs[0].jws =
         signer.detached_jws_over_payload_with_kid(&verification_method, &binding)?;

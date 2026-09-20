@@ -1161,6 +1161,10 @@ pub fn chinese_translations() -> TranslationDict {
     // T7.2 watch-level quick switch
     dict.set("chat.watch_level.tooltip", "选择此 Strand 的通知频率。");
     dict.set("chat.watch_level.prefix", "通知");
+    dict.set(
+        "chat.watch_level.unavailable",
+        "当前关注状态未获确认，暂不可更改",
+    );
     dict.set("chat.watch_level.mentions_only", "仅 @ 我");
     dict.set("chat.watch_level.participating", "参与中");
     dict.set("chat.watch_level.all", "全部");

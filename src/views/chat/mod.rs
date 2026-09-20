@@ -82,99 +82,13 @@ fn same_principal_core(left: &str, right: &str) -> bool {
         .is_some_and(|left| principal_core_key(right).as_deref() == Some(left.as_str()))
 }
 
-/// The signed-in actor's own watch level for one Strand.
-///
-/// The Realm snapshot has no watch selector, so this folds the Strand's own
-/// accepted `ak.strand.watch.set` writes in Commit order
-/// (`authz/event-auth-state-resolution.md` section 6). `Loading` means no
-/// Strand current result has arrived yet, so the picker stays disabled rather
-/// than presenting the schema default as an observed answer.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum WatchCurrentProjection {
-    Loading,
-    Settled {
-        level: WatchLevel,
-        /// Prior value for the payload's `expected_value` compare-and-swap
-        /// guard; `None` when the cell has never been written.
-        expected: Option<arkret_sdk::StrandWatchExpectedValue>,
-    },
-    Unavailable,
-}
-
+#[cfg(test)]
 fn watch_level_from_wire(value: arkret_sdk::StrandWatchLevel) -> WatchLevel {
     match value {
         arkret_sdk::StrandWatchLevel::MentionsOnly => WatchLevel::MentionsOnly,
         arkret_sdk::StrandWatchLevel::Participating => WatchLevel::Participating,
         arkret_sdk::StrandWatchLevel::All => WatchLevel::All,
         arkret_sdk::StrandWatchLevel::Muted => WatchLevel::Muted,
-    }
-}
-
-fn current_watch_projection(
-    state_store: &LocalStateStore,
-    realm_id: &str,
-    strand_id: &str,
-    actor_id: &str,
-) -> WatchCurrentProjection {
-    let Ok(strand) = arkret_sdk::StrandId::new(strand_id.to_owned()) else {
-        return WatchCurrentProjection::Unavailable;
-    };
-    let entries = state_store.realm_current_state_entries(realm_id);
-    if crate::current_projection::current_strand(&entries, &strand).is_none() {
-        return WatchCurrentProjection::Loading;
-    }
-    // Later writes supersede earlier ones at the same typed target, so the last
-    // accepted write this client folded is the current value.
-    let mut settled: Option<arkret_sdk::StrandWatchSetPayload> = None;
-    for record in state_store.load().raw_operations {
-        if record.realm_id.as_deref().map(str::trim) != Some(realm_id.trim()) {
-            continue;
-        }
-        if record.payload.get("kind").and_then(Value::as_str)
-            != Some(event_kind_str::STRAND_WATCH_SET)
-        {
-            continue;
-        }
-        let Some(body) = record
-            .payload
-            .get("body")
-            .or_else(|| record.payload.get("payload"))
-        else {
-            continue;
-        };
-        let Ok(payload) = serde_json::from_value::<arkret_sdk::StrandWatchSetPayload>(body.clone())
-        else {
-            continue;
-        };
-        if payload.strand_id != strand
-            || !same_principal_core(
-                payload.watcher_actor_id.signing_principal_id().as_str(),
-                actor_id,
-            )
-        {
-            continue;
-        }
-        settled = Some(payload);
-    }
-    match settled {
-        // `strand-and-message.md` section 8.3: a cleared cell is the schema
-        // default, and the clearing write is the observed prior value.
-        Some(payload) => WatchCurrentProjection::Settled {
-            level: payload
-                .level
-                .map(watch_level_from_wire)
-                .unwrap_or(WatchLevel::MentionsOnly),
-            expected: payload
-                .level
-                .map(|level| arkret_sdk::StrandWatchExpectedValue {
-                    level,
-                    level_public: payload.level_public,
-                }),
-        },
-        None => WatchCurrentProjection::Settled {
-            level: WatchLevel::MentionsOnly,
-            expected: None,
-        },
     }
 }
 
@@ -1622,8 +1536,8 @@ pub fn ChatPanel(
         mut new_channel_topic,
         mut new_channel_create_card,
         mut create_dialog_open,
-        mut strand_watch_level,
-        mut watch_level_menu_open,
+        strand_watch_level: _,
+        watch_level_menu_open: _,
         mut status_msg,
         queued_outbound_local_operation_ids,
         is_online,
@@ -1705,20 +1619,6 @@ pub fn ChatPanel(
             state_store
                 .read()
                 .set_product_current_demand(&authority, &realm, None, Vec::new())
-        }
-    });
-    let watch_current = current_watch_projection(
-        &state_store.read(),
-        &selected_realm_id,
-        &selected_channel_value,
-        &principal_id,
-    );
-    use_effect({
-        let watch_current = watch_current.clone();
-        move || {
-            if let WatchCurrentProjection::Settled { level, .. } = watch_current {
-                strand_watch_level.set(level);
-            }
         }
     });
     let all_channels = channels();
@@ -2638,123 +2538,20 @@ pub fn ChatPanel(
                             }
                         }
                         }
-                        // T7.2: watch-level fast switcher. Issues a
-                        // `ak.strand.watch.set` event on selection. We
-                        // optimistically update the local signal first;
-                        // a network failure rolls back via status_msg.
-                        {
-                            let optimistic_level = strand_watch_level();
-                            let (level_now, watch_basis_refs, watch_unavailable) =
-                                match &watch_current {
-                                    WatchCurrentProjection::Settled { level, basis_refs } => {
-                                        (*level, basis_refs.clone(), false)
-                                    }
-                                    WatchCurrentProjection::Unavailable => {
-                                        (optimistic_level, Vec::new(), true)
-                                    }
-                                    WatchCurrentProjection::Loading => {
-                                        (optimistic_level, Vec::new(), true)
-                                    }
-                                };
-                            let menu_open = watch_level_menu_open();
-                            let level_label = crate::i18n::tr(watch_level_label_key(level_now));
-                            let strand_id_for_watch = selected_channel_value.clone();
-                            let realm_for_watch = selected_realm_id.clone();
-                            let actor_for_watch = principal_id.clone();
-                            let watch_disabled = strand_id_for_watch.trim().is_empty()
-                                || watch_unavailable
-                                || !sidecar_privacy_gate.allows_strand(
-                                    crate::sidecar::SidecarDisclosureSurface::Watch,
-                                    &strand_id_for_watch,
-                                );
-                            rsx! {
-                                div { class: "watch-level-picker", "data-testid": "watch-level-picker",
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        r#type: "button",
-                                        class: "watch-level-toggle",
-                                        "data-testid": "watch-level-toggle",
-                                        disabled: watch_disabled,
-                                        title: crate::i18n::tr("chat.watch_level.tooltip"),
-                                        onclick: move |_| {
-                                            watch_level_menu_open.set(!watch_level_menu_open());
-                                        },
-                                        span { class: "watch-level-toggle-label",
-                                            "{crate::i18n::tr(\"chat.watch_level.prefix\")}: {level_label}"
-                                        }
-                                        span { class: "watch-level-toggle-caret", "\u{25be}" }
-                                    }
-                                    if menu_open && !watch_disabled {
-                                        div { class: "watch-level-menu", "data-testid": "watch-level-menu",
-                                            {
-                                                let options = [
-                                                    WatchLevel::MentionsOnly,
-                                                    WatchLevel::Participating,
-                                                    WatchLevel::All,
-                                                    WatchLevel::Muted,
-                                                ];
-                                                rsx! {
-                                                    for option in options.iter().copied() {
-                                                        {
-                                                            let option_label = crate::i18n::tr(watch_level_label_key(option));
-                                                            let strand_id_for_click = strand_id_for_watch.clone();
-                                                            let realm_for_click = realm_for_watch.clone();
-                                                            let actor_for_click = actor_for_watch.clone();
-                                                            let base_for_click = base_url.clone();
-                                                            let basis_for_click = watch_basis_refs.clone();
-                                                            let is_active = level_now == option;
-                                                            rsx! {
-                                                                Button {
-                                                                    variant: ButtonVariant::Secondary,
-                                                                    r#type: "button",
-                                                                    class: if is_active { "watch-level-option active" } else { "watch-level-option" },
-                                                                    "data-testid": "watch-level-option",
-                                                                    onclick: move |_| {
-                                                                        let prev = strand_watch_level();
-                                                                        strand_watch_level.set(option);
-                                                                        watch_level_menu_open.set(false);
-                                                                        status_msg.set(crate::i18n::tr("chat.watch_level.pending"));
-                                                                        let api_token = token();
-                                                                        let wait_for = active_sync_token(sync_cursor());
-                                                                        let watch_op = match ak_ops::strand_watch_set(
-                                                                            &realm_for_click,
-                                                                            &actor_for_click,
-                                                                            &actor_for_click,
-                                                                            &strand_id_for_click,
-                                                                            Some(watch_level_wire_value(option)),
-                                                                            None,
-                                                                        ) {
-                                                                            Ok(builder) => builder
-                                                                                .causal_refs(basis_for_click.clone())
-                                                                                .build_sdk_event("inkson"),
-                                                                            Err(err) => {
-                                                                                tracing::warn!("strand_watch_set build failed: {err:#}");
-                                                                                strand_watch_level.set(prev);
-                                                                                status_msg.set(crate::i18n::tr("chat.watch_level.failed"));
-                                                                                return;
-                                                                            }
-                                                                        };
-                                                                        let watch_op = match watch_op {
-                                                                            Ok(watch_op) => watch_op,
-                                                                            Err(err) => {
-                                                                                tracing::warn!("strand_watch_set SDK conversion failed: {err:#}");
-                                                                                strand_watch_level.set(prev);
-                                                                                status_msg.set(crate::i18n::tr("chat.watch_level.failed"));
-                                                                                return;
-                                                                            }
-                                                                        };
-                                                                        let base = base_for_click.clone();
-                                                                        controller.set_strand_watch_level(base, api_token, wait_for, watch_op, prev);
-                                                                    },
-                                                                    "{option_label}"
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                        // 0357: Station's exact self watch-current read is not
+                        // available in the current server. A local Event fold
+                        // cannot prove the CAS prior value, so keep this
+                        // control visibly unavailable and emit no write.
+                        div { class: "watch-level-picker", "data-testid": "watch-level-picker",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                r#type: "button",
+                                class: "watch-level-toggle",
+                                "data-testid": "watch-level-toggle",
+                                disabled: true,
+                                title: crate::i18n::tr("chat.watch_level.unavailable"),
+                                span { class: "watch-level-toggle-label",
+                                    "{crate::i18n::tr(\"chat.watch_level.prefix\")}: {crate::i18n::tr(\"chat.watch_level.unavailable\")}"
                                 }
                             }
                         }
