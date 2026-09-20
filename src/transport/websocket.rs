@@ -125,6 +125,7 @@ pub const CLIENT_MAX_FRAME_BYTES: u32 = 262_144;
 /// condition §2 and §8.1 list: no descriptor, an unusable descriptor, a
 /// handshake that never reached `101`, a protocol or oversize close, a second
 /// policy failure, or a third restart without a `welcome`.
+#[derive(Debug)]
 pub struct WebSocketTransportSelector {
     descriptor: Option<WebSocketEndpoint>,
     policy: WebSocketFallbackPolicy,

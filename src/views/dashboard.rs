@@ -34,7 +34,7 @@ impl DashboardContactsSummary {
     }
 }
 
-fn projection_object_state_label(state: arkret_sdk::ObjectState) -> &'static str {
+fn projection_object_state_label(state: &arkret_sdk::ObjectState) -> &'static str {
     match state {
         arkret_sdk::ObjectState::Active => "active",
         arkret_sdk::ObjectState::Archived => "archived",
@@ -404,7 +404,7 @@ pub fn DashboardPanel(
                                             td { class: "dim", "" }
                                             td { "{strand.title}" }
                                             td { "Current Board" }
-                                            td { "{projection_object_state_label(strand.state)}" }
+                                            td { "{projection_object_state_label(&strand.state)}" }
                                             td {
                                                 {strand.fields
                                                     .get("due_at")

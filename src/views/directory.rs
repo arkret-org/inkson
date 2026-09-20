@@ -52,7 +52,7 @@ pub fn DirectoryPanel(
                                     Err(error) => crate::components::feedback::toast_error(
                                         "feedback.directory_search_failed",
                                         vec![],
-                                        Some(error.to_string()),
+                                        Some(error.display()),
                                     ),
                                 }
                             });
