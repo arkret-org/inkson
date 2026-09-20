@@ -60,7 +60,8 @@ impl PersistedRealmAuthorityBasis {
     /// so generation equality is the load-bearing check and the authority ref
     /// must name the exact genesis or change Event of that generation.
     pub fn accepts(&self, commit: &arkret_wire::RealmCommit) -> bool {
-        if commit.realm_id != self.realm_id || commit.authority_generation != self.current_generation
+        if commit.realm_id != self.realm_id
+            || commit.authority_generation != self.current_generation
         {
             return false;
         }

@@ -552,10 +552,7 @@ mod tests {
             kind: arkret_sdk::sync::AccountSubscribeFrameKind::Delta,
             cursor: Some("ak:cursor:account".to_owned()),
             realms: Some(arkret_sdk::sync::AccountSubscribeRealms {
-                entries: std::collections::BTreeMap::from([(
-                    realm_id.as_str().to_owned(),
-                    entry,
-                )]),
+                entries: std::collections::BTreeMap::from([(realm_id.as_str().to_owned(), entry)]),
             }),
             to_device: None,
             device_lists: None,
@@ -829,7 +826,10 @@ impl BackfillView {
     /// The last position covered by this page, for the caller's per-stream
     /// cursor. `None` means the page was empty and the cursor does not move.
     pub fn last_position(&self) -> Option<u64> {
-        self.0.commits.last().map(|item| item.commit.stream_position)
+        self.0
+            .commits
+            .last()
+            .map(|item| item.commit.stream_position)
     }
 
     /// The Station reported more commits after this page.
@@ -884,6 +884,10 @@ impl From<arkret_wire::StreamScanOutcome> for BackfillView {
 // `ak.schema.realm_state_snapshot.v1` manifest. See
 // `api::TransportClient::realm_state_snapshot_head`.
 
+pub use arkret_models_collaboration::device_messages::{
+    DeviceMessageEnvelope, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
+    DeviceMessagesGetOutcome, DeviceMessagesSendOutcome,
+};
 /// Structured mention node embedded in message body. Spec
 /// `models/strand-and-message.md §9.4` + `identity/identity-handles.md §3.8`.
 ///
@@ -911,10 +915,6 @@ pub use arkret_models_collaboration::governance::authorization::GrantList;
 /// `service-operation-dtos.schema.json#/$defs/ModerationReportOutcome`).
 pub use arkret_models_collaboration::governance::moderation::ModerationReportOutcome;
 pub use arkret_models_collaboration::objects::blob::BlobUploadOutcome;
-pub use arkret_models_collaboration::device_messages::{
-    DeviceMessageEnvelope, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
-    DeviceMessagesGetOutcome, DeviceMessagesSendOutcome,
-};
 pub use arkret_models_crypto::{KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome};
 // ── Directory ───────────────────────────────────────────────────
 pub use arkret_models_discovery::DirectoryHandleResolutionOutcome as ResolveHandleView;

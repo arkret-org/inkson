@@ -690,7 +690,6 @@ fn projected_card(
         .map(|strand| card_from_strand_projection_for_actor(strand, decrypt_ctx, actor))
 }
 
-
 /// Readiness of the Station's typed current result for one Strand.
 ///
 /// The snapshot carries the whole Strand object under
@@ -716,10 +715,12 @@ pub(crate) fn strand_current_basis(
         strand_id: strand_id.clone(),
     };
     let mut matching = entries.iter().filter(|entry| match entry {
-        arkret_wire::TypedCurrentResult::Value { selector: found, .. }
-        | arkret_wire::TypedCurrentResult::MessageReactions { selector: found, .. } => {
-            *found == selector
+        arkret_wire::TypedCurrentResult::Value {
+            selector: found, ..
         }
+        | arkret_wire::TypedCurrentResult::MessageReactions {
+            selector: found, ..
+        } => *found == selector,
     });
     let Some(entry) = matching.next() else {
         return StrandCurrentBasis::Missing;
@@ -731,12 +732,9 @@ pub(crate) fn strand_current_basis(
         arkret_wire::TypedCurrentResult::Value { revision, .. } => {
             StrandCurrentBasis::Revision(revision.clone())
         }
-        arkret_wire::TypedCurrentResult::MessageReactions { .. } => {
-            StrandCurrentBasis::Unavailable
-        }
+        arkret_wire::TypedCurrentResult::MessageReactions { .. } => StrandCurrentBasis::Unavailable,
     }
 }
-
 
 fn clear_unavailable_card_content(card: &mut KanbanCard) {
     card.authoring_basis = None;

@@ -28,11 +28,11 @@
 use std::collections::BTreeSet;
 
 use arkret_models_integration::{
-    AppletActorPolicy, AppletRevokeRequestBody, AppletApprovalRequest, AppletGhostActorMode,
+    AppletActorPolicy, AppletApprovalRequest, AppletGhostActorMode,
     AppletInstallAuthoringRequestBasis, AppletInstallCreateRequestBody, AppletInstallPlan,
     AppletInstallPreviewOutcome, AppletInstallPreviewRequestBody, AppletInstallRequestBody,
     AppletManagedActorAuthorRequestBody, AppletManagedActorPurpose, AppletPackage,
-    AppletRegistrationEpochEvidence,
+    AppletRegistrationEpochEvidence, AppletRevokeRequestBody,
 };
 use arkret_wire::{AppletRevokeMode, DidCoreId, ScopeRef, event_kind_str};
 use dioxus::prelude::*;

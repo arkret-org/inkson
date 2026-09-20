@@ -134,9 +134,9 @@ fn carries_item_kind(body: &Value, item_kind: arkret_sdk::SecretStorageItemKind)
     let expected = serde_json::to_value(item_kind)
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned));
-    expected.as_deref().is_some_and(|expected| {
-        backup_item_kind(body) == Some(expected)
-    })
+    expected
+        .as_deref()
+        .is_some_and(|expected| backup_item_kind(body) == Some(expected))
 }
 
 /// True when `body` is an MLS account-secret envelope under any recipient

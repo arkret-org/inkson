@@ -503,11 +503,10 @@ pub fn build_requested_scope_disclosure_for_pairing(
     if expires_at <= issued_at {
         anyhow::bail!("runtime key request has expired");
     }
-    let signer_resolution_evidence_ref = crate::event_signer::cached_active_event_proof_context(
-        arkret_sdk::DigestSuite::Sha256,
-    )?
-    .signer_resolution_evidence_ref
-    .ok_or_else(|| anyhow::anyhow!("verified signer-resolution evidence is unavailable"))?;
+    let signer_resolution_evidence_ref =
+        crate::event_signer::cached_active_event_proof_context(arkret_sdk::DigestSuite::Sha256)?
+            .signer_resolution_evidence_ref
+            .ok_or_else(|| anyhow::anyhow!("verified signer-resolution evidence is unavailable"))?;
     let mut disclosure = AgentRequestedScopeDisclosure {
         schema: arkret_sdk::SchemaId::AgentRequestedScopeDisclosureV1,
         request_id: RequestId::new(format!("ak:request:{request_uuid}"))?,

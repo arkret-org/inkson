@@ -21,7 +21,6 @@ fn payload_timestamp_wire(created_at: chrono::DateTime<chrono::Utc>) -> String {
     arkret_sdk::canonical::format_timestamp_canonical(created_at)
 }
 
-
 /// Build a Realm bootstrap against the exact Station captured by the
 /// authenticated submitter. Production create flows use this entry point so a
 /// transient reconnect cannot clear a process-global selection between UI
@@ -639,8 +638,7 @@ pub fn build_direct_conversation_founding_steps(
             );
             let founder_actor_id = arkret_sdk::ActorId::account(founder_actor.clone());
             let founder_actor_key = founder_actor_id.canonical_key()?;
-            let founder_member_cell_subject =
-                founder_actor_key.to_owned();
+            let founder_member_cell_subject = founder_actor_key.to_owned();
             Ok(vec![
                 TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::MemberState>(
                     create.realm_id.to_string(),
@@ -1485,7 +1483,10 @@ mod genesis_authority_tests {
         if let Some(entry) =
             arkret_wire::forbidden_wire::forbidden_wire_violation("event_envelope", "*", &envelope)
         {
-            panic!("authored policy_bundle envelope carries forbidden field {}", entry.id);
+            panic!(
+                "authored policy_bundle envelope carries forbidden field {}",
+                entry.id
+            );
         }
         for removed in ["preconditions", "cell_writes", "basis", "seal", "frontier"] {
             assert!(

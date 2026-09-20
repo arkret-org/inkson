@@ -244,13 +244,7 @@ impl LiveSignalProjection {
             self.bodies
                 .retain(|existing, _| !existing.starts_with(&prefix) || existing == &key);
         }
-        Ok(self.apply(
-            key,
-            signal.payload_sequence(),
-            signal.expires_at,
-            body,
-            now,
-        ))
+        Ok(self.apply(key, signal.payload_sequence(), signal.expires_at, body, now))
     }
 
     /// The retained bodies, in projection-key order.
@@ -387,10 +381,7 @@ impl InksonSignalSink {
     /// A Realm with no projected snapshot resolves to the spec default
     /// (`disclosure=optional`, `visibility=members`), which is what
     /// `read-receipts.md` §2.5 says an undeclared policy means.
-    fn realm_read_receipt_policy(
-        &self,
-        signal: &AdmittedSignal,
-    ) -> arkret_sdk::ReadReceiptPolicy {
+    fn realm_read_receipt_policy(&self, signal: &AdmittedSignal) -> arkret_sdk::ReadReceiptPolicy {
         let realm_id = signal.scope_ref().realm_id().as_str().to_owned();
         let snapshot = self
             .state_store

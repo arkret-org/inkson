@@ -332,7 +332,15 @@ where
         if !is_active() {
             return Ok(());
         }
-        drain_stream(authority, cursors, replica, realm_id, &stream_ref, projector).await?;
+        drain_stream(
+            authority,
+            cursors,
+            replica,
+            realm_id,
+            &stream_ref,
+            projector,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -415,7 +423,9 @@ where
         // Durable fold first: the position is only advanced once the product
         // projection that consumes these rows has committed them.
         projector.project(batch).await?;
-        cursors.save(scope.clone(), next_position.to_string()).await?;
+        cursors
+            .save(scope.clone(), next_position.to_string())
+            .await?;
         after_position = Some(next_position);
         if !truncated {
             return Ok(());

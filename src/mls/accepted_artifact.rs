@@ -97,9 +97,7 @@ pub(crate) fn accepted_from_submission(
     accepted_mls_transition(&StreamRow { commit, event })
 }
 
-fn event_payload<T: serde::de::DeserializeOwned>(
-    event: &arkret_sdk::Event,
-) -> Result<T, String> {
+fn event_payload<T: serde::de::DeserializeOwned>(event: &arkret_sdk::Event) -> Result<T, String> {
     let payload = serde_json::Value::Object(event.payload.clone().into_iter().collect());
     serde_json::from_value(payload)
         .map_err(|error| format!("accepted MLS payload is unreadable: {error}"))

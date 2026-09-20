@@ -63,13 +63,9 @@ pub fn consent_grant(
         evidence_ref: None,
         reason: None,
     };
-    Ok(
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::ConsentGrant>(
-            holder_pcr_realm_id,
-            holder,
-            payload,
-        )
-    )
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::ConsentGrant,
+    >(holder_pcr_realm_id, holder, payload))
 }
 
 /// Build a canonical `ak.consent.revoke` Event.
@@ -94,4 +90,3 @@ pub fn consent_revoke(
         arkret_sdk::event_spec::ConsentRevoke,
     >(holder_pcr_realm_id, holder, payload))
 }
-

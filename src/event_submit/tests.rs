@@ -32,12 +32,7 @@ fn account_actor() -> arkret_sdk::ActorId {
 ///
 /// A producer Event carries no chain position, predecessor or logical clock,
 /// so the fixture has nothing to invent beyond the content itself.
-fn event_with_kind(
-    event_id: &str,
-    realm: &str,
-    kind: &str,
-    payload: Value,
-) -> arkret_sdk::Event {
+fn event_with_kind(event_id: &str, realm: &str, kind: &str, payload: Value) -> arkret_sdk::Event {
     serde_json::from_value(json!({
         "event_id": event_id,
         "kind": kind,
@@ -156,7 +151,11 @@ fn founding_realm_bypasses_only_its_own_local_detail_freshness_gap() {
         true,
     ));
     assert!(local_detail_blocks_authoring(None, founding.as_str(), true));
-    assert!(!local_detail_blocks_authoring(None, founding.as_str(), false));
+    assert!(!local_detail_blocks_authoring(
+        None,
+        founding.as_str(),
+        false
+    ));
 }
 
 #[test]
@@ -281,7 +280,9 @@ fn snapshot_of(
     let mut queue = garth::SendQueue::default();
     let now = chrono::Utc::now();
     for (event, _) in &items {
-        queue.enqueue(event_submission(event).unwrap(), now).unwrap();
+        queue
+            .enqueue(event_submission(event).unwrap(), now)
+            .unwrap();
     }
     let mut snapshot = queue.snapshot();
     for (queued, (event, status)) in snapshot.items.iter_mut().zip(items.iter()) {
@@ -689,7 +690,9 @@ async fn a_station_refusal_settles_the_item_with_its_exact_reason_code() {
     assert_eq!(reason_code, "mls_activation_required");
     assert_eq!(item.status, SendQueueStatus::Rejected);
     assert_eq!(
-        SubmitEventResult::from(&*item).rejection_reason_code.as_deref(),
+        SubmitEventResult::from(&*item)
+            .rejection_reason_code
+            .as_deref(),
         Some("mls_activation_required"),
         "the Station's reason code reaches the caller verbatim"
     );
@@ -697,10 +700,7 @@ async fn a_station_refusal_settles_the_item_with_its_exact_reason_code() {
 
 // ─────────────────────────── MLS commit submission ─────────────────────────
 
-fn welcome_delivery(
-    commit_event: &arkret_sdk::Event,
-    nth: u64,
-) -> arkret_wire::MlsWelcomeDelivery {
+fn welcome_delivery(commit_event: &arkret_sdk::Event, nth: u64) -> arkret_wire::MlsWelcomeDelivery {
     arkret_wire::MlsWelcomeDelivery {
         welcome_id: arkret_wire::MlsWelcomeDeliveryId::new_v7_at(1_760_000_000_000 + nth),
         realm_id: commit_event.realm_id.clone(),
@@ -845,10 +845,9 @@ fn a_superseded_signing_method_quarantines_the_queued_write() {
         ),
         &signer,
     );
-    let replacement =
-        crate::event_signer::build_ed25519_device_signer([91; 32], PRINCIPAL, DEVICE)
-            .verification_method()
-            .to_owned();
+    let replacement = crate::event_signer::build_ed25519_device_signer([91; 32], PRINCIPAL, DEVICE)
+        .verification_method()
+        .to_owned();
     let replacement = format!("{replacement}-generation-2");
 
     assert_eq!(
@@ -874,7 +873,11 @@ fn a_write_this_device_did_not_author_is_left_to_its_own_principal() {
         arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example".to_owned()).unwrap();
 
     assert_eq!(
-        generation_decision_for_signer(&other_principal, "did:web:bob.example#device", event.event()),
+        generation_decision_for_signer(
+            &other_principal,
+            "did:web:bob.example#device",
+            event.event()
+        ),
         GenerationFenceDecision::Current
     );
 }

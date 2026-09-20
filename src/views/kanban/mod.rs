@@ -39,8 +39,8 @@ use controller::{KanbanCommand, KanbanController, use_kanban_controller};
 use drag_drop_controller::*;
 use due_calendar::*;
 use effects::KanbanEffects;
-use model::*;
 pub(crate) use model::strand_views_from_ops;
+use model::*;
 
 /// Holder-local queue key for one Strand's placement on one Board.
 ///
@@ -64,7 +64,10 @@ pub(crate) enum StrandPositionExpectation {
 /// Placement this write asks for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum StrandPositionEffect {
-    SetPosition { list_space_id: String, rank: String },
+    SetPosition {
+        list_space_id: String,
+        rank: String,
+    },
     /// The Strand leaves the target Board.
     Remove,
 }
@@ -1090,9 +1093,12 @@ pub fn KanbanPanel(
         let realm = local_realm_id.clone();
         move || {
             let (strands, _) = current_page();
-            state_store
-                .read()
-                .set_product_current_demand(&authority, &realm, Some(strands), Vec::new());
+            state_store.read().set_product_current_demand(
+                &authority,
+                &realm,
+                Some(strands),
+                Vec::new(),
+            );
         }
     });
     use_drop({

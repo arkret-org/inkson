@@ -133,7 +133,10 @@ fn realm_member_roster_reads_r32_wire_shape() {
                 .contains("alice")
         })
         .unwrap();
-    assert_eq!(alice.membership, Some(arkret_sdk::sync::MemberRosterMembership::Join));
+    assert_eq!(
+        alice.membership,
+        Some(arkret_sdk::sync::MemberRosterMembership::Join)
+    );
     assert_eq!(
         alice.identity_event_ids,
         vec!["ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ".to_owned()]
@@ -152,7 +155,10 @@ fn realm_member_roster_reads_r32_wire_shape() {
                 .starts_with("ak:did_core:webvh:")
         })
         .unwrap();
-    assert_eq!(webvh.membership, Some(arkret_sdk::sync::MemberRosterMembership::Knock));
+    assert_eq!(
+        webvh.membership,
+        Some(arkret_sdk::sync::MemberRosterMembership::Knock)
+    );
     assert!(webvh.identity_event_ids.is_empty());
     assert!(webvh.member_display_state_digest.is_none());
     // subject_account_id not disclosed for the invite row.
@@ -214,7 +220,10 @@ fn realm_member_roster_keeps_first_duplicate_actor_entry() {
 
     let rows = realm_member_roster(Some(&projection));
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].membership, Some(arkret_sdk::sync::MemberRosterMembership::Join));
+    assert_eq!(
+        rows[0].membership,
+        Some(arkret_sdk::sync::MemberRosterMembership::Join)
+    );
 }
 
 #[test]

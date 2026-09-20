@@ -126,8 +126,8 @@ fn notification_baseline_segments_preserve_previous_segment_and_upsert_by_id() {
     let delta = arkret_sdk::sync::NotificationDelta::try_new(
         notification.id.clone(),
         arkret_sdk::sync::NotificationDeltaAction::Upsert,
-        Some(arkret_sdk::sync::NotificationData::OrdinaryProjection(Box::new(
-            arkret_sdk::OrdinaryProjectionContent {
+        Some(arkret_sdk::sync::NotificationData::OrdinaryProjection(
+            Box::new(arkret_sdk::OrdinaryProjectionContent {
                 realm_id: source.realm_id.clone().unwrap(),
                 source_event_id: source.source_event_id.clone(),
                 source_ref: source.source_ref.clone(),
@@ -138,8 +138,8 @@ fn notification_baseline_segments_preserve_previous_segment_and_upsert_by_id() {
                 preview: notification.preview.clone(),
                 created_at: notification.created_at,
                 updated_at: notification.updated_at,
-            },
-        ))),
+            }),
+        )),
     )
     .unwrap();
     for _ in 0..2 {
@@ -793,9 +793,9 @@ fn notification_sources_use_typed_subscribe_deltas_only() {
         arkret_sdk::sync::NotificationDelta::try_new(
             notification.id.clone(),
             arkret_sdk::sync::NotificationDeltaAction::Upsert,
-            Some(arkret_sdk::sync::NotificationData::OrdinaryProjection(Box::new(
-                ordinary,
-            ))),
+            Some(arkret_sdk::sync::NotificationData::OrdinaryProjection(
+                Box::new(ordinary),
+            )),
         )
         .unwrap(),
         arkret_sdk::sync::NotificationDelta::try_new(
@@ -868,9 +868,9 @@ fn ordinary_notification_with_another_recipient_id_is_discarded() {
     let delta = arkret_sdk::sync::NotificationDelta::try_new(
         content.derive_id(&other).unwrap().into(),
         arkret_sdk::sync::NotificationDeltaAction::Upsert,
-        Some(arkret_sdk::sync::NotificationData::OrdinaryProjection(Box::new(
-            content,
-        ))),
+        Some(arkret_sdk::sync::NotificationData::OrdinaryProjection(
+            Box::new(content),
+        )),
     )
     .unwrap();
 

@@ -131,8 +131,7 @@ impl AppSignalProductSink {
         let Ok(resource_realm_id) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
             return false;
         };
-        let key =
-            signal_authorization_cache_key(signal.actor_id(), action, &resource_realm_id);
+        let key = signal_authorization_cache_key(signal.actor_id(), action, &resource_realm_id);
         if let Some(allowed) = self.cached_verdict(&key) {
             return allowed;
         }

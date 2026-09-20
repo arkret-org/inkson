@@ -184,7 +184,9 @@ where
             Ok(None) => return (WebSocketCloseCode::Normal, None),
             Err(error) => {
                 tracing::debug!(%error, "WebSocket receive failed");
-                let _ = socket.close(WebSocketCloseCode::InternalError, "recv").await;
+                let _ = socket
+                    .close(WebSocketCloseCode::InternalError, "recv")
+                    .await;
                 return (WebSocketCloseCode::InternalError, None);
             }
         };

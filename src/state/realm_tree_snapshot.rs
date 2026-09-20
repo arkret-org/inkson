@@ -15,9 +15,7 @@ impl LocalStateStore {
         if let Some(mut strands) = strands {
             strands.sort();
             strands.dedup();
-            selectors.sort_by_key(|selector| {
-                serde_json::to_string(selector).unwrap_or_default()
-            });
+            selectors.sort_by_key(|selector| serde_json::to_string(selector).unwrap_or_default());
             selectors.dedup();
             assert!(strands.len() <= 32, "product demand exceeds protocol bound");
             assert!(

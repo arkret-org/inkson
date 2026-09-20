@@ -241,19 +241,15 @@ pub(super) fn dispatch_card_assignees_update(
         return false;
     }
 
-    let mutations = match card_assignment_mutations(
-        &realm_id,
-        &actor_id,
-        &current,
-        &selected_actor_ids,
-    ) {
-        Ok(mutations) => mutations,
-        Err(msg) => {
-            assignee_edit_status.set(msg.clone());
-            board_status.set(msg);
-            return false;
-        }
-    };
+    let mutations =
+        match card_assignment_mutations(&realm_id, &actor_id, &current, &selected_actor_ids) {
+            Ok(mutations) => mutations,
+            Err(msg) => {
+                assignee_edit_status.set(msg.clone());
+                board_status.set(msg);
+                return false;
+            }
+        };
     if mutations.is_empty() {
         board_status.set("No assignee changes to save".to_owned());
         assignee_edit_status.set(String::new());

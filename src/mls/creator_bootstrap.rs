@@ -490,7 +490,12 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     // `mark_mls_genesis_emitted_*`; that binding is the completion boundary.
     if state_store.read(|store| {
         store
-            .mls_group_state_ref_for_effective_scope(realm_id, None, &accepted_event_id.to_string(), 0)
+            .mls_group_state_ref_for_effective_scope(
+                realm_id,
+                None,
+                &accepted_event_id.to_string(),
+                0,
+            )
             .is_err()
             && store.mls_checkpoint_for(realm_id).is_none()
     }) {
@@ -518,11 +523,7 @@ pub(crate) fn ensure_local_mls_transition_ready(
         .ok_or_else(|| "local MLS group state is pending".to_owned())?;
     state_store
         .read(|store| {
-            store.mls_group_state_ref_for_scope(
-                effective_scope,
-                &snapshot.group_id,
-                snapshot.epoch,
-            )
+            store.mls_group_state_ref_for_scope(effective_scope, &snapshot.group_id, snapshot.epoch)
         })
         .map(|_| ())
 }

@@ -33,11 +33,9 @@ pub fn invite_create_structured(
     // own committed current state and refuses the loser of two concurrent
     // invites with `invite_live_target_occupied`; a producer Event carries no
     // precondition of its own.
-    Ok(
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::InviteCreate>(
-            realm_id, actor, payload,
-        ),
-    )
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::InviteCreate,
+    >(realm_id, actor, payload))
 }
 
 /// Build `ak.invite.accept`.
@@ -68,7 +66,6 @@ pub fn invite_accept(
         .target_ref(invite_id.to_string()),
     )
 }
-
 
 /// Build a `ak.invite.cancel` Control Move.
 ///

@@ -140,7 +140,10 @@ async fn mutate_queue_in_file<R>(
         ))
     })?;
     std::fs::rename(&temporary, path).map_err(|error| {
-        garth::Error::Protocol(format!("persist outbound queue {}: {error}", path.display()))
+        garth::Error::Protocol(format!(
+            "persist outbound queue {}: {error}",
+            path.display()
+        ))
     })?;
     Ok(result)
 }
@@ -304,24 +307,23 @@ mod tests {
             "discussion",
             arkret_sdk::ContentBlock::text(format!("queued fixture {nth}")),
         );
-        let event =
-            arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MessageCreate>::new(
-                arkret_sdk::ScopeRef::Realm {
-                    realm_id: fixture::realm_id(FIXTURE_REALM),
-                },
-                actor_id,
-                payload,
+        let event = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MessageCreate>::new(
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: fixture::realm_id(FIXTURE_REALM),
+            },
+            actor_id,
+            payload,
+        )
+        .unwrap()
+        .author_with_digest_suite(
+            chrono::DateTime::from_timestamp_millis(
+                1_760_000_000_000 + i64::try_from(nth).unwrap_or(0),
             )
-            .unwrap()
-            .author_with_digest_suite(
-                chrono::DateTime::from_timestamp_millis(
-                    1_760_000_000_000 + i64::try_from(nth).unwrap_or(0),
-                )
-                .unwrap(),
-                arkret_sdk::DigestSuite::Sha256,
-            )
-            .unwrap()
-            .into_event();
+            .unwrap(),
+            arkret_sdk::DigestSuite::Sha256,
+        )
+        .unwrap()
+        .into_event();
         garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
             arkret_wire::EventCommitSubmission { event },
         ))
@@ -431,7 +433,10 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(items, 2048);
-        assert_ne!(first, last, "every queued item keeps its own Event identity");
+        assert_ne!(
+            first, last,
+            "every queued item keeps its own Event identity"
+        );
     }
 
     #[tokio::test]

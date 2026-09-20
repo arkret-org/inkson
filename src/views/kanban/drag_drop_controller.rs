@@ -793,15 +793,15 @@ pub(super) fn dispatch_strand_position_move(
     // `expected_position` is the payload's own compare-and-swap guard: the
     // governance Station evaluates it against the Strand position it holds when
     // it assigns the Commit, so the producer only states what it observed.
-    let expected = if dragged.from_column_id.trim().is_empty() || dragged.from_rank.trim().is_empty()
-    {
-        StrandPositionExpectation::Initial
-    } else {
-        StrandPositionExpectation::At {
-            list_space_id: dragged.from_column_id.clone(),
-            rank: dragged.from_rank.clone(),
-        }
-    };
+    let expected =
+        if dragged.from_column_id.trim().is_empty() || dragged.from_rank.trim().is_empty() {
+            StrandPositionExpectation::Initial
+        } else {
+            StrandPositionExpectation::At {
+                list_space_id: dragged.from_column_id.clone(),
+                rank: dragged.from_rank.clone(),
+            }
+        };
     let effect = StrandPositionEffect::SetPosition {
         list_space_id: target_column_id.clone(),
         rank: new_rank.clone(),

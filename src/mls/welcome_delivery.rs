@@ -61,10 +61,10 @@ pub(crate) fn welcome_envelope_from_delivery(
         "Welcome delivery scope differs from its Commit Event scope"
     );
 
-    let payload: MlsCommitPayload = serde_json::from_value(serde_json::to_value(
-        &commit_event.payload,
-    )?)
-    .map_err(|error| anyhow::anyhow!("accepted MLS Commit payload is unreadable: {error}"))?;
+    let payload: MlsCommitPayload =
+        serde_json::from_value(serde_json::to_value(&commit_event.payload)?).map_err(|error| {
+            anyhow::anyhow!("accepted MLS Commit payload is unreadable: {error}")
+        })?;
     let binding = payload.governance_binding();
     let group_id = binding
         .mls_group_id()
@@ -121,10 +121,7 @@ fn endpoint_identity(
                 binding.verification_method
             );
             anyhow::ensure!(
-                delivery
-                    .recipient_actor_id
-                    .signing_principal_id()
-                    .as_str()
+                delivery.recipient_actor_id.signing_principal_id().as_str()
                     == binding.agent_id.as_str(),
                 "Agent key binding belongs to another Agent than the Welcome recipient"
             );
@@ -152,8 +149,7 @@ pub(crate) fn enqueue_admissible_welcomes(
     accepted_ref: &arkret_wire::CommittedEventRef,
     agent_key_binding: Option<&AgentRuntimeKeyBinding>,
 ) -> anyhow::Result<usize> {
-    let admissible =
-        garth::retain_admissible_welcomes(welcomes, endpoint, &commit_event.event_id);
+    let admissible = garth::retain_admissible_welcomes(welcomes, endpoint, &commit_event.event_id);
     let mut queued = 0;
     for delivery in admissible {
         let envelope = welcome_envelope_from_delivery(&delivery, commit_event, agent_key_binding)?;
@@ -264,7 +260,10 @@ mod tests {
     fn commit_event() -> Event {
         let binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
             realm_id(),
-            Some(EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [9; 32])),
+            Some(EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [9; 32],
+            )),
             3,
             4,
             0,

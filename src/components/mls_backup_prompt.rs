@@ -700,15 +700,15 @@ fn upload_mls_backup_with_recovery_key(
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             let backup_id =
                 crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
-                &api,
-                secure_store.as_ref(),
-                &authority,
-                &principal_control_realm_id,
-                &actor,
-                &device,
-                &recovery_secret,
-            )
-            .await?;
+                    &api,
+                    secure_store.as_ref(),
+                    &authority,
+                    &principal_control_realm_id,
+                    &actor,
+                    &device,
+                    &recovery_secret,
+                )
+                .await?;
             Ok::<_, anyhow::Error>(backup_id)
         })
         .await;

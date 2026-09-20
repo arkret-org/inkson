@@ -649,7 +649,9 @@ pub async fn direct_conversation_found(
                 anyhow::bail!("Direct Conversation founding Event rejected: {reason_code}");
             }
             garth::SubmissionState::Queued => {
-                anyhow::bail!("Direct Conversation founding Event was not answered by the authority")
+                anyhow::bail!(
+                    "Direct Conversation founding Event was not answered by the authority"
+                )
             }
         };
         results.push(result);
@@ -753,9 +755,8 @@ pub(crate) fn direct_conversation_client_local_blockers(
     state_store: &crate::state::LocalStateStore,
     peer: &str,
     outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
-) -> std::collections::BTreeSet<
-    arkret_sdk::direct_conversation::DirectConversationClientLocalBlocker,
-> {
+) -> std::collections::BTreeSet<arkret_sdk::direct_conversation::DirectConversationClientLocalBlocker>
+{
     use arkret_sdk::direct_conversation::DirectConversationClientLocalBlocker as Local;
 
     let mut blockers = std::collections::BTreeSet::new();

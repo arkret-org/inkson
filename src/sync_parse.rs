@@ -250,7 +250,9 @@ mod tests {
     fn a_bare_realm_presence_is_not_a_durable_projection() {
         assert!(!realm_projection_is_durable(&json!({})));
         assert!(!realm_projection_is_durable(&json!({"timeline": null})));
-        assert!(realm_projection_is_durable(&json!({"summary": {"title": "x"}})));
+        assert!(realm_projection_is_durable(
+            &json!({"summary": {"title": "x"}})
+        ));
         assert!(realm_projection_is_durable(&json!({"current": []})));
     }
 

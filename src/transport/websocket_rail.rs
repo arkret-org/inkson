@@ -88,7 +88,10 @@ impl SharedConnection {
     }
 
     fn with<R>(&self, apply: impl FnOnce(&mut RailQueues) -> R) -> R {
-        let mut queues = self.queues.lock().unwrap_or_else(|poison| poison.into_inner());
+        let mut queues = self
+            .queues
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         apply(&mut queues)
     }
 
@@ -175,7 +178,10 @@ struct RailState {
 
 impl WebSocketRail {
     fn with<R>(&self, apply: impl FnOnce(&mut RailState) -> R) -> R {
-        let mut state = self.inner.lock().unwrap_or_else(|poison| poison.into_inner());
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         apply(&mut state)
     }
 

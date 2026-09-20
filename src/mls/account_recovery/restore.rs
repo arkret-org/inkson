@@ -1,12 +1,13 @@
 //! Fetch + restore flow: the account MLS secret and the private-plaintext
 //! sidecar.
 
-use anyhow::{Result, anyhow};
 use crate::mls::runtime::{
-    active_secret_storage_series_id_for, all_secret_storage_backups, backup_series_seq_of, mls_account_secret_backup_version,
-    select_mls_account_secret_backup, select_mls_account_secret_recovery_public_key_backup,
-    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
+    active_secret_storage_series_id_for, all_secret_storage_backups, backup_series_seq_of,
+    mls_account_secret_backup_version, select_mls_account_secret_backup,
+    select_mls_account_secret_recovery_public_key_backup, select_mls_private_plaintext_backup,
+    select_preferred_mls_account_secret_backup,
 };
+use anyhow::{Result, anyhow};
 use garth::mls::backup_series::verify_series_chain;
 use serde_json::{Value, json};
 
@@ -96,9 +97,7 @@ pub struct RestoreReport {
 
 pub(super) fn verify_active_backup_series(list_payload: &Value, backup_kind: &str) -> Result<()> {
     let class = arkret_sdk::BackupKind::try_from(backup_kind).map_err(|error| anyhow!(error))?;
-    let Some(active_series) =
-        active_secret_storage_series_id_for(list_payload, class)
-    else {
+    let Some(active_series) = active_secret_storage_series_id_for(list_payload, class) else {
         return Err(anyhow!(
             "{backup_kind} active-series pointer is unavailable"
         ));
@@ -108,10 +107,7 @@ pub(super) fn verify_active_backup_series(list_payload: &Value, backup_kind: &st
         .filter(|body| body.get("series_id").and_then(Value::as_str) == Some(active_series))
         .cloned()
         .collect::<Vec<_>>();
-    let Some(tail) = bodies
-        .iter()
-        .max_by_key(|body| backup_series_seq_of(body))
-    else {
+    let Some(tail) = bodies.iter().max_by_key(|body| backup_series_seq_of(body)) else {
         return Err(anyhow!(
             "authoritative {backup_kind} series has no envelopes"
         ));
@@ -323,8 +319,7 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
             .and_then(Value::as_str)
             .unwrap_or_default();
         if let Ok(class) = arkret_sdk::BackupKind::try_from(backup_kind) {
-            let active_series =
-                active_secret_storage_series_id_for(&payload, class);
+            let active_series = active_secret_storage_series_id_for(&payload, class);
             if entry.get("series_id").and_then(Value::as_str) != active_series {
                 continue;
             }
@@ -427,7 +422,14 @@ pub async fn restore_mls_history_with_passphrase_from_payload(
             "no mls_account_secret backup on server; cannot recover MLS history"
         ));
     }
-    restore_private_sidecar(list_payload, state_store, secure_store, authority, &mut report).await;
+    restore_private_sidecar(
+        list_payload,
+        state_store,
+        secure_store,
+        authority,
+        &mut report,
+    )
+    .await;
     Ok(report)
 }
 
@@ -475,7 +477,14 @@ pub async fn restore_mls_history_with_recovery_key_from_payload(
     report.account_secret_imported = true;
 
     let _ = recovery_private_key;
-    restore_private_sidecar(list_payload, state_store, secure_store, authority, &mut report).await;
+    restore_private_sidecar(
+        list_payload,
+        state_store,
+        secure_store,
+        authority,
+        &mut report,
+    )
+    .await;
     Ok(report)
 }
 
@@ -496,7 +505,14 @@ pub async fn restore_mls_history_with_local_secret_from_payload(
         report.first_error = Some(error.to_string());
         return report;
     }
-    restore_private_sidecar(list_payload, state_store, secure_store, authority, &mut report).await;
+    restore_private_sidecar(
+        list_payload,
+        state_store,
+        secure_store,
+        authority,
+        &mut report,
+    )
+    .await;
     report
 }
 

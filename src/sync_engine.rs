@@ -33,23 +33,23 @@ use arkret_models_collaboration::sync_frames::account_subscribe::{
 use arkret_sdk::EventPayloadExt as _;
 use arkret_wire::{AccountDataKey, event_kind_str};
 use garth::subscription::{AccountBatchProjector, AccountSubscription, SubscriptionControl};
-use garth::{RealmProjectionFrame, reconcile_realm_projection};
 #[cfg(test)]
 use garth::{ClientEvent, ClientProjector};
 #[cfg(test)]
 use garth::{DecodedInbound, InboundDecoder};
+use garth::{RealmProjectionFrame, reconcile_realm_projection};
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
+use crate::models::AccountSyncStep;
+use crate::runtime::projection::{ClientProjectionEvent, ProjectionSink, SyncStatusEvent};
+use crate::state::{LocalStateStore, RawOperationRecord};
 use crate::sync_parse::{
     accepted_human_event_signing_device, collect_member_identity_proof_devices_from_value,
     collect_persistent_proof_sender_devices, collect_proof_sender_devices_from_value,
     realm_projection_is_durable, sync_realm_timeline_events,
 };
-use crate::models::AccountSyncStep;
-use crate::runtime::projection::{ClientProjectionEvent, ProjectionSink, SyncStatusEvent};
-use crate::state::{LocalStateStore, RawOperationRecord};
 use crate::transport::TransportClient;
 
 /// Connection-status label surfaced to the app shell's status signal.
@@ -280,9 +280,9 @@ impl AccountTransportProvider {
         // (and therefore the filter value) did not change. Explicit replacement
         // asks the server to resend that bounded baseline instead of entering
         // another idle long-poll with the same demand.
-        let replace_filter =
-            (previous.is_some() && (previous != filter || selected_detail_invalidated))
-                .then_some(true);
+        let replace_filter = (previous.is_some()
+            && (previous != filter || selected_detail_invalidated))
+            .then_some(true);
         SyncRequestBody {
             after: None,
             catchup: Some(true),
@@ -631,7 +631,11 @@ impl InksonAccountProjector {
 
     /// Durably fold one frame, then run the product work that is allowed to
     /// fail without un-committing it.
-    async fn project_frame(&self, frame: &AccountSubscribeFrame, cursor: &str) -> garth::Result<()> {
+    async fn project_frame(
+        &self,
+        frame: &AccountSubscribeFrame,
+        cursor: &str,
+    ) -> garth::Result<()> {
         if frame.kind == AccountSubscribeFrameKind::ResyncRequired {
             return self.reset_account_context().await;
         }
@@ -704,7 +708,9 @@ impl InksonAccountProjector {
                 .projection_sink
                 .projection(ClientProjectionEvent::Theme { value });
         }
-        self.ctx.projection_sink.sync_status(SyncStatusEvent::Online);
+        self.ctx
+            .projection_sink
+            .sync_status(SyncStatusEvent::Online);
         refresh_projection_events_from_sync_response(&response, &self.ctx);
         for account in changed_device_accounts(&response.device_lists()) {
             crate::identity::device_directory::invalidate_actor(&account.to_string());
@@ -744,7 +750,10 @@ impl InksonAccountProjector {
         let submitter = crate::event_submit::EventSubmitter::new(http.clone())
             .with_state_store(self.ctx.state_store.clone());
         if let Err(error) = submitter.drain_outbound().await {
-            tracing::debug!(?error, "account post-commit deferred durable outbound drain");
+            tracing::debug!(
+                ?error,
+                "account post-commit deferred durable outbound drain"
+            );
         }
         if let Err(error) = submitter.drain_mls_outbound().await {
             tracing::debug!(?error, "account post-commit deferred MLS outbound drain");
@@ -1480,7 +1489,9 @@ async fn run_circle_scope_rotate_pass(
                         // protocol: each Event is answered by its own
                         // RealmCommit, so the unit is submitted in order and
                         // stops at the first Event the Station refuses.
-                        submitter.submit_signed_sdk_events_in_order(&authored).await?;
+                        submitter
+                            .submit_signed_sdk_events_in_order(&authored)
+                            .await?;
                     }
                     fence()?;
                     Ok(Some((draft.post_commit_checkpoint, commit_id)))

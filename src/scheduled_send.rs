@@ -371,14 +371,11 @@ fn scheduled_send_operation(
     let send_at = DateTime::parse_from_rfc3339(&value.send_at)
         .map_err(|error| anyhow::anyhow!("scheduled_send send_at is not RFC 3339: {error}"))?
         .with_timezone(&Utc);
-    let operation =
-        crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
-            realm_id,
-            actor_id,
-            value.message_payload.clone(),
-        )
-        .target_ref(value.message_payload.strand_id.as_str())
-        .build_sdk_event("inkson")?;
+    let operation = crate::operation::TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::MessageCreate,
+    >(realm_id, actor_id, value.message_payload.clone())
+    .target_ref(value.message_payload.strand_id.as_str())
+    .build_sdk_event("inkson")?;
     let local_operation_id = operation.local_operation_id().clone();
     Ok(
         crate::operation::LocalOperation::new(operation.into_intent().with_created_at(send_at))

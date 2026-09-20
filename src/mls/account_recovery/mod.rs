@@ -50,8 +50,7 @@ pub(crate) use recovery_transaction::{
 };
 pub use restore::{
     RestoreReport, auto_restore_mls_history_with_passphrase, fetch_mls_account_secret_backup,
-    fetch_mls_restore_payload,
-    fetch_mls_restore_payload_after_encrypted_projection,
+    fetch_mls_restore_payload, fetch_mls_restore_payload_after_encrypted_projection,
     fetch_mls_restore_payload_after_projection,
     fetch_mls_restore_payload_with_recovery_session_unlock_proof,
     fetch_mls_restore_payload_with_unlock_proof, mls_backup_prompt_required,
@@ -61,8 +60,7 @@ pub use restore::{
 };
 pub(crate) use rotation_transaction::execute_device_revoke_security_rotation;
 pub use upload::{
-    fetch_mls_private_plaintext_backup_body,
-    upload_mls_account_secret_backup_with_passphrase,
+    fetch_mls_private_plaintext_backup_body, upload_mls_account_secret_backup_with_passphrase,
     upload_mls_account_secret_backup_with_recovery_key,
     upload_mls_account_secret_backup_with_recovery_public_key, upload_mls_private_plaintext_backup,
     upload_mls_private_plaintext_backup_with_previous,

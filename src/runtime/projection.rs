@@ -146,11 +146,7 @@ pub trait SignalProductSink {
     /// `visibility="private"` discard a **client** obligation — the receipt is
     /// Signal plaintext, so no service can apply it — which is why the sink
     /// receives the policy instead of assuming the transport already filtered.
-    fn read_receipt(
-        &self,
-        plaintext: &AdmittedSignal,
-        policy: &arkret_sdk::ReadReceiptPolicy,
-    );
+    fn read_receipt(&self, plaintext: &AdmittedSignal, policy: &arkret_sdk::ReadReceiptPolicy);
 
     /// Advance the TTL state of Signal-backed projections: `signal.md` §7.4
     /// marks a preview stalled after 30 seconds without a valid frame and
@@ -175,12 +171,7 @@ impl SignalProductSink for NoopSignalProductSink {
         Box::pin(async {})
     }
 
-    fn read_receipt(
-        &self,
-        _plaintext: &AdmittedSignal,
-        _policy: &arkret_sdk::ReadReceiptPolicy,
-    ) {
-    }
+    fn read_receipt(&self, _plaintext: &AdmittedSignal, _policy: &arkret_sdk::ReadReceiptPolicy) {}
 
     fn advance_clock(&self, _now: chrono::DateTime<chrono::Utc>) {}
 }
@@ -221,11 +212,7 @@ impl SignalProductSink for SignalProductRouter {
         Box::pin(async move { sink.message_stream(plaintext).await })
     }
 
-    fn read_receipt(
-        &self,
-        plaintext: &AdmittedSignal,
-        policy: &arkret_sdk::ReadReceiptPolicy,
-    ) {
+    fn read_receipt(&self, plaintext: &AdmittedSignal, policy: &arkret_sdk::ReadReceiptPolicy) {
         self.sink.borrow().read_receipt(plaintext, policy);
     }
 

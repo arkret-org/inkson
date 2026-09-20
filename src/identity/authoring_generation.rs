@@ -56,9 +56,7 @@ impl AuthoringGeneration {
         });
         Ok(Self {
             authority_model: AuthoringAuthorityModel::Agent,
-            authority_principal_id: arkret_sdk::DidCoreId::new(
-                authority_principal_id.to_owned(),
-            )?,
+            authority_principal_id: arkret_sdk::DidCoreId::new(authority_principal_id.to_owned())?,
             generation_ref: crate::canonical::canonical_sha256(&binding)?,
         })
     }
@@ -94,8 +92,7 @@ pub(crate) fn cache_verified_principal_generation(
             principal_generation_cache_key(account_id, device_id),
             generation.clone(),
         );
-    if previous.as_ref().is_some_and(|value| value != generation) {
-    }
+    if previous.as_ref().is_some_and(|value| value != generation) {}
 }
 
 #[cfg(test)]

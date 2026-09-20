@@ -552,12 +552,18 @@ mod tests {
                 .unwrap(),
             },
         };
-        adapter.save(realm_scope.clone(), "7".to_owned()).await.unwrap();
+        adapter
+            .save(realm_scope.clone(), "7".to_owned())
+            .await
+            .unwrap();
         adapter
             .save(circle_scope.clone(), "3".to_owned())
             .await
             .unwrap();
-        assert_eq!(adapter.load(realm_scope).await.unwrap().as_deref(), Some("7"));
+        assert_eq!(
+            adapter.load(realm_scope).await.unwrap().as_deref(),
+            Some("7")
+        );
         assert_eq!(
             adapter.load(circle_scope).await.unwrap().as_deref(),
             Some("3")

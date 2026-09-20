@@ -233,10 +233,8 @@ pub fn ingest_sidecar_view_state_account_data(
 /// artifact whose truth source is the Sidecar private Event history).
 #[derive(Clone, Debug, Default)]
 pub struct SidecarProjectionFold {
-    view_states: std::collections::BTreeMap<
-        (String, String, String),
-        arkret_sdk::AgentSidecarViewState,
-    >,
+    view_states:
+        std::collections::BTreeMap<(String, String, String), arkret_sdk::AgentSidecarViewState>,
     exchanges: std::collections::BTreeMap<String, arkret_sdk::AgentSidecarExchangeProjection>,
 }
 

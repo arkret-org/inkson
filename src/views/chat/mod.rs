@@ -142,13 +142,15 @@ fn current_watch_projection(
         else {
             continue;
         };
-        let Ok(payload) =
-            serde_json::from_value::<arkret_sdk::StrandWatchSetPayload>(body.clone())
+        let Ok(payload) = serde_json::from_value::<arkret_sdk::StrandWatchSetPayload>(body.clone())
         else {
             continue;
         };
         if payload.strand_id != strand
-            || !same_principal_core(payload.watcher_actor_id.signing_principal_id().as_str(), actor_id)
+            || !same_principal_core(
+                payload.watcher_actor_id.signing_principal_id().as_str(),
+                actor_id,
+            )
         {
             continue;
         }
@@ -158,11 +160,16 @@ fn current_watch_projection(
         // `strand-and-message.md` section 8.3: a cleared cell is the schema
         // default, and the clearing write is the observed prior value.
         Some(payload) => WatchCurrentProjection::Settled {
-            level: payload.level.map(watch_level_from_wire).unwrap_or(WatchLevel::MentionsOnly),
-            expected: payload.level.map(|level| arkret_sdk::StrandWatchExpectedValue {
-                level,
-                level_public: payload.level_public,
-            }),
+            level: payload
+                .level
+                .map(watch_level_from_wire)
+                .unwrap_or(WatchLevel::MentionsOnly),
+            expected: payload
+                .level
+                .map(|level| arkret_sdk::StrandWatchExpectedValue {
+                    level,
+                    level_public: payload.level_public,
+                }),
         },
         None => WatchCurrentProjection::Settled {
             level: WatchLevel::MentionsOnly,
@@ -713,10 +720,9 @@ fn validate_native_prepared_sidecar_binding(
     {
         anyhow::bail!("native Sidecar context attach draft has the wrong signed scope");
     }
-    let attach: arkret_sdk::SidecarContextAttachPayload =
-        serde_json::from_value(serde_json::Value::Object(
-            context_attach_event.payload.clone().into_iter().collect(),
-        ))?;
+    let attach: arkret_sdk::SidecarContextAttachPayload = serde_json::from_value(
+        serde_json::Value::Object(context_attach_event.payload.clone().into_iter().collect()),
+    )?;
     attach.validate()?;
     if attach.sidecar_id != *sidecar_id
         || attach.source_context_ref

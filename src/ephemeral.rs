@@ -81,6 +81,9 @@ mod tests {
         assert!(!authority_rejected_for_reason(&typed, "policy_violation"));
 
         let prose_only = anyhow::anyhow!("dependency_missing");
-        assert!(!authority_rejected_for_reason(&prose_only, "dependency_missing"));
+        assert!(!authority_rejected_for_reason(
+            &prose_only,
+            "dependency_missing"
+        ));
     }
 }

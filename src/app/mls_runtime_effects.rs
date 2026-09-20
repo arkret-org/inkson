@@ -688,12 +688,15 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             let recovery_key_fingerprint =
                 crate::views::recovery::local_recovery_key_fingerprint(&state_for_bootstrap_key)
                     .unwrap_or_default();
-            let local_pending_welcome_hint = crate::mls::welcome_delivery::local_mls_welcome_hint_for_realm(
-                &state_for_bootstrap_key.welcome_inbox_for_scope(&arkret_sdk::ScopeRef::Realm {
-                    realm_id: realm_id.clone(),
-                }),
-                &bootstrap_realm_id,
-            );
+            let local_pending_welcome_hint =
+                crate::mls::welcome_delivery::local_mls_welcome_hint_for_realm(
+                    &state_for_bootstrap_key.welcome_inbox_for_scope(
+                        &arkret_sdk::ScopeRef::Realm {
+                            realm_id: realm_id.clone(),
+                        },
+                    ),
+                    &bootstrap_realm_id,
+                );
             let coverage_repair_hint =
                 crate::mls::coverage_liveness::mls_coverage_repair_dedup_hint(
                     &state_for_bootstrap_key,

@@ -364,9 +364,7 @@ impl LocalStateStore {
             .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
     }
 
-    pub(crate) fn sidecar_projection_fold_snapshot(
-        &self,
-    ) -> crate::sidecar::SidecarProjectionFold {
+    pub(crate) fn sidecar_projection_fold_snapshot(&self) -> crate::sidecar::SidecarProjectionFold {
         self.sidecar_projection_fold.clone()
     }
 

@@ -41,11 +41,7 @@ async fn fetch_kanban_projection_snapshot(
             None
         }
     };
-    let events = api
-        .event_submitter()?
-        .backfill(realm_id)
-        .await?
-        .events();
+    let events = api.event_submitter()?.backfill(realm_id).await?.events();
     // A Realm backfill can carry senders absent from account sync. Populate
     // their verified device authority before the synchronous decrypt/render
     // path runs, using the same proof resolver as the discussion backfill.

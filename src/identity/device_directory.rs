@@ -1000,7 +1000,8 @@ mod verification_method_controller_tests {
             "keys/query Data evidence must not be reused as Control evidence"
         );
         let generation = crate::identity::authoring_generation::AuthoringGeneration {
-            authority_model: crate::identity::authoring_generation::AuthoringAuthorityModel::AcceptedDevice,
+            authority_model:
+                crate::identity::authoring_generation::AuthoringAuthorityModel::AcceptedDevice,
             authority_principal_id: account.principal_id.clone(),
             generation_ref: "7".to_owned(),
         };
@@ -1133,7 +1134,8 @@ mod verification_method_controller_tests {
         );
         let outcome = self_outcome_fixture(&account, &device, &projection);
         let generation = crate::identity::authoring_generation::AuthoringGeneration {
-            authority_model: crate::identity::authoring_generation::AuthoringAuthorityModel::AcceptedDevice,
+            authority_model:
+                crate::identity::authoring_generation::AuthoringAuthorityModel::AcceptedDevice,
             authority_principal_id: account.principal_id.clone(),
             generation_ref: "7".to_owned(),
         };
@@ -1239,7 +1241,8 @@ mod verification_method_controller_tests {
             &account,
             &device,
             crate::identity::authoring_generation::AuthoringGeneration {
-                authority_model: crate::identity::authoring_generation::AuthoringAuthorityModel::AcceptedDevice,
+                authority_model:
+                    crate::identity::authoring_generation::AuthoringAuthorityModel::AcceptedDevice,
                 authority_principal_id: account.principal_id.clone(),
                 generation_ref: "7".to_owned(),
             },

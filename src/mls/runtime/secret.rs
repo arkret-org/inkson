@@ -441,9 +441,7 @@ pub fn load_mls_key_package_inventory(
         });
     };
     let inventory: arkret_sdk::LocalMlsKeyPackageInventory = serde_json::from_str(&encoded)
-        .map_err(|error| {
-            SecureKeyStoreError::Backend(format!("invalid MLS inventory: {error}"))
-        })?;
+        .map_err(|error| SecureKeyStoreError::Backend(format!("invalid MLS inventory: {error}")))?;
     if inventory.endpoint != expected {
         return Err(SecureKeyStoreError::Backend(
             "MLS inventory endpoint does not match the active authority and device".to_owned(),
@@ -564,9 +562,7 @@ pub fn prepare_account_mls_secret_rotation(
         };
         let mut salt = [0_u8; 16];
         getrandom::fill(&mut salt).map_err(|err| {
-            MlsRuntimeError::DeviceSecret(SecureKeyStoreError::Backend(format!(
-                "getrandom: {err}"
-            )))
+            MlsRuntimeError::DeviceSecret(SecureKeyStoreError::Backend(format!("getrandom: {err}")))
         })?;
         // Re-wrapping does not advance the epoch: carry the epoch-start clock
         // so a secret rotation never resets the minimal-metadata epoch-age cap.
@@ -929,7 +925,11 @@ mod tests {
         assert_eq!(rotation.new_version, 2);
         assert_eq!(rotation.rewrapped_checkpoints.len(), 1);
         assert_eq!(
-            rotation.failed_realms.iter().map(|(realm, _)| realm.as_str()).collect::<Vec<_>>(),
+            rotation
+                .failed_realms
+                .iter()
+                .map(|(realm, _)| realm.as_str())
+                .collect::<Vec<_>>(),
             ["realm-b"]
         );
         let rotated = &rotation.rewrapped_checkpoints["realm-a"];

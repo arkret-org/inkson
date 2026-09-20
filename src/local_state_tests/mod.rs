@@ -107,4 +107,3 @@ pub(super) fn realm_stream_head(realm_id: &str, position: u64) -> arkret_wire::C
         commit_id: arkret_wire::RealmCommitId::from_digest([position as u8; 32]),
     }
 }
-

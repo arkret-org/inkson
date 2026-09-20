@@ -78,9 +78,13 @@ impl crate::transport::TransportClient {
         if prepared.realm_stream_head != prepared.authority_bundle.realm_stream_head {
             anyhow::bail!("join preparation stream head contradicts the authority bundle");
         }
-        let operation =
-            crate::operation::ak_ops::invite_accept(realm_id, actor_id, invite_id, Some(account_id))?
-                .build_sdk_event("inkson")?;
+        let operation = crate::operation::ak_ops::invite_accept(
+            realm_id,
+            actor_id,
+            invite_id,
+            Some(account_id),
+        )?
+        .build_sdk_event("inkson")?;
         let submit = self.event_submitter()?.submit_sdk_event(&operation).await?;
         Ok((submit, None))
     }

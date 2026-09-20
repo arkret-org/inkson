@@ -36,18 +36,10 @@ const PAGE_LIMIT: usize = 100;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum CurrentTarget {
     Realm,
-    Strand {
-        strand_id: arkret_sdk::StrandId,
-    },
-    Member {
-        actor_id: arkret_sdk::ActorId,
-    },
-    Event {
-        event_id: arkret_sdk::EventId,
-    },
-    MlsGroup {
-        scope_ref: arkret_sdk::ScopeRef,
-    },
+    Strand { strand_id: arkret_sdk::StrandId },
+    Member { actor_id: arkret_sdk::ActorId },
+    Event { event_id: arkret_sdk::EventId },
+    MlsGroup { scope_ref: arkret_sdk::ScopeRef },
 }
 
 fn target_of(selector: &CurrentSelector) -> CurrentTarget {
@@ -839,10 +831,7 @@ impl CurrentIndex {
     }
     // These bounded readers are the explicit 0540 hand-off surface.
     #[allow(dead_code)]
-    pub(crate) async fn read_progress(
-        &self,
-        realm: &str,
-    ) -> anyhow::Result<CurrentRealmProgress> {
+    pub(crate) async fn read_progress(&self, realm: &str) -> anyhow::Result<CurrentRealmProgress> {
         let _lease = self.lease.lock().await;
         self.progress_at(realm, self.generation.load(Ordering::Acquire))
             .await
@@ -1030,8 +1019,7 @@ impl CurrentIndex {
                         continue;
                     }
                     if baseline.is_none()
-                        && let Some(mark) =
-                            self.strongest_mark(realm, expected_generation).await?
+                        && let Some(mark) = self.strongest_mark(realm, expected_generation).await?
                         && revision_of(entry).stream_position <= mark.covered_floor
                         && self
                             .latest_generation(
@@ -1085,12 +1073,7 @@ impl CurrentIndex {
                             serde_json::to_vec(entry)?,
                         );
                         unversioned.insert(
-                            format!(
-                                "{}prune/{}/{}",
-                                self.prefix,
-                                hash(realm)?,
-                                hash(selector)?
-                            ),
+                            format!("{}prune/{}/{}", self.prefix, hash(realm)?, hash(selector)?),
                             serde_json::to_vec(&PruneTask {
                                 realm: realm.clone(),
                                 selector: selector.clone(),

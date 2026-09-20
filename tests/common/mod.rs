@@ -25,7 +25,6 @@ pub fn test_inception_root_key_multibase(principal_did: &str) -> String {
     )
 }
 
-
 /// The pinned signing stamp for position `actor_seq`.
 pub fn pinned_hlc(actor_seq: u64) -> arkret_sdk::Hlc {
     arkret_test_kit::pinned_hlc(u16::try_from(actor_seq).expect("fixture HLC counter"))

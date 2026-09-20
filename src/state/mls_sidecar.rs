@@ -1148,8 +1148,10 @@ mod tests {
     }
 
     fn event_id(suffix: &str) -> arkret_sdk::EventId {
-        arkret_sdk::EventId::new(format!("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl4{suffix}"))
-            .unwrap()
+        arkret_sdk::EventId::new(format!(
+            "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl4{suffix}"
+        ))
+        .unwrap()
     }
 
     fn checkpoint(epoch: u64, body: &[u8]) -> crate::mls::persistence::MlsLocalCheckpointEnvelope {

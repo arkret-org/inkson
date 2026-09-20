@@ -367,9 +367,10 @@ fn pending_mls_commit_for_realm_from_snapshot(
     snapshot: &garth::SendQueueSnapshot,
     realm_id: &str,
 ) -> bool {
-    snapshot.items.iter().any(|item| {
-        is_unsettled(item.status) && queued_event(item).realm_id.as_str() == realm_id
-    })
+    snapshot
+        .items
+        .iter()
+        .any(|item| is_unsettled(item.status) && queued_event(item).realm_id.as_str() == realm_id)
 }
 
 fn durable_mls_genesis_for_realm_from_snapshot(
@@ -379,13 +380,10 @@ fn durable_mls_genesis_for_realm_from_snapshot(
     snapshot
         .items
         .iter()
-        .filter(|item| {
-            is_unsettled(item.status) || item.status == SendQueueStatus::Committed
-        })
+        .filter(|item| is_unsettled(item.status) || item.status == SendQueueStatus::Committed)
         .any(|item| {
             let event = queued_event(item);
-            event.kind == arkret_sdk::EventKind::MlsGenesis
-                && event.realm_id.as_str() == realm_id
+            event.kind == arkret_sdk::EventKind::MlsGenesis && event.realm_id.as_str() == realm_id
         })
 }
 
@@ -601,9 +599,10 @@ impl EventSubmitter {
     }
 
     fn ensure_realm_detail_current(&self, realm_id: &str) -> anyhow::Result<()> {
-        let invalidated_without_projection = self.state_store.as_ref().is_some_and(|store| {
-            store.read(|store| store.realm_detail_invalidated(realm_id))
-        });
+        let invalidated_without_projection = self
+            .state_store
+            .as_ref()
+            .is_some_and(|store| store.read(|store| store.realm_detail_invalidated(realm_id)));
         if local_detail_blocks_authoring(
             self.founding_realm.as_ref(),
             realm_id,
@@ -724,7 +723,9 @@ impl EventSubmitter {
         let founding = self
             .realm_create_authority(realm_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("committed Realm founding authority is not available"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("committed Realm founding authority is not available")
+            })?;
         Ok(matches!(founding, RealmCreateAuthority::Root { controller } if controller == actor))
     }
 
@@ -861,9 +862,7 @@ impl EventSubmitter {
         )
         .map_err(anyhow::Error::msg)?;
         if intent.actor_id().signing_principal_id() != &material.actor_id {
-            anyhow::bail!(
-                "minimal-metadata intent actor does not equal the Realm pairwise actor"
-            );
+            anyhow::bail!("minimal-metadata intent actor does not equal the Realm pairwise actor");
         }
         material
             .signer
@@ -1162,9 +1161,9 @@ impl EventSubmitter {
             arkret_wire::MlsCommitSubmission {
                 commit_event: commit.event().clone(),
                 welcomes,
-                idempotency_key: arkret_wire::UuidV7::new(
-                    arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms()),
-                )
+                idempotency_key: arkret_wire::UuidV7::new(arkret_sdk::identifiers::uuid_v7_at(
+                    crate::clock::now_unix_ms(),
+                ))
                 .map_err(anyhow::Error::from)?,
             },
         ))
@@ -1271,10 +1270,7 @@ impl EventSubmitter {
     ///
     /// A Station refusal is an answer, not an error: it comes back as the
     /// settled item so the caller can read its exact `reason_code`.
-    async fn enqueue_and_drive(
-        &self,
-        write: QueuedWrite,
-    ) -> anyhow::Result<garth::SendQueueItem> {
+    async fn enqueue_and_drive(&self, write: QueuedWrite) -> anyhow::Result<garth::SendQueueItem> {
         let QueuedWrite {
             lane,
             submission,
@@ -1328,7 +1324,9 @@ impl EventSubmitter {
                 .await
                 .map_err(anyhow::Error::from)?
             {
-                OutboundEngineOutcome::Committed { item, commit } if item.event_id() == &event_id => {
+                OutboundEngineOutcome::Committed { item, commit }
+                    if item.event_id() == &event_id =>
+                {
                     self.run_post_accept(&post_accept, &item, &commit).await?;
                     if let Some(state_store) = self.state_store.as_ref() {
                         state_store.write(|store| {
@@ -1668,7 +1666,9 @@ impl EventSubmitter {
                 Some(position) if page.truncated() => after_position = Some(position),
                 _ => {
                     return head.ok_or_else(|| {
-                        anyhow::anyhow!("this scope's commit stream has no head to bind a Signal to")
+                        anyhow::anyhow!(
+                            "this scope's commit stream has no head to bind a Signal to"
+                        )
                     });
                 }
             }
