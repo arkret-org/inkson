@@ -1,4 +1,4 @@
-use arkret_wire::{CapabilityActionId, CellFamilyId, event_kind_str};
+use arkret_wire::{CapabilityActionId, event_kind_str};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::Link;
@@ -587,13 +587,6 @@ pub fn RealmAdminPanel(
                                     span { class: "muted", "Latest locally published key generation" }
                                 }
                                 code { "data-testid": "mls-epoch-value", "{mls_epoch_label}" }
-                            }
-                            div { class: "security-diagnostic-row",
-                                div {
-                                    strong { "Epoch cell" }
-                                    span { class: "muted", "Protocol family" }
-                                }
-                                code { {CellFamilyId::MLS_EPOCH_V1} }
                             }
                             div { class: "security-diagnostic-row", "data-testid": "seal-frontier-debug",
                                 div {
