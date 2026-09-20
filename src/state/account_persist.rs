@@ -90,8 +90,8 @@ fn json_merge_live_priority(live: Value, stored: Value) -> Value {
 /// Otherwise both are non-default (a real live write raced hydration) and the
 /// field-wise [`json_merge_live_priority`] union runs.
 ///
-/// The four memory-only sidecars (`mls_private_plaintext`,
-/// `mls_decrypted_plaintext`, `history_secrets`, `authenticated_identity_links`)
+/// The three memory-only sidecars (`mls_private_plaintext`,
+/// `mls_decrypted_plaintext`, `authenticated_identity_links`)
 /// are `#[serde(skip_serializing)]`
 /// and never appear in a stored blob, so they are lifted out of `live` before
 /// the JSON round-trip and restored afterwards — the JSON merge would otherwise
@@ -111,7 +111,6 @@ pub(super) fn merge_persisted_into_live(
     // drops them (they are skip_serializing) and stored never carries them.
     let live_private_plaintext = live.mls_private_plaintext.clone();
     let live_decrypted_plaintext = live.mls_decrypted_plaintext.clone();
-    let live_history_secrets = live.history_secrets.clone();
     let live_authenticated_identity_links = live.authenticated_identity_links.clone();
 
     let merged_value = match (serde_json::to_value(&live), serde_json::to_value(&stored)) {
@@ -129,7 +128,6 @@ pub(super) fn merge_persisted_into_live(
     };
     merged.mls_private_plaintext = live_private_plaintext;
     merged.mls_decrypted_plaintext = live_decrypted_plaintext;
-    merged.history_secrets = live_history_secrets;
     merged.authenticated_identity_links = live_authenticated_identity_links;
     merged
 }
