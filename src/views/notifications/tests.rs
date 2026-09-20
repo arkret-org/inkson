@@ -808,7 +808,7 @@ fn notification_sources_use_typed_subscribe_deltas_only() {
             arkret_sdk::sync::NotificationDeltaAction::Upsert,
             Some(arkret_sdk::sync::NotificationData::AgentRuntimeApproval(
                 arkret_sdk::sync::AgentRuntimeApprovalNotificationData {
-                    approval_request_id: arkret_sdk::OpaqueLocalId::new(
+                    approval_request_id: arkret_sdk::sync::AgentRuntimeApprovalRequestId::new(
                         "agent_runtime_approval:01964137-0000-7000-8000-000000000005",
                     )
                     .unwrap(),
@@ -827,11 +827,21 @@ fn notification_sources_use_typed_subscribe_deltas_only() {
     ];
     let from_subscribe = raw_notifications_from_sources(Some(&subscribe_delta), &account_data);
     assert_eq!(from_subscribe.len(), 2);
-    assert!(from_subscribe.iter().any(|item| {
-        item.agent_runtime_approval().is_some_and(|(id, _)| {
-            id.as_str() == "ak:notification:01964137-0000-7000-8000-000000000004"
-        })
-    }));
+    let runtime_approval = from_subscribe
+        .iter()
+        .find(|item| item.agent_runtime_approval().is_some())
+        .expect("runtime approval notification");
+    assert!(
+        runtime_approval
+            .agent_runtime_approval()
+            .is_some_and(|(id, _)| {
+                id.as_str() == "ak:notification:01964137-0000-7000-8000-000000000004"
+            })
+    );
+    let context = notification_eval_context(runtime_approval);
+    assert_eq!(context.notification_kind, "agent");
+    assert!(context.sender.is_none());
+    assert!(context.realm_id.is_empty());
     assert!(
         from_subscribe
             .iter()

@@ -486,7 +486,7 @@ pub(crate) fn notification_scope_kind(notification: &UiNotification) -> &'static
 fn notification_preview(value: &StoredNotification) -> Option<&BTreeMap<String, Value>> {
     match value {
         StoredNotification::Event { notification } => notification.preview.as_ref(),
-        StoredNotification::AgentRuntimeApproval { .. } | StoredNotification::Invite { .. } => None,
+        StoredNotification::Invite { .. } => None,
     }
 }
 
@@ -529,7 +529,7 @@ pub(crate) fn notification_eval_context(value: &StoredNotification) -> Notificat
             }
             .to_owned(),
         ),
-        StoredNotification::AgentRuntimeApproval { .. } | StoredNotification::Invite { .. } => None,
+        StoredNotification::Invite { .. } => None,
     };
     let priority_override = preview_bool(value, "priority_override").unwrap_or_else(|| {
         priority
@@ -542,16 +542,18 @@ pub(crate) fn notification_eval_context(value: &StoredNotification) -> Notificat
         realm_id: value.realm_id().unwrap_or_default().to_owned(),
         strand_id: value.strand_id().map(ToOwned::to_owned),
         strand_track: preview_string(value, &["strand_track", "track_name"]),
-        sender: match value {
-            StoredNotification::Event { notification } => Some(
-                notification
-                    .actor_id
-                    .signing_principal_id()
-                    .as_str()
-                    .to_owned(),
-            ),
-            StoredNotification::AgentRuntimeApproval { .. } | StoredNotification::Invite { .. } => {
-                None
+        sender: if value.agent_runtime_approval().is_some() {
+            None
+        } else {
+            match value {
+                StoredNotification::Event { notification } => Some(
+                    notification
+                        .actor_id
+                        .signing_principal_id()
+                        .as_str()
+                        .to_owned(),
+                ),
+                StoredNotification::Invite { .. } => None,
             }
         },
         body: preview_string(value, &["body", "summary"]),
@@ -577,21 +579,23 @@ pub(crate) fn notification_eval_context(value: &StoredNotification) -> Notificat
 }
 
 fn notification_title(value: &StoredNotification, kind: &str) -> String {
+    if value.agent_runtime_approval().is_some() {
+        return "Agent runtime approval".to_owned();
+    }
     match value {
         StoredNotification::Event { .. } => preview_string(value, &["title"])
             .unwrap_or_else(|| default_notification_title(kind).to_owned()),
-        StoredNotification::AgentRuntimeApproval { .. } => "Agent runtime approval".to_owned(),
         StoredNotification::Invite { .. } => default_notification_title("invite").to_owned(),
     }
 }
 
 fn notification_body(value: &StoredNotification) -> String {
+    if value.agent_runtime_approval().is_some() {
+        return "Review the pending Agent runtime key request.".to_owned();
+    }
     match value {
         StoredNotification::Event { .. } => {
             preview_string(value, &["body", "summary"]).unwrap_or_else(|| "Notification".to_owned())
-        }
-        StoredNotification::AgentRuntimeApproval { data, .. } => {
-            format!("Approve a runtime key for {}.", data.agent_id.as_str())
         }
         // The Invite object carries no Realm title, so the short protocol id is
         // the only name available before the accept flow resolves a preview.
@@ -603,9 +607,11 @@ fn notification_body(value: &StoredNotification) -> String {
 }
 
 fn notification_realm_label(value: &StoredNotification) -> Option<String> {
+    if value.agent_runtime_approval().is_some() {
+        return None;
+    }
     match value {
         StoredNotification::Event { .. } => preview_string(value, &["realm_label", "realm_title"]),
-        StoredNotification::AgentRuntimeApproval { .. } => None,
         StoredNotification::Invite { .. } => None,
     }
 }
@@ -619,9 +625,7 @@ pub(crate) fn notification_wire_state(value: &StoredNotification) -> (bool, bool
                 (true, true)
             }
         },
-        StoredNotification::AgentRuntimeApproval { .. } | StoredNotification::Invite { .. } => {
-            (false, false)
-        }
+        StoredNotification::Invite { .. } => (false, false),
     }
 }
 

@@ -617,33 +617,36 @@ fn dashboard_notification_summaries(
                 &value.notification_kind(),
             )
             .to_owned();
-            let title = match value {
-                crate::state::StoredNotification::Event { notification } => {
-                    crate::state::projection::notifications::event_preview_string(
-                        notification,
-                        &["title"],
-                    )
+            let is_runtime_approval = value.agent_runtime_approval().is_some();
+            let title = if is_runtime_approval {
+                Some("Agent runtime approval".to_owned())
+            } else {
+                match value {
+                    crate::state::StoredNotification::Event { notification } => {
+                        crate::state::projection::notifications::event_preview_string(
+                            notification,
+                            &["title"],
+                        )
+                    }
+                    crate::state::StoredNotification::Invite { .. } => None,
                 }
-                crate::state::StoredNotification::AgentRuntimeApproval { .. } => {
-                    Some("Agent runtime approval".to_owned())
-                }
-                crate::state::StoredNotification::Invite { .. } => None,
             }
             .unwrap_or_else(|| default_notification_title(&kind).to_owned());
-            let body = match value {
-                crate::state::StoredNotification::Event { notification } => {
-                    crate::state::projection::notifications::event_preview_string(
-                        notification,
-                        &["body", "summary"],
-                    )
+            let body = if is_runtime_approval {
+                Some("Review the pending Agent runtime key request.".to_owned())
+            } else {
+                match value {
+                    crate::state::StoredNotification::Event { notification } => {
+                        crate::state::projection::notifications::event_preview_string(
+                            notification,
+                            &["body", "summary"],
+                        )
+                    }
+                    crate::state::StoredNotification::Invite { invite } => Some(format!(
+                        "You were invited to join {}.",
+                        crate::views::helpers::short_protocol_id(invite.realm_id.as_str())
+                    )),
                 }
-                crate::state::StoredNotification::AgentRuntimeApproval { data, .. } => Some(
-                    format!("Approve a runtime key for {}.", data.agent_id.as_str()),
-                ),
-                crate::state::StoredNotification::Invite { invite } => Some(format!(
-                    "You were invited to join {}.",
-                    crate::views::helpers::short_protocol_id(invite.realm_id.as_str())
-                )),
             }
             .unwrap_or_else(|| "Notification".to_owned());
             Some(DashboardNotificationSummary {
