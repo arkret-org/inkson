@@ -7,53 +7,6 @@ use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::views::helpers::short_protocol_id;
 
-async fn retain_current_history_secrets_before_clear(
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    scope: &E2eePlaintextCacheClearScope,
-    authority: &arkret_sdk::AccountId,
-    device_id: &arkret_sdk::DeviceId,
-) -> anyhow::Result<usize> {
-    let realms: Vec<String> = {
-        let store = state_store.read();
-        let usage = store.e2ee_plaintext_cache_usage();
-        match scope {
-            E2eePlaintextCacheClearScope::All => usage.realms.into_keys().collect(),
-            E2eePlaintextCacheClearScope::Realm(realm_id) => usage
-                .realms
-                .contains_key(realm_id)
-                .then(|| realm_id.clone())
-                .into_iter()
-                .collect(),
-        }
-    };
-
-    let mut retained = 0;
-    for realm_id in realms {
-        let derived = {
-            let store = state_store.read();
-            if !crate::mls::runtime::realm_content_scheme_is_exporter_aead(&store, &realm_id) {
-                continue;
-            }
-            crate::mls::runtime::derive_and_retain_realm_history_secret(
-                &store,
-                secure_store,
-                &realm_id,
-                authority,
-                device_id,
-            )
-        }
-        .map_err(|error| anyhow::anyhow!(error.user_message()))?;
-        let Some((_epoch, _secret, pending)) = derived else {
-            continue;
-        };
-        pending.persist(secure_store).await?;
-        state_store.write().publish_history_secrets(pending);
-        retained += 1;
-    }
-    Ok(retained)
-}
-
 fn format_storage_bytes(bytes: u64) -> String {
     const KIB: f64 = 1024.0;
     const MIB: f64 = 1024.0 * KIB;
@@ -103,11 +56,9 @@ async fn refresh_browser_storage_quota(
 pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> Element {
     let session = crate::app::SessionContext::get();
     let mut state_store = session.state_store;
-    let Some(account) = session.active_account() else {
+    if session.active_account().is_none() {
         return rsx! {};
-    };
-    let authority = account.authority;
-    let active_device_id = account.device_id;
+    }
     let mut cache_usage = use_signal(|| state_store.read().e2ee_plaintext_cache_usage());
     let mut pending_clear = use_signal(|| None::<E2eePlaintextCacheClearScope>);
     let mut cache_status = use_signal(String::new);
@@ -260,7 +211,7 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
                             }
                             div { class: "modal-body",
                                 p {
-                                    "Before cleanup, Inkson durably retains every current-epoch history key that this device can export. This then removes locally cached authored and received plaintext for {clear_target}. Older ratcheted content without a verifiable recovery source may still not open again on this device. MLS receive state and encrypted checkpoints are kept."
+                                    "This removes locally cached authored and received plaintext for {clear_target}. MLS private-state checkpoints are kept, but older ratcheted content may still not open again on this device. This cannot be undone."
                                 }
                             }
                             div { class: "modal-foot actions",
@@ -275,49 +226,35 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
                                     "data-testid": "e2ee-cache-clear-confirm",
                                     onclick: move |_| {
                                         let clear_scope = clear_scope_for_action.clone();
-                                        let active_device_id = active_device_id.clone();
-                                        let authority = authority.clone();
                                         spawn(async move {
                                             let secure_store =
                                                 crate::secure_key_store::default_secure_key_store("inkson");
-                                            let retained = retain_current_history_secrets_before_clear(
-                                                state_store,
-                                                secure_store.as_ref(),
-                                                &clear_scope,
-                                                &authority,
-                                                &active_device_id,
-                                            )
-                                            .await;
-                                            let result = match retained {
-                                                Ok(retained) => {
-                                                    let pending = state_store
-                                                        .write()
-                                                        .prepare_e2ee_plaintext_cache_clear(&clear_scope);
-                                                    match pending {
-                                                        Ok(Some(pending)) => {
-                                                            if let Err(error) =
-                                                                pending.persist(secure_store.as_ref()).await
-                                                            {
-                                                                state_store
-                                                                    .write()
-                                                                    .rollback_e2ee_plaintext_cache_clear(
-                                                                        pending,
-                                                                    );
-                                                                Err(error)
-                                                            } else {
-                                                                Ok(Some(retained))
-                                                            }
-                                                        }
-                                                        Ok(None) => Ok(None),
-                                                        Err(error) => Err(error),
+                                            let pending = state_store
+                                                .write()
+                                                .prepare_e2ee_plaintext_cache_clear(&clear_scope);
+                                            let result = match pending {
+                                                Ok(Some(pending)) => {
+                                                    if let Err(error) =
+                                                        pending.persist(secure_store.as_ref()).await
+                                                    {
+                                                        state_store
+                                                            .write()
+                                                            .rollback_e2ee_plaintext_cache_clear(
+                                                                pending,
+                                                            );
+                                                        Err(error)
+                                                    } else {
+                                                        Ok(Some(()))
                                                     }
                                                 }
+                                                Ok(None) => Ok(None),
                                                 Err(error) => Err(error),
                                             };
                                             match result {
-                                                Ok(Some(retained)) => cache_status.set(format!(
-                                                    "Protected plaintext cleared. MLS receive state was retained; {retained} current-epoch history key(s) were durably retained first."
-                                                )),
+                                                Ok(Some(())) => cache_status.set(
+                                                    "Protected plaintext cleared. MLS private-state checkpoints were retained; old content may still be unavailable."
+                                                        .to_owned(),
+                                                ),
                                                 Ok(None) => cache_status
                                                     .set("Nothing matched that cleanup scope.".to_owned()),
                                                 Err(error) => cache_status.set(format!(

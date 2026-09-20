@@ -12,32 +12,6 @@ fn test_user(device_suffix: &str) -> UserLocalStore {
     .unwrap()
 }
 
-fn test_local_history_record(
-    epoch: u64,
-    secret: &[u8],
-) -> arkret_sdk::LocalAuthoritativeHistorySecret {
-    use base64::Engine as _;
-    let effective_scope = arkret_sdk::HistoryEffectiveScope::Realm {
-        realm_id: arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
-            .unwrap(),
-    };
-    arkret_sdk::LocalAuthoritativeHistorySecret {
-        mls_group_id: effective_scope.canonical_mls_group_id().unwrap(),
-        effective_scope,
-        epoch,
-        mls_ciphersuite: arkret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned(),
-        local_state_ref: format!("inkson.mls_snapshot.v1:test-{epoch}"),
-        transition_ref: arkret_sdk::EventId::new(
-            "ak:event:AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        )
-        .unwrap(),
-        transition_event_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
-            .unwrap(),
-        mls_transition_digest: arkret_sdk::Hash::new(format!("sha256:{}", "2".repeat(64))).unwrap(),
-        secret_b64u: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret),
-    }
-}
-
 /// T5.2 — store / load signing seed round-trips through a
 /// MemorySecureKeyStore. `load_signing_seed` returns None on a
 /// fresh store; `store_signing_seed` followed by
@@ -666,81 +640,6 @@ impl HostSecretBridge for TestHostSecretBridge {
             .biometric_accept
             .load(std::sync::atomic::Ordering::SeqCst))
     }
-}
-
-// ── E2EE-at-rest T1 / T6 — MLS history-secret hardening helpers ──────────
-
-/// T6.2 — the per-realm history-secret JSON encodes raw 32-byte secrets as
-/// base64url keyed by decimal epoch and round-trips back to identical bytes.
-#[test]
-fn history_secrets_json_round_trips() {
-    use std::collections::BTreeMap;
-    let mut by_epoch = BTreeMap::new();
-    by_epoch.insert(0, test_local_history_record(0, &[0_u8; 32]));
-    by_epoch.insert(
-        7,
-        test_local_history_record(7, &(0_u8..32).collect::<Vec<_>>()),
-    );
-    by_epoch.insert(4096, test_local_history_record(4096, &[0xAB_u8; 32]));
-
-    let json = encode_history_secrets_json(&by_epoch);
-    let decoded = decode_history_secrets_json(&json);
-    assert_eq!(decoded, by_epoch);
-}
-
-/// T6.1 (regression guard) — the encoded blob must NOT contain the raw secret
-/// bytes in the clear: a distinctive plaintext marker is absent from the JSON.
-#[test]
-fn history_secrets_json_does_not_leak_raw_bytes() {
-    use std::collections::BTreeMap;
-    // A secret whose bytes spell an ASCII marker we can search for.
-    let marker = b"SUPER-SECRET-EXPORTER-KEY-32BYTE";
-    assert_eq!(marker.len(), 32);
-    let mut by_epoch = BTreeMap::new();
-    by_epoch.insert(3, test_local_history_record(3, marker));
-
-    let json = encode_history_secrets_json(&by_epoch);
-    assert!(
-        !json.contains("SUPER-SECRET"),
-        "raw secret bytes leaked into stored JSON: {json}"
-    );
-    // ...but it still round-trips back to the exact bytes.
-    assert_eq!(
-        arkret_sdk::base64url_decode(
-            decode_history_secrets_json(&json)
-                .get(&3)
-                .unwrap()
-                .secret_b64u
-                .as_bytes()
-        )
-        .unwrap(),
-        marker
-    );
-}
-
-/// The SecureKeyStore key for a scope/group pair is the hardened prefix plus a
-/// stable, character-safe base64 encoding and is classified as
-/// IndexedDB-only key material.
-#[test]
-fn history_secret_store_key_is_classified_indexeddb_only() {
-    let key = mls_history_secret_store_key(
-        "realm\u{1f}ak:realm:A5NOQJGC_6RcCjXoz2IvpY-Eg3e2khXp9KQJZkiliab8\u{1f}ak:mls:group-a",
-    );
-    assert!(key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX));
-    assert!(is_wasm_indexeddb_required_secret_key(&key));
-    // Stable across calls (no nonce / randomness in the key derivation).
-    assert_eq!(
-        key,
-        mls_history_secret_store_key(
-            "realm\u{1f}ak:realm:A5NOQJGC_6RcCjXoz2IvpY-Eg3e2khXp9KQJZkiliab8\u{1f}ak:mls:group-a",
-        )
-    );
-    assert_ne!(
-        key,
-        mls_history_secret_store_key(
-            "realm\u{1f}ak:realm:A5NOQJGC_6RcCjXoz2IvpY-Eg3e2khXp9KQJZkiliab8\u{1f}ak:mls:group-b",
-        )
-    );
 }
 
 #[test]

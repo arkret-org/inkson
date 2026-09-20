@@ -745,6 +745,7 @@ async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
     store
         .persist_e2ee_plaintext_cache_with_secure_store(&secure)
         .unwrap();
+    let checkpoint_before_clear = store.mls_checkpoint_for(realm_a).unwrap();
 
     assert!(
         store
@@ -761,7 +762,10 @@ async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
             .is_none()
     );
     assert!(store.mls_decrypted_plaintext_for(realm_a, digest).is_none());
-    assert!(store.mls_checkpoint_for(realm_a).is_some());
+    assert_eq!(
+        store.mls_checkpoint_for(realm_a),
+        Some(checkpoint_before_clear.clone())
+    );
     assert_eq!(
         store.private_plaintext_for(realm_b, strand, "body"),
         Some("realm-b-author".to_owned())
@@ -786,7 +790,10 @@ async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
             .private_plaintext_for(realm_a, strand, "body")
             .is_none()
     );
-    assert!(reloaded.mls_checkpoint_for(realm_a).is_some());
+    assert_eq!(
+        reloaded.mls_checkpoint_for(realm_a),
+        Some(checkpoint_before_clear.clone())
+    );
     assert_eq!(
         reloaded.private_plaintext_for(realm_b, strand, "body"),
         Some("realm-b-author".to_owned())
@@ -802,7 +809,10 @@ async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
             .unwrap()
     );
     assert_eq!(reloaded.e2ee_plaintext_cache_usage().entry_count(), 0);
-    assert!(reloaded.mls_checkpoint_for(realm_a).is_some());
+    assert_eq!(
+        reloaded.mls_checkpoint_for(realm_a),
+        Some(checkpoint_before_clear)
+    );
     assert!(
         !reloaded
             .clear_e2ee_plaintext_cache_with_secure_store(
