@@ -1,7 +1,7 @@
 //! App-tree implementation of [`SignalProductSink`].
 //!
 //! The Signal receive engine has already admitted the envelope (structure,
-//! TTL, sender key, device proof, MLS AEAD, replay) by the time anything here
+//! TTL, Station delivery authority, device proof, MLS AEAD, replay) by the time anything here
 //! runs, so this module owns only the product half: the receiver-side
 //! authorization each profile requires before a body may drive UI, and the
 //! handoff into the two Dioxus hubs mounted at the app root.
@@ -14,8 +14,8 @@ use dioxus::prelude::*;
 use crate::runtime::projection::SignalProductSink;
 
 /// How long one `(realm, sender, action)` authorization verdict is reused.
-/// There is no Seal basis to bind the re-check to any more: the Station
-/// answers an authz check against the Realm's current committed projection, so
+/// The client does not replay a commit basis for this re-check: the governing
+/// Station answers against the Realm's current committed projection, so
 /// the TTL is the whole staleness bound. A message-stream producer may emit
 /// five frames a second per stream, so an uncached check would turn one
 /// preview into a per-frame authz round trip.

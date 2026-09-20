@@ -117,14 +117,15 @@ impl AdmittedSignal {
 /// Product routes for admitted Signal plaintext.
 ///
 /// The Signal receive engine performs every protocol-level check (envelope,
-/// Seal-relative sender authorization, device proof, MLS AEAD, TTL, replay)
+/// stream-head-relative sender authorization, device proof, MLS AEAD, TTL, replay)
 /// before anything reaches this trait, so an implementation only owns the
 /// product projection. It exists so the engine stays free of UI types: the
 /// call and message-stream hubs are Dioxus signals living in the app tree.
 pub trait SignalProductSink {
     /// One decrypted `ak.call.signal` body with the envelope it was
-    /// authenticated from. Async because call routing resolves the sender's
-    /// directory key and the moderation action before it may ring a user.
+    /// authenticated from. Async because call routing asks the governing
+    /// Station for the sender's current moderation authorization before it may
+    /// ring a user.
     fn call_signal<'a>(
         &'a self,
         signal: &'a AdmittedSignal,
@@ -133,8 +134,8 @@ pub trait SignalProductSink {
 
     /// One decrypted `ak.message.stream` preview frame. Async because
     /// `signal.md` §7.1 makes the recipient re-verify `ak.message.stream.send`
-    /// and the target `ak.message.create` at the envelope's `seal_ref` before
-    /// any body may be shown.
+    /// and the target `ak.message.create` against the governing Station's
+    /// current committed projection before any body may be shown.
     fn message_stream<'a>(&'a self, plaintext: &'a AdmittedSignal) -> LocalBoxFuture<'a>;
 
     /// One decrypted `ak.receipt.read` plaintext. Synchronous: the receipt is a

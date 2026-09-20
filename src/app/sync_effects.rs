@@ -91,9 +91,7 @@ pub(super) fn SyncEffects(
     // single-leader tab mounts this component, which is also what keeps one
     // browser session from holding two Signal consumers.
     let signal_effects = runtime_services.effects.clone();
-    let signal_client_runtime = runtime_services.client.clone();
     let signal_product_sink = runtime_services.signal_product_sink.clone();
-    let signal_websocket_rail = runtime_services.websocket_rail.clone();
     use_effect(move || {
         let current_gen = sync_generation();
         let Some(account) = active_account() else {
@@ -127,13 +125,9 @@ pub(super) fn SyncEffects(
             token: runtime_adapter::value_reader(token),
             state_store: runtime_adapter::state_store_handle(state_store),
             account,
-            principal_id: actor,
-            device_id: device,
             profiles: runtime_adapter::value_reader(profiles),
-            client_runtime: signal_client_runtime.clone(),
             effect: effect.clone(),
             products: signal_product_sink.clone(),
-            websocket_rail: signal_websocket_rail.clone(),
         };
         let mut active_generation = signal_receive_engine_active_generation;
         spawn(async move {

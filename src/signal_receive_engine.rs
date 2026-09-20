@@ -35,8 +35,8 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use garth::signal::{SignalReceiveOutcome, SignalSink};
-use garth::{RetrySchedule, RunOptions, SyncLoopControl, TransportProvider};
+use garth::RetrySchedule;
+use garth::signal::{SignalReceiveOutcome, SignalReceiver, SignalStreamStopReason};
 use serde_json::Value;
 
 use crate::config::MultiProfileConfig;
@@ -57,17 +57,11 @@ pub struct SignalReceiveEngineContext {
     pub token: crate::runtime::input::ValueReader<String>,
     pub state_store: crate::runtime::input::StateStoreHandle,
     pub account: crate::config::ActiveAccountContext,
-    pub principal_id: arkret_sdk::DidCoreId,
-    pub device_id: String,
     /// Active multi-profile snapshot — the engine exits when the active profile
     /// rotates, mirroring the other two engines.
     pub profiles: crate::runtime::input::ValueReader<MultiProfileConfig>,
-    pub client_runtime: crate::client_core::InksonClientRuntime,
     pub effect: crate::runtime::effects::EffectHandle,
     pub products: SignalProductRouter,
-    /// The session's optional WebSocket. A live rail supplies the Signal
-    /// channel; otherwise this engine stays on the canonical NDJSON rail.
-    pub websocket_rail: crate::transport::websocket_rail::WebSocketRail,
 }
 
 /// [`garth::SignalDecryptor`] backed by the persisted MLS group of the
@@ -384,7 +378,7 @@ struct InksonSignalSink {
     live: Mutex<LiveSignalProjection>,
 }
 
-impl SignalSink for InksonSignalSink {
+impl InksonSignalSink {
     /// One receiver decision.
     ///
     /// Stale and expired outcomes are not failures: the rail allows loss,
@@ -584,15 +578,6 @@ fn live_body_value(signal: &AdmittedSignal) -> garth::Result<Value> {
     Ok(Value::Object(body))
 }
 
-#[derive(Clone, Copy, Default)]
-struct SignalHostClock;
-
-impl garth::HostClock for SignalHostClock {
-    fn now(&self) -> chrono::DateTime<chrono::Utc> {
-        crate::clock::now_utc()
-    }
-}
-
 /// Run the Signal receive rail until the generation is bumped, the active
 /// profile rotates, or the session ends.
 pub async fn run_signal_receive_engine(
@@ -601,16 +586,6 @@ pub async fn run_signal_receive_engine(
     ctx: SignalReceiveEngineContext,
 ) {
     let start_profile_id = ctx.profiles.get().active_profile_id;
-    let provider = SignalTransportProvider {
-        ctx: ctx.clone(),
-        generation,
-        start_generation,
-        start_profile_id,
-    };
-    let resolver = DirectorySenderKeyResolver {
-        state_store: Some(ctx.state_store.clone()),
-        account: Some(ctx.account.clone()),
-    };
     let decryptor = MlsSignalDecryptor::new(
         ctx.state_store.clone(),
         ctx.account.authority.clone(),
@@ -621,32 +596,58 @@ pub async fn run_signal_receive_engine(
         products: ctx.products.clone(),
         live: Mutex::new(LiveSignalProjection::new()),
     };
-    let mut restart_backoff = RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING);
-    while provider.is_active() {
-        let result = ctx
-            .client_runtime
-            .client()
-            .run_signal(
-                &provider,
-                SignalReceiveHandlers::new(&resolver, &decryptor, &sink),
-                &SignalHostClock,
-                &SyncLoopControl::new(),
-                RunOptions {
-                    beat: Duration::from_millis(250),
-                    min_backoff: BACKOFF_FLOOR,
-                    max_backoff: BACKOFF_CEILING,
-                    jitter_ratio: 0.2,
-                    // The per-instance jitter seed is the SDK's; this loop has
-                    // no reason to vary it and must not silently pin it to 0.
-                    ..RunOptions::default()
-                },
+    let mut receiver = SignalReceiver::new();
+    let mut jitter_seed = [0_u8; 8];
+    let _ = getrandom::fill(&mut jitter_seed);
+    let mut restart_backoff = RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING)
+        .with_jitter(0.2, u64::from_le_bytes(jitter_seed));
+    while signal_engine_is_active(
+        &ctx,
+        &generation,
+        start_generation,
+        start_profile_id.as_deref(),
+    ) {
+        let result = run_signal_receive_attempt(
+            &ctx,
+            &generation,
+            start_generation,
+            start_profile_id.as_deref(),
+            &mut receiver,
+            &decryptor,
+            &sink,
+        )
+        .await;
+        if matches!(result, Ok(SignalStreamStopReason::Unauthorized { .. })) {
+            match crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
+                ctx.account.server_url.as_str(),
             )
-            .await;
-        let Some(retry_delay) = crate::runtime_helpers::next_reconnect_delay(
-            provider.is_active(),
-            &mut restart_backoff,
-        ) else {
+            .await
+            {
+                Ok(_) => {
+                    tracing::info!("Signal subscription refreshed after unauthorized");
+                    restart_backoff.reset();
+                    continue;
+                }
+                Err(error) => tracing::warn!(
+                    error = %error,
+                    "Signal subscription could not refresh after unauthorized"
+                ),
+            }
+        }
+        if !signal_engine_is_active(
+            &ctx,
+            &generation,
+            start_generation,
+            start_profile_id.as_deref(),
+        ) {
             break;
+        }
+        let retry_delay = match &result {
+            Ok(SignalStreamStopReason::ReconnectAfter {
+                reconnect_after_ms: Some(reconnect_after_ms),
+            }) => restart_backoff
+                .next_delay_with_hint(Some(Duration::from_millis(*reconnect_after_ms))),
+            _ => restart_backoff.next_delay(),
         };
         match result {
             Ok(reason) => tracing::warn!(
@@ -664,46 +665,75 @@ pub async fn run_signal_receive_engine(
     }
 }
 
-struct SignalTransportProvider {
-    ctx: SignalReceiveEngineContext,
-    generation: crate::runtime::input::ValueReader<u64>,
+fn signal_engine_is_active(
+    ctx: &SignalReceiveEngineContext,
+    generation: &crate::runtime::input::ValueReader<u64>,
     start_generation: u64,
-    start_profile_id: Option<String>,
+    start_profile_id: Option<&str>,
+) -> bool {
+    generation.get() == start_generation
+        && ctx.profiles.get().active_profile_id.as_deref() == start_profile_id
+        && !ctx.effect.is_cancelled()
+        && !ctx.token.get().trim().is_empty()
 }
 
-impl TransportProvider for SignalTransportProvider {
-    type Transport = crate::transport::websocket_rail::StreamRail<arkret_sdk::http_client::Client>;
-
-    /// §6.2 — the Signal channel has no cursor, no catch-up and no receipt on
-    /// either transport, so choosing between them is purely a transport
-    /// decision and needs no state to carry across.
-    async fn provide(&self) -> garth::Result<Self::Transport> {
-        let http = crate::identity::session_refresh::provide_authenticated_sdk_client(
-            self.ctx.account.server_url.as_str(),
-        )
+async fn run_signal_receive_attempt(
+    ctx: &SignalReceiveEngineContext,
+    generation: &crate::runtime::input::ValueReader<u64>,
+    start_generation: u64,
+    start_profile_id: Option<&str>,
+    receiver: &mut SignalReceiver,
+    decryptor: &MlsSignalDecryptor,
+    sink: &InksonSignalSink,
+) -> garth::Result<SignalStreamStopReason> {
+    let client = crate::identity::session_refresh::provide_authenticated_sdk_client(
+        ctx.account.server_url.as_str(),
+    )
+    .await
+    .map_err(|error| garth::Error::Http(error.to_string()))?;
+    let mut stream = client
+        .signal_subscribe_frames()
         .await
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        Ok(crate::transport::websocket_rail::StreamRail::select(
-            &self.ctx.websocket_rail,
-            http,
-        ))
+        .map_err(|error| garth::Error::Http(error.to_string()))?;
+    while signal_engine_is_active(ctx, generation, start_generation, start_profile_id) {
+        let Some(frame) = stream
+            .next_frame()
+            .await
+            .map_err(|error| garth::Error::Http(error.to_string()))?
+        else {
+            return Ok(SignalStreamStopReason::Ended);
+        };
+        match frame {
+            arkret_wire::SignalStreamFrame::Signal {
+                envelope,
+                delivery_authority,
+            } => {
+                let outcome = receiver
+                    .receive(
+                        &envelope,
+                        &delivery_authority,
+                        decryptor,
+                        crate::clock::now_utc(),
+                    )
+                    .await?;
+                sink.handle(outcome).await?;
+            }
+            arkret_wire::SignalStreamFrame::Heartbeat => {
+                let now = crate::clock::now_utc();
+                sink.expire_live_bodies(now);
+                sink.products.advance_clock(now);
+            }
+            arkret_wire::SignalStreamFrame::Drain {
+                reconnect_after_ms, ..
+            } => {
+                return Ok(SignalStreamStopReason::ReconnectAfter { reconnect_after_ms });
+            }
+            arkret_wire::SignalStreamFrame::Unauthorized { reason } => {
+                return Ok(SignalStreamStopReason::Unauthorized { reason });
+            }
+        }
     }
-
-    async fn recover_unauthorized(&self) -> garth::Result<bool> {
-        crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
-            self.ctx.account.server_url.as_str(),
-        )
-        .await
-        .map(|_| true)
-        .map_err(|error| garth::Error::Http(error.to_string()))
-    }
-
-    fn is_active(&self) -> bool {
-        self.generation.get() == self.start_generation
-            && self.ctx.profiles.get().active_profile_id == self.start_profile_id
-            && !self.ctx.effect.is_cancelled()
-            && !self.ctx.token.get().trim().is_empty()
-    }
+    Ok(SignalStreamStopReason::Ended)
 }
 
 #[cfg(test)]
