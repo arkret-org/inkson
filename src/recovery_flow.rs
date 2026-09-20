@@ -10,12 +10,11 @@
 //! exposed here as a direct HTTP side effect.
 
 use arkret_models_crypto::{
-    RecoveryHpkeSuite, RecoveryKeyAgreementAlgorithm, RecoveryKeyAgreementEntry,
-    RecoveryKeyAgreementUse, RecoveryKeyEntry, RecoveryKeySignatureAlgorithm, RecoveryPolicy,
-    RecoveryPolicyActiveOutcome, RecoveryPolicySummary, UnsignedRecoveryPolicy,
-    UnsignedRecoveryPolicyBody,
+    RecoveryBackupHpkeSuite, RecoveryKeyAgreementAlgorithm, RecoveryKeyAgreementEntry,
+    RecoveryKeyAgreementUse, RecoveryKeyEntry, RecoveryPolicy, RecoveryPolicyActiveOutcome,
+    RecoveryPolicyAuthData, RecoveryPolicySummary, RecoverySignatureAlgorithm,
 };
-use arkret_sdk::{DidUrl, NonEmptyString, PolicyId, TrustDomainId};
+use arkret_sdk::{DidUrl, PolicyId, TrustDomainId};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::Value;
@@ -309,7 +308,8 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         .map_err(|error| anyhow::anyhow!(error))?;
     let backup_hpke_ref = DidUrl::new(format!("{principal_did}#backup-hpke-0"))
         .map_err(|error| anyhow::anyhow!(error))?;
-    let policy_body = UnsignedRecoveryPolicyBody {
+    let mut typed_policy = RecoveryPolicy {
+        schema: arkret_sdk::SchemaId::RECOVERY_POLICY_V1.to_owned(),
         policy_id: PolicyId::new(format!("ak:policy:{}", crate::operation::uuid_v7()))?,
         account_id: account_id.clone(),
         version: 1,
@@ -318,23 +318,17 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         methods: vec![arkret_sdk::RecoveryMethod::RecoveryUnlock {
             keys: vec![RecoveryKeyEntry {
                 verification_method: recovery_proof_ref,
-                public_key_multibase: NonEmptyString::new(
-                    key_material.recovery_proof_public_key_multikey.clone(),
-                )
-                .map_err(anyhow::Error::msg)?,
-                signature_algorithm: RecoveryKeySignatureAlgorithm::Ed25519,
+                public_key_multibase: key_material.recovery_proof_public_key_multikey.clone(),
+                signature_algorithm: RecoverySignatureAlgorithm::Ed25519,
                 not_before: issued_at,
                 expires_at: key_expires_at,
                 revoked_at: None,
                 backup_hpke: RecoveryKeyAgreementEntry {
                     key_agreement_ref: backup_hpke_ref,
                     key_agreement_algorithm: RecoveryKeyAgreementAlgorithm::X25519,
-                    public_key_multibase: NonEmptyString::new(
-                        key_material.backup_hpke_public_key_multikey.clone(),
-                    )
-                    .map_err(anyhow::Error::msg)?,
-                    hpke_suites: vec![RecoveryHpkeSuite::X25519ChaCha20Poly1305],
-                    usage: RecoveryKeyAgreementUse::BackupHpke,
+                    public_key_multibase: key_material.backup_hpke_public_key_multikey.clone(),
+                    hpke_suites: vec![RecoveryBackupHpkeSuite::X25519AeadChacha20Poly1305V1],
+                    r#use: RecoveryKeyAgreementUse::BackupHpke,
                     not_before: issued_at,
                     expires_at: key_expires_at,
                     revoked_at: None,
@@ -345,23 +339,40 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         issued_at,
         not_before: None,
         expires_at: None,
+        auth_data: RecoveryPolicyAuthData {
+            verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned()).map_err(
+                |error| anyhow::anyhow!("recovery policy verification method is invalid: {error}"),
+            )?,
+            signature_algorithm: RecoverySignatureAlgorithm::Ed25519,
+            signature: arkret_sdk::Base64UrlString::new("AA".to_owned())
+                .map_err(anyhow::Error::msg)?,
+        },
         extra: Default::default(),
     };
-    let unsigned = UnsignedRecoveryPolicy::new(
-        policy_body,
-        arkret_sdk::DidUrl::new(verification_method.to_owned()).map_err(|error| {
-            anyhow::anyhow!("recovery policy verification method is invalid: {error}")
-        })?,
-        arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
-    )?;
-    let bytes = unsigned.signing_payload_bytes()?;
+    typed_policy.validate_shape()?;
+    let bytes = recovery_policy_signing_payload(&typed_policy)?;
     let signature =
         sign_raw(&bytes).map_err(|err| anyhow::anyhow!("recovery policy sign: {err:?}"))?;
-    let typed_policy = unsigned.attach_signature(
-        arkret_sdk::Base64UrlString::new(B64.encode(signature)).map_err(anyhow::Error::msg)?,
-    )?;
-    typed_policy.validate()?;
+    typed_policy.auth_data.signature =
+        arkret_sdk::Base64UrlString::new(B64.encode(signature)).map_err(anyhow::Error::msg)?;
+    typed_policy.validate_shape()?;
     Ok(serde_json::to_value(typed_policy)?)
+}
+
+/// `key-management.md` §8.1 recovery-policy signature transcript.
+/// `auth_data` is excluded as a whole; the signer identity and algorithm are
+/// authorized by the accepted device context rather than self-authenticated by
+/// the policy document.
+fn recovery_policy_signing_payload(policy: &RecoveryPolicy) -> anyhow::Result<Vec<u8>> {
+    let mut value = serde_json::to_value(policy)?;
+    value
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("recovery policy must serialize as an object"))?
+        .remove("auth_data")
+        .ok_or_else(|| anyhow::anyhow!("recovery policy auth_data is required"))?;
+    let mut transcript = b"ak.identity.recovery_policy.signature.v1\n".to_vec();
+    transcript.extend_from_slice(&arkret_sdk::canonical::canonical_json_bytes(&value)?);
+    Ok(transcript)
 }
 
 fn principal_scoped_recovery_policy_verification_method<'a>(
@@ -443,25 +454,24 @@ async fn publish_recovery_policy(
     api: &TransportClient,
     principal_did: &arkret_sdk::Did,
     account_id: &arkret_sdk::AccountId,
-    device_id: &arkret_sdk::DeviceId,
+    _device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
-    accepted_pcr_genesis_unit: &arkret_wire::PcrGenesisUnit,
+    _accepted_pcr_genesis_unit: &arkret_wire::PcrGenesisUnit,
     policy_value: Value,
 ) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
-    let principal_core_id = arkret_sdk::project_did_to_core_id(principal_did)?;
-    if principal_core_id != account_id.principal_id {
+    if arkret_sdk::project_did_to_core_id(principal_did)? != account_id.principal_id {
         anyhow::bail!("recovery policy principal projection does not match account authority");
     }
     let policy: RecoveryPolicy = serde_json::from_value(policy_value)?;
-    policy.validate()?;
+    policy.validate_shape()?;
     let recovery_payload = arkret_sdk::RecoveryPolicySetPayload {
         policy_id: policy.policy_id.clone(),
         value: policy,
     };
-    recovery_payload.validate()?;
+    recovery_payload.validate_shape()?;
     let payload = arkret_sdk::PolicySetStatePayload {
-        policy_id: recovery_payload.policy_id,
-        value: arkret_sdk::PolicyDocument::RecoveryPolicy(Box::new(recovery_payload.value)),
+        policy_id: recovery_payload.policy_id.clone(),
+        value: arkret_sdk::PolicySetValue::Recovery(Box::new(recovery_payload.value)),
     };
     let event = crate::operation::TypedOperationBuilder::new_for_station::<
         arkret_sdk::event_spec::PolicySet,
@@ -473,95 +483,15 @@ async fn publish_recovery_policy(
     )
     .build_sdk_event("inkson-recovery-policy")?;
     let submitter = api.event_submitter()?;
-    let event = submitter.author_for_direct_submission(&event).await?;
-    let http = api.sdk_http_client()?;
-    crate::authorization_lease::ensure_for_events(
-        &http,
-        std::slice::from_ref(event.event()),
-        &[event.digest_suite()],
-    )
-    .await?;
-    let submission =
-        crate::authorization_lease::delayed_authority_authored_self_principal_submission(
-            &event,
-            event.digest_suite(),
-            accepted_pcr_genesis_unit.create(),
-        )?;
-    let request = arkret_sdk::RecoveryPolicyPublishRequest {
-        event: submission.event,
-        authorization_lease: submission
-            .authorization_lease
-            .expect("recovery policy publication uses an explicit authorization lease"),
-        cbs_proof_bundles: submission.cbs_proof_bundles,
-        control_proposal_ack: submission.control_proposal_ack,
-    };
-
-    // A self-PCR notary is the principal's current device, never the hosting
-    // service. The first typed publication accepts the Event and returns
-    // frontier_unavailable; the client must then publish the device-signed
-    // successor Seal before retrying the identical request.
-    const FRONTIER_RETRY_ATTEMPTS: usize = 120;
-    let mut successor_seal_submitted = false;
-    for attempt in 0..FRONTIER_RETRY_ATTEMPTS {
-        match api
-            .put_recovery_policy(&request, event.digest_suite())
-            .await
-        {
-            Ok(outcome) => return Ok(outcome),
-            Err(error)
-                if recovery_policy_frontier_pending(&error)
-                    && attempt + 1 < FRONTIER_RETRY_ATTEMPTS =>
-            {
-                if !successor_seal_submitted {
-                    submit_recovery_policy_seal(
-                        api,
-                        &principal_core_id,
-                        device_id,
-                        accepted_pcr_genesis_unit,
-                        &event,
-                    )
-                    .await?;
-                    successor_seal_submitted = true;
-                }
-                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250)).await;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    unreachable!("bounded recovery policy retry loop always returns")
-}
-
-async fn submit_recovery_policy_seal(
-    api: &TransportClient,
-    principal_id: &arkret_sdk::DidCoreId,
-    device_id: &arkret_sdk::DeviceId,
-    accepted_pcr_genesis_unit: &arkret_wire::PcrGenesisUnit,
-    policy_event: &arkret_sdk::Event,
-) -> anyhow::Result<()> {
-    let http = api.sdk_http_client()?;
-    let create = accepted_pcr_genesis_unit.create();
-    let authorize = accepted_pcr_genesis_unit.founding_authorize();
-    if create.actor_id.signing_principal_id() != principal_id
-        || authorize.actor_id.signing_principal_id() != principal_id
-        || create.realm_id != policy_event.realm_id
-        || authorize.realm_id != policy_event.realm_id
-    {
-        anyhow::bail!("accepted PCR genesis unit does not match the recovery-policy Event");
-    }
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
-    if signer.device_id() != Some(device_id.as_str()) {
-        anyhow::bail!("active device signer does not match the recovery-policy device");
-    }
-    // Other legitimate PCR operations, such as invite consent, can already
-    // precede the first recovery policy. Reproduce the actual accepted
-    // history instead of assuming this policy occupies actor_seq=2.
-    let context = crate::transport::prepare_principal_successor_seal(&http, policy_event).await?;
-    crate::transport::submit_principal_successor_seal(&http, context, policy_event).await
-}
-
-fn recovery_policy_frontier_pending(error: &anyhow::Error) -> bool {
-    crate::api_error::is_recovery_policy_frontier_pending_error(error)
+    let authored = submitter.author_for_direct_submission(&event).await?;
+    let submission = submitter
+        .prepare_initial_submissions(std::slice::from_ref(&authored))
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("recovery policy authoring produced no submission"))?;
+    let request = arkret_sdk::RecoveryPolicyPublishRequest::new(submission)?;
+    api.put_recovery_policy(request.submission()).await
 }
 
 fn validate_active_policy_key_material(
@@ -577,7 +507,7 @@ fn validate_active_policy_key_material(
             "active recovery policy omitted its signed key configuration; refusing to pair it with supplied recovery material"
         )
     })?;
-    policy.validate()?;
+    policy.validate_shape()?;
     if policy.policy_id != summary.policy_id
         || policy.account_id != summary.account_id
         || policy.version != summary.version
@@ -585,26 +515,33 @@ fn validate_active_policy_key_material(
         anyhow::bail!("active recovery policy summary does not match its signed policy body");
     }
 
-    let agreement_ref = policy
-        .active_hpke_recipients(chrono::Utc::now())
-        .into_iter()
-        .find(|entry| {
-            entry.public_key_multibase.as_str() == key_material.backup_hpke_public_key_multikey
+    let now = chrono::Utc::now();
+    let proof_key = policy
+        .methods
+        .iter()
+        .filter_map(|method| match method {
+            arkret_sdk::RecoveryMethod::RecoveryUnlock { keys } => Some(keys.as_slice()),
+            _ => None,
         })
-        .map(|entry| &entry.key_agreement_ref);
-    let Some(agreement_ref) = agreement_ref else {
-        anyhow::bail!(
-            "supplied Recovery Key does not match the active policy backup recipient; use the staged recovery-key handoff workflow"
-        );
-    };
-    let proof_key = policy.signing_keys().into_iter().find(|entry| {
-        &entry.backup_hpke.key_agreement_ref == agreement_ref
-            && entry.public_key_multibase.as_str()
-                == key_material.recovery_proof_public_key_multikey
-    });
+        .flatten()
+        .find(|entry| {
+            entry.revoked_at.is_none()
+                && entry.not_before <= now
+                && entry.expires_at > now
+                && entry.backup_hpke.revoked_at.is_none()
+                && entry.backup_hpke.not_before <= now
+                && entry.backup_hpke.expires_at > now
+                && entry.public_key_multibase == key_material.recovery_proof_public_key_multikey
+                && entry.backup_hpke.public_key_multibase
+                    == key_material.backup_hpke_public_key_multikey
+                && entry
+                    .backup_hpke
+                    .hpke_suites
+                    .contains(&RecoveryBackupHpkeSuite::X25519AeadChacha20Poly1305V1)
+        });
     let Some(proof_key) = proof_key else {
         anyhow::bail!(
-            "supplied Recovery Key does not match the active policy recovery proof key; use the staged recovery-key handoff workflow"
+            "supplied Recovery Key does not match one active recovery proof/backup recipient pair; use the staged recovery-key handoff workflow"
         );
     };
     Ok(proof_key.verification_method.clone())
