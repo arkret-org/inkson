@@ -692,7 +692,7 @@ fn chat_reaction_add_operation_uses_schema_target_ref() {
 #[test]
 fn every_send_failure_has_its_own_message() {
     let failures = [
-        garth::MessageAuthoringFailure::AuthorizationNotSealed {
+        garth::MessageAuthoringFailure::AuthorizationPending {
             detail: String::new(),
         },
         garth::MessageAuthoringFailure::DependencyUnavailable {
@@ -704,16 +704,7 @@ fn every_send_failure_has_its_own_message() {
         garth::MessageAuthoringFailure::EncryptionContextChanged {
             detail: String::new(),
         },
-        garth::MessageAuthoringFailure::PreparationExpired {
-            detail: String::new(),
-        },
         garth::MessageAuthoringFailure::DuplicateConflict {
-            detail: String::new(),
-        },
-        garth::MessageAuthoringFailure::PreparedIntentMismatch {
-            detail: String::new(),
-        },
-        garth::MessageAuthoringFailure::ActorChainConflict {
             detail: String::new(),
         },
         garth::MessageAuthoringFailure::SubmissionOutcomeUnknown {

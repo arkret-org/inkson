@@ -535,7 +535,7 @@ pub(crate) fn chat_authoring_failure_message(
     failure: &garth::MessageAuthoringFailure,
 ) -> &'static str {
     match failure {
-        garth::MessageAuthoringFailure::AuthorizationNotSealed { .. } => {
+        garth::MessageAuthoringFailure::AuthorizationPending { .. } => {
             "chat.send.not_ready.authorization"
         }
         garth::MessageAuthoringFailure::DependencyUnavailable { .. } => {
@@ -545,12 +545,7 @@ pub(crate) fn chat_authoring_failure_message(
         garth::MessageAuthoringFailure::EncryptionContextChanged { .. } => {
             "chat.send.failed.encryption_context"
         }
-        garth::MessageAuthoringFailure::PreparationExpired { .. } => "chat.send.failed.expired",
         garth::MessageAuthoringFailure::DuplicateConflict { .. } => "chat.send.failed.duplicate",
-        garth::MessageAuthoringFailure::PreparedIntentMismatch { .. } => {
-            "chat.send.failed.intent_mismatch"
-        }
-        garth::MessageAuthoringFailure::ActorChainConflict { .. } => "chat.send.failed.chain",
         garth::MessageAuthoringFailure::SubmissionOutcomeUnknown { .. } => {
             "chat.send.pending.unknown"
         }

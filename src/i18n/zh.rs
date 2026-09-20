@@ -1254,7 +1254,7 @@ pub fn chinese_translations() -> TranslationDict {
     // Ordinary message send outcomes, one line per registered reason.
     dict.set(
         "chat.send.not_ready.authorization",
-        "暂时还不能发送 - 成员资格已接受，但授权尚未被接受的 Seal 覆盖。稍后自动恢复，请稍候重试。",
+        "暂时还不能发送 - 当前治理 Station 尚未让你的授权生效。该状态会自行恢复，请稍候重试。",
     );
     dict.set(
         "chat.send.not_ready.dependency",
@@ -1269,20 +1269,8 @@ pub fn chinese_translations() -> TranslationDict {
         "发送过程中加密状态已变更，消息未发出。再发一次将按当前群状态重新加密。",
     );
     dict.set(
-        "chat.send.failed.expired",
-        "本次发送的准备窗口已过期，消息未被接受。请重新发送。",
-    );
-    dict.set(
         "chat.send.failed.duplicate",
         "该发送身份已对应另一份内容。请作为新消息重新发送。",
-    );
-    dict.set(
-        "chat.send.failed.intent_mismatch",
-        "服务端返回的不是你写的那条消息，因此未签名，也未发送。",
-    );
-    dict.set(
-        "chat.send.failed.chain",
-        "本账号的另一条消息先落地了。请重新发送这条。",
     );
     dict.set(
         "chat.send.pending.unknown",
