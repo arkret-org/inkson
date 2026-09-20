@@ -269,45 +269,21 @@ impl LocalStatePersistBarrier {
     }
 }
 
-/// SEC-08 (`encryption-and-audit.md` §2.9) — does a cached realm-tree
-/// projection carry the create-locked minimal-metadata structural role in
-/// `schema_refs[]`?
-///
-/// The projection can nest the Realm object under several stable containers,
-/// but only the closed genesis `schema_refs` carrier is authoritative. Generic
-/// profile arrays are not Realm state and are deliberately ignored.
-/// The containers a realm-tree projection may nest its Realm object under.
-/// Callers scan all of them because the projection shape differs by source.
-fn realm_tree_projection_containers(body: &Value) -> Vec<&Value> {
-    const NULL: &Value = &Value::Null;
-    vec![
-        body,
-        body.get("summary").unwrap_or(NULL),
-        body.get("object").unwrap_or(NULL),
-        body.get("realm").unwrap_or(NULL),
-        body.get("metadata").unwrap_or(NULL),
-    ]
-}
-
-fn realm_tree_projection_schema_refs(body: &Value) -> Vec<String> {
-    let mut schema_refs = Vec::new();
-    for container in realm_tree_projection_containers(body) {
-        let Some(declared) = container.get("schema_refs").and_then(Value::as_array) else {
-            continue;
-        };
-        for schema_ref in declared.iter().filter_map(Value::as_str) {
-            if !schema_refs.iter().any(|seen: &String| seen == schema_ref) {
-                schema_refs.push(schema_ref.to_owned());
-            }
-        }
+/// The retired marker is never an activation signal. A raw cached projection
+/// is unverified, so any occurrence is sufficient to quarantine its Realm
+/// until a new projection is built from verified current governance facts.
+fn realm_tree_projection_has_retired_minimal_metadata_marker(body: &Value) -> bool {
+    const RETIRED_MARKER: &str = "ak.profile.mls.minimal_metadata_realm.v1";
+    match body {
+        Value::String(value) => value == RETIRED_MARKER,
+        Value::Array(values) => values
+            .iter()
+            .any(realm_tree_projection_has_retired_minimal_metadata_marker),
+        Value::Object(fields) => fields
+            .values()
+            .any(realm_tree_projection_has_retired_minimal_metadata_marker),
+        _ => false,
     }
-    schema_refs
-}
-
-fn realm_tree_projection_value_is_minimal_metadata(body: &Value) -> bool {
-    realm_tree_projection_schema_refs(body)
-        .iter()
-        .any(|profile| profile == arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1)
 }
 
 impl Default for LocalStateStore {

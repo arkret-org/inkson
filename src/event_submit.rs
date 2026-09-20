@@ -846,40 +846,19 @@ impl EventSubmitter {
         event: &mut arkret_sdk::AuthoredEvent,
         proof_context: crate::event_signer::ProducerProofContext,
     ) -> anyhow::Result<()> {
-        let minimal_metadata = intent.realm_id_opt().is_some_and(|realm_id| {
-            self.state_store.as_ref().is_some_and(|store| {
-                store.read(|state| state.realm_projection_is_minimal_metadata(realm_id.as_str()))
-            })
-        });
-        if !minimal_metadata {
-            return crate::event_signer::sign_sdk_event_with_active_context(event, proof_context)
-                .map_err(|error| anyhow::anyhow!("sign SDK Event: {error}"));
+        if let Some(realm_id) = intent.realm_id_opt() {
+            if self.state_store.as_ref().is_some_and(|store| {
+                store.read(|state| {
+                    state.realm_projection_has_retired_minimal_metadata_marker(realm_id.as_str())
+                })
+            }) {
+                anyhow::bail!(
+                    "retired minimal-metadata Realm marker requires verified current governance genesis and schema"
+                );
+            }
         }
-        let realm_id = intent
-            .realm_id_opt()
-            .ok_or_else(|| anyhow::anyhow!("minimal-metadata Event has no Realm scope"))?;
-        let authority = self.authority.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("minimal-metadata Event has no captured account authority")
-        })?;
-        let active = crate::event_signer::active_signer()
-            .ok_or_else(|| anyhow::anyhow!("active endpoint signer is unavailable"))?;
-        let device_id = arkret_sdk::DeviceId::new(
-            active
-                .device_id()
-                .ok_or_else(|| anyhow::anyhow!("active endpoint signer has no device id"))?
-                .to_owned(),
-        )?;
-        let material = crate::mls::pairwise_identity::derive_pairwise_signing_material(
-            authority, &device_id, realm_id,
-        )
-        .map_err(anyhow::Error::msg)?;
-        if intent.actor_id().signing_principal_id() != &material.actor_id {
-            anyhow::bail!("minimal-metadata intent actor does not equal the Realm pairwise actor");
-        }
-        material
-            .signer
-            .sign_sdk_event_with_context(event, proof_context)
-            .map_err(|error| anyhow::anyhow!("sign minimal-metadata SDK Event: {error}"))
+        crate::event_signer::sign_sdk_event_with_active_context(event, proof_context)
+            .map_err(|error| anyhow::anyhow!("sign SDK Event: {error}"))
     }
 
     /// Author and sign one write for a protocol endpoint that carries the

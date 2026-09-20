@@ -531,7 +531,7 @@ fn historical_author_view_survives_epoch_rotation() {
             epoch_one_ref.clone(),
         )
         .unwrap();
-    let original_view = minimal_metadata_author_view(
+    let original_view = verified_author_group_view(
         &state,
         &secure,
         realm,
@@ -583,7 +583,7 @@ fn historical_author_view_survives_epoch_rotation() {
         .save_mls_checkpoint(realm, epoch_two_snapshot)
         .unwrap();
 
-    let historical_view = minimal_metadata_author_view(
+    let historical_view = verified_author_group_view(
         &state,
         &secure,
         realm,
@@ -596,7 +596,7 @@ fn historical_author_view_survives_epoch_rotation() {
     .expect("historical epoch author view");
     assert_eq!(historical_view, original_view);
     assert!(
-        minimal_metadata_author_view(
+        verified_author_group_view(
             &state,
             &secure,
             realm,
@@ -1071,33 +1071,21 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
     assert!(state.mls_checkpoint_for(realm).is_some());
 }
 
-/// X14 — persist-on-accept contract for forced commits: the stored snapshot
-/// epoch only moves when the caller saves the returned envelope (which it
-/// does ONLY after the server accepts the `ak.mls.commit`). This is the
-/// invariant that keeps `snapshot.epoch == server.epoch` in lockstep and
-/// prevents the permanent `mls_epoch_skew` that optimistic pre-accept
-/// persistence caused.
+/// 0352 D1: a cached old profile marker cannot select a legacy epoch cap or
+/// authorize ordinary encryption; reject before touching an MLS checkpoint.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn minimal_overdue_epoch_blocks_before_counter_advance() {
+fn retired_minimal_metadata_marker_blocks_encryption_before_checkpoint_access() {
     let actor = "did:web:minimal-counter.example";
     let device = "ak:device:01964137-0000-7000-8000-0000000000c1";
     let secure = MemorySecureKeyStore::new();
-    let _ = load_or_create_account_mls_secret(&secure, &fixture::authority(actor)).unwrap();
-    crate::identity::authoring_generation::cache_verified_principal_generation_for_test(
-        crate::mls_api_helpers::principal_core_id(actor)
-            .unwrap()
-            .as_str(),
-        device,
-        "ak:event:AYwRmQJZYC4bmkTzqa4XVqbjE6FJmJxq4OTxMe44Ned1",
-    );
     let mut state = temp_state_store("minimal-counter-transition-fence");
     let realm = "ak:realm:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk";
 
     state.save_realm_tree_projection(
         realm,
         json!({
-            "schema_refs": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1],
+            "schema_refs": ["ak.profile.mls.minimal_metadata_realm.v1"],
             "member_roster_entries_limited": false,
             "member_roster_entries": [{
                 "actor_id": arkret_sdk::ActorId::account(fixture::authority(actor)),
@@ -1105,24 +1093,7 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
             }]
         }),
     );
-    assert!(state.realm_projection_is_minimal_metadata(realm));
-
-    // Genesis installs the epoch-0 snapshot.
-    super::seed_human_creator_authorization(actor, device);
-    ensure_creator_mls_checkpoint(
-        &mut state,
-        &secure,
-        realm,
-        &fixture::authority(actor),
-        &fixture::device_id(device),
-    )
-    .unwrap()
-    .expect("creator snapshot created");
-    let before = state.mls_checkpoint_for(realm).unwrap();
-    let mut overdue = state.mls_checkpoint_for(realm).unwrap();
-    overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
-    state.save_mls_checkpoint(realm, overdue).unwrap();
-    let overdue_snapshot = state.mls_checkpoint_for(realm).unwrap();
+    assert!(state.realm_projection_has_retired_minimal_metadata_marker(realm));
 
     let error = encrypt_values_with_device_snapshot(
         &mut state,
@@ -1134,12 +1105,10 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
         &[br#""private""#.to_vec()],
     )
     .unwrap_err();
-    assert!(matches!(
-        error,
-        MlsRuntimeError::EncryptionTransitionPending
-    ));
-    assert_eq!(state.mls_checkpoint_for(realm), Some(overdue_snapshot));
-    assert_eq!(before.app_messages_observed, 0);
+    assert!(
+        matches!(error, MlsRuntimeError::Identity(message) if message.contains("retired minimal-metadata"))
+    );
+    assert!(state.mls_checkpoint_for(realm).is_none());
 }
 
 // ── accepted MLS binding (`ak.component.mls.epoch.v1`) ─────────────────

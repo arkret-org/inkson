@@ -20,6 +20,24 @@ mod device_identity_proof_tests {
         crate::test_support::authority_at_authoring_station(actor)
     }
 
+    #[test]
+    fn retired_minimal_metadata_marker_rejects_even_valid_device_proof() {
+        let realm = "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI";
+        let actor = "did:web:chat-retired-profile.example";
+        let device = "ak:device:01964137-0000-7000-8000-0000000000d1";
+        let signer = crate::event_signer::build_ed25519_device_signer([71u8; 32], actor, device);
+        let envelope = signed_message_envelope(&signer, actor, device);
+        let mut state = crate::state::isolated_store_for_tests("retired-chat-profile");
+        state.save_realm_tree_projection(
+            realm,
+            json!({ "schema_refs": ["ak.profile.mls.minimal_metadata_realm.v1"] }),
+        );
+        assert_eq!(
+            verify_chat_envelope_proof_for_realm(realm, &envelope, Some(&state), None),
+            ChatProofVerdict::Rejected
+        );
+    }
+
     fn signed_message_envelope_inner(
         signer: &crate::event_signer::InksonEventSigner,
         actor_did: &str,

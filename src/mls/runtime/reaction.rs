@@ -43,6 +43,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     created_at: chrono::DateTime<chrono::Utc>,
     canonical_emoji: &str,
 ) -> Result<EncryptedReaction, MlsRuntimeError> {
+    super::reject_retired_minimal_metadata_realm(state_store, realm_id)?;
     let snapshot = state_store
         .mls_checkpoint_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
@@ -54,18 +55,10 @@ pub fn encrypt_reaction_with_device_snapshot(
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
 
-    let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
-
-    // SEC-08 (§2.9) — minimal-metadata epoch lifetime ≤ 1h. A reaction normally
-    // reuses the current epoch (no commit), so on a minimal Realm we MUST roll
-    // the epoch once it has outlived the cap, bounding within-epoch reaction
-    // frequency to a ≤1h window. The forced `ak.mls.commit` is surfaced to the
-    // caller (X14 persist-on-accept) rather than persisted optimistically.
-    // COR-08: use the injectable clock (same source as `snapshot.epoch_started_at`)
-    // so the §2.9 1h epoch-lifetime comparison is not split across two clock sources.
+    // General self-preservation rotation is handled by the same pending
+    // accepted-Commit boundary as ordinary encrypted messages.
     let now = crate::clock::now_utc();
     if should_force_epoch_advance(
-        is_minimal_metadata,
         snapshot.epoch_started_at,
         now,
         snapshot.app_messages_observed,

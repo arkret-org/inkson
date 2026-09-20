@@ -43,6 +43,18 @@ pub use garth::mls::self_preservation::{
 };
 // Typed MLS readiness status / error surface: host-neutral, owned by garth.
 pub use garth::mls::status::{MlsRuntimeError, MlsRuntimeStatus};
+
+fn reject_retired_minimal_metadata_realm(
+    state_store: &crate::state::LocalStateStore,
+    realm_id: &str,
+) -> Result<(), MlsRuntimeError> {
+    if state_store.realm_projection_has_retired_minimal_metadata_marker(realm_id) {
+        return Err(MlsRuntimeError::Identity(
+            "retired minimal-metadata Realm marker cannot authorize MLS operations".to_owned(),
+        ));
+    }
+    Ok(())
+}
 pub use genesis::*;
 pub use message::*;
 pub use reaction::*;

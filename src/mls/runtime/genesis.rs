@@ -152,6 +152,7 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
             "realm_id is required for initial MLS group setup".to_owned(),
         ));
     }
+    super::reject_retired_minimal_metadata_realm(state_store, realm)?;
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
@@ -189,30 +190,8 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
     let secret = load_or_create_account_mls_secret(secure_store, authority)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let identity =
-        if sidecar_id.is_none() && state_store.realm_projection_is_minimal_metadata(realm) {
-            let material =
-            crate::mls::pairwise_identity::derive_pairwise_signing_material_from_account_secret(
-                secret.as_bytes(),
-                authority,
-                device_id,
-                &realm_typed,
-            )
+        crate::mls_api_helpers::ordinary_mls_identity(authority.clone(), device_id.clone())
             .map_err(MlsRuntimeError::Identity)?;
-            let verification_method =
-                arkret_sdk::DidUrl::new(material.signer.verification_method().to_owned())
-                    .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?;
-            arkret_sdk::ArkretMlsIdentity::new_minimal_metadata_pairwise(
-                arkret_sdk::ActorId::service(material.actor_id.clone()),
-                verification_method,
-                arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(
-                    ed25519_dalek::SigningKey::from_bytes(&material.signing_seed()),
-                ),
-            )
-            .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?
-        } else {
-            crate::mls_api_helpers::ordinary_mls_identity(authority.clone(), device_id.clone())
-                .map_err(MlsRuntimeError::Identity)?
-        };
     let governance_binding = crate::mls::governance_proof::genesis_binding(&effective_scope)
         .map_err(MlsRuntimeError::Genesis)?;
     let mut group = identity
@@ -233,15 +212,14 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
                 )
             })?,
         ),
-        arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. }
-        | arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => None,
+        arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. } => None,
+        arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
+            return Err(MlsRuntimeError::Identity(
+                "retired minimal-metadata endpoint cannot create an MLS group".to_owned(),
+            ));
+        }
     };
-    let creator_actor = match &group.identity().endpoint {
-        arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise {
-            pairwise_actor_id, ..
-        } => arkret_sdk::ActorId::service(pairwise_actor_id.clone()),
-        _ => arkret_sdk::ActorId::account(authority.clone()),
-    };
+    let creator_actor = arkret_sdk::ActorId::account(authority.clone());
     group
         .install_local_creator_binding(creator_actor, device_authorize_event_id)
         .map_err(|error| MlsRuntimeError::Genesis(format!("bind creator leaf: {error}")))?;

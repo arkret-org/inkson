@@ -58,6 +58,7 @@ fn restore_for_commit(
     authority: &AccountId,
     device_id: &DeviceId,
 ) -> Result<(arkret_sdk::ArkretMlsGroup, String), MlsRuntimeError> {
+    super::reject_retired_minimal_metadata_realm(state_store, realm_id)?;
     let snapshot = state_store
         .mls_checkpoint_for_scope(effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
@@ -310,8 +311,7 @@ pub(crate) fn build_add_member_commit_for_scope(
 /// 1. [`should_force_epoch_advance`] — the epoch is over the floor, with the
 ///    normative pending-commit suppression already folded in;
 /// 2. [`idle_self_update_jitter_passed`] — this member's deterministic
-///    member-order jitter slot has opened (skipped for minimal-metadata, whose
-///    tight epoch-age cap leaves no room for staggered delay).
+///    member-order jitter slot has opened.
 ///
 /// Returns `Ok(None)` when not yet due, which is the common case.
 pub fn build_idle_self_update_commit(
@@ -323,12 +323,11 @@ pub fn build_idle_self_update_commit(
     device_id: &DeviceId,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<Option<StagedMlsCommit>, MlsRuntimeError> {
+    super::reject_retired_minimal_metadata_realm(state_store, realm_id)?;
     let snapshot = state_store
         .mls_checkpoint_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
     if !should_force_epoch_advance(
-        is_minimal_metadata,
         snapshot.epoch_started_at,
         now,
         snapshot.app_messages_observed,
@@ -336,17 +335,13 @@ pub fn build_idle_self_update_commit(
     ) {
         return Ok(None);
     }
-    // Minimal-metadata's tight epoch-age cap leaves no slack for staggering, so
-    // it commits as soon as it is overdue.
-    if !is_minimal_metadata
-        && !idle_self_update_jitter_passed(
-            &snapshot.group_id,
-            snapshot.epoch,
-            actor_id,
-            snapshot.epoch_started_at,
-            now,
-        )
-    {
+    if !idle_self_update_jitter_passed(
+        &snapshot.group_id,
+        snapshot.epoch,
+        actor_id,
+        snapshot.epoch_started_at,
+        now,
+    ) {
         return Ok(None);
     }
     let effective_scope = scope_for(realm_id, None, None)?;

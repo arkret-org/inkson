@@ -172,18 +172,14 @@ fn mls_encrypted_projection_reads_the_installed_realm_genesis_value() {
 }
 
 #[test]
-fn minimal_metadata_projection_detected_from_genesis_schema_refs() {
-    // SEC-08 — only the create-locked structural role in `schema_refs[]` is
-    // authoritative; generic profile arrays are rejected as Realm state.
+fn retired_minimal_metadata_projection_marker_is_quarantined_after_reload() {
+    const RETIRED_MARKER: &str = "ak.profile.mls.minimal_metadata_realm.v1";
     let path = temp_state_path("minimal-metadata-projection");
-    let mut store = LocalStateStore::with_path(path);
+    let mut store = LocalStateStore::with_path(path.clone());
 
     let top = "ak:realm:Af7kHhjQt9bXM9MVmV6uu7VNZY1P_sjoIUGS2rxLV8Qt";
-    store.save_realm_tree_projection(
-        top.to_owned(),
-        json!({ "schema_refs": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1] }),
-    );
-    assert!(store.realm_projection_is_minimal_metadata(top));
+    store.save_realm_tree_projection(top.to_owned(), json!({ "schema_refs": [RETIRED_MARKER] }));
+    assert!(store.realm_projection_has_retired_minimal_metadata_marker(top));
 
     let nested = "ak:realm:Ad0zM3xkilGkLE8K9IPZrZvbQzit2do46Wb6ECOCaX6k";
     store.save_realm_tree_projection(
@@ -192,31 +188,37 @@ fn minimal_metadata_projection_detected_from_genesis_schema_refs() {
             "summary": {
                 "schema_refs": [
                     "ak.profile.core.v1",
-                    arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1
+                    RETIRED_MARKER
                 ]
             }
         }),
     );
-    assert!(store.realm_projection_is_minimal_metadata(nested));
+    assert!(store.realm_projection_has_retired_minimal_metadata_marker(nested));
 
     let plain = "ak:realm:AUsIM7jMWF-QEkZ3Fd8dVqgxiIcM5iASgTtudL5PCcGL";
     store.save_realm_tree_projection(
         plain.to_owned(),
         json!({ "schema_refs": ["ak.profile.core.v1"] }),
     );
-    assert!(!store.realm_projection_is_minimal_metadata(plain));
+    assert!(!store.realm_projection_has_retired_minimal_metadata_marker(plain));
 
     let retired = "ak:realm:AUKBRx5s1e-cYkHAftYCs36bgPmoYQVWDau5uOOyrgzF";
     store.save_realm_tree_projection(
         retired.to_owned(),
-        json!({ "active_profiles": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1] }),
+        json!({ "active_profiles": [RETIRED_MARKER] }),
     );
-    assert!(!store.realm_projection_is_minimal_metadata(retired));
+    assert!(store.realm_projection_has_retired_minimal_metadata_marker(retired));
 
-    // Unknown Realm (no projection) ⇒ treated as non-minimal.
-    assert!(!store.realm_projection_is_minimal_metadata(
+    // Unknown Realm has no old marker; missing projection is handled by
+    // ordinary governance and MLS readiness gates.
+    assert!(!store.realm_projection_has_retired_minimal_metadata_marker(
         "ak:realm:AcN-V6vbQWbYV_LFa1cc3Vo7blS7mIpHd7DQDo9mePUM"
     ));
+    drop(store);
+    let reloaded = LocalStateStore::with_path(path);
+    assert!(reloaded.realm_projection_has_retired_minimal_metadata_marker(top));
+    assert!(reloaded.realm_projection_has_retired_minimal_metadata_marker(nested));
+    assert!(reloaded.realm_projection_has_retired_minimal_metadata_marker(retired));
 }
 
 /// Build the exact subject account a Directory handle lookup is keyed by.

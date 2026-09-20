@@ -222,20 +222,14 @@ pub(crate) async fn build_secure_send(
     circle_id: Option<&str>,
     sidecar_id: Option<arkret_sdk::SidecarId>,
 ) -> Result<SecureSendBuild, String> {
-    let minimal_metadata = state_store
+    if state_store
         .read()
-        .realm_projection_is_minimal_metadata(realm_id);
+        .realm_projection_has_retired_minimal_metadata_marker(realm_id)
+    {
+        return Err("retired minimal-metadata Realm marker cannot authorize MLS send".to_owned());
+    }
     let typed_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| format!("invalid MLS Realm id: {error}"))?;
-    let pairwise = minimal_metadata
-        .then(|| {
-            crate::mls::pairwise_identity::derive_pairwise_signing_material(
-                authority,
-                device_id,
-                &typed_realm_id,
-            )
-        })
-        .transpose()?;
     let effective_scope = if let Some(sidecar_id) = sidecar_id.as_ref() {
         arkret_sdk::ScopeRef::Sidecar {
             realm_id: typed_realm_id.clone(),
@@ -259,7 +253,7 @@ pub(crate) async fn build_secure_send(
         device_id,
         plaintext_bytes,
         metadata_plaintext_bytes,
-        pairwise.as_ref().map(|material| material.actor_id.as_str()),
+        None,
         circle_id,
         sidecar_id.as_ref(),
     )

@@ -7,55 +7,23 @@ use crate::test_support as fixture;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
-    // SEC-08 end-to-end (native): a minimal-metadata Realm whose epoch is
-    // older than 1h must force a `ak.mls.commit` (epoch advance) on the next
-    // reaction, and MUST NOT persist the advanced snapshot internally
-    // (X14 persist-on-accept) — the snapshot is handed back instead.
+fn retired_minimal_metadata_marker_rejects_reaction_before_checkpoint_access() {
+    // 0352 D1: the old marker is neither a profile activation nor a reason
+    // to enter the dedicated pairwise/one-hour branch. Reject even when a
+    // checkpoint is absent, so ordinary MLS readiness cannot mask this fact.
     use serde_json::json;
 
-    let mut state = temp_state_store("minimal-reaction-force");
+    let mut state = temp_state_store("retired-minimal-reaction");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
 
-    // Declare the minimal-metadata profile on the cached projection.
     state.save_realm_tree_projection(
         realm,
-        json!({ "schema_refs": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1] }),
+        json!({ "schema_refs": ["ak.profile.mls.minimal_metadata_realm.v1"] }),
     );
-    assert!(state.realm_projection_is_minimal_metadata(realm));
-    crate::identity::authoring_generation::cache_verified_principal_generation_for_test(
-        crate::mls_api_helpers::principal_core_id(actor)
-            .unwrap()
-            .as_str(),
-        device,
-        "ak:event:AdU2TJKBkRBC1Jk1dY8ExFkUgDvhnVG8jmKT5BdWMeYp",
-    );
-
-    fixture::install_accepted_mls_group(
-        &mut state,
-        &arkret_sdk::ScopeRef::Realm {
-            realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
-        },
-    );
-    super::seed_human_creator_authorization(actor, device);
-    ensure_creator_mls_checkpoint(
-        &mut state,
-        &secure,
-        realm,
-        &fixture::authority(actor),
-        &fixture::device_id(device),
-    )
-    .unwrap();
-    super::seed_current_group_state_ref(&mut state, realm);
-    let base_epoch = state.mls_checkpoint_for(realm).unwrap().epoch;
-
-    // Backdate the persisted snapshot's epoch clock past the 1h cap.
-    let mut overdue = state.mls_checkpoint_for(realm).unwrap();
-    overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
-    state.save_mls_checkpoint(realm, overdue).unwrap();
+    assert!(state.realm_projection_has_retired_minimal_metadata_marker(realm));
 
     let target =
         arkret_sdk::EventId::new("ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM").unwrap();
@@ -69,14 +37,9 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
         chrono::Utc::now(),
         "👍",
     );
-    let Err(error) = result else {
-        panic!("overdue minimal-metadata reaction unexpectedly encrypted");
-    };
-    assert!(matches!(
-        error,
-        MlsRuntimeError::EncryptionTransitionPending
-    ));
-    assert_eq!(state.mls_checkpoint_for(realm).unwrap().epoch, base_epoch);
+    assert!(
+        matches!(result, Err(MlsRuntimeError::Identity(message)) if message.contains("retired minimal-metadata"))
+    );
 }
 
 #[cfg(not(target_arch = "wasm32"))]

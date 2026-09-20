@@ -286,7 +286,7 @@ fn authenticate_received_identity_link(
             payload.epoch,
         )
         .ok()?;
-    let view = minimal_metadata_author_view_for_scope(
+    let view = verified_author_group_view_for_scope(
         state_store,
         secure_store,
         authority,
@@ -346,6 +346,9 @@ fn decrypt_application_payload_for_scope_internal(
     effective_scope: &arkret_sdk::ScopeRef,
     verified_sender_domain: Option<&[u8]>,
 ) -> Option<Vec<u8>> {
+    if state_store.realm_projection_has_retired_minimal_metadata_marker(realm_id) {
+        return None;
+    }
     if effective_scope.realm_id_opt()?.as_str() != realm_id {
         return None;
     }
@@ -465,15 +468,11 @@ fn decrypt_application_payload_for_scope_internal(
     Some(plaintext)
 }
 
-/// SPI-INK-001 — resolve the locally verified MLS group state into the
-/// §2.10.3 minimal-metadata author view for `(group_id, epoch,
-/// group_state_ref)`. The ONLY trust anchor is the local snapshot the device
-/// verified through its own genesis / commit chain — no directory, no
-/// `keys/query`, no current-epoch fallback. The cited `group_state_ref` must
-/// equal the exact accepted genesis / winning commit Event recorded locally
-/// for this group and epoch.
+/// Resolve a locally verified MLS group state for an exact accepted epoch and
+/// group-state Event. Identity-link admission uses this generic leaf view;
+/// it must not fall back to the current epoch or a different commit.
 #[allow(clippy::too_many_arguments)]
-pub fn minimal_metadata_author_view(
+pub fn verified_author_group_view(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -486,7 +485,7 @@ pub fn minimal_metadata_author_view(
     let effective_scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
     };
-    minimal_metadata_author_view_for_scope(
+    verified_author_group_view_for_scope(
         state_store,
         secure_store,
         authority,
@@ -499,7 +498,7 @@ pub fn minimal_metadata_author_view(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn minimal_metadata_author_view_for_scope(
+pub fn verified_author_group_view_for_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     authority: &AccountId,
@@ -747,6 +746,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     circle_id: Option<&str>,
     sidecar_id: Option<&arkret_sdk::SidecarId>,
 ) -> Result<(Vec<arkret_sdk::DidCoreId>, Vec<serde_json::Value>), MlsRuntimeError> {
+    super::reject_retired_minimal_metadata_realm(state_store, realm_id)?;
     if plaintext_values.is_empty() {
         return Err(MlsRuntimeError::EmptyPlaintext);
     }
@@ -771,7 +771,6 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     // A due epoch advance pauses the send: the commit has to be authored,
     // accepted and installed before content may ride a new epoch.
     if should_force_epoch_advance(
-        state_store.realm_projection_is_minimal_metadata(realm_id),
         snapshot.epoch_started_at,
         crate::clock::now_utc(),
         snapshot.app_messages_observed,
@@ -896,6 +895,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     circle_id: Option<&str>,
     sidecar_id: Option<&arkret_sdk::SidecarId>,
 ) -> Result<DeviceSnapshotEncryption, MlsRuntimeError> {
+    super::reject_retired_minimal_metadata_realm(state_store, realm_id)?;
     if metadata_content_type.is_some() != metadata_plaintext.is_some() {
         return Err(MlsRuntimeError::Serialize(
             "metadata content type and plaintext must be supplied together".to_owned(),
@@ -923,7 +923,6 @@ pub(crate) fn encrypt_message_with_device_snapshot(
             return Err(MlsRuntimeError::EncryptionTransitionPending);
         }
     }
-    let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
     let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // Encrypt under the accepted epoch floor so authoring from a stale local
@@ -944,7 +943,6 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         ensure_realm_membership_is_covered_for_send(state_store, realm_id, circle, &group)?;
     }
     if should_force_epoch_advance(
-        is_minimal_metadata,
         snapshot.epoch_started_at,
         crate::clock::now_utc(),
         snapshot.app_messages_observed,

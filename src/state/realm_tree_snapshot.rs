@@ -356,16 +356,20 @@ impl LocalStateStore {
         ))
     }
 
-    /// SEC-08 (`encryption-and-audit.md` §2.9) — does the latest cached
-    /// realm-tree projection declare the
-    /// `ak.profile.mls.minimal_metadata_realm.v1` profile? The committer uses
-    /// this to decide whether the ≤1h epoch-lifetime cap applies to a given
-    /// Realm. Unknown / absent projection ⇒ `false` (the realm is treated as a
-    /// normal realm).
-    pub fn realm_projection_is_minimal_metadata(&self, realm_id: &str) -> bool {
+    /// Detect the retired minimal-metadata marker in a locally cached Realm
+    /// projection. A cached marker is not a profile activation fact: v1 has no
+    /// such registered profile, and callers must fail closed instead of
+    /// treating the Realm as ordinary or authoring under the old pairwise path.
+    pub fn realm_projection_has_retired_minimal_metadata_marker(&self, realm_id: &str) -> bool {
         self.load()
             .realm_tree_projections
             .get(realm_id)
-            .is_some_and(realm_tree_projection_value_is_minimal_metadata)
+            .is_some_and(realm_tree_projection_has_retired_minimal_metadata_marker)
+    }
+
+    /// Transitional old callers still use this predicate; each authoring and
+    /// receive path is being migrated to reject the marker explicitly.
+    pub fn realm_projection_is_minimal_metadata(&self, realm_id: &str) -> bool {
+        self.realm_projection_has_retired_minimal_metadata_marker(realm_id)
     }
 }

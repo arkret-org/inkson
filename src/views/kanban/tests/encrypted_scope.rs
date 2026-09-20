@@ -688,7 +688,7 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
     state.save_realm_tree_projection(
         realm,
         json!({
-            "schema_refs": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1],
+            "schema_refs": [],
             "content_scheme": "mls_rfc9420",
             "member_roster_entries_limited": false,
             "member_roster_entries": [{
