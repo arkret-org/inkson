@@ -129,6 +129,43 @@ fn verified_current_pairing_generation(
     accepted_device_generation_ref(authority, &generation)
 }
 
+fn validate_pair_request_against_target_proof(
+    proof: &arkret_sdk::DevicePairingTargetProof,
+    request: &arkret_sdk::AccountDevicePairRequestBody,
+) -> anyhow::Result<()> {
+    arkret_sdk::signatures::device_pairing::verify_device_pairing_target_proof(proof)?;
+    let event = &request.authorize_event.event;
+    let payload = arkret_sdk::DeviceAuthorizePayload::try_from(event)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let requested_key = arkret_sdk::base64url_decode(request.new_device_pubkey.key.as_bytes())
+        .map_err(|error| anyhow::anyhow!("decode requested pairing key: {error}"))?;
+    let proof_key = arkret_sdk::decode_ed25519_multibase(
+        proof
+            .device_public_key_did
+            .as_str()
+            .strip_prefix("did:key:")
+            .ok_or_else(|| anyhow::anyhow!("pairing proof key is not a did:key"))?,
+    )
+    .map_err(|error| anyhow::anyhow!("decode pairing proof key: {error}"))?;
+    if event.actor_id.as_account_id() != Some(&proof.account_id)
+        || request.new_device_pubkey.kid.as_str() != proof.device_id.as_str()
+        || requested_key.as_slice() != proof_key.as_slice()
+        || payload.device_id != proof.device_id
+        || payload.device_public_key_did.as_str() != proof.device_public_key_did.as_str()
+        || payload.hpke_key != proof.hpke_key
+        || payload.algorithms != proof.algorithms
+        || payload.device_key_algorithm.as_str() != "Ed25519"
+        || payload.authorization_binding_kind
+            != arkret_sdk::DeviceAuthorizationBindingKind::AcceptedDevice
+        || payload.device_signature != proof.device_signature
+        || payload.pairing_challenge_transcript_digest.as_ref()
+            != Some(&proof.pairing_challenge_transcript_digest)
+    {
+        anyhow::bail!("pairing target proof does not match the exact pair request/Event");
+    }
+    Ok(())
+}
+
 pub async fn sign_target_proof(
     signer: &crate::event_signer::InksonEventSigner,
     authority: &arkret_sdk::AccountId,
@@ -265,9 +302,6 @@ pub async fn author_pairing_request_body(
     let realm_id =
         crate::identity::principal_control::resolve_accepted(&http, &principal_actor).await?;
     let submitter = api.event_submitter()?;
-    submitter
-        .refresh_realm_governance_frontier(realm_id.as_str())
-        .await?;
     let authorize = crate::operation::TypedOperationBuilder::new::<
         arkret_sdk::event_spec::DeviceAuthorize,
     >(realm_id.as_str(), principal.as_str(), authorize_payload)
@@ -276,10 +310,6 @@ pub async fn author_pairing_request_body(
     let authorized = submitter
         .author_independent_events(vec![authorize.into_intent()])
         .await?;
-    let authorize_digest_suite = authorized
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("device authorize Event was not authored"))?
-        .digest_suite();
     let authorize_event = submitter
         .prepare_initial_submissions(&authorized)
         .await?
@@ -291,18 +321,21 @@ pub async fn author_pairing_request_body(
         pairing_code: payload.bootstrap.pairing_code.clone(),
         new_device_pubkey,
         authorize_event,
-        display_name: payload.bootstrap.display_name.clone(),
+        display_name: payload
+            .bootstrap
+            .display_name
+            .as_ref()
+            .map(|value| value.as_str().to_owned()),
         device_metadata: payload.bootstrap.device_metadata.clone(),
         device_pairing_request_id: payload.bootstrap.device_pairing_request_id.clone(),
     };
-    attestation.validate_against_pair_request(&request, authorize_digest_suite)?;
+    validate_pair_request_against_target_proof(&attestation, &request)?;
     Ok(request)
 }
 
-/// Submit the target-bound authorize Event and immediately publish the
-/// approving device's human-PCR successor Seal.  A durable gate outcome alone
-/// is not an installable device authority: device-lifecycle §5.4.1 requires
-/// the target to observe this exact Event under an accepted covering Seal.
+/// Submit the target-bound authorize Event and require the gate's exact
+/// authority-signed committed coordinate. There is no client-authored Seal or
+/// parallel governance frontier.
 pub async fn approve_device_pairing(
     api: &crate::transport::TransportClient,
     payload: &ResolvedPairingApproval,
@@ -338,14 +371,21 @@ pub async fn approve_device_pairing(
     let authorize_event = body.authorize_event.event.clone();
     let http = api.sdk_http_client()?;
     let outcome = http.account_device_pair(&body).await?;
-    if outcome.authorized_event_ref != authorize_event.event_id {
+    if outcome.authorized_event_ref.event_id != authorize_event.event_id {
         anyhow::bail!("device-pair gate returned another authorize Event reference");
     }
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("active pairing signer is unavailable"))?;
-    let principal = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
-    crate::views::agents::seal_self_principal_event_current(api, &principal, &authorize_event)
+    let committed = http
+        .committed_event_get(&outcome.authorized_event_ref.event_id)
         .await?;
+    if !outcome.authorized_event_ref.matches(&committed) {
+        anyhow::bail!("device-pair gate returned a mismatched committed authorize Event");
+    }
+    let committed_event = committed.reducer_input().ok_or_else(|| {
+        anyhow::anyhow!("device-pair gate authorize Event is withheld instead of Full")
+    })?;
+    if committed_event != &authorize_event {
+        anyhow::bail!("device-pair gate returned a mismatched committed authorize Event");
+    }
     Ok(outcome)
 }
 
@@ -359,6 +399,7 @@ pub async fn verify_authorized_pairing_event_for_authority(
     outcome: &arkret_sdk::DevicePairingStatusOutcome,
     attestation: &arkret_sdk::DevicePairingTargetProof,
 ) -> anyhow::Result<arkret_sdk::Event> {
+    outcome.validate()?;
     arkret_sdk::signatures::device_pairing::verify_device_pairing_target_proof(attestation)?;
     let device_id = outcome
         .device_id
@@ -378,7 +419,10 @@ pub async fn verify_authorized_pairing_event_for_authority(
     if attestation.account_id != *authority {
         anyhow::bail!("authorized pairing attestation was signed for another account");
     }
-    let resolved = http.committed_event_get(event_ref).await?;
+    let resolved = http.committed_event_get(&event_ref.event_id).await?;
+    if !event_ref.matches(&resolved) {
+        anyhow::bail!("authorized pairing status returned a mismatched committed Event reference");
+    }
     let event = resolved
         .reducer_input()
         .cloned()
@@ -399,10 +443,6 @@ pub async fn verify_authorized_pairing_event_for_authority(
     if event.realm_id != pcr {
         anyhow::bail!("authorized pairing Event is outside the principal control Realm");
     }
-    // Finality is the authority-signed RealmCommit that carries this exact
-    // Event in the PCR's own stream; there is no separate proposal or Seal
-    // readback to consult.
-    crate::event_submit::require_committed_event_with(http, &event).await?;
     let payload: arkret_sdk::DeviceAuthorizePayload =
         serde_json::from_value(serde_json::to_value(&event.payload)?)?;
     if payload.device_id != attestation.device_id
