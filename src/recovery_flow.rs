@@ -10,13 +10,16 @@
 //! exposed here as a direct HTTP side effect.
 
 use arkret_models_crypto::{
-    RecoveryBackupHpkeSuite, RecoveryKeyAgreementAlgorithm, RecoveryKeyAgreementEntry,
-    RecoveryKeyAgreementUse, RecoveryKeyEntry, RecoveryPolicy, RecoveryPolicyActiveOutcome,
-    RecoveryPolicyAuthData, RecoveryPolicySummary, RecoverySignatureAlgorithm,
+    GenericRecoveryTranscript, RecoveryBackupHpkeSuite, RecoveryKeyAgreementAlgorithm,
+    RecoveryKeyAgreementEntry, RecoveryKeyAgreementUse, RecoveryKeyEntry, RecoveryPolicy,
+    RecoveryPolicyActiveOutcome, RecoveryPolicyAuthData, RecoveryPolicySummary, RecoveryProofKind,
+    RecoverySignatureAlgorithm, RecoveryTranscriptProofBody, RecoveryUnlockProofBody,
+    RecoveryUnlockProofBodyWithSignature, RecoveryUnlockProofKind,
 };
 use arkret_sdk::{DidUrl, PolicyId, TrustDomainId};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+use ed25519_dalek::Signer as _;
 use serde_json::Value;
 
 use crate::transport::TransportClient;
@@ -457,14 +460,16 @@ async fn publish_recovery_policy(
     api.put_recovery_policy(request.submission()).await
 }
 
-fn validate_active_policy_key_material(
+fn validate_policy_key_material_at(
     summary: &RecoveryPolicySummary,
     account_id: &arkret_sdk::AccountId,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
+    valid_at: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<DidUrl> {
     if summary.account_id != *account_id {
         anyhow::bail!("active recovery policy account does not match requested account");
     }
+    summary.validate_shape()?;
     let policy = summary.policy.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
             "active recovery policy omitted its signed key configuration; refusing to pair it with supplied recovery material"
@@ -474,12 +479,25 @@ fn validate_active_policy_key_material(
     if policy.policy_id != summary.policy_id
         || policy.account_id != summary.account_id
         || policy.version != summary.version
+        || policy.trust_domain != summary.trust_domain
+        || policy.supersedes_id != summary.supersedes_id
+        || policy.issued_at != summary.issued_at
+        || policy.expires_at != summary.expires_at
+        || policy.methods != summary.methods
     {
         anyhow::bail!("active recovery policy summary does not match its signed policy body");
     }
+    if policy
+        .not_before
+        .is_some_and(|not_before| valid_at < not_before)
+        || policy
+            .expires_at
+            .is_some_and(|expires_at| valid_at >= expires_at)
+    {
+        anyhow::bail!("active recovery policy is outside its validity interval");
+    }
 
-    let now = chrono::Utc::now();
-    let proof_key = policy
+    let matches = policy
         .methods
         .iter()
         .filter_map(|method| match method {
@@ -487,13 +505,14 @@ fn validate_active_policy_key_material(
             _ => None,
         })
         .flatten()
-        .find(|entry| {
+        .filter(|entry| {
             entry.revoked_at.is_none()
-                && entry.not_before <= now
-                && entry.expires_at > now
+                && entry.not_before <= valid_at
+                && entry.expires_at > valid_at
+                && entry.signature_algorithm == RecoverySignatureAlgorithm::Ed25519
                 && entry.backup_hpke.revoked_at.is_none()
-                && entry.backup_hpke.not_before <= now
-                && entry.backup_hpke.expires_at > now
+                && entry.backup_hpke.not_before <= valid_at
+                && entry.backup_hpke.expires_at > valid_at
                 && entry.public_key_multibase == key_material.recovery_proof_public_key_multikey
                 && entry.backup_hpke.public_key_multibase
                     == key_material.backup_hpke_public_key_multikey
@@ -501,13 +520,85 @@ fn validate_active_policy_key_material(
                     .backup_hpke
                     .hpke_suites
                     .contains(&RecoveryBackupHpkeSuite::X25519AeadChacha20Poly1305V1)
-        });
-    let Some(proof_key) = proof_key else {
+        })
+        .collect::<Vec<_>>();
+    let [proof_key] = matches.as_slice() else {
         anyhow::bail!(
             "supplied Recovery Key does not match one active recovery proof/backup recipient pair; use the staged recovery-key handoff workflow"
         );
     };
     Ok(proof_key.verification_method.clone())
+}
+
+fn validate_active_policy_key_material(
+    summary: &RecoveryPolicySummary,
+    account_id: &arkret_sdk::AccountId,
+    key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
+) -> anyhow::Result<DidUrl> {
+    validate_policy_key_material_at(summary, account_id, key_material, chrono::Utc::now())
+}
+
+fn frozen_recovery_unlock_verification_method(
+    session: &arkret_sdk::RecoverySession,
+    policy: &RecoveryPolicySummary,
+    key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
+) -> anyhow::Result<DidUrl> {
+    session.validate_shape()?;
+    if session.state != arkret_sdk::RecoverySessionState::Pending {
+        anyhow::bail!("recovery unlock proof requires a pending recovery session");
+    }
+    if session.expires_at <= chrono::Utc::now() {
+        anyhow::bail!("recovery unlock proof requires an unexpired recovery session");
+    }
+    if session.account_id != policy.account_id
+        || session.policy_id != policy.policy_id
+        || session.policy_version != policy.version
+        || session.trust_domain != policy.trust_domain
+    {
+        anyhow::bail!(
+            "recovery session does not match the supplied frozen accepted policy/version"
+        );
+    }
+    validate_policy_key_material_at(
+        policy,
+        &session.account_id,
+        key_material,
+        session.created_at,
+    )
+}
+
+fn recovery_unlock_transcript(
+    session: &arkret_sdk::RecoverySession,
+    verification_method: DidUrl,
+) -> anyhow::Result<GenericRecoveryTranscript> {
+    let transcript = GenericRecoveryTranscript {
+        schema: arkret_models_crypto::RECOVERY_PROOF_TRANSCRIPT_SCHEMA.to_owned(),
+        kind: RecoveryProofKind::RecoveryUnlock,
+        request_id: session.request_id.clone(),
+        session_grant_id: session.session_grant_id.clone(),
+        session_grant_cnf_jkt: session.session_grant_cnf_jkt.clone(),
+        account_id: session.account_id.clone(),
+        requesting_device_id: session.requesting_device_id.clone(),
+        requesting_device_public_key_did: session.requesting_device_public_key_did.clone(),
+        trust_domain: session.trust_domain.clone(),
+        policy_id: session.policy_id.clone(),
+        policy_version: session.policy_version,
+        recovery_session_id: session.recovery_session_id.clone(),
+        identity_model: session.identity_model,
+        model_generation_ref: session.current_device_generation_ref,
+        publication_authority_context_digest: session.publication_authority_context_digest.clone(),
+        challenge: session.challenge.clone(),
+        expires_at: session.expires_at,
+        created_at: session.created_at,
+        proof_body: RecoveryTranscriptProofBody::RecoveryUnlock(RecoveryUnlockProofBody {
+            kind: RecoveryUnlockProofKind::RecoveryUnlock,
+            challenge: session.challenge.clone(),
+            verification_method,
+            signature_algorithm: RecoverySignatureAlgorithm::Ed25519,
+        }),
+    };
+    transcript.validate_shape()?;
+    Ok(transcript)
 }
 
 pub fn build_recovery_unlock_proof_from_words(
@@ -522,14 +613,24 @@ pub fn build_recovery_unlock_proof_from_words(
         "",
         0,
     )?;
-    let recovery_secret_ref =
-        validate_active_policy_key_material(policy, &session.account_id, &key_material)?;
-    arkret_sdk::identity_root::build_recovery_unlock_proof(
-        session,
-        recovery_secret_ref.as_str(),
-        &key_material,
-    )
-    .map_err(anyhow::Error::from)
+    let verification_method =
+        frozen_recovery_unlock_verification_method(session, policy, &key_material)?;
+    let transcript = recovery_unlock_transcript(session, verification_method.clone())?;
+    let transcript_bytes = arkret_sdk::canonical::canonical_json_bytes(&transcript)?;
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_material.recovery_proof_seed);
+    let signature = signing_key.sign(&transcript_bytes);
+    Ok(arkret_sdk::RecoverySessionProof::RecoveryUnlock(
+        RecoveryUnlockProofBodyWithSignature {
+            kind: RecoveryUnlockProofKind::RecoveryUnlock,
+            challenge: session.challenge.clone(),
+            verification_method,
+            signature_algorithm: RecoverySignatureAlgorithm::Ed25519,
+            signature: arkret_sdk::Base64UrlString::new(arkret_sdk::canonical::base64url_encode(
+                signature.to_bytes(),
+            ))
+            .map_err(anyhow::Error::msg)?,
+        },
+    ))
 }
 
 pub async fn ensure_recovery_policy(
@@ -560,6 +661,8 @@ pub async fn ensure_recovery_policy(
 
 #[cfg(test)]
 mod tests {
+    use ed25519_dalek::Verifier as _;
+
     use super::*;
 
     fn committed_ref(
@@ -576,6 +679,199 @@ mod tests {
             },
             stream_position,
         }
+    }
+
+    fn recovery_unlock_fixture() -> (
+        String,
+        arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
+        RecoveryPolicySummary,
+        arkret_sdk::RecoverySession,
+    ) {
+        crate::operation::set_authoring_station_id(None);
+        let principal_did =
+            arkret_sdk::Did::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap();
+        let account_id = arkret_sdk::AccountId::new(
+            arkret_sdk::project_did_to_core_id(&principal_did).unwrap(),
+            arkret_sdk::DidCoreId::new(
+                "ak:did_core:webvh:z6mkfixture:onboarding-station.example".to_owned(),
+            )
+            .unwrap(),
+        );
+        let words = crate::recovery_crypto::format_recovery_key(&[7_u8; 32]);
+        let key_material =
+            arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+                &words, "", 0,
+            )
+            .unwrap();
+        let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
+            [9_u8; 32],
+            principal_did.as_str(),
+            format!("{principal_did}#founding-device"),
+        );
+        let policy: RecoveryPolicy = serde_json::from_value(
+            build_signed_genesis_recovery_policy_with_signer(
+                &principal_did,
+                &account_id,
+                "ak:trust_domain:test",
+                &key_material,
+                &signer,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let recovery_method = policy
+            .methods
+            .iter()
+            .find_map(|method| match method {
+                arkret_sdk::RecoveryMethod::RecoveryUnlock { keys } => {
+                    Some(keys[0].verification_method.clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        let summary = RecoveryPolicySummary {
+            policy_id: policy.policy_id.clone(),
+            account_id: account_id.clone(),
+            version: policy.version,
+            acceptance_basis_ref: arkret_sdk::RealmCommitId::from_digest([6; 32]),
+            recovery_policy_ref: Some(arkret_sdk::RecoveryPolicyRef {
+                policy_id: policy.policy_id.clone(),
+                policy_version: policy.version,
+            }),
+            trust_domain: policy.trust_domain.clone(),
+            supersedes_id: policy.supersedes_id.clone(),
+            issued_at: policy.issued_at,
+            expires_at: policy.expires_at,
+            accepted_at: Some(policy.issued_at),
+            methods: policy.methods.clone(),
+            policy: Some(policy.clone()),
+        };
+        let realm_id = arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [7; 32],
+        ));
+        let commit_id = arkret_sdk::RealmCommitId::from_digest([8; 32]);
+        let device_signing_key = ed25519_dalek::SigningKey::from_bytes(&[41; 32]);
+        let device_multikey = arkret_sdk::canonical::ed25519_pubkey_to_did_key_multibase(
+            device_signing_key.verifying_key().as_bytes(),
+        );
+        let created_at = policy.issued_at + chrono::Duration::seconds(1);
+        let expires_at = chrono::Utc::now() + chrono::Duration::minutes(15);
+        let session: arkret_sdk::RecoverySession = serde_json::from_value(serde_json::json!({
+            "schema": "ak.schema.recovery_session.v1",
+            "request_id": "ak:request:0198ff00-0000-7000-8000-00000000000b",
+            "recovery_session_id": "ak:recovery_session:0198ff00-0000-7000-8000-00000000000c",
+            "session_grant_id": arkret_wire::SessionGrantId::from_issuance_digest([4; 32]),
+            "session_grant_cnf_jkt": arkret_sdk::canonical::base64url_encode([5; 32]),
+            "account_id": account_id,
+            "requesting_device_id": "ak:device:0198ff00-0000-7000-8000-00000000000a",
+            "requesting_device_public_key_did": format!("did:key:{device_multikey}"),
+            "trust_domain": policy.trust_domain,
+            "policy_id": policy.policy_id,
+            "policy_version": policy.version,
+            "identity_model": "pcr_policy",
+            "current_device_generation_ref": 3,
+            "device_generation_status": "active",
+            "realm_stream_head": {
+                "stream_ref": {"kind": "realm", "realm_id": realm_id},
+                "stream_position": 12,
+                "commit_id": commit_id,
+            },
+            "publication_authority_context": {
+                "authority_commit_id": commit_id,
+                "scope_ref": {"kind": "realm", "realm_id": realm_id},
+                "authority_set_policy": {
+                    "schema": "ak.schema.authority_set_policy.v1",
+                    "authority_set_id": "ak.authority_set.principal_control.v1",
+                    "policy_kind": "principal_control",
+                    "scope_ref": {"kind": "realm", "realm_id": realm_id},
+                    "source_commit_id": commit_id,
+                    "authorization_rules": [{
+                        "rule_id": "recovery_unlock",
+                        "issuer_role": "identity_recovery",
+                        "allowed_actions": ["ak.device.reanchor"],
+                        "issuers": [{"verification_method": recovery_method}],
+                        "threshold": 1,
+                    }],
+                },
+                "allowed_actions": ["ak.device.reanchor"],
+            },
+            "publication_authority_context_digest": format!("sha256:{}", "ab".repeat(32)),
+            "challenge": arkret_sdk::canonical::base64url_encode([2; 32]),
+            "state": "pending",
+            "expires_at": expires_at,
+            "created_at": created_at,
+            "updated_at": created_at,
+        }))
+        .unwrap();
+        session.validate_shape().unwrap();
+        (words, key_material, summary, session)
+    }
+
+    #[test]
+    fn recovery_unlock_proof_uses_frozen_policy_method_and_single_signature() {
+        let (words, key_material, policy, session) = recovery_unlock_fixture();
+        let proof = build_recovery_unlock_proof_from_words(&session, &policy, &words).unwrap();
+        let arkret_sdk::RecoverySessionProof::RecoveryUnlock(proof) = proof else {
+            panic!("expected recovery_unlock proof");
+        };
+        let policy_method = policy
+            .policy
+            .as_ref()
+            .unwrap()
+            .methods
+            .iter()
+            .find_map(|method| match method {
+                arkret_sdk::RecoveryMethod::RecoveryUnlock { keys } => {
+                    Some(keys[0].verification_method.clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(proof.verification_method, policy_method);
+        let proof_value = serde_json::to_value(&proof).unwrap();
+        assert!(
+            !proof_value
+                .as_object()
+                .unwrap()
+                .contains_key("recovery_secret_ref")
+        );
+        assert!(
+            !proof_value
+                .as_object()
+                .unwrap()
+                .contains_key("unlock_commitment")
+        );
+
+        let transcript = recovery_unlock_transcript(&session, proof.verification_method).unwrap();
+        let bytes = arkret_sdk::canonical::canonical_json_bytes(&transcript).unwrap();
+        let signature = arkret_sdk::canonical::base64url_decode(proof.signature.as_str()).unwrap();
+        let signature = ed25519_dalek::Signature::from_slice(&signature).unwrap();
+        ed25519_dalek::VerifyingKey::from_bytes(&key_material.recovery_proof_public_key)
+            .unwrap()
+            .verify(&bytes, &signature)
+            .unwrap();
+    }
+
+    #[test]
+    fn recovery_unlock_proof_rejects_non_frozen_policy_and_wrong_words() {
+        let (words, _key_material, mut policy, session) = recovery_unlock_fixture();
+        policy.version += 1;
+        assert!(
+            build_recovery_unlock_proof_from_words(&session, &policy, &words)
+                .unwrap_err()
+                .to_string()
+                .contains("frozen accepted policy/version")
+        );
+
+        let (_words, _key_material, policy, session) = recovery_unlock_fixture();
+        let wrong_words = crate::recovery_crypto::format_recovery_key(&[8_u8; 32]);
+        assert!(
+            build_recovery_unlock_proof_from_words(&session, &policy, &wrong_words)
+                .unwrap_err()
+                .to_string()
+                .contains("does not match one active recovery proof")
+        );
     }
 
     #[test]
