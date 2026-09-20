@@ -43,17 +43,6 @@ pub(crate) fn is_realm_seal_frontier_pending_error(error: &anyhow::Error) -> boo
     })
 }
 
-/// True only for the retry-safe Recovery Policy publication state where the
-/// submitted Event is accepted but its covering Control Seal has not yet
-/// materialized. The error registry binds `frontier_unavailable` to HTTP 503;
-/// accepting a different status here would hide a server/spec binding drift.
-pub(crate) fn is_recovery_policy_frontier_pending_error(error: &anyhow::Error) -> bool {
-    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
-        status == StatusCode::SERVICE_UNAVAILABLE
-            && envelope.code() == arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE
-    })
-}
-
 pub fn is_mls_keypackage_not_found_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
         envelope.code() == "mls_keypackage_not_found"
@@ -179,18 +168,7 @@ pub fn is_pcr_genesis_already_accepted_error(error: &anyhow::Error) -> bool {
             .extensions
             .get("reason_code")
             .and_then(serde_json::Value::as_str);
-        matches!(
-            reason,
-            Some(
-                arkret_sdk::error_codes::ReasonCode::PCR_GENESIS_CONFLICT
-                    | arkret_sdk::error_codes::ReasonCode::PCR_GENESIS_NOT_FIRST
-            )
-        ) || envelope
-            .detail
-            .contains(arkret_sdk::error_codes::ReasonCode::PCR_GENESIS_CONFLICT)
-            || envelope
-                .detail
-                .contains(arkret_sdk::error_codes::ReasonCode::PCR_GENESIS_NOT_FIRST)
+        reason == Some(arkret_sdk::error_codes::ReasonCode::PCR_GENESIS_CONFLICT)
     })
 }
 
@@ -273,13 +251,8 @@ fn terminal_session_grant_refresh_code(code: &str) -> bool {
         arkret_sdk::error_codes::ErrorCode::SESSION_LOGGED_OUT,
         arkret_sdk::error_codes::ErrorCode::SIGNATURE_INVALID,
         arkret_sdk::error_codes::ErrorCode::DID_PROOF_REQUIRED,
-        arkret_sdk::error_codes::ErrorCode::AUTHORIZED_GRANT_REVOKED,
     ]
     .contains(&code)
-        || matches!(
-            code,
-            "invalid_grant" | "grant_expired" | "grant_revoked" | "session_grant_revoked"
-        )
 }
 
 fn terminal_session_grant_message(message: &str) -> bool {
@@ -369,9 +342,8 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_realm_bootstrap_temporarily_unavailable_detail,
+        is_pcr_genesis_already_accepted_error, is_realm_bootstrap_temporarily_unavailable_detail,
         is_realm_bootstrap_temporarily_unavailable_error,
-        is_recovery_policy_frontier_pending_error,
     };
 
     fn api_error(status: u16, code: &str) -> anyhow::Error {
@@ -385,19 +357,29 @@ mod tests {
     }
 
     #[test]
-    fn recovery_policy_frontier_retry_requires_the_registry_status_and_code() {
-        assert!(is_recovery_policy_frontier_pending_error(&api_error(
-            503,
-            arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE,
-        )));
-        assert!(!is_recovery_policy_frontier_pending_error(&api_error(
-            412,
-            arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE,
-        )));
-        assert!(!is_recovery_policy_frontier_pending_error(&api_error(
-            503,
+    fn pcr_genesis_conflict_requires_the_active_typed_reason() {
+        let typed = arkret_sdk::Problem::from_code(
             arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
-        )));
+            "PCR genesis conflicts with the accepted unit",
+        )
+        .with_extension(
+            "reason_code",
+            serde_json::json!(arkret_sdk::error_codes::ReasonCode::PCR_GENESIS_CONFLICT),
+        );
+        let typed = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 409,
+            error: Box::new(typed),
+        });
+        assert!(is_pcr_genesis_already_accepted_error(&typed));
+
+        let detail_only = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 409,
+            error: Box::new(arkret_sdk::Problem::from_code(
+                arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
+                "pcr_genesis_conflict",
+            )),
+        });
+        assert!(!is_pcr_genesis_already_accepted_error(&detail_only));
     }
 
     #[test]

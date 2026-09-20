@@ -158,9 +158,6 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
         .get("reason_code")
         .and_then(Value::as_str);
     if let Some(reason) = reason {
-        if reason == ReasonCode::CELL_IN_BOTTOM_STATE {
-            return Some("error.realm_state_conflict");
-        }
         if reason == ReasonCode::UNSUPPORTED_PROFILE {
             return Some("error.unsupported_profile");
         }
@@ -262,10 +259,7 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
     if code == ErrorCode::STATE_MISMATCH {
         return Some("error.realm_state_conflict");
     }
-    if matches!(
-        code,
-        c if c == ErrorCode::FRONTIER_UNAVAILABLE || c == ErrorCode::SERVICE_UNAVAILABLE
-    ) {
+    if code == ErrorCode::SERVICE_UNAVAILABLE {
         return Some("error.server_unavailable");
     }
 
@@ -493,23 +487,14 @@ mod tests {
 
     #[test]
     fn user_facing_keys_distinguish_permission_protocol_and_realm_state_failures() {
-        use arkret_sdk::error_codes::{ErrorCode, ReasonCode};
+        use arkret_sdk::error_codes::ErrorCode;
 
         let permission = sdk_api_error(403, ErrorCode::CAPABILITY_DENIED);
         let profile = sdk_api_error(422, ErrorCode::UNSUPPORTED_PROFILE);
         let unsupported_data = sdk_api_error(422, ErrorCode::UNSUPPORTED_EVENT_KIND);
         let unsupported_version = sdk_api_error(422, ErrorCode::UNSUPPORTED_OPERATION_VERSION);
         let invalid_data = sdk_api_error(422, ErrorCode::SCHEMA_VIOLATION);
-        let bottom = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
-            status: 409,
-            error: Box::new(
-                Problem::from_code(ErrorCode::STATE_MISMATCH, "realm cell is in Bottom state")
-                    .with_extension(
-                        "reason_code",
-                        Value::String(ReasonCode::CELL_IN_BOTTOM_STATE.to_owned()),
-                    ),
-            ),
-        });
+        let state_conflict = sdk_api_error(409, ErrorCode::STATE_MISMATCH);
 
         let cases = [
             (&permission, "error.permission_denied"),
@@ -517,7 +502,7 @@ mod tests {
             (&unsupported_data, "error.unsupported_protocol_data"),
             (&unsupported_version, "error.unsupported_protocol_data"),
             (&invalid_data, "error.invalid_protocol_data"),
-            (&bottom, "error.realm_state_conflict"),
+            (&state_conflict, "error.realm_state_conflict"),
         ];
         for (error, expected_key) in cases {
             assert_eq!(user_facing_error_key(error), Some(expected_key));
@@ -584,6 +569,20 @@ mod tests {
     }
 
     #[test]
+    fn session_refresh_ignores_reserved_and_unregistered_legacy_codes() {
+        for code in [
+            "authorized_grant_revoked",
+            "invalid_grant",
+            "grant_expired",
+            "grant_revoked",
+            "session_grant_revoked",
+        ] {
+            let error = sdk_api_error(409, code);
+            assert!(!is_terminal_session_grant_refresh_error(&error), "{code}");
+        }
+    }
+
+    #[test]
     fn revocation_classifiers_require_registered_conflict_status() {
         let pending = sdk_api_error(
             503,
@@ -601,7 +600,7 @@ mod tests {
         let unavailable = sdk_api_error(503, arkret_sdk::error_codes::ErrorCode::NOT_FOUND);
         let unrelated = sdk_api_error(
             404,
-            arkret_sdk::error_codes::ErrorCode::UNRECOGNIZED_ENDPOINT,
+            arkret_sdk::error_codes::ErrorCode::UNSUPPORTED_OPERATION_VERSION,
         );
 
         assert!(is_account_viewer_projection_missing_error(&missing));
