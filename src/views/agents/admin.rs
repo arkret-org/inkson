@@ -106,12 +106,7 @@ pub fn AgentAdminPanel(
             .into_iter()
             .filter_map(|value| {
                 let (id, data) = value.agent_runtime_approval()?;
-                Some(format!(
-                    "{}:{}:{}",
-                    id.as_str(),
-                    data.approval_request_id,
-                    data.expires_at
-                ))
+                Some(format!("{}:{}", id.as_str(), data.id,))
             })
             .collect::<Vec<_>>();
         ids.sort();

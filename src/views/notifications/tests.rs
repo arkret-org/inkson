@@ -834,8 +834,14 @@ fn notification_sources_use_typed_subscribe_deltas_only() {
     assert!(
         runtime_approval
             .agent_runtime_approval()
-            .is_some_and(|(id, _)| {
+            .is_some_and(|(id, artifact)| {
                 id.as_str() == "ak:notification:01964137-0000-7000-8000-000000000004"
+                    && artifact.id.as_str()
+                        == "agent_runtime_approval:01964137-0000-7000-8000-000000000005"
+                    && matches!(
+                        artifact.kind,
+                        arkret_sdk::NotificationAccountArtifactKind::AgentRuntimeApproval
+                    )
             })
     );
     let context = notification_eval_context(runtime_approval);

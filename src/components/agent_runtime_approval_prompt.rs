@@ -445,30 +445,30 @@ pub fn AgentRuntimeApprovalPrompt(
                                             requested_scope_disclosure,
                                             authorize_submission,
                                         );
-                                        let mut outcome =
-                                            submitter.agent_key_pair(&pair_request).await?;
-                                        if !outcome.is_active() {
-                                            // Approval is submitted once. Activation is a Station
-                                            // transition; subsequent calls only observe its view.
-                                            for attempt in 0..20 {
-                                                let view = submitter.http().agent_get(agent_did.as_str()).await?;
-                                                if view.key_state.as_ref().is_some_and(|state| state.active_authorizations.iter().any(
-                                                    |authorization| authorization.authorized_event_ref == outcome.authorize_event_ref
-                                                )) {
-                                                    outcome.activation_state = arkret_sdk::AgentKeyPairActivationState::Active;
-                                                    break;
-                                                }
-                                                if matches!(view.agent.lifecycle, arkret_sdk::AgentLifecycleState::Deactivated) {
-                                                    anyhow::bail!("agent authorization was cancelled");
-                                                }
-                                                if attempt + 1 < 20 {
-                                                    crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
-                                                }
-                                            }
+                                        let outcome = submitter.agent_key_pair(&pair_request).await?;
+                                        if matches!(
+                                            outcome.status,
+                                            arkret_sdk::AgentLifecycleState::Deactivated
+                                        ) {
+                                            anyhow::bail!("agent authorization was cancelled");
                                         }
-                                        if !outcome.is_active() {
+                                        if outcome.authorize_ref.event_id
+                                            != pair_request.authorize_event.event_id
+                                        {
                                             anyhow::bail!(
-                                                "the agent's control Realm has not finished accepting this change yet — wait a moment and try again"
+                                                "agent key pairing returned a commit for a different authorization Event"
+                                            );
+                                        }
+                                        let committed = submitter
+                                            .http()
+                                            .committed_event_get(&outcome.authorize_ref.event_id)
+                                            .await?;
+                                        if !outcome.authorize_ref.matches(&committed)
+                                            || committed.reducer_input()
+                                                != Some(&pair_request.authorize_event)
+                                        {
+                                            anyhow::bail!(
+                                                "agent key pairing authorization commit could not be verified"
                                             );
                                         }
                                         let recovery_refresh_error = bootstrap_provisioned_agent(
@@ -499,7 +499,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                                     (
                                                         "id",
                                                         short_protocol_id(
-                                                            outcome.authorize_event_ref.as_str(),
+                                                            outcome.authorize_ref.event_id.as_str(),
                                                         ),
                                                     ),
                                                     ("error", error),
@@ -511,7 +511,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                                 &[(
                                                     "id",
                                                     short_protocol_id(
-                                                        outcome.authorize_event_ref.as_str(),
+                                                        outcome.authorize_ref.event_id.as_str(),
                                                     ),
                                                 )],
                                             )
@@ -550,20 +550,19 @@ pub fn AgentRuntimeApprovalPrompt(
 struct AgentRuntimeApprovalNotification {
     notification_id: NotificationId,
     approval_request_id: OpaqueLocalId,
-    agent_id: DidCoreId,
 }
 
 fn agent_runtime_approval_notification(
     value: &crate::state::StoredNotification,
 ) -> Option<AgentRuntimeApprovalNotification> {
-    let (notification_id, data) = value.agent_runtime_approval()?;
-    if data.expires_at <= chrono::Utc::now() {
+    let (notification_identity, data) = value.agent_runtime_approval()?;
+    let arkret_sdk::NotificationIdentity::AgentApproval(notification_id) = notification_identity
+    else {
         return None;
-    }
+    };
     Some(AgentRuntimeApprovalNotification {
         notification_id: notification_id.clone(),
-        approval_request_id: data.approval_request_id.clone(),
-        agent_id: data.agent_id.clone(),
+        approval_request_id: data.id.clone(),
     })
 }
 
@@ -573,17 +572,19 @@ async fn fetch_agent_runtime_approval(
     notification: AgentRuntimeApprovalNotification,
 ) -> Result<Option<PendingAgentRuntimeApproval>, crate::transport::auth::ApiCallError> {
     with_authed_sdk_client(base_url, token, move |http| async move {
-        let view = http.agent_get(notification.agent_id.as_str()).await?;
-        let Some(mut request) = pending_runtime_approval_from_view(&view) else {
-            return Ok(None);
-        };
-        if request.agent_id != notification.agent_id
-            || request.request_key != notification.approval_request_id
-        {
-            return Ok(None);
+        let list = http.agent_list().await?;
+        for row in list.agents {
+            let view = http.agent_get(row.agent_id.as_str()).await?;
+            let Some(mut request) = pending_runtime_approval_from_view(&view) else {
+                continue;
+            };
+            if request.request_key != notification.approval_request_id {
+                continue;
+            }
+            request.notification_id = Some(notification.notification_id);
+            return Ok(Some(request));
         }
-        request.notification_id = Some(notification.notification_id);
-        Ok(Some(request))
+        Ok(None)
     })
     .await
 }
