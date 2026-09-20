@@ -1,22 +1,22 @@
 use ed25519_dalek::Signer as _;
-use garth::mls::backup_selection::{
-    is_mls_account_secret_backup, is_mls_private_plaintext_backup,
-    mls_account_secret_backup_version, select_mls_account_secret_backup,
-    select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
-    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
-};
 use garth::mls::backup_series::verify_series_chain;
 use serde_json::Value;
 
 use super::backup_body::{
-    MLS_ACCOUNT_SECRET_ITEM_KIND, MLS_ACCOUNT_SECRET_SECRET_ID, MLS_PRIVATE_PLAINTEXT_ITEM_KIND,
-    MLS_PRIVATE_PLAINTEXT_SECRET_ID, build_mls_account_secret_backup_body_with_kek,
+    MLS_ACCOUNT_SECRET_SECRET_ID, MLS_PRIVATE_PLAINTEXT_SECRET_ID,
+    build_mls_account_secret_backup_body_with_kek,
     build_mls_account_secret_backup_successor_body_with_kek_and_version,
     build_mls_account_secret_recovery_public_key_backup_in_series,
     build_mls_private_plaintext_backup_body_with_kek, decrypt_mls_account_secret_backup,
     decrypt_mls_private_plaintext_backup,
 };
 use super::restore::{mls_backup_prompt_required, verify_active_backup_series};
+use super::{
+    is_mls_account_secret_backup, is_mls_private_plaintext_backup,
+    mls_account_secret_backup_version, select_mls_account_secret_backup,
+    select_mls_account_secret_recovery_public_key_backup, select_mls_private_plaintext_backup,
+    select_preferred_mls_account_secret_backup,
+};
 use crate::key_backup::BackupKind;
 use crate::recovery_crypto::derive_vault_kek;
 use crate::secure_key_store::MemorySecureKeyStore;
@@ -29,7 +29,6 @@ const PASSPHRASE: &[u8] = b"correct horse battery staple";
 const ACCOUNT_SECRET: &str = "qr6h9rJ8nU0H2pP5w3sLx1A4bC7dE9fG2hI5jK8lM0N";
 const ACTIVE_SECRET_STORAGE_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000a1";
 const STALE_SECRET_STORAGE_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000a2";
-const ACTIVE_MLS_HISTORY_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000b1";
 
 fn authority() -> arkret_sdk::AccountId {
     crate::test_support::authority_at_station(ACTOR, crate::test_support::SERVER_STATION_ID)
@@ -132,8 +131,8 @@ fn current_series(pointers: Vec<(String, Value)>) -> Value {
     let mut state = serde_json::json!({
         "account_id": authority(),
         "control_realm_id": "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI",
-        "seal_basis": {"leaves": [format!("ak:seal:sha256:{}", "b".repeat(64))]},
-        "secret_storage": {"state":"absent"}, "mls_history": {"state":"absent"},
+        "authority_commit_id": arkret_sdk::RealmCommitId::from_digest([9; 32]),
+        "secret_storage": {"state":"absent"},
     });
     for (kind, pointer) in pointers {
         state[&kind] = pointer;
@@ -148,7 +147,7 @@ fn backup_series_id(body: &Value) -> &str {
 }
 
 fn payload_with_current_series(backups: Vec<Value>) -> Value {
-    let active_series = ["secret_storage", "mls_history"]
+    let active_series = ["secret_storage"]
         .into_iter()
         .filter_map(|backup_kind| {
             backups
@@ -225,7 +224,7 @@ fn put_body_contains_no_plaintext_secret() {
 fn real_encrypt_build_validate_decrypt_round_trips_end_to_end() {
     // No hand-crafted fixtures: this exercises the REAL pipeline —
     // encrypt_vault (which emits base64url) → build the upload body → the
-    // SAME key-backup validator the mls_history backup uses → decrypt back
+    // canonical key-backup validator → decrypt back
     // to the plaintext secret. encrypt_vault now emits base64url natively,
     // so the validator's base64url charset check on ciphertext/nonce/salt
     // passes for every random ciphertext (no `+`/`/` ever appear).
@@ -249,8 +248,7 @@ fn real_encrypt_build_validate_decrypt_round_trips_end_to_end() {
         );
     }
 
-    // 2. The body validates under the exact validator soland-mirroring clients run (the same one
-    //    `mls_history` backups must pass).
+    // 2. The body validates under the exact canonical envelope validator.
     validate_wire_envelope(&body, BackupKind::SecretStorage).expect(
         "mls_account_secret backup must validate as a secret_storage envelope (base64url-clean)",
     );
@@ -308,13 +306,12 @@ fn round_trips_even_when_random_bytes_would_need_url_safe_alphabet() {
 #[test]
 fn select_account_secret_finds_it_in_a_list_payload() {
     let account_secret_body = wrap();
-    // A `list_key_backups`-shaped payload mixing a history backup, an
-    // unrelated recovery vault, and the account-secret backup.
+    // A hydrated key-backup payload mixing an unrelated secret-storage item
+    // and the account-secret backup.
     let payload = payload_with_current_series(vec![
-        serde_json::json!({ "backup_id": "ak:backup:a", "backup_kind": "mls_history" }),
         serde_json::json!({
             "backup_id": "ak:backup:b",
-            "backup_kind": "recovery",
+            "backup_kind": "secret_storage",
             "contents": [{ "secret_id": "inkson_recovery_vault_payload" }]
         }),
         account_secret_body.clone(),
@@ -322,9 +319,7 @@ fn select_account_secret_finds_it_in_a_list_payload() {
     let found = select_mls_account_secret_backup(&payload).expect("account secret present");
     assert!(is_mls_account_secret_backup(&found));
     // No-account-secret payload returns None.
-    let none_payload = serde_json::json!({
-        "backups": [ { "backup_id": "ak:backup:a", "backup_kind": "mls_history" } ]
-    });
+    let none_payload = serde_json::json!({ "backups": [] });
     assert!(select_mls_account_secret_backup(&none_payload).is_none());
     // Absent/empty payloads are tolerated.
     assert!(select_mls_account_secret_backup(&serde_json::json!({})).is_none());
@@ -657,9 +652,7 @@ fn backup_prompt_required_when_local_secret_and_no_server_backup() {
     // up to the server -> prompt them to set a recovery passphrase.
     let store = MemorySecureKeyStore::new();
     crate::mls::runtime::store_account_mls_secret(&store, &authority(), ACCOUNT_SECRET).unwrap();
-    let payload = serde_json::json!({
-        "backups": [ { "backup_id": "ak:backup:a", "backup_kind": "mls_history" } ]
-    });
+    let payload = serde_json::json!({ "backups": [] });
     assert!(mls_backup_prompt_required(&payload, &store, &authority()));
 }
 
@@ -809,29 +802,6 @@ fn verify_account_secret_rejects_multiple_series_without_a_pointer_projection() 
     assert!(verify_active_backup_series(&payload, BackupKind::SecretStorage.as_str()).is_err());
 }
 
-#[test]
-fn select_history_backups_filters_by_class() {
-    let payload = serde_json::json!({
-        "active_series": current_series(vec![
-            active_series_pointer("mls_history", ACTIVE_MLS_HISTORY_SERIES)
-        ]),
-        "backups": [
-            { "backup_id": "ak:backup:a", "backup_kind": "mls_history", "series_id": ACTIVE_MLS_HISTORY_SERIES },
-            { "backup_id": "ak:backup:b", "backup_kind": "secret_storage" },
-            { "backup_id": "ak:backup:c", "backup_kind": "mls_history", "series_id": ACTIVE_MLS_HISTORY_SERIES },
-            { "backup_id": "ak:backup:d" },
-        ]
-    });
-    let histories = select_mls_history_backups(&payload);
-    assert_eq!(histories.len(), 2);
-    assert!(
-        histories
-            .iter()
-            .all(|b| { b.get("backup_kind").and_then(Value::as_str) == Some("mls_history") })
-    );
-    assert!(select_mls_history_backups(&serde_json::json!({})).is_empty());
-}
-
 // ---- X5.3: encrypted private-plaintext sidecar backup ----
 
 fn sample_sidecar() -> std::collections::BTreeMap<
@@ -927,11 +897,7 @@ fn select_sidecar_finds_and_prefers_highest_series_seq() {
     let mut newer = base_body.clone();
     newer["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a2");
     newer["series_seq"] = serde_json::json!(2);
-    let payload = payload_with_current_series(vec![
-        serde_json::json!({ "backup_id": "ak:backup:h", "backup_kind": "mls_history" }),
-        older,
-        newer.clone(),
-    ]);
+    let payload = payload_with_current_series(vec![older, newer.clone()]);
     let found = select_mls_private_plaintext_backup(&payload).expect("sidecar present");
     assert!(is_mls_private_plaintext_backup(&found));
     assert_eq!(found["backup_id"], newer["backup_id"]);
