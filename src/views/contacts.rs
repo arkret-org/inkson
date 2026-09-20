@@ -749,7 +749,6 @@ fn ContactRow(
                                                 crate::transport::account::direct_conversation_client_local_blockers(
                                                     store,
                                                     &peer,
-                                                    &outcome,
                                                 )
                                             });
                                             match crate::transport::account::direct_conversation_entry_with_local_blockers(

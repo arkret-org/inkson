@@ -955,6 +955,24 @@ fn plaintext_cache_outlives_group_state() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn encrypted_write_without_current_mls_group_is_fail_closed() {
+    let mut state = temp_state_store("missing-group");
+    let store = MemorySecureKeyStore::new();
+    let error = encrypt_values_with_device_snapshot(
+        &mut state,
+        &store,
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        &fixture::authority("did:web:alice.example"),
+        &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001"),
+        "text/plain",
+        &[b"secret".to_vec()],
+    )
+    .unwrap_err();
+    assert!(matches!(error, MlsRuntimeError::MissingWelcome));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn encrypted_write_with_snapshot_requires_existing_device_secret() {
     let mut state = temp_state_store("missing-secret");
     let store = MemorySecureKeyStore::new();

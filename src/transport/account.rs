@@ -758,7 +758,6 @@ pub(crate) fn direct_conversation_entry(
 pub(crate) fn direct_conversation_client_local_blockers(
     state_store: &crate::state::LocalStateStore,
     peer: &str,
-    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
 ) -> std::collections::BTreeSet<arkret_sdk::direct_conversation::DirectConversationClientLocalBlocker>
 {
     use arkret_sdk::direct_conversation::DirectConversationClientLocalBlocker as Local;
@@ -766,24 +765,6 @@ pub(crate) fn direct_conversation_client_local_blockers(
     let mut blockers = std::collections::BTreeSet::new();
     if crate::account_data::is_blocked(&state_store.client_blocklist_for_actor(peer), peer) {
         blockers.insert(Local::PersonalBlocked);
-    }
-    if let Some(coordinates) = outcome.coordinates() {
-        let scope = arkret_sdk::ScopeRef::Realm {
-            realm_id: coordinates.realm_id.clone(),
-        };
-        let history_unavailable = scope
-            .canonical_mls_group_id()
-            .ok()
-            .and_then(|group_id| {
-                crate::state::mls_scope_checkpoint_key_for_group(&scope, &group_id).ok()
-            })
-            .and_then(|scope_group_key| {
-                crate::secure_key_store::load_history_secrets(&scope_group_key)
-            })
-            .is_none_or(|secrets| secrets.is_empty());
-        if history_unavailable {
-            blockers.insert(Local::HistoryKeyUnavailable);
-        }
     }
     blockers
 }
@@ -795,9 +776,8 @@ pub(crate) fn direct_conversation_entry_with_local_blockers(
     >,
 ) -> DirectConversationEntry {
     let entry = direct_conversation_entry(outcome);
-    // Missing history secrets block sending, not entering a conversation to
-    // receive its MLS Welcome and converge keys. The chat's verified MLS gate
-    // remains responsible for enabling Send.
+    // Current MLS checkpoint, epoch and send-secret readiness are checked at
+    // the encrypted-write boundary. They do not become resolver blockers.
     if local_blockers.contains(
         &arkret_sdk::direct_conversation::DirectConversationClientLocalBlocker::PersonalBlocked,
     ) && matches!(entry, DirectConversationEntry::Openable)
@@ -2107,16 +2087,13 @@ mod tests {
             .expect("found Direct Conversation outcome");
 
         use arkret_sdk::direct_conversation::DirectConversationClientLocalBlocker as Local;
-        let missing_keys = std::collections::BTreeSet::from([Local::HistoryKeyUnavailable]);
+        let no_local_blockers = std::collections::BTreeSet::new();
         assert_eq!(
-            direct_conversation_entry_with_local_blockers(&outcome, &missing_keys),
+            direct_conversation_entry_with_local_blockers(&outcome, &no_local_blockers),
             DirectConversationEntry::Openable,
-            "the peer must be able to enter and receive its Welcome"
+            "the peer must be able to enter and receive its Welcome; MLS readiness gates sending"
         );
-        let blocked = std::collections::BTreeSet::from([
-            Local::PersonalBlocked,
-            Local::HistoryKeyUnavailable,
-        ]);
+        let blocked = std::collections::BTreeSet::from([Local::PersonalBlocked]);
         assert_eq!(
             direct_conversation_entry_with_local_blockers(&outcome, &blocked),
             DirectConversationEntry::Suspended
