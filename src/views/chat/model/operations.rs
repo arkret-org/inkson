@@ -488,9 +488,9 @@ pub(crate) fn chat_message_authoring_intent(
         blob_refs: vec![],
         reply_to_id,
     };
-    intent
-        .validate()
-        .map_err(|error| anyhow::anyhow!("chat message intent is not sendable: {error}"))?;
+    // The closed SDK intent has no independent validator. Its payload is
+    // authored through the typed MessageCreate builder, then the governing
+    // Station validates the committed Event against the registered schema.
     Ok(intent)
 }
 
