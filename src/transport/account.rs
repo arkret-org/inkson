@@ -1303,8 +1303,9 @@ pub async fn grant_consent(
 ///
 /// The current result is read first because the Event MUST carry the exact
 /// revision it supersedes: `ConsentRevokePayload.expected_revision` is the
-/// current-state compare-and-set that closes the concurrent-revoke race, and it
-/// is the Realm stream position of the result's last accepted commit.
+/// current-state compare-and-set that closes the concurrent-revoke race. The
+/// whole typed revision is forwarded verbatim; a stream position without its
+/// RealmCommit id is not an authority basis.
 pub async fn revoke_consent(
     submitter: &crate::event_submit::EventSubmitter,
     holder: &str,
@@ -1319,7 +1320,7 @@ pub async fn revoke_consent(
         principal_control_realm_id.as_str(),
         holder.trim(),
         &view.consent_id,
-        view.revision.stream_position,
+        &view.revision,
     )?
     .build_sdk_event("inkson")?;
     let signed_event = submitter.author_for_direct_submission(&event).await?;

@@ -70,19 +70,20 @@ pub fn consent_grant(
 
 /// Build a canonical `ak.consent.revoke` Event.
 ///
-/// `expected_revision` MUST be the `revision.stream_position` the holder just
-/// read back from the current consent result. The governance Station rejects a
-/// revoke whose expected revision has moved on, which is what closes the
-/// concurrent-revoke race the observed-dot vocabulary used to carry.
+/// `expected_revision` MUST be the complete typed revision the holder just read
+/// back from the current consent result. The governance Station compares both
+/// the RealmCommit id and stream position; neither coordinate may be rebuilt or
+/// reduced to a local counter. That exact compare closes the concurrent-revoke
+/// race the observed-dot vocabulary used to carry.
 pub fn consent_revoke(
     holder_pcr_realm_id: &str,
     holder: &str,
     consent_id: &arkret_sdk::ConsentId,
-    expected_revision: u64,
+    expected_revision: &arkret_sdk::CurrentRevision,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::ConsentRevokePayload {
         consent_id: consent_id.clone(),
-        expected_revision,
+        expected_revision: expected_revision.clone(),
         revoked_at: Some(crate::clock::now_utc_millis()),
         reason: None,
     };
