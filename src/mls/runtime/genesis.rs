@@ -174,9 +174,10 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
             },
         },
     };
-    let group_seed = crate::state::mls_scope_checkpoint_key(&effective_scope)
-        .map_err(MlsRuntimeError::Genesis)?;
-    let group_id = arkret_sdk::base64url_encode(group_seed.as_bytes());
+    let group_id = effective_scope
+        .canonical_mls_group_id()
+        .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
+        .to_string();
     if state_store
         .mls_checkpoint_for_scope_and_group(&effective_scope, &group_id)
         .is_some()
@@ -215,7 +216,7 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
     let governance_binding = crate::mls::governance_proof::genesis_binding(&effective_scope)
         .map_err(MlsRuntimeError::Genesis)?;
     let mut group = identity
-        .create_group_with_governance_binding(group_seed.as_bytes(), &governance_binding)
+        .create_group_with_governance_binding(&effective_scope, &governance_binding)
         .map_err(|err| MlsRuntimeError::Genesis(format!("create group: {err}")))?;
     let device_authorize_event_id = match &group.identity().endpoint {
         arkret_sdk::MlsEndpointIdentity::HumanDevice {
@@ -351,11 +352,10 @@ pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope_with_bin
             },
         },
     };
-    let expected_group_id = arkret_sdk::base64url_encode(
-        crate::state::mls_scope_checkpoint_key(&effective_scope)
-            .map_err(MlsRuntimeError::Genesis)?
-            .as_bytes(),
-    );
+    let expected_group_id = effective_scope
+        .canonical_mls_group_id()
+        .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
+        .to_string();
     let Some(snapshot) =
         state_store.mls_checkpoint_for_scope_and_group(&effective_scope, &expected_group_id)
     else {

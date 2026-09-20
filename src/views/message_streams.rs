@@ -2,7 +2,10 @@
 
 use dioxus::prelude::*;
 
-fn allow_authorized_frame(_: &garth::SignalPlaintext, _: &arkret_sdk::MessageStreamFrame) -> bool {
+fn allow_authorized_frame(
+    _: &arkret_sdk::SignalSequenceDomain,
+    _: &arkret_sdk::MessageStreamFrame,
+) -> bool {
     true
 }
 
@@ -31,9 +34,12 @@ impl MessageStreamHub {
         signal: &crate::runtime::projection::AdmittedSignal,
         observed_at: chrono::DateTime<chrono::Utc>,
     ) -> garth::Result<garth::MessageStreamApplyOutcome> {
-        self.projection
-            .write()
-            .apply(&signal.payload, &allow_authorized_frame, observed_at)
+        self.projection.write().apply_plaintext(
+            &signal.domain,
+            &signal.payload,
+            &allow_authorized_frame,
+            observed_at,
+        )
     }
 
     /// Removes a preview only after the durable Event and its verified sender
@@ -45,7 +51,7 @@ impl MessageStreamHub {
     ) -> garth::Result<Option<garth::MessageStreamPreview>> {
         self.projection
             .write()
-            .bind_verified_final(event, verified_sender_endpoint)
+            .bind_committed_final(event, verified_sender_endpoint)
     }
 
     pub fn maintain(&mut self, now: chrono::DateTime<chrono::Utc>) {

@@ -1051,7 +1051,9 @@ async fn reconnect_after(
     provider
         .ctx
         .projection_sink
-        .sync_status(SyncStatusEvent::Reconnecting);
+        .sync_status(SyncStatusEvent::Retryable {
+            reason: reason.to_owned(),
+        });
     tracing::warn!(
         reason,
         retry_delay_ms = delay.as_millis(),
@@ -1697,19 +1699,15 @@ async fn run_idle_self_update_pass(
         });
         let built = match built {
             Ok(None) => Ok(None),
-            Ok(Some((commit_envelope, snapshot, previous_governance_binding))) => {
-                let schedule_hash = commit_envelope.commit_digest.clone();
+            Ok(Some(staged)) => {
                 let local_state = ctx.state_store.read(Clone::clone);
                 crate::mls::group_events::mls_commit_event_from_store(
                     &local_state,
                     &realm_id,
                     &actor_id,
-                    &schedule_hash,
-                    &commit_envelope,
-                    &previous_governance_binding,
+                    &staged.envelope,
                 )
-                .await
-                .map(|event| Some((event, commit_envelope.epoch, snapshot)))
+                .map(|event| Some((event, staged.envelope.epoch, staged.staged_checkpoint)))
             }
             Err(error) => Err(error),
         };
@@ -1833,7 +1831,7 @@ async fn prefetch_member_identity_proof_keys<
     state_store: S,
 ) -> bool {
     let mut pairs = BTreeSet::<(String, String)>::new();
-    for body in response.realm_projections.values() {
+    for body in response.step.realm_projections.values() {
         collect_member_identity_proof_devices_from_value(body, 0, &mut pairs);
     }
     prefetch_persistent_event_sender_key_pairs(api, pairs.into_iter().collect(), state_store).await
@@ -1985,7 +1983,7 @@ async fn process_to_device_delivery(
             await_account_state_durable(ctx, "paginated to-device batch before ACK").await?;
             keys.ack_device_messages(ack_token).await?;
         }
-        if !(page.has_more || page.limited) {
+        if !(page.has_more || page.limited.unwrap_or(false)) {
             break;
         }
         next_cursor = page.next_cursor.clone();

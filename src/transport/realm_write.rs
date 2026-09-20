@@ -303,7 +303,9 @@ pub async fn set_realm_alias(
         .http()
         .scan_commit_stream_to_head(
             realm_id.clone(),
-            arkret_wire::CommitStreamRef::Realm { realm_id },
+            arkret_wire::CommitStreamRef::Realm {
+                realm_id: realm_id.clone(),
+            },
             None,
             100,
         )
@@ -314,11 +316,17 @@ pub async fn set_realm_alias(
     let event = match (requested, current) {
         (Some(alias), Some(expected)) => {
             let service_id = submitter.service_did().await?;
-            build_realm_alias_rename_event(realm_id, actor_id, &service_id, alias, expected)?
+            build_realm_alias_rename_event(
+                realm_id.as_str(),
+                actor_id,
+                &service_id,
+                alias,
+                expected,
+            )?
         }
         (Some(alias), None) => {
             let service_id = submitter.service_did().await?;
-            build_realm_alias_event(realm_id, actor_id, &service_id, alias)?
+            build_realm_alias_event(realm_id.as_str(), actor_id, &service_id, alias)?
         }
         (None, Some(expected)) => {
             let payload =
@@ -327,7 +335,7 @@ pub async fn set_realm_alias(
             if payload.alias().is_none() {
                 anyhow::bail!("Realm alias is already absent");
             }
-            build_realm_alias_tombstone_event(realm_id, actor_id, expected)?
+            build_realm_alias_tombstone_event(realm_id.as_str(), actor_id, expected)?
         }
         (None, None) => anyhow::bail!("Realm alias is already absent"),
     };
