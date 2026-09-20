@@ -184,19 +184,8 @@ fn capability_payload_validation_reads_the_intent_without_changing_it() {
         json!({"object": {}}),
     );
     let basis = crate::operation::ak_ops::IssuerRealmAuthorityBasis {
-        governance_station_id: arkret_sdk::DidCoreId::new(
-            "ak:did_core:web:server.example".to_owned(),
-        )
-        .unwrap(),
         authority_generation: 0,
-        basis: arkret_wire::CommittedEventRef {
-            event_id: genesis.event_id.clone(),
-            commit_id: commit_for(&genesis, 0).commit_id,
-            stream_ref: arkret_wire::CommitStreamRef::Realm {
-                realm_id: realm_id(REALM),
-            },
-            stream_position: 0,
-        },
+        authority_event_ref: genesis.event_id.clone(),
     };
     let operation = crate::operation::ak_ops::capability_grant_actions(
         REALM,

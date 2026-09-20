@@ -620,10 +620,9 @@ pub async fn ban_member(
 /// `ak.capability.grant{actions:[ak.realm.admin], subject}` event.
 /// The Grant id is derived from the accepted Event id. P1's
 /// `apply_capability` folds this into the soland authz index, so subsequent
-/// `ak.realm.admin` checks for `subject` pass. `root_basis` is the caller's
-/// validated current-authority coordinates
-/// (`IssuerRealmAuthorityBasis::from_verified_bundle`) the grant's issuer
-/// authority binds to.
+/// `ak.realm.admin` checks for `subject` pass. `root_basis` must come from the
+/// verified authority-root current result, not the governance Station's
+/// handoff bundle: those two generations have different lifecycles.
 pub async fn grant_realm_admin(
     submitter: &EventSubmitter,
     realm_id: &str,

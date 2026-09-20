@@ -6,41 +6,13 @@ use serde_json::Value;
 
 use super::{TypedOperationBuilder, trim_realm_id};
 
-/// The committed Realm-authority decision a new grant's `realm_authority`
-/// `issuer_authority_refs` entry binds to.
-///
-/// It names the governance Station that admitted the decision, the authority
-/// generation it was admitted under, and the exact committed Event that carries
-/// it. All three come from the verified `RealmAuthorityBundle` the client
-/// authenticated for this Realm: a grant minted against a superseded generation
-/// binds an authority route that is no longer current.
+/// The signed lineage for a Realm-root capability grant. The governing Station
+/// checks current authority at acceptance; its service id and commit basis are
+/// not producer-authored fields in `issuer_authority_refs`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IssuerRealmAuthorityBasis {
-    pub governance_station_id: arkret_sdk::DidCoreId,
     pub authority_generation: u64,
-    pub basis: arkret_wire::CommittedEventRef,
-}
-
-impl IssuerRealmAuthorityBasis {
-    /// Coordinates taken from a `RealmAuthorityBundle` this client already
-    /// validated for `realm_id`, using the genesis commit when the Realm has
-    /// never handed its authority off and the last transition otherwise.
-    pub fn from_verified_bundle(bundle: &arkret_wire::RealmAuthorityBundle) -> Self {
-        let (event_id, commit) = bundle.authority_transitions.last().map_or_else(
-            || (&bundle.genesis_event.event_id, &bundle.genesis_commit),
-            |transition| (&transition.change_event.event_id, &transition.change_commit),
-        );
-        Self {
-            governance_station_id: bundle.current_service_id.clone(),
-            authority_generation: bundle.current_generation,
-            basis: arkret_wire::CommittedEventRef {
-                event_id: event_id.clone(),
-                commit_id: commit.commit_id.clone(),
-                stream_ref: commit.stream_ref.clone(),
-                stream_position: commit.stream_position,
-            },
-        }
-    }
+    pub authority_event_ref: arkret_sdk::EventId,
 }
 
 /// `ak.capability.revoke` — drop a standing grant, addressed by `grant_id`.
@@ -167,16 +139,12 @@ pub fn capability_grant_actions_with_resources(
         actions: actions.iter().map(|action| (*action).to_owned()).collect(),
         resources,
         constraints: constraints_typed,
-        // The authority coordinates come from the caller-verified
-        // `RealmAuthorityBundle` (`IssuerRealmAuthorityBasis::from_verified_bundle`):
-        // the grant binds the exact committed decision and the generation it was
-        // admitted under, so a later handoff cannot be mistaken for the one this
-        // grant was issued against.
-        issuer_authority_refs: vec![arkret_sdk::IssuerAuthorityRef::RealmAuthority {
+        // The Station resolves and locks current authority at acceptance. The
+        // signed payload carries only closed semantic lineage.
+        issuer_authority_refs: vec![arkret_sdk::IssuerAuthorityRef::RealmRoot {
             realm_id: realm_typed,
-            governance_station_id: root_basis.governance_station_id.clone(),
+            authority_event_ref: root_basis.authority_event_ref.clone(),
             authority_generation: root_basis.authority_generation,
-            basis: root_basis.basis.clone(),
         }],
         issued_at: crate::clock::now_utc_millis(),
     };
@@ -194,26 +162,11 @@ mod tests {
 
     fn authority_basis(generation: u64) -> IssuerRealmAuthorityBasis {
         IssuerRealmAuthorityBasis {
-            governance_station_id: arkret_sdk::DidCoreId::new("ak:did_core:web:station.example")
-                .unwrap(),
             authority_generation: generation,
-            basis: arkret_wire::CommittedEventRef {
-                event_id: arkret_sdk::EventId::new(
-                    "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                )
-                .unwrap(),
-                commit_id: arkret_sdk::RealmCommitId::new(
-                    "ak:realm_commit:0196419b-0000-7000-8000-000000000001",
-                )
-                .unwrap(),
-                stream_ref: arkret_wire::CommitStreamRef::Realm {
-                    realm_id: arkret_sdk::RealmId::new(
-                        "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
-                    )
-                    .unwrap(),
-                },
-                stream_position: 0,
-            },
+            authority_event_ref: arkret_sdk::EventId::new(
+                "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            )
+            .unwrap(),
         }
     }
 
@@ -234,19 +187,10 @@ mod tests {
         assert_eq!(
             operation.payload()["grant"]["issuer_authority_refs"],
             json!([{
-                "kind": "realm_authority",
+                "kind": "realm_root",
                 "realm_id": "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
-                "governance_station_id": "ak:did_core:web:station.example",
                 "authority_generation": 1,
-                "basis": {
-                    "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                    "commit_id": "ak:realm_commit:0196419b-0000-7000-8000-000000000001",
-                    "stream_ref": {
-                        "kind": "realm",
-                        "realm_id": "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM"
-                    },
-                    "stream_position": 0
-                }
+                "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
             }])
         );
     }
