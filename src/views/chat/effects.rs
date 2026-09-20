@@ -729,7 +729,8 @@ pub(super) fn ChatEffects(
                         // identify a timeline object. Rejecting the whole page
                         // here used to drop the complete, server-folded Message
                         // tombstone whenever its separate redact Event was
-                        // returned as a RedactedEventView.
+                        // returned as a withheld CommittedEventView, which has
+                        // no reducer input.
                         let backfill_events = match backfill.display_event_values() {
                             Ok(events) => Some(events),
                             Err(error) => {
