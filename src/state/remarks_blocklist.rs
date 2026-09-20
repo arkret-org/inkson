@@ -496,10 +496,8 @@ impl LocalStateStore {
         &self,
         stream_ref: &arkret_wire::CommitStreamRef,
     ) -> Option<arkret_wire::CommitStreamHead> {
-        self.load()
-            .stream_cursors
-            .get(&commit_stream_key(stream_ref))
-            .cloned()
+        let key = commit_stream_key(stream_ref)?;
+        self.load().stream_cursors.get(&key).cloned()
     }
 
     /// Advance one stream's cursor. A head that does not strictly advance the
@@ -507,7 +505,9 @@ impl LocalStateStore {
     /// a backwards head would re-open already-verified positions.
     pub fn record_stream_head(&mut self, head: arkret_wire::CommitStreamHead) -> bool {
         self.ensure_cached_loaded();
-        let key = commit_stream_key(&head.stream_ref);
+        let Some(key) = commit_stream_key(&head.stream_ref) else {
+            return false;
+        };
         if let Some(current) = self.cached.stream_cursors.get(&key)
             && current.stream_position >= head.stream_position
         {

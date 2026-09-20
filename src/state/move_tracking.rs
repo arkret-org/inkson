@@ -90,11 +90,8 @@ impl LocalStateStore {
             .event_id
             .get_or_insert_with(|| result.event_id.clone());
         if let Some(commit) = &result.commit {
-            record.observed_stream_head = Some(format!(
-                "{}@{}",
-                crate::state::commit_stream_key(&commit.stream_ref),
-                commit.stream_position
-            ));
+            record.observed_stream_head = crate::state::commit_stream_key(&commit.stream_ref)
+                .map(|key| format!("{key}@{}", commit.stream_position));
         }
         let state = MoveSubmissionState::from_send_queue_status(result.status);
         if record.state == MoveSubmissionState::PendingMlsBinding

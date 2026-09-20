@@ -13,7 +13,8 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 ///
 /// This is holder-local queue vocabulary, not a wire shape: it never leaves the
 /// device and nothing on the authority protocol reads it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum AuthoringAuthorityModel {
     /// A device accepted by its own principal's current device generation.
     AcceptedDevice,
@@ -26,7 +27,8 @@ pub(crate) enum AuthoringAuthorityModel {
 /// A replay compares this against the freshly fetched keys projection, so a
 /// queued write can never be revived under a superseded device generation or a
 /// delegation the controller has since withdrawn.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AuthoringGeneration {
     pub(crate) authority_model: AuthoringAuthorityModel,
     pub(crate) authority_principal_id: arkret_sdk::DidCoreId,
@@ -353,6 +355,24 @@ impl ResolvedQueueGenerationFence {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn persisted_authoring_generation_round_trips_without_a_wire_alias() {
+        let generation = AuthoringGeneration {
+            authority_model: AuthoringAuthorityModel::AcceptedDevice,
+            authority_principal_id: arkret_sdk::DidCoreId::new(
+                "ak:did_core:webvh:example".to_owned(),
+            )
+            .unwrap(),
+            generation_ref: "7".to_owned(),
+        };
+        let encoded = serde_json::to_value(&generation).unwrap();
+        assert_eq!(encoded["authority_model"], "accepted_device");
+        assert_eq!(
+            serde_json::from_value::<AuthoringGeneration>(encoded).unwrap(),
+            generation
+        );
+    }
 
     #[test]
     fn generation_cache_does_not_cross_station_accounts() {

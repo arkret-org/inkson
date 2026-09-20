@@ -19,17 +19,30 @@ use crate::notification_rules::{DndSettings, WatchLevel};
 /// Realm, Circle and Sidecar streams are separate linear logs; this key keeps
 /// them separate in local state so no code path can accidentally merge two
 /// streams into a single cursor.
-pub fn commit_stream_key(stream_ref: &arkret_wire::CommitStreamRef) -> String {
+pub fn commit_stream_key(stream_ref: &arkret_wire::CommitStreamRef) -> Option<String> {
     match stream_ref {
-        arkret_wire::CommitStreamRef::Realm { realm_id } => format!("realm/{}", realm_id.as_str()),
+        arkret_wire::CommitStreamRef::Realm { realm_id } => {
+            Some(format!("realm/{}", realm_id.as_str()))
+        }
         arkret_wire::CommitStreamRef::Circle {
             realm_id,
             circle_id,
-        } => format!("circle/{}/{}", realm_id.as_str(), circle_id.as_str()),
+        } => Some(format!(
+            "circle/{}/{}",
+            realm_id.as_str(),
+            circle_id.as_str()
+        )),
         arkret_wire::CommitStreamRef::Sidecar {
             realm_id,
             sidecar_id,
-        } => format!("sidecar/{}/{}", realm_id.as_str(), sidecar_id.as_str()),
+        } => Some(format!(
+            "sidecar/{}/{}",
+            realm_id.as_str(),
+            sidecar_id.as_str()
+        )),
+        // A future canonical stream kind needs an explicit durable-key design.
+        // Do not collapse it into an invented compatibility bucket.
+        _ => None,
     }
 }
 
@@ -61,7 +74,7 @@ impl PersistedRealmAuthorityBasis {
     /// must name the exact genesis or change Event of that generation.
     pub fn accepts(&self, commit: &arkret_wire::RealmCommit) -> bool {
         if commit.realm_id != self.realm_id
-            || commit.authority_generation != self.current_generation
+            || commit.governance_generation != self.current_generation
         {
             return false;
         }
@@ -1605,6 +1618,20 @@ impl MlsReceiveOverlay {
 mod authority_root_tests {
     use super::*;
     use crate::test_support as fixture;
+
+    #[test]
+    fn commit_stream_key_preserves_the_exact_stream_identity() {
+        let realm_id = arkret_sdk::RealmId::new(
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
+        )
+        .unwrap();
+        assert_eq!(
+            commit_stream_key(&arkret_wire::CommitStreamRef::Realm {
+                realm_id: realm_id.clone(),
+            }),
+            Some(format!("realm/{}", realm_id.as_str()))
+        );
+    }
 
     #[test]
     fn same_authority_keeps_the_original_profile_id() {
