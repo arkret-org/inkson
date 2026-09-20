@@ -83,7 +83,6 @@ pub(crate) fn upload_recovery_key_account_backup(
         Some(state_store.read().private_plaintext_snapshot_json())
     };
     let recovery_material_evidence = state_store.read().recovery_material_evidence();
-    let governance_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
     let needs_mls_backup_signal = crate::components::try_needs_mls_backup_signal();
     // `tr()` reads the i18n signal out of Dioxus context, which is not
     // available inside the spawned task below — the same constraint
@@ -110,13 +109,11 @@ pub(crate) fn upload_recovery_key_account_backup(
             if evidence.principal_did != actor_did || evidence.device_id.as_str() != device {
                 anyhow::bail!("recovery authority evidence does not match the active session");
             }
+            // The frozen PCR evidence already names the two exact accepted
+            // RealmCommit coordinates. Re-resolving a deleted Seal/frontier
+            // would create a second finality gate and is not part of recovery
+            // policy publication.
             crate::recovery_flow::verify_recovery_authority_evidence(&api, &evidence).await?;
-            crate::recovery_flow::refresh_principal_bootstrap_frontier(
-                &api,
-                &governance_state_store,
-                &evidence.bootstrap_seal,
-            )
-            .await?;
             crate::recovery_flow::ensure_recovery_policy(
                 &api,
                 &evidence.principal_did,
