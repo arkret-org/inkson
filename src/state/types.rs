@@ -1199,6 +1199,14 @@ pub struct ClientLocalState {
     /// DM authority and is not revoked as part of this saga.
     #[serde(default)]
     pub pending_personal_block_sagas: BTreeSet<String>,
+    /// Subset of `pending_personal_block_sagas` whose exact blocklist value has
+    /// already been accepted. These retries resume at the Contact leg and MUST
+    /// NOT mint another identical Account Data revision.
+    #[serde(default)]
+    pub committed_personal_block_sagas: BTreeSet<String>,
+    /// A local whole-value edit not yet acknowledged by Account Data CAS.
+    #[serde(default)]
+    pub personal_blocklist_write_pending: bool,
     /// Per spec a77b995 — last `trust_domain` advertised by the
     /// connected Station's `ServiceDescribe` response.
     /// Threaded through to flows that need to canonicalise into
@@ -1483,6 +1491,8 @@ impl Default for ClientLocalState {
             client_blocklist: Vec::new(),
             client_blocklist_revision: 0,
             pending_personal_block_sagas: BTreeSet::new(),
+            committed_personal_block_sagas: BTreeSet::new(),
+            personal_blocklist_write_pending: false,
             server_trust_domain: None,
             dpop_device_key: None,
             member_identity_events: BTreeMap::new(),

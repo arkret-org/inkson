@@ -519,6 +519,8 @@ mod tests {
             store.pending_personal_block_sagas(),
             std::collections::BTreeSet::from([actor.clone()])
         );
+        assert!(store.personal_blocklist_write_pending());
+        assert!(store.committed_personal_block_sagas().is_empty());
 
         let remote = entries.clone();
         store.set_client_blocklist(4, remote.clone());
@@ -526,6 +528,11 @@ mod tests {
         store.set_client_blocklist(4, Vec::new());
         assert_eq!(store.client_blocklist_revision(), 4);
         assert_eq!(store.client_blocklist(), remote);
+        assert!(!store.personal_blocklist_write_pending());
+        assert_eq!(
+            store.committed_personal_block_sagas(),
+            std::collections::BTreeSet::from([actor.clone()])
+        );
 
         store.complete_personal_block_saga(&actor);
         assert!(store.pending_personal_block_sagas().is_empty());
@@ -563,5 +570,107 @@ mod tests {
             crate::account_data::blocklist_target_value(&store.client_blocklist()[0].target),
             second
         );
+    }
+
+    #[test]
+    fn non_dm_block_does_not_stage_contact_tombstone() {
+        let mut store = crate::state::isolated_store_for_tests("settings-blocklist-non-dm");
+        let actor = account_actor("ak:did_core:web:station.example");
+        assert!(store.block_target(
+            crate::account_data::BlocklistUiTargetKind::Actor,
+            &actor,
+            None,
+            vec![arkret_models_collaboration::objects::productivity::AccountBlocklistSurface::Messages],
+            None,
+        ));
+        assert!(store.pending_personal_block_sagas().is_empty());
+    }
+
+    #[test]
+    fn actor_projection_cache_is_bounded_and_revision_invalidated() {
+        let mut store = crate::state::isolated_store_for_tests("settings-blocklist-cache");
+        let mut actors = Vec::new();
+        let mut entries = Vec::new();
+        for index in 0..300 {
+            let actor = account_actor(&format!("ak:did_core:web:station-{index}.example"));
+            entries.push(
+                crate::account_data::new_blocklist_entry(
+                    crate::account_data::BlocklistUiTargetKind::Actor,
+                    &actor,
+                    None,
+                    crate::account_data::DEFAULT_BLOCKLIST_APPLIES_TO.to_vec(),
+                    None,
+                    chrono::Utc::now(),
+                )
+                .unwrap(),
+            );
+            actors.push(actor);
+        }
+        store.set_client_blocklist(7, entries);
+        for actor in &actors {
+            assert_eq!(store.client_blocklist_for_actor(actor).len(), 1);
+        }
+        assert_eq!(store.blocklist_projection_cache_len(), 256);
+
+        store.set_client_blocklist(8, Vec::new());
+        assert_eq!(store.blocklist_projection_cache_len(), 0);
+        assert!(store.client_blocklist_for_actor(&actors[0]).is_empty());
+        assert_eq!(store.blocklist_projection_cache_len(), 1);
+    }
+
+    #[test]
+    fn tombstone_failure_resumes_without_rewriting_blocklist_revision() {
+        let mut store = crate::state::isolated_store_for_tests("settings-blocklist-resume");
+        let actor = account_actor("ak:did_core:web:station.example");
+        assert!(store.block_user(&actor, None));
+        let accepted_entries = store.client_blocklist();
+
+        // Simulate Account Data acceptance followed by a Contact transport
+        // failure: the accepted leg is durable and the write leg is no longer
+        // pending, so the retry resumes at tombstone instead of minting v2.
+        store.set_client_blocklist(1, accepted_entries);
+        assert_eq!(store.client_blocklist_revision(), 1);
+        assert!(!store.personal_blocklist_write_pending());
+        assert_eq!(
+            store.committed_personal_block_sagas(),
+            std::collections::BTreeSet::from([actor.clone()])
+        );
+        assert_eq!(
+            store.pending_personal_block_sagas(),
+            std::collections::BTreeSet::from([actor])
+        );
+    }
+
+    #[test]
+    fn unblock_rebuilds_view_from_retained_history_without_restoring_contact() {
+        let mut store = crate::state::isolated_store_for_tests("settings-blocklist-unblock");
+        let blocked = account_actor("ak:did_core:web:blocked.example");
+        let visible = account_actor("ak:did_core:web:visible.example");
+        let retained_history = vec![blocked.clone(), visible.clone()];
+        assert!(store.block_user(&blocked, None));
+        let accepted_entries = store.client_blocklist();
+        store.set_client_blocklist(1, accepted_entries);
+        store.complete_personal_block_saga(&blocked);
+
+        let projected = retained_history
+            .iter()
+            .filter(|actor| {
+                !crate::account_data::is_blocked(&store.client_blocklist_for_actor(actor), actor)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(projected, vec![visible.clone()]);
+
+        assert!(store.unblock_user(&blocked));
+        assert!(store.personal_blocklist_write_pending());
+        assert!(store.pending_personal_block_sagas().is_empty());
+        let rebuilt = retained_history
+            .iter()
+            .filter(|actor| {
+                !crate::account_data::is_blocked(&store.client_blocklist_for_actor(actor), actor)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(rebuilt, retained_history);
     }
 }

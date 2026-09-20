@@ -272,7 +272,7 @@ pub(crate) fn push_blocklist_account_data(
     base_url: String,
     api_token: String,
     principal_id: String,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: SyncSignal<crate::state::LocalStateStore>,
     entries: Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry>,
 ) {
     if api_token.trim().is_empty() {
@@ -288,42 +288,19 @@ pub(crate) fn push_blocklist_account_data(
         tracing::warn!("blocklist upload skipped: active authority does not match the account");
         return;
     }
+    let store = crate::app::runtime_adapter::state_store_handle(state_store);
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
-            let outcome = crate::transport::account::update_account_data_with_merge(
-                &sub,
-                AccountDataKey::ACCOUNT_BLOCKLIST,
-                |snapshot| {
-                    let plaintext = crate::account_data::build_blocklist_account_data_body(
-                        snapshot.revision.checked_add(1).ok_or_else(|| {
-                            anyhow::anyhow!("ak.account.blocklist revision overflow")
-                        })?,
-                        &entries,
-                    )
-                    .map_err(anyhow::Error::msg)?;
-                    crate::account_data::encrypt_account_data_value(
-                        &authority,
-                        AccountDataKey::ACCOUNT_BLOCKLIST,
-                        &plaintext,
-                    )
-                },
+            crate::transport::account::persist_personal_block_saga(
+                &sub, &authority, &store, &entries,
             )
-            .await?;
-            let pending_peers = state_store.read().pending_personal_block_sagas();
-            for peer in pending_peers {
-                crate::transport::account::tombstone_contact(sub.http(), &peer, true).await?;
-                state_store.write().complete_personal_block_saga(&peer);
-            }
-            Ok(outcome)
+            .await
         })
         .await
         {
             Ok(_) => {}
             Err(err) => {
-                tracing::debug!(
-                    "ak.account_data.set for ak.account.blocklist failed: {}",
-                    err.display()
-                );
+                tracing::debug!("personal blocklist saga deferred: {}", err.display());
             }
         }
     });

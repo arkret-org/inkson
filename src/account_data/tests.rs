@@ -485,6 +485,11 @@ fn typed_blocklist_entries_filter_by_closed_mode_surface_and_expiry() {
     )
     .unwrap();
     assert!(is_blocked(&[entry.clone()], &actor));
+    assert!(!requires_contact_tombstone(
+        &[entry.clone()],
+        &actor,
+        chrono::Utc::now(),
+    ));
     assert!(!suppresses_notifications(
         &[entry.clone()],
         &actor,
@@ -494,13 +499,30 @@ fn typed_blocklist_entries_filter_by_closed_mode_surface_and_expiry() {
     entry.mode = AccountBlocklistMode::Mute;
     assert!(!is_blocked(&[entry.clone()], &actor));
     entry.applies_to = vec![AccountBlocklistSurface::Notifications];
+    assert!(!requires_contact_tombstone(
+        &[entry.clone()],
+        &actor,
+        chrono::Utc::now(),
+    ));
     assert!(suppresses_notifications(
         &[entry.clone()],
         &actor,
         &[AccountBlocklistSurface::Notifications],
     ));
 
+    entry.mode = AccountBlocklistMode::Block;
+    entry.applies_to = vec![AccountBlocklistSurface::Dm];
+    assert!(requires_contact_tombstone(
+        &[entry.clone()],
+        &actor,
+        chrono::Utc::now(),
+    ));
     entry.expires_at = Some("2020-01-01T00:00:00.000Z".parse().unwrap());
+    assert!(!requires_contact_tombstone(
+        &[entry.clone()],
+        &actor,
+        chrono::Utc::now(),
+    ));
     assert!(!suppresses_notifications(
         &[entry],
         &actor,

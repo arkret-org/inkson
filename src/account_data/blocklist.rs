@@ -52,6 +52,11 @@ pub const DEFAULT_BLOCKLIST_APPLIES_TO: [AccountBlocklistSurface; 9] = [
     AccountBlocklistSurface::Directory,
 ];
 
+/// The protocol's closed per-revision bound. Enforce it before staging a local
+/// edit as well as when decoding a remote payload, so an offline client cannot
+/// grow a value that can never pass the canonical validator.
+pub const MAX_BLOCKLIST_ENTRIES: usize = 4096;
+
 pub const fn blocklist_surface_label(surface: AccountBlocklistSurface) -> &'static str {
     match surface {
         AccountBlocklistSurface::Messages => "messages",
@@ -282,8 +287,31 @@ pub fn block_target_in(
     {
         return false;
     }
+    if list.len() >= MAX_BLOCKLIST_ENTRIES {
+        return false;
+    }
     list.push(entry);
     true
+}
+
+/// Whether an accepted full-list revision carries the product's durable
+/// "block DM" intent for this exact ActorId. Hide/mute and blocks that do not
+/// cover the DM surface must never revoke Contact authority.
+pub fn requires_contact_tombstone(
+    list: &[AccountBlocklistPayloadEntry],
+    actor_id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    let Ok(needle) = serde_json::from_str::<arkret_sdk::ActorId>(actor_id) else {
+        return false;
+    };
+    list.iter().any(|entry| {
+        matches!(&entry.target, AccountBlocklistTarget::Actor(target)
+            if target.actor_id == needle)
+            && entry.mode == AccountBlocklistMode::Block
+            && entry.applies_to.contains(&AccountBlocklistSurface::Dm)
+            && entry.expires_at.is_none_or(|expires_at| expires_at > now)
+    })
 }
 
 pub fn unblock_user_in(list: &mut Vec<AccountBlocklistPayloadEntry>, actor_id: &str) -> bool {

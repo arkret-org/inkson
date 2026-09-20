@@ -50,6 +50,21 @@ const RAW_OPERATIONS_MAX: usize = 512;
 const TO_DEVICE_INBOX_MAX: usize = 512;
 const TO_DEVICE_RECEIPTS_MAX: usize = 4096;
 
+/// Runtime-only lookup cache for the actor side of the holder-private
+/// blocklist. The durable list remains the source of truth; this cache is
+/// discarded whenever its accepted Account Data revision changes (and on any
+/// local edit before that edit obtains a revision).
+#[derive(Debug, Default)]
+struct BlocklistProjectionCache {
+    revision: Option<u64>,
+    by_actor: BTreeMap<
+        String,
+        Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry>,
+    >,
+}
+
+const BLOCKLIST_PROJECTION_CACHE_MAX_ACTORS: usize = 256;
+
 // Structural split: client-state data types (RawOperationRecord,
 // ClientLocalState, MlsReceiveOverlay, the persisted-record structs, ...)
 // moved out of this file into `types` (move only). The glob re-export keeps
@@ -194,6 +209,7 @@ pub struct LocalStateStore {
     /// from decrypted Account Data and deterministic accepted private-history
     /// folds; persisted caches remain rebuildable accelerators.
     sidecar_projection_fold: crate::sidecar::SidecarProjectionFold,
+    blocklist_projection_cache: Mutex<BlocklistProjectionCache>,
     pending_projection_commands: std::collections::VecDeque<LocalProjectionCommand>,
     #[cfg(not(target_arch = "wasm32"))]
     path: PathBuf,
@@ -213,6 +229,9 @@ impl Clone for LocalStateStore {
             mls_receive_overlay: Arc::clone(&self.mls_receive_overlay),
             mls_decrypt_serial: Arc::clone(&self.mls_decrypt_serial),
             sidecar_projection_fold: self.sidecar_projection_fold.clone(),
+            // A clone may hold a different unaccepted local edit. Never share
+            // or copy an acceleration cache across that state boundary.
+            blocklist_projection_cache: Mutex::new(BlocklistProjectionCache::default()),
             pending_projection_commands: self.pending_projection_commands.clone(),
             #[cfg(not(target_arch = "wasm32"))]
             path: self.path.clone(),
@@ -305,6 +324,7 @@ impl Default for LocalStateStore {
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
             sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default(),
+            blocklist_projection_cache: Mutex::new(BlocklistProjectionCache::default()),
             pending_projection_commands: std::collections::VecDeque::new(),
             #[cfg(not(target_arch = "wasm32"))]
             path: default_state_path(),
@@ -609,6 +629,7 @@ impl LocalStateStore {
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
             sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default(),
+            blocklist_projection_cache: Mutex::new(BlocklistProjectionCache::default()),
             pending_projection_commands: std::collections::VecDeque::new(),
             path: path.into(),
         }

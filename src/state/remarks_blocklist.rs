@@ -215,6 +215,67 @@ impl LocalStateStore {
         self.load().client_blocklist_revision
     }
 
+    /// Return the bounded, revision-keyed projection for one exact sender.
+    /// Entries are still evaluated for mode/surface/expiry by the caller; the
+    /// cache only avoids repeatedly scanning the full holder-private list.
+    pub fn client_blocklist_for_actor(
+        &self,
+        actor_id: &str,
+    ) -> Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry> {
+        let Ok(actor) = serde_json::from_str::<arkret_sdk::ActorId>(actor_id) else {
+            return Vec::new();
+        };
+        let actor_key = actor.to_string();
+        let state = self.load();
+        let mut cache = self
+            .blocklist_projection_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if cache.revision != Some(state.client_blocklist_revision) {
+            cache.revision = Some(state.client_blocklist_revision);
+            cache.by_actor.clear();
+        }
+        if let Some(entries) = cache.by_actor.get(&actor_key) {
+            return entries.clone();
+        }
+        let entries = state
+            .client_blocklist
+            .into_iter()
+            .filter(|entry| {
+                matches!(
+                    &entry.target,
+                    arkret_models_collaboration::objects::productivity::AccountBlocklistTarget::Actor(target)
+                        if target.actor_id == actor
+                )
+            })
+            .collect::<Vec<_>>();
+        if cache.by_actor.len() >= BLOCKLIST_PROJECTION_CACHE_MAX_ACTORS
+            && let Some(oldest_key) = cache.by_actor.keys().next().cloned()
+        {
+            cache.by_actor.remove(&oldest_key);
+        }
+        cache.by_actor.insert(actor_key, entries.clone());
+        entries
+    }
+
+    fn invalidate_blocklist_projection_cache(&self) {
+        let mut cache = self
+            .blocklist_projection_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        cache.revision = None;
+        cache.by_actor.clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn blocklist_projection_cache_len(&self) -> usize {
+        self.blocklist_projection_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .by_actor
+            .len()
+    }
+
     /// Append `actor_id` to the personal blocklist. Idempotent — duplicate
     /// actor IDs are not inserted twice. `reason` is shown back to the user
     /// in Settings → Privacy; pass `None` to skip.
@@ -236,6 +297,8 @@ impl LocalStateStore {
         );
         if changed {
             self.cached.pending_personal_block_sagas.insert(actor_key);
+            self.cached.personal_blocklist_write_pending = true;
+            self.invalidate_blocklist_projection_cache();
             let _ = self.flush();
         }
         changed
@@ -250,6 +313,8 @@ impl LocalStateStore {
             actor_id.as_ref(),
         );
         if changed {
+            self.cached.personal_blocklist_write_pending = true;
+            self.invalidate_blocklist_projection_cache();
             let _ = self.flush();
         }
         changed
@@ -289,11 +354,21 @@ impl LocalStateStore {
             chrono::Utc::now(),
         );
         if changed {
-            if let Some(actor) = actor {
+            if let Some(actor) = actor
+                && self.cached.client_blocklist.iter().any(|entry| {
+                    crate::account_data::requires_contact_tombstone(
+                        std::slice::from_ref(entry),
+                        &actor.to_string(),
+                        chrono::Utc::now(),
+                    )
+                })
+            {
                 self.cached
                     .pending_personal_block_sagas
                     .insert(actor.to_string());
             }
+            self.cached.personal_blocklist_write_pending = true;
+            self.invalidate_blocklist_projection_cache();
             let _ = self.flush();
         }
         changed
@@ -310,6 +385,8 @@ impl LocalStateStore {
         let changed =
             crate::account_data::unblock_target_in(&mut self.cached.client_blocklist, target);
         if changed {
+            self.cached.personal_blocklist_write_pending = true;
+            self.invalidate_blocklist_projection_cache();
             let _ = self.flush();
         }
         changed
@@ -334,6 +411,8 @@ impl LocalStateStore {
         }
         self.cached.client_blocklist = entries;
         self.cached.client_blocklist_revision = revision;
+        self.reconcile_personal_block_sagas_after_accepted_write();
+        self.invalidate_blocklist_projection_cache();
         let _ = self.flush();
     }
 
@@ -341,9 +420,54 @@ impl LocalStateStore {
         self.load().pending_personal_block_sagas
     }
 
+    pub fn committed_personal_block_sagas(&self) -> BTreeSet<String> {
+        self.load().committed_personal_block_sagas
+    }
+
+    pub fn personal_blocklist_write_pending(&self) -> bool {
+        let state = self.load();
+        state.personal_blocklist_write_pending
+            || state
+                .pending_personal_block_sagas
+                .iter()
+                .any(|peer| !state.committed_personal_block_sagas.contains(peer))
+    }
+
+    /// Advance the durable saga boundary after Account Data accepted the exact
+    /// current full-list value. A successor that removed or narrowed a block
+    /// cancels its not-yet-committed Contact leg; live DM blocks resume at the
+    /// holder tombstone without writing another Account Data revision.
+    pub fn mark_personal_blocklist_sagas_committed(&mut self) {
+        self.ensure_cached_loaded();
+        self.reconcile_personal_block_sagas_after_accepted_write();
+        let _ = self.flush();
+    }
+
+    fn reconcile_personal_block_sagas_after_accepted_write(&mut self) {
+        self.cached.personal_blocklist_write_pending = false;
+        let entries = &self.cached.client_blocklist;
+        let now = chrono::Utc::now();
+        let peers = self
+            .cached
+            .pending_personal_block_sagas
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        for peer in peers {
+            if crate::account_data::requires_contact_tombstone(entries, &peer, now) {
+                self.cached.committed_personal_block_sagas.insert(peer);
+            } else {
+                self.cached.pending_personal_block_sagas.remove(&peer);
+                self.cached.committed_personal_block_sagas.remove(&peer);
+            }
+        }
+    }
+
     pub fn complete_personal_block_saga(&mut self, peer_id: &str) {
         self.ensure_cached_loaded();
-        if self.cached.pending_personal_block_sagas.remove(peer_id) {
+        let pending_removed = self.cached.pending_personal_block_sagas.remove(peer_id);
+        let committed_removed = self.cached.committed_personal_block_sagas.remove(peer_id);
+        if pending_removed || committed_removed {
             let _ = self.flush();
         }
     }

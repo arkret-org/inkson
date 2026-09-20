@@ -25,6 +25,7 @@ use serde_json::Value;
 
 use crate::event_submit::EventSubmitter;
 use crate::models::{ContactList, CurrentAccount};
+use crate::state::LocalStateStore;
 
 pub(crate) fn did_for_request_field(
     field: &str,
@@ -760,7 +761,7 @@ pub(crate) fn direct_conversation_client_local_blockers(
     use arkret_sdk::direct_conversation::DirectConversationClientLocalBlocker as Local;
 
     let mut blockers = std::collections::BTreeSet::new();
-    if crate::account_data::is_blocked(&state_store.client_blocklist(), peer) {
+    if crate::account_data::is_blocked(&state_store.client_blocklist_for_actor(peer), peer) {
         blockers.insert(Local::PersonalBlocked);
     }
     if let Some(coordinates) = outcome.coordinates() {
@@ -1602,6 +1603,96 @@ where
         merge(snapshot).map(AccountDataMergeDecision::Replace)
     })
     .await
+}
+
+/// Persist one holder-private blocklist successor, then close every durable
+/// Contact-tombstone leg whose exact actor is still a live DM block in that
+/// accepted full-list value. The ordering is deliberate: a Contact lineage is
+/// never changed for a blocklist write that failed CAS/admission.
+///
+/// A target without a current accepted Contact has no directional authority to
+/// revoke, so that leg closes without synthesizing a peer lineage. Existing
+/// accepted Contacts use the canonical holder self operation with
+/// `block_peer=true`; Consent is not read or written anywhere in this saga.
+pub(crate) async fn persist_personal_block_saga(
+    submitter: &EventSubmitter,
+    authority: &arkret_sdk::AccountId,
+    state_store: &crate::runtime::input::StateStoreHandle,
+    entries: &[arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry],
+) -> anyhow::Result<Value> {
+    let outcome = update_account_data_with_conditional_merge(
+        submitter,
+        arkret_wire::AccountDataKey::ACCOUNT_BLOCKLIST,
+        |snapshot| {
+            if let Some(current) = snapshot.entry.as_ref()
+                && let Ok(plaintext) = crate::account_data::decrypt_account_data_entry(
+                    authority,
+                    arkret_wire::AccountDataKey::ACCOUNT_BLOCKLIST,
+                    current,
+                )
+                && let Ok(payload) =
+                    crate::account_data::blocklist_payload_from_account_data(&plaintext)
+                && payload.version == current.revision
+                && payload.entries == entries
+            {
+                return Ok(AccountDataMergeDecision::KeepCurrent);
+            }
+            let plaintext = crate::account_data::build_blocklist_account_data_body(
+                snapshot
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow::anyhow!("ak.account.blocklist revision overflow"))?,
+                entries,
+            )
+            .map_err(anyhow::Error::msg)?;
+            crate::account_data::encrypt_account_data_value(
+                authority,
+                arkret_wire::AccountDataKey::ACCOUNT_BLOCKLIST,
+                &plaintext,
+            )
+            .map(AccountDataMergeDecision::Replace)
+        },
+    )
+    .await?;
+
+    state_store.write(LocalStateStore::mark_personal_blocklist_sagas_committed);
+    resume_personal_block_contact_sagas(submitter.http(), state_store, entries).await?;
+    Ok(outcome)
+}
+
+/// Resume only the already-accepted Contact legs. Keeping this separate from
+/// the Account Data write is what makes a tombstone transport failure an exact
+/// retry instead of manufacturing a new full-list revision on every tick.
+pub(crate) async fn resume_personal_block_contact_sagas(
+    http: &arkret_sdk::http_client::Client,
+    state_store: &crate::runtime::input::StateStoreHandle,
+    entries: &[arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry],
+) -> anyhow::Result<()> {
+    let pending = state_store.read(LocalStateStore::committed_personal_block_sagas);
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let now = chrono::Utc::now();
+    let accepted_peers = http
+        .contacts_list()
+        .await?
+        .contacts
+        .into_iter()
+        .filter(|row| row.state == arkret_sdk::ContactState::Accepted)
+        .map(|row| row.peer.contact_actor_id().to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    for peer in pending {
+        if !crate::account_data::requires_contact_tombstone(entries, &peer, now)
+            || !accepted_peers.contains(&peer)
+        {
+            state_store.write(|store| store.complete_personal_block_saga(&peer));
+            continue;
+        }
+        tombstone_contact(http, &peer, true).await?;
+        state_store.write(|store| store.complete_personal_block_saga(&peer));
+    }
+    Ok(())
 }
 
 /// Replace a per-account whole value through the canonical CAS binding.

@@ -192,6 +192,67 @@ fn AuthenticatedGlobalEffects(
         }
     });
 
+    // Durable personal-block saga retry. A browser/device may close after the
+    // blocklist successor is accepted but before its holder Contact tombstone
+    // commits. The pending actor set lives in account-scoped local state; each
+    // bounded tick reasserts the current whole-value CAS and then resumes only
+    // this holder's directional tombstone. No peer lineage or Consent write is
+    // synthesized.
+    use_future({
+        move || async move {
+            loop {
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(30)).await;
+                let session = token();
+                if session.trim().is_empty() {
+                    continue;
+                }
+                let Some(account) = active_account() else {
+                    continue;
+                };
+                let store = super::runtime_adapter::state_store_handle(state_store);
+                let (pending, write_pending, entries) = store.read(|state| {
+                    (
+                        state.pending_personal_block_sagas(),
+                        state.personal_blocklist_write_pending(),
+                        state.client_blocklist(),
+                    )
+                });
+                if pending.is_empty() && !write_pending {
+                    continue;
+                }
+                let base = account.server_url.to_string();
+                let authority = account.authority;
+                let result = crate::transport::auth::with_event_submitter(
+                    &base,
+                    session,
+                    |submitter| async move {
+                        if write_pending {
+                            crate::transport::account::persist_personal_block_saga(
+                                &submitter, &authority, &store, &entries,
+                            )
+                            .await
+                            .map(|_| ())
+                        } else {
+                            crate::transport::account::resume_personal_block_contact_sagas(
+                                submitter.http(),
+                                &store,
+                                &entries,
+                            )
+                            .await
+                        }
+                    },
+                )
+                .await;
+                if let Err(error) = result {
+                    tracing::debug!(
+                        error = %error.display_diagnostic(),
+                        "personal block saga retry deferred"
+                    );
+                }
+            }
+        }
+    });
+
     rsx! {}
 }
 
