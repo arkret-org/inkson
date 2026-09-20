@@ -37,6 +37,15 @@ pub(crate) struct CompletedFreshDeviceRecovery {
     pub standard_grant_installed: bool,
 }
 
+fn next_recovery_device_generation(current: u64) -> anyhow::Result<u64> {
+    if current == 0 {
+        anyhow::bail!("verified recovery session carries generation zero");
+    }
+    current
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("device generation exhausted"))
+}
+
 pub(crate) async fn prepare_pcr_policy_recovery(
     api: &crate::transport::TransportClient,
     principal_did: &arkret_sdk::Did,
@@ -72,9 +81,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
     }
 
     let previous_device_generation = verified_session.current_device_generation_ref;
-    let result_device_generation = previous_device_generation
-        .checked_add(1)
-        .ok_or_else(|| anyhow::anyhow!("device generation exhausted"))?;
+    let result_device_generation = next_recovery_device_generation(previous_device_generation)?;
     let backup_material =
         arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
             recovery_words,
@@ -118,6 +125,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         not_before: created_at,
         expires_at: None,
         authorization_binding_kind: DeviceAuthorizationBindingKind::PcrRecovery,
+        authorized_generation_ref: result_device_generation,
         device_signature: SignatureMaterial::NonEmptyString(non_empty("AA".to_owned())?),
         recovery_session_id: Some(verified_session.recovery_session_id.clone()),
         pairing_challenge_transcript_digest: None,
@@ -556,4 +564,16 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
         readiness,
         standard_grant_installed: false,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_recovery_device_generation;
+
+    #[test]
+    fn recovery_generation_is_the_single_checked_successor() {
+        assert_eq!(next_recovery_device_generation(7).unwrap(), 8);
+        assert!(next_recovery_device_generation(0).is_err());
+        assert!(next_recovery_device_generation(u64::MAX).is_err());
+    }
 }
