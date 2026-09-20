@@ -35,7 +35,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use garth::signal::{SignalReceiveOutcome, SignalReceiver, SignalSink, SignalStreamStopReason};
+use garth::signal::{SignalReceiveOutcome, SignalSink};
 use garth::{RetrySchedule, RunOptions, SyncLoopControl, TransportProvider};
 use serde_json::Value;
 
@@ -138,11 +138,97 @@ impl garth::signal::SignalDecryptor for MlsSignalDecryptor {
             })
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let group = session.group;
+        let accepted_group_state_ref = self
+            .state_store
+            .read(|store| {
+                store.mls_group_state_ref_for_scope(
+                    &envelope.scope_ref,
+                    &group.group_id(),
+                    group.epoch(),
+                )
+            })
+            .map_err(garth::Error::Protocol)?;
+        if envelope.encrypted_payload.key_ref.group_state_ref != accepted_group_state_ref.as_str() {
+            return Err(garth::Error::Protocol(
+                "Signal does not bind the accepted winning MLS group state".to_owned(),
+            ));
+        }
+        let mut matching_leaves = group
+            .verified_leaf_bindings()
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?
+            .into_iter()
+            .filter(|leaf| {
+                leaf.actor_id == envelope.sender_actor_id
+                    && match (&leaf.endpoint, envelope.sender_device_id.as_ref()) {
+                        (
+                            arkret_sdk::MlsEndpointIdentity::HumanDevice { device_id, .. },
+                            Some(sender_device_id),
+                        ) => device_id == sender_device_id,
+                        (arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. }, None) => true,
+                        _ => false,
+                    }
+            });
+        let leaf = matching_leaves.next().ok_or_else(|| {
+            garth::Error::Protocol(
+                "Signal sender does not resolve to an active MLS leaf".to_owned(),
+            )
+        })?;
+        if matching_leaves.next().is_some() {
+            return Err(garth::Error::Protocol(
+                "Signal sender resolves to multiple active MLS leaves".to_owned(),
+            ));
+        }
+        let public_key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+            bytes: arkret_sdk::base64url_decode(leaf.signature_key.as_str())
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?,
+        };
+        let sender_authority = match &leaf.endpoint {
+            arkret_sdk::MlsEndpointIdentity::HumanDevice { .. } => {
+                let device_authorize_event_id =
+                    leaf.device_authorize_event_id.as_ref().ok_or_else(|| {
+                        garth::Error::Protocol(
+                            "Signal sender MLS leaf has no device authorization transition"
+                                .to_owned(),
+                        )
+                    })?;
+                arkret_sdk::mls::SignalSenderAuthority::AccountDevice {
+                    public_key: &public_key,
+                    device_authorize_event_id,
+                }
+            }
+            arkret_sdk::MlsEndpointIdentity::AgentRuntime {
+                verification_method,
+                agent_key_authorize_event_id,
+                ..
+            } => arkret_sdk::mls::SignalSenderAuthority::Agent {
+                public_key: &public_key,
+                verification_method,
+                agent_key_authorize_event_id,
+            },
+            arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
+                return Err(garth::Error::Protocol(
+                    "minimal-metadata MLS leaves cannot send Signal envelopes".to_owned(),
+                ));
+            }
+        };
         let mut replay = self.replay.lock().map_err(|error| {
             garth::Error::Protocol(format!("signal replay tracker poisoned: {error}"))
         })?;
+        // `SignalReceiver` has already checked this frame's exact Station
+        // delivery authority and producer proof. Verify the same proof under
+        // the active MLS leaf key as well, then rebuild AAD from the immutable
+        // envelope header. The governing Station fresh-gated stream_head_ref
+        // for this exact delivery; signal.md forbids replaying governance
+        // history locally per frame, so that authenticated value is the
+        // accepted head passed into the MLS opener.
         group
-            .open_signal_envelope(envelope, session.content_scheme, &mut replay)
+            .open_signal_envelope(
+                envelope,
+                sender_authority,
+                accepted_group_state_ref.as_str(),
+                &envelope.stream_head_ref,
+                &mut replay,
+            )
             .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 }
@@ -630,7 +716,7 @@ mod tests {
         chrono::DateTime::from_timestamp(1_800_000_000 + seconds, 0).unwrap()
     }
 
-    fn plaintext_of(kind: &str, body: Value) -> garth::SignalPlaintext {
+    fn plaintext_of(kind: &str, body: Value) -> AdmittedSignal {
         let Value::Object(mut body) = body else {
             unreachable!("test body must be an object");
         };
@@ -638,7 +724,7 @@ mod tests {
         // below assert how each route reshapes the typed profile, so admission
         // parses the same object rather than keeping a parallel raw body.
         body.entry("payload_sequence").or_insert(json!(7));
-        if kind == garth::SIGNAL_PLAINTEXT_KIND_PRESENCE {
+        if kind == arkret_sdk::SignalPlaintextKind::Presence.as_str() {
             body.entry("actor_id").or_insert(json!({
                 "kind": "account",
                 "account_id": {
@@ -652,141 +738,29 @@ mod tests {
             .expect("test plaintext is canonicalizable");
         let payload = garth::open_signal_plaintext(&payload_bytes)
             .expect("test plaintext matches its registered closed profile");
-        garth::SignalPlaintext {
-            payload,
-            kind: kind.to_owned(),
-            actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
-                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-            )),
-            payload_sequence: 7,
-            ttl_ms: Some(30_000),
-            sent_at: at(0),
+        assert_eq!(payload.kind().as_str(), kind);
+        AdmittedSignal {
             expires_at: at(30),
-            scope_ref: arkret_sdk::ScopeRef::Realm {
-                realm_id: arkret_sdk::RealmId::new(
-                    "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                )
-                .unwrap(),
-            },
-            seal_ref: arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64)))
-                .unwrap(),
-            sender_endpoint: arkret_sdk::SignalSequenceEndpoint::AccountDevice {
-                device_id: arkret_sdk::DeviceId::new(
-                    "ak:device:01904100-0000-7000-8000-000000000002",
-                )
-                .unwrap(),
-            },
-        }
-    }
-
-    fn sender_resolution_envelope() -> arkret_wire::SignalEnvelope {
-        let now = crate::clock::now_utc();
-        let actor_id =
-            crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:alice.example")
-                .unwrap();
-        let sender_device_id =
-            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002").unwrap();
-        let mut envelope = arkret_wire::SignalEnvelope {
-            realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            )
-            .unwrap(),
-            scope_ref: arkret_sdk::ScopeRef::Realm {
-                realm_id: arkret_sdk::RealmId::new(
-                    "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                )
-                .unwrap(),
-            },
-            sender_actor_id: actor_id,
-            sender_device_id: Some(sender_device_id.clone()),
-            seal_ref: arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64)))
-                .unwrap(),
-            signal_class: arkret_wire::SignalClass::Session,
-            sent_at: now,
-            expires_at: now + chrono::Duration::seconds(30),
-            encrypted_payload: arkret_wire::SignalEncryptedPayload {
-                scheme: arkret_wire::signal::SIGNAL_AEAD_SCHEME.to_owned(),
-                key_ref: arkret_wire::SignalKeyRef {
-                    algorithm: "MLS-EXPORTER-AEAD".to_owned(),
-                    group_state_ref: "ak:event:AZVgkcivLIz2PjwUcjuT5bTb6295nnowDbSQak0QfNCa"
-                        .to_owned(),
-                },
-                purpose: arkret_wire::signal::SIGNAL_AEAD_PURPOSE.to_owned(),
-                aead_profile: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned(),
-                epoch: 4,
-                nonce: "AAAAAAAAAAAAAAAA".to_owned(),
-                ciphertext: "AAAAAAAAAAAAAAAAAAAAAA".to_owned(),
-                aad_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64))).unwrap(),
-            },
-            proof: arkret_wire::SignalProof {
-                kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-                verification_method: arkret_sdk::DidUrl::new(format!(
-                    "did:web:alice.example#{sender_device_id}"
-                ))
-                .unwrap(),
-                envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
+            domain: arkret_sdk::SignalSequenceDomain {
+                sender_actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                    arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+                    arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+                )),
+                endpoint: arkret_sdk::SignalSequenceEndpoint::AccountDevice {
+                    device_id: arkret_sdk::DeviceId::new(
+                        "ak:device:01904100-0000-7000-8000-000000000002",
+                    )
                     .unwrap(),
-                domain: None,
-                audience: None,
-                jws: String::new(),
+                },
+                scope_ref: arkret_sdk::ScopeRef::Realm {
+                    realm_id: arkret_sdk::RealmId::new(
+                        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                    )
+                    .unwrap(),
+                },
             },
-        };
-        envelope.encrypted_payload.aad_digest = envelope.expected_aad_digest().unwrap();
-        envelope.proof.envelope_digest = envelope.envelope_digest().unwrap();
-        envelope.proof.jws = arkret_sdk::signatures::sign_ed25519_detached_jws(
-            &ed25519_dalek::SigningKey::from_bytes(&[19; 32]),
-            &envelope.proof_binding_bytes().unwrap(),
-        )
-        .unwrap();
-        envelope.validate_wire_shape().unwrap();
-        arkret_sdk::signatures::verify_ed25519_signal_proof(&envelope, &sender_resolution_key())
-            .unwrap();
-        envelope
-    }
-
-    fn sender_resolution_key() -> arkret_sdk::signatures::PublicKeyMaterial {
-        arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
-            bytes: ed25519_dalek::SigningKey::from_bytes(&[19; 32])
-                .verifying_key()
-                .to_bytes()
-                .to_vec(),
+            payload,
         }
-    }
-
-    #[tokio::test]
-    async fn cached_device_key_cannot_authorize_signal_without_an_authenticated_delivery() {
-        use garth::SignalSenderKeyResolver as _;
-        let envelope = sender_resolution_envelope();
-        let actor = envelope.sender_actor_id.signing_principal_id().as_str();
-        let device = envelope.sender_device_id.as_ref().unwrap().as_str();
-        let key = sender_resolution_key();
-        crate::identity::device_directory::seed_positive_for_test(actor, device, key);
-        let delivery_authority = arkret_wire::SignalDeliveryAuthority {
-            recipient_account_id: envelope.sender_actor_id.as_account_id().unwrap().clone(),
-            key: arkret_wire::StationSigningKey {
-                actor: envelope.sender_actor_id.clone(),
-                verification_method: envelope.proof.verification_method.clone(),
-                public_key_b64u: arkret_wire::Base64UrlString::new(arkret_sdk::base64url_encode(
-                    ed25519_dalek::SigningKey::from_bytes(&[19; 32])
-                        .verifying_key()
-                        .to_bytes(),
-                ))
-                .unwrap(),
-                authorization_ref: arkret_wire::EventId::from_digest(
-                    arkret_sdk::DigestSuite::Sha256,
-                    [0x42; 32],
-                ),
-            },
-        };
-        delivery_authority.validate_for_envelope(&envelope).unwrap();
-        assert!(
-            DirectorySenderKeyResolver::default()
-                .resolve_sender_key(&envelope, &delivery_authority)
-                .await
-                .is_none()
-        );
-        crate::identity::device_directory::invalidate_actor(actor);
     }
 
     /// `CallSignalPlaintext` is `deny_unknown_fields`, so the call route MUST
@@ -818,7 +792,7 @@ mod tests {
         )
         .unwrap();
         let plaintext = plaintext_of(
-            garth::SIGNAL_PLAINTEXT_KIND_CALL,
+            arkret_sdk::SignalPlaintextKind::CallSignal.as_str(),
             serde_json::to_value(call_plaintext).unwrap(),
         );
 
@@ -838,14 +812,14 @@ mod tests {
     #[test]
     fn the_live_presence_projection_preserves_actor_identity_and_expiry() {
         let plaintext = plaintext_of(
-            garth::SIGNAL_PLAINTEXT_KIND_PRESENCE,
+            arkret_sdk::SignalPlaintextKind::Presence.as_str(),
             json!({"kind": "ak.presence", "state": "online"}),
         );
 
         let body = live_body_value(&plaintext).unwrap();
         assert_eq!(
             serde_json::from_value::<arkret_sdk::ActorId>(body["actor_id"].clone()).unwrap(),
-            plaintext.actor_id,
+            plaintext.actor_id().clone(),
         );
         assert_eq!(
             body["device_id"],

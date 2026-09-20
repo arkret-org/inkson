@@ -470,14 +470,14 @@ fn bucket_presence_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
 /// Immutable server-visible header of a Signal, assembled before encryption.
 ///
 /// `scope_ref` comes from the target's accepted projection, never from
-/// user-supplied payload text, and `seal_ref` is the accepted Seal under which
-/// the sending device's live-send eligibility is checked.
+/// user-supplied payload text, and `stream_head_ref` is the accepted head of the
+/// scope's independent commit stream under which live-send eligibility is checked.
 #[derive(Clone, Debug)]
 pub struct SignalHeader {
     pub scope_ref: arkret_sdk::ScopeRef,
     pub sender_actor_id: arkret_sdk::ActorId,
     pub sender_device_id: arkret_sdk::DeviceId,
-    pub seal_ref: arkret_sdk::SealId,
+    pub stream_head_ref: arkret_sdk::RealmCommitId,
     pub signal_class: arkret_wire::SignalClass,
     pub sent_at: chrono::DateTime<chrono::Utc>,
     pub expires_at: chrono::DateTime<chrono::Utc>,
@@ -489,7 +489,7 @@ impl SignalHeader {
         scope_ref: arkret_sdk::ScopeRef,
         sender_actor_id: arkret_sdk::ActorId,
         sender_device_id: arkret_sdk::DeviceId,
-        seal_ref: arkret_sdk::SealId,
+        stream_head_ref: arkret_sdk::RealmCommitId,
         signal_class: arkret_wire::SignalClass,
         sent_at: chrono::DateTime<chrono::Utc>,
     ) -> Self {
@@ -497,7 +497,7 @@ impl SignalHeader {
             scope_ref,
             sender_actor_id,
             sender_device_id,
-            seal_ref,
+            stream_head_ref,
             signal_class,
             sent_at,
             expires_at: sent_at + signal_class.max_ttl(),
@@ -590,7 +590,6 @@ pub struct SignalRailUnavailable {
 /// away from.
 pub struct SignalMlsSession {
     pub group: arkret_sdk::ArkretMlsGroup,
-    pub content_scheme: arkret_sdk::EncryptedPayloadScheme,
     pub snapshot: crate::mls::persistence::MlsLocalCheckpointEnvelope,
     pub snapshot_secret: String,
 }
@@ -624,20 +623,18 @@ pub fn restore_signal_mls_session(
         }
         _ => garth::InstalledMlsEpoch::Pending,
     };
-    let content_scheme = match binding {
-        garth::InstalledMlsEpoch::Accepted(head) => match head.content_scheme {
-            arkret_sdk::ContentScheme::MlsExporterAeadV1 => {
-                arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
-            }
-            arkret_sdk::ContentScheme::MlsRfc9420 => arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
-        },
+    match binding {
+        garth::InstalledMlsEpoch::Installed { epoch, .. } if epoch == expected_epoch => {}
+        garth::InstalledMlsEpoch::Installed { epoch, .. } => anyhow::bail!(
+            "signal names MLS epoch {expected_epoch}, but the installed scope epoch is {epoch}"
+        ),
         garth::InstalledMlsEpoch::NoAcceptedGenesis => {
             anyhow::bail!("the Signal scope has no accepted MLS Genesis")
         }
         garth::InstalledMlsEpoch::Pending => {
-            anyhow::bail!("Signal requires the scope's accepted content encryption policy")
+            anyhow::bail!("Signal requires the scope's accepted MLS state")
         }
-    };
+    }
     let circle_id = scope_ref.circle_id().map(arkret_sdk::CircleId::as_str);
     let snapshot = state_store
         .mls_checkpoint_for_effective_scope(realm_id, circle_id)
@@ -656,7 +653,6 @@ pub fn restore_signal_mls_session(
             .map_err(|error| anyhow::anyhow!("restore Signal MLS snapshot: {error}"))?;
     Ok(SignalMlsSession {
         group,
-        content_scheme,
         snapshot,
         snapshot_secret,
     })
@@ -678,7 +674,6 @@ pub fn encrypt_signal_payload_with_store(
         .map(arkret_sdk::CircleId::as_str);
     let SignalMlsSession {
         mut group,
-        content_scheme,
         snapshot,
         snapshot_secret,
     } = restore_signal_mls_session(
@@ -696,7 +691,6 @@ pub fn encrypt_signal_payload_with_store(
         anyhow::bail!("Signal sender material does not name the accepted winning group state");
     }
     let key_ref = arkret_wire::SignalKeyRef {
-        algorithm: "MLS-EXPORTER-AEAD".to_owned(),
         group_state_ref: material.group_state_ref.clone(),
     };
     let binding = arkret_wire::SignalAeadBinding {
@@ -704,7 +698,7 @@ pub fn encrypt_signal_payload_with_store(
         scope_ref: &header.scope_ref,
         sender_actor_id: &header.sender_actor_id,
         sender_device_id: Some(&header.sender_device_id),
-        seal_ref: &header.seal_ref,
+        stream_head_ref: &header.stream_head_ref,
         signal_class: header.signal_class,
         sent_at: header.sent_at,
         expires_at: header.expires_at,
@@ -715,7 +709,7 @@ pub fn encrypt_signal_payload_with_store(
         epoch: material.epoch,
     };
     let sealed = group
-        .seal_signal_payload(&binding, content_scheme, plaintext)
+        .encrypt_signal_payload(&binding, plaintext)
         .map_err(|error| anyhow::anyhow!("seal Signal payload: {error}"))?;
 
     // Persist before the HTTP submit. A failed or uncertain request may skip a
@@ -746,9 +740,8 @@ pub fn encrypt_signal_payload_with_store(
 
 /// Assemble the complete envelope and attach the sending device's proof.
 ///
-/// `aad_digest` is recomputed from the assembled header and must byte-equal
-/// what the AEAD was run with; `envelope_digest` then covers everything except
-/// the proof, so it commits to the ciphertext and the AAD binding as well.
+/// `envelope_digest` covers everything except the proof, so it commits to the
+/// ciphertext and the immutable header from which receivers reconstruct AAD.
 pub fn seal_signal_envelope(
     header: SignalHeader,
     encrypted_payload: arkret_wire::SignalEncryptedPayload,
@@ -784,7 +777,7 @@ fn seal_signal_envelope_with_signer(
         scope_ref: header.scope_ref,
         sender_actor_id: header.sender_actor_id,
         sender_device_id: Some(header.sender_device_id),
-        seal_ref: header.seal_ref,
+        stream_head_ref: header.stream_head_ref,
         signal_class: header.signal_class,
         sent_at: header.sent_at,
         expires_at: header.expires_at,
@@ -799,12 +792,6 @@ fn seal_signal_envelope_with_signer(
             jws: String::new(),
         },
     };
-    let expected_aad = envelope
-        .expected_aad_digest()
-        .map_err(|error| anyhow::anyhow!("signal AAD digest recomputation failed: {error}"))?;
-    if envelope.encrypted_payload.aad_digest != expected_aad {
-        anyhow::bail!("signal ciphertext was sealed against a different header");
-    }
     envelope.proof.envelope_digest = envelope
         .envelope_digest()
         .map_err(|error| anyhow::anyhow!("signal envelope digest failed: {error}"))?;
@@ -824,23 +811,18 @@ fn seal_signal_envelope_with_signer(
 ///
 /// Sealing a real Signal needs mutable persisted MLS state and its account
 /// of a receive path does not have. These helpers therefore supply opaque
-/// ciphertext and let [`seal_signal_envelope`] recompute the AAD binding, the
-/// envelope digest and the device proof exactly as production does. Only the
-/// AEAD body is fake; every field a receiver checks is real.
+/// ciphertext and let [`seal_signal_envelope`] compute the envelope digest and
+/// device proof exactly as production does. Only the AEAD body is fake; every
+/// server-visible header and proof field is real.
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
 
-    /// Ciphertext stand-in bound to `header`, ready for
-    /// [`seal_signal_envelope`].
-    pub(crate) fn opaque_encrypted_payload(
-        header: &SignalHeader,
-        verification_method: &arkret_sdk::DidUrl,
-    ) -> arkret_wire::SignalEncryptedPayload {
-        let mut encrypted = arkret_wire::SignalEncryptedPayload {
+    /// Opaque ciphertext stand-in ready for [`seal_signal_envelope`].
+    pub(crate) fn opaque_encrypted_payload() -> arkret_wire::SignalEncryptedPayload {
+        arkret_wire::SignalEncryptedPayload {
             scheme: arkret_wire::signal::SIGNAL_AEAD_SCHEME.to_owned(),
             key_ref: arkret_wire::SignalKeyRef {
-                algorithm: "MLS-EXPORTER-AEAD".to_owned(),
                 group_state_ref: "ak:event:AZVgkcivLIz2PjwUcjuT5bTb6295nnowDbSQak0QfNCa".to_owned(),
             },
             purpose: arkret_wire::signal::SIGNAL_AEAD_PURPOSE.to_owned(),
@@ -848,30 +830,7 @@ pub(crate) mod test_support {
             epoch: 4,
             nonce: "AAAAAAAAAAAAAAAA".to_owned(),
             ciphertext: "AAAAAAAAAAAAAAAAAAAAAA".to_owned(),
-            aad_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64))).unwrap(),
-        };
-        let probe = arkret_wire::SignalEnvelope {
-            realm_id: header.scope_ref.realm_id().clone(),
-            scope_ref: header.scope_ref.clone(),
-            sender_actor_id: header.sender_actor_id.clone(),
-            sender_device_id: Some(header.sender_device_id.clone()),
-            seal_ref: header.seal_ref.clone(),
-            signal_class: header.signal_class,
-            sent_at: header.sent_at,
-            expires_at: header.expires_at,
-            encrypted_payload: encrypted.clone(),
-            proof: arkret_wire::SignalProof {
-                kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-                verification_method: verification_method.clone(),
-                envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
-                    .unwrap(),
-                domain: None,
-                audience: None,
-                jws: String::new(),
-            },
-        };
-        encrypted.aad_digest = probe.expected_aad_digest().unwrap();
-        encrypted
+        }
     }
 
     /// A fully signed envelope plus the plaintext body a receiver would get
@@ -893,14 +852,12 @@ pub(crate) mod test_support {
             },
             actor_id.clone(),
             device_id.clone(),
-            arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "ab".repeat(32)))?,
+            arkret_sdk::RealmCommitId::from_digest([0xab; 32]),
             payload.signal_class(),
             sent_at,
         );
         let plaintext = payload.to_plaintext(&actor_id, sequence)?;
-        let verification_method = arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
-            .map_err(anyhow::Error::msg)?;
-        let encrypted = opaque_encrypted_payload(&header, &verification_method);
+        let encrypted = opaque_encrypted_payload();
         let envelope = seal_signal_envelope_with_signer(header, encrypted, signer)?;
         Ok((envelope, serde_json::from_slice(&plaintext)?))
     }
@@ -1148,8 +1105,8 @@ mod tests {
     /// is `ak.signal_proof.v1` over `envelope_digest` plus the sender binding,
     /// with the proof timestamp sourced from the header `sent_at`.
     ///
-    /// The ciphertext here is opaque filler: this asserts the proof transcript
-    /// and the AAD-to-header binding, neither of which depends on the AEAD.
+    /// The ciphertext here is opaque filler: this asserts the proof transcript,
+    /// which commits to the immutable header and ciphertext without opening it.
     #[test]
     fn signal_proof_binds_the_header_and_verifies_under_the_device_key() {
         use std::sync::Arc;
@@ -1169,14 +1126,13 @@ mod tests {
             arkret_sdk::ScopeRef::Realm { realm_id: realm() },
             actor(),
             arkret_sdk::DeviceId::new(device_id).unwrap(),
-            arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "ab".repeat(32))).unwrap(),
+            arkret_sdk::RealmCommitId::from_digest([0xab; 32]),
             arkret_wire::SignalClass::Session,
             crate::clock::now_utc(),
         );
-        let mut encrypted = arkret_wire::SignalEncryptedPayload {
+        let encrypted = arkret_wire::SignalEncryptedPayload {
             scheme: arkret_wire::signal::SIGNAL_AEAD_SCHEME.to_owned(),
             key_ref: arkret_wire::SignalKeyRef {
-                algorithm: "MLS-EXPORTER-AEAD".to_owned(),
                 group_state_ref: "ak:event:AZVgkcivLIz2PjwUcjuT5bTb6295nnowDbSQak0QfNCa".to_owned(),
             },
             purpose: arkret_wire::signal::SIGNAL_AEAD_PURPOSE.to_owned(),
@@ -1184,31 +1140,7 @@ mod tests {
             epoch: 4,
             nonce: "AAAAAAAAAAAAAAAA".to_owned(),
             ciphertext: "AAAAAAAAAAAAAAAAAAAAAA".to_owned(),
-            aad_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64))).unwrap(),
         };
-        // Recompute the AAD digest the way a receiver does, from the header.
-        let probe = arkret_wire::SignalEnvelope {
-            realm_id: header.scope_ref.realm_id().clone(),
-            scope_ref: header.scope_ref.clone(),
-            sender_actor_id: header.sender_actor_id.clone(),
-            sender_device_id: Some(header.sender_device_id.clone()),
-            seal_ref: header.seal_ref.clone(),
-            signal_class: header.signal_class,
-            sent_at: header.sent_at,
-            expires_at: header.expires_at,
-            encrypted_payload: encrypted.clone(),
-            proof: arkret_wire::SignalProof {
-                kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-                verification_method: arkret_sdk::DidUrl::new(format!("{actor_did}#{device_id}"))
-                    .unwrap(),
-                envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
-                    .unwrap(),
-                domain: None,
-                audience: None,
-                jws: String::new(),
-            },
-        };
-        encrypted.aad_digest = probe.expected_aad_digest().unwrap();
 
         let envelope = seal_signal_envelope(header, encrypted).unwrap();
         let public_key = PublicKeyMaterial::Ed25519Raw {
@@ -1221,8 +1153,8 @@ mod tests {
             arkret_sdk::signatures::verify_ed25519_signal_proof(&envelope, &public_key).is_ok()
         );
 
-        // Rewriting any header member breaks the AAD binding, so the sealer
-        // refuses to mint a proof over ciphertext sealed for another header.
+        // Rewriting any immutable header member invalidates the producer proof;
+        // a real receiver also reconstructs AAD and rejects the AEAD tag.
         let mut tampered = envelope.clone();
         tampered.signal_class = arkret_wire::SignalClass::Setup;
         assert!(
@@ -1257,7 +1189,7 @@ mod tests {
                 actor(),
                 arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-a11ce0000001")
                     .unwrap(),
-                arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "ab".repeat(32))).unwrap(),
+                arkret_sdk::RealmCommitId::from_digest([0xab; 32]),
                 class,
                 sent_at,
             );
