@@ -12,30 +12,18 @@ async fn fetch_kanban_projection_snapshot(
     state_store: crate::runtime::input::StateStoreHandle,
 ) -> anyhow::Result<KanbanProjectionSnapshot> {
     let http = api.sdk_http_client()?;
-    // Read the current-object baseline first. The following backfill is at the
-    // same or a newer server head, so visible/local Events can safely fold on
-    // top without regressing the materialized Space/Strand rows.
-    let spaces = match http.realm_spaces(realm_id).await {
-        Ok(spaces) => Some(
-            spaces
-                .spaces
-                .into_iter()
-                .map(Into::into)
-                .collect::<Vec<_>>(),
-        ),
+    // Read complete derived Space/Strand projection pages for display before
+    // backfill. These rows are not an authoring basis or a governance head;
+    // accepted Events remain the canonical truth source.
+    let spaces = match crate::transport::realm_read::list_realm_spaces(&http, realm_id).await {
+        Ok(spaces) => Some(spaces.into_iter().map(Into::into).collect::<Vec<_>>()),
         Err(error) => {
             tracing::warn!(%error, %realm_id, "kanban Space baseline unavailable");
             None
         }
     };
-    let strands = match http.realm_strands(realm_id).await {
-        Ok(strands) => Some(
-            strands
-                .strands
-                .into_iter()
-                .map(Into::into)
-                .collect::<Vec<_>>(),
-        ),
+    let strands = match crate::transport::realm_read::list_realm_strands(&http, realm_id).await {
+        Ok(strands) => Some(strands.into_iter().map(Into::into).collect::<Vec<_>>()),
         Err(error) => {
             tracing::warn!(%error, %realm_id, "kanban Strand baseline unavailable");
             None

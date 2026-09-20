@@ -161,16 +161,13 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     |http| {
                         let realm_id = realm_id.clone();
                         async move {
-                            http.realm_strands(&realm_id)
-                                .await
-                                .map_err(anyhow::Error::from)
+                            crate::transport::realm_read::list_realm_strands(&http, &realm_id).await
                         }
                     },
                 )
                 .await;
                 let default_strand_id = match result {
                     Ok(strands) => strands
-                        .strands
                         .iter()
                         .find(|strand| strand.is_default)
                         .map(|strand| strand.strand_id.to_string()),

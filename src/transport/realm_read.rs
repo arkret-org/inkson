@@ -37,6 +37,101 @@ fn realm_organizations_path(realm_id: &arkret_sdk::RealmId) -> String {
     )
 }
 
+fn realm_projection_path(
+    realm_id: &arkret_sdk::RealmId,
+    collection: &'static str,
+    cursor: Option<&str>,
+) -> String {
+    let mut query = url::form_urlencoded::Serializer::new(String::new());
+    query.append_pair("limit", "500");
+    if let Some(cursor) = cursor {
+        query.append_pair("cursor", cursor);
+    }
+    format!(
+        "/_arkret/self/realms/{}/{collection}?{}",
+        path_component(realm_id.as_str()),
+        query.finish()
+    )
+}
+
+/// Read every registered Space projection page; a partial page is never a
+/// complete Board baseline. These rows remain a derived UI view, not an
+/// authority source for governance or Event authoring.
+pub async fn list_realm_spaces(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &str,
+) -> anyhow::Result<Vec<arkret_sdk::ProjectionSpaceRow>> {
+    let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    let mut rows = Vec::new();
+    let mut cursor = None;
+    let mut seen = std::collections::BTreeSet::new();
+    loop {
+        let page: arkret_sdk::ProjectionSpaceList = http
+            .get(&realm_projection_path(
+                &realm_id,
+                "spaces",
+                cursor.as_deref(),
+            ))
+            .await?;
+        page.validate()?;
+        anyhow::ensure!(
+            page.realm_id == realm_id,
+            "Space page belongs to another Realm"
+        );
+        rows.extend(page.spaces);
+        if !page.has_more {
+            return Ok(rows);
+        }
+        let next = page
+            .next_cursor
+            .ok_or_else(|| anyhow::anyhow!("Space page omitted continuation cursor"))?
+            .to_string();
+        anyhow::ensure!(
+            seen.insert(next.clone()),
+            "Space projection cursor repeated"
+        );
+        cursor = Some(next);
+    }
+}
+
+/// Read every registered Strand projection page for routing and display.
+pub async fn list_realm_strands(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &str,
+) -> anyhow::Result<Vec<arkret_sdk::ProjectionStrandRow>> {
+    let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    let mut rows = Vec::new();
+    let mut cursor = None;
+    let mut seen = std::collections::BTreeSet::new();
+    loop {
+        let page: arkret_sdk::ProjectionStrandList = http
+            .get(&realm_projection_path(
+                &realm_id,
+                "strands",
+                cursor.as_deref(),
+            ))
+            .await?;
+        page.validate()?;
+        anyhow::ensure!(
+            page.realm_id == realm_id,
+            "Strand page belongs to another Realm"
+        );
+        rows.extend(page.strands);
+        if !page.has_more {
+            return Ok(rows);
+        }
+        let next = page
+            .next_cursor
+            .ok_or_else(|| anyhow::anyhow!("Strand page omitted continuation cursor"))?
+            .to_string();
+        anyhow::ensure!(
+            seen.insert(next.clone()),
+            "Strand projection cursor repeated"
+        );
+        cursor = Some(next);
+    }
+}
+
 pub async fn authz_check_resource(
     http: &arkret_sdk::http_client::Client,
     actor: &str,
@@ -123,7 +218,7 @@ pub async fn list_realm_organizations(
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_grants_path, realm_organizations_path};
+    use super::{effective_grants_path, realm_organizations_path, realm_projection_path};
 
     #[test]
     fn effective_grants_uses_the_canonical_actor_query() {
@@ -159,5 +254,21 @@ mod tests {
             realm_organizations_path(&realm_id),
             "/_arkret/self/realms/ak%3Arealm%3AASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH/organizations"
         );
+    }
+
+    #[test]
+    fn projection_page_path_encodes_opaque_continuation() {
+        let realm_id = arkret_sdk::RealmId::new(
+            "ak:realm:ASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH".to_owned(),
+        )
+        .unwrap();
+        let path = realm_projection_path(&realm_id, "strands", Some("ak:cursor:opaque+value"));
+        let url = url::Url::parse(&format!("https://station.example{path}")).unwrap();
+        assert!(url.path().ends_with("/strands"));
+        let query = url
+            .query_pairs()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(query.get("limit").unwrap(), "500");
+        assert_eq!(query.get("cursor").unwrap(), "ak:cursor:opaque+value");
     }
 }
