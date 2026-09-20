@@ -16,6 +16,26 @@
 
 use crate::models::{AuthzCheckOutcome, GrantList};
 use crate::operation::trim_realm_id;
+use crate::wire_helpers::path_component;
+
+fn effective_grants_path(
+    realm_id: &arkret_sdk::RealmId,
+    subject: &arkret_sdk::ActorId,
+) -> anyhow::Result<String> {
+    let subject_actor_id = subject.canonical_key()?;
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("realm_id", realm_id.as_str())
+        .append_pair("subject_actor_id", &subject_actor_id)
+        .finish();
+    Ok(format!("/_arkret/self/authz/effective-grants?{query}"))
+}
+
+fn realm_organizations_path(realm_id: &arkret_sdk::RealmId) -> String {
+    format!(
+        "/_arkret/self/realms/{}/organizations",
+        path_component(realm_id.as_str())
+    )
+}
 
 pub async fn authz_check_resource(
     http: &arkret_sdk::http_client::Client,
@@ -76,7 +96,7 @@ pub async fn effective_grants(
 ) -> anyhow::Result<GrantList> {
     // Deliberately no `at` parameter: historical evaluation is not an
     // authoring basis. Settings relinquish only consumes this current read.
-    http.authz_effective_grants(realm_id, subject, None)
+    http.get(&effective_grants_path(realm_id, subject)?)
         .await
         .map_err(anyhow::Error::from)
 }
@@ -95,8 +115,49 @@ pub async fn list_realm_organizations(
 ) -> anyhow::Result<
     arkret_models_collaboration::governance::realm_governance::RealmOrganizationRelationshipList,
 > {
-    let realm_id = trim_realm_id(realm_id);
-    http.realm_organizations(&realm_id)
+    let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    http.get(&realm_organizations_path(&realm_id))
         .await
         .map_err(anyhow::Error::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_grants_path, realm_organizations_path};
+
+    #[test]
+    fn effective_grants_uses_the_canonical_actor_query() {
+        let realm_id = arkret_sdk::RealmId::new(
+            "ak:realm:ASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH".to_owned(),
+        )
+        .unwrap();
+        let subject = arkret_sdk::ActorId::service(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:service.example".to_owned()).unwrap(),
+        );
+
+        let path = effective_grants_path(&realm_id, &subject).unwrap();
+        let url = url::Url::parse(&format!("https://station.example{path}")).unwrap();
+        let query = url
+            .query_pairs()
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        assert_eq!(query.get("realm_id").unwrap(), realm_id.as_str());
+        assert_eq!(query.get("subject_actor_id").unwrap(), &subject.to_string());
+        assert_eq!(query.len(), 2);
+        assert!(!path.contains("subject="));
+        assert!(!path.contains("subject_station_id="));
+    }
+
+    #[test]
+    fn realm_organization_path_encodes_the_typed_realm_id() {
+        let realm_id = arkret_sdk::RealmId::new(
+            "ak:realm:ASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH".to_owned(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            realm_organizations_path(&realm_id),
+            "/_arkret/self/realms/ak%3Arealm%3AASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH/organizations"
+        );
+    }
 }
