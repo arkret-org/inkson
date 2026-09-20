@@ -113,12 +113,7 @@ impl LocalKanbanEvent {
                     created_at: &metadata.created_at,
                     write_state: "synced",
                     body: $payload,
-                    causal_refs: &metadata.causal_refs,
                     local_target_ref: metadata.local_target_ref.as_deref(),
-                    local_temporary_target_ref: metadata.local_temporary_target_ref.as_deref(),
-                    local_operation_idempotency_alias: metadata
-                        .local_operation_idempotency_alias
-                        .as_deref(),
                 })
                 .ok()
             };
@@ -149,24 +144,15 @@ struct LocalKanbanRecord<'a, T> {
     created_at: &'a str,
     write_state: &'static str,
     body: &'a T,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    causal_refs: &'a Vec<arkret_sdk::Hash>,
     #[serde(skip_serializing_if = "Option::is_none")]
     local_target_ref: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    local_temporary_target_ref: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    local_operation_idempotency_alias: Option<&'a str>,
 }
 
 struct LocalRecordMetadata {
     operation_id: String,
     actor_id: arkret_sdk::ActorId,
     created_at: String,
-    causal_refs: Vec<arkret_sdk::Hash>,
     local_target_ref: Option<String>,
-    local_temporary_target_ref: Option<String>,
-    local_operation_idempotency_alias: Option<String>,
 }
 
 /// Normalize a batch of canonical realm events (from `backfill` /
@@ -199,37 +185,11 @@ fn kanban_operation_from_typed(event: &arkret_sdk::Event) -> Option<RawOperation
     let operation_id = event.event_id.as_str().to_owned();
     let local_target_ref =
         arkret_sdk::schema::derived_object_id_for_kind(event.kind.as_str(), &event.event_id);
-    // Final authoring changes a create's content-bound Event id, so the
-    // producer's draft-time object handle (`unsigned.local_target_ref`, kept
-    // verbatim by the server) usually differs from the accepted id. Keep that
-    // draft handle as a reconciliation hint: it is the ONLY way a receiver can
-    // alias references other events recorded against the temporary id (e.g. a
-    // List created while its Board's accept receipt was still in flight) back
-    // to the accepted object. Never an identity source — display aliasing only.
-    let local_temporary_target_ref = event
-        .unsigned
-        .get("local_target_ref")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|wire| !wire.is_empty())
-        .filter(|wire| {
-            local_target_ref.as_deref().is_some_and(|derived| {
-                derived != *wire && typed_id_prefix(wire) == typed_id_prefix(derived)
-            })
-        })
-        .map(ToOwned::to_owned);
     let metadata = LocalRecordMetadata {
         operation_id: operation_id.clone(),
         actor_id: event.actor_id.clone(),
         created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
-        causal_refs: event.causal_refs.clone(),
         local_target_ref,
-        local_temporary_target_ref,
-        local_operation_idempotency_alias: event
-            .unsigned
-            .get("local_operation_idempotency_alias")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
     };
     let mut payload = local_event.record_value(&metadata)?;
     // Keep the signed envelope for authenticated decryption. Reduced patch
@@ -245,13 +205,6 @@ fn kanban_operation_from_typed(event: &arkret_sdk::Event) -> Option<RawOperation
         received_at: event.created_at,
         payload,
     })
-}
-
-/// `"ak:space:X" -> "ak:space"` — the typed prefix of a protocol id. Used to
-/// require that an unsigned draft handle retypes the same object kind as the
-/// derived id before it is trusted as an alias hint.
-fn typed_id_prefix(id: &str) -> Option<&str> {
-    id.rsplit_once(':').map(|(prefix, _)| prefix)
 }
 
 #[cfg(test)]
@@ -331,12 +284,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rsvp_events_enter_the_kanban_projection_with_their_causal_basis() {
+    fn rsvp_events_enter_the_kanban_projection_with_their_typed_schedule_basis() {
         let basis = arkret_sdk::Hash::new(
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         )
         .unwrap();
-        let mut event = arkret_wire::test_support::raw_event(
+        let basis_event_id = arkret_sdk::EventId::from_event_digest(&basis).unwrap();
+        let event = arkret_wire::test_support::raw_event(
             arkret_sdk::EventKind::RsvpSet.as_str(),
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(
@@ -352,19 +306,20 @@ mod tests {
                 "event_ref": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
                 "occurrence": null,
                 "entry": {
-                    "schedule_basis_refs": [basis.to_string()],
+                    "schedule_basis_refs": [basis_event_id.to_string()],
                     "response": {"status": "accepted"}
                 }
             }),
         )
         .unwrap();
-        event.causal_refs = vec![basis.clone()];
-
         let records = kanban_operations_from_events(&[event]);
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].payload["kind"], "ak.rsvp.set");
-        assert_eq!(records[0].payload["causal_refs"][0], basis.to_string());
+        assert_eq!(
+            records[0].payload["body"]["entry"]["schedule_basis_refs"][0],
+            basis_event_id.to_string()
+        );
     }
 
     #[test]
