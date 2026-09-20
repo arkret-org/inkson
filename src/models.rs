@@ -912,11 +912,13 @@ pub use arkret_models_collaboration::governance::authorization::AuthzCheckOutcom
 /// former inkson-local `InvitesView` mirror was removed in favor of the wire
 /// type.
 pub use arkret_models_collaboration::governance::authorization::AuthzInviteList;
-/// `ak.self.authz.grants.read.effective.v1` response. soland serialises the SDK
-/// `GrantList` (`grants: Vec<CapabilityGrant>`) verbatim, so the client
-/// decodes the same authoritative wire contract instead of a weakly-typed
-/// local mirror.
-pub use arkret_models_collaboration::governance::authorization::GrantList;
+/// `ak.self.authz.grants.read.effective.v1` response. Each SDK row atomically
+/// binds an effective grant to the exact current-result revision that may be
+/// copied into a subject-signed relinquish; the list digest is never a CAS
+/// substitute.
+pub use arkret_models_collaboration::governance::authorization::{
+    EffectiveCapabilityGrantRow, GrantList,
+};
 /// `POST /_arkret/self/moderation/report` response. soland emits the SDK
 /// `ModerationReportOutcome` wire shape verbatim (`status: "submitted"`,
 /// `routed_to: Vec<Did>` — scalar DIDs only, no fragments, per

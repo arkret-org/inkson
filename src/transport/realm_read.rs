@@ -58,6 +58,8 @@ pub async fn effective_grants(
     realm_id: &arkret_sdk::RealmId,
     subject: &arkret_sdk::ActorId,
 ) -> anyhow::Result<GrantList> {
+    // Deliberately no `at` parameter: historical evaluation is not an
+    // authoring basis. Settings relinquish only consumes this current read.
     http.authz_effective_grants(realm_id, subject, None)
         .await
         .map_err(anyhow::Error::from)

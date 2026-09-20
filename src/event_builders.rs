@@ -1595,6 +1595,13 @@ mod genesis_authority_tests {
                     "ak:grant:Abgeuy84qDvMqHgAWAilTc0qrZ-TjiR81uM8oQbSyu9o",
                 )
                 .unwrap(),
+                expected_revision: arkret_wire::CurrentRevision {
+                    commit_id: arkret_sdk::RealmCommitId::new(
+                        "ak:realm_commit:0196419b-0000-7000-8000-000000000041",
+                    )
+                    .unwrap(),
+                    stream_position: 41,
+                },
                 reason: None,
             },
         )
@@ -1605,6 +1612,10 @@ mod genesis_authority_tests {
         // nothing about the authority root.
         assert!(!relinquish.payload().contains_key("expected_state_digest"));
         assert!(relinquish.payload().contains_key("grant_id"));
+        assert_eq!(
+            relinquish.payload()["expected_revision"]["stream_position"],
+            41
+        );
     }
 
     #[test]

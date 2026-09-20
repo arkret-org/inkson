@@ -367,47 +367,61 @@ fn inkson_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(authz.decision, arkret_wire::AuthzDecision::Allow);
 
-    // `GrantList` is the SDK authoritative wire type (soland serialises it
-    // verbatim), so rows must be full canonical capability grants rather than
-    // free-form objects.
+    // `GrantList` is the SDK authoritative wire type. Every row binds the
+    // canonical grant and its exact current-result revision atomically.
     let grants: inkson::models::GrantList = serde_json::from_value(json!({
         "grants": [{
-            "id": "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X",
-            "schema": arkret_wire::SchemaId::CAPABILITY_V1,
-            "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-            "issuer_id": {
-                "kind": "account",
-                "account_id": {
-                    "principal_id": "ak:did_core:web:server.local",
-                    "station_id": "ak:did_core:web:server.local"
-                }
-            },
-            "subject": {
-                "kind": "account",
-                "account_id": {
-                    "principal_id": "ak:did_core:web:alice.example",
-                    "station_id": "ak:did_core:web:server.local"
-                }
-            },
-            "issuer_authority_refs": [{
-                "kind": "realm_root",
+            "grant": {
+                "id": "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X",
+                "schema": arkret_wire::SchemaId::CAPABILITY_V1,
                 "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-                "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
-                "controller_epoch_at_issuance": 0,
-                "authority_generation": 0
-            }],
-            "actions": ["ak.message.create"],
-            "resources": [
-                {"kind": "realm", "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"}
-            ],
-            "issued_at": "2026-04-28T12:00:00.000Z"
+                "issuer_id": {
+                    "kind": "account",
+                    "account_id": {
+                        "principal_id": "ak:did_core:web:server.local",
+                        "station_id": "ak:did_core:web:server.local"
+                    }
+                },
+                "subject": {
+                    "kind": "account",
+                    "account_id": {
+                        "principal_id": "ak:did_core:web:alice.example",
+                        "station_id": "ak:did_core:web:server.local"
+                    }
+                },
+                "issuer_authority_refs": [{
+                    "kind": "realm_authority",
+                    "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+                    "governance_station_id": "ak:did_core:web:server.local",
+                    "authority_generation": 0,
+                    "basis": {
+                        "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                        "commit_id": "ak:realm_commit:0196419b-0000-7000-8000-000000000001",
+                        "stream_ref": {
+                            "kind": "realm",
+                            "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
+                        },
+                        "stream_position": 0
+                    }
+                }],
+                "actions": ["ak.message.create"],
+                "resources": [
+                    {"kind": "realm", "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"}
+                ],
+                "issued_at": "2026-04-28T12:00:00.000Z"
+            },
+            "revision": {
+                "commit_id": "ak:realm_commit:0196419b-0000-7000-8000-000000000002",
+                "stream_position": 2
+            }
         }],
         "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         "evaluated_at": "2026-04-28T12:00:00.000Z"
     }))
     .unwrap();
     assert_eq!(grants.grants.len(), 1);
-    assert_eq!(grants.grants[0].issuer_authority_refs.len(), 1);
+    assert_eq!(grants.grants[0].grant.issuer_authority_refs.len(), 1);
+    assert_eq!(grants.grants[0].revision.stream_position, 2);
 
     let invites: inkson::models::AuthzInviteList = serde_json::from_value(json!({
         "invites": [],

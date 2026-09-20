@@ -18,8 +18,9 @@
 //! - `authz/capabilities.md` §3.4 — audit trail.
 //! - `authz/capabilities.md` §10.4 — subject-only relinquish.
 
+use arkret_models_collaboration::governance::authorization::EffectiveCapabilityGrantRow;
 use arkret_models_collaboration::governance::grant_constraint::{
-    CapabilityGrant, CapabilitySubject, GrantConstraintKind, IssuerAuthorityRef,
+    CapabilitySubject, GrantConstraintKind, IssuerAuthorityRef,
 };
 use dioxus::prelude::*;
 
@@ -34,8 +35,9 @@ use crate::views::helpers::{actor_display_label, short_protocol_id};
 /// One row in the user's capability list. Backed by either the user
 /// being the subject (capability held) or the issuer (capability
 /// granted to someone else). Mapped from the authoritative SDK
-/// [`CapabilityGrant`] rows that `ak.self.authz.grants.read.effective.v1`
-/// returns (soland serialises the SDK `GrantList` verbatim).
+/// [`EffectiveCapabilityGrantRow`] values that
+/// `ak.self.authz.grants.read.effective.v1` returns. The row revision is the
+/// only valid authoring basis for a subject-signed relinquish.
 #[derive(Clone, Debug, PartialEq)]
 struct CapabilityRow {
     capability_id: String,
@@ -50,6 +52,7 @@ struct CapabilityRow {
     subject_actor: Option<arkret_sdk::ActorId>,
     expires_at: String,
     issuer_authority_refs: Vec<String>,
+    revision: arkret_wire::CurrentRevision,
 }
 
 impl CapabilityRow {
@@ -58,8 +61,19 @@ impl CapabilityRow {
     }
 }
 
-/// Map one authoritative SDK [`CapabilityGrant`] onto a display row.
-fn decode_capability_row(grant: &CapabilityGrant, queried_realm_id: &str) -> CapabilityRow {
+#[derive(Clone, Debug, PartialEq)]
+struct RelinquishConfirmation {
+    capability_id: String,
+    revision: arkret_wire::CurrentRevision,
+}
+
+/// Map one authoritative SDK row onto a display row without separating its
+/// grant value from the exact current-result revision read atomically with it.
+fn decode_capability_row(
+    effective: &EffectiveCapabilityGrantRow,
+    queried_realm_id: &str,
+) -> CapabilityRow {
+    let grant = &effective.grant;
     CapabilityRow {
         capability_id: grant.id.as_str().to_owned(),
         realm_id: grant
@@ -99,7 +113,7 @@ fn decode_capability_row(grant: &CapabilityGrant, queried_realm_id: &str) -> Cap
                 IssuerAuthorityRef::Grant { grant_id } => {
                     format!("grant {}", grant_id.as_str())
                 }
-                IssuerAuthorityRef::RealmRoot {
+                IssuerAuthorityRef::RealmAuthority {
                     realm_id,
                     authority_generation,
                     ..
@@ -110,7 +124,27 @@ fn decode_capability_row(grant: &CapabilityGrant, queried_realm_id: &str) -> Cap
                 ),
             })
             .collect(),
+        revision: effective.revision.clone(),
     }
+}
+
+/// Build only from the revision the user explicitly confirmed. A refresh can
+/// replace a row with the same grant id but a new revision, so matching merely
+/// on id would silently sign against a basis the user never confirmed.
+fn build_confirmed_relinquish_payload(
+    row: &CapabilityRow,
+    confirmation: &RelinquishConfirmation,
+    reason: &str,
+) -> anyhow::Result<arkret_sdk::CapabilityRelinquishPayload> {
+    anyhow::ensure!(
+        confirmation.capability_id == row.capability_id && confirmation.revision == row.revision,
+        "capability row changed; reload and confirm relinquish again"
+    );
+    Ok(arkret_sdk::CapabilityRelinquishPayload {
+        grant_id: arkret_sdk::GrantId::new(row.capability_id.clone())?,
+        expected_revision: row.revision.clone(),
+        reason: (!reason.is_empty()).then(|| reason.to_owned()),
+    })
 }
 
 #[component]
@@ -126,19 +160,25 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
     let mut rows = use_signal(Vec::<CapabilityRow>::new);
     let mut status = use_signal(String::new);
     let mut detail_for = use_signal(|| Option::<String>::None);
-    // Subject-only relinquish confirmation: capability_id of the pending row
-    // plus an optional audit-trail reason (`capabilities.md` §10.4 — no
-    // revoke authority is required or attached).
-    let mut relinquish_for = use_signal(|| Option::<String>::None);
+    // Subject-only relinquish confirmation binds the selected capability id
+    // and exact current-result revision. Any list refresh invalidates it.
+    let mut relinquish_for = use_signal(|| Option::<RelinquishConfirmation>::None);
     let mut relinquish_reason = use_signal(String::new);
+    let mut refresh_nonce = use_signal(|| 0_u64);
     // Relinquish belongs to the complete account, not just its signing principal.
     let my_actor = active_account().map(|account| arkret_sdk::ActorId::account(account.authority));
 
     // Fire a single effective-grants probe per token change.
     use_effect(move || {
+        let _ = refresh_nonce();
         let base = base_url();
         let tok = token();
         let did = principal_id();
+        // A refresh (including the mandatory refresh after cas_conflict) makes
+        // every prior user confirmation stale even if the grant id survives.
+        relinquish_for.set(None);
+        relinquish_reason.set(String::new());
+        rows.set(Vec::new());
         if tok.trim().is_empty() || did.trim().is_empty() {
             return;
         }
@@ -160,7 +200,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                         response
                             .grants
                             .into_iter()
-                            .map(|grant| (realm_id.clone(), grant)),
+                            .map(|row| (realm_id.clone(), row)),
                     );
                 }
                 Ok::<_, anyhow::Error>(grants)
@@ -170,12 +210,13 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                 Ok(grants) => {
                     let decoded: Vec<CapabilityRow> = grants
                         .iter()
-                        .map(|(realm_id, grant)| decode_capability_row(grant, realm_id.as_str()))
+                        .map(|(realm_id, row)| decode_capability_row(row, realm_id.as_str()))
                         .collect();
                     status.set(format!("Loaded {} capabilities", decoded.len()));
                     rows.set(decoded);
                 }
                 Err(err) => {
+                    rows.set(Vec::new());
                     status.set(format!("Failed to load capabilities: {}", err.display()));
                 }
             }
@@ -248,10 +289,13 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                                 "data-testid": "capability-relinquish-button",
                                                 "data-capability-id": "{row.capability_id}",
                                                 onclick: {
-                                                    let id = row.capability_id.clone();
+                                                    let confirmation = RelinquishConfirmation {
+                                                        capability_id: row.capability_id.clone(),
+                                                        revision: row.revision.clone(),
+                                                    };
                                                     move |_| {
                                                         relinquish_reason.set(String::new());
-                                                        relinquish_for.set(Some(id.clone()));
+                                                        relinquish_for.set(Some(confirmation.clone()));
                                                     }
                                                 },
                                                 "Relinquish"
@@ -265,8 +309,13 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                 }
             }
 
-            if let Some(capability_id) = relinquish_for.read().clone() {
-                if let Some(row) = rows.read().iter().find(|r| r.capability_id == capability_id).cloned() {
+            if let Some(confirmation) = relinquish_for.read().clone() {
+                if let Some(row) = rows
+                    .read()
+                    .iter()
+                    .find(|row| row.capability_id == confirmation.capability_id)
+                    .cloned()
+                {
                     {
                         let capability_id_label = short_protocol_id(&row.capability_id);
                         rsx! {
@@ -325,6 +374,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                             "data-testid": "capability-relinquish-confirm",
                                             onclick: {
                                                 let row = row.clone();
+                                                let confirmation = confirmation.clone();
                                                 move |_| {
                                                     let base = base_url();
                                                     let api_token = token();
@@ -342,19 +392,19 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                                             return;
                                                         }
                                                     };
-                                                    let grant_id = match arkret_sdk::GrantId::new(row.capability_id.clone()) {
-                                                        Ok(grant_id) => grant_id,
+                                                    let reason_val = relinquish_reason().trim().to_owned();
+                                                    let payload = match build_confirmed_relinquish_payload(
+                                                        &row,
+                                                        &confirmation,
+                                                        &reason_val,
+                                                    ) {
+                                                        Ok(payload) => payload,
                                                         Err(err) => {
                                                             status.set(format!(
-                                                                "relinquish build failed: invalid grant id: {err}"
+                                                                "relinquish build failed: {err}"
                                                             ));
                                                             return;
                                                         }
-                                                    };
-                                                    let reason_val = relinquish_reason().trim().to_owned();
-                                                    let payload = arkret_sdk::CapabilityRelinquishPayload {
-                                                        grant_id,
-                                                        reason: (!reason_val.is_empty()).then_some(reason_val),
                                                     };
                                                     relinquish_for.set(None);
                                                     let capability_for_msg = row.capability_id.clone();
@@ -378,6 +428,13 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                                             )),
                                                             Err(err) => {
                                                                 let text = err.display();
+                                                                if relinquish_failure_requires_refresh(&text) {
+                                                                    rows.set(Vec::new());
+                                                                    relinquish_for.set(None);
+                                                                    let next_refresh = (*refresh_nonce.peek())
+                                                                        .wrapping_add(1);
+                                                                    refresh_nonce.set(next_refresh);
+                                                                }
                                                                 let hint = relinquish_failure_hint(&text)
                                                                     .map(|hint| format!(" — {hint}"))
                                                                     .unwrap_or_default();
@@ -474,47 +531,66 @@ fn relinquish_failure_hint(error_text: &str) -> Option<&'static str> {
     }
 }
 
+fn relinquish_failure_requires_refresh(error_text: &str) -> bool {
+    error_text.contains("cas_conflict")
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
 
-    fn sample_grant(subject: serde_json::Value) -> CapabilityGrant {
+    fn sample_effective_row(subject: serde_json::Value) -> EffectiveCapabilityGrantRow {
         let value = json!({
-            "id": "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X",
-            "schema": "ak.schema.capability.v1",
-            "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-            "issuer_id": {"kind": "account", "account_id": {
-                "principal_id": "ak:did_core:web:alice.example",
-                "station_id": "ak:did_core:web:principal.example"
-            }},
-            "subject": subject,
-            "actions": ["ak.message.create"],
-            "resources": [
-                {"kind": "realm", "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"}
-            ],
-            "constraints": [{
-                "constraint_kind": "temporal",
-                "effect": "allow",
-                "expires_at": "2026-12-31T00:00:00.000Z"
-            }],
-            "issued_at": "2026-01-01T00:00:00.000Z",
-            "issuer_authority_refs": [{
-                "kind": "realm_root",
+            "grant": {
+                "id": "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X",
+                "schema": "ak.schema.capability.v1",
                 "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-                "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
-                "controller_epoch_at_issuance": 0,
-                "authority_generation": 0
-            }]
+                "issuer_id": {"kind": "account", "account_id": {
+                    "principal_id": "ak:did_core:web:alice.example",
+                    "station_id": "ak:did_core:web:principal.example"
+                }},
+                "subject": subject,
+                "actions": ["ak.message.create"],
+                "resources": [
+                    {"kind": "realm", "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"}
+                ],
+                "constraints": [{
+                    "constraint_kind": "temporal",
+                    "effect": "allow",
+                    "expires_at": "2026-12-31T00:00:00.000Z"
+                }],
+                "issued_at": "2026-01-01T00:00:00.000Z",
+                "issuer_authority_refs": [{
+                    "kind": "realm_authority",
+                    "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+                    "governance_station_id": "ak:did_core:web:principal.example",
+                    "authority_generation": 0,
+                    "basis": {
+                        "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                        "commit_id": "ak:realm_commit:0196419b-0000-7000-8000-000000000001",
+                        "stream_ref": {
+                            "kind": "realm",
+                            "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
+                        },
+                        "stream_position": 0
+                    }
+                }]
+            },
+            "revision": {
+                "commit_id": "ak:realm_commit:0196419b-0000-7000-8000-000000000002",
+                "stream_position": 2
+            }
         });
-        serde_json::from_value(value).expect("sample grant decodes as SDK CapabilityGrant")
+        serde_json::from_value(value)
+            .expect("sample row decodes as SDK EffectiveCapabilityGrantRow")
     }
 
     #[test]
     fn maps_sdk_grant_to_capability_row() {
         let row = decode_capability_row(
-            &sample_grant(json!({"kind": "account", "account_id": {
+            &sample_effective_row(json!({"kind": "account", "account_id": {
                 "principal_id": "ak:did_core:web:bob.example",
                 "station_id": "ak:did_core:web:principal.example"
             }})),
@@ -539,7 +615,7 @@ mod tests {
     #[test]
     fn selector_subject_renders_as_json() {
         let row = decode_capability_row(
-            &sample_grant(json!({
+            &sample_effective_row(json!({
                 "kind": "condition",
                 "required_claims": []
             })),
@@ -557,7 +633,7 @@ mod tests {
             station.clone(),
         ));
         let row = decode_capability_row(
-            &sample_grant(serde_json::to_value(&subject).unwrap()),
+            &sample_effective_row(serde_json::to_value(&subject).unwrap()),
             "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         );
         assert!(row.can_relinquish(Some(&subject)));
@@ -575,5 +651,50 @@ mod tests {
         assert!(relinquish_failure_hint("rejected: grant_relinquish_not_subject").is_some());
         assert!(relinquish_failure_hint("capability_target_unresolved").is_some());
         assert_eq!(relinquish_failure_hint("network timeout"), None);
+    }
+
+    #[test]
+    fn relinquish_uses_only_the_exact_confirmed_row_revision() {
+        let effective = sample_effective_row(json!({"kind": "account", "account_id": {
+            "principal_id": "ak:did_core:web:bob.example",
+            "station_id": "ak:did_core:web:principal.example"
+        }}));
+        let row = decode_capability_row(
+            &effective,
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+        );
+        let confirmation = RelinquishConfirmation {
+            capability_id: row.capability_id.clone(),
+            revision: row.revision.clone(),
+        };
+        let payload = build_confirmed_relinquish_payload(&row, &confirmation, "no longer needed")
+            .expect("exact confirmed row is authorable");
+        assert_eq!(payload.expected_revision, effective.revision);
+
+        let mut refreshed = row.clone();
+        refreshed.revision.stream_position += 1;
+        assert!(build_confirmed_relinquish_payload(&refreshed, &confirmation, "").is_err());
+    }
+
+    #[test]
+    fn effective_row_without_revision_cannot_reach_authoring() {
+        let mut value = serde_json::to_value(sample_effective_row(json!({
+            "kind": "account",
+            "account_id": {
+                "principal_id": "ak:did_core:web:bob.example",
+                "station_id": "ak:did_core:web:principal.example"
+            }
+        })))
+        .unwrap();
+        value.as_object_mut().unwrap().remove("revision");
+        assert!(serde_json::from_value::<EffectiveCapabilityGrantRow>(value).is_err());
+    }
+
+    #[test]
+    fn cas_conflict_requires_refresh_before_another_confirmation() {
+        assert!(relinquish_failure_requires_refresh(
+            "server rejected event: cas_conflict"
+        ));
+        assert!(!relinquish_failure_requires_refresh("dependency_pending"));
     }
 }
