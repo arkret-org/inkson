@@ -291,6 +291,40 @@ fn bootstrap_renewal_reopens_expired_agent_and_exposes_fresh_material() {
 }
 
 #[test]
+fn renewal_rejects_each_changed_controller_binding_without_publishing_pairing_code() {
+    let baseline = test_renew_outcome(false);
+    let mut wrong_realm = baseline.clone();
+    wrong_realm.principal_control_realm_id = arkret_sdk::RealmId::new(
+        "ak:realm:AYzH43fmsgS6dn7noiHeYxAKUUdkhaJBnOGaWvu3MlBC".to_owned(),
+    )
+    .unwrap();
+    let mut wrong_authorization = baseline.clone();
+    wrong_authorization.controller_authorization_ref =
+        arkret_sdk::DidUrl::new("did:web:agents.example:summary#other-controller").unwrap();
+    let mut wrong_scope = baseline.clone();
+    wrong_scope.requested_scope_digest =
+        arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap();
+    let now = chrono::DateTime::parse_from_rfc3339("2026-07-18T00:00:00.000Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+
+    for outcome in [wrong_realm, wrong_authorization, wrong_scope] {
+        let mut rows = vec![test_pairing_view(
+            AgentLifecycleState::Active,
+            AgentRuntimeState::PairingExpired,
+        )];
+        assert_eq!(
+            apply_renewed_pairing(&mut rows, outcome.agent_id.as_str(), &outcome, now),
+            Err("renewed pairing response does not match the loaded Agent binding")
+        );
+        assert_ne!(
+            rows[0].key_state.as_ref().unwrap().pairing_code.as_deref(),
+            Some("fresh-code")
+        );
+    }
+}
+
+#[test]
 fn replacement_renewal_preserves_lifecycle_and_projects_replacing() {
     let mut rows = vec![test_pairing_view(
         AgentLifecycleState::Paused,
