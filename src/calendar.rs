@@ -7,10 +7,8 @@
 /// Derive the deterministic schedule revision winner from one Strand's own
 /// committed stream page.
 ///
-/// The winner is returned as its exact committed reference, because that is
-/// what an RSVP payload binds: a responder may only answer a revision the
-/// current governance Station has admitted, and the commit is the only proof
-/// of that. The UI calls the same reducer before it authors an RSVP.
+/// The winner is returned as its exact committed reference so the caller can
+/// verify admission before authoring. The RSVP payload names the EventId.
 pub fn schedule_revision_winner(
     commits: &[arkret_wire::CommittedEventFullView],
     strand_id: &str,
@@ -35,9 +33,8 @@ pub fn schedule_revision_winner(
 
 /// Author `ak.calendar.rsvp.set` against the deterministic schedule winner.
 ///
-/// `schedule_basis` is the exact committed reference of the winning schedule
-/// revision: the payload names the commit, not an Event digest, so a responder
-/// can only answer a revision the current governance Station has admitted.
+/// `schedule_basis` is the admitted winning schedule revision. The payload
+/// names its typed EventId, not the commit envelope or a bare digest.
 pub fn build_calendar_rsvp_event(
     realm_id: &str,
     actor_id: &arkret_sdk::ActorId,
@@ -49,11 +46,11 @@ pub fn build_calendar_rsvp_event(
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let schedule_bytes = arkret_sdk::canonical::canonical_json_bytes(calendar_fields)?;
     let schedule = arkret_sdk::CalendarScheduleProjection::from_winner(
-        arkret_sdk::Hash::new(schedule_basis.event_id.event_digest())?,
+        schedule_basis.event_id.event_digest(),
         Some(schedule_bytes),
     );
     let mut authoring = crate::operation::ak_ops::rsvp_authoring(strand_id, status, occurrence)?;
-    authoring.schedule_basis_refs = vec![schedule_basis];
+    authoring.schedule_basis_refs = vec![schedule_basis.event_id];
     let payload = authoring
         .into_payload(calendar_fields, &schedule)
         .map_err(|error| anyhow::anyhow!("RSVP payload is not authorable: {error}"))?;

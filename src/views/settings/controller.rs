@@ -508,7 +508,10 @@ impl SettingsController {
                         )?,
                     }],
                     requester_id: None,
-                    privacy_profile: Some("private_identifier_query".to_owned()),
+                    privacy_profile: Some(
+                        arkret_sdk::NonEmptyString::new("private_identifier_query")
+                            .map_err(anyhow::Error::msg)?,
+                    ),
                     proofs: Vec::new(),
                 };
                 http.post::<_, arkret_sdk::MimiIdentifierQueryOutcome>(
