@@ -135,7 +135,8 @@ fn validate_sidecar_view_state_account_data_key(
     if account_data_key != expected {
         return Err(arkret_sdk::WireError::Protocol(
             "Sidecar view-state Account Data key does not match its controller/context".to_owned(),
-        ));
+        )
+        .into());
     }
     Ok(())
 }

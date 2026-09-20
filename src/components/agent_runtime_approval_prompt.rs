@@ -443,7 +443,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                         let pair_request = into_agent_key_pair_request(
                                             body,
                                             requested_scope_disclosure,
-                                            authorize_submission,
+                                            authorize_submission.event,
                                         );
                                         let outcome = submitter.agent_key_pair(&pair_request).await?;
                                         if matches!(
