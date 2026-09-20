@@ -341,7 +341,6 @@ pub fn prepare_genesis_draft(
         checkpoint.version_id.clone(),
         validated_anchor.method_history_head.to_string(),
         created_at,
-        arkret_sdk::Hlc::new(checkpoint.genesis_hlc.clone())?,
         &key_material.root_seed,
         &checkpoint.root_public_key_multibase,
         arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?,

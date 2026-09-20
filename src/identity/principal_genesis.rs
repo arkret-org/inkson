@@ -24,14 +24,6 @@ fn did_key_verification_method(public_key_multibase: &str) -> anyhow::Result<ark
     .map_err(anyhow::Error::msg)
 }
 
-fn decode_founding_device_public_key(device_public_key: &str) -> anyhow::Result<[u8; 32]> {
-    let public_key_multibase = device_public_key
-        .strip_prefix("did:key:")
-        .ok_or_else(|| anyhow::anyhow!("founding device public key must be a did:key"))?;
-    arkret_sdk::decode_ed25519_multibase(public_key_multibase)
-        .map_err(|error| anyhow::anyhow!("decode founding device public key: {error}"))
-}
-
 pub fn build_founding_authorize_payload(
     principal_did: arkret_sdk::Did,
     station_id: arkret_sdk::DidCoreId,
@@ -90,7 +82,6 @@ pub fn build_genesis_unit(
     did_inception_version_id: String,
     did_inception_log_head: String,
     created_at: DateTime<Utc>,
-    create_hlc: arkret_sdk::Hlc,
     root_seed: &[u8; 32],
     root_public_key_multibase: &str,
     device_id: arkret_sdk::DeviceId,
@@ -123,31 +114,11 @@ pub fn build_genesis_unit(
         )?,
     };
     descriptor.validate()?;
-    let founding_notary_public_key =
-        decode_founding_device_public_key(payload.device_public_key_did.as_str())?;
-    let founding_notary = arkret_sdk::NotaryValue::new(
-        arkret_sdk::NotarySignerDescriptor {
-            actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-                principal_id.clone(),
-                station_id.clone(),
-            )),
-            verification_method: arkret_sdk::DidUrl::new(format!(
-                "{}#{}",
-                principal_did, payload.device_id
-            ))
-            .map_err(anyhow::Error::msg)?,
-            key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
-            jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
-            frozen_public_key_b64u: arkret_sdk::base64url_encode(founding_notary_public_key),
-        },
-        1_000,
-    )?;
     let mut create = arkret_bootstrap::build_self_principal_pcr_create(
         arkret_bootstrap::SelfPrincipalPcrCreateInput {
             principal_id: principal_id.clone(),
-            station_id,
+            governance_station_id: station_id,
             principal_did: principal_did.clone(),
-            notary: founding_notary,
             genesis_salt,
             trust_domain,
             did_inception_ref: arkret_sdk::SemanticRef::new(
@@ -160,10 +131,11 @@ pub fn build_genesis_unit(
                 version_id: did_inception_version_id,
             },
             founding_device_descriptor: descriptor,
+            initial_join_rule: arkret_sdk::JoinRule::Closed,
+            initial_history_access: arkret_sdk::HistoryAccess::SinceJoin,
+            initial_discoverability: arkret_sdk::Discoverability::Secret,
             created_at,
-            hlc: create_hlc,
         },
-        &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
     )?;
     let root_did = arkret_sdk::Did::new(format!("did:key:{root_public_key_multibase}"))?;
     let root_method = did_key_verification_method(root_public_key_multibase)?;
@@ -175,35 +147,19 @@ pub fn build_genesis_unit(
     arkret_sdk::signatures::sign_event(
         &mut create,
         &root_signer,
-        &root_method,
-        arkret_sdk::signatures::SignEventOptions::for_native_unit().with_created_at(created_at),
+        arkret_sdk::signatures::SignEventOptions::new().with_created_at(created_at),
     )?;
 
     // The PCR Realm exists only after the signed create draft has a stable
     // Event id. The authorize slot must use that exact event-derived id.
     let realm_id = create.realm_id.clone();
-    let authorize_hlc = crate::signing_stamp::issue_protocol_hlc_with_secret(
-        principal_did.as_str(),
-        device_signer
-            .device_id()
-            .ok_or_else(|| anyhow::anyhow!("founding signer is not bound to a device"))?,
-        realm_id.as_str(),
-        root_seed,
-    )?;
-
     let mut authorize =
         arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceAuthorize>::new(
             arkret_sdk::ScopeRef::Realm { realm_id },
             create.actor_id.clone(),
             payload,
         )?
-        .with_prev_refs(vec![create.event_id().clone()])
-        .author_with_digest_suite(
-            1,
-            authorize_hlc,
-            created_at,
-            arkret_sdk::canonical::DigestSuite::Sha256,
-        )?;
+        .author_with_digest_suite(created_at, arkret_sdk::canonical::DigestSuite::Sha256)?;
     device_signer
         .sign_sdk_event_with_context_at(
             &mut authorize,
@@ -213,12 +169,8 @@ pub fn build_genesis_unit(
             created_at,
         )
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    arkret_bootstrap::build_self_principal_pcr_genesis_unit(
-        create.into_event(),
-        authorize.into_event(),
-        &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
-    )
-    .map_err(Into::into)
+    arkret_bootstrap::build_pcr_genesis_unit(create.into_event(), authorize.into_event())
+        .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -232,28 +184,6 @@ mod tests {
         assert_eq!(
             did_key_verification_method(key).unwrap().as_str(),
             format!("did:key:{key}#{key}")
-        );
-    }
-
-    #[test]
-    fn founding_device_public_key_decodes_did_key_ed25519_material() {
-        let expected = [7_u8; 32];
-        let multibase = arkret_sdk::ed25519_pubkey_to_did_key_multibase(&expected);
-
-        assert_eq!(
-            decode_founding_device_public_key(&format!("did:key:{multibase}")).unwrap(),
-            expected
-        );
-    }
-
-    #[test]
-    fn founding_device_public_key_rejects_non_did_key_input() {
-        let error = decode_founding_device_public_key("not-a-did-key").unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("founding device public key must be a did:key")
         );
     }
 
