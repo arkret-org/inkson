@@ -115,8 +115,7 @@ fn control_scope_from_slug(slug: &str) -> Option<RealmOrganizationControlScope> 
     match slug {
         "official_badge" => Some(RealmOrganizationControlScope::OfficialBadge),
         "realm_admin" => Some(RealmOrganizationControlScope::RealmAdmin),
-        "notary_control" => Some(RealmOrganizationControlScope::NotaryControl),
-        "durability_policy" => Some(RealmOrganizationControlScope::DurabilityPolicy),
+        "realm_authority" => Some(RealmOrganizationControlScope::RealmAuthority),
         "moderation_policy" => Some(RealmOrganizationControlScope::ModerationPolicy),
         "retention_policy" => Some(RealmOrganizationControlScope::RetentionPolicy),
         "directory_listing" => Some(RealmOrganizationControlScope::DirectoryListing),
@@ -129,8 +128,7 @@ fn control_scope_from_slug(slug: &str) -> Option<RealmOrganizationControlScope> 
 const CONTROL_SCOPE_CHOICES: &[(&str, &str)] = &[
     ("official_badge", "Official badge"),
     ("realm_admin", "Realm admin"),
-    ("notary_control", "Notary control"),
-    ("durability_policy", "Durability policy"),
+    ("realm_authority", "Realm authority"),
     ("moderation_policy", "Moderation policy"),
     ("retention_policy", "Retention policy"),
     ("directory_listing", "Directory listing"),
@@ -959,5 +957,31 @@ mod tests {
             dto.organization_id,
             "ak:did_core:webvh:hint.example:orgs:org1"
         );
+    }
+
+    #[test]
+    fn control_scope_choices_match_the_closed_formal_enum() {
+        let choices = CONTROL_SCOPE_CHOICES
+            .iter()
+            .map(|(slug, _)| *slug)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            choices,
+            vec![
+                "official_badge",
+                "realm_admin",
+                "realm_authority",
+                "moderation_policy",
+                "retention_policy",
+                "directory_listing",
+                "plaintext_visible_service",
+            ]
+        );
+        assert_eq!(
+            control_scope_from_slug("realm_authority"),
+            Some(RealmOrganizationControlScope::RealmAuthority)
+        );
+        assert_eq!(control_scope_from_slug("notary_control"), None);
+        assert_eq!(control_scope_from_slug("durability_policy"), None);
     }
 }
