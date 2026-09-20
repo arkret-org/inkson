@@ -59,6 +59,20 @@ pub(crate) trait LocalStateBackend: Send + Sync {
         cursor: garth::OpaqueCursor,
     ) -> arkret_sdk::Result<()>;
     fn clear_cursor(&self, scope: &garth::CursorScope) -> arkret_sdk::Result<()>;
+    fn load_account_checkpoint(
+        &self,
+        scope: &garth::CursorScope,
+    ) -> arkret_sdk::Result<Option<garth::AccountCursorCheckpoint>>;
+    fn save_account_checkpoint(
+        &self,
+        scope: &garth::CursorScope,
+        checkpoint: garth::AccountCursorCheckpoint,
+    ) -> arkret_sdk::Result<()>;
+    fn restore_account_checkpoint(
+        &self,
+        scope: &garth::CursorScope,
+        checkpoint: Option<garth::AccountCursorCheckpoint>,
+    ) -> arkret_sdk::Result<()>;
     fn event_seen(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<bool>;
     fn remember_event(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<()>;
     fn commit_delivery(
@@ -153,6 +167,29 @@ impl LocalStateBackend for OwnedLocalStateBackend {
 
     fn clear_cursor(&self, scope: &garth::CursorScope) -> arkret_sdk::Result<()> {
         self.with_store_mut(|store| store.clear_client_cursor(scope))?
+    }
+
+    fn load_account_checkpoint(
+        &self,
+        scope: &garth::CursorScope,
+    ) -> arkret_sdk::Result<Option<garth::AccountCursorCheckpoint>> {
+        self.with_store(|store| store.load_account_checkpoint(scope))?
+    }
+
+    fn save_account_checkpoint(
+        &self,
+        scope: &garth::CursorScope,
+        checkpoint: garth::AccountCursorCheckpoint,
+    ) -> arkret_sdk::Result<()> {
+        self.with_store_mut(|store| store.save_account_checkpoint(scope, checkpoint))?
+    }
+
+    fn restore_account_checkpoint(
+        &self,
+        scope: &garth::CursorScope,
+        checkpoint: Option<garth::AccountCursorCheckpoint>,
+    ) -> arkret_sdk::Result<()> {
+        self.with_store_mut(|store| store.restore_account_checkpoint(scope, checkpoint))?
     }
 
     fn event_seen(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<bool> {
@@ -282,6 +319,40 @@ impl garth::CursorStore for InksonLocalStateStoreAdapter {
         self.inner
             .clear_cursor(&scope)
             .map_err(|error| garth::Error::Protocol(error.to_string()))
+    }
+
+    async fn load_account_checkpoint(
+        &self,
+        scope: garth::CursorScope,
+    ) -> garth::Result<Option<garth::AccountCursorCheckpoint>> {
+        self.inner
+            .load_account_checkpoint(&scope)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
+    }
+
+    async fn save_account_checkpoint(
+        &self,
+        scope: garth::CursorScope,
+        checkpoint: garth::AccountCursorCheckpoint,
+    ) -> garth::Result<()> {
+        let previous = self
+            .inner
+            .load_account_checkpoint(&scope)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        self.inner
+            .save_account_checkpoint(&scope, checkpoint)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        if let Err(error) = self.await_durable_flush().await {
+            self.inner
+                .restore_account_checkpoint(&scope, previous)
+                .map_err(|rollback| {
+                    garth::Error::Protocol(format!(
+                        "{error}; in-memory account checkpoint rollback also failed: {rollback}"
+                    ))
+                })?;
+            return self.persist_rollback(error).await;
+        }
+        Ok(())
     }
 }
 
@@ -491,8 +562,12 @@ mod tests {
             arkret_sdk::EventId::new("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
                 .unwrap();
 
+        let account_checkpoint = garth::AccountCursorCheckpoint {
+            cursor: "ak:cursor:account".to_owned(),
+            station_cas: garth::StationCasProjection::default(),
+        };
         adapter
-            .save(account_scope.clone(), "ak:cursor:account".to_owned())
+            .save_account_checkpoint(account_scope.clone(), account_checkpoint.clone())
             .await
             .unwrap();
         adapter
@@ -508,6 +583,13 @@ mod tests {
                 .unwrap()
                 .as_deref(),
             Some("ak:cursor:account")
+        );
+        assert_eq!(
+            adapter
+                .load_account_checkpoint(account_scope.clone())
+                .await
+                .unwrap(),
+            Some(account_checkpoint)
         );
         assert_eq!(
             adapter

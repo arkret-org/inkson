@@ -2,6 +2,11 @@ use arkret_wire::event_kind_str;
 
 use super::*;
 
+fn commit_stream_cursor_key(scope: &garth::CursorScope) -> arkret_sdk::Result<String> {
+    debug_assert!(matches!(scope, garth::CursorScope::CommitStream { .. }));
+    serde_json::to_string(scope).map_err(Into::into)
+}
+
 impl LocalStateStore {
     fn set_client_cursor_cached(
         &mut self,
@@ -10,14 +15,14 @@ impl LocalStateStore {
     ) -> arkret_sdk::Result<()> {
         match scope {
             garth::CursorScope::Account { .. } => self.cached.sync_cursor = cursor,
-            garth::CursorScope::RealmEvents { realm_id, .. } => match cursor {
+            garth::CursorScope::CommitStream { .. } => match cursor {
                 Some(cursor) => {
-                    self.cached
-                        .realm_events_cursors
-                        .insert(realm_id.to_string(), cursor);
+                    let key = commit_stream_cursor_key(scope)?;
+                    self.cached.commit_stream_cursors.insert(key, cursor);
                 }
                 None => {
-                    self.cached.realm_events_cursors.remove(realm_id.as_str());
+                    let key = commit_stream_cursor_key(scope)?;
+                    self.cached.commit_stream_cursors.remove(&key);
                 }
             },
             garth::CursorScope::DeviceMessages {
@@ -239,9 +244,11 @@ impl LocalStateStore {
             garth::CursorScope::Account { .. } => self
                 .sync_cursor()
                 .filter(|cursor| !cursor.trim().is_empty()),
-            garth::CursorScope::RealmEvents { realm_id, .. } => {
-                self.realm_events_cursor(realm_id.as_str())
-            }
+            garth::CursorScope::CommitStream { .. } => self
+                .load()
+                .commit_stream_cursors
+                .get(&commit_stream_cursor_key(scope)?)
+                .cloned(),
             garth::CursorScope::DeviceMessages {
                 service_id,
                 actor_id,
@@ -261,8 +268,14 @@ impl LocalStateStore {
     ) -> arkret_sdk::Result<()> {
         match scope {
             garth::CursorScope::Account { .. } => self.save_sync_cursor(cursor),
-            garth::CursorScope::RealmEvents { realm_id, .. } => {
-                self.save_realm_events_cursor(realm_id.as_str(), Some(cursor));
+            garth::CursorScope::CommitStream { .. } => {
+                self.ensure_cached_loaded();
+                self.cached
+                    .commit_stream_cursors
+                    .insert(commit_stream_cursor_key(scope)?, cursor);
+                self.flush().map_err(|error| {
+                    arkret_sdk::Error::Protocol(format!("persist commit-stream cursor: {error}"))
+                })?;
             }
             garth::CursorScope::DeviceMessages {
                 service_id,
@@ -283,8 +296,14 @@ impl LocalStateStore {
     pub fn clear_client_cursor(&mut self, scope: &garth::CursorScope) -> arkret_sdk::Result<()> {
         match scope {
             garth::CursorScope::Account { .. } => self.clear_sync_cursor(),
-            garth::CursorScope::RealmEvents { realm_id, .. } => {
-                self.save_realm_events_cursor(realm_id.as_str(), None);
+            garth::CursorScope::CommitStream { .. } => {
+                self.ensure_cached_loaded();
+                self.cached
+                    .commit_stream_cursors
+                    .remove(&commit_stream_cursor_key(scope)?);
+                self.flush().map_err(|error| {
+                    arkret_sdk::Error::Protocol(format!("clear commit-stream cursor: {error}"))
+                })?;
             }
             garth::CursorScope::DeviceMessages {
                 service_id,
@@ -325,35 +344,72 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// Resume cursor for this realm's `ak.self.committed_event.stream.subscribe.v1`. Kept
-    /// separate from `sync_cursor` (account stream); see
-    /// [`crate::state::types::ClientLocalState::realm_events_cursors`].
-    pub fn realm_events_cursor(&self, realm_id: &str) -> Option<String> {
-        self.load().realm_events_cursors.get(realm_id).cloned()
+    pub(crate) fn load_account_checkpoint(
+        &self,
+        scope: &garth::CursorScope,
+    ) -> arkret_sdk::Result<Option<garth::AccountCursorCheckpoint>> {
+        if !matches!(scope, garth::CursorScope::Account { .. }) {
+            return Err(arkret_sdk::Error::Protocol(
+                "account checkpoint requires an account cursor scope".to_owned(),
+            ));
+        }
+        Ok(self
+            .sync_cursor()
+            .map(|cursor| garth::AccountCursorCheckpoint {
+                cursor,
+                station_cas: self.load().station_cas_projection,
+            }))
     }
 
-    /// Persist the realm events stream resume cursor. A `None` cursor clears the
-    /// stored value so the next subscribe rebuilds from history.
-    pub fn save_realm_events_cursor(&mut self, realm_id: &str, cursor: Option<String>) {
+    pub(crate) fn save_account_checkpoint(
+        &mut self,
+        scope: &garth::CursorScope,
+        checkpoint: garth::AccountCursorCheckpoint,
+    ) -> arkret_sdk::Result<()> {
+        if !matches!(scope, garth::CursorScope::Account { .. }) {
+            return Err(arkret_sdk::Error::Protocol(
+                "account checkpoint requires an account cursor scope".to_owned(),
+            ));
+        }
         self.ensure_cached_loaded();
-        let realm_id = realm_id.trim();
-        if realm_id.is_empty() {
-            return;
+        let previous_cursor = self.cached.sync_cursor.clone();
+        let previous_station_cas = self.cached.station_cas_projection.clone();
+        self.cached.sync_cursor = Some(checkpoint.cursor);
+        self.cached.station_cas_projection = checkpoint.station_cas;
+        if let Err(error) = self.flush() {
+            self.cached.sync_cursor = previous_cursor;
+            self.cached.station_cas_projection = previous_station_cas;
+            return Err(arkret_sdk::Error::Protocol(format!(
+                "persist account cursor checkpoint: {error}"
+            )));
         }
-        if self.cached.realm_events_cursors.get(realm_id).cloned() == cursor {
-            return;
+        Ok(())
+    }
+
+    pub(crate) fn restore_account_checkpoint(
+        &mut self,
+        scope: &garth::CursorScope,
+        checkpoint: Option<garth::AccountCursorCheckpoint>,
+    ) -> arkret_sdk::Result<()> {
+        if !matches!(scope, garth::CursorScope::Account { .. }) {
+            return Err(arkret_sdk::Error::Protocol(
+                "account checkpoint requires an account cursor scope".to_owned(),
+            ));
         }
-        match cursor {
-            Some(cursor) => {
-                self.cached
-                    .realm_events_cursors
-                    .insert(realm_id.to_owned(), cursor);
+        self.ensure_cached_loaded();
+        match checkpoint {
+            Some(checkpoint) => {
+                self.cached.sync_cursor = Some(checkpoint.cursor);
+                self.cached.station_cas_projection = checkpoint.station_cas;
             }
             None => {
-                self.cached.realm_events_cursors.remove(realm_id);
+                self.cached.sync_cursor = None;
+                self.cached.station_cas_projection = garth::StationCasProjection::default();
             }
         }
-        let _ = self.flush();
+        self.flush().map_err(|error| {
+            arkret_sdk::Error::Protocol(format!("restore account cursor checkpoint: {error}"))
+        })
     }
 
     pub fn client_core_event_seen(&self, event_id: &str) -> bool {
@@ -905,9 +961,9 @@ mod durable_inbox_tests {
         let realm_id =
             arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
                 .unwrap();
-        let scope = garth::CursorScope::RealmEvents {
+        let scope = garth::CursorScope::CommitStream {
             service_id: None,
-            realm_id,
+            stream_ref: garth::CommitStreamRef::Realm { realm_id },
         };
         let event = garth::ClientEvent::Notification(NotificationDelta {
             id: arkret_sdk::NotificationIdentity::AgentApproval(

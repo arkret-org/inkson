@@ -69,6 +69,31 @@ impl LocalStateBackend for SignalLocalStateBackend {
         signal.write().clear_client_cursor(scope)
     }
 
+    fn load_account_checkpoint(
+        &self,
+        scope: &garth::CursorScope,
+    ) -> arkret_sdk::Result<Option<garth::AccountCursorCheckpoint>> {
+        self.store.read().load_account_checkpoint(scope)
+    }
+
+    fn save_account_checkpoint(
+        &self,
+        scope: &garth::CursorScope,
+        checkpoint: garth::AccountCursorCheckpoint,
+    ) -> arkret_sdk::Result<()> {
+        let mut signal = self.store;
+        signal.write().save_account_checkpoint(scope, checkpoint)
+    }
+
+    fn restore_account_checkpoint(
+        &self,
+        scope: &garth::CursorScope,
+        checkpoint: Option<garth::AccountCursorCheckpoint>,
+    ) -> arkret_sdk::Result<()> {
+        let mut signal = self.store;
+        signal.write().restore_account_checkpoint(scope, checkpoint)
+    }
+
     fn event_seen(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<bool> {
         Ok(self.store.read().client_core_event_seen(event_id.as_str()))
     }

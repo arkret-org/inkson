@@ -880,13 +880,16 @@ pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
     #[serde(default)]
     pub(crate) demand_sync: super::demand_sync::DemandSyncState,
-    /// Per-realm `ak.self.committed_event.stream.subscribe.v1` resume cursors, keyed by
-    /// realm id. Kept PHYSICALLY SEPARATE from the account-aggregate
-    /// `sync_cursor`: the realm events stream and the account stream are
-    /// bound to different `filter_digest`s (encoding.md §8.3.1), so their
-    /// cursors are not interchangeable and MUST NOT be cross-used.
+    /// Per committed-Event stream resume cursors, keyed by the serialized
+    /// [`garth::CursorScope::CommitStream`]. Kept physically separate from the
+    /// account-aggregate `sync_cursor`: each stream has an independent
+    /// ordering domain and its cursor must never be reused by another stream.
     #[serde(default)]
-    pub realm_events_cursors: BTreeMap<String, String>,
+    pub commit_stream_cursors: BTreeMap<String, String>,
+    /// Station-CAS revision identity folded through the same durable account
+    /// checkpoint as `sync_cursor`.
+    #[serde(default)]
+    pub station_cas_projection: garth::StationCasProjection,
     /// Crash-safe client-core deliveries. A Realm cursor and the batch it
     /// admits are committed in one local-state write; the UI projector acks
     /// only after its own durable fold succeeds.
@@ -1451,7 +1454,8 @@ impl Default for ClientLocalState {
         Self {
             sync_cursor: None,
             demand_sync: Default::default(),
-            realm_events_cursors: BTreeMap::new(),
+            commit_stream_cursors: BTreeMap::new(),
+            station_cas_projection: garth::StationCasProjection::default(),
             client_core_pending_deliveries: VecDeque::new(),
             client_core_next_delivery_id: 0,
             device_message_cursors: BTreeMap::new(),

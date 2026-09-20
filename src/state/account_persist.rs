@@ -699,10 +699,9 @@ mod tests {
             serde_json::json!({"name": "B-stored"}),
         );
         // Stored-only cursor entry: must be recovered.
-        stored.realm_events_cursors.insert(
-            "ak:realm:AF-jk6ju8IdjVa7Gf0eeCnOu9EHYKDaY47I98_7lPyfo".to_owned(),
-            "cursor-b".to_owned(),
-        );
+        stored
+            .commit_stream_cursors
+            .insert("realm-b-stream".to_owned(), "cursor-b".to_owned());
 
         let merged = merge_persisted_into_live(live, stored);
 
@@ -721,8 +720,8 @@ mod tests {
         );
         assert_eq!(
             merged
-                .realm_events_cursors
-                .get("ak:realm:AF-jk6ju8IdjVa7Gf0eeCnOu9EHYKDaY47I98_7lPyfo")
+                .commit_stream_cursors
+                .get("realm-b-stream")
                 .map(String::as_str),
             Some("cursor-b")
         );
