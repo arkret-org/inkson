@@ -380,7 +380,6 @@ pub async fn set_realm_policy_events(
     join_rule: &str,
     tighten_history_access: bool,
     join_policy: Option<Value>,
-    preserve_recommended_encryption_floor: bool,
 ) -> anyhow::Result<RealmPolicyResult> {
     let actor_id = actor_id.trim();
     if actor_id.is_empty() {
@@ -421,13 +420,8 @@ pub async fn set_realm_policy_events(
         // unregistered extra key.
         //
         // The cell is sequenced state: this revision restates the complete
-        // enabled component set, and anything omitted is cleared. Starting from
-        // the recommended genesis bundle keeps the encryption floors.
+        // enabled component set, and anything omitted is cleared.
         let mut policy_bundle = recommended_realm_policy_bundle_value();
-        if !preserve_recommended_encryption_floor {
-            policy_bundle.content_encryption_floor = None;
-            policy_bundle.metadata_encryption_floor = None;
-        }
         policy_bundle.join_policy = Some(
             serde_json::from_value(join_policy)
                 .map_err(|error| anyhow::anyhow!("invalid Realm join_policy: {error}"))?,

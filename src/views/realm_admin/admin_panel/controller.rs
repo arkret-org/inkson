@@ -231,7 +231,6 @@ impl RealmAdminController {
         rule: String,
         tighten_access: bool,
         join_policy: Option<Value>,
-        preserve_recommended_encryption_floor: bool,
     ) {
         spawn(async move {
             match crate::transport::auth::with_event_submitter(
@@ -247,7 +246,6 @@ impl RealmAdminController {
                         &rule,
                         tighten_access,
                         join_policy,
-                        preserve_recommended_encryption_floor,
                     )
                     .await
                 },

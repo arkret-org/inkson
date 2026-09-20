@@ -57,10 +57,9 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
                 return;
             }
             let session = token();
-            let actor = principal_id();
-            let Some(actor_id) = actor.as_ref() else {
+            if principal_id().is_none() {
                 return;
-            };
+            }
             if session.trim().is_empty() {
                 return;
             }
@@ -88,10 +87,6 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
                     needs_mls_unlock: needs_mls_unlock(),
                     needs_mls_backup: needs_mls_backup(),
                     needs_mls_recovery_setup: needs_mls_recovery_setup(),
-                    floor_low:
-                        crate::components::encryption_floor_prompt::account_needs_recommended_encryption_prompt(
-                            &store, actor_id.as_str(),
-                        ),
                     recovery_unconfigured: recovery_setup_prompt_required_for_account_state(
                         account_recovery_configured,
                         local_recovery_configured,

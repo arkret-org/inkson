@@ -17,7 +17,6 @@ pub(super) struct SecurityRuntimeSignals {
     pub(super) device_authorization_check_complete: Signal<bool>,
     pub(super) account_has_other_devices: Signal<bool>,
     pub(super) recovery_key_setup_prompt: Signal<bool>,
-    pub(super) encryption_floor_prompt_dismissed: Signal<bool>,
     pub(super) recovery_auto_prompt_fired: Signal<bool>,
     pub(super) account_recovery_configured: Signal<Option<bool>>,
     pub(super) account_recovery_detection_key_seen: Signal<Option<String>>,
@@ -50,8 +49,6 @@ pub(super) fn use_security_runtime_signals() -> SecurityRuntimeSignals {
     let device_authorization_check_complete = use_signal(|| false);
     let account_has_other_devices = use_signal(|| false);
     let recovery_key_setup_prompt = use_signal(|| false);
-    // Session-scoped acknowledgement for recommended-encryption-floor work.
-    let encryption_floor_prompt_dismissed = use_signal(|| false);
     // In-memory guard against reopening recovery setup during one session.
     let recovery_auto_prompt_fired = use_signal(|| false);
     let account_recovery_configured = use_signal(|| Option::<bool>::None);
@@ -71,7 +68,6 @@ pub(super) fn use_security_runtime_signals() -> SecurityRuntimeSignals {
         device_authorization_check_complete,
         account_has_other_devices,
         recovery_key_setup_prompt,
-        encryption_floor_prompt_dismissed,
         recovery_auto_prompt_fired,
         account_recovery_configured,
         account_recovery_detection_key_seen,

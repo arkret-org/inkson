@@ -16,9 +16,6 @@ pub mod device_authorization_prompt;
 pub mod did_resolution_health_banner;
 pub mod dismissible_popup;
 pub mod empty_state;
-/// Entry-time auto-acknowledgement for accounts whose visible PCR / Realm
-/// projections do not yet show the recommended metadata+content E2EE floor.
-pub mod encryption_floor_prompt;
 /// Unified feedback surface (docs/design/unified-feedback-system.md
 /// Wave 0): process-wide toast queue + `ToastHost` (stacked toasts,
 /// drains the policy-deny and circle-error queues too) + `AppBanner`
@@ -62,7 +59,6 @@ pub use device_authorization_prompt::DeviceAuthorizationPrompt;
 pub use did_resolution_health_banner::{DidResolutionHealth, DidResolutionHealthBanner};
 pub use dismissible_popup::{DismissiblePopup, DismissiblePopupProps};
 pub use empty_state::{EmptyState, EmptyStateKind};
-pub use encryption_floor_prompt::EncryptionFloorPrompt;
 pub use feedback::{
     AppBanner, AppBannerKind, FeedbackSeverity, Toast, ToastHost, is_policy_deny_code,
     maybe_dispatch_circle_error, push_policy_deny_toast, push_toast, toast_error, toast_info,

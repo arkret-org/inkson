@@ -631,7 +631,6 @@ fn AppBootstrap() -> Element {
         device_authorization_check_complete,
         account_has_other_devices,
         mut recovery_key_setup_prompt,
-        encryption_floor_prompt_dismissed,
         recovery_auto_prompt_fired,
         mut account_recovery_configured,
         mut account_recovery_detection_key_seen,
@@ -1072,10 +1071,7 @@ fn AppBootstrap() -> Element {
             has_session,
             sync_bootstrap_complete: sync_bootstrap_complete(),
             device_check_complete: device_authorization_check_complete(),
-            on_recovery_route: matches!(
-                &content_route,
-                Route::Recovery | Route::SettingsRecovery
-            ),
+            on_recovery_route: matches!(&content_route, Route::Recovery | Route::SettingsRecovery),
             on_onboarding_route: matches!(&content_route, Route::Onboarding),
             recovery_check_complete: account_recovery_configured.is_some(),
             needs_device_authorization: needs_device_authorization(),
@@ -1083,10 +1079,6 @@ fn AppBootstrap() -> Element {
             needs_mls_unlock: needs_mls_unlock(),
             needs_mls_backup: needs_mls_backup(),
             needs_mls_recovery_setup: needs_mls_recovery_setup(),
-            floor_low:
-                crate::components::encryption_floor_prompt::account_needs_recommended_encryption_prompt(
-                    &store, crate::app::principal_id_text(&actor),
-                ),
             recovery_unconfigured: recovery_setup_prompt_required_for_account_state(
                 account_recovery_configured,
                 local_recovery_configured,
@@ -1098,13 +1090,6 @@ fn AppBootstrap() -> Element {
     use crate::account_health::AccountHealthPrompt;
     let show_recovery_setup_prompt =
         active_prompt == AccountHealthPrompt::RecoverySetupReminder && !recovery_key_setup_prompt();
-    // Per-account durable suppression for the advisory encryption-floor check:
-    // once auto-acknowledged it stays quiet across navigations and sessions (the
-    // in-session `encryption_floor_prompt_dismissed` signal covers the same
-    // frame before the persisted flag is read back).
-    let encryption_floor_prompt_acknowledged = principal_id().as_ref().is_some_and(|_actor_id| {
-        crate::app::encryption_floor_prompt_acknowledged(&state_store.read())
-    });
     let connection_runtime = ConnectionRuntimeSignals {
         connection_status,
         sync_cursor,
@@ -1396,24 +1381,6 @@ fn AppBootstrap() -> Element {
                     token,
                     principal_id,
                     server_description,
-                }
-                if active_prompt == AccountHealthPrompt::RecommendedEncryptionFloor
-                    && !recovery_key_setup_prompt()
-                    && !encryption_floor_prompt_dismissed()
-                    && !encryption_floor_prompt_acknowledged
-                {
-                    crate::components::EncryptionFloorPrompt {
-                        token,
-                        principal_id,
-                        sync_bootstrap_complete,
-                        device_authorization_check_complete,
-                        needs_device_authorization,
-                        needs_mls_unlock,
-                        needs_mls_backup,
-                        recovery_key_setup_prompt,
-                        account_recovery_configured,
-                        dismissed: encryption_floor_prompt_dismissed,
-                    }
                 }
                 crate::components::RecoveryKeySetupPrompt {
                     token,

@@ -10,7 +10,6 @@ use super::metadata::{
 };
 use super::policy::build_principal_admission_join_policy;
 use super::section::{REALM_ADMIN_NAV_GROUPS, RealmAdminSection};
-use crate::components::encryption_floor_prompt::projection_has_recommended_encryption_floor;
 use crate::models::RealmTreeNodeKind;
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
@@ -1282,12 +1281,6 @@ pub fn RealmAdminPanel(
                                         return;
                                     }
                                 };
-                                let preserve_recommended_encryption_floor = state_store
-                                    .read()
-                                    .load()
-                                    .realm_tree_projections
-                                    .get(&realm)
-                                    .is_some_and(projection_has_recommended_encryption_floor);
                                 controller.apply_policy(
                                     base,
                                     api_token,
@@ -1296,7 +1289,6 @@ pub fn RealmAdminPanel(
                                     rule,
                                     tighten_access,
                                     join_policy,
-                                    preserve_recommended_encryption_floor,
                                 );
                             }
                         },

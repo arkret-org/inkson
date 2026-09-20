@@ -2,13 +2,9 @@
 //!
 //! After session boot, several mutually-dependent account-setup conditions can
 //! be true at once (device not yet authorized, encrypted history that this
-//! browser cannot decrypt, missing server backup, no recovery key, a Realm
-//! below the recommended encryption floor, …). Historically each prompt
-//! component re-derived its own suppression condition inline in `app.rs`,
-//! which drifted: e.g. the encryption-floor modal suppressed itself on
-//! `needs_mls_unlock`/`needs_mls_backup` but NOT on the fresh-device
-//! "recovery missing" banner, and the SPOF recovery reminder didn't suppress
-//! on unlock/backup at all, so multiple banners could stack.
+//! browser cannot decrypt, missing server backup, no recovery key, …).
+//! Historically each prompt component re-derived its own suppression condition
+//! inline in `app.rs`, so multiple banners could stack.
 //!
 //! This module centralizes the decision: given the boolean state variables, it
 //! returns the single highest-priority prompt that should be visible. The
@@ -34,13 +30,10 @@ pub enum AccountHealthPrompt {
     /// 4. Encrypted history exists but there is nothing this browser can decrypt and no recovery
     ///    path is configured (S5 dead-end diagnostic). (`needs_mls_recovery_setup`)
     RecoverySetupMissing,
-    /// 5. Everything functional is fine, but no Recovery Key / backup is configured — first set up
-    ///    the display-once recovery root before advisory encryption floor work.
+    /// 5. Everything functional is fine, but no Recovery Key / backup is configured — set up
+    ///    the display-once recovery root.
     ///    (`recovery_unconfigured`)
     RecoverySetupReminder,
-    /// 6. A Realm (PCR or collaboration) is below the recommended encryption floor; offer to enable
-    ///    it after the account has a recovery path. (`floor_low`)
-    RecommendedEncryptionFloor,
     /// Nothing to prompt.
     None,
 }
@@ -51,13 +44,13 @@ pub enum AccountHealthPrompt {
 pub struct AccountHealthInputs {
     /// A live session + populated account exist (otherwise nothing prompts).
     pub has_session: bool,
-    /// First connect + sync finished. Floor/recovery prompts wait for this so
-    /// they don't fire against an empty projection set.
+    /// First connect + sync finished. Recovery prompts wait for this so they
+    /// don't fire against an incomplete account projection.
     pub sync_bootstrap_complete: bool,
     /// The device-authorization probe has returned (so device state is known).
     pub device_check_complete: bool,
     /// User is currently on a recovery/settings-recovery route, where the
-    /// advisory prompts (floor, SPOF reminder) would be redundant noise.
+    /// recovery reminder would be redundant noise.
     pub on_recovery_route: bool,
     /// User is inside the account-first onboarding flow. That flow owns device
     /// authorization and recovery setup, so global account-health prompts would
@@ -76,8 +69,6 @@ pub struct AccountHealthInputs {
     pub needs_mls_unlock: bool,
     pub needs_mls_backup: bool,
     pub needs_mls_recovery_setup: bool,
-    /// A visible Realm is below the recommended encryption floor.
-    pub floor_low: bool,
     /// No Recovery Key and no recovery backup are configured (SPOF).
     pub recovery_unconfigured: bool,
 }
@@ -134,17 +125,14 @@ pub fn resolve(i: AccountHealthInputs) -> AccountHealthPrompt {
         return AccountHealthPrompt::RecoverySetupMissing;
     }
 
-    // Priorities 5–6 are advisory. They wait for sync and recovery-state
-    // detection, and stay off the recovery routes (where the user is already
+    // Priority 5 is advisory. It waits for sync and recovery-state
+    // detection, and stays off the recovery routes (where the user is already
     // managing exactly this).
     if !i.sync_bootstrap_complete || i.on_recovery_route || !i.recovery_check_complete {
         return AccountHealthPrompt::None;
     }
     if i.recovery_unconfigured {
         return AccountHealthPrompt::RecoverySetupReminder;
-    }
-    if i.floor_low {
-        return AccountHealthPrompt::RecommendedEncryptionFloor;
     }
     AccountHealthPrompt::None
 }
@@ -182,7 +170,6 @@ mod tests {
             has_session: false,
             needs_device_authorization: true,
             needs_mls_unlock: true,
-            floor_low: true,
             recovery_unconfigured: true,
             ..Default::default()
         };
@@ -202,7 +189,6 @@ mod tests {
             needs_mls_unlock: true,
             needs_mls_backup: true,
             needs_mls_recovery_setup: true,
-            floor_low: true,
             recovery_unconfigured: true,
             ..healthy()
         };
@@ -228,7 +214,6 @@ mod tests {
             needs_mls_unlock: true,
             needs_mls_backup: true,
             needs_mls_recovery_setup: true,
-            floor_low: true,
             recovery_unconfigured: true,
             ..healthy()
         };
@@ -242,19 +227,17 @@ mod tests {
         let i = AccountHealthInputs {
             device_check_complete: false,
             needs_mls_unlock: true,
-            floor_low: true,
             ..healthy()
         };
         assert_eq!(resolve(i), AccountHealthPrompt::None);
     }
 
     #[test]
-    fn unlock_beats_backup_and_below() {
+    fn unlock_beats_backup_and_recovery_states() {
         let i = AccountHealthInputs {
             needs_mls_unlock: true,
             needs_mls_backup: true,
             needs_mls_recovery_setup: true,
-            floor_low: true,
             recovery_unconfigured: true,
             ..healthy()
         };
@@ -262,11 +245,10 @@ mod tests {
     }
 
     #[test]
-    fn backup_beats_recovery_missing_and_floor() {
+    fn backup_beats_recovery_missing_and_reminder() {
         let i = AccountHealthInputs {
             needs_mls_backup: true,
             needs_mls_recovery_setup: true,
-            floor_low: true,
             recovery_unconfigured: true,
             ..healthy()
         };
@@ -284,33 +266,13 @@ mod tests {
     }
 
     #[test]
-    fn recovery_missing_beats_floor() {
+    fn recovery_missing_beats_reminder() {
         let i = AccountHealthInputs {
             needs_mls_recovery_setup: true,
-            floor_low: true,
             recovery_unconfigured: true,
             ..healthy()
         };
         assert_eq!(resolve(i), AccountHealthPrompt::RecoverySetupMissing);
-    }
-
-    #[test]
-    fn recovery_reminder_beats_floor() {
-        let i = AccountHealthInputs {
-            floor_low: true,
-            recovery_unconfigured: true,
-            ..healthy()
-        };
-        assert_eq!(resolve(i), AccountHealthPrompt::RecoverySetupReminder);
-    }
-
-    #[test]
-    fn floor_follows_configured_recovery() {
-        let i = AccountHealthInputs {
-            floor_low: true,
-            ..healthy()
-        };
-        assert_eq!(resolve(i), AccountHealthPrompt::RecommendedEncryptionFloor);
     }
 
     #[test]
@@ -324,11 +286,10 @@ mod tests {
 
     #[test]
     fn advisory_prompts_wait_for_sync() {
-        // floor_low + unconfigured, but sync not done -> silent (functional
-        // prompts already cleared).
+        // Unconfigured, but sync not done -> silent (functional prompts already
+        // cleared).
         let i = AccountHealthInputs {
             sync_bootstrap_complete: false,
-            floor_low: true,
             recovery_unconfigured: true,
             ..healthy()
         };
@@ -339,7 +300,6 @@ mod tests {
     fn advisory_prompts_wait_for_recovery_state() {
         let i = AccountHealthInputs {
             recovery_check_complete: false,
-            floor_low: true,
             recovery_unconfigured: true,
             ..healthy()
         };
@@ -361,7 +321,6 @@ mod tests {
     fn advisory_prompts_suppressed_on_recovery_route() {
         let i = AccountHealthInputs {
             on_recovery_route: true,
-            floor_low: true,
             recovery_unconfigured: true,
             ..healthy()
         };
@@ -396,12 +355,6 @@ mod tests {
 
     #[test]
     fn auto_prompt_suppressed_outside_reminder_state() {
-        // Configured recovery with a low floor -> do not auto-open recovery setup.
-        let floor_only = AccountHealthInputs {
-            floor_low: true,
-            ..healthy()
-        };
-        assert!(!should_auto_prompt_recovery_setup(floor_only, false));
         // Healthy + configured -> nothing to prompt.
         assert!(!should_auto_prompt_recovery_setup(healthy(), false));
         // Device probe not done -> wait.
@@ -423,7 +376,6 @@ mod tests {
             MlsBackup,
             RecoverySetupMissing,
             RecoverySetupReminder,
-            RecommendedEncryptionFloor,
             None,
         ];
         for w in order.windows(2) {

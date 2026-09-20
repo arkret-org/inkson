@@ -337,7 +337,7 @@ test("connect refresh canonicalizes stale account and device identity", async ({
     });
 });
 
-test("fresh browser requires device authorization before recovery or encryption prompts", async ({
+test("fresh browser requires device authorization before recovery prompts", async ({
   page,
 }) => {
   const authModal = latestTestId(page, "device-authorization-modal");
@@ -353,9 +353,6 @@ test("fresh browser requires device authorization before recovery or encryption 
   await expect(
     latestTestId(page, "device-authorization-open-pairing"),
   ).toBeVisible();
-  await expect(
-    page.getByTestId("recommended-encryption-floor-modal"),
-  ).toHaveCount(0);
   await expect(page.getByTestId("recovery-setup-banner")).toHaveCount(0);
   await expect(page.getByTestId("recovery-key-setup-modal")).toHaveCount(0);
 });

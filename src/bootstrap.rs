@@ -25,14 +25,6 @@ use crate::state::LocalStateStore;
 pub(crate) const RECOVERY_AUTO_PROMPT_SHOWN_KEY: &str = "recovery.auto_prompt_shown.v1";
 pub(crate) const RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY: &str =
     "recovery.auto_prompt_local_only_shown.v1";
-/// Per-account flag: the recommended-encryption-floor health check has been
-/// auto-acknowledged. The underlying `floor_low` condition stays true until the
-/// account actually ratchets a Realm to the recommended floor, so without this
-/// flag the auto-apply effect would re-run on every render/navigation.
-/// Mirrors `RECOVERY_AUTO_PROMPT_SHOWN_KEY`: run at most once per account, then
-/// leave the user to manage it from settings.
-pub(crate) const ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY: &str =
-    "encryption.floor_prompt_dismissed.v1";
 
 pub(crate) fn has_bootstrap_refresh_material(
     store: &LocalStateStore,
@@ -131,14 +123,6 @@ pub(crate) fn recovery_auto_prompt_already_prompted(
     }
     store
         .load_plain_local_data(RECOVERY_AUTO_PROMPT_SHOWN_KEY)
-        .is_some()
-}
-
-/// Whether the recommended-encryption-floor check was already auto-acknowledged
-/// for this account (see [`ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY`]).
-pub(crate) fn encryption_floor_prompt_acknowledged(store: &LocalStateStore) -> bool {
-    store
-        .load_plain_local_data(ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY)
         .is_some()
 }
 
