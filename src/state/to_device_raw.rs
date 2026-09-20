@@ -63,17 +63,24 @@ impl LocalStateStore {
                     .to_owned(),
             ));
         }
+        if !events.is_empty() && self.cached.client_core_next_delivery_id >= u64::MAX - 1 {
+            return Err(arkret_sdk::Error::Protocol(
+                "delivery id overflow".to_owned(),
+            ));
+        }
         let previous = self.cached.clone();
         self.set_client_cursor_cached(&scope, cursor.clone())?;
         let delivery_id = if events.is_empty() {
             None
         } else {
-            self.cached.client_core_next_delivery_id = self
+            let next_id = self
                 .cached
                 .client_core_next_delivery_id
                 .checked_add(1)
                 .ok_or_else(|| arkret_sdk::Error::Protocol("delivery id overflow".to_owned()))?;
-            let id = garth::DeliveryId::new(self.cached.client_core_next_delivery_id);
+            let id = garth::DeliveryId::from_stored_u64(next_id)
+                .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
+            self.cached.client_core_next_delivery_id = next_id;
             self.cached.client_core_pending_deliveries.push_back(
                 crate::state::types::StoredClientDelivery {
                     id: id.get(),
@@ -100,17 +107,18 @@ impl LocalStateStore {
     pub(crate) fn pending_client_deliveries(
         &self,
         limit: usize,
-    ) -> arkret_sdk::Result<Vec<garth::PendingDelivery>> {
+    ) -> arkret_sdk::Result<Vec<garth::PendingDelivery<Vec<garth::ClientEvent>>>> {
         self.load()
             .client_core_pending_deliveries
             .iter()
             .take(limit.clamp(1, garth::MAX_PENDING_READ))
             .map(|delivery| {
                 Ok(garth::PendingDelivery {
-                    id: garth::DeliveryId::new(delivery.id),
+                    id: garth::DeliveryId::from_stored_u64(delivery.id)
+                        .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?,
                     scope: delivery.scope.clone(),
                     cursor: delivery.cursor.clone(),
-                    events: serde_json::from_value(delivery.events.clone())?,
+                    payload: serde_json::from_value(delivery.events.clone())?,
                     attempts: delivery.attempts,
                     next_attempt_at_ms: delivery.next_attempt_at_ms,
                     error_class: delivery.error_class,

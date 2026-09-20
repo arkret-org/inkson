@@ -112,12 +112,12 @@ pub(crate) trait LocalStateBackend: Send + Sync {
 
 pub(crate) fn device_message_cursor_key(
     service_id: Option<&arkret_sdk::DidCoreId>,
-    actor_id: &arkret_sdk::DidCoreId,
+    actor_id: &arkret_sdk::ActorId,
     device_id: &arkret_sdk::DeviceId,
 ) -> arkret_sdk::Result<String> {
     serde_json::to_string(&serde_json::json!({
         "service_id": service_id.map(arkret_sdk::DidCoreId::as_str),
-        "actor_id": actor_id.as_str(),
+        "actor_id": actor_id,
         "device_id": device_id.as_str(),
     }))
     .map_err(Into::into)
