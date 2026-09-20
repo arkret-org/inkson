@@ -1038,8 +1038,7 @@ pub(super) fn send_encrypted_message(
                 crate::views::secure_send::SecureSendOutcome::Sent { event_id, status } => {
                     (event_id, status)
                 }
-                crate::views::secure_send::SecureSendOutcome::CommitFailed { message }
-                | crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
+                crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
                     // P2: reconcile the optimistic bubble so
                     // it doesn't spin forever, and keep the
                     // draft recoverable.

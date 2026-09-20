@@ -39,14 +39,9 @@ impl HostedSidecarState {
             && self.native_mls_ready
     }
 
-    pub fn mls_binding(&self) -> arkret_sdk::Result<arkret_sdk::SidecarMlsBinding> {
-        let binding = arkret_sdk::SidecarMlsBinding {
-            sidecar_id: self.sidecar_id.clone(),
-            participant_authority_digest: self.mls_context.participant_authority_digest.clone(),
-            control_frontier: self.mls_context.control_frontier.clone(),
-        };
-        binding.validate()?;
-        Ok(binding)
+    pub fn mls_scope_sidecar_id(&self) -> arkret_sdk::Result<arkret_sdk::SidecarId> {
+        self.mls_context.validate_shape()?;
+        Ok(self.sidecar_id.clone())
     }
 
     pub fn pending_reconciliation_count(&self) -> usize {
@@ -1031,7 +1026,7 @@ pub(crate) async fn submit_pending_sidecar_auto_close(
     device_id: &arkret_sdk::DeviceId,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     intent: PendingSidecarAutoCloseIntent,
-    sidecar_binding: arkret_sdk::SidecarMlsBinding,
+    sidecar_id: arkret_sdk::SidecarId,
 ) -> anyhow::Result<()> {
     if intent.accepted_control_event_id.is_some() {
         return Ok(());
@@ -1050,7 +1045,7 @@ pub(crate) async fn submit_pending_sidecar_auto_close(
         intent.controller_account_id.principal_id.as_str(),
         device_id,
         &intent.source_strand_id,
-        sidecar_binding,
+        sidecar_id,
         &intent.control,
     )
     .await
@@ -1066,8 +1061,7 @@ pub(crate) async fn submit_pending_sidecar_auto_close(
     .await;
     let result = match outcome {
         crate::views::secure_send::SecureSendOutcome::Sent { event_id, .. } => Ok(event_id),
-        crate::views::secure_send::SecureSendOutcome::CommitFailed { message }
-        | crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => Err(message),
+        crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => Err(message),
         // A Sidecar close is a control Event this client authors itself, so the
         // message authoring engine is never reached from here.
         crate::views::secure_send::SecureSendOutcome::MessageAuthoringFailed { failure } => {
@@ -1355,7 +1349,7 @@ pub(crate) async fn sync_sidecar_exchange_background(
             .agent_sidecar_list(None, cursor.as_deref())
             .await
             .map_err(anyhow::Error::from)?;
-        sidecar_views.extend(page.agent_sidecar_views);
+        sidecar_views.extend(page.sidecars);
         let Some(next_cursor) = page.next_cursor.map(|value| value.to_string()) else {
             break;
         };
@@ -1368,7 +1362,8 @@ pub(crate) async fn sync_sidecar_exchange_background(
     let mut views_by_realm =
         std::collections::BTreeMap::<String, Vec<arkret_sdk::AgentSidecarView>>::new();
     for view in sidecar_views {
-        view.validate()?;
+        view.sidecar.validate_shape()?;
+        view.mls_context.validate_shape()?;
         if view.sidecar.controller_account_id != *authority {
             anyhow::bail!("Sidecar list returned a view for another controller");
         }
@@ -1469,11 +1464,6 @@ pub(crate) async fn sync_sidecar_exchange_background(
             let Some(view) = views_by_sidecar.get(intent.sidecar_id.as_str()) else {
                 continue;
             };
-            let binding = arkret_sdk::SidecarMlsBinding {
-                sidecar_id: view.sidecar.id.clone(),
-                participant_authority_digest: view.mls_context.participant_authority_digest.clone(),
-                control_frontier: view.mls_context.control_frontier.clone(),
-            };
             submit_pending_sidecar_auto_close(
                 base_url,
                 api_token.clone(),
@@ -1481,7 +1471,7 @@ pub(crate) async fn sync_sidecar_exchange_background(
                 device_id,
                 state_store,
                 intent,
-                binding,
+                view.sidecar.id.clone(),
             )
             .await?;
         }
@@ -2318,11 +2308,8 @@ mod tests {
                     "1".repeat(64)
                 ))
                 .unwrap(),
-                control_frontier: vec![
-                    arkret_sdk::NonEmptyString::new(
-                        "ak:event:AVeCvdcuh1hDJWwYlZJb_1yRzWQwN1-pXxgZYTyd7BGT",
-                    )
-                    .unwrap(),
+                authority_stream_head: vec![
+                    "ak:event:AVeCvdcuh1hDJWwYlZJb_1yRzWQwN1-pXxgZYTyd7BGT".to_owned(),
                 ],
                 mls_group_id: None,
                 epoch: None,
@@ -2375,8 +2362,7 @@ mod tests {
         let session = session(vec![arkret_sdk::PendingSidecarAccessReconciliation {
             agent_id: crate::mls_api_helpers::principal_core_id("did:web:agents.example:assistant")
                 .unwrap(),
-            provisioning_phase: arkret_sdk::PendingSidecarAccessReconciliationStage::MlsWelcome,
-            membership_frontier: None,
+            provisioning_phase: arkret_sdk::SidecarAccessProvisioningPhase::MlsWelcome,
         }]);
         assert!(!session.membership_ready());
         assert_eq!(session.pending_reconciliation_count(), 1);
@@ -2394,22 +2380,14 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_readiness_and_mls_binding_require_the_current_device() {
+    fn sidecar_readiness_and_mls_scope_require_the_current_device() {
         let mut session = session(Vec::new());
         assert!(!session.membership_ready());
         session.mls_context.current_controller_device_ready = true;
         assert!(session.membership_ready());
 
-        let binding = session.mls_binding().unwrap();
-        assert_eq!(binding.sidecar_id, session.sidecar_id);
-        assert_eq!(
-            binding.participant_authority_digest,
-            session.mls_context.participant_authority_digest
-        );
-        assert_eq!(
-            binding.control_frontier,
-            session.mls_context.control_frontier
-        );
+        let sidecar_id = session.mls_scope_sidecar_id().unwrap();
+        assert_eq!(sidecar_id, session.sidecar_id);
     }
 
     #[test]

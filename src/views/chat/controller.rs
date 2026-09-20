@@ -1070,8 +1070,7 @@ impl ChatController {
                         frontier_state.set(event_id);
                         status_msg.set("Message sent".to_owned());
                     }
-                    crate::views::secure_send::SecureSendOutcome::CommitFailed { message }
-                    | crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
+                    crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
                         mark_message_command_failed(
                             &mut messages,
                             &message_id_for_lookup,

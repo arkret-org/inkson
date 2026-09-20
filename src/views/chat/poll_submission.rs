@@ -86,8 +86,7 @@ pub(super) async fn submit_poll_operation(
         .await
         {
             crate::views::secure_send::SecureSendOutcome::Sent { event_id, .. } => event_id,
-            crate::views::secure_send::SecureSendOutcome::CommitFailed { message }
-            | crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
+            crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
                 anyhow::bail!(message);
             }
             crate::views::secure_send::SecureSendOutcome::MessageAuthoringFailed { failure } => {

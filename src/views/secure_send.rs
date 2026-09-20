@@ -1,21 +1,18 @@
 //! Shared E2EE "Send Secure" pipeline.
 //!
-//! This module owns the MLS core + operation construction + commit/message
-//! submission orchestration used by the Chat discussion view to send an
+//! This module owns the MLS core + operation construction + message
+//! submission used by the Chat discussion view to send an
 //! encrypted `ak.message.create`. It was extracted from the verified Chat
-//! "Send Secure" flow so encryption, commit and persist-on-accept stay in one
-//! path.
+//! "Send Secure" flow so encryption and durable ratchet persistence stay in
+//! one path.
 //!
 //! Boundary: this module performs everything that MUST be identical across the
 //! message-write path —
 //!   1. MLS encrypt of the canonical Content Block bytes (`run_local_mls_encrypt` →
 //!      `mls::runtime::encrypt_message_with_device_snapshot`),
-//!   2. forced `ak.mls.commit` envelope build (governance binding / prev→post epoch /
-//!      membership_frontier),
-//!   3. spec-canonical `ak.schema.encrypted_envelope.v1` wrap bound to the group-state ref,
-//!   4. `ak.message.create` payload build (with reply-to + message id),
-//!   5. submission ordering — commit FIRST (persist-on-accept snapshot + §7.10 history-backup
-//!      schedule + move-submission record), then message.
+//!   2. spec-canonical `ak.schema.encrypted_envelope.v1` wrap bound to the accepted group-state ref,
+//!   3. `ak.message.create` payload build (with reply-to + message id),
+//!   4. durable sender-ratchet persistence before submission.
 //!
 //! UI-shaped concerns stay in the caller: the optimistic bubble, draft
 //! recovery, author-owned sidecar persistence, and status
@@ -24,31 +21,14 @@
 
 use dioxus::prelude::*;
 
-use crate::state::{LocalStateStore, MoveSubmissionState};
+use crate::state::LocalStateStore;
 
-/// Result of the local MLS encrypt step.
-///
-/// * `schedule_hash` — post-encrypt group key-schedule hash (B3d governance).
-/// * `member_ids` — every stable principal id in the group (membership sanity check).
-/// * encrypted content — typed MLS payload + AAD, or `None` on failure.
-/// * commit envelope — the SDK self-update commit, when the encrypt advanced the epoch (a forced
-///   `ak.mls.commit` is then emitted).
-/// * snapshot — post-commit snapshot, persisted by the caller ONLY after the server accepts the
-///   `ak.mls.commit` (persist-on-accept).
-pub(crate) type LocalMlsEncryptResult = (
-    Option<arkret_sdk::Hash>,
-    Vec<arkret_sdk::DidCoreId>,
-    Option<arkret_sdk::EncryptedPayload>,
-    Option<arkret_sdk::EncryptedPayload>,
-    Option<crate::mls::runtime::PreparedMlsCommit>,
-    Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
-    Option<crate::state::PendingHistorySecrets>,
-);
+pub(crate) type LocalMlsEncryptResult = crate::mls::runtime::DeviceSnapshotEncryption;
 
 /// Encrypt `plaintext_bytes` under the Realm MLS group and return the
-/// structured MLS payload + the canonical AAD it was bound to, plus the
-/// post-encrypt schedule hash, member id set, optional self-update commit
-/// envelope, and the post-commit snapshot to persist on accept.
+/// structured MLS payload + the canonical AAD it was bound to. Epoch
+/// transitions are reconciled separately; a content send only consumes an
+/// already accepted group-state reference.
 ///
 /// Runs on wasm: the underlying `mls::runtime::encrypt_message_with_device_snapshot`
 /// uses the same wasm-enabled OpenMLS path as kanban strand-content encryption.
@@ -66,7 +46,7 @@ pub(crate) fn run_local_mls_encrypt(
     metadata_plaintext_bytes: Option<&[u8]>,
     expected_sender_domain: Option<&str>,
     circle_id: Option<&str>,
-    sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
+    sidecar_id: Option<&arkret_sdk::SidecarId>,
 ) -> Result<LocalMlsEncryptResult, crate::mls::runtime::MlsRuntimeError> {
     serde_json::from_slice::<arkret_sdk::ContentBlock>(plaintext_bytes).map_err(|error| {
         crate::mls::runtime::MlsRuntimeError::Serialize(format!(
@@ -92,7 +72,7 @@ pub(crate) fn run_local_mls_encrypt(
         metadata_plaintext_bytes,
         expected_sender_domain,
         circle_id,
-        sidecar_binding,
+        sidecar_id,
     )
 }
 
@@ -109,7 +89,7 @@ fn run_local_mls_encrypt_for_event(
     metadata_plaintext_bytes: Option<&[u8]>,
     expected_sender_domain: Option<&str>,
     circle_id: Option<&str>,
-    sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
+    sidecar_id: Option<&arkret_sdk::SidecarId>,
 ) -> Result<LocalMlsEncryptResult, crate::mls::runtime::MlsRuntimeError> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let realm_id_typed = arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| {
@@ -117,10 +97,10 @@ fn run_local_mls_encrypt_for_event(
             "invalid Realm id for encrypted content: {error:?}"
         ))
     })?;
-    let effective_scope = if let Some(binding) = sidecar_binding {
+    let effective_scope = if let Some(sidecar_id) = sidecar_id {
         arkret_sdk::ScopeRef::Sidecar {
             realm_id: realm_id_typed,
-            sidecar_id: binding.sidecar_id.clone(),
+            sidecar_id: sidecar_id.clone(),
         }
     } else if let Some(circle_id) = circle_id {
         circle_effective_scope(realm_id, circle_id)
@@ -138,15 +118,7 @@ fn run_local_mls_encrypt_for_event(
         .read()
         .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)
         .map_err(|_| crate::mls::runtime::MlsRuntimeError::EncryptionTransitionPending)?;
-    let (
-        schedule_hash,
-        member_ids,
-        payload,
-        metadata_payload,
-        commit_envelope,
-        new_snapshot,
-        pending_history_secrets,
-    ) = crate::mls::runtime::encrypt_message_with_device_snapshot(
+    crate::mls::runtime::encrypt_message_with_device_snapshot(
         &mut state_store.write(),
         secure_store.as_ref(),
         realm_id,
@@ -160,17 +132,8 @@ fn run_local_mls_encrypt_for_event(
         metadata_plaintext_bytes,
         expected_sender_domain,
         circle_id,
-        sidecar_binding,
-    )?;
-    Ok((
-        Some(schedule_hash),
-        member_ids,
-        Some(payload),
-        metadata_payload,
-        commit_envelope,
-        new_snapshot,
-        pending_history_secrets,
-    ))
+        sidecar_id,
+    )
 }
 
 fn circle_effective_scope(
@@ -185,15 +148,7 @@ fn circle_effective_scope(
     })
 }
 
-/// The built (but not yet submitted) secure-send artifacts: the optional
-/// forced MLS commit event, the encrypted `ak.message.create` event, and
-/// the metadata the caller needs to drive UI / persist-on-accept.
-/// Builds the encrypted write once the epoch's group-state reference is known.
-///
-/// The encrypted envelope binds `key_ref.group_state_ref` to the Event that
-/// established the epoch. When this send forces a commit, that Event is part of
-/// the same send and has no identity until it is accepted — so the message is
-/// built from the accepted commit id, never from a draft one.
+/// Builds the encrypted write against an already accepted epoch reference.
 pub(crate) type SecureMessagePlan = Box<
     dyn FnOnce(Option<&arkret_sdk::EventId>) -> Result<arkret_sdk::MessageAuthoringContent, String>
         + Send,
@@ -214,8 +169,8 @@ pub(crate) struct SecureMessageAuthoring {
 
 /// What the accepted MLS epoch is being used to write.
 ///
-/// An ordinary message and a Sidecar control Event share the encrypt, commit
-/// and persist-on-accept ordering, and nothing else: a message is completed by
+/// An ordinary message and a Sidecar control Event share encryption under an
+/// accepted epoch, and nothing else: a message is completed by
 /// the Station and only signed here, while a control Event is authored here.
 /// Keeping both in one enum is what stops the message path from quietly growing
 /// a second, locally authored way to send.
@@ -225,9 +180,6 @@ pub(crate) enum SecureWritePlan {
 }
 
 pub(crate) struct SecureSendBuild {
-    /// Forced `ak.mls.commit` to submit BEFORE the message, when the encrypt
-    /// advanced the epoch. `None` rides the current epoch.
-    pub commit_event: Option<crate::operation::LocalOperation>,
     /// Freezes the encrypted write against the accepted epoch reference.
     pub message_plan: SecureWritePlan,
     /// Holder-local identity of the message this send will author.
@@ -236,16 +188,11 @@ pub(crate) struct SecureSendBuild {
     /// sidecar can be keyed before the Event — which waits on the commit's
     /// accepted id — exists.
     pub message_local_operation_id: crate::operation::LocalOperationId,
-    /// Post-commit snapshot — persisted by the caller ONLY after the server
-    /// accepts the commit (persist-on-accept).
-    pub new_mls_checkpoint: Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
-    /// History-secret update that must commit before either MLS event is sent.
-    pub pending_history_secrets: Option<crate::state::PendingHistorySecrets>,
     /// Exact executable MLS scope used for snapshot/ref persistence.
     pub effective_scope: arkret_sdk::ScopeRef,
 }
 
-/// Build the full encrypted send (MLS encrypt → forced commit event →
+/// Build the full encrypted send (MLS encrypt →
 /// `ak.schema.encrypted_envelope.v1` wrap → `ak.message.create` payload) for a
 /// discussion message.
 ///
@@ -261,11 +208,11 @@ pub(crate) struct SecureSendBuild {
 /// `metadata`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn build_secure_send(
-    api: &crate::transport::TransportClient,
+    _api: &crate::transport::TransportClient,
     state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
-    actor: &str,
+    _actor: &str,
     device_id: &arkret_sdk::DeviceId,
     strand_id: &str,
     local_message_id: &str,
@@ -273,7 +220,7 @@ pub(crate) async fn build_secure_send(
     plaintext_bytes: &[u8],
     metadata_plaintext_bytes: Option<&[u8]>,
     circle_id: Option<&str>,
-    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
+    sidecar_id: Option<arkret_sdk::SidecarId>,
 ) -> Result<SecureSendBuild, String> {
     let minimal_metadata = state_store
         .read()
@@ -289,15 +236,10 @@ pub(crate) async fn build_secure_send(
             )
         })
         .transpose()?;
-    let event_actor = pairwise
-        .as_ref()
-        .map(|material| material.actor_id.as_str())
-        .unwrap_or(actor)
-        .to_owned();
-    let effective_scope = if let Some(binding) = sidecar_binding.as_ref() {
+    let effective_scope = if let Some(sidecar_id) = sidecar_id.as_ref() {
         arkret_sdk::ScopeRef::Sidecar {
             realm_id: typed_realm_id.clone(),
-            sidecar_id: binding.sidecar_id.clone(),
+            sidecar_id: sidecar_id.clone(),
         }
     } else if let Some(circle_id) = circle_id {
         circle_effective_scope(realm_id, circle_id)?
@@ -307,22 +249,10 @@ pub(crate) async fn build_secure_send(
         }
     };
     crate::mls::creator_bootstrap::ensure_local_mls_transition_ready(
-        api,
         &crate::app::runtime_adapter::state_store_handle(state_store),
         &effective_scope,
-        authority,
-        device_id,
-    )
-    .await?;
-    let (
-        local_schedule_hash,
-        local_member_ids,
-        encrypted_message,
-        encrypted_metadata_message,
-        real_commit_envelope,
-        new_mls_checkpoint,
-        pending_history_secrets,
-    ): LocalMlsEncryptResult = run_local_mls_encrypt(
+    )?;
+    let encryption = run_local_mls_encrypt(
         state_store,
         realm_id,
         authority,
@@ -331,20 +261,16 @@ pub(crate) async fn build_secure_send(
         metadata_plaintext_bytes,
         pairwise.as_ref().map(|material| material.actor_id.as_str()),
         circle_id,
-        sidecar_binding.as_ref(),
+        sidecar_id.as_ref(),
     )
     .map_err(|error| error.user_message())?;
 
-    let Some(encrypted_payload) = encrypted_message else {
-        return Err("Send Secure could not produce an MLS encrypted payload".to_owned());
-    };
+    let encrypted_payload = encryption.content;
+    let encrypted_metadata_message = encryption.metadata;
     if metadata_plaintext_bytes.is_some() && encrypted_metadata_message.is_none() {
         return Err("Send Secure could not produce the MLS encrypted metadata".to_owned());
     }
-    let Some(_local_schedule_hash) = local_schedule_hash else {
-        return Err("Send Secure could not derive the MLS key schedule hash".to_owned());
-    };
-    if local_member_ids.is_empty() {
+    if encryption.member_ids.is_empty() {
         return Err("Send Secure could not resolve MLS group members".to_owned());
     }
 
@@ -353,39 +279,9 @@ pub(crate) async fn build_secure_send(
         .mls_group_state_ref_for_scope(
             &effective_scope,
             encrypted_payload.group_id.as_str(),
-            encrypted_payload
-                .epoch
-                .saturating_sub(u64::from(real_commit_envelope.is_some())),
+            encrypted_payload.epoch,
         )?
         .to_string();
-    let local_state = state_store.read().clone();
-    let commit_event = match real_commit_envelope.as_ref() {
-        Some(prepared_commit) => Some(match sidecar_binding.as_ref() {
-            Some(binding) => {
-                crate::mls::group_events::mls_commit_event_from_store_for_sidecar_scope(
-                    &local_state,
-                    realm_id,
-                    &event_actor,
-                    &prepared_commit.envelope,
-                    &prepared_commit.previous_governance_binding,
-                    binding.clone(),
-                )
-                .await?
-            }
-            None => {
-                crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
-                    &local_state,
-                    realm_id,
-                    circle_id,
-                    &event_actor,
-                    &prepared_commit.envelope,
-                    &prepared_commit.previous_governance_binding,
-                )
-                .await?
-            }
-        }),
-        None => None,
-    };
     let plan_scope = effective_scope.clone();
     // The caller's optimistic row is already keyed by `local_message_id`; the
     // queue slot has to answer to that same key, or the row it belongs to can
@@ -393,15 +289,12 @@ pub(crate) async fn build_secure_send(
     let message_local_operation_id =
         crate::operation::LocalOperationId::from_holder_key(local_message_id);
     let plan_local_operation_id = message_local_operation_id.clone();
-    let message_plan: SecureMessagePlan = Box::new(move |accepted_commit| {
+    let message_plan: SecureMessagePlan = Box::new(move |_accepted_commit| {
         // Wrap the MLS payload in the spec-canonical
         // `ak.schema.encrypted_envelope.v1` wire shape, binding
         // key_ref.group_state_ref to the Event that established this epoch.
-        let group_state_ref = match accepted_commit {
-            Some(event_id) => event_id.clone(),
-            None => arkret_sdk::EventId::new(base_group_state_ref)
-                .map_err(|error| format!("invalid MLS group-state Event id: {error}"))?,
-        };
+        let group_state_ref = arkret_sdk::EventId::new(base_group_state_ref)
+            .map_err(|error| format!("invalid MLS group-state Event id: {error}"))?;
         if encrypted_payload.pre_encryption_header.group_state_ref != group_state_ref {
             return Err(
                 "MLS encrypted payload group-state reference changed after sealing".to_owned(),
@@ -440,7 +333,6 @@ pub(crate) async fn build_secure_send(
     });
 
     Ok(SecureSendBuild {
-        commit_event,
         message_plan: SecureWritePlan::Message(SecureMessageAuthoring {
             strand_id: strand_id.to_owned(),
             reply_to: reply_to
@@ -449,8 +341,6 @@ pub(crate) async fn build_secure_send(
             plan: message_plan,
         }),
         message_local_operation_id,
-        new_mls_checkpoint,
-        pending_history_secrets,
         effective_scope,
     })
 }
@@ -469,23 +359,15 @@ pub(crate) async fn build_sidecar_exchange_control_send(
     actor: &str,
     device_id: &arkret_sdk::DeviceId,
     source_strand_id: &str,
-    sidecar_binding: arkret_sdk::SidecarMlsBinding,
+    sidecar_id: arkret_sdk::SidecarId,
     control: &arkret_sdk::AgentSidecarExchangeControl,
 ) -> Result<SecureSendBuild, String> {
     control
-        .validate()
+        .validate_shape()
         .map_err(|error| format!("Sidecar exchange control validation failed: {error}"))?;
     let plaintext = serde_json::to_vec(control)
         .map_err(|error| format!("Sidecar exchange control encode failed: {error}"))?;
-    let (
-        _,
-        members,
-        encrypted_control,
-        encrypted_metadata,
-        prepared_commit,
-        new_mls_checkpoint,
-        pending_history_secrets,
-    ) = run_local_mls_encrypt_for_event(
+    let encryption = run_local_mls_encrypt_for_event(
         state_store,
         realm_id,
         authority,
@@ -497,48 +379,29 @@ pub(crate) async fn build_sidecar_exchange_control_send(
         None,
         None,
         None,
-        Some(&sidecar_binding),
+        Some(&sidecar_id),
     )
     .map_err(|error| error.user_message())?;
-    let Some(encrypted_payload) = encrypted_control else {
-        return Err("Sidecar close could not produce an MLS encrypted payload".to_owned());
-    };
-    if encrypted_metadata.is_some() || members.is_empty() {
+    let encrypted_payload = encryption.content;
+    if encryption.metadata.is_some() || encryption.member_ids.is_empty() {
         return Err("Sidecar close produced an invalid MLS author result".to_owned());
     }
     let effective_scope = arkret_sdk::ScopeRef::Sidecar {
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
             .map_err(|error| format!("Sidecar close Realm id invalid: {error}"))?,
-        sidecar_id: sidecar_binding.sidecar_id.clone(),
+        sidecar_id: sidecar_id.clone(),
     };
     let base_group_state_ref = state_store
         .read()
         .mls_group_state_ref_for_scope(
             &effective_scope,
             encrypted_payload.group_id.as_str(),
-            encrypted_payload
-                .epoch
-                .saturating_sub(u64::from(prepared_commit.is_some())),
+            encrypted_payload.epoch,
         )?
         .to_string();
-    let local_state = state_store.read().clone();
-    let commit_event = match prepared_commit.as_ref() {
-        Some(prepared) => Some(
-            crate::mls::group_events::mls_commit_event_from_store_for_sidecar_scope(
-                &local_state,
-                realm_id,
-                actor,
-                &prepared.envelope,
-                &prepared.previous_governance_binding,
-                sidecar_binding.clone(),
-            )
-            .await?,
-        ),
-        None => None,
-    };
     let source_strand_id = arkret_sdk::StrandId::new(source_strand_id.to_owned())
         .map_err(|error| format!("Sidecar close source Strand invalid: {error}"))?;
-    let plan_sidecar_id = sidecar_binding.sidecar_id;
+    let plan_sidecar_id = sidecar_id;
     let plan_refs: Vec<arkret_sdk::SemanticRef> = control
         .basis_event_ids
         .iter()
@@ -549,12 +412,9 @@ pub(crate) async fn build_sidecar_exchange_control_send(
     let plan_scope = effective_scope.clone();
     let message_local_operation_id = crate::operation::LocalOperationId::new();
     let plan_local_operation_id = message_local_operation_id.clone();
-    let message_plan: SecureControlPlan = Box::new(move |accepted_commit| {
-        let group_state_ref = match accepted_commit {
-            Some(event_id) => event_id.clone(),
-            None => arkret_sdk::EventId::new(base_group_state_ref)
-                .map_err(|error| format!("invalid MLS group-state Event id: {error}"))?,
-        };
+    let message_plan: SecureControlPlan = Box::new(move |_accepted_commit| {
+        let group_state_ref = arkret_sdk::EventId::new(base_group_state_ref)
+            .map_err(|error| format!("invalid MLS group-state Event id: {error}"))?;
         if encrypted_payload.pre_encryption_header.group_state_ref != group_state_ref {
             return Err(
                 "Sidecar close encrypted payload group-state reference changed after sealing"
@@ -582,24 +442,18 @@ pub(crate) async fn build_sidecar_exchange_control_send(
         .map_err(|error| format!("Sidecar close SDK Event conversion failed: {error}"))
     });
     Ok(SecureSendBuild {
-        commit_event,
         message_plan: SecureWritePlan::Control(message_plan),
         message_local_operation_id,
-        new_mls_checkpoint,
-        pending_history_secrets,
         effective_scope,
     })
 }
 
 /// The result of submitting a [`SecureSendBuild`]: either the server-accepted
-/// message event id (commit, if any, already accepted + snapshot persisted) or
+/// message event id or
 /// a categorised failure the caller renders into its own UI.
 pub(crate) enum SecureSendOutcome {
     /// Message accepted; `event_id` is the server's `ak.message.create` id.
     Sent { event_id: String, status: String },
-    /// The forced MLS commit was rejected; message NOT submitted. Snapshot was
-    /// NOT advanced (the next retry uses the correct `expected_prev_epoch`).
-    CommitFailed { message: String },
     /// The `ak.message.create` submission failed (commit, if any, accepted).
     MessageFailed { message: String },
     /// The typed authoring engine refused or could not complete the message.
@@ -612,10 +466,7 @@ pub(crate) enum SecureSendOutcome {
     },
 }
 
-/// Submit a built secure send: forced `ak.mls.commit` first (persist-on-accept
-/// snapshot + §7.10 history-backup schedule + move-submission record), then the
-/// encrypted `ak.message.create`. The MLS core ordering + persistence here is
-/// shared verbatim by the chat write path.
+/// Submit a built secure send after the same-epoch sender ratchet is durable.
 ///
 /// The caller owns all UI reconciliation: it inspects [`SecureSendOutcome`] to
 /// clear/fail the optimistic bubble, persist the author sidecar, restore the
@@ -629,110 +480,11 @@ pub(crate) async fn submit_secure_send(
     circle_id: Option<String>,
 ) -> SecureSendOutcome {
     let SecureSendBuild {
-        commit_event,
         message_plan,
         message_local_operation_id,
-        new_mls_checkpoint,
-        pending_history_secrets,
         effective_scope,
     } = build;
     let sidecar_scope = matches!(&effective_scope, arkret_sdk::ScopeRef::Sidecar { .. });
-    if let Some(pending) = pending_history_secrets {
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        if let Err(error) = pending.persist(secure_store.as_ref()).await {
-            return SecureSendOutcome::MessageFailed {
-                message: format!("persist MLS history secret before send: {error}"),
-            };
-        }
-        state_store.write().publish_history_secrets(pending);
-    }
-    let commit_op_id = commit_event
-        .as_ref()
-        .map(|commit| commit.local_operation_id().to_string());
-
-    let mut accepted_commit_event_id = None::<arkret_sdk::EventId>;
-    if let Some(commit_event) = commit_event {
-        // Submit the forced MLS commit first; if it fails, abort the message
-        // send (the Security Frontier will not bind). The message's
-        // `group_state_ref` is this commit's ACCEPTED id, so it is also the
-        // reason the message cannot be built before this point.
-        match match api.event_submitter() {
-            Ok(sub) => sub.submit_sdk_event(&commit_event).await,
-            Err(err) => Err(err),
-        } {
-            Ok(resp) => {
-                let submission_state = MoveSubmissionState::from_send_queue_status(resp.status);
-                if let Some(commit_op_id) = commit_op_id {
-                    state_store.write().record_move_submission_with_event_id(
-                        commit_op_id,
-                        Some(resp.event_id.clone()),
-                        realm_id.to_owned(),
-                        "mls_commit".to_owned(),
-                        submission_state,
-                        resp.rejection_reason_code.clone(),
-                        None,
-                    );
-                }
-                if submission_state != MoveSubmissionState::Effective || resp.commit.is_none() {
-                    return SecureSendOutcome::CommitFailed {
-                        message: format!(
-                            "MLS commit has no terminal committed outcome (status={})",
-                            submission_state.slug()
-                        ),
-                    };
-                }
-                match arkret_sdk::EventId::new(resp.event_id.clone()) {
-                    Ok(event_id) => accepted_commit_event_id = Some(event_id),
-                    Err(error) => {
-                        return SecureSendOutcome::MessageFailed {
-                            message: format!(
-                                "accepted MLS commit returned an invalid Event id: {error}"
-                            ),
-                        };
-                    }
-                }
-                // The encrypt step deliberately keeps a post-commit snapshot
-                // out of the live store until the matching commit is accepted.
-                // Once accepted, both the ratchet state and its canonical
-                // group-state Event reference must land together before the
-                // dependent encrypted message can be submitted. Dropping this
-                // snapshot leaves the browser at the previous epoch after a
-                // reload even though the server has already advanced it.
-                if let Some(snapshot) = new_mls_checkpoint.as_ref() {
-                    let Some(event_id) = accepted_commit_event_id.as_ref() else {
-                        return SecureSendOutcome::MessageFailed {
-                            message: "accepted MLS commit has no typed Event id".to_owned(),
-                        };
-                    };
-                    let persist_result = {
-                        let mut store = state_store.write();
-                        store
-                            .save_mls_checkpoint_for_scope(&effective_scope, snapshot.clone())
-                            .and_then(|()| {
-                                store.record_mls_group_state_ref_for_scope(
-                                    &effective_scope,
-                                    &snapshot.group_id,
-                                    snapshot.epoch,
-                                    event_id.clone(),
-                                )
-                            })
-                    };
-                    if let Err(error) = persist_result {
-                        return SecureSendOutcome::MessageFailed {
-                            message: format!(
-                                "persist accepted MLS commit state before message send: {error}"
-                            ),
-                        };
-                    }
-                }
-            }
-            Err(err) => {
-                return SecureSendOutcome::CommitFailed {
-                    message: format!("MLS commit event submit failed: {err}"),
-                };
-            }
-        }
-    }
 
     // `run_local_mls_encrypt` also advances the same-epoch send ratchet when
     // no commit is required. Freeze either path into the account-state writer
@@ -754,7 +506,7 @@ pub(crate) async fn submit_secure_send(
 
     let control_event = match message_plan {
         SecureWritePlan::Message(authoring) => {
-            let content = match (authoring.plan)(accepted_commit_event_id.as_ref()) {
+            let content = match (authoring.plan)(None) {
                 Ok(content) => content,
                 Err(message) => return SecureSendOutcome::MessageFailed { message },
             };
@@ -796,7 +548,7 @@ pub(crate) async fn submit_secure_send(
                 }
             };
         }
-        SecureWritePlan::Control(plan) => match plan(accepted_commit_event_id.as_ref()) {
+        SecureWritePlan::Control(plan) => match plan(None) {
             Ok(control_event) => control_event,
             Err(message) => return SecureSendOutcome::MessageFailed { message },
         },

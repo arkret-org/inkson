@@ -329,7 +329,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                     });
                     let sidecar_track_write = active_sidecar_session.as_ref().map(|session| {
                         SidecarTrackWriteContext {
-                            binding: session.mls_binding().ok(),
+                            sidecar_id: session.mls_scope_sidecar_id().ok(),
                             ready: session.membership_ready(),
                         }
                     });

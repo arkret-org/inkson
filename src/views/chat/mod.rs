@@ -1122,9 +1122,9 @@ async fn ensure_owned_agent_sidecar(
     Ok(Some(OwnedAgentSidecarEnsureResult { sidecar_id, view }))
 }
 
-/// The Sidecar scope's MLS coordinates as the Station published them.
-fn sidecar_mls_binding(view: &arkret_sdk::AgentSidecarView) -> arkret_sdk::AgentSidecarMlsContext {
-    view.mls_context.clone()
+/// The native Sidecar scope whose accepted MLS epoch is used for encryption.
+fn sidecar_mls_scope(view: &arkret_sdk::AgentSidecarView) -> arkret_sdk::SidecarId {
+    view.sidecar.id.clone()
 }
 
 struct SourceRoutedSidecarMessageOutcome {
@@ -1273,7 +1273,7 @@ async fn submit_source_routed_sidecar_message(
         &content_bytes,
         Some(&metadata_bytes),
         None,
-        Some(sidecar_mls_binding(view)),
+        Some(sidecar_mls_scope(view)),
     )
     .await
     .map_err(anyhow::Error::msg)?;
@@ -1307,8 +1307,7 @@ async fn submit_source_routed_sidecar_message(
         crate::views::secure_send::SecureSendOutcome::Sent { event_id, status } => {
             (event_id, status)
         }
-        crate::views::secure_send::SecureSendOutcome::CommitFailed { message }
-        | crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
+        crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
             anyhow::bail!(message)
         }
         crate::views::secure_send::SecureSendOutcome::MessageAuthoringFailed { failure } => {

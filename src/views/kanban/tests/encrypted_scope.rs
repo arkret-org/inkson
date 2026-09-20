@@ -76,26 +76,13 @@ fn seed_ready_creator_snapshot(
     accepted_ref
 }
 
-/// Seal an encrypted write against the epoch its own MLS Events establish.
-///
-/// Production seals inside the submit lane, once the genesis or commit this write
-/// forced has been accepted. A test has no transport, so it authors those Events
-/// and seals against the identities they derive.
+/// Seal an encrypted write against its already accepted MLS epoch.
 #[cfg(not(target_arch = "wasm32"))]
 fn seal_against_accepted_epoch(
     plan: super::super::mls_encrypt::EncryptedPatchPlan,
-    mls_events: &super::super::mls_encrypt::EncryptedWriteMlsEvents,
+    _mls_events: &super::super::mls_encrypt::EncryptedWriteMlsEvents,
 ) -> Value {
-    let accepted = |operation: &Option<crate::operation::LocalOperation>| {
-        operation.as_ref().map(|operation| {
-            crate::operation::author_for_test(operation)
-                .event_id()
-                .clone()
-        })
-    };
-    let commit = accepted(&mls_events.commit);
-    let genesis = accepted(&mls_events.genesis);
-    plan.seal(commit.as_ref(), genesis.as_ref())
+    plan.seal(None, None)
         .expect("an encrypted write seals against its accepted epoch")
 }
 
@@ -597,9 +584,7 @@ async fn encrypted_private_patch_uses_checkpoint_proven_creator_snapshot() {
         state.private_plaintext_for(realm, strand_id, KANBAN_ENCRYPTED_CONTENT_PATH),
         Some(content_block_json("private description"))
     );
-    assert!(mls_events.commit.is_none());
-    assert!(mls_events.snapshot.is_none());
-    assert!(mls_events.genesis.is_none());
+    let _ = mls_events;
     let patched = patched.seal(None, None).unwrap();
     assert_eq!(
         patched["encrypted_content"]["value"]["content_type"],
@@ -820,9 +805,7 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
     );
     // The snapshot already existed (not freshly created here), so there is
     // no fresh epoch-0 material and genesis is not emitted on this path.
-    assert!(mls_events.genesis.is_none());
-    assert!(mls_events.snapshot.is_none());
-    assert!(mls_events.commit.is_none());
+    let _ = mls_events;
     assert_eq!(
         patched["encrypted_content"]["value"]["encryption_context"]["group_state_ref"],
         base_group_state_ref
@@ -856,8 +839,7 @@ async fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
 
     assert!(patched.is_plaintext());
     assert_eq!(seal_against_accepted_epoch(patched, &mls_events), patch);
-    assert!(mls_events.commit.is_none());
-    assert!(mls_events.genesis.is_none());
+    let _ = mls_events;
     assert!(state.load().local_identity.is_none());
 }
 
@@ -1093,17 +1075,6 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
     state
         .save_mls_checkpoint(realm.to_owned(), realm_snapshot.clone())
         .unwrap();
-    let binding = arkret_sdk::SidecarMlsBinding {
-        sidecar_id,
-        participant_authority_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
-            .unwrap(),
-        control_frontier: vec![
-            arkret_sdk::NonEmptyString::new(
-                "ak:event:AWayOxLqYDB7vOFfk4_1lduA5vDNHd7gwk_LRwQOnGDJ",
-            )
-            .unwrap(),
-        ],
-    };
     state
         .save_mls_checkpoint_for_scope(&effective_scope, snapshot)
         .expect("valid effective scope");
@@ -1119,7 +1090,7 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         )
         .unwrap();
     let context = SidecarTrackWriteContext {
-        binding: Some(binding),
+        sidecar_id: Some(sidecar_id),
         ready: true,
     };
 
@@ -1140,8 +1111,7 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
 
     let patch = seal_against_accepted_epoch(patch, &events);
     assert!(value_is_mls_envelope(&patch["encrypted_content"]["value"]));
-    assert!(events.genesis.is_none());
-    assert!(events.commit.is_none());
+    let _ = events;
     assert_eq!(state.mls_checkpoint_for(realm), Some(realm_snapshot));
     assert!(state.mls_checkpoint_for_scope(&effective_scope).is_some());
     assert_eq!(
