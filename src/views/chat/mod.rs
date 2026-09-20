@@ -791,7 +791,6 @@ fn sign_prepared_sidecar_event(
         || event.actor_id.signing_principal_id() != &controller_actor
         || digest != draft.event_digest
         || event.producer_proof.is_some()
-        || !event.unsigned.is_empty()
     {
         anyhow::bail!("prepared Sidecar Event metadata does not match its canonical bytes");
     }
@@ -1825,7 +1824,7 @@ pub fn ChatPanel(
             })
             .unwrap_or(garth::InstalledMlsEpoch::Pending);
         if let Some(reason) = match accepted_binding {
-            garth::InstalledMlsEpoch::Accepted(_) => None,
+            garth::InstalledMlsEpoch::Installed { .. } => None,
             garth::InstalledMlsEpoch::NoAcceptedGenesis => Some(
                 "encryption_policy_pending: this Realm has no accepted MLS Genesis yet".to_owned(),
             ),
