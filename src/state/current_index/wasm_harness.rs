@@ -83,11 +83,11 @@ impl CurrentIndexHarness {
     }
 
     /// The installed entry a product read would see, as canonical JSON.
-    pub async fn read_ready(&self, selector: &str) -> Result<Option<String>, String> {
+    pub async fn read_ready(&self, realm: &str, selector: &str) -> Result<Option<String>, String> {
         let selector: CurrentSelector = serde_json::from_str(selector).map_err(message)?;
         let entry = self
             .index
-            .read_selector_ready(&selector)
+            .read_selector_ready(realm, &selector)
             .await
             .map_err(message)?;
         entry

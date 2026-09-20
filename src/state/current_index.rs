@@ -5,7 +5,7 @@ use std::sync::{Arc, OnceLock};
 
 use arkret_sdk::AccountId;
 use arkret_sdk::sync::AccountSubscribeFrame;
-use arkret_sdk::sync::{AccountCurrentCoverage, RealmDetailBaseline};
+use arkret_sdk::sync::RealmDetailBaseline;
 use arkret_wire::{CurrentRevision, CurrentSelector, TypedCurrentResult};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, OwnedMutexGuard};
@@ -80,39 +80,11 @@ fn selector_key(selector: &CurrentSelector) -> anyhow::Result<String> {
     )?)
 }
 
-/// Highest stream position that is provably covered by one baseline.
-///
-/// Each Realm, Circle and Sidecar keeps its own linear stream and there is no
-/// Realm-global position, so the only position a single number can safely
-/// assert coverage for is the smallest head across every covered stream: a row
-/// at or below it is at or below every covered stream's head. `None` means the
-/// reader was not told it saw every stream it is authorized to read, and
-/// nothing may be swept or hidden on the strength of this baseline.
-fn covered_floor(coverage: &AccountCurrentCoverage) -> Option<u64> {
-    if !coverage.complete_for_authorized_streams {
-        return None;
-    }
-    coverage
-        .stream_heads
-        .iter()
-        .map(|head| head.stream_position)
-        .min()
-}
-
-/// Highest position any covered stream reached. A current result above it
-/// cannot belong to the frozen cut the baseline describes.
-fn baseline_ceiling(coverage: &AccountCurrentCoverage) -> u64 {
-    coverage
-        .stream_heads
-        .iter()
-        .map(|head| head.stream_position)
-        .max()
-        .unwrap_or(0)
-}
-
 /// Small durable per-Realm metadata, independent of the number of selectors.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct CurrentRealmProgress {
+    #[serde(default)]
+    pub governance_generation: Option<u64>,
     pub baseline: Option<RealmDetailBaseline>,
     pub invalidated_snapshot: Option<String>,
     pub invalidation_revision: u64,
@@ -141,13 +113,22 @@ impl CurrentRealmProgress {
             .as_ref()
             .map(|baseline| baseline.snapshot_cursor.clone());
     }
+
+    fn begin_governance_generation(&mut self, generation: u64) {
+        self.invalidated_snapshot = self
+            .baseline
+            .as_ref()
+            .map(|baseline| baseline.snapshot_cursor.clone());
+        self.baseline = None;
+        self.needs_refresh = true;
+        self.governance_generation = Some(generation);
+    }
 }
 
 /// A sweep predicate, never a list of every covered selector.
 #[derive(Clone, Debug)]
 struct CurrentCoverageCleanup {
     snapshot_cursor: String,
-    covered_floor: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -174,12 +155,6 @@ fn plan_current_entry(
             .as_ref()
             .is_some_and(|old| old.snapshot_cursor == segment.snapshot_cursor && old.complete)
     });
-    if let Some(segment) = baseline {
-        anyhow::ensure!(
-            revision_of(entry).stream_position <= baseline_ceiling(&segment.coverage),
-            "current result is outside its frozen baseline"
-        );
-    }
     let seen = baseline.is_some() && !complete;
     if let Some(old) = old {
         anyhow::ensure!(
@@ -188,7 +163,11 @@ fn plan_current_entry(
         );
         let old_revision = revision_of(old);
         let new_revision = revision_of(entry);
-        if old_revision == new_revision {
+        if old_revision.stream_position == new_revision.stream_position {
+            anyhow::ensure!(
+                old_revision == new_revision,
+                "current result forked at the same stream position"
+            );
             anyhow::ensure!(
                 arkret_sdk::canonical::canonical_json_bytes(old)?
                     == arkret_sdk::canonical::canonical_json_bytes(entry)?,
@@ -199,14 +178,6 @@ fn plan_current_entry(
         if old_revision.stream_position > new_revision.stream_position {
             return Ok((false, seen));
         }
-    } else if baseline.is_none()
-        && previous.baseline.as_ref().is_some_and(|installed| {
-            installed.complete
-                && covered_floor(&installed.coverage)
-                    .is_some_and(|floor| revision_of(entry).stream_position <= floor)
-        })
-    {
-        return Ok((false, seen));
     }
     Ok((!complete, seen))
 }
@@ -252,13 +223,10 @@ fn plan_current_install(
             plan.progress.baseline = Some(segment.clone());
             plan.progress.needs_refresh = !segment.complete;
         }
-        if segment.complete
-            && !already_complete
-            && let Some(floor) = covered_floor(&segment.coverage)
+        if segment.complete && segment.coverage.complete_for_authorized_streams && !already_complete
         {
             plan.cleanup = Some(CurrentCoverageCleanup {
                 snapshot_cursor: segment.snapshot_cursor.clone(),
-                covered_floor: floor,
             });
         }
     }
@@ -345,9 +313,8 @@ impl Drop for CurrentStage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CoverageMark {
     snapshot: String,
-    /// Highest stream position every covered stream had reached. See
-    /// [`covered_floor`].
-    covered_floor: u64,
+    /// Rows installed no later than this generation were part of the frozen
+    /// baseline cut. Later live rows must not be compared across streams.
     generation: u64,
 }
 
@@ -737,7 +704,10 @@ impl CurrentIndex {
             return Ok(None);
         };
         if let Some(mark) = self.strongest_mark(realm, generation).await? {
-            if revision_of(&entry).stream_position <= mark.covered_floor
+            let row_generation = self
+                .latest_generation(&self.row_prefix(realm, selector)?, generation)
+                .await?;
+            if row_generation <= mark.generation
                 && self
                     .latest::<bool>(
                         &self.seen_prefix(&mark.snapshot, realm, selector)?,
@@ -795,12 +765,7 @@ impl CurrentIndex {
         let row_generation = self
             .latest_generation(&self.row_prefix(realm, selector)?, generation)
             .await?;
-        let pending_covered = progress.needs_refresh
-            && progress.baseline.as_ref().is_some_and(|baseline| {
-                covered_floor(&baseline.coverage)
-                    .is_some_and(|covered| revision_of(&entry).stream_position <= covered)
-            });
-        if pending_covered
+        if progress.needs_refresh
             || row_generation < floor
             || revision_of(&entry).stream_position < progress.invalidation_revision
         {
@@ -966,10 +931,50 @@ impl CurrentIndex {
         }
         if let Some(realms) = &mut filtered.realms {
             for (realm, incoming) in &mut realms.entries {
-                let previous = match progress_updates.remove(realm) {
+                let mut previous = match progress_updates.remove(realm) {
                     Some(progress) => progress,
                     None => self.progress_at(realm, expected_generation).await?,
                 };
+                if let Some(baseline) = &incoming.baseline {
+                    anyhow::ensure!(
+                        baseline.coverage.realm_id.as_str() == realm,
+                        "current coverage belongs to another Realm"
+                    );
+                    anyhow::ensure!(
+                        !baseline.complete || baseline.coverage.complete_for_authorized_streams,
+                        "complete current baseline has incomplete stream coverage"
+                    );
+                }
+                if let Some(current) = &incoming.current {
+                    current
+                        .validate()
+                        .map_err(|error| anyhow::anyhow!("{error}"))?;
+                    anyhow::ensure!(
+                        current.realm_id.as_str() == realm,
+                        "current result belongs to another Realm"
+                    );
+                    if let Some(baseline) = &incoming.baseline {
+                        anyhow::ensure!(
+                            current.stream_heads == baseline.coverage.stream_heads,
+                            "current result and baseline have different stream heads"
+                        );
+                    }
+                    if let Some(installed) = previous.governance_generation {
+                        anyhow::ensure!(
+                            current.governance_generation >= installed,
+                            "older governance generation cannot replace current results"
+                        );
+                        if current.governance_generation > installed {
+                            anyhow::ensure!(
+                                incoming.baseline.is_some(),
+                                "governance generation changed without a fresh baseline"
+                            );
+                            previous.begin_governance_generation(current.governance_generation);
+                        }
+                    } else {
+                        previous.governance_generation = Some(current.governance_generation);
+                    }
+                }
                 let mut plan = plan_current_install(&previous, incoming)?;
                 let baseline = incoming.baseline.clone();
                 let mut accepted = Vec::new();
@@ -1016,19 +1021,6 @@ impl CurrentIndex {
                         }
                     }
                     if !write {
-                        continue;
-                    }
-                    if baseline.is_none()
-                        && let Some(mark) = self.strongest_mark(realm, expected_generation).await?
-                        && revision_of(entry).stream_position <= mark.covered_floor
-                        && self
-                            .latest_generation(
-                                &self.seen_prefix(&mark.snapshot, realm, selector)?,
-                                expected_generation,
-                            )
-                            .await?
-                            == 0
-                    {
                         continue;
                     }
                     accepted.push(entry.clone());
@@ -1107,10 +1099,7 @@ impl CurrentIndex {
                         let old = self
                             .latest::<CoverageMark>(&prefix, expected_generation)
                             .await?;
-                        if old
-                            .as_ref()
-                            .is_none_or(|old| old.covered_floor <= cleanup.covered_floor)
-                        {
+                        if old.as_ref().is_none_or(|old| old.generation <= generation) {
                             unversioned.insert(
                                 self.gc_mark_key(
                                     gc.epoch,
@@ -1122,7 +1111,6 @@ impl CurrentIndex {
                                 format!("{prefix}{suffix}"),
                                 serde_json::to_vec(&CoverageMark {
                                     snapshot: cleanup.snapshot_cursor.clone(),
-                                    covered_floor: cleanup.covered_floor,
                                     generation,
                                 })?,
                             );
@@ -1202,8 +1190,8 @@ impl CurrentIndex {
         let Some((task_key, bytes)) = rows.into_iter().next() else {
             return Ok(false);
         };
-        let selector: CurrentSelector = serde_json::from_slice(&bytes)?;
-        let row_prefix = self.row_prefix(&selector)?;
+        let task: PruneTask = serde_json::from_slice(&bytes)?;
+        let row_prefix = self.row_prefix(&task.realm, &task.selector)?;
         let versions = self
             .backend
             .keys(
@@ -1528,12 +1516,7 @@ impl CurrentIndex {
             return Ok(maintained);
         };
         let mut task: CleanupTask = serde_json::from_slice(&bytes)?;
-        let prefix = format!(
-            "{}target/{}/{}/",
-            self.prefix,
-            hash(&task.realm)?,
-            task.target
-        );
+        let prefix = format!("{}target/{}/", self.prefix, hash(&task.realm)?);
         let Some((index_key, bytes)) = self
             .backend
             .scan(&prefix, None, task.after.as_deref(), 1)
@@ -1550,7 +1533,7 @@ impl CurrentIndex {
             return Ok(true);
         };
         let selector: CurrentSelector = serde_json::from_slice(&bytes)?;
-        let row_prefix = self.row_prefix(&selector)?;
+        let row_prefix = self.row_prefix(&task.realm, &selector)?;
         let versions = self
             .backend
             .keys(
@@ -1560,7 +1543,9 @@ impl CurrentIndex {
                 100,
             )
             .await?;
-        let visible = self.visible_selector(&selector, generation).await?;
+        let visible = self
+            .visible_selector(&task.realm, &selector, generation)
+            .await?;
         let mut deletes = Vec::new();
         let mut writes = Vec::new();
         if visible.is_none() {
@@ -1573,20 +1558,19 @@ impl CurrentIndex {
                 let entry: TypedCurrentResult = serde_json::from_slice(&bytes)?;
                 let row_generation = self.latest_generation(&row_prefix, generation).await?;
                 if self
-                    .retired(&selector, generation)
+                    .retired(&task.realm, &selector, generation)
                     .await?
                     .is_none_or(|retired| retired.generation < row_generation)
                 {
                     writes.push((
                         format!(
-                            "{}retired/{}/{}",
-                            self.prefix,
-                            hash(&selector)?,
+                            "{}{}",
+                            self.retired_prefix(&task.realm, &selector)?,
                             version(generation)
                         ),
                         serde_json::to_vec(&RetiredEntry {
-                            revision: entry.revision(),
-                            target: entry.target().clone(),
+                            revision: revision_of(&entry).clone(),
+                            target: target_of(&selector),
                             digest: hash(&entry)?,
                             generation,
                         })?,
@@ -1595,39 +1579,9 @@ impl CurrentIndex {
             }
             deletes.extend(versions.iter().cloned());
             if versions.len() < 100 {
-                let retired = self.retired(&selector, generation).await?;
-                let target = if let Some(key) = versions.first() {
-                    let bytes = self
-                        .backend
-                        .get(key)
-                        .await?
-                        .ok_or_else(|| anyhow::anyhow!("current row disappeared"))?;
-                    Some(
-                        serde_json::from_slice::<TypedCurrentResult>(&bytes)?
-                            .target()
-                            .clone(),
-                    )
-                } else {
-                    retired.map(|entry| entry.target)
-                };
-                if let Some(target) = target {
-                    deletes.push(format!(
-                        "{}target/{}/{}/{}",
-                        self.prefix,
-                        hash(&task.realm)?,
-                        target_key(&target)?,
-                        hash(&selector)?
-                    ));
-                    if matches!(target, CurrentTarget::Member { .. }) {
-                        deletes.push(format!(
-                            "{}target/{}/{}/{}",
-                            self.prefix,
-                            hash(&task.realm)?,
-                            member_all_key(),
-                            hash(&selector)?
-                        ));
-                    }
-                }
+                // The selector may have more than one target index (member
+                // rows also have `member-all`). This scan reaches and deletes
+                // each concrete index key independently.
                 deletes.push(index_key.clone());
                 task.after = Some(index_key);
             }
@@ -1651,24 +1605,49 @@ mod tests {
 
     use super::*;
     const REALM: &str = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
+    const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq";
     fn row(revision: u64, removed: bool) -> TypedCurrentResult {
-        serde_json::from_value(json!({"selector":{"scope_ref":{"kind":"realm","realm_id":REALM},"cell_id":"ak:cell:ak.component.realm.freeze.v1:null"},"target":{"kind":"realm"},"revision":revision,"result":if removed{json!({"status":"removed"})}else{json!({"status":"value","value":null})}})).unwrap()
+        serde_json::from_value(json!({
+            "selector":{"kind":"realm_profile"},
+            "revision":{"commit_id":COMMIT,"stream_position":revision},
+            "value":if removed{json!({"status":"removed"})}else{json!({"status":"value","value":null})}
+        })).unwrap()
     }
     fn frame(
         entries: Vec<TypedCurrentResult>,
         baseline: Option<serde_json::Value>,
     ) -> AccountSubscribeFrame {
-        let mut realm = json!({"current":{"entries":entries}});
-        if let Some(baseline) = baseline {
-            realm["baseline"] = baseline;
-        }
-        serde_json::from_value(
-            json!({"kind":"delta","cursor":"ak:cursor:YQ","realms":{REALM:realm}}),
-        )
-        .unwrap()
+        realm_frame(REALM, entries, baseline)
+    }
+    fn at_generation(mut frame: AccountSubscribeFrame, generation: u64) -> AccountSubscribeFrame {
+        frame
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(REALM)
+            .unwrap()
+            .current
+            .as_mut()
+            .unwrap()
+            .governance_generation = generation;
+        frame
     }
     fn baseline(snapshot: &str, cut: u64, complete: bool) -> serde_json::Value {
-        json!({"snapshot_cursor":snapshot,"cut_revision":cut,"coverage":{"realm":true,"strand_ids":[],"members":{"mode":"selected","actor_ids":[]},"event_ids":[]},"complete":complete})
+        json!({
+            "snapshot_cursor":snapshot,
+            "cut_revision":cut,
+            "coverage":{
+                "realm_id":REALM,
+                "stream_heads":[{
+                    "stream_ref":{"kind":"realm","realm_id":REALM},
+                    "stream_position":cut,
+                    "commit_id":COMMIT
+                }],
+                "complete_for_authorized_streams":true
+            },
+            "complete":complete
+        })
     }
     async fn index(path: &std::path::Path, generation: u64) -> CurrentIndex {
         let shared = Arc::new(SharedGeneration {
@@ -1700,18 +1679,37 @@ mod tests {
         "ak:cursor:aw",
         "ak:cursor:bA",
     ];
-    fn realm_row(realm: &str, revision: u64) -> TypedCurrentResult {
-        serde_json::from_value(json!({"selector":{"scope_ref":{"kind":"realm","realm_id":realm},"cell_id":"ak:cell:ak.component.realm.freeze.v1:null"},"target":{"kind":"realm"},"revision":revision,"result":{"status":"value","value":null}})).unwrap()
+    fn realm_row(_realm: &str, revision: u64) -> TypedCurrentResult {
+        row(revision, false)
     }
-    fn member_row(realm: &str, actor: &str, revision: u64) -> TypedCurrentResult {
-        serde_json::from_value(json!({"selector":{"scope_ref":{"kind":"realm","realm_id":realm},"cell_id":format!("ak:cell:ak.component.member.state.v1:{actor}")},"target":{"kind":"member","actor_id":{"kind":"service","service_id":actor}},"revision":revision,"result":{"status":"value","value":null}})).unwrap()
+    fn member_row(_realm: &str, actor: &str, revision: u64) -> TypedCurrentResult {
+        serde_json::from_value(json!({
+            "selector":{"kind":"member_state","actor_id":{"kind":"service","service_id":actor}},
+            "revision":{"commit_id":COMMIT,"stream_position":revision},
+            "value":{"membership":"join"}
+        }))
+        .unwrap()
     }
     fn realm_frame(
         realm: &str,
         entries: Vec<TypedCurrentResult>,
         baseline: Option<serde_json::Value>,
     ) -> AccountSubscribeFrame {
-        let mut entry = json!({"current":{"entries":entries}});
+        let mut baseline = baseline;
+        if let Some(value) = baseline.as_mut() {
+            value["coverage"]["realm_id"] = json!(realm);
+            value["coverage"]["stream_heads"][0]["stream_ref"]["realm_id"] = json!(realm);
+        }
+        let stream_heads = baseline
+            .as_ref()
+            .map(|value| value["coverage"]["stream_heads"].clone())
+            .unwrap_or_else(|| json!([]));
+        let mut entry = json!({"current":{
+            "realm_id":realm,
+            "governance_generation":1,
+            "stream_heads":stream_heads,
+            "entries":entries
+        }});
         if let Some(baseline) = baseline {
             entry["baseline"] = baseline;
         }
@@ -1721,14 +1719,15 @@ mod tests {
         .unwrap()
     }
     fn members_baseline(snapshot: &str, cut: u64, complete: bool) -> serde_json::Value {
-        json!({"snapshot_cursor":snapshot,"cut_revision":cut,"coverage":{"realm":true,"strand_ids":[],"members":{"mode":"all"},"event_ids":[]},"complete":complete})
+        baseline(snapshot, cut, complete)
     }
-    async fn seen_versions(
+    async fn seen_versions_in_realm(
         index: &CurrentIndex,
         snapshot: &str,
+        realm: &str,
         selector: &CurrentSelector,
     ) -> usize {
-        let prefix = index.seen_prefix(snapshot, selector).unwrap();
+        let prefix = index.seen_prefix(snapshot, realm, selector).unwrap();
         index
             .backend
             .keys(&prefix, None, None, PAGE_LIMIT)
@@ -1736,12 +1735,19 @@ mod tests {
             .unwrap()
             .len()
     }
+    async fn seen_versions(
+        index: &CurrentIndex,
+        snapshot: &str,
+        selector: &CurrentSelector,
+    ) -> usize {
+        seen_versions_in_realm(index, snapshot, REALM, selector).await
+    }
     async fn seen_generation(
         index: &CurrentIndex,
         snapshot: &str,
         selector: &CurrentSelector,
     ) -> u64 {
-        let prefix = index.seen_prefix(snapshot, selector).unwrap();
+        let prefix = index.seen_prefix(snapshot, REALM, selector).unwrap();
         index.latest_generation(&prefix, u64::MAX).await.unwrap()
     }
     async fn count_keys(index: &CurrentIndex, prefix: &str) -> usize {
@@ -1818,8 +1824,8 @@ mod tests {
                 .unwrap()
                 .finish();
         }
-        let selector = row(110, false).selector().clone();
-        let row_prefix = index.row_prefix(&selector).unwrap();
+        let selector = selector_of(&row(110, false));
+        let row_prefix = index.row_prefix(REALM, &selector).unwrap();
         assert_eq!(
             index
                 .backend
@@ -1840,7 +1846,7 @@ mod tests {
             index.maintain().await.unwrap();
         }
         assert_eq!(
-            index.read_selector(&selector).await.unwrap(),
+            index.read_selector(REALM, &selector).await.unwrap(),
             Some(row(110, false))
         );
         assert_eq!(
@@ -1881,7 +1887,7 @@ mod tests {
             1
         );
         assert_eq!(
-            index.read_selector(&selector).await.unwrap(),
+            index.read_selector(REALM, &selector).await.unwrap(),
             Some(row(120, false))
         );
     }
@@ -1898,7 +1904,7 @@ mod tests {
         );
         assert!(
             first
-                .read_selector(row(1, false).selector())
+                .read_selector(REALM, &selector_of(&row(1, false)))
                 .await
                 .unwrap()
                 .is_none()
@@ -1912,7 +1918,7 @@ mod tests {
             .finish();
         assert_eq!(
             restored
-                .read_selector(row(2, true).selector())
+                .read_selector(REALM, &selector_of(&row(2, true)))
                 .await
                 .unwrap(),
             Some(row(2, true))
@@ -1921,7 +1927,7 @@ mod tests {
         let committed = index(&path, 1).await;
         assert_eq!(
             committed
-                .read_selector(row(2, true).selector())
+                .read_selector(REALM, &selector_of(&row(2, true)))
                 .await
                 .unwrap(),
             Some(row(2, true))
@@ -1933,11 +1939,74 @@ mod tests {
                 .is_err()
         );
     }
+
+    #[test]
+    fn same_position_with_another_commit_is_a_fork() {
+        let old = row(7, false);
+        let mut value = serde_json::to_value(row(7, false)).unwrap();
+        value["revision"]["commit_id"] =
+            json!("ak:realm_commit:Aaurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6ur");
+        let fork: TypedCurrentResult = serde_json::from_value(value).unwrap();
+        assert!(
+            plan_current_entry(&CurrentRealmProgress::default(), None, &fork, Some(&old))
+                .unwrap_err()
+                .to_string()
+                .contains("forked at the same stream position")
+        );
+    }
+
+    #[tokio::test]
+    async fn governance_generation_requires_a_fresh_baseline_and_never_rolls_back() {
+        let path = path();
+        let index = index(&path, 0).await;
+        index
+            .stage_frame(
+                0,
+                &at_generation(
+                    frame(vec![row(1, false)], Some(baseline(CURSORS[0], 1, true))),
+                    2,
+                ),
+            )
+            .await
+            .unwrap()
+            .finish();
+        assert!(
+            index
+                .stage_frame(1, &at_generation(frame(vec![row(2, false)], None), 1))
+                .await
+                .is_err()
+        );
+        assert!(
+            index
+                .stage_frame(1, &at_generation(frame(vec![row(2, false)], None), 3))
+                .await
+                .is_err()
+        );
+        index
+            .stage_frame(
+                1,
+                &at_generation(
+                    frame(vec![row(2, false)], Some(baseline(CURSORS[1], 2, true))),
+                    3,
+                ),
+            )
+            .await
+            .unwrap()
+            .finish();
+        assert_eq!(
+            index
+                .read_progress(REALM)
+                .await
+                .unwrap()
+                .governance_generation,
+            Some(3)
+        );
+    }
     #[tokio::test]
     async fn reset_and_invalidation_require_fresh_seen_without_waiting_for_completion() {
         let path = path();
         let index = index(&path, 0).await;
-        let selector = row(1, false).selector().clone();
+        let selector = selector_of(&row(1, false));
         index
             .stage_frame(
                 0,
@@ -1948,10 +2017,16 @@ mod tests {
             .finish();
         let reset = serde_json::from_value(json!({"kind":"resync_required"})).unwrap();
         index.stage_frame(1, &reset).await.unwrap().finish();
-        assert!(index.read_selector(&selector).await.unwrap().is_some());
         assert!(
             index
-                .read_selector_ready(&selector)
+                .read_selector(REALM, &selector)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            index
+                .read_selector_ready(REALM, &selector)
                 .await
                 .unwrap()
                 .is_none()
@@ -1980,7 +2055,7 @@ mod tests {
             .finish();
         assert!(
             index
-                .read_selector_ready(&selector)
+                .read_selector_ready(REALM, &selector)
                 .await
                 .unwrap()
                 .is_some()
@@ -1989,7 +2064,7 @@ mod tests {
         index.stage_frame(4, &invalidation).await.unwrap().finish();
         assert!(
             index
-                .read_selector_ready(&selector)
+                .read_selector_ready(REALM, &selector)
                 .await
                 .unwrap()
                 .is_none()
@@ -2008,7 +2083,7 @@ mod tests {
         index.stage_frame(6, &invalidation).await.unwrap().finish();
         assert!(
             index
-                .read_selector_ready(&selector)
+                .read_selector_ready(REALM, &selector)
                 .await
                 .unwrap()
                 .is_some()
@@ -2018,14 +2093,14 @@ mod tests {
     async fn coverage_cleanup_keeps_post_cut_live_and_rejects_retired_conflicts() {
         let path = path();
         let index = index(&path, 0).await;
-        let selector = row(1, false).selector().clone();
+        let selector = selector_of(&row(1, false));
         index
-            .stage_frame(0, &frame(vec![row(7, false)], None))
+            .stage_frame(0, &frame(vec![], Some(baseline("ak:cursor:YQ", 5, true))))
             .await
             .unwrap()
             .finish();
         index
-            .stage_frame(1, &frame(vec![], Some(baseline("ak:cursor:YQ", 5, true))))
+            .stage_frame(1, &frame(vec![row(7, false)], None))
             .await
             .unwrap()
             .finish();
@@ -2033,7 +2108,7 @@ mod tests {
             index.maintain().await.unwrap();
         }
         assert_eq!(
-            index.read_selector(&selector).await.unwrap(),
+            index.read_selector(REALM, &selector).await.unwrap(),
             Some(row(7, false))
         );
         index
@@ -2044,7 +2119,13 @@ mod tests {
         for _ in 0..4 {
             index.maintain().await.unwrap();
         }
-        assert!(index.read_selector(&selector).await.unwrap().is_none());
+        assert!(
+            index
+                .read_selector(REALM, &selector)
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert!(
             index
                 .read_target_page(REALM, &CurrentTarget::Realm, None, 100)
@@ -2116,7 +2197,10 @@ mod tests {
         );
         index.confirm_durable_pointer(1).unwrap();
         assert_eq!(
-            index.read_selector(row(1, false).selector()).await.unwrap(),
+            index
+                .read_selector(REALM, &selector_of(&row(1, false)))
+                .await
+                .unwrap(),
             Some(row(1, false))
         );
         let mut stage = index
@@ -2129,7 +2213,10 @@ mod tests {
         drop(stage);
         assert!(!index.is_poisoned());
         assert_eq!(
-            index.read_selector(row(1, false).selector()).await.unwrap(),
+            index
+                .read_selector(REALM, &selector_of(&row(1, false)))
+                .await
+                .unwrap(),
             Some(row(1, false))
         );
     }
@@ -2138,7 +2225,7 @@ mod tests {
     async fn repeated_baselines_reclaim_zero_reference_snapshot_seen() {
         let path = path();
         let store = index(&path, 0).await;
-        let selector = row(1, false).selector().clone();
+        let selector = selector_of(&row(1, false));
         for (generation, snapshot) in CURSORS[..3].iter().enumerate() {
             store
                 .stage_frame(
@@ -2153,12 +2240,12 @@ mod tests {
             assert_eq!(seen_versions(&store, snapshot, &selector).await, 1);
         }
         assert_eq!(
-            store.read_selector(&selector).await.unwrap(),
+            store.read_selector(REALM, &selector).await.unwrap(),
             Some(row(1, false))
         );
         assert!(
             store
-                .read_selector_ready(&selector)
+                .read_selector_ready(REALM, &selector)
                 .await
                 .unwrap()
                 .is_some()
@@ -2168,12 +2255,12 @@ mod tests {
         assert_eq!(seen_versions(&store, CURSORS[1], &selector).await, 0);
         assert_eq!(seen_versions(&store, CURSORS[2], &selector).await, 1);
         assert_eq!(
-            store.read_selector(&selector).await.unwrap(),
+            store.read_selector(REALM, &selector).await.unwrap(),
             Some(row(1, false))
         );
         assert!(
             store
-                .read_selector_ready(&selector)
+                .read_selector_ready(REALM, &selector)
                 .await
                 .unwrap()
                 .is_some()
@@ -2184,9 +2271,9 @@ mod tests {
     async fn another_target_reference_keeps_a_shared_snapshot_alive() {
         let path = path();
         let store = index(&path, 0).await;
-        let realm_selector = row(1, false).selector().clone();
+        let realm_selector = selector_of(&row(1, false));
         let member = member_row(REALM, "ak:did_core:webvh:z6mkfixture", 1);
-        let member_selector = member.selector().clone();
+        let member_selector = selector_of(&member);
         store
             .stage_frame(
                 0,
@@ -2212,11 +2299,11 @@ mod tests {
         assert_eq!(seen_versions(&store, CURSORS[0], &member_selector).await, 1);
         assert_eq!(seen_versions(&store, CURSORS[0], &realm_selector).await, 1);
         assert_eq!(
-            store.read_selector(&member_selector).await.unwrap(),
+            store.read_selector(REALM, &member_selector).await.unwrap(),
             Some(member.clone())
         );
         assert_eq!(
-            store.read_selector(&realm_selector).await.unwrap(),
+            store.read_selector(REALM, &realm_selector).await.unwrap(),
             Some(row(1, false))
         );
         // Only another member-all baseline detaches the first snapshot.
@@ -2236,11 +2323,11 @@ mod tests {
         assert_eq!(seen_versions(&store, CURSORS[0], &realm_selector).await, 0);
         assert_eq!(seen_versions(&store, CURSORS[2], &member_selector).await, 1);
         assert_eq!(
-            store.read_selector(&member_selector).await.unwrap(),
+            store.read_selector(REALM, &member_selector).await.unwrap(),
             Some(member)
         );
         assert_eq!(
-            store.read_selector(&realm_selector).await.unwrap(),
+            store.read_selector(REALM, &realm_selector).await.unwrap(),
             Some(row(1, false))
         );
     }
@@ -2249,7 +2336,7 @@ mod tests {
     async fn an_unfinished_baseline_keeps_its_seen_at_the_original_generation() {
         let path = path();
         let store = index(&path, 0).await;
-        let selector = row(1, false).selector().clone();
+        let selector = selector_of(&row(1, false));
         store
             .stage_frame(
                 0,
@@ -2260,7 +2347,7 @@ mod tests {
             .finish();
         assert!(
             store
-                .read_selector_ready(&selector)
+                .read_selector_ready(REALM, &selector)
                 .await
                 .unwrap()
                 .is_some()
@@ -2269,7 +2356,7 @@ mod tests {
         store.stage_frame(1, &reset).await.unwrap().finish();
         assert!(
             store
-                .read_selector_ready(&selector)
+                .read_selector_ready(REALM, &selector)
                 .await
                 .unwrap()
                 .is_none()
@@ -2281,12 +2368,18 @@ mod tests {
         assert_eq!(seen_generation(&store, CURSORS[0], &selector).await, 1);
         assert!(
             store
-                .read_selector_ready(&selector)
+                .read_selector_ready(REALM, &selector)
                 .await
                 .unwrap()
                 .is_none()
         );
-        assert!(store.read_selector(&selector).await.unwrap().is_some());
+        assert!(
+            store
+                .read_selector(REALM, &selector)
+                .await
+                .unwrap()
+                .is_some()
+        );
         store
             .stage_frame(
                 2,
@@ -2297,7 +2390,7 @@ mod tests {
             .finish();
         assert!(
             store
-                .read_selector_ready(&selector)
+                .read_selector_ready(REALM, &selector)
                 .await
                 .unwrap()
                 .is_some()
@@ -2306,7 +2399,7 @@ mod tests {
         assert_eq!(seen_generation(&store, CURSORS[1], &selector).await, 3);
         assert!(
             store
-                .read_selector_ready(&selector)
+                .read_selector_ready(REALM, &selector)
                 .await
                 .unwrap()
                 .is_some()
@@ -2317,7 +2410,7 @@ mod tests {
     async fn a_root_published_after_the_mark_cursor_survives_the_same_sweep() {
         let path = path();
         let store = index(&path, 0).await;
-        let selector = row(1, false).selector().clone();
+        let selector = selector_of(&row(1, false));
         store
             .stage_frame(
                 0,
@@ -2353,12 +2446,12 @@ mod tests {
         }
         assert_eq!(seen_versions(&store, CURSORS[1], &selector).await, 1);
         assert_eq!(
-            store.read_selector(&selector).await.unwrap(),
+            store.read_selector(REALM, &selector).await.unwrap(),
             Some(row(1, false))
         );
         assert!(
             store
-                .read_selector_ready(&selector)
+                .read_selector_ready(REALM, &selector)
                 .await
                 .unwrap()
                 .is_some()
@@ -2383,7 +2476,7 @@ mod tests {
     async fn maintenance_never_deletes_future_data_or_skips_an_unfinished_batch() {
         let path = path();
         let store = index(&path, 0).await;
-        let selector = row(1, false).selector().clone();
+        let selector = selector_of(&row(1, false));
         for (generation, snapshot) in CURSORS[..2].iter().enumerate() {
             store
                 .stage_frame(
@@ -2403,7 +2496,7 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let future = store.seen_prefix(CURSORS[2], &selector).unwrap();
+        let future = store.seen_prefix(CURSORS[2], REALM, &selector).unwrap();
         let staged = store
             .backend
             .keys(&future, None, None, PAGE_LIMIT)
@@ -2430,7 +2523,7 @@ mod tests {
         assert_eq!(seen_versions(&store, CURSORS[0], &selector).await, 0);
         assert_eq!(seen_versions(&store, CURSORS[1], &selector).await, 1);
         assert_eq!(
-            store.read_selector(&selector).await.unwrap(),
+            store.read_selector(REALM, &selector).await.unwrap(),
             Some(row(1, false))
         );
         store.poison();
@@ -2439,7 +2532,7 @@ mod tests {
         drop(store);
         let restored = index(&path, 2).await;
         assert_eq!(
-            restored.read_selector(&selector).await.unwrap(),
+            restored.read_selector(REALM, &selector).await.unwrap(),
             Some(row(1, false))
         );
         assert_eq!(
@@ -2470,12 +2563,12 @@ mod tests {
         drive(&restored, 80).await;
         assert_eq!(seen_versions(&restored, CURSORS[3], &selector).await, 1);
         assert_eq!(
-            restored.read_selector(&selector).await.unwrap(),
+            restored.read_selector(REALM, &selector).await.unwrap(),
             Some(row(1, false))
         );
         assert!(
             restored
-                .read_selector_ready(&selector)
+                .read_selector_ready(REALM, &selector)
                 .await
                 .unwrap()
                 .is_some()
@@ -2517,22 +2610,23 @@ mod tests {
         }
         drive(&store, 240).await;
         for (offset, realm) in [REALM, OTHER_REALM].into_iter().enumerate() {
-            let selector = realm_row(realm, 1).selector().clone();
+            let selector = selector_of(&realm_row(realm, 1));
             for round in 0..5usize {
                 assert_eq!(
-                    seen_versions(&store, CURSORS[round * 2 + offset], &selector).await,
+                    seen_versions_in_realm(&store, CURSORS[round * 2 + offset], realm, &selector,)
+                        .await,
                     0,
                     "stale snapshot survived for realm {realm}"
                 );
             }
             assert_eq!(
-                seen_versions(&store, CURSORS[10 + offset], &selector).await,
+                seen_versions_in_realm(&store, CURSORS[10 + offset], realm, &selector).await,
                 1
             );
-            let row_prefix = store.row_prefix(&selector).unwrap();
+            let row_prefix = store.row_prefix(realm, &selector).unwrap();
             assert_eq!(count_keys(&store, &row_prefix).await, 1);
             assert_eq!(
-                store.read_selector(&selector).await.unwrap(),
+                store.read_selector(realm, &selector).await.unwrap(),
                 Some(realm_row(realm, 15))
             );
         }
@@ -2607,18 +2701,21 @@ mod tests {
         assert_eq!(count_keys(&store, &seen).await, 1);
         assert_eq!(
             store
-                .read_selector(&selector_of(&members[0]))
+                .read_selector(REALM, &selector_of(&members[0]))
                 .await
                 .unwrap(),
             None
         );
         assert_eq!(
-            store.read_selector(row(1, false).selector()).await.unwrap(),
+            store
+                .read_selector(REALM, &selector_of(&row(1, false)))
+                .await
+                .unwrap(),
             Some(row(1, false))
         );
     }
 
     fn selector_of(entry: &TypedCurrentResult) -> CurrentSelector {
-        entry.selector().clone()
+        super::selector_of(entry).clone()
     }
 }

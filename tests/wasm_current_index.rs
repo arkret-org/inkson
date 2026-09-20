@@ -13,6 +13,7 @@ use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
 
 const REALM: &str = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
+const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq";
 
 /// One IndexedDB database backs every account, so each test owns an authority
 /// of its own and never reads another test's committed generation.
@@ -26,20 +27,19 @@ fn authority(label: &str) -> String {
 }
 
 fn selector() -> String {
-    json!({"scope_ref":{"kind":"realm","realm_id":REALM},
-        "cell_id":"ak:cell:ak.component.realm.freeze.v1:null"})
-    .to_string()
+    json!({"kind":"realm_profile"}).to_string()
 }
 
 fn frame(revision: u64, removed: bool) -> String {
     let entry = json!({
         "selector": serde_json::from_str::<serde_json::Value>(&selector()).unwrap(),
-        "target": {"kind":"realm"},
-        "revision": revision,
-        "result": if removed { json!({"status":"removed"}) } else { json!({"status":"value","value":null}) },
+        "revision": {"commit_id":COMMIT,"stream_position":revision},
+        "value": if removed { json!({"status":"removed"}) } else { json!({"status":"value","value":null}) },
     });
     json!({"kind":"delta","cursor":"ak:cursor:YQ",
-        "realms":{REALM:{"current":{"entries":[entry]}}}})
+    "realms":{REALM:{"current":{
+        "realm_id":REALM,"governance_generation":1,"stream_heads":[],"entries":[entry]
+    }}}})
     .to_string()
 }
 
@@ -48,18 +48,28 @@ async fn a_failed_stage_stays_invisible_and_retries_at_the_same_generation() {
     let id = authority("failed-stage");
     let first = CurrentIndexHarness::open(&id, 0).await.unwrap();
     first.abandon(0, &frame(1, false)).await.unwrap();
-    assert_eq!(first.read_ready(&selector()).await.unwrap(), None);
+    assert_eq!(first.read_ready(REALM, &selector()).await.unwrap(), None);
     drop(first);
 
     let restored = CurrentIndexHarness::open(&id, 0).await.unwrap();
     assert_eq!(restored.commit(0, &frame(2, true)).await.unwrap(), 1);
-    let installed = restored.read_ready(&selector()).await.unwrap().unwrap();
-    assert!(installed.contains("\"revision\":2"), "{installed}");
+    let installed = restored
+        .read_ready(REALM, &selector())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(installed.contains("\"stream_position\":2"), "{installed}");
     assert!(installed.contains("removed"), "{installed}");
     drop(restored);
 
     let committed = CurrentIndexHarness::open(&id, 1).await.unwrap();
-    assert!(committed.read_ready(&selector()).await.unwrap().is_some());
+    assert!(
+        committed
+            .read_ready(REALM, &selector())
+            .await
+            .unwrap()
+            .is_some()
+    );
     // The retried generation delivered other content at the same revision.
     assert!(committed.commit(1, &frame(2, false)).await.is_err());
 }
@@ -78,10 +88,10 @@ async fn an_unconfirmed_durable_result_poisons_the_pointer() {
 
     store.confirm_durable_pointer(0).unwrap();
     assert!(!store.is_poisoned());
-    assert_eq!(store.read_ready(&selector()).await.unwrap(), None);
+    assert_eq!(store.read_ready(REALM, &selector()).await.unwrap(), None);
     assert_eq!(store.commit(0, &frame(2, false)).await.unwrap(), 1);
-    let installed = store.read_ready(&selector()).await.unwrap().unwrap();
-    assert!(installed.contains("\"revision\":2"), "{installed}");
+    let installed = store.read_ready(REALM, &selector()).await.unwrap().unwrap();
+    assert!(installed.contains("\"stream_position\":2"), "{installed}");
 }
 
 #[wasm_bindgen_test(async)]
@@ -91,14 +101,20 @@ async fn a_cancelled_install_recovers_only_the_confirmed_pointer() {
     store.abandon_armed(0, &frame(1, false)).await.unwrap();
     assert!(store.is_poisoned());
     store.confirm_durable_pointer(1).unwrap();
-    let installed = store.read_ready(&selector()).await.unwrap().unwrap();
-    assert!(installed.contains("\"revision\":1"), "{installed}");
+    let installed = store.read_ready(REALM, &selector()).await.unwrap().unwrap();
+    assert!(installed.contains("\"stream_position\":1"), "{installed}");
     drop(store);
 
     // A restart may only open at a generation whose manifest is durable.
     assert!(CurrentIndexHarness::open(&id, 2).await.is_err());
     let restored = CurrentIndexHarness::open(&id, 1).await.unwrap();
-    assert!(restored.read_ready(&selector()).await.unwrap().is_some());
+    assert!(
+        restored
+            .read_ready(REALM, &selector())
+            .await
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(restored.commit(1, &frame(3, false)).await.unwrap(), 2);
 }
 
@@ -109,8 +125,8 @@ async fn the_same_revision_with_other_content_is_rejected() {
     assert_eq!(store.commit(0, &frame(5, false)).await.unwrap(), 1);
     assert!(store.commit(1, &frame(5, true)).await.is_err());
     // The rejected frame left the installed value exactly as it was.
-    let installed = store.read_ready(&selector()).await.unwrap().unwrap();
-    assert!(installed.contains("\"revision\":5"), "{installed}");
+    let installed = store.read_ready(REALM, &selector()).await.unwrap().unwrap();
+    assert!(installed.contains("\"stream_position\":5"), "{installed}");
     assert!(!installed.contains("removed"), "{installed}");
     assert_eq!(store.commit(1, &frame(6, true)).await.unwrap(), 2);
 
@@ -119,6 +135,6 @@ async fn the_same_revision_with_other_content_is_rejected() {
     for _ in 0..24 {
         store.maintain().await.unwrap();
     }
-    let installed = store.read_ready(&selector()).await.unwrap().unwrap();
-    assert!(installed.contains("\"revision\":6"), "{installed}");
+    let installed = store.read_ready(REALM, &selector()).await.unwrap().unwrap();
+    assert!(installed.contains("\"stream_position\":6"), "{installed}");
 }
