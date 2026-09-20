@@ -5,17 +5,15 @@
 //! has committed its Event into the scope's own independent commit stream. The
 //! client never asks a separate endpoint whether a transition was accepted: a
 //! locally authored Commit pairs its Event with the `RealmCommit` the submit
-//! returned, and a remote transition arrives as a `StreamRow` on the scope's
-//! stream. Both shapes are the same `arkret_wire::StreamRow`, so this module
-//! takes that and nothing else.
+//! returned, and a remote transition arrives as a full committed-event view.
 
-use arkret_wire::{CommittedEventRef, MlsGroupId, StreamRow};
+use arkret_wire::{CommittedEventFullView, CommittedEventRef, MlsGroupId};
 
 /// One accepted `ak.mls.genesis` / `ak.mls.commit` with the exact commit
 /// coordinate that ordered it.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AcceptedMlsTransition {
-    pub(crate) item: StreamRow,
+    pub(crate) item: CommittedEventFullView,
     pub(crate) effective_scope: arkret_sdk::ScopeRef,
     pub(crate) mls_group_id: MlsGroupId,
     pub(crate) previous_epoch: u64,
@@ -46,7 +44,9 @@ impl AcceptedMlsTransition {
 /// binding must name the same scope, and the group id must be the one derived
 /// from that scope. A transition that fails any of them is refused rather than
 /// installed under a scope it does not belong to.
-pub(crate) fn accepted_mls_transition(item: &StreamRow) -> Result<AcceptedMlsTransition, String> {
+pub(crate) fn accepted_mls_transition(
+    item: &CommittedEventFullView,
+) -> Result<AcceptedMlsTransition, String> {
     item.validate_shape()
         .map_err(|error| format!("accepted MLS transition is malformed: {error}"))?;
     let binding = match &item.event.kind {
@@ -94,7 +94,7 @@ pub(crate) fn accepted_from_submission(
     event: arkret_sdk::Event,
     commit: arkret_wire::RealmCommit,
 ) -> Result<AcceptedMlsTransition, String> {
-    accepted_mls_transition(&StreamRow { commit, event })
+    accepted_mls_transition(&CommittedEventFullView { commit, event })
 }
 
 fn event_payload<T: serde::de::DeserializeOwned>(event: &arkret_sdk::Event) -> Result<T, String> {

@@ -46,7 +46,7 @@ pub fn realm_projection_is_durable(body: &Value) -> bool {
 
 /// The authority-committed rows a Realm entry delivered.
 ///
-/// Each row is a whole `StreamRow`: the Station's `RealmCommit` plus the exact
+/// Each full row is a `CommittedEventFullView`: the Station's `RealmCommit` plus the exact
 /// Event it covers. The array is per-stream, so nothing here derives a
 /// Realm-global order from it.
 pub fn sync_realm_timeline_commits(body: &Value) -> Vec<Value> {

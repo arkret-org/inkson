@@ -174,9 +174,9 @@ pub fn missing_event_envelope_write_requirements(
     }
     if !service_supports_operation(
         description,
-        arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_DESCRIBE_V1,
+        arkret_sdk::ServiceOperationId::SERVER_READ_DESCRIBE_V1,
     ) {
-        missing.push(arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_DESCRIBE_V1);
+        missing.push(arkret_sdk::ServiceOperationId::SERVER_READ_DESCRIBE_V1);
     }
     if !service_supports_operation(
         description,
@@ -343,7 +343,7 @@ fn project_member_roster_from_sdk_entry(
 // `public`/`title` on the preview node, a non-optional `join_rule`) and broke
 // invite-accept with "error decoding response body" whenever the server omitted
 // those fields. The SDK type is the single source of truth.
-pub use arkret_models_discovery::{DirectoryRealmResolutionOutcome, RealmJoinCandidate};
+pub use arkret_models_discovery::DirectoryRealmResolutionOutcome;
 pub use arkret_models_identity::IdentityResolveOutcome;
 
 /// Sidebar tag distinguishing a security-boundary Realm from a product
@@ -820,16 +820,19 @@ pub struct BackfillView(pub arkret_wire::StreamScanOutcome);
 impl BackfillView {
     /// The stream this page belongs to, or `None` for an empty page.
     pub fn stream_ref(&self) -> Option<&arkret_wire::CommitStreamRef> {
-        self.0.commits.first().map(|item| &item.commit.stream_ref)
+        self.0
+            .committed_events
+            .first()
+            .map(|item| &item.commit().stream_ref)
     }
 
     /// The last position covered by this page, for the caller's per-stream
     /// cursor. `None` means the page was empty and the cursor does not move.
     pub fn last_position(&self) -> Option<u64> {
         self.0
-            .commits
+            .committed_events
             .last()
-            .map(|item| item.commit.stream_position)
+            .map(|item| item.commit().stream_position)
     }
 
     /// The Station reported more commits after this page.
@@ -844,31 +847,32 @@ impl BackfillView {
     /// operations read this directly.
     pub fn events(&self) -> Vec<arkret_sdk::Event> {
         self.0
-            .commits
+            .committed_events
             .iter()
-            .map(|item| item.event.clone())
+            .filter_map(|item| item.reducer_input().cloned())
             .collect()
     }
 
     /// Serialize the page's Events for a non-authoritative display projection.
     pub fn display_event_values(&self) -> anyhow::Result<Vec<Value>> {
         self.0
-            .commits
+            .committed_events
             .iter()
-            .map(|item| serde_json::to_value(&item.event).map_err(Into::into))
+            .filter_map(arkret_wire::CommittedEventView::reducer_input)
+            .map(|event| serde_json::to_value(event).map_err(Into::into))
             .collect()
     }
 
     /// The exact committed reference of each Event on this page.
     pub fn committed_refs(&self) -> Vec<arkret_wire::CommittedEventRef> {
         self.0
-            .commits
+            .committed_events
             .iter()
             .map(|item| arkret_wire::CommittedEventRef {
-                event_id: item.event.event_id.clone(),
-                commit_id: item.commit.commit_id.clone(),
-                stream_ref: item.commit.stream_ref.clone(),
-                stream_position: item.commit.stream_position,
+                event_id: item.commit().event_ref.clone(),
+                commit_id: item.commit().commit_id.clone(),
+                stream_ref: item.commit().stream_ref.clone(),
+                stream_position: item.commit().stream_position,
             })
             .collect()
     }
@@ -916,8 +920,6 @@ pub use arkret_models_collaboration::governance::authorization::GrantList;
 pub use arkret_models_collaboration::governance::moderation::ModerationReportOutcome;
 pub use arkret_models_collaboration::objects::blob::BlobUploadOutcome;
 pub use arkret_models_crypto::{KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome};
-// ── Directory ───────────────────────────────────────────────────
-pub use arkret_models_discovery::DirectoryHandleResolutionOutcome as ResolveHandleView;
 pub use arkret_models_integration::OkOutcome;
 pub use arkret_models_integration::models_push::PushRegisterDeviceOutcome;
 

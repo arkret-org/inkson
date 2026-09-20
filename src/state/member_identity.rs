@@ -103,7 +103,7 @@ impl LocalStateStore {
         Some(entry.clone())
     }
 
-    /// Save a display-only `list_handles_for_subject` result. The cache TTL
+    /// Save a display-only handle result. The cache TTL
     /// is capped at one hour, and additionally capped by the earliest visible
     /// claim expiry when the response supplies one. Empty results use a short
     /// negative-cache TTL so a render loop does not hammer the Directory.

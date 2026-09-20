@@ -12,7 +12,7 @@
 /// current governance Station has admitted, and the commit is the only proof
 /// of that. The UI calls the same reducer before it authors an RSVP.
 pub fn schedule_revision_winner(
-    commits: &[arkret_wire::StreamRow],
+    commits: &[arkret_wire::CommittedEventFullView],
     strand_id: &str,
     digest_suite: arkret_sdk::DigestSuite,
 ) -> anyhow::Result<arkret_wire::CommittedEventRef> {

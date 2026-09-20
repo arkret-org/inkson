@@ -325,7 +325,7 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// Resume cursor for this realm's `ak.self.events.stream.subscribe.v1`. Kept
+    /// Resume cursor for this realm's `ak.self.committed_event.stream.subscribe.v1`. Kept
     /// separate from `sync_cursor` (account stream); see
     /// [`crate::state::types::ClientLocalState::realm_events_cursors`].
     pub fn realm_events_cursor(&self, realm_id: &str) -> Option<String> {

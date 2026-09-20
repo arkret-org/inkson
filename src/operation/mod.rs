@@ -16,8 +16,8 @@ use std::sync::{OnceLock, RwLock};
 
 pub use arkret_sdk::events::kinds::EventKind;
 pub use arkret_sdk::{
-    Audience, AuthoredEvent, CriticalExtension, Event, EventIntent, EventRef, ProducerEventProof,
-    ScopeRef,
+    Audience, AuthoredEvent, CriticalExtension, Event, EventIntent, ProducerEventProof, ScopeRef,
+    SemanticRef,
 };
 use serde_json::Value;
 
@@ -522,8 +522,8 @@ impl TypedOperationBuilder {
         })
     }
 
-    pub fn refs(self, refs: Vec<EventRef>) -> Self {
-        self.map_intent(|intent| Ok(intent.with_refs(refs)))
+    pub fn semantic_refs(self, semantic_refs: Vec<SemanticRef>) -> Self {
+        self.map_intent(|intent| Ok(intent.with_semantic_refs(semantic_refs)))
     }
 
     pub fn created_at(self, created_at: chrono::DateTime<chrono::Utc>) -> Self {

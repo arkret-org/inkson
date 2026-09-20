@@ -117,9 +117,8 @@ mod agent_tests {
                 "ak.message.create",
                 "ak.reaction.add",
                 "ak.self.events.command.submit.v1",
-                "ak.self.events.read.frontier.v1",
-                "ak.self.events.read.scan.v1",
-                "ak.self.events.stream.subscribe.v1",
+                "ak.self.committed_event.read.scan.v1",
+                "ak.self.committed_event.stream.subscribe.v1",
                 "ak.self.keys.keypackages.upload.create.v1",
                 "ak.self.seals.read.frontier.v1",
                 "ak.self.authorization_leases.command.issue.v1",
@@ -140,15 +139,11 @@ mod agent_tests {
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.events.read.frontier.v1"
+                    "operation": "ak.self.committed_event.read.scan.v1"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.events.read.scan.v1"
-                },
-                {
-                    "kind": "operation",
-                    "operation": "ak.self.events.stream.subscribe.v1"
+                    "operation": "ak.self.committed_event.stream.subscribe.v1"
                 },
                 {
                     "kind": "operation",
@@ -202,9 +197,8 @@ mod agent_tests {
                 "ak.agent.draft.propose".to_owned(),
                 "ak.agent.action_request".to_owned(),
                 "ak.self.events.command.submit.v1".to_owned(),
-                "ak.self.events.read.frontier.v1".to_owned(),
-                "ak.self.events.read.scan.v1".to_owned(),
-                "ak.self.events.stream.subscribe.v1".to_owned(),
+                "ak.self.committed_event.read.scan.v1".to_owned(),
+                "ak.self.committed_event.stream.subscribe.v1".to_owned(),
                 "ak.self.seals.read.frontier.v1".to_owned(),
             ]
         );
@@ -225,11 +219,10 @@ mod agent_tests {
             scope.actions,
             vec![
                 "ak.self.events.command.submit.v1",
-                "ak.self.events.read.frontier.v1",
-                "ak.self.events.read.scan.v1",
-                "ak.self.events.stream.subscribe.v1",
+                "ak.self.committed_event.read.scan.v1",
+                "ak.self.committed_event.stream.subscribe.v1",
                 "ak.self.seals.read.frontier.v1",
-                "ak.self.events.resource.get.v1",
+                "ak.self.committed_event.resource.get.v1",
             ]
         );
     }

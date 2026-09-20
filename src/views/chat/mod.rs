@@ -735,10 +735,10 @@ fn validate_native_prepared_sidecar_binding(
     if let Some(create) = create_event
         && (attach.version != 1
             || attach.predecessor_event_ref.is_some()
-            || context_attach_event.refs.len() != 1
-            || context_attach_event.refs[0].id != create.event_id.as_str()
-            || context_attach_event.refs[0].role != "after"
-            || !context_attach_event.refs[0].critical)
+            || context_attach_event.semantic_refs.len() != 1
+            || context_attach_event.semantic_refs[0].id != create.event_id.as_str()
+            || context_attach_event.semantic_refs[0].role != "after"
+            || !context_attach_event.semantic_refs[0].critical)
     {
         anyhow::bail!("new native Sidecar attach does not exactly follow its create Event");
     }

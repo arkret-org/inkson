@@ -679,7 +679,7 @@ fn server_description_gates_event_envelope_write_plane() {
         missing_event_envelope_write_requirements(&events_missing),
         vec![
             "ak.profile.core_event_store.v1",
-            "ak.self.events.read.describe.v1",
+            "ak.server.read.describe.v1",
             "ak.self.events.command.submit.v1"
         ]
     );
@@ -689,7 +689,7 @@ fn server_description_gates_event_envelope_write_plane() {
         missing_v1_station_requirements(&events_missing),
         vec![
             "ak.profile.core_event_store.v1",
-            "ak.self.events.read.describe.v1",
+            "ak.server.read.describe.v1",
             "ak.self.events.command.submit.v1",
         ]
     );

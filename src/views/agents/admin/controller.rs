@@ -877,7 +877,7 @@ impl AgentAdminController {
                 let controller_principal_id = controller_principal_id.clone();
                 let controller_authorization_ref = controller_authorization_ref.clone();
                 move |submitter| async move {
-                    let describe = submitter.events_describe().await?;
+                    let describe = submitter.service_describe().await?;
                     let draft = crate::event_builders::build_agent_pcr_create_event(
                         agent_id.as_str(),
                         initial_resolution,

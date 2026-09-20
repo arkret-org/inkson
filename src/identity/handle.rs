@@ -8,14 +8,14 @@
 //! A handle is **addressing only**. It is NEVER materialised into an
 //! authoritative principal/subject DID on the client: per
 //! `identity/identity-handles.md §80` the resolution result MUST first be
-//! reduced to a DID + verifiable claim by the Directory (`resolve_handle`),
+//! reduced to a DID + verifiable claim before it reaches the client,
 //! and a handle string carries no verifiable claim that the client could use
 //! to fabricate that DID. The previous client-side
 //! `format!("did:web:{domain}:users:{localpart}")` materialisation has been
 //! removed: it both bypassed the directory-attested reduction and hard-coded
 //! the `did:web` method even though v1 core defaults principal/service to
 //! `did:webvh`. The authoritative `AccountId` must be taken from the verified
-//! claim in the Directory `resolve_handle` response: its `principal_id`
+//! claim embedded in accepted Realm state: its `principal_id`
 //! identifies the account and its `station_id` is the routing coordinate.
 //! Neither value may be invented by this parser.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,6 +118,6 @@ mod tests {
     #[test]
     fn principal_identifier_accepts_did_but_fails_closed_on_handle() {
         // A bare handle is NOT materialised into a fabricated DID; reducing it
-        // requires a directory-attested resolve_handle round-trip.
+        // requires separately verified signed evidence.
     }
 }

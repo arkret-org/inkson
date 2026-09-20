@@ -330,20 +330,11 @@ pub async fn verify_authorized_pairing_event_for_authority(
     if attestation.account_id != *authority {
         anyhow::bail!("authorized pairing attestation was signed for another account");
     }
-    let resolved = http
-        .events_resolve(&arkret_sdk::EventsResolveRequestBody {
-            event_ids: vec![event_ref.clone()],
-            event_digests: Vec::new(),
-            include_payload: Some(true),
-            history_traversal_access: None,
-            max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
-        })
-        .await?;
+    let resolved = http.committed_event_get(event_ref).await?;
     let event = resolved
-        .events
-        .into_iter()
-        .find(|event| &event.event_id == event_ref)
-        .ok_or_else(|| anyhow::anyhow!("authorized device Event is not accepted"))?;
+        .reducer_input()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("authorized device Event is withheld"))?;
     let principal_actor = arkret_sdk::project_did_to_core_id(principal)?;
     if authority.principal_id != principal_actor {
         anyhow::bail!("pairing authority does not match the target principal");

@@ -40,25 +40,25 @@ impl StationFeature {
         use ServiceOperationId::*;
         match self {
             Self::Discussion => &[
-                SelfEventsReadScanV1,
-                SelfEventsResourceGetV1,
-                SelfEventsStreamSubscribeV1,
+                SelfCommittedEventReadScanV1,
+                SelfCommittedEventResourceGetV1,
+                SelfCommittedEventStreamSubscribeV1,
             ],
             Self::Board => &[
-                SelfEventsReadScanV1,
-                SelfEventsResourceGetV1,
-                SelfEventsStreamSubscribeV1,
+                SelfCommittedEventReadScanV1,
+                SelfCommittedEventResourceGetV1,
+                SelfCommittedEventStreamSubscribeV1,
                 SelfSpaceReadListV1,
                 SelfStrandReadListV1,
             ],
             Self::CreateRealm => &[
                 ServerReadDescribeV1,
                 SelfEventsCommandSubmitV1,
-                SelfEventsReadScanV1,
+                SelfCommittedEventReadScanV1,
                 OpenServiceReadResolutionV1,
                 SelfSignerKeysReadResolveV1,
             ],
-            Self::CreateSpace => &[SelfEventsCommandSubmitV1, SelfEventsReadScanV1],
+            Self::CreateSpace => &[SelfEventsCommandSubmitV1, SelfCommittedEventReadScanV1],
             Self::Circles => &[SelfCircleReadListV1],
             Self::PublishKeyPackage => &[
                 SelfKeysKeypackagesUploadCreateV1,
@@ -68,13 +68,13 @@ impl StationFeature {
                 SelfKeysKeypackagesCommandClaimV1,
                 SelfKeysKeypackagesCommandConsumeV1,
                 SelfEventsCommandSubmitV1,
-                SelfEventsReadScanV1,
+                SelfCommittedEventReadScanV1,
             ],
             Self::WelcomeBootstrap => &[
                 SelfDeviceMessagesReadListV1,
                 SelfDeviceMessagesCommandAckV1,
                 SelfKeysKeypackagesCommandConsumeV1,
-                SelfEventsReadScanV1,
+                SelfCommittedEventReadScanV1,
             ],
         }
     }

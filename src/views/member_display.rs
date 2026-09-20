@@ -6,7 +6,6 @@ use arkret_sdk::identity::{
 };
 use arkret_sdk::sync::{MemberRosterEntry, MemberRosterMembership};
 use arkret_sdk::{AccountId, Handle};
-use dioxus::prelude::{SyncSignal, WritableExt};
 use serde_json::Value;
 
 use super::helpers::short_protocol_id;
@@ -52,21 +51,6 @@ pub(crate) struct ResolvedMemberDisplay {
     pub display_name: Option<String>,
     pub avatar_blob_ref: Option<arkret_sdk::BlobRef>,
     pub subject_id: Option<String>,
-}
-
-/// One pending `ak.find.directory.read.list_handles_for_subject.v1` fetch.
-///
-/// `client-sync.md` §8.1 only allows this query when the roster disclosed the
-/// member's exact `subject_account_id` (or the decrypted MemberIdentity
-/// disclosed an account-branch `subject_actor_id`); the Realm `actor_id`, a
-/// pairwise principal and any single-component assembly are all forbidden as
-/// query input, so the request carries the complete `AccountId`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct MemberHandleLookupRequest {
-    pub request_key: String,
-    pub subject_account_id: AccountId,
-    pub realm_id: String,
-    pub member_display_state_digest: Option<String>,
 }
 
 /// Wire value of a roster membership state. `MemberRosterMembership` is closed to
@@ -313,143 +297,6 @@ pub(crate) fn member_handle_lookup_account(
     })
 }
 
-pub(crate) fn member_handle_fetch_key(
-    realm_id: &str,
-    subject_account_id: &AccountId,
-    digest: Option<&str>,
-) -> String {
-    format!(
-        "{}\u{1f}{}\u{1f}{}",
-        realm_id.trim(),
-        subject_account_id,
-        digest.unwrap_or_default().trim()
-    )
-}
-
-pub(crate) fn missing_member_handle_lookups(
-    store: &LocalStateStore,
-    realm_id: &str,
-    rows: &[RealmMemberRow],
-    in_flight: &BTreeSet<String>,
-) -> Vec<MemberHandleLookupRequest> {
-    let mut requests = Vec::new();
-    let policies = realm_handle_issuer_policies(&store.load().realm_tree_projections, realm_id);
-    for row in rows {
-        if inline_primary_handle(row, &policies, Some(realm_id)).is_some() {
-            continue;
-        }
-        let identity = store.resolved_member_identity(realm_id, &row.actor_id);
-        let Some(subject_account_id) = member_handle_lookup_account(row, identity.as_ref()) else {
-            continue;
-        };
-        let digest = row.member_display_state_digest.clone();
-        if store
-            .cached_member_handle_lookup(&subject_account_id, Some(realm_id), digest.as_deref())
-            .is_some()
-        {
-            continue;
-        }
-        let request_key = member_handle_fetch_key(realm_id, &subject_account_id, digest.as_deref());
-        if in_flight.contains(&request_key) {
-            continue;
-        }
-        requests.push(MemberHandleLookupRequest {
-            request_key,
-            subject_account_id,
-            realm_id: realm_id.to_owned(),
-            member_display_state_digest: digest,
-        });
-    }
-    requests
-}
-
-/// Whether a `list_handles_for_subject` answer may be used for the request
-/// that produced it.
-///
-/// `discovery/discovery-directory.md` requires the response `account_id` to be
-/// the exact subject that was asked about and forbids merging the same
-/// principal's account at another Station. The comparison is therefore over
-/// the whole `AccountId`; a mismatching answer is unusable and is recorded as
-/// a negative entry under the requested subject rather than re-keyed onto the
-/// account that answered.
-pub(crate) fn member_handle_response_matches_request(
-    response: &arkret_models_discovery::DirectorySubjectHandleList,
-    request: &MemberHandleLookupRequest,
-) -> bool {
-    response.account_id == request.subject_account_id
-}
-
-pub(crate) async fn fetch_and_cache_member_handle(
-    base_url: String,
-    api_token: String,
-    mut state_store: SyncSignal<LocalStateStore>,
-    request: MemberHandleLookupRequest,
-) {
-    let result = crate::transport::auth::with_endpoint_clients(&base_url, api_token, None, {
-        let subject_account_id = request.subject_account_id.clone();
-        let realm_id = request.realm_id.clone();
-        move |clients| async move {
-            clients
-                .directory()
-                .list_handles_for_subject(
-                    &subject_account_id,
-                    Some(&realm_id),
-                    Some(arkret_models_discovery::DirectoryIntent::Lookup),
-                )
-                .await
-        }
-    })
-    .await;
-    match result {
-        Ok(response) if member_handle_response_matches_request(&response, &request) => {
-            let primary = response
-                .primary_handle
-                .as_ref()
-                .map(|handle| handle.canonical().to_owned());
-            let claims_count = response.claims.len();
-            let earliest_expiry = response
-                .claims
-                .iter()
-                .filter_map(|claim| claim.claim.expires_at.as_ref().cloned())
-                .min();
-            state_store.write().save_member_handle_lookup(
-                &request.subject_account_id,
-                Some(request.realm_id),
-                request.member_display_state_digest,
-                primary,
-                claims_count,
-                Some(response.as_of),
-                earliest_expiry,
-            );
-        }
-        Ok(_) => {
-            // See [`member_handle_response_matches_request`]: an answer about
-            // another account is unusable for this subject.
-            state_store.write().save_member_handle_lookup(
-                &request.subject_account_id,
-                Some(request.realm_id),
-                request.member_display_state_digest,
-                None,
-                0,
-                None,
-                None,
-            );
-        }
-        Err(error) if !error.is_auth_expired() => {
-            state_store.write().save_member_handle_lookup(
-                &request.subject_account_id,
-                Some(request.realm_id),
-                request.member_display_state_digest,
-                None,
-                0,
-                None,
-                None,
-            );
-        }
-        Err(_) => {}
-    }
-}
-
 /// §3.8.2 step 5 — the visual-degradation tier a rendered member label sits
 /// on. Every non-`Verified` tier MUST be visually marked as degraded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -598,7 +445,7 @@ pub(crate) fn resolve_member_display_with_policies(
     let handle_lookup_account = member_handle_lookup_account(row, identity.as_ref());
     // §3.8.2 step 4a input: the last verified primary handle this client saw
     // for the subject, either the active account's own persisted handle or a
-    // fresh Directory `list_handles_for_subject` result. The Directory cache
+    // signed handle evidence already carried by Realm state. The local cache
     // is addressed by the exact `AccountId` only; a row without a disclosed
     // subject has no cache key and degrades instead of borrowing another
     // Station's account.

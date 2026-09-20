@@ -41,7 +41,6 @@ pub mod config;
 pub mod conformance;
 pub mod content;
 pub(crate) mod current_projection;
-pub(crate) mod directory_helpers;
 pub(crate) mod ephemeral;
 pub mod event_builders;
 pub mod event_signer;

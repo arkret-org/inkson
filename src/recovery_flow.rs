@@ -160,15 +160,8 @@ pub async fn verify_recovery_authority_evidence(
         anyhow::bail!("durable bootstrap Seal does not cover the complete PCR genesis unit");
     }
     let http = api.sdk_http_client()?;
-    let resolved = http
-        .events_resolve(&arkret_sdk::EventsResolveRequestBody {
-            event_ids: vec![create.event_id.clone(), authorize.event_id.clone()],
-            event_digests: vec![create_digest.clone(), authorize_digest.clone()],
-            include_payload: Some(true),
-            history_traversal_access: None,
-            max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
-        })
-        .await?;
+    let resolved_create = http.committed_event_get(&create.event_id).await?;
+    let resolved_authorize = http.committed_event_get(&authorize.event_id).await?;
     let resolved_seals = http
         .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
             realm_id: evidence.bootstrap_seal.realm_id.clone(),
@@ -179,14 +172,12 @@ pub async fn verify_recovery_authority_evidence(
         })
         .await?;
     let resolved_seals = resolved_seals.into_seals()?;
-    if !resolved
-        .events
-        .iter()
-        .any(|event| accepted_event_matches_genesis_basis(event, create, &create_digest))
-        || !resolved
-            .events
-            .iter()
-            .any(|event| accepted_event_matches_genesis_basis(event, authorize, &authorize_digest))
+    if !resolved_create
+        .reducer_input()
+        .is_some_and(|event| accepted_event_matches_genesis_basis(event, create, &create_digest))
+        || !resolved_authorize.reducer_input().is_some_and(|event| {
+            accepted_event_matches_genesis_basis(event, authorize, &authorize_digest)
+        })
         || !resolved_seals
             .iter()
             .any(|seal| seal == &evidence.bootstrap_seal)

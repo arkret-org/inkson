@@ -553,7 +553,7 @@ pub fn build_direct_conversation_founding_steps(
                     founder.station_id.clone(),
                     create_payload,
                 )
-                .refs(vec![founding_ref.clone()])
+                .semantic_refs(vec![founding_ref.clone()])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
                 .into_intent(),
@@ -592,7 +592,7 @@ pub fn build_direct_conversation_founding_steps(
                     membership,
                 )
                 .target_ref(member_cell_subject)
-                .refs(vec![founding_ref.clone()])
+                .semantic_refs(vec![founding_ref.clone()])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
                 .into_intent(),
@@ -618,7 +618,7 @@ pub fn build_direct_conversation_founding_steps(
                     founder.station_id.clone(),
                     strand_payload,
                 )
-                .refs(vec![founding_ref.clone()])
+                .semantic_refs(vec![founding_ref.clone()])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
                 .into_intent(),
@@ -647,7 +647,7 @@ pub fn build_direct_conversation_founding_steps(
                     founder_membership,
                 )
                 .target_ref(founder_member_cell_subject)
-                .refs(vec![founding_ref.clone()])
+                .semantic_refs(vec![founding_ref.clone()])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
                 .into_intent(),
@@ -1365,7 +1365,7 @@ mod genesis_authority_tests {
         )
         .expect("controller must freeze an exact event-derived PCR create");
         assert_eq!(event.kind(), &arkret_sdk::EventKind::RealmCreate);
-        assert!(event.intent().refs().is_empty());
+        assert!(event.intent().semantic_refs().is_empty());
     }
 
     #[test]
@@ -1383,7 +1383,7 @@ mod genesis_authority_tests {
         )
         .expect("the PCR bootstrap unit authors");
         assert_eq!(events.len(), 1);
-        assert!(events[0].refs.is_empty());
+        assert!(events[0].semantic_refs.is_empty());
     }
 
     /// Mirror of the Station's `ak.realm.create` candidate gate
@@ -1552,7 +1552,7 @@ mod genesis_authority_tests {
             authored.realm_id,
             arkret_sdk::derive_genesis_realm_id(authored.event_id())
         );
-        assert!(event.intent().refs().is_empty());
+        assert!(event.intent().semantic_refs().is_empty());
     }
 
     #[test]

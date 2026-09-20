@@ -21,7 +21,7 @@
 //! (`WebSocketSubscribeRequest`), which fans out `account` frames and — when
 //! `include_signals` is set — `signal` envelopes. There is no separate per-Realm
 //! events channel: Realm commits ride the account frames, and a stream tail
-//! pull is `ak.self.events.read.scan.v1` over the canonical HTTPS binding.
+//! pull is `ak.self.committed_event.read.scan.v1` over the canonical HTTPS binding.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};

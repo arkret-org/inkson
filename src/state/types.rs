@@ -241,7 +241,7 @@ impl StoredNotification {
     }
 }
 
-/// Realm-scoped cache for `ak.find.directory.read.list_handles_for_subject.v1`.
+/// Realm-scoped cache for signed handle evidence already carried by Realm state.
 ///
 /// Handles are display evidence, not identity keys. Cache entries are
 /// therefore bound to the exact subject `AccountId`, the Realm context, and
@@ -685,9 +685,9 @@ pub struct PendingPrincipalRegistration {
     /// First Standard grant request, bound to the durable DPoP key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_session: Option<arkret_sdk::InitialSessionGrantIntent>,
-    /// Verified terminal PCR genesis receipt returned with the Standard grant.
+    /// The two authority commits returned with the accepted PCR genesis unit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pcr_genesis_receipt: Option<arkret_sdk::EventBatchReceipt>,
+    pub pcr_genesis_commits: Option<[arkret_wire::RealmCommit; 2]>,
     pub genesis_created_at: String,
     pub genesis_hlc: String,
     /// Random create-time salt committed by `ak.realm.create`. Realm identity
@@ -862,7 +862,7 @@ pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
     #[serde(default)]
     pub(crate) demand_sync: super::demand_sync::DemandSyncState,
-    /// Per-realm `ak.self.events.stream.subscribe.v1` resume cursors, keyed by
+    /// Per-realm `ak.self.committed_event.stream.subscribe.v1` resume cursors, keyed by
     /// realm id. Kept PHYSICALLY SEPARATE from the account-aggregate
     /// `sync_cursor`: the realm events stream and the account stream are
     /// bound to different `filter_digest`s (encoding.md §8.3.1), so their
@@ -1229,7 +1229,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub member_identity_events: BTreeMap<String, BTreeMap<String, Vec<Value>>>,
     /// Display-only cache for reverse handle lookup by subject DID. Entries
-    /// come from validated `ak.find.directory.read.list_handles_for_subject.v1` responses
+    /// come from validated signed handle evidence
     /// or equivalent roster evidence and are never used as authority for
     /// ACL, attribution, membership, or delivery.
     #[serde(default)]

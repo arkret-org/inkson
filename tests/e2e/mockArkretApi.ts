@@ -833,7 +833,7 @@ export async function mockArkretApi(
   const activeAssistantScope = {
     actions: ["ak.event.read"],
     resources: [
-      { kind: "operation", operation: "ak.self.events.read.scan.v1" },
+      { kind: "operation", operation: "ak.self.committed_event.read.scan.v1" },
     ],
   };
   const activeAssistantKeyState = {
@@ -883,14 +883,14 @@ export async function mockArkretApi(
         "ak.event.read",
         "ak.message.create",
         "ak.reaction.add",
-        "ak.self.events.stream.subscribe.v1",
-        "ak.self.events.read.scan.v1",
+        "ak.self.committed_event.stream.subscribe.v1",
+        "ak.self.committed_event.read.scan.v1",
         "ak.self.events.command.submit.v1",
       ],
       resources: [
         {
           kind: "operation",
-          operation: "ak.self.events.stream.subscribe.v1",
+          operation: "ak.self.committed_event.stream.subscribe.v1",
         },
       ],
     };
@@ -912,6 +912,39 @@ export async function mockArkretApi(
   }
   const eventRealmId = (event: Record<string, unknown>) =>
     String(event.realm_id ?? "");
+  const committedEventView = (
+    event: Record<string, unknown>,
+    streamPosition: number,
+  ) => {
+    const realmId = eventRealmId(event);
+    const eventId = String(event.event_id ?? "");
+    const commitId = `ak:realm_commit:${canonicalSha256({ event_id: eventId }).slice("sha256:".length)}`;
+    return {
+      commit: {
+        commit_id: commitId,
+        realm_id: realmId,
+        stream_ref: { kind: "realm", realm_id: realmId },
+        stream_position: streamPosition,
+        previous_commit_ref:
+          streamPosition === 0
+            ? null
+            : `ak:realm_commit:${canonicalSha256({ event_id: eventId, stream_position: streamPosition - 1 }).slice("sha256:".length)}`,
+        event_ref: eventId,
+        governance_generation: 0,
+        authority_ref: eventId,
+        committed_at: "2026-09-20T00:00:00.000Z",
+        signature: {
+          context: "ak.realm_commit_signature.v1",
+          signature_algorithm: "Ed25519",
+          verification_method: `${CURRENT_STATION_ID}#realm-commit`,
+          signed_digest: canonicalSha256({ event_id: eventId, stream_position: streamPosition }),
+          created_at: "2026-09-20T00:00:00.000Z",
+          sig: "c2ln",
+        },
+      },
+      event,
+    };
+  };
   const accountDeviceSummaries = () =>
     Array.from(accountDevices.values()).map((device) => {
       const summary: Record<string, unknown> = {
@@ -1347,152 +1380,6 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname === "/_arkret/self/events/frontier" &&
-      route.request().method() === "QUERY"
-    ) {
-      const selector = (await route.request().postDataJSON()) as Record<
-        string,
-        unknown
-      >;
-      const actorId =
-        selector.actor_id !== null &&
-        typeof selector.actor_id === "object" &&
-        !Array.isArray(selector.actor_id)
-          ? (selector.actor_id as Record<string, unknown>)
-          : null;
-      const realmId =
-        typeof selector.realm_id === "string" ? selector.realm_id : null;
-      if (actorId && realmId) {
-        const actorEvents = projectionEvents.filter(
-          (event) =>
-            eventRealmId(event) === realmId &&
-            canonicalJson(event.actor_id) === canonicalJson(actorId),
-        );
-        const referenced = new Set(
-          actorEvents.flatMap((event) =>
-            Array.isArray(event.prev_refs)
-              ? event.prev_refs.filter(
-                  (eventId): eventId is string => typeof eventId === "string",
-                )
-              : [],
-          ),
-        );
-        const heads = actorEvents
-          .map((event) => event.event_id)
-          .filter(
-            (eventId): eventId is string =>
-              typeof eventId === "string" && !referenced.has(eventId),
-          )
-          .sort();
-        const nextActorSeq =
-          actorEvents.reduce(
-            (highest, event) =>
-              typeof event.actor_seq === "number"
-                ? Math.max(highest, event.actor_seq)
-                : highest,
-            -1,
-          ) + 1;
-        return json(route, {
-          frontier: realmActorFrontier(
-            realmId,
-            actorId,
-            nextActorSeq,
-            heads,
-            "sha256",
-          ),
-        });
-      }
-      if (actorId) {
-        return json(route, {
-          frontier: {
-            kind: "actor_aggregate",
-            actor_id: actorId,
-            realms: [],
-          },
-        });
-      }
-      if (realmId) {
-        if (managedPcrRealmIds.has(realmId)) {
-          const seal = managedPcrSealHeads.get(realmId);
-          if (!seal) {
-            return json(
-              route,
-              {
-                ok: false,
-                error: {
-                  code: "not_found",
-                  message: "Agent PCR has no accepted Seal yet",
-                },
-              },
-              404,
-            );
-          }
-          return json(route, {
-            frontier: {
-              kind: "realm_seal",
-              realm_id: realmId,
-              seal_id: seal.id,
-              control_event_set_root: seal.control_event_set_root,
-              state_root: seal.state_root,
-              governance_health: {
-                status: "healthy",
-                pending_proposals: [],
-                pending_proposals_complete: true,
-              },
-              hlc: seal.hlc,
-            },
-            receipts: [
-              {
-                kind: "ak.agent_pcr.seal_head.v1",
-                seal,
-              },
-            ],
-          });
-        }
-        const fixture = realmGenesisSeals.get(realmId);
-        if (!fixture) {
-          return json(
-            route,
-            {
-              ok: false,
-              error: {
-                code: "not_found",
-                message: "Realm has no accepted Seal frontier",
-              },
-            },
-            404,
-          );
-        }
-        return json(route, {
-          frontier: {
-            kind: "realm_seal",
-            realm_id: realmId,
-            seal_id: fixture.seal.id,
-            control_event_set_root: fixture.seal.control_event_set_root,
-            state_root: fixture.seal.state_root,
-            governance_health: {
-              status: "healthy",
-              pending_proposals: [],
-              pending_proposals_complete: true,
-            },
-            hlc: fixture.seal.hlc,
-          },
-        });
-      }
-      return json(
-        route,
-        {
-          ok: false,
-          error: {
-            code: "param_invalid",
-            message: "frontier selector is required",
-          },
-        },
-        400,
-      );
-    }
-
-    if (
       url.pathname === "/_arkret/self/seals" &&
       route.request().method() === "POST"
     ) {
@@ -1707,13 +1594,6 @@ export async function mockArkretApi(
         };
       });
       return json(route, { authorization_leases: authorizationLeases });
-    }
-
-    if (
-      url.pathname === "/_arkret/self/events/describe" &&
-      route.request().method() === "QUERY"
-    ) {
-      return json(route, eventsServiceDescribe());
     }
 
     if (
@@ -2179,20 +2059,17 @@ export async function mockArkretApi(
         ) {
           return {};
         }
-        const receiptEvents = [
-          {
-            event_id: createEvent.event_id,
-            kind: "ak.realm.create",
-          },
-          {
-            event_id: authorizeEvent.event_id,
-            kind: "ak.device.authorize",
-          },
-        ].sort((left, right) =>
-          canonicalJson(left).localeCompare(canonicalJson(right)),
-        );
-        const receiptIssuer = CURRENT_STATION_ID;
         const createdAt = "2026-08-09T00:00:00.000Z";
+        const createCommitId =
+          "ak:realm_commit:ARNRmzDi2r78zveOLmoHOb6AephFMwVuGE1fwXmCoeo4";
+        const commitSignature = {
+          context: "ak.realm_commit_signature.v1",
+          signature_algorithm: "Ed25519",
+          verification_method: `${CURRENT_STATION_ID}#realm-commit`,
+          signed_digest: `sha256:${"5".repeat(64)}`,
+          created_at: createdAt,
+          sig: "e2e-realm-commit-signature",
+        };
         return {
           binding_receipt: {
             binding_state: "bound",
@@ -2202,37 +2079,33 @@ export async function mockArkretApi(
             operation_status: "accepted",
             operation_digest: identityCreation.control_proof.operation_digest,
           },
-          pcr_genesis_receipt: {
-            schema: "ak.schema.event_batch_receipt.v1",
-            receipt_id: "ak:receipt:019a6413-7000-7000-8000-000000000001",
-            issuer: receiptIssuer,
-            scope: {
-              kind: "pcr_genesis_unit",
-              principal_id: body.principal_id,
+          pcr_genesis_commits: [
+            {
+              commit_id: createCommitId,
               realm_id: createEvent.realm_id,
-              did_version_id: identityCreation.control_proof.did_version_id,
-              log_head_digest: identityCreation.control_proof.log_head_digest,
-              control_key_digest:
-                identityCreation.control_proof.control_key_digest,
-              registration_evidence_digest: `sha256:${"4".repeat(64)}`,
-              accepted_device_id: registrationDeviceId,
-              device_key_digest: descriptor.device_key_digest,
-              hpke_key_digest: descriptor.hpke_key_digest,
-              accepted_at: createdAt,
-              audience: identityCreation.control_proof.audience,
+              stream_ref: { kind: "realm", realm_id: createEvent.realm_id },
+              stream_position: 0,
+              previous_commit_ref: null,
+              event_ref: createEvent.event_id,
+              governance_generation: 0,
+              authority_ref: createEvent.event_id,
+              committed_at: createdAt,
+              signature: commitSignature,
             },
-            events: receiptEvents,
-            created_at: createdAt,
-            proofs: [
-              {
-                kind: "detached_jws",
-                verification_method: `${receiptIssuer}#receipt`,
-                payload_digest: `sha256:${"5".repeat(64)}`,
-                created_at: createdAt,
-                jws: "e2e..pcr-genesis-receipt",
-              },
-            ],
-          },
+            {
+              commit_id:
+                "ak:realm_commit:AdA0TA9zF1BPiudM7qe4WqKZLjMn0r7--gKAHqstAWDZ",
+              realm_id: createEvent.realm_id,
+              stream_ref: { kind: "realm", realm_id: createEvent.realm_id },
+              stream_position: 1,
+              previous_commit_ref: createCommitId,
+              event_ref: authorizeEvent.event_id,
+              governance_generation: 0,
+              authority_ref: createEvent.event_id,
+              committed_at: createdAt,
+              signature: commitSignature,
+            },
+          ],
           session_grant_outcome: {
             principal_id: body.principal_id,
             device_id: registrationDeviceId,
@@ -2245,7 +2118,7 @@ export async function mockArkretApi(
             audience: identityCreation.initial_session.audience,
             granted_scope: [
               "ak.self.account.read.describe.v1",
-              "ak.self.events.read.scan.v1",
+              "ak.self.committed_event.read.scan.v1",
             ],
           },
         };
@@ -2609,45 +2482,6 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname === "/_arkret/find/directory/search-organizations" &&
-      route.request().method() === "POST"
-    ) {
-      return json(route, {
-        organizations: [
-          {
-            organization_id: "ak:did_core:web:org.arkret.example",
-            handle: "arkret.example",
-            display_name: "Arkret Labs",
-            as_of: "2026-06-19T00:00:00.000Z",
-            // No `source_refs`: a mocked entry has no Event provenance, and
-            // directory-operations.schema.json forbids synthesizing an id for
-            // an Event the implementation never authored.
-            policy_revision: "local",
-          },
-        ],
-        has_more: false,
-      });
-    }
-
-    if (
-      url.pathname === "/_arkret/find/directory/search-actors" &&
-      route.request().method() === "POST"
-    ) {
-      return json(route, {
-        actors: [
-          {
-            actor_id: accountActorIdFor("ak:did_core:web:bob.example"),
-            handle: "bob:local.host",
-            display_name: "Bob Example",
-            as_of: "2026-04-28T12:00:00.000Z",
-            policy_revision: "1",
-          },
-        ],
-        has_more: false,
-      });
-    }
-
-    if (
       url.pathname === "/_arkret/open/invite-locators/resolve" &&
       route.request().method() === "POST"
     ) {
@@ -2660,58 +2494,6 @@ export async function mockArkretApi(
           subject_id: "ak:did_core:web:carol.example",
         }),
       );
-    }
-
-    if (
-      url.pathname === "/_arkret/find/directory/resolve-handle" &&
-      route.request().method() === "POST"
-    ) {
-      const body = await route.request().postDataJSON();
-      const audience =
-        body.audience ??
-        body.realm_id ??
-        body.requester ??
-        CURRENT_STATION_ID;
-      return json(route, {
-        account_id: {
-          principal_id: accountPrincipalId,
-          station_id: CURRENT_STATION_ID,
-        },
-        handle: body.handle,
-        verified: true,
-        claims: [],
-        source_refs: [audience],
-      });
-    }
-
-    if (
-      url.pathname === "/_arkret/find/directory/list-handles-for-subject" &&
-      route.request().method() === "POST"
-    ) {
-      const body = await route.request().postDataJSON();
-      const subject = body.subject ?? accountPrincipalId;
-      const subjectPrimaryHandle = directoryHandleForSubject(subject);
-      const subjectAccountId = {
-        principal_id: didCoreId(subject),
-        station_id: CURRENT_STATION_ID,
-      };
-      if (!subjectPrimaryHandle) {
-        return json(route, {
-          account_id: subjectAccountId,
-          as_of: "2026-04-28T12:00:00.000Z",
-          has_more: false,
-          claims: [],
-        });
-      }
-      return json(route, {
-        account_id: subjectAccountId,
-        primary_handle: subjectPrimaryHandle,
-        as_of: "2026-04-28T12:00:00.000Z",
-        has_more: false,
-        claims: [
-          handleClaimStatusView(subjectPrimaryHandle, subjectAccountId.principal_id),
-        ],
-      });
     }
 
     if (
@@ -2729,19 +2511,19 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname === "/_arkret/self/events/subscribe" &&
+      url.pathname === "/_arkret/self/committed-events/subscribe" &&
       route.request().method() === "GET"
     ) {
       const cursor = "ak:cursor:e2e-events-2";
       if (url.searchParams.has("after")) {
         await new Promise((resolve) => setTimeout(resolve, 5_000));
         const controlFrames = [
-          { kind: "frontier", cursor },
+          { kind: "checkpoint", cursor },
           { kind: "catchup_complete", cursor },
         ];
         controlFrames.forEach((frame) =>
           validateMockSchema(
-            "schemas/events-subscribe-frame.schema.json",
+            "schemas/committed-event-subscribe-frame.schema.json",
             frame,
           ),
         );
@@ -2751,8 +2533,8 @@ export async function mockArkretApi(
           body: `${controlFrames.map(canonicalJson).join("\n")}\n`,
         });
       }
-      const requestedRealms = (url.searchParams.get("realms") ?? "")
-        .split(",")
+      const requestedRealms = url.searchParams
+        .getAll("realm_ids")
         .map((realm) => realm.trim())
         .filter(Boolean);
       const frames: Array<Record<string, unknown>> = projectionEvents
@@ -2761,15 +2543,18 @@ export async function mockArkretApi(
             requestedRealms.length === 0 ||
             requestedRealms.includes(eventRealmId(event)),
         )
-        .map((payload) => ({
-          kind: "event",
+        .map((payload, index) => ({
+          kind: "committed_event",
           realm_id: eventRealmId(payload),
           cursor,
-          payload,
+          payload: committedEventView(payload, index),
         }));
       frames.push({ kind: "catchup_complete", cursor });
       frames.forEach((frame) =>
-        validateMockSchema("schemas/events-subscribe-frame.schema.json", frame),
+        validateMockSchema(
+          "schemas/committed-event-subscribe-frame.schema.json",
+          frame,
+        ),
       );
       return route.fulfill({
         status: 200,
@@ -2779,80 +2564,42 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname === "/_arkret/self/events" &&
-      route.request().method() === "QUERY"
+      url.pathname === "/_arkret/self/streams/scan" &&
+      route.request().method() === "POST"
     ) {
       const requestBody = (await route.request().postDataJSON()) as Record<
         string,
         unknown
       >;
-      const requestedRealms = Array.isArray(requestBody.realms)
-        ? requestBody.realms.filter(
-            (realm): realm is string => typeof realm === "string",
-          )
-        : [];
-      const events = requestedRealms.length
-        ? projectionEvents.filter((event) =>
-            requestedRealms.includes(eventRealmId(event)),
-          )
-        : projectionEvents;
-      const response: Record<string, unknown> = {
-        events,
-        has_more: false,
-      };
-      return json(route, response);
+      const requestedRealm =
+        typeof requestBody.realm_id === "string" ? requestBody.realm_id : "";
+      return json(route, {
+        committed_events: projectionEvents
+          .filter((event) => eventRealmId(event) === requestedRealm)
+          .map(committedEventView),
+        truncated: false,
+      });
     }
 
     // invite-addressing.md §7 — before dispatching private invite delivery the
     // client MUST read the accepted Event back through
-    // `ak.self.events.read.resolve.v1` (`QUERY /_arkret/self/events/resolve`)
+    // `ak.self.committed_event.read.scan.v1` (`POST /_arkret/self/streams/scan`)
     // rather than re-authoring an equivalent one, because only the server's own
     // view is guaranteed byte-identical to the persisted canonical bytes. The
     // mock therefore serves back exactly what it accepted on POST
     // /_arkret/self/events.
-    if (
-      url.pathname === "/_arkret/self/events/resolve" &&
-      route.request().method() === "QUERY"
-    ) {
-      const requestBody = ((await contractRequestBody(route)) ?? {}) as Record<
-        string,
-        unknown
-      >;
-      const requested = Array.isArray(requestBody.event_ids)
-        ? requestBody.event_ids.filter(
-            (eventId): eventId is string => typeof eventId === "string",
-          )
-        : [];
-      const requestedDigests = Array.isArray(requestBody.event_digests)
-        ? requestBody.event_digests.filter(
-            (digest): digest is string => typeof digest === "string",
-          )
-        : [];
-      const eventIdsForDigests = new Set(
-        [...realmGenesisSeals.values()]
-          .flatMap((fixture) => fixture.event_digests)
-          .filter((entry) => requestedDigests.includes(entry.digest))
-          .map((entry) => entry.event_id),
+    const committedEventMatch = url.pathname.match(
+      /^\/_arkret\/self\/committed-events\/(ak:event:[A-Za-z0-9_-]+)$/,
+    );
+    if (committedEventMatch && route.request().method() === "GET") {
+      const requestedEventId = decodeURIComponent(committedEventMatch[1]);
+      const index = projectionEvents.findIndex(
+        (event) => event.event_id === requestedEventId,
       );
-      const resolved = projectionEvents.filter(
-        (event) =>
-          requested.includes(String(event.event_id)) ||
-          eventIdsForDigests.has(String(event.event_id)),
-      );
-      const found = new Set(resolved.map((event) => String(event.event_id)));
-      const foundDigests = new Set(
-        [...realmGenesisSeals.values()]
-          .flatMap((fixture) => fixture.event_digests)
-          .filter((entry) => found.has(entry.event_id))
-          .map((entry) => entry.digest),
-      );
-      return json(route, {
-        events: resolved,
-        missing: [
-          ...requested.filter((eventId) => !found.has(eventId)),
-          ...requestedDigests.filter((digest) => !foundDigests.has(digest)),
-        ],
-      });
+      if (index < 0) {
+        return json(route, { error: { code: "not_found" } }, 404);
+      }
+      return json(route, committedEventView(projectionEvents[index], index));
     }
 
     // invite-addressing.md §7 — `ak.self.invites.command.dispatch.v1`. The client
@@ -4492,7 +4239,7 @@ function staticMockResponseFixtures(
       value: principalServiceDescribe(),
     },
     {
-      operation_id: "ak.self.events.read.describe.v1",
+      operation_id: "ak.server.read.describe.v1",
       status: 200,
       value: eventsServiceDescribe(),
     },

@@ -590,12 +590,12 @@ impl EventSubmitter {
             .to_string())
     }
 
-    /// `ak.self.events.read.describe.v1`.
-    pub async fn events_describe(&self) -> anyhow::Result<arkret_sdk::ServiceDescribe> {
+    /// Current server metadata.
+    pub async fn service_describe(&self) -> anyhow::Result<arkret_sdk::ServiceDescribe> {
         self.http
-            .events_describe()
+            .describe()
             .await
-            .map_err(|error| anyhow::anyhow!("events describe: {error}"))
+            .map_err(|error| anyhow::anyhow!("server describe: {error}"))
     }
 
     fn ensure_realm_detail_current(&self, realm_id: &str) -> anyhow::Result<()> {
@@ -1419,7 +1419,7 @@ impl EventSubmitter {
                 authority_hints,
                 state_store,
             } => {
-                let stream_row = arkret_wire::StreamRow {
+                let committed_event = arkret_wire::CommittedEventFullView {
                     commit: commit.clone(),
                     event: queued_event(item).clone(),
                 };
@@ -1427,7 +1427,7 @@ impl EventSubmitter {
                     state_store,
                     authority,
                     device_id,
-                    &stream_row,
+                    &committed_event,
                     authority_hints,
                 )
                 .await

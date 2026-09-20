@@ -1,4 +1,4 @@
-//! Per-stream `ak.self.events.read.scan.v1` tail-follow engine.
+//! Per-stream `ak.self.committed_event.read.scan.v1` tail-follow engine.
 //!
 //! This is the Realm-scoped counterpart to [`crate::sync_engine`]. The account
 //! engine drives `/_arkret/self/account/subscribe` (the account-aggregate
@@ -20,18 +20,16 @@
 //! and advances each of them on its own. A stream is drained by repeating the
 //! scan while the Station reports `truncated`.
 //!
-//! The Station answers a scan with whole [`arkret_wire::StreamRow`]s (the
-//! authority `RealmCommit` plus the exact Event it covers), so every row this
-//! engine folds is complete: there is no second "resolve the payload" round
-//! trip on the follow path.
+//! The Station answers a scan with [`arkret_wire::CommittedEventView`] values,
+//! preserving withheld disclosure without inventing a replacement Event.
 
 use std::collections::BTreeSet;
 use std::time::Duration;
 
 use garth::{
-    AuthorityClient, ClientEvent, ClientProjector, CommitStreamRef, CommittedDelta, CursorScope,
-    CursorStore, DecodedInbound, InboundDecoder, RealmReplica, RetrySchedule, StreamRow,
-    StreamScanRequest,
+    AuthorityClient, ClientEvent, ClientProjector, CommitStreamRef, CommittedDelta,
+    CommittedEventView, CursorScope, CursorStore, DecodedInbound, InboundDecoder, RealmReplica,
+    RetrySchedule, StreamScanRequest,
 };
 
 use crate::config::MultiProfileConfig;
@@ -132,15 +130,17 @@ impl ClientProjector for RealmIngestProjector {
 /// Every row carries its own [`arkret_wire::CommitStreamRef`] and
 /// `stream_position` inside [`CommittedDelta`], so nothing here has to invent a
 /// cross-stream ordering to represent them.
-fn stream_rows_to_client_events(
+fn committed_views_to_client_events(
     realm_id: &arkret_sdk::RealmId,
-    commits: Vec<StreamRow>,
+    committed_events: Vec<CommittedEventView>,
 ) -> garth::Result<Vec<ClientEvent>> {
     let decoder = InboundDecoder::new();
-    let mut batch = Vec::with_capacity(commits.len());
-    for item in commits {
-        let delta = CommittedDelta::from_stream_row(realm_id.clone(), item)?;
-        if let DecodedInbound::Message(message) = decoder.decode_event((*delta.event).clone()) {
+    let mut batch = Vec::with_capacity(committed_events.len());
+    for item in committed_events {
+        let delta = CommittedDelta::from_committed_event_view(realm_id.clone(), item)?;
+        if let Some(event) = delta.event()
+            && let DecodedInbound::Message(message) = decoder.decode_event(event.clone())
+        {
             batch.push(ClientEvent::Message(message));
         }
         batch.push(ClientEvent::Committed(delta));
@@ -404,7 +404,7 @@ where
         };
         let outcome = authority.scan(&request).await?;
         let truncated = outcome.truncated;
-        let batch = stream_rows_to_client_events(realm_id, outcome.commits.clone())?;
+        let batch = committed_views_to_client_events(realm_id, outcome.committed_events.clone())?;
         // `apply_scan` re-validates the window against the installed head, so
         // a Station that answers with a gap or a replayed prefix is rejected
         // before anything is folded or checkpointed.

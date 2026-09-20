@@ -1,24 +1,5 @@
 use super::*;
 
-pub(super) fn display_handles_from_directory_response(
-    res: &arkret_models_discovery::DirectorySubjectHandleList,
-) -> Vec<String> {
-    let mut seen = BTreeSet::<String>::new();
-    let mut handles = Vec::<String>::new();
-    let mut push_handle = |handle: String| {
-        if !handle.trim().is_empty() && seen.insert(handle.clone()) {
-            handles.push(handle);
-        }
-    };
-    if let Some(primary) = res.primary_handle.as_ref() {
-        push_handle(primary.canonical().to_owned());
-    }
-    for claim in &res.claims {
-        push_handle(claim.claim.handle.canonical().to_owned());
-    }
-    handles
-}
-
 pub(crate) fn merge_personal_handles(
     current: &[String],
     incoming: impl IntoIterator<Item = String>,

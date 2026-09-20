@@ -137,7 +137,7 @@ pub fn build_genesis_unit(
             notary: founding_notary,
             genesis_salt,
             trust_domain,
-            did_inception_ref: arkret_sdk::EventRef::new(
+            did_inception_ref: arkret_sdk::SemanticRef::new(
                 did_inception_version_id.clone(),
                 arkret_bootstrap::DID_INCEPTION_REF_ROLE,
             ),

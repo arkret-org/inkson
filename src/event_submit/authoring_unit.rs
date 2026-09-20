@@ -126,10 +126,9 @@ mod tests {
                 let previous = authored
                     .first()
                     .ok_or_else(|| anyhow::anyhow!("the first member must already be authored"))?;
-                Ok(vec![realm_intent().with_ref(arkret_sdk::EventRef::new(
-                    previous.event_id().to_string(),
-                    "predecessor",
-                ))])
+                Ok(vec![realm_intent().with_semantic_ref(
+                    arkret_sdk::SemanticRef::new(previous.event_id().to_string(), "predecessor"),
+                )])
             }),
         ];
 
@@ -137,7 +136,7 @@ mod tests {
 
         assert_eq!(authored.len(), 2);
         assert_eq!(
-            authored[1].refs[0].event_id.as_str(),
+            authored[1].semantic_refs[0].id.as_str(),
             authored[0].event_id().as_str()
         );
         assert_ne!(authored[0].event_id(), authored[1].event_id());

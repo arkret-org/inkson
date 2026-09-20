@@ -757,5 +757,5 @@ fn agent_pcr_prepare_builds_an_exact_ref_free_create() {
         .expect("Agent provision can freeze an event-derived PCR create"),
     );
     assert_eq!(events.len(), 1);
-    assert!(events[0].refs.is_empty());
+    assert!(events[0].semantic_refs.is_empty());
 }

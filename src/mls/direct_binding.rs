@@ -301,7 +301,7 @@ pub(crate) async fn ensure_binding(
                 )
                 .map_err(anyhow::Error::msg)?,
             )
-            .with_ref(arkret_sdk::EventRef::new(
+            .with_semantic_ref(arkret_sdk::SemanticRef::new(
                 create.event_id.to_string(),
                 "direct_conversation_founding_unit",
             )),

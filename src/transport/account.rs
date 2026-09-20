@@ -683,7 +683,7 @@ pub async fn create_direct_conversation_from_resolve(
         submitter.authority()? == founder_account,
         "Direct Conversation founder differs from the authenticated AccountId"
     );
-    let trust_domain = submitter.events_describe().await?.trust_domain;
+    let trust_domain = submitter.service_describe().await?.trust_domain;
     let steps = crate::event_builders::build_direct_conversation_founding_steps(
         founder_account,
         peer_account,

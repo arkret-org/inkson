@@ -1,11 +1,6 @@
 use serde_json::Value;
 use url::Url;
 
-use crate::directory_helpers::{
-    ResolveHandleContext, canonical_invitee_handle, resolve_handle_request_body,
-};
-use crate::models::ResolveHandleView;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct InviteeResolution {
     pub invite_address: arkret_sdk::InviteAddress,
@@ -241,50 +236,6 @@ fn parse_explicit_invite_target(target: &str) -> anyhow::Result<Option<InviteeRe
     Ok(None)
 }
 
-fn resolved_handle_claim(
-    resolved: &ResolveHandleView,
-) -> anyhow::Result<Option<arkret_models_identity::HandleClaim>> {
-    let Some(claim) = resolved
-        .claims
-        .as_ref()
-        .and_then(|claims| claims.first())
-        .cloned()
-    else {
-        return Ok(None);
-    };
-    claim
-        .validate()
-        .map_err(|err| anyhow::anyhow!("directory returned invalid handle_claim: {err}"))?;
-    Ok(Some(claim))
-}
-
-fn resolved_account_invite_address(
-    account_id: &arkret_sdk::AccountId,
-) -> anyhow::Result<arkret_sdk::InviteAddress> {
-    let host = account_id
-        .station_id
-        .as_str()
-        .strip_prefix("ak:did_core:web:")
-        .and_then(|rest| rest.split(':').next())
-        .filter(|host| !host.is_empty())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "handle result Station has no derivable HTTPS origin; use a principal locator"
-            )
-        })?;
-    let resolution_url = format!(
-        "https://{host}{}",
-        arkret_sdk::canonical_service_resolution_path(&account_id.station_id)
-    );
-    let target = arkret_sdk::InviteAddress {
-        account_id: account_id.clone(),
-        service_resolution: arkret_sdk::ServiceResolutionCarrier::ResolutionUrl { resolution_url },
-        route_assistance: None,
-    };
-    target.validate()?;
-    Ok(target)
-}
-
 impl crate::transport::TransportClient {
     // ── Identity & Directory ────────────────────────────────────────
 
@@ -314,91 +265,6 @@ impl crate::transport::TransportClient {
             .map_err(Into::into)
     }
 
-    async fn resolve_handle_with_context(
-        &self,
-        handle: &str,
-        context: ResolveHandleContext<'_>,
-    ) -> anyhow::Result<ResolveHandleView> {
-        let body = resolve_handle_request_body(handle, context)?;
-        let outcome: arkret_sdk::DirectoryHandleResolutionOutcome = self
-            .sdk_http_client()?
-            .directory_resolve_handle(&body)
-            .await
-            .map_err(anyhow::Error::from)?;
-        Ok(outcome)
-    }
-
-    pub async fn resolve_agent_selector_mention(
-        &self,
-        controller_handle: &str,
-        agent_slug: &str,
-        realm_id: &str,
-        requester: &str,
-    ) -> anyhow::Result<arkret_models_discovery::DirectoryAgentSelectorResolutionOutcome> {
-        let controller_handle =
-            arkret_models_identity::Handle::parse(controller_handle).map_err(|err| {
-                anyhow::anyhow!("invalid controller handle `{controller_handle}`: {err}")
-            })?;
-        arkret_models_identity::validate_agent_slug(agent_slug)
-            .map_err(|err| anyhow::anyhow!("invalid agent_slug `{agent_slug}`: {err}"))?;
-        let requester = crate::mls_api_helpers::principal_core_id(requester)
-            .map_err(|err| anyhow::anyhow!("invalid requester DID `{requester}`: {err}"))?;
-        let realm_id = arkret_sdk::RealmId::new(realm_id.trim().to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid realm_id `{realm_id}`: {err}"))?;
-        let body = arkret_models_discovery::DirectoryResolveAgentSelectorRequestBody {
-            controller_handle,
-            agent_slug: agent_slug.to_owned(),
-            expected_actor_id: None,
-            proof_challenge: None,
-            intent: arkret_models_discovery::DirectoryIntent::Mention,
-            realm_id: Some(realm_id),
-            requester_id: requester,
-            proofs: Vec::new(),
-        };
-        let outcome: arkret_models_discovery::DirectoryAgentSelectorResolutionOutcome = self
-            .sdk_http_client()?
-            .directory_resolve_agent_selector(&body)
-            .await
-            .map_err(anyhow::Error::from)?;
-        outcome
-            .validate()
-            .map_err(|err| anyhow::anyhow!("invalid agent selector outcome: {err}"))?;
-        Ok(outcome)
-    }
-
-    async fn resolve_invitee_handle_for_invite(
-        &self,
-        handle: &str,
-        realm_id: &str,
-        actor_id: &str,
-    ) -> anyhow::Result<InviteeResolution> {
-        let resolved = self
-            .resolve_handle_with_context(
-                handle,
-                ResolveHandleContext {
-                    intent: Some("invite"),
-                    requester: Some(actor_id),
-                    audience: Some(realm_id),
-                    realm_id: Some(realm_id),
-                    ..ResolveHandleContext::default()
-                },
-            )
-            .await?;
-        let address = resolved_account_invite_address(&resolved.account_id)?;
-        let handle = arkret_models_identity::Handle::parse(&resolved.handle)
-            .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
-        let evidence = match resolved_handle_claim(&resolved)? {
-            Some(handle_claim) => arkret_sdk::IntroductionEvidence::HandleClaim {
-                handle: handle.clone(),
-                handle_claim: Box::new(handle_claim),
-                resolved_by: None,
-                resolved_at: None,
-            },
-            None => arkret_sdk::IntroductionEvidence::ExplicitAddress,
-        };
-        invitee_resolution(address, Some(handle.canonical().to_owned()), evidence)
-    }
-
     pub(crate) async fn contact_request_addressing(
         &self,
         target: &str,
@@ -415,37 +281,6 @@ impl crate::transport::TransportClient {
                 },
             });
         }
-        if let Ok(handle) = canonical_invitee_handle(target) {
-            let requester = crate::transport::account::account_me(&self.sdk_http_client()?)
-                .await?
-                .principal_id;
-            let resolved = self
-                .resolve_handle_with_context(
-                    &handle,
-                    ResolveHandleContext {
-                        intent: Some("contact_request"),
-                        requester: Some(requester.as_str()),
-                        audience: Some(requester.as_str()),
-                        ..ResolveHandleContext::default()
-                    },
-                )
-                .await?;
-            let handle = arkret_models_identity::Handle::parse(&resolved.handle)
-                .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
-            let introduction_evidence = match resolved_handle_claim(&resolved)? {
-                Some(handle_claim) => arkret_sdk::ContactIntroductionEvidence::HandleClaim {
-                    handle,
-                    handle_claim: Box::new(handle_claim),
-                    resolved_by: None,
-                    resolved_at: None,
-                },
-                None => arkret_sdk::ContactIntroductionEvidence::ExplicitAddress,
-            };
-            return Ok(ContactRequestAddressing {
-                target: resolved.account_id,
-                introduction_evidence,
-            });
-        }
         // An explicit address is the counterparty's complete account. A bare
         // principal has no Station, and this client's Station is not a stand-in
         // for it: the same principal at another Station is a different account
@@ -454,7 +289,7 @@ impl crate::transport::TransportClient {
         let target_account =
             crate::mls_api_helpers::account_id_from_selector(target).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "contact target must be an invite link, handle, or complete account selector"
+                    "contact target must be an invite link or complete account selector"
                 )
             })?;
         Ok(ContactRequestAddressing {
@@ -503,20 +338,14 @@ impl crate::transport::TransportClient {
             return invitee_from_principal_locator(locator);
         }
 
-        if let Ok(handle) = canonical_invitee_handle(target) {
-            return self
-                .resolve_invitee_handle_for_invite(&handle, realm_id, actor_id)
-                .await;
-        }
+        let _ = (realm_id, actor_id);
         if let Some(invitee) = parse_explicit_invite_target(target)? {
             return Ok(invitee);
         }
         if arkret_sdk::Did::new(target.to_owned()).is_ok() {
             anyhow::bail!("raw DID invite target also needs a recipient server DID");
         }
-        anyhow::bail!(
-            "invite target must be a locator, handle, principal locator JSON, or DID + server"
-        )
+        anyhow::bail!("invite target must be a locator, principal locator JSON, or DID + server")
     }
 }
 

@@ -43,15 +43,6 @@ pub(super) fn ChatEffects(
         sync_cursor,
         state_store,
     );
-    use_member_handle_cache(
-        controller,
-        base_url.clone(),
-        selected_realm_id.clone(),
-        token,
-        sync_cursor,
-        realm_live_epoch,
-        state_store,
-    );
     use_eligible_circle_scopes(
         controller,
         base_url.clone(),
@@ -933,64 +924,6 @@ pub(super) fn ChatEffects(
     }
 
     rsx! {}
-}
-
-/// Fill the Directory handle cache for everyone on the Realm roster.
-///
-/// Re-runs when the account cursor or the Realm's live epoch moves, because
-/// either can add a member. `member_handle_fetching` is the in-flight set: a
-/// re-render while a lookup is outstanding must not issue the same Directory
-/// request again.
-fn use_member_handle_cache(
-    controller: ChatController,
-    base_url: String,
-    realm_id: String,
-    token: Signal<String>,
-    sync_cursor: Signal<String>,
-    realm_live_epoch: Signal<u64>,
-    state_store: SyncSignal<crate::state::LocalStateStore>,
-) {
-    let mut member_handle_fetching = controller.member_handle_fetching;
-    use_effect(move || {
-        let _account_cursor = sync_cursor();
-        let _realm_epoch = realm_live_epoch();
-        let api_token = token();
-        if base_url.trim().is_empty() || realm_id.trim().is_empty() || api_token.trim().is_empty() {
-            return;
-        }
-        let projection = state_store
-            .read()
-            .load()
-            .realm_tree_projections
-            .get(&realm_id)
-            .cloned();
-        let rows = crate::views::member_display::realm_member_roster(projection.as_ref());
-        if rows.is_empty() {
-            return;
-        }
-        let fetches = {
-            let store = state_store.read();
-            let in_flight = member_handle_fetching.read();
-            crate::views::member_display::missing_member_handle_lookups(
-                &store, &realm_id, &rows, &in_flight,
-            )
-        };
-        for request in fetches {
-            let request_key = request.request_key.clone();
-            member_handle_fetching.write().insert(request_key.clone());
-            let base = base_url.clone();
-            let credential = api_token.clone();
-            let store = state_store;
-            let mut fetching = member_handle_fetching;
-            spawn(async move {
-                crate::views::member_display::fetch_and_cache_member_handle(
-                    base, credential, store, request,
-                )
-                .await;
-                fetching.write().remove(&request_key);
-            });
-        }
-    });
 }
 
 /// Load the Circles a new Strand may be scoped to.

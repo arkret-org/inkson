@@ -10,7 +10,7 @@ use super::*;
 ///
 /// `TODO`: feed the Realm-scoped roster handle-claim snapshot +
 /// accepted_issuer_ids + a locally cached verified handle in here. Until the
-/// live claim cache + `list_handles_for_subject` plumbing lands we pass an
+/// signed handle evidence is available we pass an
 /// empty snapshot, so the renderer steps down to the cached/name/DID
 /// fallback ladder (each visually degraded) instead of inventing a
 /// handle.

@@ -269,10 +269,12 @@ pub async fn update_realm_metadata(
     submitter.submit_sdk_event(&event).await
 }
 
-fn latest_realm_alias_payload(rows: &[arkret_sdk::EventReadRow]) -> anyhow::Result<Option<Value>> {
+fn latest_realm_alias_payload(
+    rows: &[arkret_wire::CommittedEventView],
+) -> anyhow::Result<Option<Value>> {
     let mut latest = None;
     for row in rows {
-        let Some(event) = row.event() else {
+        let Some(event) = row.reducer_input() else {
             continue;
         };
         if event.kind == arkret_sdk::EventKind::RealmAlias {
@@ -295,11 +297,17 @@ pub async fn set_realm_alias(
     actor_id: &str,
     alias: Option<&str>,
 ) -> anyhow::Result<SubmitEventResult> {
+    let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())?;
     let rows = submitter
         .http()
-        .events_read_all_pages(realm_id)
+        .scan_commit_stream_to_head(
+            realm_id.clone(),
+            arkret_wire::CommitStreamRef::Realm { realm_id },
+            None,
+            100,
+        )
         .await?
-        .events;
+        .committed_events;
     let current = latest_realm_alias_payload(&rows)?;
     let requested = alias.map(str::trim).filter(|alias| !alias.is_empty());
     let event = match (requested, current) {
@@ -703,18 +711,12 @@ mod tests {
     use super::*;
 
     fn settled_realm_profile_winner(
-        rows: &[arkret_sdk::EventReadRow],
+        rows: &[arkret_wire::CommittedEventView],
     ) -> anyhow::Result<(Value, arkret_sdk::Hash)> {
         let writes = rows
             .iter()
-            .filter_map(|row| match row {
-                arkret_sdk::EventReadRow::Event(event)
-                    if event.kind == arkret_sdk::EventKind::RealmProfile =>
-                {
-                    Some(event)
-                }
-                _ => None,
-            })
+            .filter_map(arkret_wire::CommittedEventView::reducer_input)
+            .filter(|event| event.kind == arkret_sdk::EventKind::RealmProfile)
             .map(|event| {
                 arkret_sdk::StateWrite::new(
                     event.event_id.clone(),
@@ -735,6 +737,41 @@ mod tests {
     const ACTOR_ID: &str = "ak:did_core:web:alice.example";
     const SERVICE_DID: &str = "did:web:server.example";
 
+    fn committed_row(event: arkret_sdk::Event) -> arkret_wire::CommittedEventView {
+        let commit = arkret_wire::RealmCommit {
+            commit_id: arkret_wire::RealmCommitId::from_digest([1; 32]),
+            realm_id: event.realm_id.clone(),
+            stream_ref: arkret_wire::CommitStreamRef::from_scope(
+                &event.scope_ref,
+                Some(event.realm_id.clone()),
+            )
+            .unwrap(),
+            stream_position: 0,
+            previous_commit_ref: None,
+            event_ref: event.event_id.clone(),
+            governance_generation: 0,
+            authority_ref: arkret_wire::RealmCommitAuthorityRef::GenesisOrChangeEvent(
+                arkret_wire::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [9; 32]),
+            ),
+            committed_at: chrono::DateTime::parse_from_rfc3339("2026-09-20T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            signature: arkret_wire::DetachedObjectSignature {
+                context: arkret_wire::DetachedSignatureContext::RealmCommit,
+                signature_algorithm: arkret_wire::DetachedSignatureAlgorithm::Ed25519,
+                verification_method: arkret_wire::DidUrl::new("did:web:authority.example#key-1")
+                    .unwrap(),
+                signed_digest: arkret_wire::Hash::new(format!("sha256:{}", "a".repeat(64)))
+                    .unwrap(),
+                created_at: chrono::DateTime::parse_from_rfc3339("2026-09-20T00:00:00Z")
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
+                sig: arkret_wire::Base64UrlString::new("AA").unwrap(),
+            },
+        };
+        arkret_wire::CommittedEventView::Full(arkret_wire::CommittedEventFullView { commit, event })
+    }
+
     #[test]
     fn latest_alias_payload_folds_accepted_declaration_and_tombstone() {
         let declaration =
@@ -743,12 +780,8 @@ mod tests {
         let tombstone =
             build_realm_alias_tombstone_event(REALM_ID, ACTOR_ID, declaration_value).unwrap();
         let rows = vec![
-            arkret_sdk::EventReadRow::Event(
-                crate::operation::author_for_test(&declaration).into_event(),
-            ),
-            arkret_sdk::EventReadRow::Event(
-                crate::operation::author_for_test(&tombstone).into_event(),
-            ),
+            committed_row(crate::operation::author_for_test(&declaration).into_event()),
+            committed_row(crate::operation::author_for_test(&tombstone).into_event()),
         ];
         let latest = latest_realm_alias_payload(&rows)
             .unwrap()
@@ -771,10 +804,8 @@ mod tests {
             )
             .unwrap();
         let latest = latest_realm_alias_payload(&[
-            arkret_sdk::EventReadRow::Event(crate::operation::author_for_test(&alias).into_event()),
-            arkret_sdk::EventReadRow::Event(
-                crate::operation::author_for_test(&unrelated).into_event(),
-            ),
+            committed_row(crate::operation::author_for_test(&alias).into_event()),
+            committed_row(crate::operation::author_for_test(&unrelated).into_event()),
         ])
         .unwrap()
         .expect("alias remains current");
@@ -795,9 +826,7 @@ mod tests {
             arkret_sdk::RealmProfile::new("Engineering").unwrap(),
         )
         .unwrap();
-        let initial_row = arkret_sdk::EventReadRow::Event(
-            crate::operation::author_for_test(&initial).into_event(),
-        );
+        let initial_row = committed_row(crate::operation::author_for_test(&initial).into_event());
         let (expected, expected_digest) =
             settled_realm_profile_winner(std::slice::from_ref(&initial_row)).unwrap();
 
@@ -821,9 +850,7 @@ mod tests {
 
         let mut rows = vec![
             initial_row,
-            arkret_sdk::EventReadRow::Event(
-                crate::operation::author_for_test(&replacement).into_event(),
-            ),
+            committed_row(crate::operation::author_for_test(&replacement).into_event()),
         ];
         assert_eq!(
             settled_realm_profile_winner(&rows).unwrap().0["title"],
@@ -859,10 +886,8 @@ mod tests {
         let mut unguarded_event = crate::operation::author_for_test(&unguarded).into_event();
         unguarded_event.preconditions.clear();
         let rows = vec![
-            arkret_sdk::EventReadRow::Event(
-                crate::operation::author_for_test(&initial).into_event(),
-            ),
-            arkret_sdk::EventReadRow::Event(unguarded_event),
+            committed_row(crate::operation::author_for_test(&initial).into_event()),
+            committed_row(unguarded_event),
         ];
 
         let first = settled_realm_profile_winner(&rows).unwrap();

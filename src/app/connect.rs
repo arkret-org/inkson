@@ -184,12 +184,12 @@ async fn accepted_account_context(
     .await
 }
 
-async fn client_core_events_describe(
+async fn client_core_server_describe(
     authed: &crate::transport::TransportClient,
     _state_store: SyncSignal<LocalStateStore>,
 ) -> anyhow::Result<arkret_sdk::ServiceDescribe> {
     let http = authed.sdk_http_client()?;
-    http.events_describe().await.map_err(Into::into)
+    http.describe().await.map_err(Into::into)
 }
 
 /// The single source of truth for restoring or rotating the current session credential.
@@ -1381,7 +1381,7 @@ pub(super) fn connect(
                     "events describe",
                     &session,
                     bootstrap_session_generation,
-                    client_core_events_describe(&authed, state_store),
+                    client_core_server_describe(&authed, state_store),
                 )
                 .await
                 else {
@@ -1418,7 +1418,7 @@ pub(super) fn connect(
                                     "events describe retry",
                                     &session,
                                     bootstrap_session_generation,
-                                    client_core_events_describe(&authed, state_store),
+                                    client_core_server_describe(&authed, state_store),
                                 )
                                 .await
                                 else {

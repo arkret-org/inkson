@@ -264,7 +264,7 @@ pub(super) async fn create_and_bind_identity(
         let dpop_device_key = completion.dpop_device_key.clone();
         let mut accepted = checkpoint;
         accepted.binding_receipt = Some(completion.binding_receipt.clone());
-        accepted.pcr_genesis_receipt = Some(completion.pcr_genesis_receipt.clone());
+        accepted.pcr_genesis_commits = Some(completion.pcr_genesis_commits.clone());
         if accepted.stage == crate::state::PendingPrincipalRegistrationStage::GenesisDraftPrepared {
             accepted
                 .advance_registration_stage(
@@ -676,7 +676,7 @@ pub(super) fn recovery_material_continuation(
             Ok(RecoveryMaterialContinuation::FinalizeDurableEvidence)
         }
         _ => anyhow::bail!(
-            "identity registration has not returned a verified PCR receipt and Standard grant"
+            "identity registration has not returned verified PCR commits and a Standard grant"
         ),
     }
 }
@@ -694,19 +694,26 @@ pub(super) fn validate_completed_recovery_material(
         .pcr_bootstrap_seal
         .as_ref()
         .context("completed recovery checkpoint omits its bootstrap Seal")?;
-    let receipt = registration
-        .pcr_genesis_receipt
+    let commits = registration
+        .pcr_genesis_commits
         .as_ref()
-        .context("completed recovery checkpoint omits its PCR genesis receipt")?;
-    let expected_authority =
-        arkret_sdk::AccountId::new(account.principal_id().clone(), receipt.issuer_id.clone());
+        .context("completed recovery checkpoint omits its PCR genesis commits")?;
+    let committed_refs = commits
+        .each_ref()
+        .map(|commit| arkret_wire::CommittedEventRef {
+            event_id: commit.event_ref.clone(),
+            commit_id: commit.commit_id.clone(),
+            stream_ref: commit.stream_ref.clone(),
+            stream_position: commit.stream_position,
+        });
     if evidence.account_id != account.authority
         || evidence.principal_did != *account.did()
         || evidence.device_id != account.device_id
         || evidence.pcr_genesis_unit != *unit
+        || evidence.pcr_genesis_commits != committed_refs
         || evidence.bootstrap_seal != *seal
         || evidence.principal_control_realm_id != seal.realm_id
-        || evidence.controller_authority.as_ref() != Some(&expected_authority)
+        || evidence.controller_authority.as_ref() != Some(&account.authority)
     {
         anyhow::bail!("completed recovery-material evidence does not match the onboarding account");
     }
@@ -821,8 +828,8 @@ pub(super) async fn finish_principal_setup(
         .context("durably create the first-enrollment account MLS root")?;
     }
     crate::recovery_flow::submit_principal_bootstrap_seal(&api, &bootstrap_seal_for_submit).await?;
-    // The accepted genesis unit, its frozen bootstrap Seal, and the receipt
-    // issuer already form the complete holder-side PCR authority evidence.
+    // The accepted genesis unit and its two exact RealmCommits form the
+    // complete holder-side PCR authority evidence.
     // Persist that verified evidence before publishing the recovery policy:
     // policy materialization may transiently wait for a newer control Seal,
     // and a retry must use these exact frozen bytes instead of attempting the
@@ -831,20 +838,26 @@ pub(super) async fn finish_principal_setup(
         .pcr_genesis_unit
         .clone()
         .context("recovery-material evidence omits PCR genesis unit")?;
-    let principal_id = account.principal_id().clone();
-    let station_id = registration
-        .pcr_genesis_receipt
+    let commits = registration
+        .pcr_genesis_commits
         .as_ref()
-        .context("recovery-material evidence omits PCR genesis receipt")?
-        .issuer_id
-        .clone();
-    let controller_authority = arkret_sdk::AccountId::new(principal_id.clone(), station_id);
+        .context("recovery-material evidence omits PCR genesis commits")?;
+    let pcr_genesis_commits = commits
+        .each_ref()
+        .map(|commit| arkret_wire::CommittedEventRef {
+            event_id: commit.event_ref.clone(),
+            commit_id: commit.commit_id.clone(),
+            stream_ref: commit.stream_ref.clone(),
+            stream_position: commit.stream_position,
+        });
+    let controller_authority = account.authority.clone();
     let recovery_material_evidence = crate::state::RecoveryMaterialEvidence {
         account_id: completed.persisted_grant.account_id.clone(),
         principal_did: account.did().clone(),
         device_id: arkret_sdk::DeviceId::new(device.to_owned())?,
         principal_control_realm_id: bootstrap_seal.realm_id.clone(),
         pcr_genesis_unit,
+        pcr_genesis_commits,
         bootstrap_seal: bootstrap_seal.clone(),
         controller_authority: Some(controller_authority),
     };

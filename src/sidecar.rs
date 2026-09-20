@@ -1185,7 +1185,7 @@ fn sidecar_history_events_for_realm(
 
 fn event_refs_after(event: &arkret_sdk::Event) -> Vec<arkret_sdk::EventId> {
     event
-        .refs
+        .semantic_refs
         .iter()
         .filter(|reference| reference.role == "after")
         .filter_map(|reference| arkret_sdk::EventId::new(reference.id.clone()).ok())
@@ -2927,7 +2927,7 @@ mod tests {
             }),
         )
         .unwrap();
-        event.refs = vec![arkret_sdk::EventRef::new(
+        event.semantic_refs = vec![arkret_sdk::SemanticRef::new(
             request_event_id.as_str(),
             "after",
         )];
@@ -3093,7 +3093,7 @@ mod tests {
             }),
         )
         .unwrap();
-        event.refs = vec![arkret_sdk::EventRef::new(
+        event.semantic_refs = vec![arkret_sdk::SemanticRef::new(
             request_event_id.as_str(),
             "after",
         )];

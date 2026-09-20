@@ -2,7 +2,7 @@
 //!
 //! An MLS transition is installable exactly when the governance Station has
 //! committed its Event into the scope's own independent commit stream, so every
-//! entry point here takes the accepted `StreamRow` (or, for a Welcome, the
+//! entry point here takes the accepted full committed-event view (or, for a Welcome, the
 //! producer-signed delivery plus the accepted Commit it names). Nothing asks a
 //! separate endpoint whether a transition was accepted, and nothing installs
 //! provider state that is not bound to an exact commit coordinate.
@@ -11,7 +11,7 @@
 //! commit whose base epoch this device does not hold is left for a later pass
 //! rather than applied out of order.
 
-use arkret_wire::StreamRow;
+use arkret_wire::{CommittedEventFullView, CommittedEventView};
 
 use crate::mls::accepted_artifact::{AcceptedMlsTransition, accepted_mls_transition};
 use crate::mls::governance_proof::MlsLeafAuthorityHint;
@@ -41,7 +41,7 @@ pub(crate) async fn install_accepted_transition(
     state: &StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-    item: &StreamRow,
+    item: &CommittedEventFullView,
     authority_hints: &[MlsLeafAuthorityHint],
 ) -> Result<MlsInstallOutcome, String> {
     let transition = accepted_mls_transition(item)?;
@@ -127,7 +127,7 @@ pub(crate) async fn install_accepted_welcome(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     delivery: &arkret_wire::MlsWelcomeDelivery,
-    accepted_commit: &StreamRow,
+    accepted_commit: &CommittedEventFullView,
     authority_hints: &[MlsLeafAuthorityHint],
 ) -> Result<MlsInstallOutcome, String> {
     let transition = accepted_mls_transition(accepted_commit)?;
@@ -289,7 +289,7 @@ pub(crate) async fn converge_accepted_mls_artifacts(
 async fn accepted_commit_for_welcome(
     api: &crate::transport::TransportClient,
     delivery: &arkret_wire::MlsWelcomeDelivery,
-) -> Result<Option<StreamRow>, String> {
+) -> Result<Option<CommittedEventFullView>, String> {
     let stream_ref = arkret_wire::CommitStreamRef::from_scope(&delivery.effective_scope, None)
         .map_err(|error| format!("MLS Welcome scope has no commit stream: {error}"))?;
     let submitter = api
@@ -301,12 +301,12 @@ async fn accepted_commit_for_welcome(
             .scan_stream(&stream_ref, after_position, WELCOME_COMMIT_SCAN_PAGE)
             .await
             .map_err(|error| format!("scan the MLS Welcome commit stream: {error}"))?;
-        if let Some(item) = page
-            .0
-            .commits
-            .iter()
-            .find(|item| item.event.event_id == delivery.commit_event_ref)
-        {
+        if let Some(item) = page.0.committed_events.iter().find_map(|item| match item {
+            CommittedEventView::Full(item) if item.event.event_id == delivery.commit_event_ref => {
+                Some(item)
+            }
+            _ => None,
+        }) {
             return Ok(Some(item.clone()));
         }
         match page.last_position() {

@@ -95,7 +95,7 @@ pub fn prepare_registration_checkpoint(
         principal_registration_anchor,
         pcr_genesis_unit: None,
         initial_session: None,
-        pcr_genesis_receipt: None,
+        pcr_genesis_commits: None,
         pcr_bootstrap_seal: None,
         genesis_created_at: arkret_sdk::canonical::format_timestamp_canonical(created_at),
         genesis_hlc,
@@ -187,7 +187,7 @@ pub fn recover_registration_checkpoint_from_reservation(
         principal_registration_anchor: reserved.principal_registration_anchor,
         pcr_genesis_unit: None,
         initial_session: None,
-        pcr_genesis_receipt: None,
+        pcr_genesis_commits: None,
         pcr_bootstrap_seal: None,
         genesis_created_at: arkret_sdk::canonical::format_timestamp_canonical(genesis_created_at),
         genesis_hlc,
@@ -368,7 +368,7 @@ pub fn prepare_genesis_draft(
 
 pub struct IdentityBindingCompletion {
     pub binding_receipt: arkret_sdk::AccountBindingReceipt,
-    pub pcr_genesis_receipt: arkret_sdk::EventBatchReceipt,
+    pub pcr_genesis_commits: [arkret_wire::RealmCommit; 2],
     pub session_grant: garth::SessionGrantState,
     pub session_private_key_pem: String,
     pub dpop_device_key: crate::state::DpopDeviceKeyRecord,
@@ -597,17 +597,17 @@ pub async fn complete_account_handoff_binding(
     {
         anyhow::bail!("Account Authority binding receipt does not match the frozen account or DID");
     }
-    let pcr_genesis_receipt = register_outcome
-        .pcr_genesis_receipt
+    let pcr_genesis_commits = register_outcome
+        .pcr_genesis_commits
         .clone()
-        .context("Account Authority omitted PCR genesis receipt")?;
+        .context("Account Authority omitted PCR genesis commits")?;
 
     // Preserve the exact response with the frozen request before installing
     // the session, so a restart resumes the same registration terminal.
     {
         let mut durable = register_request_prepared_checkpoint(checkpoint)?;
         durable.binding_receipt = Some(binding_receipt.clone());
-        durable.pcr_genesis_receipt = Some(pcr_genesis_receipt.clone());
+        durable.pcr_genesis_commits = Some(pcr_genesis_commits.clone());
         let barrier = state_store.write(|store| {
             store.set_pending_principal_registration(Some(durable))?;
             store.begin_durable_flush()
@@ -628,7 +628,7 @@ pub async fn complete_account_handoff_binding(
         )?;
     Ok(IdentityBindingCompletion {
         binding_receipt,
-        pcr_genesis_receipt,
+        pcr_genesis_commits,
         session_grant,
         session_private_key_pem,
         dpop_device_key,

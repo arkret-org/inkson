@@ -4,8 +4,8 @@
 //! inkson-side glue on top of the SDK's client-agnostic addressing grammar
 //! ([`arkret_wire::parse_address`] / [`build_address`]):
 //!
-//! * [`OpenedLink`] — the result of parsing a pasted link, routed to a local
-//!   [`crate::routes::Route`] by `target_kind`.
+//! * [`OpenedLink`] — the result of parsing a pasted link and routing its
+//!   canonical hierarchy locally.
 //!
 //! ## Privacy / fail-closed posture
 //! * The HTTPS landing form puts the target + token in the URL FRAGMENT (everything after `#`). The
@@ -21,8 +21,7 @@
 //!   INSIDE its own fragment, and the HTTPS-fragment landing link is leak-proof with no
 //!   registration at all.
 
-use arkret_models_discovery::TargetKind;
-use arkret_wire::{ParsedAddress, RealmRef, build_address, parse_address};
+use arkret_wire::{ParsedAddress, RealmRef, parse_address};
 
 use crate::routes::Route;
 
@@ -45,28 +44,23 @@ impl OpenedLink {
         Ok(OpenedLink { address, token })
     }
 
-    /// The canonical address string to send to `directory_resolve_target`. We
-    /// re-serialize through [`build_address`] so the server receives the
-    /// canonical `web+arkret:` form regardless of which envelope the user
-    /// pasted.
-    pub fn resolve_address(&self) -> String {
-        build_address(&self.address)
-    }
-
-    /// Map a resolved [`TargetKind`] onto the local [`Route`]. The realm path
-    /// segment must already be a canonical event-derived `realm_id` for the
-    /// route to be navigable; an alias-only address routes to the directory so
-    /// the user can resolve it there.
+    /// Map the parsed hierarchy onto the local route. The public Directory can
+    /// resolve Realm ids only; Strand and Message routing is entirely local.
     ///
     /// inkson routes a Realm through the default Realm surface, a Strand to its
     /// Board task deep link, and a Message to the Realm discussion surface.
-    pub fn route_for(&self, target_kind: TargetKind) -> Route {
-        match target_kind {
-            TargetKind::Realm => match typed_realm_route_id(&self.address.realm) {
-                Some(realm_id) => Route::Realm { realm_id },
+    pub fn route(&self) -> Route {
+        if self.address.message.is_some() {
+            return match typed_realm_route_id(&self.address.realm) {
+                Some(realm_id) => Route::Chat {
+                    realm_id,
+                    message: String::new(),
+                },
                 None => Route::Directory,
-            },
-            TargetKind::Strand => match (
+            };
+        }
+        if self.address.strand.is_some() {
+            return match (
                 typed_realm_route_id(&self.address.realm),
                 self.address.strand.as_deref(),
             ) {
@@ -75,14 +69,11 @@ impl OpenedLink {
                     task_id: typed_strand(strand),
                 },
                 _ => Route::Directory,
-            },
-            TargetKind::Message => match typed_realm_route_id(&self.address.realm) {
-                Some(realm_id) => Route::Chat {
-                    realm_id,
-                    message: String::new(),
-                },
-                _ => Route::Directory,
-            },
+            };
+        }
+        match typed_realm_route_id(&self.address.realm) {
+            Some(realm_id) => Route::Realm { realm_id },
+            None => Route::Directory,
         }
     }
 }
@@ -120,7 +111,7 @@ mod tests {
     #[test]
     fn realm_target_routes_to_realm() {
         let opened = OpenedLink::parse(&format!("web+arkret:realm/{R}")).unwrap();
-        match opened.route_for(TargetKind::Realm) {
+        match opened.route() {
             Route::Realm { realm_id } => assert_eq!(
                 realm_id,
                 "ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU".to_owned()
@@ -132,7 +123,7 @@ mod tests {
     #[test]
     fn alias_realm_routes_to_directory() {
         let opened = OpenedLink::parse("web+arkret:realm/team.example.com").unwrap();
-        assert_eq!(opened.route_for(TargetKind::Realm), Route::Directory);
+        assert_eq!(opened.route(), Route::Directory);
     }
 
     #[test]

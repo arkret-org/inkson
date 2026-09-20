@@ -21,12 +21,6 @@ impl EndpointClients {
         }
     }
 
-    pub fn directory(&self) -> DirectoryEndpoints<'_> {
-        DirectoryEndpoints {
-            transport: &self.transport,
-        }
-    }
-
     pub fn mls(&self) -> MlsEndpoints<'_> {
         MlsEndpoints {
             transport: &self.transport,
@@ -417,26 +411,5 @@ impl AccountEndpoints<'_> {
 
     pub async fn contacts(&self) -> anyhow::Result<crate::models::ContactList> {
         crate::transport::account::contacts(self.transport.http()).await
-    }
-}
-
-pub struct DirectoryEndpoints<'a> {
-    transport: &'a super::TransportClient,
-}
-
-impl DirectoryEndpoints<'_> {
-    pub async fn list_handles_for_subject(
-        &self,
-        subject_account_id: &arkret_sdk::AccountId,
-        realm_id: Option<&str>,
-        intent: Option<arkret_models_discovery::DirectoryIntent>,
-    ) -> anyhow::Result<arkret_models_discovery::DirectorySubjectHandleList> {
-        super::directory::list_handles_for_subject(
-            self.transport.http(),
-            subject_account_id,
-            realm_id,
-            intent,
-        )
-        .await
     }
 }

@@ -380,17 +380,13 @@ async fn direct_contact_claim_route(
         !refs.is_empty(),
         "Contact has no accepted endpoint-bearing Event"
     );
-    let resolved = http
-        .events_resolve(&arkret_sdk::EventsResolveRequestBody {
-            event_ids: refs.clone(),
-            event_digests: Vec::new(),
-            include_payload: Some(true),
-            history_traversal_access: None,
-            max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
-        })
-        .await?;
+    let mut resolved = Vec::with_capacity(refs.len());
+    for event_id in &refs {
+        if let Some(event) = http.committed_event_get(event_id).await?.reducer_input() {
+            resolved.push(event.clone());
+        }
+    }
     let device = resolved
-        .events
         .iter()
         .rev()
         .find_map(|event| {
@@ -409,9 +405,9 @@ async fn direct_contact_claim_route(
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "Contact endpoint resolution returned {} Events, {} by the peer, {} with a device proof",
-                resolved.events.len(),
-                resolved.events.iter().filter(|event| event.actor_id == *peer).count(),
-                resolved.events.iter().filter(|event| garth::sync_client::accepted_human_event_signing_device(event).is_some()).count(),
+                resolved.len(),
+                resolved.iter().filter(|event| event.actor_id == *peer).count(),
+                resolved.iter().filter(|event| garth::sync_client::accepted_human_event_signing_device(event).is_some()).count(),
             )
         })?;
     Ok(AcceptedInviteClaimRoute {

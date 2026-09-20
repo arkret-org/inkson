@@ -539,10 +539,10 @@ pub(crate) async fn build_sidecar_exchange_control_send(
     let source_strand_id = arkret_sdk::StrandId::new(source_strand_id.to_owned())
         .map_err(|error| format!("Sidecar close source Strand invalid: {error}"))?;
     let plan_sidecar_id = sidecar_binding.sidecar_id;
-    let plan_refs: Vec<arkret_sdk::EventRef> = control
+    let plan_refs: Vec<arkret_sdk::SemanticRef> = control
         .basis_event_ids
         .iter()
-        .map(|event_id| arkret_sdk::EventRef::new(event_id.to_string(), "after"))
+        .map(|event_id| arkret_sdk::SemanticRef::new(event_id.to_string(), "after"))
         .collect();
     let plan_realm_id = realm_id.to_owned();
     let plan_actor = actor.to_owned();
@@ -575,7 +575,7 @@ pub(crate) async fn build_sidecar_exchange_control_send(
         crate::operation::TypedOperationBuilder::new::<
             arkret_sdk::event_spec::AgentSidecarExchangeControl,
         >(&plan_realm_id, &plan_actor, payload)
-        .refs(plan_refs)
+        .semantic_refs(plan_refs)
         .effective_scope(plan_scope)
         .build_sdk_event("inkson")
         .map(|operation| operation.with_local_operation_id(plan_local_operation_id))

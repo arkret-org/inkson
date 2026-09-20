@@ -558,7 +558,6 @@ fn AppBootstrap() -> Element {
     let mut personal_handles = use_signal(Vec::<String>::new);
     let mut personal_handles_status = use_signal(|| "Not published".to_owned());
     let mut personal_handles_lookup_key = use_signal(String::new);
-    let directory_handles_available = use_signal(|| false);
     let current_account_display_name = use_signal(String::new);
     let current_account_avatar_blob_ref = use_signal(String::new);
     let current_device_display_name = use_signal(String::new);
@@ -720,7 +719,6 @@ fn AppBootstrap() -> Element {
         .as_ref()
         .map(|description| description.service_id.as_str().to_owned())
         .unwrap_or_default();
-    let can_list_handles_for_subject = directory_handles_available();
     let has_session = !token().trim().is_empty();
     let auth_surface = auth_surface_for_route(
         &route,
@@ -1284,7 +1282,6 @@ fn AppBootstrap() -> Element {
                         personal_handles,
                         personal_handles_status,
                         personal_handles_lookup_key,
-                        directory_handles_available,
                         device_id,
                         current_account_display_name,
                         current_account_avatar_blob_ref,
@@ -3440,7 +3437,6 @@ fn AppBootstrap() -> Element {
                             secure_store_bootstrap_ready,
                             needs_device_authorization,
                             device_authorization_check_complete,
-                            can_list_handles_for_subject,
                             push_state,
                             locale,
                             theme,
