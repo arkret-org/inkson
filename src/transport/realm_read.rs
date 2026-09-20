@@ -29,7 +29,23 @@ pub async fn authz_check_resource(
         resource,
         context: None,
     };
-    http.authz_check(&body).await.map_err(anyhow::Error::from)
+    authz_check_request(http, &body).await
+}
+
+/// Ask the authenticated account Station to evaluate one authorization query.
+///
+/// The SDK intentionally exposes registered JSON operations through its generic
+/// typed request path: it derives the exact `Arkret-Operation` selector from
+/// the method and path. Keeping this as a transport call means Inkson consumes
+/// the Station's current projection and never grows a second local policy
+/// evaluator.
+pub async fn authz_check_request(
+    http: &arkret_sdk::http_client::Client,
+    body: &arkret_models_collaboration::governance::authorization::AuthzCheckRequestBody,
+) -> anyhow::Result<AuthzCheckOutcome> {
+    http.post("/_arkret/self/authz/check", body)
+        .await
+        .map_err(anyhow::Error::from)
 }
 
 pub async fn authz_check(

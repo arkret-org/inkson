@@ -6,49 +6,21 @@
 //! authorization each profile requires before a body may drive UI, and the
 //! handoff into the two Dioxus hubs mounted at the app root.
 
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-
 use dioxus::prelude::*;
 
 use crate::runtime::projection::SignalProductSink;
 
-/// How long one `(realm, sender, action)` authorization verdict is reused.
-/// The client does not replay a commit basis for this re-check: the governing
-/// Station answers against the Realm's current committed projection, so
-/// the TTL is the whole staleness bound. A message-stream producer may emit
-/// five frames a second per stream, so an uncached check would turn one
-/// preview into a per-frame authz round trip.
-const AUTHZ_VERDICT_TTL_MS: u64 = 30_000;
-
-/// Hard cap on cached verdicts, evicting the oldest first.
-const MAX_AUTHZ_VERDICTS: usize = 256;
-
-fn signal_authorization_cache_key(
-    actor: &arkret_sdk::ActorId,
-    action: &str,
-    realm: &arkret_sdk::RealmId,
-) -> String {
-    format!("{realm}|{actor}|{action}")
-}
-
 fn signal_authorization_request(
     actor: &arkret_sdk::ActorId,
     action: &str,
-    realm: arkret_sdk::RealmId,
+    resource: arkret_sdk::WireResourceSelector,
 ) -> arkret_models_collaboration::governance::authorization::AuthzCheckRequestBody {
     arkret_models_collaboration::governance::authorization::AuthzCheckRequestBody {
         actor_id: actor.clone(),
         action: action.to_owned(),
-        resource: Some(arkret_sdk::WireResourceSelector::realm(realm)),
+        resource: Some(resource),
         context: None,
     }
-}
-
-#[derive(Clone, Copy)]
-struct CachedVerdict {
-    allowed: bool,
-    expires_at_ms: u64,
 }
 
 pub(super) struct AppSignalProductSink {
@@ -58,7 +30,6 @@ pub(super) struct AppSignalProductSink {
     base_url: Signal<String>,
     token: Signal<String>,
     principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    authz_verdicts: RefCell<BTreeMap<String, CachedVerdict>>,
 }
 
 impl AppSignalProductSink {
@@ -77,7 +48,6 @@ impl AppSignalProductSink {
             base_url,
             token,
             principal_id,
-            authz_verdicts: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -90,67 +60,31 @@ impl AppSignalProductSink {
         crate::transport::auth::authed_api(&base_url, token).ok()
     }
 
-    fn cached_verdict(&self, key: &str) -> Option<bool> {
-        let now = crate::clock::now_unix_ms();
-        let mut verdicts = self.authz_verdicts.borrow_mut();
-        verdicts.retain(|_, verdict| verdict.expires_at_ms > now);
-        verdicts.get(key).map(|verdict| verdict.allowed)
-    }
-
-    fn remember_verdict(&self, key: String, allowed: bool) {
-        let now = crate::clock::now_unix_ms();
-        let mut verdicts = self.authz_verdicts.borrow_mut();
-        verdicts.insert(
-            key,
-            CachedVerdict {
-                allowed,
-                expires_at_ms: now.saturating_add(AUTHZ_VERDICT_TTL_MS),
-            },
-        );
-        while verdicts.len() > MAX_AUTHZ_VERDICTS {
-            let Some(soonest) = verdicts
-                .iter()
-                .min_by_key(|(_, verdict)| verdict.expires_at_ms)
-                .map(|(key, _)| key.clone())
-            else {
-                break;
-            };
-            verdicts.remove(&soonest);
-        }
-    }
-
-    /// Fail-closed authorization probe for one product action, memoized per
-    /// `(realm, sender, action)`. A transport failure is a denial: §7.1
-    /// forbids showing a body whose authorization could not be verified.
+    /// Fail-closed authorization probe for one exact product action and
+    /// resource. Every frame reaches the governing Station's current
+    /// projection through the authenticated account Station; no local verdict
+    /// cache may outlive a revocation or governance-head change. A transport
+    /// failure is a denial: §7.1 forbids showing a body whose authorization
+    /// could not be verified.
     async fn action_allowed(
         &self,
         signal: &crate::runtime::projection::AdmittedSignal,
         action: &str,
-        realm_id: &str,
+        resource: arkret_sdk::WireResourceSelector,
     ) -> bool {
-        let Ok(resource_realm_id) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
-            return false;
-        };
-        let key = signal_authorization_cache_key(signal.actor_id(), action, &resource_realm_id);
-        if let Some(allowed) = self.cached_verdict(&key) {
-            return allowed;
-        }
         let Some(api) = self.authenticated_api() else {
             return false;
         };
         // Admission already authenticated the full sender Actor. Reconstructing
         // an account from its principal and our Station would query a different
         // participant, losing the verified account's Station binding.
-        let request = signal_authorization_request(signal.actor_id(), action, resource_realm_id);
-        let allowed = match api.sdk_http_client() {
-            Ok(http) => http
-                .authz_check(&request)
+        let request = signal_authorization_request(signal.actor_id(), action, resource);
+        match api.sdk_http_client() {
+            Ok(http) => crate::transport::realm_read::authz_check_request(&http, &request)
                 .await
                 .is_ok_and(|outcome| crate::transport::realm_read::authz_allowed(&outcome)),
             Err(_) => false,
-        };
-        self.remember_verdict(key, allowed);
-        allowed
+        }
     }
 }
 
@@ -179,17 +113,23 @@ impl SignalProductSink for AppSignalProductSink {
         signal: &'a crate::runtime::projection::AdmittedSignal,
     ) -> LocalBoxFuture<'a> {
         Box::pin(async move {
-            let realm_id = signal.scope_ref().realm_id().as_str().to_owned();
+            let arkret_sdk::SignalPlaintext::MessageStream(frame) = &signal.payload else {
+                return;
+            };
+            let resource = arkret_sdk::WireResourceSelector::strand(
+                signal.scope_ref().realm_id().clone(),
+                frame.strand_id().clone(),
+            );
             // §7.1 — the sender must hold BOTH the preview action and the
             // authorization the final Message create needs. Neither is
             // observable from the outer envelope, so the recipient re-checks
-            // both against the Realm's current authority before any body
-            // reaches a surface.
+            // both for the exact decrypted Strand against the governing
+            // Station's current authority before any body reaches a surface.
             for action in [
                 arkret_sdk::CapabilityActionId::MESSAGE_STREAM_SEND,
                 arkret_sdk::CapabilityActionId::MESSAGE_CREATE,
             ] {
-                if !self.action_allowed(signal, action, &realm_id).await {
+                if !self.action_allowed(signal, action, resource.clone()).await {
                     tracing::debug!(
                         action,
                         actor = %signal.actor_id(),
@@ -250,15 +190,19 @@ mod tests {
         let realm =
             arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
                 .unwrap();
-        let mut keys = std::collections::BTreeSet::new();
         for actor in actors {
-            let request = signal_authorization_request(&actor, "ak.message.create", realm.clone());
-            assert_eq!(request.actor_id, actor);
-            assert!(keys.insert(signal_authorization_cache_key(
+            let strand =
+                arkret_sdk::StrandId::new("ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                    .unwrap();
+            let request = signal_authorization_request(
                 &actor,
                 "ak.message.create",
-                &realm,
-            )));
+                arkret_sdk::WireResourceSelector::strand(realm.clone(), strand.clone()),
+            );
+            assert_eq!(request.actor_id, actor);
+            let resource = request.resource.unwrap();
+            assert_eq!(resource.realm_id.as_ref(), Some(&realm));
+            assert_eq!(resource.strand_id.as_ref(), Some(&strand));
         }
     }
 }
