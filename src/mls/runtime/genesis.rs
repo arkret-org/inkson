@@ -266,7 +266,7 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
     );
     let summary = InitialMlsCheckpointSummary {
         realm_id: realm.to_owned(),
-        group_id: post_state.group_id.clone(),
+        group_id: post_state.group_id.as_str().to_owned(),
         epoch: post_state.epoch,
         group_info_bytes,
         ratchet_tree_bytes,
@@ -391,7 +391,7 @@ pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope_with_bin
         .map_err(|err| MlsRuntimeError::Genesis(format!("export public group state: {err}")))?;
     Ok(Some(InitialMlsCheckpointSummary {
         realm_id: realm.to_owned(),
-        group_id,
+        group_id: group_id.as_str().to_owned(),
         epoch: group.epoch(),
         group_info_bytes,
         ratchet_tree_bytes,
@@ -423,6 +423,7 @@ pub fn build_mls_genesis_payload(
     if governance_binding
         .mls_group_id()
         .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
+        .as_str()
         != summary.group_id
     {
         return Err(MlsRuntimeError::Genesis(

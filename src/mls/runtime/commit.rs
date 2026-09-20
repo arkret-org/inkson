@@ -176,7 +176,7 @@ pub(crate) fn build_mls_remove_actors_commit_for_scope(
         authority,
         device_id,
     )?;
-    if group.group_id() != frozen.mls_group_id || group.epoch() != frozen.epoch {
+    if group.group_id().as_str() != frozen.mls_group_id || group.epoch() != frozen.epoch {
         return Err(MlsRuntimeError::Commit(
             "MLS removal base group or epoch changed".to_owned(),
         ));

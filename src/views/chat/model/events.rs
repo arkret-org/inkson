@@ -1320,7 +1320,11 @@ fn minimal_metadata_content_coordinates(
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
     };
     Some((
-        effective_scope.canonical_mls_group_id().ok()?,
+        effective_scope
+            .canonical_mls_group_id()
+            .ok()?
+            .as_str()
+            .to_owned(),
         envelope.encryption_context.epoch(),
         envelope
             .encryption_context

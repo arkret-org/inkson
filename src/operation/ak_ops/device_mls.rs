@@ -50,14 +50,14 @@ pub fn mls_commit_with_governance(
     actor: &str,
     payload: &arkret_sdk::MlsCommitPayload,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let group_id = payload.mls_group_id().to_owned();
+    let group_id = payload.mls_group_id()?;
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::MlsCommit>(
             realm_id,
             actor,
             payload.clone(),
         )
-        .target_ref(group_id),
+        .target_ref(group_id.as_str()),
     )
 }
 

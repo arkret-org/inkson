@@ -464,7 +464,7 @@ fn build_mls_keypackage_claim_request_with_requester(
         intended_realm_id: arkret_sdk::RealmId::new(crate::operation::trim_realm_id(
             intended_realm_id,
         ))?,
-        mls_group_id: arkret_sdk::NonEmptyString::new(mls_group_id.trim())
+        mls_group_id: arkret_sdk::MlsGroupId::new(mls_group_id.trim())
             .map_err(anyhow::Error::msg)?,
         claim_purpose: arkret_sdk::PeerKeyPackageClaimPurpose::RealmMembership,
         required_capabilities: mls_keypackage_claim_required_capabilities()?,

@@ -154,7 +154,9 @@ pub(crate) fn accepted_pair_commit<'a>(
                 serde_json::to_value(&event.payload).unwrap_or_default(),
             ).is_ok_and(|payload| {
                 payload.next_epoch() == epoch
-                    && payload.mls_group_id() == group_id
+                    && payload
+                        .mls_group_id()
+                        .is_ok_and(|payload_group_id| payload_group_id.as_str() == group_id)
                     && matches!(payload.governance_binding().effective_scope(),
                         arkret_sdk::ScopeRef::Realm { realm_id: scope_realm } if scope_realm.as_str() == realm_id)
             })

@@ -1617,7 +1617,7 @@ async fn run_circle_scope_rotate_pass(
                             return false;
                         };
                         removal_scope_stamp(store, scope)
-                            .is_some_and(|stamp| round.empty.get(&group) == Some(&stamp))
+                            .is_some_and(|stamp| round.empty.get(group.as_str()) == Some(&stamp))
                     });
                     if exact {
                         store.resolve_member_remove_mls_bindings(realm.as_str());

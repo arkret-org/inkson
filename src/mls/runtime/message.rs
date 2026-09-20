@@ -554,7 +554,7 @@ fn restore_author_group_for_scope(
     let secret = load_device_checkpoint_secret(secure_store, authority, device_id).ok()?;
     // COR-04: read-only restore — no ratchet advance / persist on this path.
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
-    if group.group_id() != group_id || group.epoch() != epoch {
+    if group.group_id().as_str() != group_id || group.epoch() != epoch {
         return None;
     }
     Some(group)
