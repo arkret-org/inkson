@@ -76,6 +76,23 @@ impl HostedSidecarState {
     }
 }
 
+pub(crate) fn validate_agent_sidecar_view(
+    view: &arkret_sdk::AgentSidecarView,
+) -> arkret_sdk::Result<()> {
+    view.sidecar.validate_shape()?;
+    view.mls_context.validate_shape()?;
+    if view
+        .effective_agent_ids
+        .iter()
+        .any(|agent| !view.desired_agent_ids.contains(agent))
+    {
+        return Err(arkret_sdk::Error::Protocol(
+            "effective Sidecar Agent set is not a subset of desired Agents".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SidecarViewStateMergeDecision {
     UseCurrent,
@@ -375,6 +392,38 @@ const SIDECAR_AUTO_CLOSE_INTENT_PREFIX: &str = "sidecar_exchange_auto_close_inte
 /// Controller-device-local recovery cache. These locators are derived from
 /// accepted structural Event history and are never uploaded.
 const SIDECAR_CONTEXT_LOCATOR_PREFIX: &str = "sidecar_context_locator";
+const SIDECAR_EXCHANGE_BINDING_FIELD: &str = "sidecar_exchange_binding";
+
+/// Mount the one canonical Sidecar exchange binding into encrypted Message
+/// metadata. `MessageMetadata.extra` is the SDK's exact top-level carrier for
+/// registered extension members; this helper accepts no legacy key or shape.
+pub(crate) fn set_sidecar_exchange_binding(
+    metadata: &mut arkret_sdk::MessageMetadata,
+    binding: &arkret_sdk::AgentSidecarEventExchangeBinding,
+) -> anyhow::Result<()> {
+    binding.validate_shape()?;
+    if metadata.extra.contains_key(SIDECAR_EXCHANGE_BINDING_FIELD) {
+        anyhow::bail!("Sidecar exchange metadata already carries a binding");
+    }
+    metadata.extra.insert(
+        SIDECAR_EXCHANGE_BINDING_FIELD.to_owned(),
+        serde_json::to_value(binding)?,
+    );
+    Ok(())
+}
+
+/// Decode the canonical encrypted-metadata binding. Unknown/malformed shapes
+/// fail closed to non-echo and never participate in the local exchange fold.
+pub(crate) fn sidecar_exchange_binding(
+    metadata: &arkret_sdk::MessageMetadata,
+) -> Option<arkret_sdk::AgentSidecarEventExchangeBinding> {
+    let binding = serde_json::from_value::<arkret_sdk::AgentSidecarEventExchangeBinding>(
+        metadata.extra.get(SIDECAR_EXCHANGE_BINDING_FIELD)?.clone(),
+    )
+    .ok()?;
+    binding.validate_shape().ok()?;
+    Some(binding)
+}
 
 fn sidecar_exchange_fold_cache_key(
     controller_principal_id: &str,
@@ -395,7 +444,7 @@ pub(crate) fn cache_sidecar_exchange_projection(
     controller_account_id: &arkret_sdk::AccountId,
     projection: &arkret_sdk::AgentSidecarExchangeProjection,
 ) -> anyhow::Result<bool> {
-    projection.validate()?;
+    projection.validate_shape()?;
     if &projection.controller_account_id != controller_account_id {
         anyhow::bail!("Sidecar exchange controller does not match the account holder");
     }
@@ -439,7 +488,7 @@ pub fn cached_sidecar_exchange_projections(
             serde_json::from_str::<arkret_sdk::AgentSidecarExchangeProjection>(&raw).ok()
         })
         .filter(|projection| {
-            projection.validate().is_ok()
+            projection.validate_shape().is_ok()
                 && projection.controller_account_id == *controller_account_id
                 && projection.source_track_ref.realm_id.as_str() == source_realm_id
         })
@@ -473,13 +522,13 @@ pub fn cached_sidecar_exchange_projections(
 //
 // A joint test that rebuilds a "frontier" from DOM messages is measuring the
 // set of Events that happened to render, not
-// `AgentSidecarExchangeFoldedFrontier`. That cannot show two controller devices
+// `AgentSidecarFoldedCheckpoint`. That cannot show two controller devices
 // hold a byte-identical fold cache, which is the actual §7.2.4 claim.
 //
 // So the evidence is read straight out of the validated cache instead. It is
 // read-only, same-origin, and controller-only: every entry comes from
 // `cached_sidecar_exchange_projections`, which already requires
-// `projection.validate()` and `controller_principal_id == principal_id`. The whole surface
+// `projection.validate_shape()` and `controller_principal_id == principal_id`. The whole surface
 // is compiled out of production builds, and it is reachable only by an explicit
 // call — never through a URL, a log line, a trace label, telemetry, or ordinary
 // shared DOM — so it cannot widen the disclosure boundary
@@ -509,10 +558,10 @@ pub(crate) const SIDECAR_FOLD_EVIDENCE_SCHEMA: &str = "inkson.test.sidecar_fold_
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub(crate) struct SidecarFoldEvidenceEntry {
-    pub exchange_id: arkret_sdk::AgentSidecarExchangeId,
+    pub exchange_id: String,
     pub status: arkret_sdk::AgentSidecarExchangeStatus,
     pub terminal_event_id: Option<arkret_sdk::EventId>,
-    pub folded_frontier: arkret_sdk::AgentSidecarExchangeFoldedFrontier,
+    pub folded_checkpoint: arkret_sdk::AgentSidecarFoldedCheckpoint,
     /// Canonical digest of `projection`, so two devices can be compared with
     /// one equality check before anything is diffed field by field.
     pub projection_digest: arkret_sdk::Hash,
@@ -550,7 +599,7 @@ pub(crate) fn sidecar_fold_evidence(
                 exchange_id: projection.exchange_id.clone(),
                 status: projection.status,
                 terminal_event_id: projection.terminal_event_id.clone(),
-                folded_frontier: projection.folded_frontier.clone(),
+                folded_checkpoint: projection.folded_checkpoint.clone(),
                 projection_digest: arkret_sdk::Hash::new(
                     arkret_sdk::canonical::canonical_sha256(&projection)?,
                 )?,
@@ -756,7 +805,7 @@ pub(crate) struct PendingSidecarSubmission {
     pub controller_account_id: arkret_sdk::AccountId,
     pub sidecar_id: arkret_sdk::SidecarId,
     pub source_strand_id: String,
-    pub exchange_id: arkret_sdk::AgentSidecarExchangeId,
+    pub exchange_id: String,
     pub request_context: arkret_sdk::AgentSidecarExchangeRequestContext,
     /// Message id of the latest submit attempt (used to recognise the
     /// accepted request Event in the synced timeline after a crash).
@@ -900,7 +949,7 @@ pub(crate) struct StoredSidecarExchangeRequestFact {
     pub controller_account_id: arkret_sdk::AccountId,
     pub sidecar_id: arkret_sdk::SidecarId,
     pub source_strand_id: String,
-    pub exchange_id: arkret_sdk::AgentSidecarExchangeId,
+    pub exchange_id: String,
     pub request_event_id: String,
     /// Canonical digest of the complete accepted Event Envelope. Submission
     /// responses expose only the Event id, so this remains `None` until the
@@ -932,7 +981,7 @@ pub(crate) struct PendingSidecarAutoCloseIntent {
     pub sidecar_id: arkret_sdk::SidecarId,
     pub source_strand_id: String,
     pub source_realm_id: String,
-    pub exchange_id: arkret_sdk::AgentSidecarExchangeId,
+    pub exchange_id: String,
     pub control: arkret_sdk::AgentSidecarExchangeControl,
     /// Present only after the server accepted the authored control. It is a
     /// retry/dedupe marker, not durable close state; history refold remains the
@@ -981,7 +1030,7 @@ pub(crate) fn pending_sidecar_auto_close_intents(
         .filter(|intent| {
             intent.controller_account_id.principal_id.as_str() == controller_principal_id
                 && intent.source_realm_id == realm_id
-                && intent.control.validate().is_ok()
+                && intent.control.validate_shape().is_ok()
         })
         .collect()
 }
@@ -1362,8 +1411,7 @@ pub(crate) async fn sync_sidecar_exchange_background(
     let mut views_by_realm =
         std::collections::BTreeMap::<String, Vec<arkret_sdk::AgentSidecarView>>::new();
     for view in sidecar_views {
-        view.sidecar.validate_shape()?;
-        view.mls_context.validate_shape()?;
+        validate_agent_sidecar_view(&view)?;
         if view.sidecar.controller_account_id != *authority {
             anyhow::bail!("Sidecar list returned a view for another controller");
         }
@@ -1659,7 +1707,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 };
                 // Fail-closed accessor: schema mismatch / unknown role /
                 // field-validation failure all yield None (non-echo).
-                let Some(binding) = metadata.sidecar_exchange_binding() else {
+                let Some(binding) = sidecar_exchange_binding(&metadata) else {
                     continue;
                 };
                 // §7.2 all exchange Events MUST carry a top-level HLC; fail
@@ -1672,7 +1720,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 };
                 let exchange_key = (strand_id.clone(), binding.exchange_id.as_str().to_owned());
                 match binding.role {
-                    arkret_sdk::AgentSidecarExchangeBindingRole::Request => {
+                    arkret_sdk::AgentSidecarExchangeRole::Request => {
                         if event.actor_id.signing_principal_id() != &controller_core_id {
                             continue;
                         }
@@ -1695,8 +1743,8 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                             },
                         );
                     }
-                    arkret_sdk::AgentSidecarExchangeBindingRole::UserFacingResponse
-                    | arkret_sdk::AgentSidecarExchangeBindingRole::Internal => {
+                    arkret_sdk::AgentSidecarExchangeRole::UserFacingResponse
+                    | arkret_sdk::AgentSidecarExchangeRole::Internal => {
                         agent_facts.entry(exchange_key).or_default().push(
                             garth::projection::SidecarExchangeAgentFact {
                                 event_id: event.event_id.clone(),
@@ -1723,7 +1771,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 let Some(control) =
                     serde_json::from_slice::<arkret_sdk::AgentSidecarExchangeControl>(&plaintext)
                         .ok()
-                        .filter(|control| control.validate().is_ok())
+                        .filter(|control| control.validate_shape().is_ok())
                 else {
                     continue;
                 };
@@ -1786,10 +1834,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
             let Some(sidecar_id) = scope_hints.get(strand_id) else {
                 continue;
             };
-            let Ok(exchange_id) = arkret_sdk::AgentSidecarExchangeId::new(exchange_id_raw.clone())
-            else {
-                continue;
-            };
+            let exchange_id = exchange_id_raw.clone();
             let exchange_requests = requests.get(&exchange_key).unwrap_or(&empty_requests);
             let exchange_agent_facts = agent_facts.get(&exchange_key).unwrap_or(&empty_agent_facts);
             let exchange_controls = controls.get(&exchange_key).unwrap_or(&empty_controls);
@@ -1880,7 +1925,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                     } else if exchange_agent_facts.iter().any(|fact| {
                         fact.actor_principal_id == projection.coordinator_agent_id
                             && fact.binding.role
-                                == arkret_sdk::AgentSidecarExchangeBindingRole::UserFacingResponse
+                                == arkret_sdk::AgentSidecarExchangeRole::UserFacingResponse
                             && fact.binding.completes_exchange == Some(true)
                             && fact.binding.coordinator_assignment_event_id.as_ref()
                                 == Some(&projection.coordinator_assignment_event_id)
@@ -1893,11 +1938,12 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                             left.as_str().as_bytes().cmp(right.as_str().as_bytes())
                         });
                         let control = arkret_sdk::AgentSidecarExchangeControl {
-                            schema: arkret_sdk::AgentSidecarExchangeControlSchema::V1,
+                            schema: arkret_sdk::SchemaId::AGENT_SIDECAR_EXCHANGE_CONTROL_V1
+                                .to_owned(),
                             exchange_id: projection.exchange_id.clone(),
                             request_event_id: projection.private_request_event_id.clone(),
                             basis_event_ids,
-                            action: arkret_sdk::AgentSidecarExchangeControlAction::Close,
+                            action: arkret_sdk::AgentSidecarExchangeAction::Close,
                             response_event_ids: Some(
                                 projection.user_facing_response_event_ids.clone(),
                             ),
@@ -1905,7 +1951,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                             expected_coordinator_agent_id: None,
                             coordinator_agent_id: None,
                         };
-                        if control.validate().is_ok() {
+                        if control.validate_shape().is_ok() {
                             let existing = store_ref
                                 .load_plain_local_data(&auto_close_key)
                                 .and_then(|raw| {
@@ -2391,6 +2437,45 @@ mod tests {
     }
 
     #[test]
+    fn exchange_binding_uses_only_the_canonical_encrypted_metadata_member() {
+        let binding = arkret_sdk::AgentSidecarEventExchangeBinding {
+            schema: arkret_sdk::SchemaId::AGENT_SIDECAR_EVENT_EXCHANGE_BINDING_V1.to_owned(),
+            exchange_id: "exchange-01964137000000000008".to_owned(),
+            role: arkret_sdk::AgentSidecarExchangeRole::Request,
+            request_event_id: None,
+            completes_exchange: None,
+            coordinator_assignment_event_id: None,
+            request_context: Some(arkret_sdk::AgentSidecarExchangeRequestContext {
+                source_track_ref: arkret_sdk::SidecarSourceTrackRef {
+                    realm_id: arkret_sdk::RealmId::new(
+                        "ak:realm:AUqzNZlfuL-7z087TbZhKOdYyKUNPAa2o_neyoFRh3o2".to_owned(),
+                    )
+                    .unwrap(),
+                    strand_id: arkret_sdk::StrandId::new(
+                        "ak:strand:AUvEs_-d1tc81yDszBZAVWapgIr3Gs6ofbmtZSLQNejL".to_owned(),
+                    )
+                    .unwrap(),
+                    track_name: "discussion".to_owned(),
+                },
+                source_hlc: arkret_sdk::Hlc::new("019641370000-0000-00000001").unwrap(),
+                client_order_key: "01964137-0000-7000-8000-000000000008".to_owned(),
+                addressed_agent_ids: vec![
+                    crate::mls_api_helpers::principal_core_id("did:web:agents.example:assistant")
+                        .unwrap(),
+                ],
+                coordinator_agent_id: None,
+                source_checkpoint_anchor_id: None,
+            }),
+        };
+        let mut metadata = arkret_sdk::MessageMetadata::default();
+        set_sidecar_exchange_binding(&mut metadata, &binding).unwrap();
+
+        assert_eq!(sidecar_exchange_binding(&metadata), Some(binding));
+        assert!(metadata.fields.is_empty());
+        assert_eq!(metadata.extra.len(), 1);
+    }
+
+    #[test]
     fn route_match_requires_realm_and_source_strand() {
         let session = session(Vec::new());
         assert!(session.matches_route(&session.source_realm_id, &session.source_strand_id));
@@ -2699,19 +2784,18 @@ mod tests {
         session: &HostedSidecarState,
     ) -> arkret_sdk::AgentSidecarExchangeRequestContext {
         arkret_sdk::AgentSidecarExchangeRequestContext {
-            source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
+            source_track_ref: arkret_sdk::SidecarSourceTrackRef {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
                 strand_id: arkret_sdk::StrandId::new(session.source_strand_id.clone()).unwrap(),
                 track_name: "discussion".to_owned(),
             },
             source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
-            client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
+            client_order_key: "device-1-1".to_owned(),
             addressed_agent_ids: vec![
                 crate::mls_api_helpers::principal_core_id(EXCHANGE_AGENT).unwrap(),
             ],
-            completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
             coordinator_agent_id: None,
-            source_event_id: None,
+            source_checkpoint_anchor_id: None,
         }
     }
 
@@ -2720,11 +2804,40 @@ mod tests {
             controller_account_id: controller_account(),
             sidecar_id: session.sidecar_id.clone(),
             source_strand_id: session.source_strand_id.clone(),
-            exchange_id: arkret_sdk::AgentSidecarExchangeId::new("exchange-01964137000000000008")
-                .unwrap(),
+            exchange_id: "exchange-01964137000000000008".to_owned(),
             request_context: exchange_request_context(session),
             message_id: "msg:019f0000-0000-7000-8000-0000000000aa".to_owned(),
             local_operation_id: "op:019f0000-0000-7000-8000-0000000000ab".to_owned(),
+        }
+    }
+
+    fn exchange_request_binding(
+        pending: &PendingSidecarSubmission,
+    ) -> arkret_sdk::AgentSidecarEventExchangeBinding {
+        arkret_sdk::AgentSidecarEventExchangeBinding {
+            schema: arkret_sdk::SchemaId::AGENT_SIDECAR_EVENT_EXCHANGE_BINDING_V1.to_owned(),
+            exchange_id: pending.exchange_id.clone(),
+            role: arkret_sdk::AgentSidecarExchangeRole::Request,
+            request_event_id: None,
+            completes_exchange: None,
+            coordinator_assignment_event_id: None,
+            request_context: Some(pending.request_context.clone()),
+        }
+    }
+
+    fn exchange_response_binding(
+        pending: &PendingSidecarSubmission,
+        request_event_id: arkret_sdk::EventId,
+        completes_exchange: bool,
+    ) -> arkret_sdk::AgentSidecarEventExchangeBinding {
+        arkret_sdk::AgentSidecarEventExchangeBinding {
+            schema: arkret_sdk::SchemaId::AGENT_SIDECAR_EVENT_EXCHANGE_BINDING_V1.to_owned(),
+            exchange_id: pending.exchange_id.clone(),
+            role: arkret_sdk::AgentSidecarExchangeRole::UserFacingResponse,
+            request_event_id: Some(request_event_id.clone()),
+            completes_exchange: completes_exchange.then_some(true),
+            coordinator_assignment_event_id: completes_exchange.then_some(request_event_id),
+            request_context: None,
         }
     }
 
@@ -2732,13 +2845,10 @@ mod tests {
         session: &HostedSidecarState,
         pending: &PendingSidecarSubmission,
     ) -> arkret_sdk::Event {
-        let binding = arkret_sdk::AgentSidecarEventExchangeBinding::request(
-            pending.exchange_id.clone(),
-            pending.request_context.clone(),
-        )
-        .unwrap();
+        let binding = exchange_request_binding(pending);
+        binding.validate_shape().unwrap();
         let mut metadata = arkret_sdk::MessageMetadata::default();
-        metadata.set_sidecar_exchange_binding(&binding).unwrap();
+        set_sidecar_exchange_binding(&mut metadata, &binding).unwrap();
         arkret_wire::test_support::raw_event(
             arkret_sdk::EventKind::MessageCreate.as_str(),
             arkret_sdk::ScopeRef::Sidecar {
@@ -2937,15 +3047,10 @@ mod tests {
 
         // Craft the Agent-authored user_facing_response Event; the fake
         // decrypt below returns the mounted metadata value as plaintext.
-        let binding = arkret_sdk::AgentSidecarEventExchangeBinding::user_facing_response(
-            pending.exchange_id.clone(),
-            request_event_id.clone(),
-        )
-        .unwrap()
-        .with_completion(request_event_id.clone())
-        .unwrap();
+        let binding = exchange_response_binding(&pending, request_event_id.clone(), true);
+        binding.validate_shape().unwrap();
         let mut metadata = arkret_sdk::MessageMetadata::default();
-        metadata.set_sidecar_exchange_binding(&binding).unwrap();
+        set_sidecar_exchange_binding(&mut metadata, &binding).unwrap();
         let mut event = arkret_wire::test_support::raw_event(
             arkret_sdk::EventKind::MessageCreate.as_str(),
             arkret_sdk::ScopeRef::Sidecar {
@@ -3101,13 +3206,10 @@ mod tests {
             1
         );
 
-        let binding = arkret_sdk::AgentSidecarEventExchangeBinding::user_facing_response(
-            pending.exchange_id.clone(),
-            request_event_id.clone(),
-        )
-        .unwrap();
+        let binding = exchange_response_binding(&pending, request_event_id.clone(), false);
+        binding.validate_shape().unwrap();
         let mut metadata = arkret_sdk::MessageMetadata::default();
-        metadata.set_sidecar_exchange_binding(&binding).unwrap();
+        set_sidecar_exchange_binding(&mut metadata, &binding).unwrap();
         let mut event = arkret_wire::test_support::raw_event(
             arkret_sdk::EventKind::MessageCreate.as_str(),
             arkret_sdk::ScopeRef::Circle {

@@ -64,14 +64,14 @@ fn delivered_exchange_projection_fixture(
         .unwrap(),
         exchange_id: arkret_sdk::AgentSidecarExchangeId::new("exchange-01964137000000000008")
             .unwrap(),
-        source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
+        source_track_ref: arkret_sdk::SidecarSourceTrackRef {
             realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
             strand_id: arkret_sdk::StrandId::new(source_strand_id).unwrap(),
             track_name: "discussion".to_owned(),
         },
         source_event_id: source_event_id.map(|anchor| arkret_sdk::EventId::new(anchor).unwrap()),
         source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
-        client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
+        client_order_key: "device-1-1".to_owned(),
         addressed_agent_ids: vec![coordinator.clone()],
         coordinator_agent_id: coordinator,
         coordinator_assignment_event_id: request_event.clone(),
@@ -148,7 +148,7 @@ fn source_routed_echo_waits_until_its_anchor_is_visible() {
 #[test]
 fn routed_request_binding_travels_only_in_encrypted_metadata_plaintext() {
     let context = arkret_sdk::AgentSidecarExchangeRequestContext {
-        source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
+        source_track_ref: arkret_sdk::SidecarSourceTrackRef {
             realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5",
             )
@@ -167,28 +167,31 @@ fn routed_request_binding_travels_only_in_encrypted_metadata_plaintext() {
             )
             .unwrap(),
         ],
-        completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
         coordinator_agent_id: None,
-        source_event_id: None,
+        source_checkpoint_anchor_id: None,
     };
-    let binding = arkret_sdk::AgentSidecarEventExchangeBinding::request(
-        arkret_sdk::AgentSidecarExchangeId::new("exchange-01964137000000000008").unwrap(),
-        context,
-    )
-    .unwrap();
+    let binding = arkret_sdk::AgentSidecarEventExchangeBinding {
+        schema: arkret_sdk::SchemaId::AGENT_SIDECAR_EVENT_EXCHANGE_BINDING_V1.to_owned(),
+        exchange_id: "exchange-01964137000000000008".to_owned(),
+        role: arkret_sdk::AgentSidecarExchangeRole::Request,
+        request_event_id: None,
+        completes_exchange: None,
+        coordinator_assignment_event_id: None,
+        request_context: Some(context),
+    };
+    binding.validate_shape().unwrap();
     let mut metadata = arkret_sdk::MessageMetadata::default();
-    metadata.set_sidecar_exchange_binding(&binding).unwrap();
+    crate::sidecar::set_sidecar_exchange_binding(&mut metadata, &binding).unwrap();
 
     // The encrypted_metadata plaintext is exactly the MessageMetadata JSON
     // with the binding under the spec key.
     let plaintext = serde_json::to_value(&metadata).unwrap();
-    assert!(
-        plaintext
-            .get(arkret_sdk::MESSAGE_METADATA_SIDECAR_EXCHANGE_BINDING_KEY)
-            .is_some()
-    );
+    assert!(plaintext.get("sidecar_exchange_binding").is_some());
     let parsed: arkret_sdk::MessageMetadata = serde_json::from_value(plaintext).unwrap();
-    assert_eq!(parsed.sidecar_exchange_binding(), Some(binding));
+    assert_eq!(
+        crate::sidecar::sidecar_exchange_binding(&parsed),
+        Some(binding)
+    );
 
     // The content block on the encrypted send path never carries the binding.
     let chat_content = chat_content_block_for_body("hi @assistant").unwrap();
@@ -196,7 +199,7 @@ fn routed_request_binding_travels_only_in_encrypted_metadata_plaintext() {
     assert!(
         !serde_json::to_string(&content_value)
             .unwrap()
-            .contains(arkret_sdk::MESSAGE_METADATA_SIDECAR_EXCHANGE_BINDING_KEY),
+            .contains("sidecar_exchange_binding"),
         "the content block never carries the binding"
     );
 }

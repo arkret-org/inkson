@@ -1085,7 +1085,7 @@ async fn ensure_owned_agent_sidecar(
                 .agent_sidecar_get(&sidecar_id)
                 .await
                 .map_err(anyhow::Error::from)?;
-            view.validate()?;
+            crate::sidecar::validate_agent_sidecar_view(&view)?;
             if view.sidecar.id != sidecar_id
                 || view.sidecar.realm_id != ceremony_realm
                 || view.sidecar.controller_account_id != ceremony_controller_account_id
@@ -1148,7 +1148,7 @@ async fn submit_source_routed_sidecar_message(
     mut state_store: SyncSignal<LocalStateStore>,
     view: &arkret_sdk::AgentSidecarView,
 ) -> anyhow::Result<SourceRoutedSidecarMessageOutcome> {
-    view.validate()?;
+    crate::sidecar::validate_agent_sidecar_view(view)?;
     if attached_source_strand_id != routed_source_strand_id {
         anyhow::bail!("native Sidecar send source differs from its attached context");
     }
@@ -1251,12 +1251,18 @@ async fn submit_source_routed_sidecar_message(
         .as_ref()
         .map(|pending| pending.exchange_id.clone())
         .unwrap_or_else(uuid_v7);
-    let binding = arkret_sdk::AgentSidecarEventExchangeBinding::request(
-        exchange_id.clone(),
-        request_context.clone(),
-    )?;
+    let binding = arkret_sdk::AgentSidecarEventExchangeBinding {
+        schema: arkret_sdk::SchemaId::AGENT_SIDECAR_EVENT_EXCHANGE_BINDING_V1.to_owned(),
+        exchange_id: exchange_id.clone(),
+        role: arkret_sdk::AgentSidecarExchangeRole::Request,
+        request_event_id: None,
+        completes_exchange: None,
+        coordinator_assignment_event_id: None,
+        request_context: Some(request_context.clone()),
+    };
+    binding.validate_shape()?;
     let mut message_metadata = arkret_sdk::MessageMetadata::default();
-    message_metadata.set_sidecar_exchange_binding(&binding)?;
+    crate::sidecar::set_sidecar_exchange_binding(&mut message_metadata, &binding)?;
     let metadata_bytes = serde_json::to_vec(&message_metadata)?;
     let message_id = new_chat_local_id();
     let api = crate::transport::auth::authed_api_with_sync(base_url, api_token.clone(), None)?;
