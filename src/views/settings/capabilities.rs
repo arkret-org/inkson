@@ -113,7 +113,7 @@ fn decode_capability_row(
                 IssuerAuthorityRef::Grant { grant_id } => {
                     format!("grant {}", grant_id.as_str())
                 }
-                IssuerAuthorityRef::RealmAuthority {
+                IssuerAuthorityRef::RealmRoot {
                     realm_id,
                     authority_generation,
                     ..
@@ -564,19 +564,17 @@ mod tests {
                 }],
                 "issued_at": "2026-01-01T00:00:00.000Z",
                 "issuer_authority_refs": [{
-                    "kind": "realm_authority",
+                    "kind": "realm_root",
                     "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-                    "governance_station_id": "ak:did_core:web:principal.example",
                     "authority_generation": 0,
-                    "basis": {
-                        "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                        "commit_id": "ak:realm_commit:0196419b-0000-7000-8000-000000000001",
-                        "stream_ref": {
-                            "kind": "realm",
-                            "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
-                        },
-                        "stream_position": 0
-                    }
+                    "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+                }],
+                "authority_depth": 0,
+                "authority_root_refs": [{
+                    "kind": "realm_root",
+                    "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+                    "authority_generation": 0,
+                    "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
                 }]
             },
             "revision": {

@@ -285,9 +285,12 @@ impl AccountSyncStep {
             .iter()
             .find(|(id, _)| id.as_str() == realm_id)
             .and_then(|(_, entry)| entry.state_at_window_start.as_ref())
-            .and_then(|state| state.get("realm_metadata"))
-            .and_then(|metadata| metadata.get("collaboration_role"))
-            .and_then(|role| serde_json::from_value(role.clone()).ok())
+            .and_then(|state| state.realm_metadata.collaboration_role)
+            .map(|role| match role {
+                arkret_models_collaboration::sync_frames::account_sync::WindowStartCollaborationRole::DirectConversation => {
+                    arkret_sdk::CollaborationRealmRole::DirectConversation
+                }
+            })
     }
 
     pub fn has_window_start_realm_metadata(&self, realm_id: &str) -> bool {

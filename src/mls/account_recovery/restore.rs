@@ -104,7 +104,9 @@ pub(super) fn verify_active_backup_series(list_payload: &Value, backup_kind: &st
     };
     let bodies = crate::mls::runtime::iter_backup_bodies(list_payload)
         .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(backup_kind))
-        .filter(|body| body.get("series_id").and_then(Value::as_str) == Some(active_series))
+        .filter(|body| {
+            body.get("series_id").and_then(Value::as_str) == Some(active_series.as_str())
+        })
         .cloned()
         .collect::<Vec<_>>();
     let Some(tail) = bodies.iter().max_by_key(|body| backup_series_seq_of(body)) else {
@@ -112,7 +114,12 @@ pub(super) fn verify_active_backup_series(list_payload: &Value, backup_kind: &st
             "authoritative {backup_kind} series has no envelopes"
         ));
     };
-    verify_series_chain(tail, &bodies).map_err(|error| anyhow!("{error}"))
+    let tail: arkret_models_crypto::KeyBackup = serde_json::from_value(tail.clone())?;
+    let chain = bodies
+        .into_iter()
+        .map(serde_json::from_value::<arkret_models_crypto::KeyBackup>)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    verify_series_chain(&tail, &chain).map_err(|error| anyhow!("{error}"))
 }
 
 pub(super) fn validate_backup_account(
@@ -129,7 +136,6 @@ pub(super) fn validate_backup_account(
             .cloned()
             .ok_or_else(|| anyhow!("current backup pointers are unavailable"))?,
     )?;
-    current.validate()?;
     if current.account_id != *authority {
         return Err(anyhow!("active-series account binding mismatch"));
     }
@@ -320,7 +326,7 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
             .unwrap_or_default();
         if let Ok(class) = arkret_sdk::BackupKind::try_from(backup_kind) {
             let active_series = active_secret_storage_series_id_for(&payload, class);
-            if entry.get("series_id").and_then(Value::as_str) != active_series {
+            if entry.get("series_id").and_then(Value::as_str) != active_series.as_deref() {
                 continue;
             }
         }
@@ -401,8 +407,12 @@ pub async fn restore_mls_history_with_passphrase_from_payload(
         // Fail closed against series rollback / withholding: the selected tail
         // must sit at the end of a complete, digest-linked chain back to genesis
         // before we trust it as the account secret to import.
-        verify_series_chain(&secret_body, &all_secret_storage_backups(list_payload))
-            .map_err(|error| anyhow!("{error}"))?;
+        let tail: arkret_models_crypto::KeyBackup = serde_json::from_value(secret_body.clone())?;
+        let chain = all_secret_storage_backups(list_payload)
+            .into_iter()
+            .map(serde_json::from_value::<arkret_models_crypto::KeyBackup>)
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        verify_series_chain(&tail, &chain).map_err(|error| anyhow!("{error}"))?;
         let secret_bytes = decrypt_mls_account_secret_backup(passphrase, &secret_body)?;
         let secret = String::from_utf8(secret_bytes)
             .map_err(|err| anyhow!("account secret is not valid UTF-8: {err}"))?;

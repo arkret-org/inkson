@@ -131,7 +131,6 @@ fn current_series(pointers: Vec<(String, Value)>) -> Value {
     let mut state = serde_json::json!({
         "account_id": authority(),
         "control_realm_id": "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI",
-        "authority_commit_id": arkret_sdk::RealmCommitId::from_digest([9; 32]),
         "secret_storage": {"state":"absent"},
     });
     for (kind, pointer) in pointers {
