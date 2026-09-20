@@ -405,6 +405,7 @@ fn inkson_accepts_server_contract_payloads() {
                     }
                 }],
                 "actions": ["ak.message.create"],
+                "status": "active",
                 "resources": [
                     {"kind": "realm", "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"}
                 ],
