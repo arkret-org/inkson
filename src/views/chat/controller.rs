@@ -1202,6 +1202,20 @@ impl ChatController {
         poll_ref: arkret_sdk::MessageId,
         option_id: String,
     ) {
+        let actor = arkret_sdk::ActorId::account(context.authority.clone());
+        let vote_check = self
+            .poll_cards
+            .read()
+            .iter()
+            .find(|card| card.message_id == message_id)
+            .ok_or_else(|| anyhow::anyhow!("poll projection is unavailable"))
+            .and_then(|card| {
+                super::poll_submission::ensure_first_poll_vote(card, &poll_ref, &actor)
+            });
+        if let Err(error) = vote_check {
+            self.status_msg.set(format!("Poll vote refused: {error}"));
+            return;
+        }
         if let Some(message) = self
             .messages
             .write()

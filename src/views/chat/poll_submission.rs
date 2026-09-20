@@ -9,6 +9,25 @@ pub(super) struct PollSubmissionContext {
     pub circle_id: Option<String>,
 }
 
+/// Until the verified response projection retains accepted response Event ids,
+/// this producer can only author a first vote. A known re-vote needs the exact
+/// pairwise declaration required by content-types §4.9.1.
+pub(super) fn ensure_first_poll_vote(
+    card: &crate::messaging::polls::PollCard,
+    poll_ref: &arkret_sdk::MessageId,
+    actor: &arkret_sdk::ActorId,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        card.poll_ref.as_ref() == Some(poll_ref),
+        "poll is not an accepted message"
+    );
+    anyhow::ensure!(
+        !card.actor_has_voted(actor),
+        "cannot change a poll vote until the accepted response Event reference is available"
+    );
+    Ok(())
+}
+
 pub(super) async fn submit_poll_operation(
     api: &TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
@@ -40,17 +59,13 @@ pub(super) async fn submit_poll_operation(
         )
         .await
         .map_err(anyhow::Error::msg)?;
-        // A poll response is an `ak.message.create` that has to name the poll
-        // it answers in `causal_refs`. The closed message authoring intent has
-        // no member for that, and a prepared message with non-empty
-        // `causal_refs` is refused, so this one write is authored locally
-        // instead of prepared. Ordinary discussion messages do not take this
-        // path; when the contract carries the reference, neither will this one.
+        // The closed prepared-message intent does not carry the typed
+        // poll_response_heads declaration. Poll responses therefore use a
+        // directly authored MessageCreate Event; initial votes have no head.
         let crate::views::secure_send::SecureWritePlan::Message(authoring) = build.message_plan
         else {
             anyhow::bail!("a poll response requires the encrypted message build");
         };
-        let response_refs = operation.intent().causal_refs().to_vec();
         let plan_realm_id = realm_id.to_owned();
         let plan_actor = context.authority.principal_id.as_str().to_owned();
         let plan_scope = build.effective_scope.clone();
@@ -64,14 +79,10 @@ pub(super) async fn submit_poll_operation(
                     authoring.reply_to.as_deref(),
                 )
                 .map_err(|error| format!("poll response intent build failed: {error:#}"))?;
-                let mut refs = response_refs;
-                refs.sort();
-                refs.dedup();
                 crate::operation::TypedOperationBuilder::new::<
                     arkret_sdk::event_spec::MessageCreate,
                 >(&plan_realm_id, &plan_actor, intent.payload())
                 .effective_scope(plan_scope)
-                .causal_refs(refs)
                 .build_sdk_event("inkson")
                 .map(|operation| operation.with_local_operation_id(plan_local_operation_id))
                 .map_err(|error| format!("poll response Event conversion failed: {error}"))
@@ -110,4 +121,30 @@ pub(super) async fn submit_poll_operation(
         std::str::from_utf8(&content_bytes)?,
     );
     Ok(event_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_vote_allowed_but_known_revote_requires_accepted_head() {
+        let poll_ref = arkret_sdk::MessageId::new(
+            "ak:message:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu".to_owned(),
+        )
+        .unwrap();
+        let actor = crate::views::chat::tests::local_fixture_actor("did:web:alice.example");
+        let mut draft = crate::messaging::polls::PollDraft::new();
+        draft.question = "ship?".to_owned();
+        draft.set_option(0, "yes".to_owned());
+        draft.set_option(1, "no".to_owned());
+        let mut card = crate::messaging::polls::PollCard::from_draft("accepted".to_owned(), &draft);
+        card.poll_ref = Some(poll_ref.clone());
+        assert!(ensure_first_poll_vote(&card, &poll_ref, &actor).is_ok());
+        card.votes[0].push(actor.clone());
+        assert!(ensure_first_poll_vote(&card, &poll_ref, &actor).is_err());
+        card.votes[0].clear();
+        card.poll_ref = None;
+        assert!(ensure_first_poll_vote(&card, &poll_ref, &actor).is_err());
+    }
 }
