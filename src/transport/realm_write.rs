@@ -373,8 +373,8 @@ pub async fn update_space_metadata(
     causal_refs: Vec<arkret_sdk::Hash>,
 ) -> anyhow::Result<SubmitEventResult> {
     let event = ak_ops::space_update_patch(realm_id, actor_id, space_id, patch)?
-        .causal_refs(causal_refs)
-        .build_sdk_event("inkson")?;
+        .build_sdk_event("inkson")?
+        .with_causal_refs(causal_refs);
     submitter.submit_sdk_event(&event).await
 }
 

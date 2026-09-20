@@ -399,7 +399,7 @@ impl AccountFrameStep {
         self.frame.device_lists.clone().unwrap_or_default()
     }
 
-    fn to_device(&self) -> &[Value] {
+    fn to_device(&self) -> &[arkret_sdk::DeviceMessageEnvelope] {
         self.frame
             .to_device
             .as_ref()
@@ -2346,10 +2346,10 @@ fn apply_notification_projection(
         // Realm membership is itself a notification transition: a live
         // `join` delta must retire the pending invite even when this frame
         // carries neither wire notifications nor notification account-data.
-        || !response.realm_entries.is_empty();
+        || !response.step.realm_entries.is_empty();
     let mut notification_projection = store.notification_projection();
     let joined_realms = crate::state::projection::notifications::JoinedRealmIds::from_realm_entries(
-        &response.realm_entries,
+        &response.step.realm_entries,
         account_actor,
     );
     crate::state::projection::notifications::apply_notification_projection(
