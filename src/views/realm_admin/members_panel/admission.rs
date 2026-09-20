@@ -8,39 +8,6 @@
 
 use super::*;
 
-pub(super) async fn retain_current_history_secret_durable(
-    mut state_store: SyncSignal<LocalStateStore>,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
-) -> anyhow::Result<Option<(u64, zeroize::Zeroizing<Vec<u8>>)>> {
-    let account = crate::app::SessionContext::get()
-        .active_account()
-        .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
-    anyhow::ensure!(
-        account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
-        "MLS history retention identity does not match the active account"
-    );
-    let derived = {
-        let store = state_store.read();
-        crate::mls::runtime::derive_and_retain_realm_history_secret(
-            &store,
-            secure_store,
-            realm_id,
-            &account.authority,
-            &account.device_id,
-        )
-    }
-    .map_err(|error| anyhow::anyhow!(error.user_message()))?;
-    let Some((epoch, secret, pending)) = derived else {
-        return Ok(None);
-    };
-    pending.persist(secure_store).await?;
-    state_store.write().publish_history_secrets(pending);
-    Ok(Some((epoch, secret)))
-}
-
 pub(super) fn mls_admission_authoring_lock(realm_id: &str) -> Arc<tokio::sync::Mutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> = OnceLock::new();
     let mut locks = LOCKS
@@ -76,6 +43,12 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS admission identity does not match the active account"
     );
+    anyhow::ensure!(
+        !state_store
+            .read()
+            .realm_projection_has_retired_minimal_metadata_marker(&realm_id),
+        "retired minimal-metadata Realm marker blocks MLS admission"
+    );
     let needs_mls_admission = {
         let store = state_store.read();
         store.mls_checkpoint_for(&realm_id).is_some()
@@ -89,11 +62,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         .has_pending_mls_admission_for_realm(&realm_id)
         .await?
     {
-        let advanced = admission_submitter
-            .drain_mls_outbound_with_accepted_store(
-                crate::app::runtime_adapter::state_store_handle(state_store),
-            )
-            .await?;
+        let advanced = admission_submitter.drain_mls_outbound().await?;
         tracing::warn!(
             target: "mls_admission",
             realm = %short_protocol_id(&realm_id),
@@ -103,26 +72,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         );
         anyhow::bail!("an exact durable MLS admission unit is still converging for this Realm");
     }
-    let pairwise_requester = {
-        let store = state_store.read();
-        store
-            .realm_projection_is_minimal_metadata(&realm_id)
-            .then(|| {
-                let realm = arkret_sdk::RealmId::new(realm_id.clone())
-                    .map_err(|error| format!("invalid minimal-metadata Realm id: {error}"))?;
-                crate::mls::pairwise_identity::derive_pairwise_signing_material(
-                    &account.authority,
-                    &account.device_id,
-                    &realm,
-                )
-            })
-            .transpose()
-            .map_err(anyhow::Error::msg)?
-    };
-    let mls_actor_id = pairwise_requester
-        .as_ref()
-        .map(|requester| requester.actor_id.to_string())
-        .unwrap_or_else(|| actor_id.clone());
+    let mls_actor_id = actor_id.clone();
     let is_direct = state_store.read().realm_collaboration_role(&realm_id)
         == Some(arkret_sdk::CollaborationRealmRole::DirectConversation);
     let target_agent = if is_direct && target_device_id_override.is_none() {
@@ -192,7 +142,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     let target_device_id = if target_agent.is_some() {
         None
     } else {
-        claim_target_device_id(&claim_route, pairwise_requester.is_some())?
+        claim_target_device_id(&claim_route)?
     };
     let group_id = {
         let store = state_store.read();
@@ -227,48 +177,22 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         &[],
     )
     .await?;
-    // Resolve and durably retain the pre-commit epoch before allocating a
-    // one-time peer package. A local export failure must not exhaust the
-    // recipient's package pool on every retry.
-    retain_current_history_secret_durable(
-        state_store,
-        secure_store.as_ref(),
-        &realm_id,
-        &mls_actor_id,
-        &device_id,
-    )
-    .await?;
     let claim_request_id = crate::mls_api_helpers::generate_mls_claim_request_id()?;
     let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
-    let claim_outcome = if let Some(requester) = pairwise_requester.as_ref() {
-        mls_clients
-            .mls()
-            .claim_pairwise_key_package(
-                invitee_principal,
-                &realm_id,
-                requester,
-                Some(&claim_route.destination_id),
-                &claim_request_id,
-                None,
-                &group_id,
-            )
-            .await?
-    } else {
-        mls_clients
-            .mls()
-            .claim_key_package(
-                invitee_principal,
-                &realm_id,
-                &actor_id,
-                &device_id,
-                Some(&claim_route.destination_id),
-                &claim_request_id,
-                target_device_id,
-                &group_id,
-                target_agent.as_ref(),
-            )
-            .await?
-    };
+    let claim_outcome = mls_clients
+        .mls()
+        .claim_key_package(
+            invitee_principal,
+            &realm_id,
+            &actor_id,
+            &device_id,
+            Some(&claim_route.destination_id),
+            &claim_request_id,
+            target_device_id,
+            &group_id,
+            target_agent.as_ref(),
+        )
+        .await?;
     claim_outcome
         .validate_shape()
         .map_err(|error| anyhow::anyhow!("KeyPackage claim outcome is invalid: {error}"))?;
@@ -295,18 +219,13 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         &[(&claim, &claim_receipt)],
     )
     .await?;
-    let requester_device_authorize_event_id = if pairwise_requester.is_none() {
-        Some(
-            crate::mls::admission::current_requester_device_authorize_event_id(
-                &api.sdk_http_client()?,
-                &device_id,
-            )
-            .await
-            .map_err(anyhow::Error::msg)?,
+    let requester_device_authorize_event_id =
+        crate::mls::admission::current_requester_device_authorize_event_id(
+            &api.sdk_http_client()?,
+            &device_id,
         )
-    } else {
-        None
-    };
+        .await
+        .map_err(anyhow::Error::msg)?;
     let local_state = state_store.read().clone();
     let admission = crate::mls::admission::build_realm_mls_admission_events_from_claim(
         &api.sdk_http_client()?,
@@ -316,7 +235,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         &account.authority,
         &mls_actor_id,
         &account.device_id,
-        requester_device_authorize_event_id.as_ref(),
+        Some(&requester_device_authorize_event_id),
         &claim,
         &claim_request_id,
         &claim_receipt,
@@ -348,7 +267,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             .as_ref()
             .map(|device| short_protocol_id(device.as_str()))
             .unwrap_or_else(|| "agent".to_owned()),
-        "retained local-authoritative history_secret for history-key recovery"
+        "submitted MLS admission for accepted Commit and Welcome delivery"
     );
     Ok(Some(next_epoch))
 }
@@ -650,11 +569,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         .has_pending_mls_admission_for_realm(&realm_id)
         .await?
     {
-        submitter
-            .drain_mls_outbound_with_accepted_store(
-                crate::app::runtime_adapter::state_store_handle(state_store),
-            )
-            .await?;
+        submitter.drain_mls_outbound().await?;
         if submitter
             .has_pending_mls_admission_for_realm(&realm_id)
             .await?

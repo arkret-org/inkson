@@ -975,11 +975,7 @@ pub(super) fn accepted_invite_claim_route(
 
 pub(super) fn claim_target_device_id(
     route: &AcceptedInviteClaimRoute,
-    minimal_metadata_pairwise: bool,
 ) -> anyhow::Result<Option<&str>> {
-    if minimal_metadata_pairwise {
-        return Ok(None);
-    }
     route.target_device_id.as_deref().map(Some).ok_or_else(|| {
         anyhow::anyhow!(
             "accepted human invite has no exact target device from its accepted Event proof"

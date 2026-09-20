@@ -44,37 +44,16 @@ pub(crate) enum WelcomeRequester {
     Device {
         sender_device_id: arkret_sdk::DeviceId,
     },
-    /// A minimal-metadata Realm signs with the Realm-local pairwise identity so
-    /// the delivery carries no account-linkable method.
-    MinimalMetadataPairwise {
-        verification_method: arkret_sdk::DidUrl,
-        signer: std::sync::Arc<crate::event_signer::InksonEventSigner>,
-    },
 }
 
 fn admission_actor_and_requester(
     state_store: &LocalStateStore,
     realm_id: &str,
-    authority: &arkret_sdk::AccountId,
     ordinary_actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<(String, WelcomeRequester), String> {
-    if state_store.realm_projection_is_minimal_metadata(realm_id) {
-        let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
-            .map_err(|error| format!("invalid minimal-metadata Realm id: {error}"))?;
-        let material = crate::mls::pairwise_identity::derive_pairwise_signing_material(
-            authority, device_id, &realm_id,
-        )?;
-        let verification_method =
-            arkret_sdk::DidUrl::new(material.signer.verification_method().to_owned())
-                .map_err(|error| format!("invalid pairwise verification method: {error}"))?;
-        return Ok((
-            material.actor_id.to_string(),
-            WelcomeRequester::MinimalMetadataPairwise {
-                verification_method,
-                signer: material.signer.clone(),
-            },
-        ));
+    if state_store.realm_projection_has_retired_minimal_metadata_marker(realm_id) {
+        return Err("retired minimal-metadata Realm marker blocks MLS admission".to_owned());
     }
     Ok((
         ordinary_actor_id.to_owned(),
@@ -166,13 +145,8 @@ pub(crate) fn build_admission_events_for_scope(
         .realm_id_opt()
         .ok_or_else(|| "MLS admission scope has no Realm".to_owned())?
         .clone();
-    let (actor_id, requester) = admission_actor_and_requester(
-        state_store,
-        realm_id.as_str(),
-        authority,
-        actor_id,
-        device_id,
-    )?;
+    let (actor_id, requester) =
+        admission_actor_and_requester(state_store, realm_id.as_str(), actor_id, device_id)?;
     validate_claim_receipt_for_admission(
         state_store,
         effective_scope,
@@ -328,20 +302,9 @@ fn build_welcome_delivery(
         ciphertext_b64: draft.ciphertext_b64.clone(),
     };
     let signing_bytes = unsigned.canonical_signing_bytes()?;
-    let (verification_method, signature) = match requester {
-        WelcomeRequester::Device { sender_device_id } => {
-            sign_with_active_device_signer(requester_actor_id, sender_device_id, &signing_bytes)?
-        }
-        WelcomeRequester::MinimalMetadataPairwise {
-            verification_method,
-            signer,
-        } => {
-            let signature = signer
-                .sign_raw(&signing_bytes)
-                .map_err(|error| format!("Welcome delivery pairwise signature: {error}"))?;
-            (verification_method.clone(), signature)
-        }
-    };
+    let WelcomeRequester::Device { sender_device_id } = requester;
+    let (verification_method, signature) =
+        sign_with_active_device_signer(requester_actor_id, sender_device_id, &signing_bytes)?;
     let producer_proof = arkret_wire::DetachedObjectSignature {
         context: arkret_wire::DetachedSignatureContext::MlsWelcomeDelivery,
         signature_algorithm: arkret_wire::DetachedSignatureAlgorithm::Ed25519,
@@ -451,6 +414,24 @@ mod tests {
     use crate::state::isolated_store_for_tests;
 
     const REALM: &str = "ak:realm:Aa8_CTduEn4HY_7QtwQ1Ct3QH2pg-9mfHGxJfGOYYHxx";
+
+    #[test]
+    fn retired_minimal_metadata_marker_rejects_admission_before_signing() {
+        let mut state = isolated_store_for_tests("retired-minimal-admission");
+        state.save_realm_tree_projection(
+            REALM,
+            serde_json::json!({"schema_refs": ["ak.profile.mls.minimal_metadata_realm.v1"]}),
+        );
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000b1".to_owned())
+                .unwrap();
+        assert!(
+            admission_actor_and_requester(&state, REALM, "did:web:alice.example", &device)
+                .err()
+                .unwrap()
+                .contains("retired minimal-metadata")
+        );
+    }
 
     fn requester_device_summary(
         device_id: &arkret_sdk::DeviceId,

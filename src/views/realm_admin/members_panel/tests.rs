@@ -797,20 +797,18 @@ fn accepted_human_invite_route_fails_closed_without_exact_accepting_device() {
         })
     );
     let route = accepted_invite_claim_route(&store, realm_id, &actor_key(invitee)).unwrap();
-    assert!(claim_target_device_id(&route, false).is_err());
-    assert_eq!(claim_target_device_id(&route, true).unwrap(), None);
+    assert!(claim_target_device_id(&route).is_err());
 }
 
 #[test]
-fn pairwise_claim_selector_never_reuses_a_human_device_coordinate() {
+fn human_claim_selector_requires_the_accepted_device_coordinate() {
     let route = AcceptedInviteClaimRoute {
         destination_id: "ak:did_core:web:principal.example".to_owned(),
         target_device_id: Some("ak:device:0196419b-0000-7000-8000-000000000002".to_owned()),
     };
 
-    assert_eq!(claim_target_device_id(&route, true).unwrap(), None);
     assert_eq!(
-        claim_target_device_id(&route, false).unwrap(),
+        claim_target_device_id(&route).unwrap(),
         Some("ak:device:0196419b-0000-7000-8000-000000000002")
     );
 }
