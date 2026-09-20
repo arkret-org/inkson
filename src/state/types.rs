@@ -1382,7 +1382,7 @@ impl RootIndex {
 ///
 /// We intentionally use ed25519 (Ed25519) rather than ES256 because every
 /// other signing path in inkson is already ed25519 (device authorization,
-/// move-signing, session-grant introspection proofs) and coauth's
+/// move-signing, session DPoP proofs) and coauth's
 /// `DpopVerifier` accepts the `Ed25519`
 /// algorithm out of the box. Sticking with ed25519 keeps a single
 /// key-format story across the client.
@@ -1425,11 +1425,9 @@ pub(crate) const MEMBER_HANDLE_NEGATIVE_CACHE_TTL_SECONDS: i64 = 5 * 60;
 pub struct PersistedSessionGrant {
     /// The signed grant JWT (long-lived, signed by coauth).
     pub grant_jwt: String,
-    /// PKCS8 PEM of the ephemeral session signing key. Decoded with
-    /// [`crate::identity::account_auth::session_grant_signing_key_from_pem`] before
-    /// signing a fresh introspection proof.
+    /// PKCS8 PEM of the ephemeral holder/DPoP key bound to this session.
     pub session_private_key_pem: String,
-    /// Grant id assigned by coauth. Embedded in introspection proof claims.
+    /// Grant id assigned by coauth and used by refresh/revocation binding.
     pub grant_id: String,
     /// Stable service identity the grant is bound to.
     pub audience_id: arkret_sdk::DidCoreId,

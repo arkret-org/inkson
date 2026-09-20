@@ -57,9 +57,9 @@ pub enum AuthDpopError {
     /// The shared SDK DPoP proof builder failed.
     #[error("DPoP mint failed: {0}")]
     Mint(String),
-    /// The session-grant introspection proof could not be signed.
-    #[error("session-grant introspection proof failed: {0}")]
-    SessionGrantProof(String),
+    /// Session holder key material could not be encoded.
+    #[error("session holder key material failed: {0}")]
+    SessionKeyMaterial(String),
 }
 
 /// In-memory handle on the device's DPoP signing key. Construct via
@@ -97,11 +97,11 @@ impl DpopHandle {
             &self.signing_key.verifying_key(),
         );
         let bytes = arkret_sdk::canonical::canonical_json_bytes(&jwk)
-            .map_err(|error| AuthDpopError::SessionGrantProof(error.to_string()))?;
+            .map_err(|error| AuthDpopError::SessionKeyMaterial(error.to_string()))?;
         let json = String::from_utf8(bytes)
-            .map_err(|error| AuthDpopError::SessionGrantProof(error.to_string()))?;
+            .map_err(|error| AuthDpopError::SessionKeyMaterial(error.to_string()))?;
         arkret_sdk::CanonicalSessionPublicJwk::new(json)
-            .map_err(|error| AuthDpopError::SessionGrantProof(error.to_string()))
+            .map_err(|error| AuthDpopError::SessionKeyMaterial(error.to_string()))
     }
 
     /// Export the raw 32-byte ed25519 seed as base64url-no-pad.
@@ -120,18 +120,16 @@ impl DpopHandle {
     /// Export the device signing key as PKCS#8 PEM.
     ///
     /// Used after a DPoP-bound session-grant rotation: the rotated grant's
-    /// `session_public_key` is this device key (the grant binds to the same key
-    /// the rotation proof proved possession of), so the station
-    /// introspection proof must be signed with this key. Persisting it as the
-    /// rotated grant's `session_private_key_pem` lets the existing proof path
-    /// (`session_grant_signing_key_from_pem`) sign with the right key, uniformly
-    /// with the first-login flow.
+    /// `session_public_key` is this device key, so persisting the same holder
+    /// material keeps the grant binding exact across restart.
     pub fn session_signing_key_pkcs8_pem(&self) -> Result<Zeroizing<String>, AuthDpopError> {
         use ed25519_dalek::pkcs8::EncodePrivateKey as _;
         self.signing_key
             .to_pkcs8_pem(ed25519_dalek::pkcs8::spki::der::pem::LineEnding::LF)
             .map(|pem| Zeroizing::new(pem.to_string()))
-            .map_err(|err| AuthDpopError::SessionGrantProof(format!("device key pkcs8 pem: {err}")))
+            .map_err(|err| {
+                AuthDpopError::SessionKeyMaterial(format!("device key pkcs8 pem: {err}"))
+            })
     }
 
     /// Sign one `challenge_dpop_session_v1` proof for

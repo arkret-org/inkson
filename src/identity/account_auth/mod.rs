@@ -7,7 +7,6 @@ mod callback;
 pub mod grant_dpop;
 mod handoff;
 mod onboarding;
-mod proof;
 pub mod transition;
 mod util;
 
@@ -20,7 +19,6 @@ pub use authorize::*;
 pub use callback::*;
 pub use handoff::*;
 pub use onboarding::*;
-pub use proof::*;
 pub(crate) use util::*;
 
 const INKSON_OIDC_REDIRECT_URI_NATIVE: &str = "urn:inkson:oauth:callback";

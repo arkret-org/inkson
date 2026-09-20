@@ -41,9 +41,6 @@ use chime::{
     PushGatewayType, PushPreferences, PushRegistrationState, build_register_device_request,
 };
 
-use crate::identity::account_auth::{
-    build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem,
-};
 use crate::identity::session_refresh::grant_matches_station;
 use crate::push::token_source::current_platform;
 use crate::push::{
@@ -83,9 +80,6 @@ pub enum PushRegistrationError {
     /// The persisted grant is not usable for this registration.
     #[error("coauth session grant cannot be used for chime: {reason}")]
     SessionGrantMismatch { reason: String },
-    /// The persisted grant exists but its proof material could not be minted.
-    #[error("could not mint chime session-grant proof: {0}")]
-    SessionGrantProof(anyhow::Error),
     /// An unexpected internal error.
     #[error("push registration failed: {0}")]
     Other(anyhow::Error),
@@ -116,8 +110,7 @@ pub struct RegisterContext {
     pub authorization_credential: Option<String>,
     /// X-Arkret-Session-Grant header (coauth-issued grant). `None`
     /// means inkson loads the persisted coauth session grant from
-    /// `LocalStateStore`, mints the matching introspection proof headers,
-    /// and fails closed if no grant is available.
+    /// `LocalStateStore` and fails closed if no grant is available.
     pub session_grant: Option<String>,
     /// P3B.2.9 — active Circle id (when the registration
     /// originates from a Circle-scoped sidebar deep-link or the
@@ -147,8 +140,6 @@ pub struct RegisterOutcome {
 #[derive(Clone, Debug)]
 struct ChimeSessionGrantHeaders {
     grant_jwt: String,
-    challenge: Option<String>,
-    proof_jwt: Option<String>,
 }
 
 /// Resolve a real token via the installed `PushTokenProvider`, build a
@@ -231,15 +222,6 @@ fn chime_client(
     client = client
         .with_session_grant(&session_grant.grant_jwt)
         .map_err(|err| PushRegistrationError::Transport(err.to_string()))?;
-    if let (Some(challenge), Some(proof_jwt)) = (
-        session_grant.challenge.as_deref(),
-        session_grant.proof_jwt.as_deref(),
-    ) {
-        client = client
-            .with_header("X-Arkret-Session-Grant-Challenge", challenge)
-            .and_then(|client| client.with_header("X-Arkret-Session-Grant-Proof", proof_jwt))
-            .map_err(|err| PushRegistrationError::Transport(err.to_string()))?;
-    }
     Ok(client)
 }
 
@@ -260,8 +242,6 @@ fn resolve_chime_session_grant(
         }
         return Ok(ChimeSessionGrantHeaders {
             grant_jwt: grant_jwt.to_owned(),
-            challenge: None,
-            proof_jwt: None,
         });
     }
 
@@ -292,20 +272,8 @@ fn resolve_chime_session_grant(
     }
     ctx.account_id = Some(grant.account_id.clone());
 
-    let signing_key = session_grant_signing_key_from_pem(&grant.session_private_key_pem)
-        .map_err(PushRegistrationError::SessionGrantProof)?;
-    let proof = build_session_grant_introspection_proof_bundle(
-        &grant.grant_id,
-        &grant.grant_jwt,
-        grant.audience_id.as_str(),
-        &signing_key,
-    )
-    .map_err(PushRegistrationError::SessionGrantProof)?;
-
     Ok(ChimeSessionGrantHeaders {
         grant_jwt: grant.grant_jwt,
-        challenge: Some(proof.challenge),
-        proof_jwt: Some(proof.proof_jwt),
     })
 }
 
@@ -531,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_persisted_grant_into_chime_headers() {
+    fn resolves_persisted_grant_into_chime_bearer() {
         let device_id = "ak:device:01904100-0000-7000-8000-000000000005";
         let mut store = isolated_store("grant-headers");
         store.set_session_grant(Some(persisted_grant(device_id)));
@@ -542,8 +510,6 @@ mod tests {
             .expect("grant headers");
 
         assert_eq!(headers.grant_jwt, "header.payload.signature");
-        assert!(headers.challenge.as_deref().is_some_and(|v| !v.is_empty()));
-        assert!(headers.proof_jwt.as_deref().is_some_and(|v| !v.is_empty()));
         assert_eq!(
             context
                 .account_id

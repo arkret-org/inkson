@@ -1056,7 +1056,7 @@ pub(crate) async fn issue_bound_handoff_session(
                 "Account handoff omitted its authenticated account subject.".to_owned()
             })?;
             let account_handoff_grant_digest = arkret_sdk::Hash::new(
-                crate::identity::account_auth::session_grant_jwt_digest(handoff_grant),
+                arkret_sdk::canonical::sha256_digest(handoff_grant.as_bytes()),
             )
             .map_err(|error| format!("Hash AccountHandoff credential: {error}"))?;
             let verification_method = arkret_sdk::DidUrl::new(format!("{did}#{device_id}"))

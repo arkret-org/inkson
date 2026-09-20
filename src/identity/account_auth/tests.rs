@@ -1,6 +1,3 @@
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use serde_json::Value;
 use url::Url;
 
 use super::*;
@@ -39,100 +36,6 @@ fn s256_challenge_matches_rfc7636_test_vector() {
     assert_eq!(
         challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
         "S256 challenge MUST match RFC 7636 Appendix B"
-    );
-}
-
-/// The introspection proof MUST be a valid Ed25519 JWS over the
-/// canonical claims, MUST embed `ak.session_grant.introspection_proof.v1`
-/// as `type`, MUST hash the grant JWT into `grant_jwt_digest`, and MUST
-/// round-trip the challenge / audience / grant_id verbatim. coauth's
-/// verifier requires every one of those exact strings - drift here
-/// would surface as `InvalidProof` at the Station.
-#[test]
-fn session_grant_proof_signs_canonical_claims() {
-    use ed25519_dalek::{SigningKey, Verifier};
-    let signing = SigningKey::from_bytes(&[7u8; 32]);
-    let verifying = signing.verifying_key();
-    let proof_jwt = build_session_grant_introspection_proof(
-        "01HABC123",
-        "eyJ.opaque-grant.jwt",
-        "did:web:principal.example",
-        "challenge-deadbeef",
-        &signing,
-    )
-    .unwrap();
-    // Compact JWS: 3 segments separated by `.`.
-    let parts: Vec<&str> = proof_jwt.split('.').collect();
-    assert_eq!(parts.len(), 3, "proof must be a compact JWS");
-    // Decode + verify the signature against the matching pubkey.
-    let signing_input = format!("{}.{}", parts[0], parts[1]);
-    let sig_bytes = URL_SAFE_NO_PAD.decode(parts[2]).unwrap();
-    let sig_arr: [u8; 64] = sig_bytes.try_into().unwrap();
-    let signature = ed25519_dalek::Signature::from_bytes(&sig_arr);
-    verifying
-        .verify(signing_input.as_bytes(), &signature)
-        .expect("proof JWS must verify under matching pubkey");
-    // Decode + assert payload claims.
-    let payload_bytes = URL_SAFE_NO_PAD.decode(parts[1]).unwrap();
-    let claims: arkret_sdk::SessionGrantIntrospectionProofClaims =
-        serde_json::from_slice(&payload_bytes).unwrap();
-    assert_eq!(
-        claims.kind, "ak.session_grant.introspection_proof.v1",
-        "type claim must match coauth's spec"
-    );
-    assert_eq!(claims.session_grant_id, "01HABC123");
-    assert_eq!(
-        claims.audience_id.as_str(),
-        "ak:did_core:web:principal.example"
-    );
-    assert_eq!(claims.challenge, "challenge-deadbeef");
-    assert_eq!(
-        claims.grant_jwt_digest,
-        session_grant_jwt_digest("eyJ.opaque-grant.jwt"),
-        "grant_jwt_digest must be sha256(grant_jwt) hex prefixed"
-    );
-    // Header claim is `Ed25519` + `JWT`.
-    let header_bytes = URL_SAFE_NO_PAD.decode(parts[0]).unwrap();
-    let header: Value = serde_json::from_slice(&header_bytes).unwrap();
-    assert_eq!(header.get("alg").and_then(|v| v.as_str()), Some("Ed25519"));
-    assert_eq!(header.get("typ").and_then(|v| v.as_str()), Some("JWT"));
-}
-
-#[test]
-fn session_grant_private_key_pem_round_trips_to_signing_key() {
-    use ed25519_dalek::pkcs8::EncodePrivateKey as _;
-
-    let signing = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
-    let pem = signing
-        .to_pkcs8_pem(Default::default())
-        .expect("encode pkcs8 pem");
-    let decoded = session_grant_signing_key_from_pem(&pem).expect("decode pkcs8 pem");
-
-    assert_eq!(decoded.to_bytes(), signing.to_bytes());
-}
-
-/// Empty inputs MUST be rejected — coauth's verifier treats blank
-/// challenge / proof_jwt as `InvalidProof` so client-side validation
-/// avoids round-tripping unsignable garbage.
-#[test]
-fn session_grant_proof_rejects_empty_inputs() {
-    let signing = ed25519_dalek::SigningKey::from_bytes(&[3u8; 32]);
-    assert!(build_session_grant_introspection_proof("", "j", "a", "c", &signing).is_err());
-    assert!(build_session_grant_introspection_proof("g", "", "a", "c", &signing).is_err());
-    assert!(build_session_grant_introspection_proof("g", "j", "", "c", &signing).is_err());
-    assert!(build_session_grant_introspection_proof("g", "j", "a", "", &signing).is_err());
-}
-
-#[test]
-fn session_grant_jwt_digest_matches_coauth_format() {
-    // `sha256:<lowercase-hex(sha256(bytes))>`. Pin the format so a
-    // refactor that switches to base64url doesn't silently desync.
-    let hash = session_grant_jwt_digest("hello");
-    assert!(hash.starts_with("sha256:"));
-    // sha256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
-    assert_eq!(
-        hash,
-        "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
     );
 }
 
