@@ -26,7 +26,7 @@ pub(crate) fn refresh_notifications(
         let session_credential = session_credential();
         match with_authed_api(&base_url, session_credential, |api| async move {
             let http = api.sdk_http_client()?;
-            let response = state_store.write().current_account_projection_step();
+            let account_data = state_store.write().current_account_data_events();
             // `invite-addressing.md` §7 - the notify branch's durable carrier is
             // the holder-private `ak.account.invite_delivery` cell, and the
             // account-subscribe stream may race with this refresh. The live
@@ -48,21 +48,19 @@ pub(crate) fn refresh_notifications(
                     None
                 }
             };
-            Ok((response, delivery_cell))
+            Ok((account_data, delivery_cell))
         })
         .await
         {
-            Ok((response, delivery_cell)) => {
+            Ok((account_data, delivery_cell)) => {
                 let principal_id = state_store.read().active_principal_id().unwrap_or_default();
-                let push_rules =
-                    push_rules_from_account_data(&authority, &response.updates.account_data);
-                let account_dnd =
-                    dnd_settings_from_account_data(&authority, &response.updates.account_data);
+                let push_rules = push_rules_from_account_data(&authority, &account_data);
+                let account_dnd = dnd_settings_from_account_data(&authority, &account_data);
                 let account_actor = arkret_sdk::ActorId::account(authority.clone());
                 let inbox_states =
                     crate::account_data::notification_inbox_states_from_account_data_events(
                         &authority,
-                        &response.updates.account_data,
+                        &account_data,
                     );
                 let hydrated = {
                     let mut store = state_store.write();
@@ -483,7 +481,7 @@ fn accept_invite_notification(
                         "the authenticated account is not the active account; cannot accept the invite"
                     )
                 })?;
-            let (submit, accepted_title) = api
+            let (_submit_results, accepted_title) = api
                 .accept_realm_invite(
                     &accepted_realm_for_api,
                     account.principal_id.as_str(),
@@ -496,21 +494,14 @@ fn accept_invite_notification(
                 "Joined Realm {}.",
                 short_protocol_id(&accepted_realm_for_api)
             ));
-            // The SDK's account-subscribe surface no longer accepts a
-            // per-request wait-for option (client-sync.md: X-Arkret-Wait-For
-            // belongs to read endpoints); the accepted invite folds in via the
-            // snapshot or a following delta.
-            let _ = &submit.cursor;
-            let sync = Ok::<_, anyhow::Error>(state_store.write().current_account_projection_step());
-            Ok::<_, anyhow::Error>((sync, accepted_title, delivery_cell))
+            let account_data = state_store.write().current_account_data_events();
+            Ok::<_, anyhow::Error>((account_data, accepted_title, delivery_cell))
         })
         .await
         {
-            Ok((Ok(sync), _accepted_title, delivery_cell)) => {
-                let push_rules =
-                    push_rules_from_account_data(&authority, &sync.updates.account_data);
-                let account_dnd =
-                    dnd_settings_from_account_data(&authority, &sync.updates.account_data);
+            Ok((account_data, _accepted_title, delivery_cell)) => {
+                let push_rules = push_rules_from_account_data(&authority, &account_data);
+                let account_dnd = dnd_settings_from_account_data(&authority, &account_data);
                 let account_actor = arkret_sdk::ActorId::account(authority.clone());
 
                 let hydrated = {
@@ -550,19 +541,6 @@ fn accept_invite_notification(
                 status_msg.set(format!(
                     "Joined Realm {}.",
                     short_protocol_id(&accepted_realm)
-                ));
-            }
-            Ok((Err(sync_err), ..)) => {
-                hide_accepted_invite_notification(
-                    &mut state_store,
-                    &mut notifications,
-                    &notification_id,
-                    &accepted_realm,
-                );
-                status_msg.set(format!(
-                    "Joined Realm {}. Refresh pending: {}",
-                    short_protocol_id(&accepted_realm),
-                    sync_err
                 ));
             }
             Err(err) => {

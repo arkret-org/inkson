@@ -366,34 +366,24 @@ fn refresh_items(
                 return;
             }
         };
-        let sync_result =
-            Ok::<_, anyhow::Error>(state_store.write().current_account_projection_step());
-        match sync_result {
-            Ok(sync) => {
-                let account_data = sync
-                    .updates
-                    .account_data
-                    .iter()
-                    .filter_map(|event| serde_json::to_value(&event.payload).ok())
-                    .collect::<Vec<_>>();
-                let next = file_transfer_items_from_account_data(&account_data, &crypto);
-                let count = next.len();
-                items.set(next);
-                status.set(if count == 0 {
-                    if state_store.write().account_data_baseline_complete() {
-                        "Ready".to_owned()
-                    } else {
-                        "Syncing".to_owned()
-                    }
-                } else {
-                    format!("Loaded {count}")
-                });
+        let account_data = state_store
+            .write()
+            .current_account_data_events()
+            .iter()
+            .filter_map(|event| serde_json::to_value(&event.payload).ok())
+            .collect::<Vec<_>>();
+        let next = file_transfer_items_from_account_data(&account_data, &crypto);
+        let count = next.len();
+        items.set(next);
+        status.set(if count == 0 {
+            if state_store.write().account_data_baseline_complete() {
+                "Ready".to_owned()
+            } else {
+                "Syncing".to_owned()
             }
-            Err(error) => status.set(format!(
-                "Refresh failed: {}",
-                crate::api_error::display_user_facing(&error)
-            )),
-        }
+        } else {
+            format!("Loaded {count}")
+        });
         refreshing.set(false);
     });
 }
