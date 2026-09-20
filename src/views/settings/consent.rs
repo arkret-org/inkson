@@ -4,7 +4,7 @@
 //! decision, orthogonal to capability + membership: the holder grants or
 //! revokes scoped permission for a peer to initiate a contact action
 //! (`invite` / `voice_call` / `presence`). The cells are read from the
-//! holder-private projection at `/_arkret/self/consent/cells` and mutated via
+//! holder-private projection at `/_arkret/self/consent` and mutated via
 //! the `grant` / `revoke` / `request` self-plane commands.
 //!
 //! Surfaces (testids consumed by `cotest/e2e/.../consent-grant.spec.ts`):
@@ -16,8 +16,6 @@
 //! - opaque outbound request: `consent-request-button`, `consent-request-scope-input`,
 //!   `consent-request-holder-input`, `consent-request-holder-station-input`,
 //!   `consent-request-submit-button`
-//! - pending list: `consent-pending-row`, `consent-detail-button`, `consent-pending-detail`,
-//!   `consent-scope-select`, `consent-valid-until-input`, `grant-consent-button`
 //! - granted list: `consent-granted-row`, `revoke-consent-button`
 //! - `write-status` shared write feedback line.
 
@@ -50,7 +48,7 @@ struct ConsentRow {
     peer_label: String,
     /// Wire scope (`invite` / `voice_call` / `presence` / ...).
     scope: String,
-    /// Effective state: `active` / `pending` / `revoked`.
+    /// Materialized current state, with `expired` derived from the read clock.
     state: String,
     expires_at: Option<String>,
 }
@@ -76,19 +74,6 @@ fn consent_peer_label(peer: &arkret_sdk::ConsentPeer) -> String {
             principal_id.as_str(),
             realm_id.as_str()
         ),
-    }
-}
-
-/// Whether this peer is the holder itself, per kind.
-///
-/// A Realm-local ephemeral pairwise actor is never the holder Account, so the
-/// question only has an answer on the actor branch.
-fn consent_peer_is_holder(peer: &arkret_sdk::ConsentPeer, holder_principal_id: &str) -> bool {
-    match peer {
-        arkret_sdk::ConsentPeer::Actor { actor_id } => {
-            actor_id.signing_principal_id().as_str() == holder_principal_id
-        }
-        arkret_sdk::ConsentPeer::PairwisePrincipal { .. } => false,
     }
 }
 
@@ -123,23 +108,13 @@ fn parse_ttl(raw: &str) -> Option<chrono::Duration> {
     }
 }
 
-/// Parse an absolute RFC 3339 `valid_until` timestamp into a UTC datetime.
-fn parse_valid_until(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    chrono::DateTime::parse_from_rfc3339(raw)
-        .ok()
-        .map(|dt| dt.with_timezone(&chrono::Utc))
-}
-
 fn parse_consent_rows(value: &arkret_sdk::ConsentList, holder: &str) -> Vec<ConsentRow> {
+    let now = crate::clock::now_utc();
     value
-        .consent_cell_views
+        .consents
         .iter()
         .map(|cell| ConsentRow {
-            // The self list endpoint is holder-scoped; ConsentCellView
+            // The self list endpoint is holder-scoped; ConsentView
             // deliberately does not mirror that authenticated holder.
             holder: holder.to_owned(),
             peer: cell.peer.clone(),
@@ -147,9 +122,13 @@ fn parse_consent_rows(value: &arkret_sdk::ConsentList, holder: &str) -> Vec<Cons
             peer_label: consent_peer_label(&cell.peer),
             scope: cell.consent_scope.as_str().to_owned(),
             state: match cell.state {
+                arkret_sdk::ConsentState::Active
+                    if cell.expires_at.is_some_and(|expires_at| expires_at <= now) =>
+                {
+                    "expired"
+                }
                 arkret_sdk::ConsentState::Active => "active",
-                arkret_sdk::ConsentState::NoConsent if !cell.revoked_dots.is_empty() => "revoked",
-                arkret_sdk::ConsentState::NoConsent => "pending",
+                arkret_sdk::ConsentState::Revoked => "revoked",
             }
             .to_owned(),
             expires_at: cell
@@ -195,14 +174,6 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
     let mut request_holder = use_signal(String::new);
     let mut request_holder_station = use_signal(String::new);
 
-    // Open pending-detail editor, keyed by `(peer_key, scope)` — the exact
-    // wire peer, so two kinds sharing a principal core never share a row.
-    let mut detail_open = use_signal(|| Option::<(String, String)>::None);
-    let mut detail_scope = use_signal(String::new);
-    let detail_scope_selected =
-        use_memo(move || (!detail_scope().is_empty()).then(|| detail_scope()));
-    let mut detail_valid_until = use_signal(String::new);
-
     let mut busy = use_signal(|| false);
 
     // Load consent cells on mount and whenever `reload` ticks.
@@ -240,19 +211,22 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
 
     let me = principal_id();
     let all_rows = rows.read().clone();
-    let pending_rows: Vec<ConsentRow> = all_rows
-        .iter()
-        .filter(|row| {
-            row.holder == me && !consent_peer_is_holder(&row.peer, &me) && row.state == "pending"
-        })
-        .cloned()
-        .collect();
     let granted_rows: Vec<ConsentRow> = all_rows
         .iter()
         .filter(|row| row.holder == me && row.state == "active")
         .cloned()
         .collect();
-    let show_empty = !grant_form_open() && pending_rows.is_empty() && granted_rows.is_empty();
+    let revoked_rows: Vec<ConsentRow> = all_rows
+        .iter()
+        .filter(|row| row.holder == me && row.state == "revoked")
+        .cloned()
+        .collect();
+    let expired_rows: Vec<ConsentRow> = all_rows
+        .iter()
+        .filter(|row| row.holder == me && row.state == "expired")
+        .cloned()
+        .collect();
+    let show_empty = !grant_form_open() && all_rows.is_empty();
 
     let grant_submit_disabled = grant_grantee.read().trim().is_empty()
         || grant_scope().parse::<arkret_wire::ConsentScope>().is_err()
@@ -550,132 +524,6 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                         }
                     }
 
-                    // ── Pending (inbound) requests ──────────────────────────
-                    if !pending_rows.is_empty() {
-                        div { class: "event",
-                            div { class: "event-head", span { "Pending requests" } }
-                            ul { class: "settings-list",
-                                for row in pending_rows.iter().cloned() {
-                                    {
-                                        let peer = row.peer.clone();
-                                        let peer_key = row.peer_key.clone();
-                                        let peer_label = row.peer_label.clone();
-                                        let scope = row.scope.clone();
-                                        let detail_key = (peer_key.clone(), scope.clone());
-                                        let is_open = detail_open() == Some(detail_key.clone());
-                                        rsx! {
-                                            li {
-                                                class: "event",
-                                                "data-testid": "consent-pending-row",
-                                                "data-peer": "{peer_key}",
-                                                "data-scope": "{scope}",
-                                                div { class: "event-head",
-                                                    span { "{scope_label(&scope)}" }
-                                                    span { class: "mono", title: "{peer_key}", "{peer_label}" }
-                                                }
-                                                div { class: "actions",
-                                                    Button {
-                                                        variant: ButtonVariant::Secondary,
-                                                        "data-testid": "consent-detail-button",
-                                                        onclick: {
-                                                            let peer_key = peer_key.clone();
-                                                            let scope = scope.clone();
-                                                            move |_| {
-                                                                detail_scope.set(scope.clone());
-                                                                detail_valid_until.set(String::new());
-                                                                detail_open.set(Some((peer_key.clone(), scope.clone())));
-                                                            }
-                                                        },
-                                                        "Review"
-                                                    }
-                                                }
-
-                                                if is_open {
-                                                    div {
-                                                        class: "event",
-                                                        "data-testid": "consent-pending-detail",
-                                                        div { class: "muted", title: "{peer_key}", "Request from {peer_label}" }
-                                                        div { class: "field",
-                                                            Label { html_for: "consent-scope-select", "Scope" }
-                                                            Select::<String> {
-                                                                id: "consent-scope-select",
-                                                                "data-testid": "consent-scope-select",
-                                                                value: Some(detail_scope_selected.into()),
-                                                                on_value_change: move |v: Option<String>| {
-                                                                    if let Some(v) = v {
-                                                                        detail_scope.set(v);
-                                                                    }
-                                                                },
-                                                                SelectOption::<String> { index: 0usize, value: "invite".to_string(), text_value: "Group invites", "Group invites" }
-                                                                SelectOption::<String> { index: 1usize, value: "voice_call".to_string(), text_value: "Voice calls", "Voice calls" }
-                                                                SelectOption::<String> { index: 2usize, value: "video_call".to_string(), text_value: "Video calls", "Video calls" }
-                                                                SelectOption::<String> { index: 3usize, value: "presence".to_string(), text_value: "Presence", "Presence" }
-                                                                SelectOption::<String> { index: 4usize, value: "any".to_string(), text_value: "All consent permissions", "All consent permissions" }
-                                                            }
-                                                        }
-                                                        div { class: "field",
-                                                            Label { html_for: "consent-valid-until-input-input", "Valid until (optional, RFC 3339)" }
-                                                            Input {
-                                                                id: "consent-valid-until-input-input",
-                                                                "data-testid": "consent-valid-until-input",
-                                                                value: "{detail_valid_until}",
-                                                                placeholder: "2026-12-31T00:00:00.000Z",
-                                                                oninput: move |event: FormEvent| detail_valid_until.set(event.value()),
-                                                            }
-                                                        }
-                                                        div { class: "actions",
-                                                            Button {
-                                                                variant: ButtonVariant::Primary,
-                                                                "data-testid": "grant-consent-button",
-                                                                disabled: busy(),
-                                                                onclick: {
-                                                                    let base = base_url();
-                                                                    let peer = peer.clone();
-                                                                    let me_did = me.clone();
-                                                                    move |_| {
-                                                                        let base = base.clone();
-                                                                        let api_token = token();
-                                                                        let holder = me_did.clone();
-                                                                        let peer = peer.clone();
-                                                                        let scope = detail_scope();
-                                                                        let expires_at = parse_valid_until(&detail_valid_until());
-                                                                        busy.set(true);
-                                                                        write_status.set("granting…".to_owned());
-                                                                        spawn(async move {
-                                                                            match with_authed_sdk_client(&base, api_token, |http| async move {
-                                                                                crate::transport::account::grant_consent(
-                                                        &crate::event_submit::EventSubmitter::from_current_session(http),
-                                                        &holder, &peer, &scope, expires_at,
-                                                    ).await
-                                                                            })
-                                                                            .await
-                                                                            {
-                                                                                Ok(_) => {
-                                                                                    write_status.set("consent granted".to_owned());
-                                                                                    detail_open.set(None);
-                                                                                    reload.set(reload() + 1);
-                                                                                }
-                                                                                Err(err) => {
-                                                                                    write_status.set(format!("grant failed: {}", err.display()));
-                                                                                }
-                                                                            }
-                                                                            busy.set(false);
-                                                                        });
-                                                                    }
-                                                                },
-                                                                "Grant consent"
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
                     // ── Granted consents ────────────────────────────────────
                     if !granted_rows.is_empty() {
                         div { class: "event",
@@ -745,6 +593,42 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                                 }
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if !revoked_rows.is_empty() {
+                        div { class: "event",
+                            div { class: "event-head", span { "Revoked" } }
+                            ul { class: "settings-list",
+                                for row in revoked_rows.iter() {
+                                    li {
+                                        class: "event",
+                                        "data-testid": "consent-revoked-row",
+                                        "data-peer": "{row.peer_key}",
+                                        "data-scope": "{row.scope}",
+                                        span { "{scope_label(&row.scope)}" }
+                                        span { class: "mono", title: "{row.peer_key}", "{row.peer_label}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if !expired_rows.is_empty() {
+                        div { class: "event",
+                            div { class: "event-head", span { "Expired" } }
+                            ul { class: "settings-list",
+                                for row in expired_rows.iter() {
+                                    li {
+                                        class: "event",
+                                        "data-testid": "consent-expired-row",
+                                        "data-peer": "{row.peer_key}",
+                                        "data-scope": "{row.scope}",
+                                        span { "{scope_label(&row.scope)}" }
+                                        span { class: "mono", title: "{row.peer_key}", "{row.peer_label}" }
                                     }
                                 }
                             }
