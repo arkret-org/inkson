@@ -1480,7 +1480,7 @@ impl ChatController {
                     let authored = submitter.author_event_unit(steps).await?;
                     let ids = crate::messaging::discussion_promote::promote_ids(&authored)?;
                     submitter
-                        .submit_signed_sdk_events_batch(&authored, None)
+                        .submit_signed_sdk_events_in_order(&authored)
                         .await?;
                     Ok(ids)
                 })

@@ -561,7 +561,6 @@ pub(crate) fn cache_accepted_device_evidence_from_outcome(
         resolved
             .as_ref()
             .map(|resolved| resolved.signer_evidence_ref.clone()),
-        None,
         resolved
             .as_ref()
             .map(|resolved| resolved.projection_expires_at_ms),
