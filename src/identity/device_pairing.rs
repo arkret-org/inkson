@@ -93,6 +93,42 @@ pub(crate) fn clear_pending_device_pairing_verification(
     Ok(())
 }
 
+fn accepted_device_generation_ref(
+    authority: &arkret_sdk::AccountId,
+    generation: &crate::identity::authoring_generation::AuthoringGeneration,
+) -> anyhow::Result<u64> {
+    if generation.authority_model
+        != crate::identity::authoring_generation::AuthoringAuthorityModel::AcceptedDevice
+        || generation.authority_principal_id != authority.principal_id
+    {
+        anyhow::bail!("pairing requires the approving account's accepted-device generation");
+    }
+    let generation_ref = generation
+        .generation_ref
+        .parse::<u64>()
+        .map_err(|_| anyhow::anyhow!("verified PCR generation is not a canonical integer"))?;
+    if generation_ref == 0 || generation_ref.to_string() != generation.generation_ref {
+        anyhow::bail!("verified PCR generation is not a canonical positive integer");
+    }
+    Ok(generation_ref)
+}
+
+fn verified_current_pairing_generation(
+    authority: &arkret_sdk::AccountId,
+    approving_device: &arkret_sdk::DeviceId,
+) -> anyhow::Result<u64> {
+    let generation = crate::identity::authoring_generation::cached_principal_authoring_generation(
+        authority,
+        approving_device.as_str(),
+    )
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "pairing requires a Station-verified current PCR generation for the approving device"
+        )
+    })?;
+    accepted_device_generation_ref(authority, &generation)
+}
+
 pub async fn sign_target_proof(
     signer: &crate::event_signer::InksonEventSigner,
     authority: &arkret_sdk::AccountId,
@@ -184,6 +220,8 @@ pub async fn author_pairing_request_body(
     if signer.device_id() != Some(active_scope.device_id.as_str()) {
         anyhow::bail!("active pairing signer does not match the active device");
     }
+    let authorized_generation_ref =
+        verified_current_pairing_generation(&active_scope.authority, &active_scope.device_id)?;
     let authorizing_device = active_scope.device_id;
     let device_signature = match &attestation.device_signature {
         arkret_sdk::SignatureMaterial::NonEmptyString(value) => {
@@ -194,25 +232,35 @@ pub async fn author_pairing_request_body(
     };
     let created_at = chrono::Utc::now();
     let principal_actor = arkret_sdk::project_did_to_core_id(&principal)?;
-    let authorize_payload = arkret_sdk::UnsignedDeviceAuthorizePayload::new(
-        attestation.device_id.clone(),
-        arkret_sdk::NonEmptyString::new(attestation.device_public_key_did.as_str().to_owned())
+    let authorize_payload = arkret_sdk::DeviceAuthorizePayload {
+        device_id: attestation.device_id.clone(),
+        device_public_key_did: arkret_sdk::NonEmptyString::new(
+            attestation.device_public_key_did.as_str().to_owned(),
+        )
+        .map_err(anyhow::Error::msg)?,
+        hpke_key: attestation.hpke_key.clone(),
+        algorithms: attestation.algorithms.clone(),
+        device_key_algorithm: arkret_sdk::NonEmptyString::new("Ed25519".to_owned())
             .map_err(anyhow::Error::msg)?,
-        attestation.hpke_key.clone(),
-        attestation.algorithms.clone(),
-        Some(arkret_sdk::NonEmptyString::new("Ed25519".to_owned()).map_err(anyhow::Error::msg)?),
-        arkret_sdk::DeviceOrPrincipalRef::DeviceId(authorizing_device),
-        None,
-        created_at,
-        None,
-        arkret_sdk::DeviceAuthorizationBindingKind::AcceptedDevice,
-        None,
-        None,
-    )?
-    .with_pairing_challenge_transcript_digest(
-        attestation.pairing_challenge_transcript_digest.clone(),
-    )
-    .attach_signature(device_signature)?;
+        authorized_by: arkret_sdk::DeviceOrPrincipalRef::DeviceId(authorizing_device),
+        scopes: None,
+        not_before: created_at,
+        expires_at: None,
+        authorization_binding_kind: arkret_sdk::DeviceAuthorizationBindingKind::AcceptedDevice,
+        authorized_generation_ref,
+        device_signature: arkret_sdk::SignatureMaterial::NonEmptyString(
+            arkret_sdk::NonEmptyString::new(device_signature.into_string())
+                .map_err(anyhow::Error::msg)?,
+        ),
+        recovery_session_id: None,
+        pairing_challenge_transcript_digest: Some(
+            attestation.pairing_challenge_transcript_digest.clone(),
+        ),
+        applet_id: None,
+    };
+    authorize_payload
+        .validate_wire_constraints()
+        .map_err(anyhow::Error::msg)?;
     let http = api.sdk_http_client()?;
     let realm_id =
         crate::identity::principal_control::resolve_accepted(&http, &principal_actor).await?;
@@ -381,4 +429,44 @@ pub async fn verify_authorized_pairing_event_for_authority(
         anyhow::bail!("authorized pairing Event does not match the target attestation");
     }
     Ok(event)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::identity::authoring_generation::{AuthoringAuthorityModel, AuthoringGeneration};
+
+    fn account(principal: &str) -> arkret_sdk::AccountId {
+        arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(principal).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkstation").unwrap(),
+        )
+    }
+
+    #[test]
+    fn pairing_generation_requires_exact_accepted_device_projection() {
+        let authority = account("ak:did_core:webvh:z6mkprincipal");
+        let current = AuthoringGeneration {
+            authority_model: AuthoringAuthorityModel::AcceptedDevice,
+            authority_principal_id: authority.principal_id.clone(),
+            generation_ref: "7".to_owned(),
+        };
+        assert_eq!(
+            accepted_device_generation_ref(&authority, &current).unwrap(),
+            7
+        );
+
+        let mut invalid = current.clone();
+        invalid.generation_ref = "07".to_owned();
+        assert!(accepted_device_generation_ref(&authority, &invalid).is_err());
+
+        invalid = current.clone();
+        invalid.authority_model = AuthoringAuthorityModel::Agent;
+        assert!(accepted_device_generation_ref(&authority, &invalid).is_err());
+
+        invalid = current;
+        invalid.authority_principal_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkother").unwrap();
+        assert!(accepted_device_generation_ref(&authority, &invalid).is_err());
+    }
 }
