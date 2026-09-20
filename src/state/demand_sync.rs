@@ -183,7 +183,6 @@ pub(crate) struct DemandSyncState {
     channels: BTreeMap<Channel, BaselineChannelState>,
     account_events: BTreeMap<String, Event>,
     device_ids: BTreeSet<String>,
-    cas_removals: BTreeMap<String, u64>,
     #[serde(default)]
     agent_draft_pending_intents: BTreeMap<String, StoredAgentDraftPendingIntent>,
     #[serde(default)]
@@ -558,58 +557,6 @@ impl LocalStateStore {
                 );
             }
         }
-        if let Some(cas) = frame
-            .account_data
-            .as_ref()
-            .and_then(|data| data.station_cas.as_ref())
-        {
-            let baseline = views
-                .baseline
-                .as_ref()
-                .is_some_and(|segment| segment.channels.contains(&Channel::StationCas));
-            for row in &cas.upserts {
-                let previous = self
-                    .cached
-                    .station_cas_account_data
-                    .get(&row.account_data_key);
-                let revision = previous.map(|row| row.revision).unwrap_or(0).max(
-                    self.cached
-                        .demand_sync
-                        .cas_removals
-                        .get(&row.account_data_key)
-                        .copied()
-                        .unwrap_or(0),
-                );
-                anyhow::ensure!(
-                    baseline || row.revision >= revision,
-                    "Station-CAS revision regressed"
-                );
-                anyhow::ensure!(
-                    row.revision != revision
-                        || previous.is_some_and(|old| old.content == row.content),
-                    "Station-CAS same revision changed value"
-                );
-            }
-            for removal in &cas.removals {
-                let previous = self
-                    .cached
-                    .station_cas_account_data
-                    .get(&removal.account_data_key);
-                let revision = previous.map(|row| row.revision).unwrap_or(0).max(
-                    self.cached
-                        .demand_sync
-                        .cas_removals
-                        .get(&removal.account_data_key)
-                        .copied()
-                        .unwrap_or(0),
-                );
-                anyhow::ensure!(
-                    removal.revision >= revision
-                        && (removal.revision != revision || previous.is_none()),
-                    "Station-CAS removal revision conflict"
-                );
-            }
-        }
         let mut accepted = frame.clone();
         if let Some(baseline) = &views.baseline {
             if self.cached.demand_sync.global_snapshot.as_deref()
@@ -766,80 +713,20 @@ impl LocalStateStore {
             });
             if let Some(cas) = &mut data.station_cas {
                 let is_baseline = baseline(Channel::StationCas);
-                let mut error = None;
                 cas.upserts.retain(|row| {
-                    let key = row.account_data_key.as_str();
-                    if !self
-                        .cached
-                        .demand_sync
-                        .accepts(Channel::StationCas, key, is_baseline)
-                    {
-                        return false;
-                    }
-                    let previous = self.cached.station_cas_account_data.get(key);
-                    let revision = previous.map(|row| row.revision).unwrap_or(0).max(
-                        self.cached
-                            .demand_sync
-                            .cas_removals
-                            .get(key)
-                            .copied()
-                            .unwrap_or(0),
-                    );
-                    if row.revision < revision {
-                        if !is_baseline {
-                            error = Some("Station-CAS revision regressed");
-                        }
-                        return false;
-                    }
-                    if row.revision == revision {
-                        if previous.is_none_or(|old| old.content != row.content) {
-                            error = Some("Station-CAS same revision changed value");
-                        }
-                        return false;
-                    }
-                    self.cached.demand_sync.cas_removals.remove(key);
-                    true
+                    self.cached.demand_sync.accepts(
+                        Channel::StationCas,
+                        row.account_data_key.as_str(),
+                        is_baseline,
+                    )
                 });
-                for removal in &cas.removals {
+                cas.removals.retain(|removal| {
                     self.cached.demand_sync.accepts(
                         Channel::StationCas,
                         &removal.account_data_key,
-                        false,
-                    );
-                    let previous = self
-                        .cached
-                        .station_cas_account_data
-                        .get(&removal.account_data_key)
-                        .map(|row| row.revision)
-                        .unwrap_or(0)
-                        .max(
-                            self.cached
-                                .demand_sync
-                                .cas_removals
-                                .get(&removal.account_data_key)
-                                .copied()
-                                .unwrap_or(0),
-                        );
-                    anyhow::ensure!(
-                        removal.revision >= previous,
-                        "Station-CAS removal revision regressed"
-                    );
-                    anyhow::ensure!(
-                        removal.revision != previous
-                            || !self
-                                .cached
-                                .station_cas_account_data
-                                .contains_key(&removal.account_data_key),
-                        "Station-CAS same revision changed to removal"
-                    );
-                    self.cached
-                        .demand_sync
-                        .cas_removals
-                        .insert(removal.account_data_key.clone(), removal.revision);
-                }
-                if let Some(error) = error {
-                    anyhow::bail!(error);
-                }
+                        is_baseline,
+                    )
+                });
             }
         }
         if let Some(notifications) = &mut accepted.notifications {

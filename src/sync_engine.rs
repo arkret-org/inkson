@@ -376,6 +376,7 @@ struct InksonAccountProjector {
     request_filter: Option<SyncFilter>,
     control: SubscriptionControl,
     current_index: tokio::sync::Mutex<Option<crate::state::CurrentIndex>>,
+    station_cas_projection: std::sync::Arc<tokio::sync::Mutex<garth::StationCasProjection>>,
     removal_schedule: std::sync::Mutex<RemovalSchedule>,
     transport:
         crate::transport::websocket_rail::StreamRail<crate::client_core::InksonAccountTransport>,
@@ -629,6 +630,36 @@ impl InksonAccountProjector {
         Ok(())
     }
 
+    /// Run the batch through Garth's single Station-CAS revision authority
+    /// before any Inkson product reducer observes it. A rollback, same-revision
+    /// conflict, or broken baseline generation clears the durable cursor and
+    /// account baseline together; reconnect then requests a fresh initial
+    /// snapshot. Inkson deliberately does not duplicate those revision rules.
+    async fn validate_station_cas_batch(&self, batch: &AccountSubscribeBatch) -> garth::Result<()> {
+        let mut projection = self.station_cas_projection.lock().await;
+        if batch
+            .frames
+            .iter()
+            .any(|frame| frame.kind == AccountSubscribeFrameKind::ResyncRequired)
+        {
+            projection.reset_for_initial_sync();
+            return Ok(());
+        }
+        let mut staged = projection.clone();
+        for frame in &batch.frames {
+            if let Err(error) = staged.apply_frame(frame) {
+                projection.reset_for_initial_sync();
+                drop(projection);
+                self.reset_account_context().await?;
+                return Err(garth::Error::Http(format!(
+                    "Station-CAS integrity reset: {error}"
+                )));
+            }
+        }
+        *projection = staged;
+        Ok(())
+    }
+
     /// Durably fold one frame, then run the product work that is allowed to
     /// fail without un-committing it.
     async fn project_frame(
@@ -870,6 +901,7 @@ impl InksonAccountProjector {
 
 impl AccountBatchProjector for InksonAccountProjector {
     async fn project(&self, batch: &AccountSubscribeBatch) -> garth::Result<()> {
+        self.validate_station_cas_batch(batch).await?;
         for frame in &batch.frames {
             self.project_frame(frame, &batch.cursor).await?;
         }
@@ -911,6 +943,9 @@ pub async fn run_sync_engine(
     };
     let mut backoff = garth::RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING);
     let mut terminal: Option<SyncStatusEvent> = None;
+    let station_cas_projection = std::sync::Arc::new(tokio::sync::Mutex::new(
+        garth::StationCasProjection::default(),
+    ));
 
     while provider.is_active() {
         let transport = match provider.provide().await {
@@ -932,6 +967,7 @@ pub async fn run_sync_engine(
             request_filter: request.filter.clone(),
             control: subscription.control(),
             current_index: tokio::sync::Mutex::new(None),
+            station_cas_projection: station_cas_projection.clone(),
             removal_schedule: std::sync::Mutex::new(RemovalSchedule::default()),
             transport,
         };
