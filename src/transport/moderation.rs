@@ -32,6 +32,7 @@ pub async fn report(
     let body = arkret_sdk::ModerationReportRequestBody {
         report_event: arkret_wire::EventCommitSubmission {
             event: signed.into_event(),
+            approval_signatures: None,
         },
     };
     body.validate_authoring_context(

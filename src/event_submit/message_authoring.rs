@@ -126,6 +126,7 @@ impl EventSubmitter {
         let request = MessageSubmitRequestBody {
             submission: arkret_wire::EventCommitSubmission {
                 event: event.event().clone(),
+                approval_signatures: None,
             },
         };
         let submission =

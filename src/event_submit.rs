@@ -955,6 +955,7 @@ impl EventSubmitter {
             validate_signed_sdk_event_for_submit(event.event(), event.digest_suite())?;
             submissions.push(arkret_wire::EventCommitSubmission {
                 event: event.event().clone(),
+                approval_signatures: None,
             });
         }
         Ok(submissions)
@@ -980,6 +981,7 @@ impl EventSubmitter {
         validate_signed_sdk_event_for_submit(event.event(), event.digest_suite())?;
         Ok(arkret_wire::EventCommitSubmission {
             event: event.event().clone(),
+            approval_signatures: None,
         })
     }
 
@@ -1943,6 +1945,7 @@ fn event_submission(event: &arkret_sdk::AuthoredEvent) -> anyhow::Result<QueuedS
     QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
         arkret_wire::EventCommitSubmission {
             event: event.event().clone(),
+            approval_signatures: None,
         },
     ))
     .map_err(anyhow::Error::from)

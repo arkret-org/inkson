@@ -39,6 +39,7 @@ pub async fn add_circle_member(
                 .author_for_direct_submission(&event)
                 .await?
                 .into_event(),
+            approval_signatures: None,
         },
     };
     submitter
@@ -71,6 +72,7 @@ pub async fn remove_circle_member(
                 .author_for_direct_submission(&event)
                 .await?
                 .into_event(),
+            approval_signatures: None,
         },
     };
     submitter

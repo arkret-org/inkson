@@ -253,6 +253,7 @@ pub async fn update_profile(
     let body = arkret_models_collaboration::account_operations::AccountUpdateProfileRequestBody {
         profile_event: arkret_wire::EventCommitSubmission {
             event: signed.into_event(),
+            approval_signatures: None,
         },
     };
     body.validate()?;
@@ -631,7 +632,10 @@ pub async fn direct_conversation_found(
     for event in authored {
         let event = event.into_event();
         let mut queued = garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
-            arkret_wire::EventCommitSubmission { event },
+            arkret_wire::EventCommitSubmission {
+                event,
+                approval_signatures: None,
+            },
         ))
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         authority
@@ -1289,6 +1293,7 @@ pub async fn grant_consent(
     let body = arkret_sdk::ConsentGrantRequestBody {
         grant_event: arkret_wire::EventCommitSubmission {
             event: signed_event.into_event(),
+            approval_signatures: None,
         },
     };
     body.validate()?;
@@ -1329,6 +1334,7 @@ pub async fn revoke_consent(
     let body = arkret_sdk::ConsentRevokeRequestBody {
         revoke_event: arkret_wire::EventCommitSubmission {
             event: signed_event.into_event(),
+            approval_signatures: None,
         },
     };
     body.validate()?;

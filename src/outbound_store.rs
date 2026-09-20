@@ -375,7 +375,10 @@ mod tests {
         .unwrap()
         .into_event();
         garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
-            arkret_wire::EventCommitSubmission { event },
+            arkret_wire::EventCommitSubmission {
+                event,
+                approval_signatures: None,
+            },
         ))
         .expect("fixture submission is structurally valid")
     }
