@@ -233,7 +233,7 @@ impl AgentServiceScopePreset {
             Self::SubscribeEvents => "Open the self events stream for live delivery.",
             Self::ScanCatchUp => "Query missed events after the runtime reconnects.",
             Self::SubmitEvents => {
-                "Fetch the current Realm frontier, issue publication evidence, and submit approved durable writes."
+                "Submit approved durable Events for governing Station acceptance."
             }
             Self::SecureMessaging => {
                 "Publish and consume MLS key packages, receive encrypted device messages, and send encrypted live presence."
@@ -251,10 +251,7 @@ impl AgentServiceScopePreset {
                 &[ServiceOperationId::SELF_COMMITTED_EVENT_STREAM_SUBSCRIBE_V1]
             }
             Self::ScanCatchUp => &[ServiceOperationId::SELF_COMMITTED_EVENT_READ_SCAN_V1],
-            Self::SubmitEvents => &[
-                ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1,
-                ServiceOperationId::SELF_AUTHORIZATION_LEASES_COMMAND_ISSUE_V1,
-            ],
+            Self::SubmitEvents => &[ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1],
             Self::SecureMessaging => &[
                 ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_CONSUME_V1,
                 // Standard KeyPackage lifecycle is upload|claim|consume|revoke

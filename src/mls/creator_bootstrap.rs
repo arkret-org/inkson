@@ -22,12 +22,6 @@ fn creator_bootstrap_lock(key: String) -> std::sync::Arc<tokio::sync::Mutex<()>>
     lock
 }
 
-fn genesis_already_accepted(error: &anyhow::Error) -> bool {
-    crate::api_error::api_error_status_and_envelope(error).is_some_and(|(_, problem)| {
-        problem.code() == arkret_sdk::error_codes::ErrorCode::MLS_GENESIS_ALREADY_EXISTS
-    })
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CreatorGenesisResumeAction {
     Author,
@@ -441,20 +435,10 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
                         )
                     })
                 }
-                // A duplicate is success only after resolving the exact
-                // already-accepted Event id: encrypted writes bind their
-                // `group_state_ref` to it, so merely setting the emitted flag would
-                // strand them without a resolvable group state.
-                Err(error) if genesis_already_accepted(&error) => submitter
-                    .find_mls_genesis_event_id(realm_id)
-                    .await
-                    .and_then(|event_id| {
-                        event_id.ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "MLS genesis already exists server-side but its accepted Event id is unavailable"
-                            )
-                        })
-                    }),
+                // `mls_genesis_already_exists` is reserved, not an active
+                // Station response. An ambiguous failure is not proof of
+                // acceptance; the next run recovers only an exact committed
+                // genesis Event through the lookup above.
                 Err(error) => Err(error),
             };
             match accepted {
@@ -544,24 +528,6 @@ mod tests {
         assert!(other.try_lock().is_ok());
         drop(guard);
         assert!(second.try_lock().is_ok());
-    }
-
-    #[test]
-    fn creator_bootstrap_recognizes_typed_genesis_conflict_without_matching_diagnostic_text() {
-        let conflict = |code: &str, detail: &str| {
-            anyhow::Error::new(arkret_sdk::http_client::Error::Api {
-                status: 409,
-                error: Box::new(arkret_sdk::Problem::from_code(code, detail)),
-            })
-        };
-        assert!(genesis_already_accepted(&conflict(
-            "mls_genesis_already_exists",
-            "already accepted"
-        )));
-        assert!(!genesis_already_accepted(&conflict(
-            "failed_precondition",
-            "mls_genesis_already_exists"
-        )));
     }
 
     fn temp_store(name: &str) -> LocalStateStore {

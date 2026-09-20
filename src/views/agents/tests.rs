@@ -120,8 +120,6 @@ mod agent_tests {
                 "ak.self.committed_event.read.scan.v1",
                 "ak.self.committed_event.stream.subscribe.v1",
                 "ak.self.keys.keypackages.upload.create.v1",
-                "ak.self.seals.read.frontier.v1",
-                "ak.self.authorization_leases.command.issue.v1",
                 "ak.self.keys.keypackages.command.consume.v1",
                 "ak.self.keys.keypackages.command.revoke.v1",
                 "ak.self.device_messages.read.list.v1",
@@ -148,14 +146,6 @@ mod agent_tests {
                 {
                     "kind": "operation",
                     "operation": "ak.self.keys.keypackages.upload.create.v1"
-                },
-                {
-                    "kind": "operation",
-                    "operation": "ak.self.seals.read.frontier.v1"
-                },
-                {
-                    "kind": "operation",
-                    "operation": "ak.self.authorization_leases.command.issue.v1"
                 },
                 {
                     "kind": "operation",
@@ -199,7 +189,6 @@ mod agent_tests {
                 "ak.self.events.command.submit.v1".to_owned(),
                 "ak.self.committed_event.read.scan.v1".to_owned(),
                 "ak.self.committed_event.stream.subscribe.v1".to_owned(),
-                "ak.self.seals.read.frontier.v1".to_owned(),
             ]
         );
     }
@@ -221,7 +210,6 @@ mod agent_tests {
                 "ak.self.events.command.submit.v1",
                 "ak.self.committed_event.read.scan.v1",
                 "ak.self.committed_event.stream.subscribe.v1",
-                "ak.self.seals.read.frontier.v1",
                 "ak.self.committed_event.resource.get.v1",
             ]
         );
