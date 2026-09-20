@@ -642,29 +642,6 @@ pub(super) enum RecoveryMaterialContinuation {
     FinalizeDurableEvidence,
 }
 
-#[derive(Debug)]
-pub(super) struct BootstrapSealReplayContradiction;
-
-impl std::fmt::Display for BootstrapSealReplayContradiction {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("the bootstrap Seal replay changed after its checkpoint was persisted")
-    }
-}
-
-impl std::error::Error for BootstrapSealReplayContradiction {}
-
-pub(super) fn validate_exact_bootstrap_seal_replay<T: serde::Serialize>(
-    frozen: &T,
-    replay: &T,
-) -> anyhow::Result<()> {
-    let frozen_bytes = serde_json::to_vec(frozen).context("encode the frozen bootstrap Seal")?;
-    let replay_bytes = serde_json::to_vec(replay).context("encode the replayed bootstrap Seal")?;
-    if frozen_bytes != replay_bytes {
-        return Err(BootstrapSealReplayContradiction.into());
-    }
-    Ok(())
-}
-
 pub(super) fn recovery_material_continuation(
     stage: crate::state::PendingPrincipalRegistrationStage,
 ) -> anyhow::Result<RecoveryMaterialContinuation> {
@@ -690,10 +667,6 @@ pub(super) fn validate_completed_recovery_material(
         .pcr_genesis_unit
         .as_ref()
         .context("completed recovery checkpoint omits its PCR genesis unit")?;
-    let seal = registration
-        .pcr_bootstrap_seal
-        .as_ref()
-        .context("completed recovery checkpoint omits its bootstrap Seal")?;
     let commits = registration
         .pcr_genesis_commits
         .as_ref()
@@ -711,8 +684,7 @@ pub(super) fn validate_completed_recovery_material(
         || evidence.device_id != account.device_id
         || evidence.pcr_genesis_unit != *unit
         || evidence.pcr_genesis_commits != committed_refs
-        || evidence.bootstrap_seal != *seal
-        || evidence.principal_control_realm_id != seal.realm_id
+        || evidence.principal_control_realm_id != unit.create().realm_id
         || evidence.controller_authority.as_ref() != Some(&account.authority)
     {
         anyhow::bail!("completed recovery-material evidence does not match the onboarding account");
@@ -742,7 +714,6 @@ pub(super) async fn finish_principal_setup(
     )?;
     let mut registration = registration.clone();
     let account = &completed.account;
-    let actor = account.principal_id().as_str();
     let device = account.device_id.as_str();
     let continuation = recovery_material_continuation(registration.stage)?;
     // Registration and current-principal already confirmed this Account. Its
@@ -770,48 +741,16 @@ pub(super) async fn finish_principal_setup(
         finish_pre_account_recovery_checkpoint(&registration)?;
         return Ok(None);
     }
-    let bootstrap_seal: arkret_sdk::Seal = match registration.pcr_bootstrap_seal.clone() {
-        Some(seal) => seal,
-        None => {
-            let unit = registration
-                .pcr_genesis_unit
-                .clone()
-                .context("identity registration checkpoint omits its PCR genesis unit")?;
-            let signer = crate::event_signer::active_signer()
-                .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
-            if signer.device_id() != Some(device) {
-                anyhow::bail!("active signer does not match the founding PCR device");
-            }
-            let hlc = crate::signing_stamp::issue_protocol_hlc(
-                actor,
-                device,
-                unit.create().realm_id.as_str(),
-            )?;
-            let seal = signer
-                .sign_self_principal_bootstrap_seal(unit.create(), unit.founding_authorize(), hlc)
-                .map_err(|error| anyhow::anyhow!("sign principal bootstrap Seal: {error}"))?;
-            registration.pcr_bootstrap_seal = Some(seal.clone());
-            let barrier = {
-                let mut store = state_store.write();
-                store.set_pending_principal_registration(Some(registration.clone()))?;
-                store.begin_durable_flush()?
-            };
-            barrier.wait().await?;
-            seal
-        }
-    };
-
     let recovery_actor = account.did().clone();
     let recovery_device = account.device_id.clone();
     let recovery_key_value = recovery_key.to_owned();
-    let principal_control_realm_id = bootstrap_seal.realm_id.clone();
-    let bootstrap_seal_for_submit = bootstrap_seal.clone();
-    let frozen_bootstrap_seal = registration
-        .pcr_bootstrap_seal
+    let principal_control_realm_id = registration
+        .pcr_genesis_unit
         .as_ref()
-        .context("bootstrap Seal was not frozen in the durable checkpoint")?;
-    validate_exact_bootstrap_seal_replay(frozen_bootstrap_seal, &bootstrap_seal_for_submit)?;
-    let governance_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
+        .context("identity registration checkpoint omits its PCR genesis unit")?
+        .create()
+        .realm_id
+        .clone();
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let api = accepted_account_session_client_from_secure_store(
         account,
@@ -827,13 +766,11 @@ pub(super) async fn finish_principal_setup(
         .await
         .context("durably create the first-enrollment account MLS root")?;
     }
-    crate::recovery_flow::submit_principal_bootstrap_seal(&api, &bootstrap_seal_for_submit).await?;
     // The accepted genesis unit and its two exact RealmCommits form the
     // complete holder-side PCR authority evidence.
     // Persist that verified evidence before publishing the recovery policy:
-    // policy materialization may transiently wait for a newer control Seal,
-    // and a retry must use these exact frozen bytes instead of attempting the
-    // forbidden current actor-history resolution path.
+    // a retry must use these exact frozen coordinates instead of reconstructing
+    // or trusting a client-authored control frontier.
     let pcr_genesis_unit = registration
         .pcr_genesis_unit
         .clone()
@@ -855,10 +792,9 @@ pub(super) async fn finish_principal_setup(
         account_id: completed.persisted_grant.account_id.clone(),
         principal_did: account.did().clone(),
         device_id: arkret_sdk::DeviceId::new(device.to_owned())?,
-        principal_control_realm_id: bootstrap_seal.realm_id.clone(),
+        principal_control_realm_id: principal_control_realm_id.clone(),
         pcr_genesis_unit,
         pcr_genesis_commits,
-        bootstrap_seal: bootstrap_seal.clone(),
         controller_authority: Some(controller_authority),
     };
     {
@@ -871,9 +807,9 @@ pub(super) async fn finish_principal_setup(
         barrier.wait().await?;
     }
 
-    // The founding Seal materializes two distinct Station-verified authoring
-    // roots: keys/query carries Data evidence, while the authenticated account
-    // viewer carries Control evidence adjacent to the exact authorize Event.
+    // The committed genesis unit materializes two distinct Station-verified
+    // authoring roots: keys/query carries Data evidence, while the authenticated
+    // account viewer carries Control evidence adjacent to the exact authorize Event.
     // Install and durably checkpoint both before authoring the ordinary
     // Control-plane recovery policy. Neither root is a fallback for the other.
     crate::identity::device_directory::reset_session_cache();
@@ -918,16 +854,6 @@ pub(super) async fn finish_principal_setup(
         store.begin_durable_flush()?
     };
     barrier.wait().await?;
-
-    // Evidence hydration deliberately advances the device-cache epoch above.
-    // Refresh the accepted PCR frontier only afterwards so its digest suite is
-    // cached under the same epoch that will author the recovery-policy Move.
-    crate::recovery_flow::refresh_principal_bootstrap_frontier(
-        &api,
-        &governance_state_store,
-        &bootstrap_seal_for_submit,
-    )
-    .await?;
 
     crate::recovery_flow::ensure_recovery_policy(
         &api,

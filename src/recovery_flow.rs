@@ -40,17 +40,17 @@ pub enum FirstBackupGateStatus {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FirstBackupGateBlockReason {
-    NoAcceptedPrincipalControlSeal,
+    NoAcceptedPrincipalControlCommit,
     NoActiveRecoveryPolicy,
 }
 
 pub fn first_backup_gate_status(
-    accepted_principal_control_seal: bool,
+    accepted_principal_control_commit: bool,
     recovery_policy_outcome: &RecoveryPolicyActiveOutcome,
 ) -> FirstBackupGateStatus {
-    if !accepted_principal_control_seal {
+    if !accepted_principal_control_commit {
         return FirstBackupGateStatus::Blocked(
-            FirstBackupGateBlockReason::NoAcceptedPrincipalControlSeal,
+            FirstBackupGateBlockReason::NoAcceptedPrincipalControlCommit,
         );
     }
     let Some(policy) = active_recovery_policy(recovery_policy_outcome) else {
@@ -58,53 +58,6 @@ pub fn first_backup_gate_status(
     };
     let _ = policy;
     FirstBackupGateStatus::Satisfied
-}
-
-pub async fn submit_principal_bootstrap_seal(
-    api: &TransportClient,
-    seal: &arkret_sdk::Seal,
-) -> anyhow::Result<()> {
-    let outcome = api.sdk_http_client()?.events_submit_seal(seal).await?;
-    if outcome.seal_id != seal.id
-        || outcome.accepted_event_digests != seal.delta
-        || outcome.post_state_root != seal.state_root
-    {
-        anyhow::bail!("Station returned a mismatched PCR bootstrap Seal outcome");
-    }
-    Ok(())
-}
-
-/// Refresh the Account Station's accepted PCR frontier after bootstrap submission.
-/// The exact bootstrap bytes are checked through the existing accepted Seal lookup;
-/// subsequent authoring consumes the Station's current digest suite and complete basis.
-pub async fn refresh_principal_bootstrap_frontier(
-    api: &TransportClient,
-    state_store: &crate::runtime::input::StateStoreHandle,
-    bootstrap_seal: &arkret_sdk::Seal,
-) -> anyhow::Result<()> {
-    let http = api.sdk_http_client()?;
-    let accepted = http
-        .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
-            realm_id: bootstrap_seal.realm_id.clone(),
-            selection: arkret_sdk::SealResolveSelection::SealRefs {
-                seal_refs: vec![bootstrap_seal.id.clone()],
-            },
-            history_traversal_access: None,
-        })
-        .await?;
-    let accepted = accepted.into_seals()?;
-    anyhow::ensure!(
-        accepted.as_slice() == [bootstrap_seal.clone()],
-        "Station has not accepted the exact PCR bootstrap Seal"
-    );
-    crate::mls::governance_proof::refresh_realm_frontier_with_http(
-        &http,
-        state_store.clone(),
-        bootstrap_seal.realm_id.as_str(),
-    )
-    .await
-    .map_err(anyhow::Error::msg)?;
-    Ok(())
 }
 
 pub async fn verify_recovery_material_evidence(
@@ -133,7 +86,6 @@ pub async fn verify_recovery_authority_evidence(
         || evidence.pcr_genesis_unit.create().realm_id != evidence.principal_control_realm_id
         || evidence.pcr_genesis_unit.founding_authorize().realm_id
             != evidence.principal_control_realm_id
-        || evidence.bootstrap_seal.realm_id != evidence.principal_control_realm_id
     {
         anyhow::bail!("durable recovery-material evidence has mixed PCR scope");
     }
@@ -145,43 +97,54 @@ pub async fn verify_recovery_authority_evidence(
     let authorize_digest = arkret_sdk::Hash::new(
         authorize.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
     )?;
-    if !evidence.bootstrap_seal.delta.contains(&create_digest)
-        || !evidence.bootstrap_seal.delta.contains(&authorize_digest)
-        || !evidence
-            .bootstrap_seal
-            .covered_event_digests
-            .contains(&create_digest)
-        || !evidence
-            .bootstrap_seal
-            .covered_event_digests
-            .contains(&authorize_digest)
-    {
-        anyhow::bail!("durable bootstrap Seal does not cover the complete PCR genesis unit");
-    }
+    validate_pcr_genesis_coordinates(
+        &evidence.principal_control_realm_id,
+        &create.event_id,
+        &authorize.event_id,
+        &evidence.pcr_genesis_commits,
+    )?;
+    let [create_ref, authorize_ref] = &evidence.pcr_genesis_commits;
+
     let http = api.sdk_http_client()?;
-    let resolved_create = http.committed_event_get(&create.event_id).await?;
-    let resolved_authorize = http.committed_event_get(&authorize.event_id).await?;
-    let resolved_seals = http
-        .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
-            realm_id: evidence.bootstrap_seal.realm_id.clone(),
-            selection: arkret_sdk::SealResolveSelection::SealRefs {
-                seal_refs: vec![evidence.bootstrap_seal.id.clone()],
-            },
-            history_traversal_access: None,
+    let resolved_create = http.committed_event_get(&create_ref.event_id).await?;
+    let resolved_authorize = http.committed_event_get(&authorize_ref.event_id).await?;
+    if !create_ref.matches(&resolved_create)
+        || !authorize_ref.matches(&resolved_authorize)
+        || resolved_authorize
+            .commit()
+            .validate_successor_of(resolved_create.commit())
+            .is_err()
+        || !resolved_create.reducer_input().is_some_and(|event| {
+            accepted_event_matches_genesis_basis(event, create, &create_digest)
         })
-        .await?;
-    let resolved_seals = resolved_seals.into_seals()?;
-    if !resolved_create
-        .reducer_input()
-        .is_some_and(|event| accepted_event_matches_genesis_basis(event, create, &create_digest))
         || !resolved_authorize.reducer_input().is_some_and(|event| {
             accepted_event_matches_genesis_basis(event, authorize, &authorize_digest)
         })
-        || !resolved_seals
-            .iter()
-            .any(|seal| seal == &evidence.bootstrap_seal)
     {
-        anyhow::bail!("server no longer resolves the durable PCR bootstrap evidence exactly");
+        anyhow::bail!("server no longer resolves the exact committed PCR genesis unit");
+    }
+    Ok(())
+}
+
+fn validate_pcr_genesis_coordinates(
+    principal_control_realm_id: &arkret_sdk::RealmId,
+    create_event_id: &arkret_sdk::EventId,
+    authorize_event_id: &arkret_sdk::EventId,
+    commits: &[arkret_wire::CommittedEventRef; 2],
+) -> anyhow::Result<()> {
+    let [create_ref, authorize_ref] = commits;
+    let expected_stream = arkret_sdk::CommitStreamRef::Realm {
+        realm_id: principal_control_realm_id.clone(),
+    };
+    if &create_ref.event_id != create_event_id
+        || &authorize_ref.event_id != authorize_event_id
+        || create_ref.stream_ref != expected_stream
+        || authorize_ref.stream_ref != expected_stream
+        || create_ref.stream_position != 0
+        || authorize_ref.stream_position != 1
+        || create_ref.commit_id == authorize_ref.commit_id
+    {
+        anyhow::bail!("durable PCR genesis coordinates do not name the exact ordered unit");
     }
     Ok(())
 }
@@ -598,6 +561,70 @@ pub async fn ensure_recovery_policy(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn committed_ref(
+        event_id: &str,
+        commit_id: &str,
+        realm_id: &arkret_sdk::RealmId,
+        stream_position: u64,
+    ) -> arkret_wire::CommittedEventRef {
+        arkret_wire::CommittedEventRef {
+            event_id: arkret_sdk::EventId::new(event_id).unwrap(),
+            commit_id: arkret_sdk::RealmCommitId::new(commit_id).unwrap(),
+            stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: realm_id.clone(),
+            },
+            stream_position,
+        }
+    }
+
+    #[test]
+    fn pcr_genesis_coordinates_require_exact_ordered_realm_positions() {
+        let realm_id =
+            arkret_sdk::RealmId::new("ak:realm:AV0aa7N4-6SpEMTq2vRgjNbMjn0vCIqfM5PxnJ-qQpPP")
+                .unwrap();
+        let create_id =
+            arkret_sdk::EventId::new("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap();
+        let authorize_id =
+            arkret_sdk::EventId::new("ak:event:ASgi2U7PbVyNs4UpiQAoXKoHv84g07gpBvuddCGiMMG1")
+                .unwrap();
+        let commits = [
+            committed_ref(
+                create_id.as_str(),
+                "ak:realm_commit:0196419b-0000-7000-8000-000000000001",
+                &realm_id,
+                0,
+            ),
+            committed_ref(
+                authorize_id.as_str(),
+                "ak:realm_commit:0196419b-0000-7000-8000-000000000002",
+                &realm_id,
+                1,
+            ),
+        ];
+
+        validate_pcr_genesis_coordinates(&realm_id, &create_id, &authorize_id, &commits).unwrap();
+
+        let mut wrong_position = commits.clone();
+        wrong_position[1].stream_position = 2;
+        assert!(
+            validate_pcr_genesis_coordinates(
+                &realm_id,
+                &create_id,
+                &authorize_id,
+                &wrong_position,
+            )
+            .is_err()
+        );
+
+        let mut swapped = commits;
+        swapped.swap(0, 1);
+        assert!(
+            validate_pcr_genesis_coordinates(&realm_id, &create_id, &authorize_id, &swapped)
+                .is_err()
+        );
+    }
 
     #[test]
     fn genesis_policy_uses_explicit_account_station_and_only_recovery_key_method() {

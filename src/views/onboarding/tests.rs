@@ -74,13 +74,10 @@ fn accepted_and_durable_recovery_stages_are_both_resumable() {
 }
 
 #[test]
-fn principal_setup_refreshes_frontier_after_device_evidence_hydration() {
-    // key-management.md §5.0.4 allows the bootstrap Seal and genesis
-    // recovery policy while recovery_material_pending is active. The policy
-    // Event still needs both the accepted-device authoring evidence and the
-    // current Station frontier. Device evidence hydration advances the shared
-    // session-cache epoch, so a frontier fetched before it is immediately
-    // stale and cannot supply the Realm digest suite for policy authoring.
+fn principal_setup_persists_exact_genesis_evidence_before_policy_publication() {
+    // The authority-issued PCR genesis commits are the durable recovery
+    // checkpoint. Device authoring evidence is hydrated only after those exact
+    // coordinates are persisted, and policy publication follows both steps.
     let source = include_str!("identity_setup.rs");
     let setup = source
         .split_once("pub(super) async fn finish_principal_setup(")
@@ -96,20 +93,16 @@ fn principal_setup_refreshes_frontier_after_device_evidence_hydration() {
     let restore = setup
         .find("restore_persisted_device_authoring_authority(")
         .expect("principal setup must install the hydrated evidence in the live epoch");
-    let refresh = setup
-        .find("refresh_principal_bootstrap_frontier(")
-        .expect("principal setup must refresh the accepted PCR frontier");
+    let persist = setup
+        .find("set_recovery_material_evidence(Some(recovery_material_evidence))")
+        .expect("principal setup must persist exact PCR genesis evidence");
     let publish = setup
         .find("ensure_recovery_policy(")
         .expect("principal setup must publish the genesis recovery policy");
 
     assert!(
-        hydrate < restore && restore < refresh && refresh < publish,
-        "accepted-device evidence must be hydrated and restored before the PCR frontier is refreshed, and policy publication must consume that current frontier"
-    );
-    assert!(
-        !setup[refresh..publish].contains("reset_session_cache()"),
-        "no cache-epoch reset may invalidate the refreshed PCR frontier before recovery-policy authoring"
+        persist < hydrate && hydrate < restore && restore < publish,
+        "exact PCR genesis evidence must be durable before accepted-device evidence is hydrated, and policy publication must follow both"
     );
 }
 
@@ -453,29 +446,6 @@ async fn prepared_registration_rehydrates_its_pending_signer_before_retry() {
         signer
             .verification_method()
             .ends_with(&format!("#{}", handoff.device_id))
-    );
-}
-
-#[test]
-fn bootstrap_seal_retry_reuses_the_byte_exact_checkpoint_value() {
-    let frozen = serde_json::json!({
-        "id": "ak:seal:frozen",
-        "notary_seq": 0,
-        "hlc": "01970e589d21-0004-a13f9c2e"
-    });
-
-    validate_exact_bootstrap_seal_replay(&frozen, &frozen.clone()).unwrap();
-
-    let changed = serde_json::json!({
-        "id": "ak:seal:frozen",
-        "notary_seq": 1,
-        "hlc": "01970e589d21-0004-a13f9c2e"
-    });
-    let error = validate_exact_bootstrap_seal_replay(&frozen, &changed).unwrap_err();
-    assert!(
-        error
-            .downcast_ref::<BootstrapSealReplayContradiction>()
-            .is_some()
     );
 }
 

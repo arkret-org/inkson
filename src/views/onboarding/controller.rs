@@ -407,9 +407,6 @@ impl IdentityCreationController {
                     resume_terminal.set(Some(terminal));
                 }
                 Err(error) => {
-                    let seal_replay_contradiction = error
-                        .downcast_ref::<BootstrapSealReplayContradiction>()
-                        .is_some();
                     let command_error = format!("{error:#}");
                     let correlation =
                         crate::identity::account_auth::transition::LoginCorrelation::for_handoff(
@@ -417,25 +414,13 @@ impl IdentityCreationController {
                         );
                     crate::identity::account_auth::transition::record_onboarding_completion_transition(
                         crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeRestore,
-                        if seal_replay_contradiction {
-                            crate::identity::account_auth::transition::OnboardingCompletionOutcome::Contradiction
-                        } else {
-                            crate::identity::account_auth::transition::OnboardingCompletionOutcome::Failed
-                        },
-                        if seal_replay_contradiction {
-                            "bootstrap_seal_replay_changed"
-                        } else {
-                            "onboarding_continuation_failed"
-                        },
+                        crate::identity::account_auth::transition::OnboardingCompletionOutcome::Failed,
+                        "onboarding_continuation_failed",
                         &correlation,
                         None,
                     );
                     resume_terminal.set(Some(ResumeTerminal {
-                        kind: if seal_replay_contradiction {
-                            ResumeTerminalKind::Contradiction
-                        } else {
-                            ResumeTerminalKind::RetryableFailure
-                        },
+                        kind: ResumeTerminalKind::RetryableFailure,
                         reason: command_error,
                         inventory: Vec::new(),
                     }));
