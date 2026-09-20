@@ -529,6 +529,24 @@ fn a_committed_item_yields_the_commit_that_covers_exactly_this_event() {
     );
 }
 
+#[test]
+fn queued_and_forwarding_items_never_report_realm_commit_acceptance() {
+    let signer = test_signer();
+    let event = author_and_sign(
+        message_intent(
+            REALM,
+            "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+        ),
+        &signer,
+    );
+    for status in [SendQueueStatus::Queued, SendQueueStatus::Forwarding] {
+        let snapshot = snapshot_of(vec![(event.clone(), status)]);
+        let error = settled_outbound_result(&snapshot.items[0])
+            .expect_err("a local pending state must not be reported as accepted");
+        assert!(is_durably_queued_error(&error), "{status:?}: {error:#}");
+    }
+}
+
 // ───────────────────── durable submission state transitions ────────────────
 
 /// One scripted governance-authority transport.

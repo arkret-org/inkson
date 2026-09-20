@@ -198,6 +198,18 @@ struct QueuedWrite {
     submission: QueuedSubmission,
     local_operation_id: String,
     post_accept: PostAccept,
+    retry_scope: InteractiveRetryScope,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InteractiveRetryScope {
+    Ordinary,
+    RealmBootstrap,
+}
+
+pub(crate) struct CommittedRealmBootstrap {
+    pub(crate) realm_id: arkret_sdk::RealmId,
+    pub(crate) first_commit: arkret_wire::RealmCommit,
 }
 
 /// A browser runtime has multiple outbound triggers: the foreground writer and
@@ -997,6 +1009,7 @@ impl EventSubmitter {
                 submission,
                 local_operation_id,
                 post_accept: PostAccept::None,
+                retry_scope: InteractiveRetryScope::Ordinary,
             })
             .await?;
         settled_outbound_result(&item)
@@ -1028,6 +1041,7 @@ impl EventSubmitter {
                     submission,
                     local_operation_id: event.event_id().to_string(),
                     post_accept: PostAccept::None,
+                    retry_scope: InteractiveRetryScope::Ordinary,
                 })
                 .await?;
             results.push(settled_outbound_result(&item)?);
@@ -1054,7 +1068,7 @@ impl EventSubmitter {
         &self,
         steps: Vec<EventUnitStep>,
         local_operation_id: String,
-    ) -> anyhow::Result<arkret_sdk::RealmId> {
+    ) -> anyhow::Result<CommittedRealmBootstrap> {
         let _single_writer = outbound_submit_lock().lock().await;
         let events = self.author_event_unit(steps).await?;
         let realm_id = events
@@ -1062,6 +1076,7 @@ impl EventSubmitter {
             .ok_or_else(|| anyhow::anyhow!("Realm bootstrap unit is empty"))?
             .realm_id
             .clone();
+        let mut first_commit = None;
         for (index, event) in events.iter().enumerate() {
             let submission = event_submission(event)?;
             let item = self
@@ -1074,11 +1089,25 @@ impl EventSubmitter {
                         event.event_id().to_string()
                     },
                     post_accept: PostAccept::None,
+                    retry_scope: InteractiveRetryScope::RealmBootstrap,
                 })
                 .await?;
-            settled_outbound_result(&item)?;
+            let settled = settled_outbound_result(&item)?;
+            let commit = settled.commit.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Realm bootstrap Event {} completed without a RealmCommit",
+                    settled.event_id
+                )
+            })?;
+            if first_commit.is_none() {
+                first_commit = Some(commit);
+            }
         }
-        Ok(realm_id)
+        Ok(CommittedRealmBootstrap {
+            realm_id,
+            first_commit: first_commit
+                .ok_or_else(|| anyhow::anyhow!("Realm bootstrap produced no RealmCommit"))?,
+        })
     }
 
     /// Submit the founding unit of a Direct Conversation.
@@ -1104,6 +1133,7 @@ impl EventSubmitter {
                     submission,
                     local_operation_id: event.event_id().to_string(),
                     post_accept: PostAccept::None,
+                    retry_scope: InteractiveRetryScope::Ordinary,
                 })
                 .await?;
             settled_outbound_result(&item)?;
@@ -1127,6 +1157,7 @@ impl EventSubmitter {
                 submission,
                 local_operation_id: scheduled_send_id.to_string(),
                 post_accept: PostAccept::None,
+                retry_scope: InteractiveRetryScope::Ordinary,
             })
             .await?;
         settled_outbound_result(&item)
@@ -1179,6 +1210,7 @@ impl EventSubmitter {
                     authority_hints,
                     state_store: state_store.clone(),
                 },
+                retry_scope: InteractiveRetryScope::Ordinary,
             })
             .await?;
         settled_outbound_result(&item)
@@ -1276,6 +1308,7 @@ impl EventSubmitter {
             submission,
             local_operation_id,
             post_accept,
+            retry_scope,
         } = write;
         let event_id = submission.event_id.clone();
         let outbound = self.outbound(lane)?;
@@ -1335,6 +1368,43 @@ impl EventSubmitter {
                     }
                     return Ok(*item);
                 }
+                OutboundEngineOutcome::Rejected { item, .. }
+                    if item.event_id() == &event_id
+                        && retry_scope == InteractiveRetryScope::RealmBootstrap
+                        && matches!(
+                            &item.submission.state,
+                            garth::SubmissionState::Rejected {
+                                status: arkret_wire::AuthorityRejectionStatus::RetryableUnavailable,
+                                ..
+                            }
+                        ) =>
+                {
+                    let retry_budget_exhausted = interactive_retries >= 4;
+                    if !retry_budget_exhausted {
+                        interactive_retries = interactive_retries.saturating_add(1);
+                    }
+                    let delay = Duration::from_millis(1_025);
+                    outbound
+                        .store()
+                        .requeue_retryable_unavailable(
+                            &event_id,
+                            i64::try_from(crate::clock::now_unix_ms())
+                                .unwrap_or(i64::MAX)
+                                .saturating_add(
+                                    i64::try_from(delay.as_millis()).unwrap_or(i64::MAX),
+                                ),
+                        )
+                        .await
+                        .map_err(anyhow::Error::from)?;
+                    if retry_budget_exhausted {
+                        return Err(DurablyQueuedError {
+                            operation_id: local_operation_id,
+                            reason: Some("retryable_unavailable".to_owned()),
+                        }
+                        .into());
+                    }
+                    crate::runtime_helpers::sleep_for(delay).await;
+                }
                 OutboundEngineOutcome::Rejected { item, .. } if item.event_id() == &event_id => {
                     if let Some(state_store) = self.state_store.as_ref() {
                         state_store.write(|store| {
@@ -1347,6 +1417,17 @@ impl EventSubmitter {
                     anyhow::bail!("durable submission of {event_id} failed: {error}");
                 }
                 OutboundEngineOutcome::Retry { item, delay } if item.event_id() == &event_id => {
+                    if retry_scope == InteractiveRetryScope::RealmBootstrap
+                        && !crate::api_error::is_realm_bootstrap_temporarily_unavailable_detail(
+                            item.last_error.as_deref(),
+                        )
+                    {
+                        return Err(DurablyQueuedError {
+                            operation_id: local_operation_id,
+                            reason: item.last_error.clone(),
+                        }
+                        .into());
+                    }
                     if interactive_retries >= 4 {
                         return Err(DurablyQueuedError {
                             operation_id: local_operation_id,
@@ -1377,6 +1458,22 @@ impl EventSubmitter {
                     self.settle_other_item(&item);
                 }
                 OutboundEngineOutcome::Retry { item, delay } => {
+                    if retry_scope == InteractiveRetryScope::RealmBootstrap
+                        && !crate::api_error::is_realm_bootstrap_temporarily_unavailable_detail(
+                            item.last_error.as_deref(),
+                        )
+                    {
+                        return Err(DurablyQueuedError {
+                            operation_id: local_operation_id,
+                            reason: item.last_error.clone().map(|reason| {
+                                format!(
+                                    "blocked by earlier operation {}: {reason}",
+                                    item.event_id()
+                                )
+                            }),
+                        }
+                        .into());
+                    }
                     if interactive_retries >= 4 {
                         let blocking = item.event_id().to_string();
                         return Err(DurablyQueuedError {

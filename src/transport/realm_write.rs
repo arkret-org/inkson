@@ -114,14 +114,15 @@ pub async fn create_realm(
     // final explicit slot in the same atomic unit.
     let idempotency_key =
         arkret_sdk::OperationId::new_v7_at(crate::clock::now_unix_ms()).into_string();
-    let realm_id = submitter
+    let committed = submitter
         .submit_realm_bootstrap_durable(steps, idempotency_key)
-        .await?
-        .to_string();
+        .await?;
+    let realm_id = committed.realm_id.to_string();
 
     Ok(RealmCreateResult {
         ok: true,
         realm_id,
+        first_commit: committed.first_commit,
         owner: actor_id.to_owned(),
         members: vec![actor_id.to_owned()],
         state: "active".to_owned(),

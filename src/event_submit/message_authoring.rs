@@ -136,6 +136,7 @@ impl EventSubmitter {
                 submission,
                 local_operation_id: attempt.local_operation_id.clone(),
                 post_accept: PostAccept::None,
+                retry_scope: InteractiveRetryScope::Ordinary,
             })
             .await
             .map_err(|error| {

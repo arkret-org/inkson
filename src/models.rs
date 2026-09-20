@@ -126,6 +126,9 @@ pub use arkret_wire::{InviteReceiveAction, UnknownInviteAction};
 pub struct RealmCreateResult {
     pub ok: bool,
     pub realm_id: String,
+    /// The governance Station's first commit for this Realm. UI completion is
+    /// gated on this proof, never on a queued/forwarding transport state.
+    pub first_commit: arkret_wire::RealmCommit,
     pub owner: String,
     #[serde(default)]
     pub members: Vec<String>,

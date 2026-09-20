@@ -990,17 +990,35 @@ pub(super) fn RealmsSection(
                                                         // RealmCreateResult with the new
                                                         // `ak:realm:*` id under `realm_id`.
                                                         let realm_id = realm.realm_id.clone();
+                                                        if realm.first_commit.realm_id.as_str() != realm_id
+                                                            || realm.first_commit.stream_position != 0
+                                                        {
+                                                            let error = format!(
+                                                                "Realm founding returned a non-genesis RealmCommit {}",
+                                                                realm.first_commit.commit_id
+                                                            );
+                                                            let message = BootstrapProgressStrings::fill(
+                                                                &strings.created_then_failed,
+                                                                &[("id", realm_id.clone()), ("error", error)],
+                                                            );
+                                                            realm_create_busy.set(false);
+                                                            realm_state.set(message.clone());
+                                                            crate::components::feedback::toast_error(
+                                                                "feedback.realm_create_failed",
+                                                                vec![],
+                                                                Some(message),
+                                                            );
+                                                            return;
+                                                        }
                                                         tracing::debug!(
                                                             realm_id = %realm_id,
+                                                            commit_id = %realm.first_commit.commit_id,
                                                             phase = "realm_founding",
-                                                            state = "accepted",
+                                                            state = "committed",
                                                             "Realm setup phase completed"
                                                         );
                                                         selected_realm_id.set(realm_id.clone());
                                                         created_realm_id.set(realm_id.clone());
-                                                        // Admission is irreversible. Keep the accepted Realm
-                                                        // reachable even if post-create initialization fails.
-                                                        create_step.set(NewRealmStep::Done);
                                                         // Optimistic sidebar update goes
                                                         // through the canonical store —
                                                         // the Realm tree Signal is derived
@@ -1050,54 +1068,11 @@ pub(super) fn RealmsSection(
                                                             realm_id.clone(),
                                                             projection_body,
                                                         );
-                                                        // Every post-bootstrap Control Move (including a
-                                                        // plaintext Realm invite) derives authority and the
-                                                        // live digest suite from a locally verified accepted
-                                                        // Seal checkpoint. MLS setup also needs it, but the
-                                                        // requirement is Realm-wide rather than encryption-
-                                                        // specific, so establish it before enabling Open.
-                                                        tracing::debug!(
-                                                            realm_id = %realm_id,
-                                                            phase = "governance_checkpoint",
-                                                            state = "pending",
-                                                            "Realm setup phase started"
-                                                        );
-                                                        if let Err(err) = crate::mls::creator_bootstrap::refresh_new_realm_governance_frontier(
-                                                            &api,
-                                                            crate::app::runtime_adapter::state_store_handle(state_store),
-                                                            &realm_id,
-                                                        )
-                                                        .await
-                                                        {
-                                                            tracing::warn!(
-                                                                realm_id = %realm_id,
-                                                                phase = "governance_checkpoint",
-                                                                state = "failed",
-                                                                error = %err,
-                                                                "Realm setup phase failed"
-                                                            );
-                                                            let message = BootstrapProgressStrings::fill(
-                                                                &strings.created_then_failed,
-                                                                &[
-                                                                    ("id", realm_id.clone()),
-                                                                    ("error", err),
-                                                                ],
-                                                            );
-                                                            realm_create_busy.set(false);
-                                                            realm_state.set(message.clone());
-                                                            crate::components::feedback::toast_error(
-                                                                "feedback.realm_create_failed",
-                                                                vec![],
-                                                                Some(message),
-                                                            );
-                                                            return;
-                                                        }
-                                                        tracing::debug!(
-                                                            realm_id = %realm_id,
-                                                            phase = "governance_checkpoint",
-                                                            state = "accepted",
-                                                            "Realm setup phase completed"
-                                                        );
+                                                        // The first authority-signed RealmCommit is the sole
+                                                        // completion boundary. Keep the committed Realm
+                                                        // reachable even when later product initialization
+                                                        // (default discussion / MLS artifacts) needs recovery.
+                                                        create_step.set(NewRealmStep::Done);
                                                         if let Err(err) = create_initial_default_discussion(
                                                             &api,
                                                             &realm_id,

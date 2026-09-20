@@ -7,6 +7,27 @@ use reqwest::StatusCode;
 
 use super::api_error_status_and_envelope;
 
+/// Realm founding may repeat an exact, already-frozen Event only for the
+/// Account Station's closed temporary-unavailability outcome. Other 5xx
+/// responses are not silently widened into a creator-bootstrap retry.
+pub(crate) fn is_realm_bootstrap_temporarily_unavailable_error(error: &anyhow::Error) -> bool {
+    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
+        status == StatusCode::SERVICE_UNAVAILABLE
+            && envelope.code() == arkret_sdk::error_codes::ErrorCode::TEMPORARILY_UNAVAILABLE
+    })
+}
+
+/// The durable Garth queue stores the rendered transport error rather than
+/// the original SDK error. Keep the fallback closed over the one registered
+/// code instead of treating every HTTP/server failure as retryable.
+pub(crate) fn is_realm_bootstrap_temporarily_unavailable_detail(detail: Option<&str>) -> bool {
+    detail.is_some_and(|detail| {
+        detail
+            .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+            .any(|token| token == arkret_sdk::error_codes::ErrorCode::TEMPORARILY_UNAVAILABLE)
+    })
+}
+
 /// True only while the authoritative Realm Seal frontier is not readable yet.
 ///
 /// The frontier binding uses 404 before any accepted Seal exists and the
@@ -347,7 +368,11 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_recovery_policy_frontier_pending_error;
+    use super::{
+        is_realm_bootstrap_temporarily_unavailable_detail,
+        is_realm_bootstrap_temporarily_unavailable_error,
+        is_recovery_policy_frontier_pending_error,
+    };
 
     fn api_error(status: u16, code: &str) -> anyhow::Error {
         anyhow::Error::new(arkret_sdk::http_client::Error::Api {
@@ -373,5 +398,28 @@ mod tests {
             503,
             arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
         )));
+    }
+
+    #[test]
+    fn realm_bootstrap_retry_is_closed_to_temporary_unavailability() {
+        assert!(is_realm_bootstrap_temporarily_unavailable_error(
+            &api_error(
+                503,
+                arkret_sdk::error_codes::ErrorCode::TEMPORARILY_UNAVAILABLE,
+            )
+        ));
+        assert!(!is_realm_bootstrap_temporarily_unavailable_error(
+            &api_error(500, "internal_error")
+        ));
+        assert!(!is_realm_bootstrap_temporarily_unavailable_error(
+            &api_error(503, "frontier_unavailable")
+        ));
+        assert!(is_realm_bootstrap_temporarily_unavailable_detail(Some(
+            "Arkret API returned 503: temporarily_unavailable",
+        )));
+        assert!(!is_realm_bootstrap_temporarily_unavailable_detail(Some(
+            "Arkret API returned 503: frontier_unavailable",
+        )));
+        assert!(!is_realm_bootstrap_temporarily_unavailable_detail(None));
     }
 }
