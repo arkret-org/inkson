@@ -138,25 +138,31 @@ impl LocalStateStore {
     ) {
         self.ensure_cached_loaded();
         let projection_id = projection_id.into();
-        // The create workflow stores these create-locked selectors locally so
-        // a pre-Genesis MLS proposal can be resumed after navigation/reload.
-        // Account snapshots do not carry them until an accepted MLS Genesis is
-        // folded into the local Event projection. Preserve the local values
-        // across that gap; accepted Genesis remains authoritative because the
-        // resolver always prefers its signed governance_binding.
-        for key in ["content_scheme", "durability_policy"] {
-            if let Some(local_value) = self
-                .cached
-                .realm_tree_projections
-                .get(&projection_id)
-                .and_then(|current| current.get(key))
-                .cloned()
-                && let Some(incoming) = projection.as_object_mut()
-                && !incoming.contains_key(key)
-            {
-                incoming.insert(key.to_owned(), local_value);
+        // Realm creation no longer locks an encryption mechanism. These old
+        // projection carriers must not survive in the durable account blob or
+        // be used as a pre-Genesis default after reload: accepted
+        // `ak.mls.genesis` current is the only activation fact. Strip the
+        // historical root/summary/facet spellings while retaining unrelated
+        // Realm presentation data.
+        fn strip_removed_encryption_carriers(value: &mut Value) {
+            let Some(object) = value.as_object_mut() else {
+                return;
+            };
+            for key in [
+                "content_scheme",
+                "encryption_profile",
+                "encryption_floor",
+                "durability_policy",
+            ] {
+                object.remove(key);
+            }
+            for container in ["summary", "object", "realm", "metadata", "history_facet"] {
+                if let Some(nested) = object.get_mut(container) {
+                    strip_removed_encryption_carriers(nested);
+                }
             }
         }
+        strip_removed_encryption_carriers(&mut projection);
         if self.cached.realm_tree_projections.get(&projection_id) == Some(&projection) {
             return; // projection identical — skip flush + dirtying renders
         }

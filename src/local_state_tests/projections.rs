@@ -51,8 +51,8 @@ fn account_realm_state_snapshot_refresh_preserves_local_realm_profile_overlay() 
 }
 
 #[test]
-fn account_realm_state_snapshot_refresh_preserves_pre_genesis_mls_binding_selectors() {
-    let path = temp_state_path("pre-genesis-mls-binding-refresh");
+fn account_realm_state_snapshot_drops_removed_encryption_carriers() {
+    let path = temp_state_path("removed-encryption-carriers");
     let mut store = LocalStateStore::with_path(path);
     let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
 
@@ -61,7 +61,8 @@ fn account_realm_state_snapshot_refresh_preserves_pre_genesis_mls_binding_select
         json!({
             "summary": {"title": "Encrypted"},
             "content_scheme": "mls_exporter_aead_v1",
-            "durability_policy": {"kind": "rhrk_v1"}
+            "durability_policy": {"kind": "rhrk_v1"},
+            "history_facet": {"encryption_floor": "mls_rfc9420"}
         }),
     );
     store.save_realm_tree_projection(
@@ -70,8 +71,15 @@ fn account_realm_state_snapshot_refresh_preserves_pre_genesis_mls_binding_select
     );
 
     let projection = &store.load().realm_tree_projections[realm_id];
-    assert_eq!(projection["content_scheme"], "mls_exporter_aead_v1");
-    assert_eq!(projection["durability_policy"]["kind"], "rhrk_v1");
+    assert_eq!(projection["summary"]["title"], "Encrypted");
+    assert!(projection.get("content_scheme").is_none());
+    assert!(projection.get("durability_policy").is_none());
+    assert!(projection["summary"].get("encryption_profile").is_none());
+    assert!(
+        projection["history_facet"]
+            .get("encryption_floor")
+            .is_none()
+    );
 }
 
 #[test]
@@ -103,7 +111,7 @@ fn submit_receipt_reconciles_before_local_projection_runs() {
 }
 
 #[test]
-fn mls_encrypted_projection_detects_epoch_pause_scope() {
+fn removed_creation_encryption_profile_does_not_activate_mls() {
     let path = temp_state_path("mls-encrypted-projection");
     let mut store = LocalStateStore::with_path(path);
     let realm = "ak:realm:AZl7EK1HY5gtksGJR-c5LC0hIz-9eSozZxy9EqwP2wTw";
@@ -117,7 +125,12 @@ fn mls_encrypted_projection_detects_epoch_pause_scope() {
             }
         }),
     );
-    assert!(store.realm_projection_is_mls_encrypted(realm));
+    assert!(!store.realm_projection_is_mls_encrypted(realm));
+    assert!(
+        store.load().realm_tree_projections[realm]["summary"]
+            .get("encryption_profile")
+            .is_none()
+    );
 
     let plain = "ak:realm:ARHSf2mxKS6wI8GpuAtLKy-RJVOSL_M_UEJprJwbHfO2";
     store.save_realm_tree_projection(

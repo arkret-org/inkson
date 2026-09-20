@@ -580,7 +580,7 @@ mod tests {
     /// envelope. The retired `owner` / `created_by` mirrors are deliberately
     /// absent — a fixture that carried them would test a fallback the client
     /// no longer has.
-    fn realm_projection(creator: &str, encryption_profile: &str) -> serde_json::Value {
+    fn realm_projection(creator: &str) -> serde_json::Value {
         let principal_id = crate::mls_api_helpers::principal_core_id(creator).unwrap();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             principal_id,
@@ -588,13 +588,9 @@ mod tests {
         ));
         json!({
             "__kind": "realm",
-            "content_scheme": encryption_profile,
             "member_roster_entries_limited": false,
             "member_roster_entries": [{ "actor_id": creator, "membership": "join" }],
-            "summary": {
-                "title": "Realm",
-                "encryption_profile": encryption_profile,
-            },
+            "summary": { "title": "Realm" },
             "current": {
                 "entries": [authority_root_entry(&creator)]
             }
@@ -641,7 +637,7 @@ mod tests {
     #[test]
     fn creator_of_an_encrypted_realm_without_local_mls_state_is_pending() {
         let mut store = temp_store("pending");
-        store.save_realm_tree_projection(REALM, realm_projection(ACTOR, "mls_rfc9420"));
+        store.save_realm_tree_projection(REALM, realm_projection(ACTOR));
         assert!(creator_mls_bootstrap_pending(&store, REALM, ACTOR));
     }
 
@@ -652,8 +648,7 @@ mod tests {
             REALM,
             json!({
                 "__kind": "realm",
-                "content_scheme": "mls_rfc9420",
-                "summary": { "encryption_profile": "mls_rfc9420" }
+                "summary": { "title": "Realm" }
             }),
         );
         // The gate is the local epoch-0 group material, so an optimistic
@@ -666,7 +661,7 @@ mod tests {
     #[test]
     fn emitted_genesis_with_stale_checkpoint_remains_pending() {
         let mut store = temp_store("stale-checkpoint");
-        store.save_realm_tree_projection(REALM, realm_projection(ACTOR, "mls_rfc9420"));
+        store.save_realm_tree_projection(REALM, realm_projection(ACTOR));
         let scope = arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
         };
@@ -722,7 +717,7 @@ mod tests {
     #[test]
     fn station_absence_can_repair_only_unaccepted_epoch_zero_marker() {
         let mut store = temp_store("repair-stale-marker");
-        store.save_realm_tree_projection(REALM, realm_projection(ACTOR, "mls_rfc9420"));
+        store.save_realm_tree_projection(REALM, realm_projection(ACTOR));
         let scope = arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
         };
@@ -757,7 +752,7 @@ mod tests {
         // projection. The synchronous gate is therefore identical for every
         // actor: it answers only "does this device still owe epoch-0 work".
         let mut store = temp_store("actor-independent");
-        store.save_realm_tree_projection(REALM, realm_projection(ACTOR, "mls_rfc9420"));
+        store.save_realm_tree_projection(REALM, realm_projection(ACTOR));
         assert_eq!(
             creator_mls_bootstrap_pending(&store, REALM, ACTOR),
             creator_mls_bootstrap_pending(&store, REALM, "did:web:bob.example"),
