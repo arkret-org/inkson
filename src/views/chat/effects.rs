@@ -98,7 +98,7 @@ pub(super) fn ChatEffects(
                     |http| async move {
                         let list = http.agent_list().await?;
                         Ok::<_, anyhow::Error>(crate::views::agents::mentionable_owned_agent_slugs(
-                            list.agent_projections,
+                            list.agents,
                         ))
                     },
                 )

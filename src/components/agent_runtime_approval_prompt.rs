@@ -595,7 +595,7 @@ async fn fetch_pending_agent_runtime_approval(
 ) -> Result<Option<PendingAgentRuntimeApproval>, crate::transport::auth::ApiCallError> {
     with_authed_sdk_client(base_url, token, move |http| async move {
         let list = http.agent_list().await?;
-        for row in list.agent_projections {
+        for row in list.agents {
             let agent_id = row.agent_id.as_str();
             if agent_id.trim().is_empty() {
                 continue;

@@ -57,7 +57,7 @@ pub(super) async fn fetch_owned_agent_rows(
 ) -> anyhow::Result<Vec<MemberAgentRow>> {
     let list = http.agent_list().await?;
     let mut rows = Vec::<MemberAgentRow>::new();
-    for value in list.agent_projections {
+    for value in list.agents {
         let Some(mut row) = member_agent_row_from_value(value, fallback_controller_principal_id)
         else {
             continue;

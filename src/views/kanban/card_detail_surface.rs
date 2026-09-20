@@ -205,7 +205,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                 with_authed_sdk_client(&base, api_token, |http| async move {
                     let list = http.agent_list().await?;
                     Ok::<_, anyhow::Error>(crate::views::agents::mentionable_owned_agent_slugs(
-                        list.agent_projections,
+                        list.agents,
                     ))
                 })
                 .await

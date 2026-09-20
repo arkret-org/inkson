@@ -295,7 +295,7 @@ pub(super) fn load_own_agents_for_sidebar(
         })
         .await
         {
-            Ok(response) => own_agent_rows.set(active_agents_only(response.agent_projections)),
+            Ok(response) => own_agent_rows.set(active_agents_only(response.agents)),
             Err(err) => {
                 tracing::warn!(
                     "failed to reload Agents for Contacts sidebar: {}",
@@ -352,9 +352,7 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
                     }
                 }
                 match agents {
-                    Ok(response) => {
-                        own_agent_rows.set(active_agents_only(response.agent_projections))
-                    }
+                    Ok(response) => own_agent_rows.set(active_agents_only(response.agents)),
                     Err(err) => {
                         own_agents_loaded.set(false);
                         tracing::warn!(error = %err, "failed to load Agents for Contacts sidebar");

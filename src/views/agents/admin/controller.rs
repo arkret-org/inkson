@@ -176,9 +176,9 @@ impl AgentAdminController {
                     if *refresh_epoch.peek() != request_epoch {
                         return;
                     }
-                    let total = resp.agent_projections.len();
+                    let total = resp.agents.len();
                     let rows: Vec<AgentView> = resp
-                        .agent_projections
+                        .agents
                         .into_iter()
                         .filter_map(agent_view_from_directory_row)
                         .collect();
