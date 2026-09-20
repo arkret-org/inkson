@@ -23,11 +23,11 @@ fn membership_label(state: Option<arkret_sdk::CircleMembership>) -> &'static str
     }
 }
 
-fn encryption_label(profile: &arkret_sdk::EncryptionProfile) -> &'static str {
-    match profile {
-        arkret_sdk::EncryptionProfile::None => "Restricted delivery · not E2EE",
-        arkret_sdk::EncryptionProfile::MlsRfc9420 => "Independent MLS group · E2EE capable",
-        arkret_sdk::EncryptionProfile::External => "External encryption",
+fn encryption_label(mls_group_id: Option<&str>) -> &'static str {
+    if mls_group_id.is_some() {
+        "Independent MLS group · E2EE active"
+    } else {
+        "Restricted delivery · not E2EE"
     }
 }
 
@@ -47,8 +47,6 @@ pub fn CirclesPanel(
     let mut create_open = use_signal(|| false);
     let mut create_title = use_signal(String::new);
     let mut create_summary = use_signal(String::new);
-    let mut create_encryption = use_signal(|| "mls_rfc9420".to_owned());
-    let mut plaintext_ack = use_signal(|| false);
     let mut member_actor = use_signal(String::new);
     let mut member_state = use_signal(|| "invite".to_owned());
     let mut busy = use_signal(|| false);
@@ -90,14 +88,7 @@ pub fn CirclesPanel(
             .into_iter()
             .find(|circle| circle.circle_id.as_str() == id)
     });
-    let plaintext_selected = create_encryption() == "none";
-    let encryption_preview = if plaintext_selected {
-        "The server may read plaintext."
-    } else {
-        "The Circle receives an independent MLS group."
-    };
-    let create_disabled =
-        busy() || create_title().trim().is_empty() || (plaintext_selected && !plaintext_ack());
+    let create_disabled = busy() || create_title().trim().is_empty();
 
     rsx! {
         main { class: "circle-realm", "data-testid": "circles-panel",
@@ -151,7 +142,7 @@ pub fn CirclesPanel(
                                 span { class: "muted",
                                     "{circle.display.short_name} · {circle.member_ids.len()} members"
                                 }
-                                span { class: "muted", "{encryption_label(&circle.encryption_profile)}" }
+                                span { class: "muted", "{encryption_label(circle.mls_group_id.as_deref())}" }
                             }
                         }
                     }
@@ -177,13 +168,13 @@ pub fn CirclesPanel(
                             div { strong { "Join rule" } span { "{circle.join_rule:?}" } }
                             div { strong { "History" } span { "{circle.history_access:?}" } }
                             div { strong { "Directory" } span { "{circle.directory_visibility:?}" } }
-                            div { strong { "Encryption" } span { "{encryption_label(&circle.encryption_profile)}" } }
+                            div { strong { "Encryption" } span { "{encryption_label(circle.mls_group_id.as_deref())}" } }
                         }
 
-                        if circle.encryption_profile == arkret_sdk::EncryptionProfile::None {
+                        if circle.mls_group_id.is_none() {
                             div { class: "circle-security-warning",
                                 strong { "Not end-to-end encrypted" }
-                                p { "This Circle is a restricted delivery and query boundary. The server may read plaintext." }
+                                p { "This Circle remains a restricted delivery and query boundary until its own MLS genesis is accepted. The server may read plaintext." }
                             }
                         }
 
@@ -386,24 +377,13 @@ pub fn CirclesPanel(
                             input { r#type: "text", value: "{create_title}", oninput: move |event| create_title.set(event.value()), "data-testid": "circle-create-title" }
                             label { "Summary" }
                             textarea { value: "{create_summary}", oninput: move |event| create_summary.set(event.value()) }
-                            label { "Encryption boundary" }
-                            select { value: "{create_encryption}", onchange: move |event| create_encryption.set(event.value()),
-                                option { value: "mls_rfc9420", "Independent MLS group (recommended)" }
-                                option { value: "none", "Restricted delivery only (not E2EE)" }
-                            }
                             div { class: "circle-boundary-preview",
                                 strong { "Boundary preview" }
                                 p { "Initial member: {principal_id}" }
                                 p { "Directory: Circle members only" }
                                 p { "Join rule: open to active Realm members" }
                                 p { "History: joined members" }
-                                p { "{encryption_preview}" }
-                            }
-                            if plaintext_selected {
-                                label { class: "discussion-checkbox-row",
-                                    input { r#type: "checkbox", checked: plaintext_ack(), onchange: move |event| plaintext_ack.set(event.checked()) }
-                                    span { "I understand this Circle is private by delivery scope, not end-to-end encrypted." }
-                                }
+                                p { "Starts as restricted delivery only. E2EE becomes active only after this Circle's own MLS genesis is accepted." }
                             }
                         }
                         div { class: "discussion-modal-actions",
@@ -426,11 +406,6 @@ pub fn CirclesPanel(
                                             status.set("Invalid account principal id".to_owned());
                                             return;
                                         };
-                                        let encryption_profile = if create_encryption() == "none" {
-                                            arkret_sdk::EncryptionProfile::None
-                                        } else {
-                                            arkret_sdk::EncryptionProfile::MlsRfc9420
-                                        };
                                         // The Circle id is `retype(create.event_id)`, so the
                                         // Event is authored and signed here and the server
                                         // submits those exact bytes. It cannot name the
@@ -447,10 +422,6 @@ pub fn CirclesPanel(
                                                 directory_visibility: arkret_sdk::CircleDirectoryVisibility::Members,
                                                 join_rule: arkret_sdk::CircleJoinRule::Public,
                                                 history_access: arkret_sdk::HistoryAccess::SinceJoin,
-                                                encryption_profile: encryption_profile.clone(),
-                                                content_scheme: (encryption_profile == arkret_sdk::EncryptionProfile::MlsRfc9420)
-                                                    .then_some(arkret_sdk::ContentScheme::MlsRfc9420),
-                                                durability_policy: None,
                                             },
                                         )
                                         .and_then(|builder| builder.build_sdk_event("inkson"))
@@ -471,7 +442,7 @@ pub fn CirclesPanel(
                                             let outcome = with_authed_api(&base, credential, |api| async move {
                                                 let submitter = api.event_submitter()?;
                                                 let request = arkret_sdk::CircleCreateRequestBody {
-                                                    create_event: arkret_wire::EventInitialSubmission::online(
+                                                    create_event: arkret_wire::EventCommitSubmission::new(
                                                         submitter
                                                             .author_for_direct_submission(&create_operation)
                                                             .await?
@@ -516,5 +487,19 @@ pub fn CirclesPanel(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encryption_label;
+
+    #[test]
+    fn circle_security_label_follows_accepted_mls_binding() {
+        assert_eq!(
+            encryption_label(Some("ak:mls_group:accepted")),
+            "Independent MLS group · E2EE active"
+        );
+        assert_eq!(encryption_label(None), "Restricted delivery · not E2EE");
     }
 }
