@@ -161,6 +161,9 @@ pub async fn update_profile(
     authority_evidence
         .pcr_genesis_unit
         .validate_ordered_envelopes()?;
+    let expected_pcr_stream = arkret_wire::CommitStreamRef::Realm {
+        realm_id: authority_evidence.principal_control_realm_id.clone(),
+    };
     if evidence_principal_id != principal_id
         || authority_evidence.pcr_genesis_unit.create().actor_id
             != arkret_sdk::ActorId::account(authority_evidence.account_id.clone())
@@ -171,10 +174,10 @@ pub async fn update_profile(
             .founding_authorize()
             .realm_id
             != authority_evidence.principal_control_realm_id
-        || authority_evidence.pcr_genesis_commits[0].realm_id
-            != authority_evidence.principal_control_realm_id
-        || authority_evidence.pcr_genesis_commits[1].realm_id
-            != authority_evidence.principal_control_realm_id
+        || authority_evidence
+            .pcr_genesis_commits
+            .iter()
+            .any(|commit| commit.stream_ref != expected_pcr_stream)
     {
         anyhow::bail!(
             "durable profile-authoring evidence does not bind the authenticated principal's exact PCR"
