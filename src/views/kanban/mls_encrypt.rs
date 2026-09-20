@@ -665,10 +665,18 @@ pub(super) async fn dispatch_card_detail_update(
                     .with_state_store(genesis_state_store)
                     .with_authority(genesis_authority);
                 match submitter.submit_sdk_event(&genesis_op).await {
-                    Ok(accepted) => arkret_sdk::EventId::new(accepted.event_id.clone())
-                        .map_err(|error| {
-                            anyhow::anyhow!("accepted ak.mls.genesis id is invalid: {error}")
-                        }),
+                    Ok(accepted)
+                        if accepted.status == garth::SendQueueStatus::Committed
+                            && accepted.commit.is_some() =>
+                    {
+                        arkret_sdk::EventId::new(accepted.event_id.clone()).map_err(|error| {
+                            anyhow::anyhow!("committed ak.mls.genesis id is invalid: {error}")
+                        })
+                    }
+                    Ok(outcome) => Err(anyhow::anyhow!(
+                        "ak.mls.genesis has no terminal committed outcome (status={})",
+                        MoveSubmissionState::from_send_queue_status(outcome.status).slug()
+                    )),
                     Err(error)
                         if crate::ephemeral::events_submit_rejected_for_reason(
                             &error,
@@ -728,27 +736,35 @@ pub(super) async fn dispatch_card_detail_update(
             .await;
             match commit_result {
                 Ok(resp) => {
-                    let commit_event_id = match arkret_sdk::EventId::new(resp.event_id.clone()) {
-                        Ok(event_id) => event_id,
-                        Err(error) => {
-                            tracing::warn!(%error, "accepted MLS commit id is invalid");
-                            return;
-                        }
-                    };
-                    accepted_commit_event_id = Some(commit_event_id.clone());
+                    let submission_state = MoveSubmissionState::from_send_queue_status(resp.status);
                     if let Some(commit_operation_id) = mls_commit_operation_id {
                         submit_state_store.write(|store| {
                             store.record_move_submission_with_event_id(
                                 commit_operation_id,
-                                Some(resp.event_id),
+                                Some(resp.event_id.clone()),
                                 realm_id.clone(),
                                 "mls_commit".to_owned(),
-                                MoveSubmissionState::from_submit_state("accepted", None),
-                                None,
+                                submission_state,
+                                resp.rejection_reason_code.clone(),
                                 None,
                             );
                         });
                     }
+                    if submission_state != MoveSubmissionState::Effective || resp.commit.is_none() {
+                        tracing::debug!(
+                            status = submission_state.slug(),
+                            "MLS commit has no terminal committed outcome yet"
+                        );
+                        return;
+                    }
+                    let commit_event_id = match arkret_sdk::EventId::new(resp.event_id.clone()) {
+                        Ok(event_id) => event_id,
+                        Err(error) => {
+                            tracing::warn!(%error, "committed MLS commit id is invalid");
+                            return;
+                        }
+                    };
+                    accepted_commit_event_id = Some(commit_event_id.clone());
                 }
                 Err(err) => {
                     let err_text = err.display().to_string();

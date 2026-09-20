@@ -661,6 +661,26 @@ pub(crate) async fn submit_secure_send(
             Err(err) => Err(err),
         } {
             Ok(resp) => {
+                let submission_state = MoveSubmissionState::from_send_queue_status(resp.status);
+                if let Some(commit_op_id) = commit_op_id {
+                    state_store.write().record_move_submission_with_event_id(
+                        commit_op_id,
+                        Some(resp.event_id.clone()),
+                        realm_id.to_owned(),
+                        "mls_commit".to_owned(),
+                        submission_state,
+                        resp.rejection_reason_code.clone(),
+                        None,
+                    );
+                }
+                if submission_state != MoveSubmissionState::Effective || resp.commit.is_none() {
+                    return SecureSendOutcome::CommitFailed {
+                        message: format!(
+                            "MLS commit has no terminal committed outcome (status={})",
+                            submission_state.slug()
+                        ),
+                    };
+                }
                 match arkret_sdk::EventId::new(resp.event_id.clone()) {
                     Ok(event_id) => accepted_commit_event_id = Some(event_id),
                     Err(error) => {
@@ -671,18 +691,6 @@ pub(crate) async fn submit_secure_send(
                         };
                     }
                 }
-                if let Some(commit_op_id) = commit_op_id {
-                    state_store.write().record_move_submission_with_event_id(
-                        commit_op_id,
-                        Some(resp.event_id.clone()),
-                        realm_id.to_owned(),
-                        "mls_commit".to_owned(),
-                        MoveSubmissionState::from_submit_state("accepted", None),
-                        None,
-                        None,
-                    );
-                }
-
                 // The encrypt step deliberately keeps a post-commit snapshot
                 // out of the live store until the matching commit is accepted.
                 // Once accepted, both the ratchet state and its canonical

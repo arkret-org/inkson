@@ -472,15 +472,13 @@ fn encode_did_key(signing_key: &SigningKey) -> String {
     crate::identity::did_key::did_key_from_verifying_key(&signing_key.verifying_key())
 }
 
-/// Local submission progress and projection diagnostics.
+/// Local submission progress derived from authoritative outcomes.
 ///
-/// `Effective` requires verified acceptance evidence or completion of the
-/// independent MLS reconciliation path. A sync status label alone cannot
-/// establish a committed command result or ordinary historical eligibility.
-/// `ProjectionUnresolved` is reserved for explicitly registered cross-cell or
-/// domain invariants that can still report Bottom; ordinary causal-register
-/// concurrency always has a deterministic current winner.
-/// `NotaryPaused` and `PendingMlsBinding` retain separate retry conditions.
+/// `Effective` requires an authority-committed result carrying the exact
+/// `RealmCommit`. Queued and forwarding outcomes remain `PendingCommit`, while
+/// an authority refusal is terminally `Rejected`. `PendingMlsBinding` is a
+/// separate local MLS reconciliation gate and cannot be promoted by an Event
+/// status label.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MoveSubmissionState {

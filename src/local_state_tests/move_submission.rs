@@ -3,42 +3,30 @@
 use super::*;
 
 #[test]
-fn move_submission_state_maps_pending_seal_and_effective() {
-    assert_eq!(
-        MoveSubmissionState::from_submit_state("pending", None),
-        MoveSubmissionState::PendingSeal
-    );
-    assert_eq!(
-        MoveSubmissionState::from_submit_state("pending_seal", None),
-        MoveSubmissionState::PendingSeal
-    );
-    assert_eq!(
-        MoveSubmissionState::from_submit_state("accepted", None),
-        MoveSubmissionState::PendingSeal
-    );
-    for label in [
-        "effective",
-        "sealed",
-        "control_sealed",
-        "data_local",
-        "data_observed",
-        "rejected",
+fn move_submission_state_maps_only_station_queue_outcomes() {
+    for status in [
+        garth::SendQueueStatus::Queued,
+        garth::SendQueueStatus::Forwarding,
     ] {
         assert_eq!(
-            MoveSubmissionState::from_submit_state(label, Some("bottom: guessed reason")),
-            MoveSubmissionState::PendingSeal
+            MoveSubmissionState::from_send_queue_status(status),
+            MoveSubmissionState::PendingCommit
         );
     }
-}
-
-#[test]
-fn move_submission_state_keeps_projection_diagnostics_nonterminal() {
-    let state =
-        MoveSubmissionState::from_submit_state("failed_bottom", Some("cell_in_bottom_state"));
-    assert_eq!(state, MoveSubmissionState::ProjectionUnresolved);
-    assert!(!state.is_failed());
-    assert_eq!(state.badge_class(), "badge amber");
-    assert_eq!(state.slug(), "projection_unresolved");
+    assert_eq!(
+        MoveSubmissionState::from_send_queue_status(garth::SendQueueStatus::Committed),
+        MoveSubmissionState::Effective
+    );
+    for status in [
+        garth::SendQueueStatus::Rejected,
+        garth::SendQueueStatus::Failed,
+        garth::SendQueueStatus::Cancelled,
+    ] {
+        assert_eq!(
+            MoveSubmissionState::from_send_queue_status(status),
+            MoveSubmissionState::Rejected
+        );
+    }
 }
 
 #[test]
@@ -51,45 +39,45 @@ fn move_submission_record_round_trips_through_store() {
         mid,
         realm,
         "ak.consent.grant",
-        MoveSubmissionState::PendingSeal,
+        MoveSubmissionState::PendingCommit,
         None,
-        Some("ak:seal:sha256:abc".to_owned()),
+        None,
     );
     let listed = store.move_submissions_for_realm(realm);
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].move_id, mid);
-    assert_eq!(listed[0].state, MoveSubmissionState::PendingSeal);
-    assert!(!store.realm_has_paused_notary(realm));
+    assert_eq!(listed[0].state, MoveSubmissionState::PendingCommit);
 
-    // Update to NotaryPaused — Space should now flag the banner.
+    // A terminal local rejection survives a restart without becoming an
+    // authority-committed success.
     {
         let record = store
             .cached
             .move_submissions
             .get_mut(mid)
             .expect("tracked move");
-        record.state = MoveSubmissionState::NotaryPaused;
-        record.reason = Some("recovery notary not signed".to_owned());
+        record.state = MoveSubmissionState::Rejected;
+        record.reason = Some("failed_precondition".to_owned());
     }
     let _ = store.flush();
-    assert!(store.realm_has_paused_notary(realm));
     let listed = store.move_submissions_for_realm(realm);
-    assert_eq!(listed[0].state, MoveSubmissionState::NotaryPaused);
-    assert_eq!(
-        listed[0].reason.as_deref(),
-        Some("recovery notary not signed")
-    );
+    assert_eq!(listed[0].state, MoveSubmissionState::Rejected);
+    assert_eq!(listed[0].reason.as_deref(), Some("failed_precondition"));
 
     // Persistence: a fresh reader sees the same state.
     let reader = LocalStateStore::with_path(path);
-    assert!(reader.realm_has_paused_notary(realm));
+    assert!(
+        reader.move_submissions_for_realm(realm)[0]
+            .state
+            .is_failed()
+    );
 
     // Drop it and the banner clears.
     let mut store = LocalStateStore::with_path(reader.path.clone());
     store.ensure_cached_loaded();
     store.cached.move_submissions.remove(mid);
     let _ = store.flush();
-    assert!(!store.realm_has_paused_notary(realm));
+    assert!(store.move_submissions_for_realm(realm).is_empty());
 }
 
 #[test]
@@ -106,8 +94,6 @@ fn move_submission_pending_mls_binding_drives_toast() {
         None,
     );
     assert!(store.realm_has_pending_mls_binding(realm));
-    assert!(!store.realm_has_paused_notary(realm));
-
     assert_eq!(store.resolve_member_remove_mls_bindings(realm), 0);
     let membership_event = "ak:event:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
     let binding_tracking_id = format!("mls-binding:{membership_event}");
@@ -119,22 +105,6 @@ fn move_submission_pending_mls_binding_drives_toast() {
         Some("epoch_update_required".to_owned()),
         None,
     );
-    // The governance Event becoming effective is not evidence that the MLS
-    // epoch advanced. Its event_state must not resolve the independently keyed
-    // reconciliation record.
-    assert_eq!(
-        store.ingest_move_event_states(
-            realm,
-            &serde_json::json!({
-                "event_states": [{
-                    "event_id": membership_event,
-                    "event_state": "effective"
-                }]
-            }),
-        ),
-        0
-    );
-    assert!(store.realm_has_pending_mls_binding(realm));
     assert_eq!(store.resolve_member_remove_mls_bindings(realm), 1);
     assert!(store.realm_has_pending_mls_binding(realm));
     assert_eq!(
@@ -210,19 +180,16 @@ fn pending_mls_binding_reason_preserves_add_and_remove_semantics() {
 #[test]
 fn move_submission_state_label_and_badge_class_distinct_per_state() {
     for state in [
-        MoveSubmissionState::PendingSeal,
+        MoveSubmissionState::PendingCommit,
         MoveSubmissionState::Effective,
-        MoveSubmissionState::FailedPrecondition,
-        MoveSubmissionState::ProjectionUnresolved,
-        MoveSubmissionState::RejectedSeal,
-        MoveSubmissionState::NotaryPaused,
+        MoveSubmissionState::Rejected,
         MoveSubmissionState::PendingMlsBinding,
     ] {
         assert!(!state.slug().is_empty());
         assert!(!state.label_zh().is_empty());
         assert!(state.badge_class().starts_with("badge"));
     }
-    assert!(!MoveSubmissionState::NotaryPaused.is_failed());
-    assert!(!MoveSubmissionState::PendingSeal.is_failed());
+    assert!(!MoveSubmissionState::PendingCommit.is_failed());
     assert!(!MoveSubmissionState::Effective.is_failed());
+    assert!(MoveSubmissionState::Rejected.is_failed());
 }

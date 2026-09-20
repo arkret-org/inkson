@@ -586,22 +586,31 @@ pub(super) fn submit_kanban_card_create(
         .await;
         match result {
             Ok(resp) => {
+                let state = MoveSubmissionState::from_send_queue_status(resp.status);
                 state_store.write().update_raw_operation_write_state(
                     &op_for_track,
-                    "accepted",
+                    state.slug(),
                     Some(resp.event_id.clone()),
-                    None,
+                    resp.rejection_reason_code.clone(),
                 );
-                let state = MoveSubmissionState::from_submit_state("accepted", None);
                 state_store.write().record_move_submission_with_event_id(
                     op_for_track.clone(),
                     Some(resp.event_id.clone()),
                     realm_for_record.clone(),
                     kind_for_record.clone(),
                     state,
-                    None,
+                    resp.rejection_reason_code.clone(),
                     None,
                 );
+                if state != MoveSubmissionState::Effective {
+                    tracing::debug!(
+                        operation_id = %short_protocol_id(&op_for_track),
+                        event_id = %short_protocol_id(&resp.event_id),
+                        status = state.slug(),
+                        "detached kanban card create has no committed outcome yet"
+                    );
+                    return;
+                }
                 tracing::debug!(
                     operation_id = %short_protocol_id(&op_for_track),
                     event_id = %short_protocol_id(&resp.event_id),
@@ -679,19 +688,21 @@ pub(super) fn submit_kanban_card_create(
                 .await;
                 match move_result {
                     Ok(move_response) => {
+                        let state =
+                            MoveSubmissionState::from_send_queue_status(move_response.status);
                         state_store.write().update_raw_operation_write_state(
                             &move_id,
-                            "accepted",
+                            state.slug(),
                             Some(move_response.event_id.clone()),
-                            None,
+                            move_response.rejection_reason_code.clone(),
                         );
                         state_store.write().record_move_submission_with_event_id(
                             move_id.clone(),
                             Some(move_response.event_id),
                             realm_for_record,
                             event_kind_str::STRAND_MOVE.to_owned(),
-                            MoveSubmissionState::from_submit_state("accepted", None),
-                            None,
+                            state,
+                            move_response.rejection_reason_code,
                             None,
                         );
                     }
@@ -1318,30 +1329,39 @@ pub(super) fn submit_strand_position_move(
         .await;
         match submit_result {
             Ok(resp) => {
-                // events.submit accepted path: the ordinary Event is durable.
-                // The canonical current result decides whether it is the sole
-                // position winner or loses deterministically to another write.
+                let submission_state = MoveSubmissionState::from_send_queue_status(resp.status);
+                // Only a committed Station outcome makes the ordinary Event
+                // durable. The canonical current result then decides whether
+                // it is the sole position winner or loses deterministically
+                // to another write.
                 state_store.write().update_raw_operation_write_state(
                     &move_for_track,
-                    "accepted",
+                    submission_state.slug(),
                     Some(resp.event_id.clone()),
-                    None,
+                    resp.rejection_reason_code.clone(),
                 );
-                let submission_state = MoveSubmissionState::from_submit_state("accepted", None);
                 state_store.write().record_move_submission_with_event_id(
                     move_for_track.clone(),
                     Some(resp.event_id.clone()),
                     realm_for_record,
                     kind_for_record.clone(),
                     submission_state,
-                    None,
+                    resp.rejection_reason_code,
                     None,
                 );
-                board_status.set(format!(
-                    "{kind_for_record} event {} accepted by server; awaiting current projection (event_id={})",
-                    short_protocol_id(&move_for_track),
-                    short_protocol_id(&resp.event_id)
-                ));
+                if submission_state == MoveSubmissionState::Effective {
+                    board_status.set(format!(
+                        "{kind_for_record} event {} committed; awaiting current projection (event_id={})",
+                        short_protocol_id(&move_for_track),
+                        short_protocol_id(&resp.event_id)
+                    ));
+                } else {
+                    board_status.set(format!(
+                        "{kind_for_record} event {} is {}",
+                        short_protocol_id(&move_for_track),
+                        submission_state.slug()
+                    ));
+                }
             }
             Err(err) => {
                 let err_text = err.display();
