@@ -87,19 +87,84 @@ enum SidecarViewStateMergeDecision {
     UseCandidate,
 }
 
+fn sidecar_view_state_account_data_key_for_context(
+    account_data_namespace_key: &[u8],
+    controller_account_id: &arkret_sdk::AccountId,
+    realm_id: &arkret_sdk::RealmId,
+    strand_id: &arkret_sdk::StrandId,
+) -> arkret_sdk::Result<String> {
+    let controller_account_key =
+        arkret_sdk::derive_account_data_key(account_data_namespace_key, controller_account_id)?;
+    Ok(format!(
+        "{}:{controller_account_key}:{realm_id}:{strand_id}",
+        arkret_sdk::AccountDataKey::AGENT_SIDECAR_VIEW_STATE_V1
+    ))
+}
+
+fn sidecar_view_state_account_data_key(
+    account_data_namespace_key: &[u8],
+    view_state: &arkret_sdk::AgentSidecarViewState,
+) -> arkret_sdk::Result<String> {
+    view_state.validate_shape()?;
+    sidecar_view_state_account_data_key_for_context(
+        account_data_namespace_key,
+        &view_state.controller_account_id,
+        &view_state.context_ref.realm_id,
+        &view_state.context_ref.strand_id,
+    )
+}
+
+fn validate_sidecar_view_state_account_data_key(
+    account_data_namespace_key: &[u8],
+    account_data_key: &str,
+    view_state: &arkret_sdk::AgentSidecarViewState,
+) -> arkret_sdk::Result<()> {
+    let expected = sidecar_view_state_account_data_key(account_data_namespace_key, view_state)?;
+    if account_data_key != expected {
+        return Err(arkret_sdk::WireError::Protocol(
+            "Sidecar view-state Account Data key does not match its controller/context".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn compare_sidecar_view_state_stamp(
+    left: &arkret_sdk::AgentSidecarViewState,
+    right: &arkret_sdk::AgentSidecarViewState,
+) -> arkret_sdk::Result<std::cmp::Ordering> {
+    Ok(
+        arkret_sdk::compare_hlc(left.updated_hlc.as_str(), right.updated_hlc.as_str())?.then_with(
+            || {
+                left.origin_device_id
+                    .as_str()
+                    .as_bytes()
+                    .cmp(right.origin_device_id.as_str().as_bytes())
+            },
+        ),
+    )
+}
+
 fn sidecar_view_state_merge_decision(
     current_plaintext: Option<&serde_json::Value>,
     account_data_namespace_key: &[u8],
     account_data_key: &str,
     candidate: &arkret_sdk::AgentSidecarViewState,
 ) -> anyhow::Result<SidecarViewStateMergeDecision> {
-    candidate.validate_account_data_key(account_data_namespace_key, account_data_key)?;
+    validate_sidecar_view_state_account_data_key(
+        account_data_namespace_key,
+        account_data_key,
+        candidate,
+    )?;
     let Some(current_plaintext) = current_plaintext else {
         return Ok(SidecarViewStateMergeDecision::UseCandidate);
     };
     let current =
         serde_json::from_value::<arkret_sdk::AgentSidecarViewState>(current_plaintext.clone())?;
-    current.validate_account_data_key(account_data_namespace_key, account_data_key)?;
+    validate_sidecar_view_state_account_data_key(
+        account_data_namespace_key,
+        account_data_key,
+        &current,
+    )?;
     if current.sidecar_id != candidate.sidecar_id {
         anyhow::bail!("Sidecar view-state reuses one context key for different Sidecar ids");
     }
@@ -111,13 +176,13 @@ fn sidecar_view_state_merge_decision(
         }
         anyhow::bail!("Sidecar view-state conflicting payload reuses one LWW stamp");
     }
-    let mut fold = garth::projection::SidecarProjectionFold::default();
-    fold.apply_view_state(current);
-    Ok(if fold.apply_view_state(candidate.clone()) {
-        SidecarViewStateMergeDecision::UseCandidate
-    } else {
-        SidecarViewStateMergeDecision::UseCurrent
-    })
+    Ok(
+        if compare_sidecar_view_state_stamp(candidate, &current)?.is_gt() {
+            SidecarViewStateMergeDecision::UseCandidate
+        } else {
+            SidecarViewStateMergeDecision::UseCurrent
+        },
+    )
 }
 
 fn apply_sidecar_view_state_checked(
@@ -134,7 +199,7 @@ fn apply_sidecar_view_state_checked(
     match sidecar_view_state_merge_decision(
         current_plaintext.as_ref(),
         account_data_namespace_key,
-        &view_state.account_data_key(account_data_namespace_key)?,
+        &sidecar_view_state_account_data_key(account_data_namespace_key, view_state)?,
         view_state,
     )? {
         SidecarViewStateMergeDecision::UseCurrent => Ok(false),
@@ -157,7 +222,7 @@ fn cache_sidecar_view_state_with_namespace(
     if &view_state.controller_account_id != authority {
         anyhow::bail!("Sidecar view-state controller does not match the account holder");
     }
-    let key = view_state.account_data_key(namespace_key)?;
+    let key = sidecar_view_state_account_data_key(namespace_key, view_state)?;
     if let Some(persisted) = store
         .load_plain_local_data(&key)
         .and_then(|raw| serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok())
@@ -205,7 +270,7 @@ pub fn ingest_sidecar_view_state_account_data(
         crate::account_data::decrypt_account_data_entry(authority, account_data_key, entry)?,
     )?;
     let namespace_key = crate::account_data::account_data_namespace_key(authority)?;
-    view_state.validate_account_data_key(&namespace_key, account_data_key)?;
+    validate_sidecar_view_state_account_data_key(&namespace_key, account_data_key, &view_state)?;
     if &view_state.controller_account_id != authority {
         anyhow::bail!("Sidecar view-state controller does not match the account holder");
     }
@@ -248,13 +313,9 @@ impl SidecarProjectionFold {
             value.context_ref.strand_id.to_string(),
         );
         let should_replace = self.view_states.get(&key).is_none_or(|current| {
-            (
-                value.updated_hlc.to_string(),
-                value.origin_device_id.to_string(),
-            ) > (
-                current.updated_hlc.to_string(),
-                current.origin_device_id.to_string(),
-            )
+            compare_sidecar_view_state_stamp(&value, current)
+                .expect("typed Sidecar view-state stamps are canonical")
+                .is_gt()
         });
         if should_replace {
             self.view_states.insert(key, value);
@@ -1936,7 +1997,7 @@ pub fn cached_sidecar_display_mode(
             let namespace_key =
                 crate::account_data::account_data_namespace_key(&session.controller_account_id)
                     .ok()?;
-            let key = arkret_sdk::agent_sidecar_view_state_account_data_key(
+            let key = sidecar_view_state_account_data_key_for_context(
                 &namespace_key,
                 &session.controller_account_id,
                 &realm_id,
@@ -2122,10 +2183,10 @@ pub fn push_sidecar_display_mode(
         }
     };
     let view_state = arkret_sdk::AgentSidecarViewState {
-        schema: arkret_sdk::AgentSidecarViewStateSchema::V1,
+        schema: arkret_sdk::SchemaId::AGENT_SIDECAR_VIEW_STATE_V1.to_owned(),
         controller_account_id: authority.clone(),
         sidecar_id: session.sidecar_id.clone(),
-        context_ref: arkret_sdk::AgentSidecarStrandContextRef {
+        context_ref: arkret_sdk::SidecarStrandContextRef {
             realm_id: context_ref.0,
             strand_id: context_ref.1,
         },
@@ -2142,7 +2203,7 @@ pub fn push_sidecar_display_mode(
             return;
         }
     };
-    let account_data_key = match view_state.account_data_key(&namespace_key) {
+    let account_data_key = match sidecar_view_state_account_data_key(&namespace_key, &view_state) {
         Ok(key) => key,
         Err(error) => {
             tracing::warn!(%error, "Sidecar view-state account-data key derivation failed");
@@ -2282,10 +2343,10 @@ mod tests {
         device: &str,
     ) -> arkret_sdk::AgentSidecarViewState {
         arkret_sdk::AgentSidecarViewState {
-            schema: arkret_sdk::AgentSidecarViewStateSchema::V1,
+            schema: arkret_sdk::SchemaId::AGENT_SIDECAR_VIEW_STATE_V1.to_owned(),
             controller_account_id: controller_account(),
             sidecar_id: session.sidecar_id.clone(),
-            context_ref: arkret_sdk::AgentSidecarStrandContextRef {
+            context_ref: arkret_sdk::SidecarStrandContextRef {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
                 strand_id: arkret_sdk::StrandId::new(session.source_strand_id.clone()).unwrap(),
             },
@@ -2304,9 +2365,7 @@ mod tests {
         sidecar_view_state_merge_decision(
             Some(&serde_json::to_value(current).unwrap()),
             &account_data_namespace_key(),
-            &candidate
-                .account_data_key(&account_data_namespace_key())
-                .unwrap(),
+            &sidecar_view_state_account_data_key(&account_data_namespace_key(), candidate).unwrap(),
             candidate,
         )
     }
@@ -2509,8 +2568,7 @@ mod tests {
             sidecar_view_state_merge_decision(
                 Some(&serde_json::json!({"updated_hlc": "not-a-complete-view-state"})),
                 &account_data_namespace_key(),
-                &candidate
-                    .account_data_key(&account_data_namespace_key())
+                &sidecar_view_state_account_data_key(&account_data_namespace_key(), &candidate)
                     .unwrap(),
                 &candidate,
             )
