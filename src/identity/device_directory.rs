@@ -696,7 +696,7 @@ pub fn verify_proof_value_for_signer_result_with_digest_suite(
     .map_err(|error| error.to_string())
 }
 
-pub fn verify_persistent_envelope_proofs(
+pub fn verify_persistent_envelope_proof(
     envelope: &serde_json::Value,
     public_key: &PublicKeyMaterial,
 ) -> bool {
@@ -707,18 +707,21 @@ pub fn verify_persistent_envelope_proofs(
         return false;
     };
     let actor_principal = actor_id.signing_principal_id().as_str();
-    let Some(proofs) = envelope.get("proofs").and_then(|value| value.as_array()) else {
+    let Some(proof) = envelope
+        .get("producer_proof")
+        .and_then(|value| value.as_object())
+    else {
         return false;
     };
-    if proofs.is_empty() {
-        return false;
-    }
     let Ok(preimage) = arkret_sdk::event_digest_preimage(envelope) else {
         return false;
     };
-    proofs
-        .iter()
-        .any(|proof| verify_proof_value(&preimage, proof, actor_principal, public_key))
+    verify_proof_value(
+        &preimage,
+        &serde_json::Value::Object(proof.clone()),
+        actor_principal,
+        public_key,
+    )
 }
 
 pub fn invalidate_actor(actor: &str) -> usize {

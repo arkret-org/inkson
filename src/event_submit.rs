@@ -1817,7 +1817,7 @@ fn generation_decision_for_signer(
     if authoring_principal != signer_principal {
         return GenerationFenceDecision::Current;
     }
-    let Some(proof) = event.proofs.first() else {
+    let Some(proof) = event.producer_proof.as_ref() else {
         return GenerationFenceDecision::Quarantine {
             reason: "queued_event_has_no_producer_proof".to_owned(),
         };
@@ -1889,7 +1889,7 @@ fn validate_signed_sdk_event_for_submit(
     event: &arkret_sdk::Event,
     digest_suite: arkret_sdk::DigestSuite,
 ) -> anyhow::Result<()> {
-    let [_producer] = event.proofs.as_slice() else {
+    let Some(_producer) = event.producer_proof.as_ref() else {
         anyhow::bail!(
             "submit requires exactly one producer proof (event_id={}, kind={})",
             event.event_id,

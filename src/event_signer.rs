@@ -1139,7 +1139,7 @@ mod tests {
     }
 
     fn producer_proof(event: &arkret_sdk::Event) -> &arkret_sdk::ProducerEventProof {
-        event.proofs.first().expect("producer proof")
+        event.producer_proof.as_ref().expect("producer proof")
     }
 
     #[test]
@@ -1420,7 +1420,7 @@ mod tests {
 
         let mut event = message_event("did:web:bob.example", "hi");
         // A freshly authored envelope carries no proof of its own.
-        assert!(event.proofs.is_empty());
+        assert!(event.producer_proof.is_none());
 
         signer.sign_envelope(&mut event).expect("sign");
 
@@ -1735,7 +1735,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(event.proofs.len(), 1);
+        assert!(event.producer_proof.is_some());
     }
 
     #[test]
@@ -1759,7 +1759,7 @@ mod tests {
                 test_producer_proof_context(arkret_sdk::DigestSuite::Sha256),
             )
             .unwrap();
-        let original = event.proofs.clone();
+        let original = event.producer_proof.clone();
         let error = second
             .sign_sdk_event_with_context(
                 &mut event,
@@ -1768,7 +1768,7 @@ mod tests {
             .unwrap_err();
 
         assert!(!error.to_string().is_empty());
-        assert_eq!(event.proofs, original);
+        assert_eq!(event.producer_proof, original);
     }
 
     #[test]

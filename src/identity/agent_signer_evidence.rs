@@ -90,7 +90,7 @@ fn verify_event_producer(selector: &EventAgentSelector, key: &[u8; 32]) -> bool 
     let material = PublicKeyMaterial::Ed25519Raw {
         bytes: key.to_vec(),
     };
-    event.proofs.iter().any(|proof| {
+    event.producer_proof.as_ref().is_some_and(|proof| {
         if proof.verification_method != selector.verification_method {
             return false;
         }
@@ -296,7 +296,7 @@ pub(crate) fn verified_cached_agent_event_endpoint(
 
 fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreId, DidUrl)> {
     let event: arkret_sdk::Event = serde_json::from_value(envelope.clone()).ok()?;
-    let frozen_agent_evidence = !event.proofs.is_empty();
+    let frozen_agent_evidence = event.producer_proof.is_some();
     if event.applet_id.is_some() || (event.executed_by.is_none() && !frozen_agent_evidence) {
         return None;
     }
@@ -306,20 +306,16 @@ fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreI
         .unwrap_or(&event.actor_id)
         .signing_principal_id()
         .clone();
-    let verification_method = event
-        .proofs
-        .iter()
-        .find(|proof| {
-            proof
-                .verification_method
-                .as_str()
-                .split_once('#')
-                .and_then(|(controller, _)| Did::new(controller.to_owned()).ok())
-                .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
-                .is_some_and(|controller| controller == agent_id)
-        })?
+    let proof = event.producer_proof.as_ref()?;
+    let verification_method = proof
         .verification_method
-        .clone();
+        .as_str()
+        .split_once('#')
+        .and_then(|(controller, _)| Did::new(controller.to_owned()).ok())
+        .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
+        .filter(|controller| controller == &agent_id)
+        .map(|_| proof)
+        .map(|proof| proof.verification_method.clone())?;
     Some((event, agent_id, verification_method))
 }
 
@@ -374,7 +370,7 @@ fn selector_from_object(
     {
         return None;
     }
-    let producer = event.proofs.first()?;
+    let producer = event.producer_proof.as_ref()?;
     Some(EventAgentSelector {
         accepted_event: event.clone(),
         realm_id,
@@ -568,7 +564,7 @@ mod historical_result_tests {
             DidCoreId::new("ak:did_core:web:controller.example").unwrap(),
             DidCoreId::new("ak:did_core:web:station.example").unwrap(),
         ));
-        event.proofs.clear();
+        event.producer_proof = None;
         let mut authored = arkret_sdk::AuthoredEvent::finalize_with_digest_suite(
             event,
             arkret_sdk::DigestSuite::Sha256,

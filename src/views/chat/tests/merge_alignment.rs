@@ -264,7 +264,7 @@ mod merge_duplicate_create_message_alignment_tests {
             "message_id": "ak:message:AiMtOq_gs6Il6jSfTW_-c3OYzV-X5k9afNn8RSyisj38",
             "body": "hi",
             "reaction_summary": { " +1 ": { "members": [" ak:did_core:web:carol.example "] } },
-            "proofs": []
+            "producer_proof": null
         })];
         sign_chat_fixtures(&mut events);
         let messages = chat_messages_from_events_with_sidecar(

@@ -178,7 +178,7 @@ fn accepted_direct_message_final<'a>(
             )?;
         return Some((event, endpoint));
     }
-    let method = event.proofs.first()?.verification_method.as_str();
+    let method = event.producer_proof.as_ref()?.verification_method.as_str();
     let (controller, device) = method.rsplit_once('#')?;
     let controller = crate::mls_api_helpers::principal_core_id(controller).ok()?;
     if &controller != event.actor_id.signing_principal_id() {
@@ -465,7 +465,7 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        event.proofs.push(arkret_sdk::ProducerEventProof {
+        event.producer_proof = Some(arkret_sdk::ProducerEventProof {
             kind: "detached_jws".to_owned(),
             verification_method: arkret_sdk::DidUrl::new(format!("{ACTOR_CONTROLLER}#{DEVICE_ID}"))
                 .unwrap(),
@@ -546,7 +546,7 @@ mod tests {
     }
 
     #[test]
-    fn final_binding_rejects_delegated_or_ambiguous_sender_identity() {
+    fn final_binding_rejects_delegated_sender_identity() {
         let mut delegated = direct_message_event();
         let ClientEvent::Message(message) = &mut delegated else {
             unreachable!();
@@ -557,16 +557,6 @@ mod tests {
         let store = crate::state::LocalStateStore::default();
         assert!(
             accepted_direct_message_final(&delegated, arkret_sdk::DigestSuite::Sha256, &store,)
-                .is_none()
-        );
-
-        let mut ambiguous = direct_message_event();
-        let ClientEvent::Message(message) = &mut ambiguous else {
-            unreachable!();
-        };
-        message.event.proofs.push(message.event.proofs[0].clone());
-        assert!(
-            accepted_direct_message_final(&ambiguous, arkret_sdk::DigestSuite::Sha256, &store,)
                 .is_none()
         );
     }

@@ -610,7 +610,7 @@ fn accepted_invite_route_recovers_from_canonical_history_after_restart() {
             "invitee_account_id": invitee,
         }),
     );
-    accept.proofs.push(
+    accept.producer_proof = Some(
         arkret_sdk::ProducerEventProof {
             kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
             verification_method: arkret_sdk::DidUrl::new(format!(

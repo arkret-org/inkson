@@ -40,8 +40,7 @@ fn event_with_kind(event_id: &str, realm: &str, kind: &str, payload: Value) -> a
         "scope_ref": {"kind": "realm", "realm_id": realm},
         "actor_id": account_actor(),
         "created_at": "2026-05-19T00:00:00.000Z",
-        "payload": payload,
-        "proofs": []
+        "payload": payload
     }))
     .unwrap()
 }

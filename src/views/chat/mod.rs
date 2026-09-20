@@ -790,7 +790,7 @@ fn sign_prepared_sidecar_event(
         || event.realm_id != *source_realm_id
         || event.actor_id.signing_principal_id() != &controller_actor
         || digest != draft.event_digest
-        || !event.proofs.is_empty()
+        || event.producer_proof.is_some()
         || !event.unsigned.is_empty()
     {
         anyhow::bail!("prepared Sidecar Event metadata does not match its canonical bytes");
@@ -811,8 +811,8 @@ fn sign_prepared_sidecar_event(
     )?;
     let signed_digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
     if signed_digest != draft.event_digest
-        || event.proofs.is_empty()
-        || event.proofs.iter().any(|proof| {
+        || event.producer_proof.is_none()
+        || event.producer_proof.as_ref().is_some_and(|proof| {
             proof.event_digest != draft.event_digest
                 || proof.verification_method != expected_verification_method
         })

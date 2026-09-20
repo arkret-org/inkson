@@ -4,7 +4,7 @@
 //!
 //! # Signing
 //!
-//! All envelopes are produced with `proofs: Vec::new()`. The detached JWS
+//! All envelopes are produced with `producer_proof: None`. The detached JWS
 //! proof is attached through the SDK event signing path before submit. There is
 //! NO placeholder proof: a submit without an installed signer is rejected
 //! locally with `no active signer configured` rather than shipped to the
@@ -614,7 +614,7 @@ impl EventExt for Event {
     }
 
     fn require_proof(&self) -> anyhow::Result<&ProducerEventProof> {
-        let [proof] = self.proofs.as_slice() else {
+        let Some(proof) = self.producer_proof.as_ref() else {
             anyhow::bail!("event envelope must contain exactly one producer proof");
         };
         Ok(proof)

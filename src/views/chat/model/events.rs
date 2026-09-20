@@ -924,7 +924,7 @@ fn decrypt_chat_encrypted_content_value(
 }
 
 /// Find the proof-bearing envelope layer for a chat event and verify its
-/// `proofs` against the sender's authoritative directory verify key.
+/// `producer_proof` against the sender's authoritative directory verify key.
 ///
 /// Uses the shared receiver primitive (`device_directory`) — the SAME resolver
 /// and detached-JWS verifier the call-signal path uses. Lookups are cache-only
@@ -940,15 +940,15 @@ fn verify_chat_envelope_proof_with_local_identity(
     event: &Value,
     local_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> ChatProofVerdict {
-    // Locate the envelope layer that actually carries `actor_id` + `proofs`.
+    // Locate the envelope layer that actually carries `actor_id` + `producer_proof`.
     // Projected chat events nest the signed envelope under `event` / `envelope`
     // / `raw`; scan the same candidate layers used elsewhere.
     let candidates = message_candidates(event);
     let proof_bearing = candidates.iter().copied().find(|candidate| {
         candidate
-            .get("proofs")
-            .and_then(Value::as_array)
-            .is_some_and(|proofs| !proofs.is_empty())
+            .get("producer_proof")
+            .and_then(Value::as_object)
+            .is_some()
             && candidate
                 .get("actor_id")
                 .and_then(actor_principal_from_value)
@@ -1012,8 +1012,7 @@ fn verify_chat_envelope_proof_with_local_identity(
         device,
     ) {
         crate::identity::device_directory::CacheLookup::Hit(key) => {
-            if crate::identity::device_directory::verify_persistent_envelope_proofs(envelope, &key)
-            {
+            if crate::identity::device_directory::verify_persistent_envelope_proof(envelope, &key) {
                 ChatProofVerdict::Verified
             } else {
                 ChatProofVerdict::Rejected
@@ -1048,7 +1047,7 @@ fn verify_chat_envelope_proof_with_local_identity(
                 });
             match local_key {
                 Some(key)
-                    if crate::identity::device_directory::verify_persistent_envelope_proofs(
+                    if crate::identity::device_directory::verify_persistent_envelope_proof(
                         envelope, &key,
                     ) =>
                 {
@@ -1166,9 +1165,9 @@ pub(crate) fn verified_chat_sender_domain_for_realm(
     }
     let envelope = message_candidates(event).into_iter().find(|candidate| {
         candidate
-            .get("proofs")
-            .and_then(Value::as_array)
-            .is_some_and(|proofs| !proofs.is_empty())
+            .get("producer_proof")
+            .and_then(Value::as_object)
+            .is_some()
     })?;
     let actor = envelope
         .get("executed_by")
@@ -1201,9 +1200,9 @@ fn verify_minimal_metadata_chat_author(
     let candidates = message_candidates(event);
     let proof_bearing = candidates.iter().copied().find(|candidate| {
         candidate
-            .get("proofs")
-            .and_then(Value::as_array)
-            .is_some_and(|proofs| !proofs.is_empty())
+            .get("producer_proof")
+            .and_then(Value::as_object)
+            .is_some()
             && candidate
                 .get("actor_id")
                 .and_then(actor_principal_from_value)
@@ -1241,12 +1240,11 @@ fn verify_minimal_metadata_chat_author(
     // The proof key comes purely from the pairwise verification-method
     // multibase fragment — never a directory value.
     let Some((proof_verification_method, proof_key_bytes)) = envelope
-        .get("proofs")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|proof| proof.get("verification_method").and_then(Value::as_str))
-        .find_map(|method| {
+        .get("producer_proof")
+        .and_then(Value::as_object)
+        .and_then(|proof| proof.get("verification_method"))
+        .and_then(Value::as_str)
+        .and_then(|method| {
             let no_query = method
                 .split_once('?')
                 .map(|(head, _)| head)
@@ -1297,7 +1295,7 @@ fn verify_minimal_metadata_chat_author(
     let material = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
         bytes: proof_key_bytes.to_vec(),
     };
-    if crate::identity::device_directory::verify_persistent_envelope_proofs(envelope, &material) {
+    if crate::identity::device_directory::verify_persistent_envelope_proof(envelope, &material) {
         ChatProofVerdict::Verified
     } else {
         ChatProofVerdict::Rejected
@@ -1340,16 +1338,11 @@ fn persistent_proof_sender_device<'a>(envelope: &'a Value, actor: &str) -> Optio
         .filter(|device| !device.trim().is_empty())
         .or_else(|| {
             envelope
-                .get("proofs")
-                .and_then(Value::as_array)
-                .and_then(|proofs| {
-                    proofs.iter().find_map(|proof| {
-                        proof
-                            .get("verification_method")
-                            .and_then(Value::as_str)
-                            .and_then(|method| verification_method_device_fragment(method, actor))
-                    })
-                })
+                .get("producer_proof")
+                .and_then(Value::as_object)
+                .and_then(|proof| proof.get("verification_method"))
+                .and_then(Value::as_str)
+                .and_then(|method| verification_method_device_fragment(method, actor))
         })
 }
 
@@ -1370,16 +1363,13 @@ fn verification_method_device_fragment<'a>(
 }
 
 fn persistent_proof_controllers_match(envelope: &Value, expected_controller: &str) -> bool {
-    let Some(proofs) = envelope.get("proofs").and_then(Value::as_array) else {
+    let Some(proof) = envelope.get("producer_proof").and_then(Value::as_object) else {
         return false;
     };
-    if proofs.is_empty() {
-        return false;
-    }
-    proofs
-        .iter()
-        .filter_map(|proof| proof.get("verification_method").and_then(Value::as_str))
-        .any(|verification_method| {
+    proof
+        .get("verification_method")
+        .and_then(Value::as_str)
+        .is_some_and(|verification_method| {
             arkret_sdk::Did::new(verification_method_controller(verification_method).to_owned())
                 .ok()
                 .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
@@ -1706,7 +1696,7 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
             .iter()
             .copied()
             .find(|candidate| {
-                candidate.get("actor_id").is_some() && candidate.get("proofs").is_some()
+                candidate.get("actor_id").is_some() && candidate.get("producer_proof").is_some()
             })
             .and_then(|envelope| envelope.get("scope_ref"))
             .and_then(|scope| serde_json::from_value::<arkret_sdk::ScopeRef>(scope.clone()).ok());
@@ -1770,7 +1760,7 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
             .or(private_content)
             .or(decrypted_content.flatten());
         let envelope = candidates.iter().copied().find(|candidate| {
-            candidate.get("actor_id").is_some() && candidate.get("proofs").is_some()
+            candidate.get("actor_id").is_some() && candidate.get("producer_proof").is_some()
         });
         let identity = (proof_verdict == ChatProofVerdict::Verified)
             .then(|| {

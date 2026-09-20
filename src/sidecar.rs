@@ -1193,7 +1193,7 @@ fn event_refs_after(event: &arkret_sdk::Event) -> Vec<arkret_sdk::EventId> {
 }
 
 fn event_actor_id(event: &arkret_sdk::Event) -> Option<arkret_sdk::DidCoreId> {
-    let [proof] = event.proofs.as_slice() else {
+    let Some(proof) = event.producer_proof.as_ref() else {
         return None;
     };
     let controller = proof.verification_method.as_str().split_once('#')?.0;
@@ -2941,7 +2941,7 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        event.proofs.push(
+        event.producer_proof = Some(
             arkret_sdk::ProducerEventProof {
                 kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
                 verification_method: arkret_sdk::DidUrl::new(format!(

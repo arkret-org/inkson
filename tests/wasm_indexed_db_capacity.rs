@@ -145,8 +145,7 @@ fn contract_record() -> garth::QueuedRecord {
         "created_at": "2026-05-19T00:00:00.000Z",
         "hlc": "01970e589d21-0001-a13f9c2e",
         "prev_refs": [],
-        "payload": {"actor_id": actor_id, "state": "online"},
-        "proofs": []
+        "payload": {"actor_id": actor_id, "state": "online"}
     }))
     .unwrap();
     garth::QueuedRecord::SdkEvent(Box::new(

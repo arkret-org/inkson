@@ -120,7 +120,7 @@ fn operation_builder_generates_valid_envelope() {
             .as_str()
             .is_empty()
     );
-    assert!(event.proofs.is_empty());
+    assert!(event.producer_proof.is_none());
     event.verify_identity().unwrap();
 }
 
@@ -186,7 +186,7 @@ fn operation_builder_can_emit_signed_authorization_binding() {
     assert!(!event.unsigned.contains_key("local_authz_ref"));
     let mut canonical = serde_json::to_value(event.event()).unwrap();
     if let serde_json::Value::Object(object) = &mut canonical {
-        object.remove("proofs");
+        object.remove("producer_proof");
         object.remove("unsigned");
     }
     assert_eq!(
@@ -785,7 +785,7 @@ fn sign_ed25519_attaches_typed_proof() {
                 .unwrap(),
         )
         .expect("sign ok");
-    let proof = event.proofs.first().expect("proof present");
+    let proof = event.producer_proof.as_ref().expect("proof present");
     assert_eq!(proof.verification_method, "did:web:alice#k1");
     assert!(proof.event_digest.as_str().starts_with("sha256:"));
     // JWS layout: header.. (detached) ..sig — 3 parts separated by '.'.
@@ -807,7 +807,7 @@ fn authoring_a_built_write_yields_an_unsigned_envelope_ready_to_sign() {
 
     let event = authored(&op);
 
-    assert!(event.proofs.is_empty());
+    assert!(event.producer_proof.is_none());
     assert_eq!(event.kind.as_str(), "ak.message.create");
     assert_eq!(
         Some(&event.realm_id),
@@ -864,7 +864,7 @@ fn require_proof_fails_when_unsigned() {
     )
     .build("node");
     let mut event = authored(&op);
-    event.clear_proofs();
+    event.clear_producer_proof();
     assert!(event.require_proof().is_err());
 }
 

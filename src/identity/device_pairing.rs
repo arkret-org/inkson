@@ -375,9 +375,9 @@ pub async fn verify_authorized_pairing_event_for_authority(
         || payload.device_signature != attestation.device_signature
         || payload.pairing_challenge_transcript_digest.as_ref() != Some(&attestation.pairing_challenge_transcript_digest)
         || !event
-            .proofs
-            .iter()
-            .any(|proof| {
+            .producer_proof
+            .as_ref()
+            .is_some_and(|proof| {
                 proof
                     .verification_method
                     .as_str()

@@ -2851,7 +2851,7 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        event.proofs.push(
+        event.producer_proof = Some(
             arkret_sdk::ProducerEventProof {
                 kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
                 verification_method: arkret_sdk::DidUrl::new(format!(
@@ -2878,7 +2878,11 @@ mod tests {
         let record = membership_operation_from_event(&event).unwrap();
         assert_eq!(record.payload["signing_device_id"], device_id);
 
-        event.proofs[0].verification_method =
+        event
+            .producer_proof
+            .as_mut()
+            .expect("producer proof")
+            .verification_method =
             arkret_sdk::DidUrl::new(format!("did:web:mallory.example#{device_id}")).unwrap();
         let record = membership_operation_from_event(&event).unwrap();
         assert!(record.payload.get("signing_device_id").is_none());

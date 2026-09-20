@@ -24,7 +24,7 @@ pub(super) fn event(kind: &str) -> arkret_sdk::Event {
         "kind":kind,"realm_id":"ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "scope_ref":{"kind":"realm","realm_id":"ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
         "actor_id":actor,"actor_seq":1,"created_at":"2026-09-12T12:00:00.000Z",
-        "prev_refs":[],"payload":{"peer":peer},"proofs":[]
+        "prev_refs":[],"payload":{"peer":peer}
     })).unwrap();
     let mut event = arkret_sdk::AuthoredEvent::finalize_with_digest_suite(
         event,
@@ -65,7 +65,7 @@ fn peer_request() -> (arkret_sdk::Event, ContactProducerSigner) {
         })
         .unwrap(),
     );
-    request.proofs.clear();
+    request.producer_proof = None;
     let mut authored = arkret_sdk::AuthoredEvent::finalize_with_digest_suite(
         request,
         arkret_sdk::DigestSuite::Sha256,
@@ -459,15 +459,9 @@ fn every_contact_result_binds_original_producer_method_and_local_key() {
             }
         }
         let mut no_proof = event.clone();
-        no_proof.proofs.clear();
+        no_proof.producer_proof = None;
         assert!(
             validate_contact_commit_outcome(&result, &no_proof, &operation_id(), &local_signer())
-                .is_err()
-        );
-        let mut duplicate = event.clone();
-        duplicate.proofs.push(duplicate.proofs[0].clone());
-        assert!(
-            validate_contact_commit_outcome(&result, &duplicate, &operation_id(), &local_signer())
                 .is_err()
         );
     }
@@ -482,7 +476,7 @@ fn nested_peer_request_keeps_its_own_producer_and_original_event_signature_is_re
 
     let event = event(arkret_wire::event_kind_str::CONTACT_ACCEPTED);
     let descriptor = direct_producer(&event, &local_signer());
-    let proof = &event.proofs[0];
+    let proof = event.producer_proof.as_ref().expect("producer proof");
     let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(proof.jws.split('.').nth(2).unwrap())
         .unwrap();

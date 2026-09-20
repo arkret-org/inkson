@@ -168,10 +168,7 @@ pub fn collect_proof_sender_devices_from_value(
 pub fn proof_bearing_sender_device(
     object: &serde_json::Map<String, Value>,
 ) -> Option<(String, String)> {
-    let proofs = object
-        .get("proofs")
-        .and_then(Value::as_array)
-        .filter(|proofs| !proofs.is_empty())?;
+    let proof = object.get("producer_proof").and_then(Value::as_object)?;
     let actor = object
         .get("actor_id")
         .or_else(|| object.get("sender_actor_id"))
@@ -185,7 +182,7 @@ pub fn proof_bearing_sender_device(
         .and_then(|value| serde_json::from_value::<ActorId>(value.clone()).ok())
         .unwrap_or(actor);
     let account_id = proof_subject.as_account_id()?;
-    let proof_controller = proofs.iter().find_map(|proof| {
+    let proof_controller = {
         let method = proof.get("verification_method").and_then(Value::as_str)?;
         let controller = {
             let no_query = method.split_once('?').map_or(method, |(head, _)| head);
@@ -194,7 +191,7 @@ pub fn proof_bearing_sender_device(
         let controller = Did::new(controller.to_owned()).ok()?;
         let controller_core = project_did_to_core_id(&controller).ok()?;
         (controller_core == account_id.principal_id).then_some(controller)
-    })?;
+    }?;
     let device = object
         .get("device_id")
         .or_else(|| object.get("sender_device_id"))
@@ -208,17 +205,17 @@ pub fn proof_bearing_sender_device(
     Some((account_id.to_string(), device))
 }
 
-/// The device fragment of the first proof whose controller is `actor`.
+/// The device fragment of the producer proof whose controller is `actor`.
 pub fn proof_sender_device_from_verification_method(
     object: &serde_json::Map<String, Value>,
     actor: &str,
 ) -> Option<String> {
     object
-        .get("proofs")
-        .and_then(Value::as_array)?
-        .iter()
-        .filter_map(|proof| proof.get("verification_method").and_then(Value::as_str))
-        .find_map(|method| {
+        .get("producer_proof")
+        .and_then(Value::as_object)?
+        .get("verification_method")
+        .and_then(Value::as_str)
+        .and_then(|method| {
             let no_query = method.split_once('?').map_or(method, |(head, _)| head);
             let (controller, fragment) = no_query.split_once('#')?;
             (controller == actor && fragment.starts_with("ak:device:")).then(|| fragment.to_owned())
@@ -228,7 +225,7 @@ pub fn proof_sender_device_from_verification_method(
 /// The device that signed an accepted human Event, when its producer proof is
 /// controlled by the Event's own signing principal.
 pub fn accepted_human_event_signing_device(event: &Event) -> Option<DeviceId> {
-    let [proof] = event.proofs.as_slice() else {
+    let Some(proof) = event.producer_proof.as_ref() else {
         return None;
     };
     let (controller, fragment) = proof.verification_method.as_str().split_once('#')?;

@@ -243,7 +243,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
             event.actor_id.route_service_id() == &authority.service_id,
             "Realm genesis Event targets a different Station"
         );
-        let [producer] = event.proofs.as_slice() else {
+        let Some(producer) = event.producer_proof.as_ref() else {
             bail!("Realm genesis input must contain exactly one producer proof");
         };
         producer

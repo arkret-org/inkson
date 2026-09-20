@@ -171,7 +171,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert!(create.auth_context.is_none());
     // The typed builder leaves the envelope unsigned — the active
     // signer attaches the detached JWS proof at submit time.
-    assert!(create.proofs.is_empty());
+    assert!(create.producer_proof.is_none());
 
     // Bootstrap order: create, profile, policy bundle, join_rule,
     // history_access, discovery, plaintext_visible, creator member join.

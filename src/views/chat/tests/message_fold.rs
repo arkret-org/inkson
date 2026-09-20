@@ -827,7 +827,7 @@ fn chat_messages_keep_standalone_server_redacted_revision_tombstone() {
             "local_target_ref": "ak:message:AALmz4zWkDYecrEZnVupSWR2EqdHzYP-bSwUXf4qQ82E",
             "projection_only": true
         },
-        "proofs": []
+        "producer_proof": null
     })];
 
     let messages = chat_messages_from_events_with_sidecar(
@@ -865,7 +865,7 @@ fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombst
                 "state": "redacted",
                 "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE"
             },
-            "proofs": []
+            "producer_proof": null
         }),
         json!({
             "event_id": "ak:event:AjU1l-Eisb3OsJErxiFpnMdIrcBcnCih6I8bEfreUYQ4",
@@ -882,7 +882,7 @@ fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombst
                 "state": "redacted",
                 "message_id": "ak:message:AXLf0mAo4UUC50gymplf5Oowi6lfIjnA1pl45rHyZXXs"
             },
-            "proofs": []
+            "producer_proof": null
         }),
     ];
     sign_chat_fixtures(&mut events);

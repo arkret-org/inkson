@@ -118,7 +118,7 @@ fn sign_chat_fixture(value: &mut Value) {
                 .map(|suffix| format!("did:web:{suffix}"))
                 .unwrap_or_else(|| actor_core_id.as_str().to_owned());
             object.insert("device_id".to_owned(), json!(CHAT_FIXTURE_DEVICE));
-            object.remove("proofs");
+            object.remove("producer_proof");
             object.remove("unsigned");
             let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
                 CHAT_FIXTURE_SEED,
@@ -158,7 +158,7 @@ fn sign_chat_fixture(value: &mut Value) {
             value
                 .as_object_mut()
                 .unwrap()
-                .insert("proofs".to_owned(), json!([proof]));
+                .insert("producer_proof".to_owned(), json!(proof));
 
             let signing_key = ed25519_dalek::SigningKey::from_bytes(&CHAT_FIXTURE_SEED);
             let did_key =

@@ -4,9 +4,9 @@ mod device_identity_proof_tests {
 
     use super::super::*;
 
-    /// Build a signed persistent message envelope: `proofs:[<detached_jws>]`
+    /// Build a signed persistent message envelope: `producer_proof:<detached_jws>`
     /// over the canonical proof binding object, with `event_digest` = canonical
-    /// hash of the envelope without `proofs` / `unsigned` (matching
+    /// hash of the envelope without `producer_proof` / `unsigned` (matching
     /// `event_signer::sign_envelope`).
     fn signed_message_envelope(
         signer: &crate::event_signer::InksonEventSigner,
@@ -73,8 +73,8 @@ mod device_identity_proof_tests {
         let binding_bytes = proof.canonical_binding_bytes(&actor_id).unwrap();
         proof.jws = signer.detached_jws_over(&binding_bytes).unwrap();
         envelope.as_object_mut().unwrap().insert(
-            "proofs".to_owned(),
-            json!([serde_json::to_value(&proof).unwrap()]),
+            "producer_proof".to_owned(),
+            serde_json::to_value(&proof).unwrap(),
         );
         envelope
     }
@@ -172,7 +172,8 @@ mod device_identity_proof_tests {
         let mut envelope = signed_message_envelope(&signer, actor, device);
         let actor_core = core_id(actor);
         // Point the verification_method at a different controller DID.
-        envelope["proofs"][0]["verification_method"] = json!("did:web:imposter.example#device");
+        envelope["producer_proof"]["verification_method"] =
+            json!("did:web:imposter.example#device");
         crate::identity::device_directory::seed_positive_for_test(
             &actor_core,
             device,
@@ -358,13 +359,13 @@ mod device_identity_proof_tests {
         });
         let canonical_bytes = crate::canonical::canonical_json_bytes(&envelope).unwrap();
         let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
-        envelope["proofs"] = json!([{
+        envelope["producer_proof"] = json!({
             "kind": "detached_jws",
             "verification_method": format!("{executor_full}#applet-service-key"),
             "event_digest": event_digest,
             "created_at": "2026-06-16T00:00:00.000Z",
             "jws": "fixture"
-        }]);
+        });
 
         assert_eq!(
             verify_chat_envelope_proof(&envelope),

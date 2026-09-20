@@ -583,7 +583,7 @@ fn local_contact_producer(
     event: &arkret_sdk::Event,
     signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<(arkret_sdk::DidUrl, arkret_sdk::Base64UrlString)> {
-    let [proof] = event.proofs.as_slice() else {
+    let Some(proof) = event.producer_proof.as_ref() else {
         anyhow::bail!("Contact Event must retain its unique original producer proof");
     };
     let method = signer.verification_method_for_sdk_event(event)?;

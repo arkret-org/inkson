@@ -108,7 +108,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             refs: Vec::new(),
             payload: BTreeMap::from([("object".to_owned(), json!({}))]),
-            proofs: Vec::new(),
+            producer_proof: None,
         }
     }
 
