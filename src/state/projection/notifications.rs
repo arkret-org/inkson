@@ -10,7 +10,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use arkret_models_collaboration::governance::invite_addressing::InviteDeliveryEntry;
 #[cfg(test)]
 use arkret_models_collaboration::governance::operation_wire::Invite;
-use arkret_sdk::sync::{NotificationDelta, NotificationDeltaAction, RealmSyncEntry};
+use arkret_sdk::sync::{
+    NotificationData, NotificationDelta, NotificationDeltaAction, RealmSyncEntry,
+};
 use arkret_sdk::{MembershipState, Notification, NotificationKind, RealmId};
 use serde::Deserialize;
 use serde_json::Value;
@@ -177,6 +179,71 @@ pub(crate) fn upsert_invite_delivery_notification(
     });
 }
 
+/// Materialize one validated account-subscribe upsert into the display-side
+/// Notification model.
+///
+/// The delta's typed union is authoritative. Ordinary rows deliberately omit
+/// recipient and inbox state, while Agent approval rows carry only their
+/// account-private artifact coordinate. Re-serializing either branch and
+/// guessing the old full-Notification shape would reintroduce wire fields the
+/// current protocol removed.
+fn notification_from_upsert(
+    delta: &NotificationDelta,
+    recipient_actor: &arkret_sdk::ActorId,
+) -> arkret_sdk::Result<Notification> {
+    delta.validate_shape()?;
+    let recipient = recipient_actor.as_account_id().ok_or_else(|| {
+        arkret_sdk::Error::Protocol(
+            "notification recipient must be a complete account ActorId".to_owned(),
+        )
+    })?;
+    let notification = match (&delta.id, delta.data.as_ref()) {
+        (
+            arkret_sdk::NotificationIdentity::Projection(delivered_id),
+            Some(NotificationData::OrdinaryProjection(content)),
+        ) => content.clone().into_notification(
+            recipient,
+            delivered_id.clone(),
+            arkret_sdk::NotificationState::Unread,
+        )?,
+        (
+            arkret_sdk::NotificationIdentity::AgentApproval(_),
+            Some(NotificationData::AgentRuntimeApproval(data)),
+        ) => {
+            data.validate()?;
+            Notification {
+                id: delta.id.clone(),
+                schema: arkret_sdk::NotificationSchema::V1,
+                actor_id: recipient_actor.clone(),
+                source: arkret_sdk::NotificationSource::AccountArtifact(
+                    arkret_sdk::NotificationAccountArtifactSource {
+                        source_account_artifact: arkret_sdk::NotificationAccountArtifact {
+                            kind: arkret_sdk::NotificationAccountArtifactKind::AgentRuntimeApproval,
+                            id: arkret_sdk::OpaqueLocalId::new(
+                                data.approval_request_id.as_str().to_owned(),
+                            )
+                            .map_err(|error| arkret_sdk::Error::Protocol(error.to_owned()))?,
+                        },
+                    },
+                ),
+                notification_kind: NotificationKind::Agent,
+                priority: arkret_sdk::NotificationPriority::Normal,
+                state: arkret_sdk::NotificationState::Unread,
+                preview: None,
+                created_at: data.requested_at,
+                updated_at: None,
+            }
+        }
+        _ => {
+            return Err(arkret_sdk::Error::Protocol(
+                "notification upsert does not match its typed identity branch".to_owned(),
+            ));
+        }
+    };
+    notification.validate()?;
+    Ok(notification)
+}
+
 /// Fold all notification sources into one current projection.
 ///
 /// Frames upsert individual identities. Completed baseline cleanup belongs
@@ -191,36 +258,17 @@ pub(crate) fn apply_notification_projection(
         let id = delta.id.as_str();
         match delta.action {
             NotificationDeltaAction::Upsert => {
-                // One closed object covers both notification branches: an
-                // ordinary source-Event projection and the account-artifact row
-                // that announces an open Agent runtime-key approval. The wire
-                // delta carries no second typed payload to reconcile.
-                let notification = match serde_json::from_value::<Notification>(delta.data.clone())
-                {
+                let notification = match notification_from_upsert(delta, recipient_actor) {
                     Ok(notification) => notification,
                     Err(error) => {
                         tracing::error!(
                             notification_id = id,
                             %error,
-                            "discarding a notification delta that is not a closed Notification"
+                            "discarding a notification delta that does not match its typed branch"
                         );
                         continue;
                     }
                 };
-                if notification.id.as_str() != id {
-                    tracing::error!(
-                        notification_id = id,
-                        "notification delta id does not address its own payload"
-                    );
-                    continue;
-                }
-                if notification.actor_id != *recipient_actor {
-                    tracing::error!(
-                        notification_id = id,
-                        "notification is addressed to another actor"
-                    );
-                    continue;
-                }
                 let replacement = StoredNotification::Event { notification };
                 if let Some(existing) = current
                     .iter_mut()
