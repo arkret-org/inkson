@@ -5,7 +5,7 @@ use std::sync::{Arc, LazyLock, Mutex, Weak};
 use arkret_sdk::contact_operations::{ContactCommitRequestBody, ContactOperationOutcome};
 use serde::{Deserialize, Serialize};
 
-use super::{ContactSessionFence, PrincipalSuccessorSealContext};
+use super::{ContactCommitContext, ContactSessionFence};
 use crate::secure_key_store::{SecureKeyStore, UserLocalStore};
 
 pub(crate) const SECRET_KEY: &str = "contact.pending_commit";
@@ -36,9 +36,6 @@ struct PendingContactCommit {
     signer_key: String,
     intent_digest: String,
     commit: ContactCommitRequestBody,
-    predecessor: arkret_sdk::SealId,
-    seal_request: Option<arkret_sdk::SealPrepareRequestBody>,
-    seal: Option<arkret_sdk::Seal>,
 }
 
 impl PendingContactCommit {
@@ -75,32 +72,6 @@ impl PendingContactCommit {
                 "another Contact operation is awaiting confirmation; resume it before creating a new intent"
             );
         }
-        if let Some(request) = &self.seal_request {
-            anyhow::ensure!(
-                request.realm_id == self.commit.signed_event.realm_id
-                    && request.predecessor_ref == self.predecessor
-                    && request.event_digests
-                        == vec![self.commit.signed_event.event_id.event_digest()],
-                "Contact journal Seal request changed its exact intent"
-            );
-        }
-        if let Some(seal) = &self.seal {
-            let request = self
-                .seal_request
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Contact journal Seal omitted its preparation"))?;
-            anyhow::ensure!(
-                seal.realm_id == request.realm_id
-                    && seal.predecessor_ref.as_ref() == Some(&request.predecessor_ref),
-                "Contact journal Seal changed its Realm or predecessor"
-            );
-            seal.validate_structural()?;
-            seal.validate_id(seal.state_root.digest_suite()?)?;
-            crate::event_submit::command_unit_outcome(
-                &seal.command_results,
-                &self.commit.signed_event.event_id.event_digest(),
-            )?;
-        }
         Ok(())
     }
 }
@@ -126,33 +97,6 @@ impl Journal {
             .save_secret_durable(self.store.as_ref(), SECRET_KEY, &bytes)
             .await?;
         Ok(())
-    }
-
-    pub(super) fn request(&self) -> Option<arkret_sdk::SealPrepareRequestBody> {
-        self.snapshot().seal_request
-    }
-
-    pub(super) fn seal(&self) -> Option<arkret_sdk::Seal> {
-        self.snapshot().seal
-    }
-
-    pub(super) async fn save_request(
-        &self,
-        request: &arkret_sdk::SealPrepareRequestBody,
-    ) -> anyhow::Result<()> {
-        self.record
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .seal_request = Some(request.clone());
-        self.save().await
-    }
-
-    pub(super) async fn save_seal(&self, seal: &arkret_sdk::Seal) -> anyhow::Result<()> {
-        self.record
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .seal = Some(seal.clone());
-        self.save().await
     }
 
     pub(super) async fn clear(&self) -> anyhow::Result<()> {
@@ -221,10 +165,9 @@ impl PendingOperation {
             return Ok(None);
         };
         let record = journal.snapshot();
-        let context = PrincipalSuccessorSealContext {
+        let context = ContactCommitContext {
             actor_id: record.commit.signed_event.actor_id.clone(),
             control_realm: record.commit.signed_event.realm_id.clone(),
-            predecessor: record.predecessor,
             fence: self.fence.clone(),
             journal: Some(journal.clone()),
         };
@@ -236,7 +179,7 @@ impl PendingOperation {
 
     pub(super) async fn stage(
         &self,
-        context: &mut PrincipalSuccessorSealContext,
+        context: &mut ContactCommitContext,
         commit: &ContactCommitRequestBody,
     ) -> anyhow::Result<Journal> {
         self.fence.check()?;
@@ -259,9 +202,6 @@ impl PendingOperation {
                     anyhow::anyhow!("new Contact commit omitted its local intent")
                 })?,
                 commit: commit.clone(),
-                predecessor: context.predecessor.clone(),
-                seal_request: None,
-                seal: None,
             })),
         };
         journal.save().await?;
@@ -306,12 +246,7 @@ mod tests {
                 reservation_handle: arkret_sdk::ReservationHandle::new("opaque-reservation")
                     .unwrap(),
                 signed_event: event,
-                control_proposal_ack: None,
             },
-            predecessor: arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32)))
-                .unwrap(),
-            seal_request: None,
-            seal: None,
         };
         (
             Journal {
@@ -324,17 +259,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn journal_restart_preserves_exact_commit_and_frozen_seal_request() {
+    async fn journal_restart_preserves_exact_contact_commit() {
         let (journal, signer) = fixture();
         let original = journal.snapshot();
         journal.save().await.unwrap();
-        let request = arkret_sdk::SealPrepareRequestBody {
-            realm_id: original.commit.signed_event.realm_id.clone(),
-            predecessor_ref: original.predecessor.clone(),
-            event_digests: vec![original.commit.signed_event.event_id.event_digest()],
-            hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
-        };
-        journal.save_request(&request).await.unwrap();
         let restored: PendingContactCommit = serde_json::from_str(
             &journal
                 .scope
@@ -350,11 +278,6 @@ mod tests {
             serde_json::to_value(&restored.commit).unwrap(),
             serde_json::to_value(&original.commit).unwrap()
         );
-        assert_eq!(
-            serde_json::to_value(restored.seal_request.unwrap()).unwrap(),
-            serde_json::to_value(request).unwrap()
-        );
-        assert!(restored.seal.is_none());
         journal.clear().await.unwrap();
         assert!(
             journal

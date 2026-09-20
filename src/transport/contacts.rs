@@ -74,46 +74,37 @@ impl ContactSessionFence {
     }
 }
 
-pub(crate) struct PrincipalSuccessorSealContext {
+pub(crate) struct ContactCommitContext {
     actor_id: arkret_sdk::ActorId,
     control_realm: arkret_sdk::RealmId,
-    predecessor: arkret_sdk::SealId,
     fence: ContactSessionFence,
     journal: Option<pending::Journal>,
 }
 
-pub(crate) async fn prepare_principal_successor_seal(
-    http: &arkret_sdk::http_client::Client,
+pub(crate) fn freeze_contact_commit_context(
     principal_event: &arkret_sdk::Event,
-) -> anyhow::Result<PrincipalSuccessorSealContext> {
+) -> anyhow::Result<ContactCommitContext> {
     let fence = ContactSessionFence::capture()?;
     let signer = &fence.signer;
     let principal = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
     let principal_id = arkret_sdk::project_did_to_core_id(&principal)?;
-    let actor_id = principal_successor_actor(&principal_event.actor_id, &principal_id)?;
+    let actor_id = contact_commit_actor(&principal_event.actor_id, &principal_id)?;
     let control_realm = principal_event.realm_id.clone();
-    let view = http.seals_frontier(control_realm.clone()).await?.frontier;
-    fence.check()?;
-    if view.realm_id != control_realm {
-        anyhow::bail!("principal control frontier returned a different Realm");
-    }
-    let predecessor = view.sole_leaf()?.clone();
-    Ok(PrincipalSuccessorSealContext {
+    Ok(ContactCommitContext {
         actor_id,
         control_realm,
-        predecessor,
         fence,
         journal: None,
     })
 }
 
-fn principal_successor_actor(
+fn contact_commit_actor(
     actor_id: &arkret_sdk::ActorId,
     signer_principal: &arkret_sdk::DidCoreId,
 ) -> anyhow::Result<arkret_sdk::ActorId> {
-    let account = actor_id.as_account_id().ok_or_else(|| {
-        anyhow::anyhow!("principal successor Seal requires an account Event actor")
-    })?;
+    let account = actor_id
+        .as_account_id()
+        .ok_or_else(|| anyhow::anyhow!("Contact commit requires an account Event actor"))?;
     if &account.principal_id != signer_principal {
         anyhow::bail!("prepared principal Event actor does not match the active signer");
     }
@@ -123,7 +114,7 @@ fn principal_successor_actor(
 }
 
 #[cfg(test)]
-mod principal_successor_tests {
+mod contact_commit_actor_tests {
     #[test]
     fn successor_preserves_the_signed_account_before_app_connect() {
         let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
@@ -131,174 +122,12 @@ mod principal_successor_tests {
         let actor =
             arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal.clone(), station));
         assert_eq!(
-            super::principal_successor_actor(&actor, &principal).unwrap(),
+            super::contact_commit_actor(&actor, &principal).unwrap(),
             actor
         );
         let other = arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap();
-        assert!(super::principal_successor_actor(&actor, &other).is_err());
+        assert!(super::contact_commit_actor(&actor, &other).is_err());
     }
-}
-
-pub(crate) async fn submit_principal_successor_seal(
-    http: &arkret_sdk::http_client::Client,
-    context: PrincipalSuccessorSealContext,
-    principal_event: &arkret_sdk::Event,
-) -> anyhow::Result<()> {
-    let outcome = confirm_principal_successor_seal(http, context, principal_event).await?;
-    anyhow::ensure!(
-        outcome == arkret_sdk::CommandOutcome::Committed,
-        "principal command unit was rejected"
-    );
-    Ok(())
-}
-
-async fn confirm_principal_successor_seal(
-    http: &arkret_sdk::http_client::Client,
-    context: PrincipalSuccessorSealContext,
-    principal_event: &arkret_sdk::Event,
-) -> anyhow::Result<arkret_sdk::CommandOutcome> {
-    context.fence.check()?;
-    anyhow::ensure!(
-        principal_event.actor_id == context.actor_id
-            && principal_event.realm_id == context.control_realm,
-        "principal Seal Event differs from the frozen account/Realm"
-    );
-    let principal_digest = principal_event.event_id.event_digest();
-    if let Some(outcome) = principal_event_terminal_outcome(http, principal_event).await? {
-        context.fence.check()?;
-        return Ok(outcome);
-    }
-    context.fence.check()?;
-    let seal = if let Some(seal) = context.journal.as_ref().and_then(pending::Journal::seal) {
-        seal
-    } else {
-        let device_id = context
-            .fence
-            .signer
-            .device_id()
-            .ok_or_else(|| anyhow::anyhow!("PCR signer requires a bound device"))?;
-        let request =
-            if let Some(request) = context.journal.as_ref().and_then(pending::Journal::request) {
-                request
-            } else {
-                arkret_sdk::SealPrepareRequestBody {
-                    realm_id: context.control_realm.clone(),
-                    predecessor_ref: context.predecessor.clone(),
-                    event_digests: vec![principal_digest.clone()],
-                    hlc: crate::signing_stamp::issue_protocol_hlc(
-                        context.actor_id.signing_principal_id().as_str(),
-                        device_id,
-                        context.control_realm.as_str(),
-                    )?,
-                }
-            };
-        if let Some(journal) = &context.journal {
-            journal.save_request(&request).await?;
-            context.fence.check()?;
-        }
-        let prepared = match http.seals_prepare(&request).await {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                context.fence.check()?;
-                if let Some(outcome) =
-                    principal_event_terminal_outcome(http, principal_event).await?
-                {
-                    context.fence.check()?;
-                    return Ok(outcome);
-                }
-                context.fence.check()?;
-                if !contact_commit_is_unconfirmed(&error) {
-                    return Err(error.into());
-                }
-                // A lost preparation response must reuse the exact frozen HLC/body.
-                http.seals_prepare(&request).await?
-            }
-        };
-        context.fence.check()?;
-        let seal =
-            context
-                .fence
-                .signer
-                .sign_prepared_pcr_seal(&context.actor_id, &request, &prepared)?;
-        crate::event_submit::command_unit_outcome(&seal.command_results, &principal_digest)?;
-        if let Some(journal) = &context.journal {
-            journal.save_seal(&seal).await?;
-            context.fence.check()?;
-        }
-        seal
-    };
-    let submitted = http.events_submit_seal(&seal).await;
-    context.fence.check()?;
-    let outcome = match submitted {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            if let Some(outcome) = principal_event_terminal_outcome(http, principal_event).await? {
-                context.fence.check()?;
-                return Ok(outcome);
-            }
-            context.fence.check()?;
-            if !contact_commit_is_unconfirmed(&error) {
-                return Err(error.into());
-            }
-            // Never prepare a second candidate after an uncertain submission.
-            let retried = http.events_submit_seal(&seal).await;
-            context.fence.check()?;
-            match retried {
-                Ok(outcome) => outcome,
-                Err(error) => {
-                    if let Some(outcome) =
-                        principal_event_terminal_outcome(http, principal_event).await?
-                    {
-                        context.fence.check()?;
-                        return Ok(outcome);
-                    }
-                    return Err(error.into());
-                }
-            }
-        }
-    };
-    if outcome.seal_id != seal.id
-        || outcome.post_state_root != seal.state_root
-        || outcome.accepted_event_digests != seal.delta
-    {
-        anyhow::bail!("Station returned a mismatched principal successor Seal outcome");
-    }
-    crate::event_submit::command_unit_outcome(&seal.command_results, &principal_digest)
-}
-
-async fn principal_event_terminal_outcome(
-    http: &arkret_sdk::http_client::Client,
-    event: &arkret_sdk::Event,
-) -> anyhow::Result<Option<arkret_sdk::CommandOutcome>> {
-    let decision = http
-        .read_control_proposal_decision(&arkret_sdk::ControlProposalDecisionReadRequestBody {
-            realm_id: event.realm_id.clone(),
-            proposal_digest: event.event_id.event_digest(),
-        })
-        .await?;
-    anyhow::ensure!(
-        decision.proposal_event_kind == event.kind.as_str(),
-        "principal decision returned a different Event kind"
-    );
-    if decision.proposal_state != arkret_sdk::ControlProposalState::Sealed {
-        anyhow::ensure!(
-            decision.accepted_seal_id.is_none(),
-            "pending principal decision carried a terminal Seal"
-        );
-        return Ok(None);
-    }
-    let seal_id = decision
-        .accepted_seal_id
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("terminal principal decision omitted its exact Seal"))?;
-    let outcome = crate::event_submit::server_command_unit_outcome(
-        http,
-        &event.realm_id,
-        &event.event_id,
-        seal_id,
-    )
-    .await?;
-    Ok(Some(outcome))
 }
 
 fn contact_commit_is_unconfirmed(error: &arkret_sdk::http_client::Error) -> bool {
@@ -309,7 +138,7 @@ fn contact_commit_is_unconfirmed(error: &arkret_sdk::http_client::Error) -> bool
 
 pub(crate) async fn finish_contact_commit(
     http: &arkret_sdk::http_client::Client,
-    mut context: PrincipalSuccessorSealContext,
+    mut context: ContactCommitContext,
     pending: &pending::PendingOperation,
     commit: &impl serde::Serialize,
 ) -> anyhow::Result<ContactOperationOutcome> {
@@ -323,7 +152,7 @@ pub(crate) async fn finish_contact_commit(
 
 async fn run_contact_commit(
     http: &arkret_sdk::http_client::Client,
-    context: PrincipalSuccessorSealContext,
+    context: ContactCommitContext,
     commit: &ContactCommitRequestBody,
 ) -> anyhow::Result<ContactOperationOutcome> {
     let endpoint = match commit.signed_event.kind.as_str() {
@@ -335,14 +164,14 @@ async fn run_contact_commit(
         _ => anyhow::bail!("unregistered Contact commit Event"),
     };
     let fence = context.fence.clone();
-    let journal = context.journal.clone();
+    anyhow::ensure!(
+        commit.signed_event.actor_id == context.actor_id
+            && commit.signed_event.realm_id == context.control_realm,
+        "Contact Event differs from the frozen account/Realm"
+    );
     let result = drive_contact_commit(
         || fence.check(),
         || http.post(endpoint, commit),
-        || async {
-            confirm_principal_successor_seal(http, context, &commit.signed_event).await?;
-            Ok(())
-        },
         |outcome| {
             validate_contact_commit_outcome(
                 outcome,
@@ -357,37 +186,31 @@ async fn run_contact_commit(
         && let Some(transport) = error.downcast_ref::<arkret_sdk::http_client::Error>()
         && matches!(transport, arkret_sdk::http_client::Error::Api { .. })
         && !contact_commit_is_unconfirmed(transport)
-        && matches!(
-            principal_event_terminal_outcome(http, &commit.signed_event).await,
-            Ok(Some(arkret_sdk::CommandOutcome::Rejected))
-        )
     {
         fence.check()?;
-        if let Some(journal) = &journal {
+        if let Some(journal) = &context.journal {
             journal.clear().await?;
         }
     }
     result
 }
 
-async fn drive_contact_commit<F, Fut, C, CFut>(
+async fn drive_contact_commit<F, Fut>(
     check_session: impl Fn() -> anyhow::Result<()>,
     mut submit: F,
-    confirm: C,
     validate: impl Fn(&ContactOperationOutcome) -> anyhow::Result<()>,
 ) -> anyhow::Result<ContactOperationOutcome>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = arkret_sdk::http_client::Result<ContactOperationOutcome>>,
-    C: FnOnce() -> CFut,
-    CFut: std::future::Future<Output = anyhow::Result<()>>,
 {
     check_session()?;
     let mut initial = submit().await;
     check_session()?;
-    if matches!(&initial, Err(arkret_sdk::http_client::Error::Http(_))) {
-        // Admission itself may not have happened. Retry the identical commit
-        // before asking the Station to confirm a possibly absent Event.
+    if matches!(&initial, Err(error) if contact_commit_is_unconfirmed(error)) {
+        // The governance Station owns RealmCommit admission. Re-submit only
+        // the byte-identical Contact commit; there is no client-side Seal or
+        // ControlProposal confirmation plane.
         initial = submit().await;
         check_session()?;
     }
@@ -396,15 +219,8 @@ where
             validate(&outcome)?;
             return Ok(outcome);
         }
-        Err(error) if contact_commit_is_unconfirmed(&error) => {}
         Err(error) => return Err(error.into()),
     }
-    confirm().await?;
-    check_session()?;
-    let outcome = submit().await?;
-    check_session()?;
-    validate(&outcome)?;
-    Ok(outcome)
 }
 
 fn validate_contact_commit_outcome(
@@ -688,7 +504,7 @@ pub(crate) fn sign_prepared_contact_event(
         .ok_or_else(|| anyhow::anyhow!("active device signer is required for Contact commit"))?;
     let principal =
         arkret_sdk::project_did_to_core_id(&arkret_sdk::Did::new(signer.signer_did().to_owned())?)?;
-    principal_successor_actor(&event.actor_id, &principal)?;
+    contact_commit_actor(&event.actor_id, &principal)?;
     if let Some(scope) = crate::secure_key_store::active_device_seed_scope() {
         anyhow::ensure!(
             event.actor_id == arkret_sdk::ActorId::account(scope.authority)
@@ -783,7 +599,7 @@ impl crate::transport::TransportClient {
             &event_draft,
             arkret_wire::event_kind_str::CONTACT_REQUESTED,
         )?;
-        let seal_context = prepare_principal_successor_seal(&http, &signed_event).await?;
+        let commit_context = freeze_contact_commit_context(&signed_event)?;
         session.check()?;
         let commit = ContactOperationRequestBody::Commit(ContactCommitRequestBody {
             phase: ContactCommitPhase::Commit,
@@ -791,8 +607,7 @@ impl crate::transport::TransportClient {
             idempotency_key,
             reservation_handle,
             signed_event: signed_event.event().clone(),
-            control_proposal_ack: None,
         });
-        finish_contact_commit(&http, seal_context, &pending, &commit).await
+        finish_contact_commit(&http, commit_context, &pending, &commit).await
     }
 }

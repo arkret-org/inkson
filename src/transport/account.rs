@@ -406,21 +406,19 @@ async fn submit_contact_response(
             &event_draft,
             arkret_wire::event_kind_str::CONTACT_ACCEPTED,
         )?;
-        let seal_context =
-            crate::transport::contacts::prepare_principal_successor_seal(http, &signed_event)
-                .await?;
+        let commit_context =
+            crate::transport::contacts::freeze_contact_commit_context(&signed_event)?;
         let commit = ContactAcceptRequestBody::Commit(ContactCommitRequestBody {
             phase: ContactCommitPhase::Commit,
             operation_id: operation_id.clone(),
             idempotency_key,
             reservation_handle,
             signed_event: signed_event.event().clone(),
-            control_proposal_ack: None,
         });
         session.check()?;
         match crate::transport::contacts::finish_contact_commit(
             http,
-            seal_context,
+            commit_context,
             &pending,
             &commit,
         )
@@ -473,21 +471,19 @@ async fn submit_contact_response(
             &event_draft,
             arkret_wire::event_kind_str::CONTACT_REJECTED,
         )?;
-        let seal_context =
-            crate::transport::contacts::prepare_principal_successor_seal(http, &signed_event)
-                .await?;
+        let commit_context =
+            crate::transport::contacts::freeze_contact_commit_context(&signed_event)?;
         let commit = ContactRejectRequestBody::Commit(ContactCommitRequestBody {
             phase: ContactCommitPhase::Commit,
             operation_id: operation_id.clone(),
             idempotency_key,
             reservation_handle,
             signed_event: signed_event.event().clone(),
-            control_proposal_ack: None,
         });
         session.check()?;
         match crate::transport::contacts::finish_contact_commit(
             http,
-            seal_context,
+            commit_context,
             &pending,
             &commit,
         )
@@ -1103,19 +1099,17 @@ pub async fn update_contact_scopes(
         &event_draft,
         arkret_wire::event_kind_str::CONTACT_SCOPE_UPDATE,
     )?;
-    let seal_context =
-        crate::transport::contacts::prepare_principal_successor_seal(http, &signed_event).await?;
+    let commit_context = crate::transport::contacts::freeze_contact_commit_context(&signed_event)?;
     let commit = ContactScopeUpdateRequestBody::Commit(ContactCommitRequestBody {
         phase: ContactCommitPhase::Commit,
         operation_id: operation_id.clone(),
         idempotency_key,
         reservation_handle,
         signed_event: signed_event.event().clone(),
-        control_proposal_ack: None,
     });
     session.check()?;
     let committed =
-        crate::transport::contacts::finish_contact_commit(http, seal_context, &pending, &commit)
+        crate::transport::contacts::finish_contact_commit(http, commit_context, &pending, &commit)
             .await?;
     match committed {
         ContactOperationOutcome::Accepted { .. } => Ok(()),
@@ -1208,18 +1202,16 @@ pub async fn tombstone_contact(
         &event_draft,
         arkret_wire::event_kind_str::CONTACT_TOMBSTONE,
     )?;
-    let seal_context =
-        crate::transport::contacts::prepare_principal_successor_seal(http, &signed_event).await?;
+    let commit_context = crate::transport::contacts::freeze_contact_commit_context(&signed_event)?;
     let commit = ContactTombstoneRequestBody::Commit(ContactCommitRequestBody {
         phase: ContactCommitPhase::Commit,
         operation_id: operation_id.clone(),
         idempotency_key,
         reservation_handle,
         signed_event: signed_event.event().clone(),
-        control_proposal_ack: None,
     });
     session.check()?;
-    match crate::transport::contacts::finish_contact_commit(http, seal_context, &pending, &commit)
+    match crate::transport::contacts::finish_contact_commit(http, commit_context, &pending, &commit)
         .await?
     {
         ContactOperationOutcome::Accepted { .. } => Ok(()),

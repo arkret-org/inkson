@@ -158,7 +158,7 @@ fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
         peer,
         terminal: false,
         head_event_ref: event.event_id.clone(),
-        accepted_frontier: vec![event.event_id.clone()],
+        accepted_commit_event_ids: vec![event.event_id.clone()],
         complete_through: 2,
         fresh_until: signature().created_at,
         signature: signature(),
@@ -218,7 +218,7 @@ fn problem(status: u16, code: &str) -> arkret_sdk::http_client::Error {
 }
 
 #[tokio::test]
-async fn all_five_contacts_confirm_pending_before_exact_retry() {
+async fn all_five_contacts_retry_only_the_exact_commit() {
     for kind in [
         arkret_wire::event_kind_str::CONTACT_REQUESTED,
         arkret_wire::event_kind_str::CONTACT_ACCEPTED,
@@ -238,25 +238,18 @@ async fn all_five_contacts_confirm_pending_before_exact_retry() {
                 calls.borrow_mut().push("same_commit");
                 std::future::ready(responses.borrow_mut().pop_front().unwrap())
             },
-            || async {
-                calls.borrow_mut().push("exact_seal");
-                Ok(())
-            },
             |outcome| {
                 validate_contact_commit_outcome(outcome, &event, &operation_id(), &local_signer())
             },
         )
         .await
         .unwrap();
-        assert_eq!(
-            *calls.borrow(),
-            ["same_commit", "exact_seal", "same_commit"]
-        );
+        assert_eq!(*calls.borrow(), ["same_commit", "same_commit"]);
     }
 }
 
 #[tokio::test]
-async fn terminal_success_failure_and_permission_denial_never_prepare_seal() {
+async fn terminal_success_failure_and_permission_denial_are_not_retried() {
     let event = event(arkret_wire::event_kind_str::CONTACT_REQUESTED);
     let failed = ContactOperationOutcome::Failed {
         outcome: ContactFailedOutcome {
@@ -272,50 +265,38 @@ async fn terminal_success_failure_and_permission_denial_never_prepare_seal() {
         Err(problem(409, "failed_precondition")),
     ] {
         let response = RefCell::new(Some(response));
-        let confirms = Cell::new(0);
         let _ = drive_contact_commit(
             || Ok(()),
             || std::future::ready(response.borrow_mut().take().unwrap()),
-            || async {
-                confirms.set(confirms.get() + 1);
-                Ok(())
-            },
             |outcome| {
                 validate_contact_commit_outcome(outcome, &event, &operation_id(), &local_signer())
             },
         )
         .await;
-        assert_eq!(confirms.get(), 0);
     }
 }
 
 #[tokio::test]
-async fn lost_commit_response_retries_original_before_seal_and_session_switch_aborts() {
-    let event = event(arkret_wire::event_kind_str::CONTACT_REQUESTED);
+async fn lost_commit_response_retries_original_and_session_switch_aborts() {
     let responses = RefCell::new(VecDeque::from([
         Err(arkret_sdk::http_client::Error::Http("lost response".into())),
         Err(problem(503, "temporarily_unavailable")),
-        Ok(accepted(&event)),
     ]));
     let submits = Cell::new(0);
-    let confirms = Cell::new(0);
-    drive_contact_commit(
-        || Ok(()),
-        || {
-            submits.set(submits.get() + 1);
-            std::future::ready(responses.borrow_mut().pop_front().unwrap())
-        },
-        || async {
-            confirms.set(confirms.get() + 1);
-            Ok(())
-        },
-        |_| Ok(()),
-    )
-    .await
-    .unwrap();
-    assert_eq!((submits.get(), confirms.get()), (3, 1));
+    assert!(
+        drive_contact_commit(
+            || Ok(()),
+            || {
+                submits.set(submits.get() + 1);
+                std::future::ready(responses.borrow_mut().pop_front().unwrap())
+            },
+            |_| Ok(()),
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(submits.get(), 2);
     let active = Cell::new(true);
-    let confirms = Cell::new(0);
     assert!(
         drive_contact_commit(
             || {
@@ -326,16 +307,11 @@ async fn lost_commit_response_retries_original_before_seal_and_session_switch_ab
                 active.set(false);
                 std::future::ready(Err(problem(503, "temporarily_unavailable")))
             },
-            || async {
-                confirms.set(confirms.get() + 1);
-                Ok(())
-            },
             |_| Ok(())
         )
         .await
         .is_err()
     );
-    assert_eq!(confirms.get(), 0);
 }
 
 #[test]
