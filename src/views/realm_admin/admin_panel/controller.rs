@@ -121,9 +121,11 @@ impl RealmAdminController {
                 &base_url,
                 api_token,
                 |sub| async move {
-                    let digest_suite = sub
-                        .refresh_realm_governance_frontier(&submit_home_realm_id)
-                        .await?;
+                    // The immutable Realm id fixes the digest suite; current
+                    // governance and admission remain Station decisions.
+                    let digest_suite = arkret_sdk::RealmId::new(submit_home_realm_id.clone())?
+                        .digest_suite_code()
+                        .digest_suite();
                     let profile_result = match kind {
                         RealmTreeNodeKind::Realm => {
                             crate::transport::realm_write::update_realm_metadata(
@@ -237,7 +239,11 @@ impl RealmAdminController {
                 &base_url,
                 api_token,
                 |sub| async move {
-                    let digest_suite = sub.refresh_realm_governance_frontier(&realm_id).await?;
+                    // Do not resurrect the retired Seal frontier to select a
+                    // digest suite already encoded by the typed Realm id.
+                    let digest_suite = arkret_sdk::RealmId::new(realm_id.clone())?
+                        .digest_suite_code()
+                        .digest_suite();
                     crate::transport::realm_write::set_realm_policy_events(
                         &sub,
                         &realm_id,
