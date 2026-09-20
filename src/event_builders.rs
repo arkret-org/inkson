@@ -1028,19 +1028,18 @@ pub fn build_realm_owner_transfer_control_intent(
     .map_err(Into::into)
 }
 
-/// Build a destructive authority-generation reset. The SDK validates the
-/// exact confirmation token and stamps the root-cell authorization reference.
+/// Build a destructive authority-generation reset after the caller's local
+/// exact-phrase confirmation. The governing Station checks the typed current
+/// `expected_state_digest`; the Event carries no retired root-cell reference.
 pub fn build_realm_authority_reset_control_intent(
     actor_id: &str,
     payload: arkret_sdk::RealmAuthorityResetPayload,
 ) -> anyhow::Result<crate::operation::EventIntent> {
     let (scope_ref, actor_id) = realm_authority_builder_context(&payload.realm_id, actor_id)?;
-    arkret_policy::realm_bootstrap::build_realm_authority_reset_intent(
-        scope_ref,
-        actor_id,
-        event_timestamp(),
-        payload,
-    )
+    arkret_event_draft::TypedEventDraft::<arkret_sdk::event_spec::RealmAuthorityReset>::new(
+        scope_ref, actor_id, payload,
+    )?
+    .into_intent(event_timestamp())
     .map_err(Into::into)
 }
 
@@ -1616,6 +1615,21 @@ mod genesis_authority_tests {
             relinquish.payload()["expected_revision"]["stream_position"],
             41
         );
+    }
+
+    #[test]
+    fn realm_authority_reset_authors_only_the_formal_current_digest() {
+        let payload: arkret_sdk::RealmAuthorityResetPayload = serde_json::from_value(json!({
+            "realm_id": "ak:realm:ASxFeEp6tO9V7cjI3A4hL2nyI_lMtmbnR6TzaYTi-EgH",
+            "expected_state_digest": format!("sha256:{}", "1".repeat(64)),
+        }))
+        .unwrap();
+        let intent =
+            build_realm_authority_reset_control_intent("did:web:alice.example", payload).unwrap();
+        assert_eq!(intent.kind().as_str(), "ak.realm.authority.reset");
+        assert_eq!(intent.payload().len(), 2);
+        assert!(intent.payload().contains_key("expected_state_digest"));
+        assert!(intent.authorization_ref().is_none());
     }
 
     #[test]
