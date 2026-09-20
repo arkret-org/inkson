@@ -44,18 +44,20 @@ pub(super) fn build_owner_transfer_payload(
 }
 
 /// Build the destructive `ak.realm.authority.reset` payload.
-/// `destructive_confirmation` is the operator-typed token; the SDK builder
-/// (and the reducer) only accept the literal event-kind string, so the typed
-/// text ships verbatim instead of being auto-filled.
+/// `destructive_confirmation` is an operator-local guard, not a wire field.
+/// Require the exact event-kind phrase before creating the closed payload.
 pub(super) fn build_authority_reset_payload(
     realm_id: &str,
     root: &arkret_policy::realm_bootstrap::RealmAuthorityRootValue,
     destructive_confirmation: &str,
 ) -> anyhow::Result<arkret_sdk::RealmAuthorityResetPayload> {
+    anyhow::ensure!(
+        destructive_confirmation.trim() == arkret_wire::event_kind_str::REALM_AUTHORITY_RESET,
+        "type ak.realm.authority.reset to confirm destructive authority reset"
+    );
     Ok(arkret_sdk::RealmAuthorityResetPayload {
         realm_id: arkret_sdk::RealmId::new(realm_id.trim().to_owned())?,
         expected_state_digest: expected_authority_root_digest(root)?,
-        destructive_confirmation: destructive_confirmation.trim().to_owned(),
     })
 }
 

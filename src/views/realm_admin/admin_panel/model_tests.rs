@@ -64,25 +64,15 @@ fn owner_transfer_does_not_infer_a_station_from_a_principal() {
 }
 
 #[test]
-fn authority_reset_payload_ships_the_typed_confirmation_verbatim() {
+fn authority_reset_payload_requires_local_destructive_confirmation() {
     let payload = build_authority_reset_payload(
         REALM,
         &root(),
         arkret_wire::event_kind_str::REALM_AUTHORITY_RESET,
     )
     .unwrap();
-    assert_eq!(payload.destructive_confirmation, "ak.realm.authority.reset");
-    // A wrong token still builds a payload here, but the SDK intent
-    // builder fails closed — the UI's disabled-until-match confirm is a
-    // convenience, not the enforcement point.
-    let wrong = build_authority_reset_payload(REALM, &root(), "yes really").unwrap();
-    assert!(
-        crate::event_builders::build_realm_authority_reset_control_intent(
-            "did:web:alice.example",
-            wrong,
-        )
-        .is_err()
-    );
+    assert_eq!(payload.realm_id.as_str(), REALM);
+    assert!(build_authority_reset_payload(REALM, &root(), "yes really").is_err());
 }
 
 #[test]
