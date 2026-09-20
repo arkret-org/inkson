@@ -30,8 +30,6 @@ const ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION: u32 = 32;
 const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "inkson.mls_key_package.identity_state.v1";
 const MLS_KEY_PACKAGE_CONSUME_REQUEST_PREFIX: &str = "inkson.mls_key_package.consume_request.v1";
 const MLS_KEY_PACKAGE_INVENTORY_PREFIX: &str = "inkson.mls_key_package.inventory.v1";
-const MLS_PAIRWISE_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str =
-    "inkson.mls_key_package.pairwise_publish_marker.v1";
 /// Per-(account authority, device) X25519 keypair this device advertises so a
 /// peer can seal material addressed to exactly this device.
 ///
@@ -448,58 +446,6 @@ pub fn load_mls_key_package_inventory(
         ));
     }
     Ok(inventory)
-}
-
-pub fn mls_pairwise_key_package_publish_marker_key(
-    authority: &AccountId,
-    device_id: &DeviceId,
-    realm_id: &arkret_sdk::RealmId,
-) -> Result<String, SecureKeyStoreError> {
-    let scope = account_device_storage_suffix(authority, device_id)?;
-    let realm = secure_key_component(realm_id.as_str(), "realm_id")?;
-    Ok(format!(
-        "{MLS_PAIRWISE_KEY_PACKAGE_PUBLISH_MARKER_PREFIX}.{scope}.{realm}"
-    ))
-}
-
-pub fn store_mls_pairwise_key_package_publish_marker(
-    store: &dyn SecureKeyStore,
-    authority: &AccountId,
-    device_id: &DeviceId,
-    realm_id: &arkret_sdk::RealmId,
-    key_package_id: &str,
-) -> Result<(), SecureKeyStoreError> {
-    let key_package_id = key_package_id.trim();
-    if key_package_id.is_empty() {
-        return Err(SecureKeyStoreError::Backend(
-            "key_package_id is required for the pairwise MLS KeyPackage publish marker".to_owned(),
-        ));
-    }
-    let key = mls_pairwise_key_package_publish_marker_key(authority, device_id, realm_id)?;
-    store.store_secret(&key, key_package_id)
-}
-
-pub fn load_mls_pairwise_key_package_publish_marker(
-    store: &dyn SecureKeyStore,
-    authority: &AccountId,
-    device_id: &DeviceId,
-    realm_id: &arkret_sdk::RealmId,
-) -> Result<Option<String>, SecureKeyStoreError> {
-    let key = mls_pairwise_key_package_publish_marker_key(authority, device_id, realm_id)?;
-    Ok(store
-        .get_secret(&key)?
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty()))
-}
-
-pub fn delete_mls_pairwise_key_package_publish_marker(
-    store: &dyn SecureKeyStore,
-    authority: &AccountId,
-    device_id: &DeviceId,
-    realm_id: &arkret_sdk::RealmId,
-) -> Result<(), SecureKeyStoreError> {
-    let key = mls_pairwise_key_package_publish_marker_key(authority, device_id, realm_id)?;
-    store.delete_secret(&key)
 }
 
 /// Load (without creating) the checkpoint secret for an account authority.

@@ -184,16 +184,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 return;
             }
             let description = server_description();
-            let pairwise_realms = {
-                let store = state_store.read();
-                store
-                    .known_realm_ids()
-                    .into_iter()
-                    .filter(|realm_id| {
-                        store.realm_projection_is_minimal_metadata(realm_id.as_str())
-                    })
-                    .collect::<Vec<_>>()
-            };
             let Some(publish_key) = mls_key_package_publish_key(
                 &account.server_url,
                 &session,
@@ -205,72 +195,26 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 return;
             };
             let publish_hint = local_mls_key_package_publish_hint(&base, &authority, &device);
-            let pairwise_secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let pairwise_basis = pairwise_realms
-                .iter()
-                .map(|realm_id| {
-                    let marker = crate::mls::runtime::load_mls_pairwise_key_package_publish_marker(
-                        pairwise_secure_store.as_ref(),
-                        &authority,
-                        &device,
-                        realm_id,
-                    )
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| "none".to_owned());
-                    format!("{}={marker}", realm_id.as_str())
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-            let publish_key = format!("{publish_key}|kp={publish_hint}|pairwise={pairwise_basis}");
+            let publish_key = format!("{publish_key}|kp={publish_hint}");
             if seen_publish_key().as_deref() == Some(publish_key.as_str()) {
                 return;
             }
             seen_publish_key.set(Some(publish_key.clone()));
             spawn(async move {
                 let attempted_publish_key = publish_key;
-                let ordinary = ensure_local_mls_key_package_inventory(
+                let published = ensure_local_mls_key_package_inventory(
                     base.clone(),
                     session.clone(),
                     authority.clone(),
                     device.clone(),
                 )
                 .await;
-                let pairwise = match ordinary {
+                match published {
                     Ok(_) => {
-                        let mut published = Vec::new();
-                        let mut error = None;
-                        for realm_id in pairwise_realms {
-                            match ensure_pairwise_mls_key_package_published(
-                                base.clone(),
-                                session.clone(),
-                                authority.clone(),
-                                device.clone(),
-                                realm_id,
-                            )
-                            .await
-                            {
-                                Ok(Some(key_package_id)) => published.push(key_package_id),
-                                Ok(None) => {}
-                                Err(current) => {
-                                    error = Some(current);
-                                    break;
-                                }
-                            }
-                        }
-                        error.map_or_else(|| Ok(published), Err)
-                    }
-                    Err(error) => Err(error),
-                };
-                match pairwise {
-                    Ok(key_package_ids) => {
                         if *publish_retry_attempt.peek() != 0 {
                             publish_retry_attempt.set(0);
                         }
-                        tracing::debug!(
-                            pairwise_key_package_count = key_package_ids.len(),
-                            "local ordinary and Realm-scoped pairwise MLS KeyPackages are published"
-                        );
+                        tracing::debug!("local MLS KeyPackage inventory is published");
                     }
                     Err(error) => {
                         tracing::warn!(%error, "MLS KeyPackage publish bootstrap failed");

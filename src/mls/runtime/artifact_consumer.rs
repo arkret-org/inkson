@@ -45,6 +45,15 @@ pub(crate) async fn install_accepted_transition(
     authority_hints: &[MlsLeafAuthorityHint],
 ) -> Result<MlsInstallOutcome, String> {
     let transition = accepted_mls_transition(item)?;
+    if state.read(|store| {
+        store.realm_projection_has_retired_minimal_metadata_marker(
+            transition.effective_scope.realm_id().as_str(),
+        )
+    }) {
+        return Err(
+            "retired minimal-metadata Realm marker cannot install an MLS transition".to_owned(),
+        );
+    }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let snapshot_secret =
         super::load_device_checkpoint_secret(secure_store.as_ref(), authority, device_id)
@@ -131,6 +140,13 @@ pub(crate) async fn install_accepted_welcome(
     authority_hints: &[MlsLeafAuthorityHint],
 ) -> Result<MlsInstallOutcome, String> {
     let transition = accepted_mls_transition(accepted_commit)?;
+    if state.read(|store| {
+        store.realm_projection_has_retired_minimal_metadata_marker(
+            transition.effective_scope.realm_id().as_str(),
+        )
+    }) {
+        return Err("retired minimal-metadata Realm marker cannot install a Welcome".to_owned());
+    }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let snapshot_secret =
         super::load_device_checkpoint_secret(secure_store.as_ref(), authority, device_id)
