@@ -310,6 +310,14 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     let kek = derive_vault_kek(passphrase).map_err(|err| anyhow!("derive KEK: {err}"))?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
+    let auth = api.key_backup_auth_binding(authority, &signer).await?;
+    let sign = |bytes: &[u8]| {
+        signer.sign_raw(bytes).map_err(|error| {
+            arkret_crypto::KeyBackupError::InvalidInput(format!(
+                "device key backup signature: {error}"
+            ))
+        })
+    };
     let account_body = if let Some(previous) = previous_account_backup.as_ref() {
         let predecessor = typed_backup_predecessor(previous)?;
         let source_commit_ref =
@@ -321,6 +329,8 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
             &kek,
             &stored.secret,
             stored.version,
+            &auth,
+            &sign,
             Some(source_commit_ref),
         )?
     } else {
@@ -331,11 +341,13 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
             &kek,
             &stored.secret,
             stored.version,
+            &auth,
+            &sign,
             Some(current_backup_source_commit_ref(api, control_realm, authority, device_id).await?),
         )?
     };
     let account_series_id = account_body.series_id.to_string();
-    api.put_key_backup(account_backup_id.as_str(), account_body, &signer)
+    api.put_key_backup(account_backup_id.as_str(), account_body)
         .await
         .map_err(|err| anyhow!("upload account MLS secret backup: {err}"))?;
     if creates_initial_series {
@@ -432,6 +444,14 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     let account_backup_id = fresh_backup_id().map_err(anyhow::Error::from)?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
+    let auth = api.key_backup_auth_binding(authority, &signer).await?;
+    let sign = |bytes: &[u8]| {
+        signer.sign_raw(bytes).map_err(|error| {
+            arkret_crypto::KeyBackupError::InvalidInput(format!(
+                "device key backup signature: {error}"
+            ))
+        })
+    };
     let source_commit_ref =
         Some(current_backup_source_commit_ref(api, control_realm, authority, device_id).await?);
     let account_body = build_mls_account_secret_recovery_public_key_backup_in_series(
@@ -444,10 +464,12 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         stored.version,
         recovery_policy_ref,
         previous_account_backup.as_ref(),
+        &auth,
+        &sign,
         source_commit_ref,
     )?;
     let account_series_id = account_body.series_id.to_string();
-    api.put_key_backup(account_backup_id.as_str(), account_body, &signer)
+    api.put_key_backup(account_backup_id.as_str(), account_body)
         .await
         .map_err(|err| anyhow!("upload recovery-key account MLS secret backup: {err}"))?;
     if creates_initial_series {
@@ -573,6 +595,14 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
     let creates_initial_series = previous_backup.is_none();
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
+    let auth = api.key_backup_auth_binding(authority, &signer).await?;
+    let sign = |bytes: &[u8]| {
+        signer.sign_raw(bytes).map_err(|error| {
+            arkret_crypto::KeyBackupError::InvalidInput(format!(
+                "device key backup signature: {error}"
+            ))
+        })
+    };
     let body = if let Some(previous) = previous_backup.as_ref() {
         let predecessor = typed_backup_predecessor(previous)?;
         let source_commit_ref =
@@ -583,6 +613,8 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
             device_id,
             &kek,
             sidecar_json,
+            &auth,
+            &sign,
             Some(source_commit_ref),
         )?
     } else {
@@ -592,11 +624,13 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
             device_id,
             &kek,
             sidecar_json,
+            &auth,
+            &sign,
             Some(current_backup_source_commit_ref(api, control_realm, authority, device_id).await?),
         )?
     };
     let (_, sent_body) = api
-        .put_key_backup_returning_sent_body(backup_id.as_str(), body, &signer)
+        .put_key_backup_returning_sent_body(backup_id.as_str(), body)
         .await
         .map_err(|err| anyhow!("upload private plaintext backup: {err}"))?;
     let series_id = sent_body.series_id.to_string();

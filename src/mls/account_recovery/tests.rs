@@ -1,5 +1,3 @@
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::Signer as _;
 use garth::mls::backup_selection::{
     is_mls_account_secret_backup, is_mls_private_plaintext_backup,
@@ -7,7 +5,7 @@ use garth::mls::backup_selection::{
     select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
     select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
-use garth::mls::backup_series::{backup_series_seq, verify_series_chain};
+use garth::mls::backup_series::verify_series_chain;
 use serde_json::Value;
 
 use super::backup_body::{
@@ -58,50 +56,41 @@ fn validate_wire_envelope(body: &Value, expected_kind: BackupKind) -> Result<(),
             envelope.backup_kind.as_str()
         ));
     }
-    envelope
-        .validate_envelope_fields()
-        .map_err(|error| error.to_string())
+    envelope.validate().map_err(|error| error.to_string())
 }
 
-fn sign_wire_envelope(body: Value) -> Value {
-    let mut envelope: arkret_sdk::KeyBackup = serde_json::from_value(body).unwrap();
-    envelope.auth_data = None;
-    let device_id = envelope.device_id.clone().unwrap();
-    let auth = arkret_sdk::UnsignedKeyBackupAuthData::new(
-        device_id,
-        arkret_sdk::DidUrl::new(format!("{ACTOR}#test-device")).unwrap(),
-        arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
-        arkret_sdk::EventId::new(
+fn test_auth() -> arkret_crypto::backup::KeyBackupAuthBinding {
+    arkret_crypto::backup::KeyBackupAuthBinding {
+        device_id: arkret_sdk::DeviceId::new(DEVICE.to_owned()).unwrap(),
+        verification_method: arkret_sdk::DidUrl::new(format!("{ACTOR}#test-device")).unwrap(),
+        signature_algorithm: arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
+        device_authorize_event_id: arkret_sdk::EventId::new(
             "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD".to_owned(),
         )
         .unwrap(),
-    )
-    .unwrap();
-    let unsigned = arkret_sdk::UnsignedKeyBackup::new(envelope, auth).unwrap();
+    }
+}
+
+fn test_sign(payload: &[u8]) -> Result<Vec<u8>, arkret_crypto::KeyBackupError> {
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&[42_u8; 32]);
-    let signature = signing_key.sign(&unsigned.signing_payload_bytes().unwrap());
-    key_backup_wire(
-        &unsigned
-            .attach_signature(
-                arkret_sdk::Base64UrlString::new(B64.encode(signature.to_bytes())).unwrap(),
-            )
-            .unwrap(),
-    )
+    Ok(signing_key.sign(payload).to_bytes().to_vec())
 }
 
 fn wrap() -> Value {
     let kek = derive_vault_kek(PASSPHRASE).unwrap();
-    sign_wire_envelope(key_backup_wire(
+    key_backup_wire(
         &build_mls_account_secret_backup_body_with_kek(
             BACKUP_ID,
             &authority(),
             DEVICE,
             &kek,
             ACCOUNT_SECRET,
+            &test_auth(),
+            &test_sign,
             None,
         )
         .unwrap(),
-    ))
+    )
 }
 
 /// Build the HPKE `recovery_public_key` account-secret backup that the
@@ -111,7 +100,7 @@ fn wrap() -> Value {
 /// `wrap()` `secret_storage` body.
 fn recovery_hpke_backup() -> Value {
     let (_sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
-    sign_wire_envelope(key_backup_wire(
+    key_backup_wire(
         &build_mls_account_secret_recovery_public_key_backup_in_series(
             "ak:backup:01964137-0000-7000-8000-00000000c0de",
             &authority(),
@@ -122,10 +111,12 @@ fn recovery_hpke_backup() -> Value {
             1,
             ("ak:policy:01964137-0000-7000-8000-0000000000a1", 3),
             None,
+            &test_auth(),
+            &test_sign,
             None,
         )
         .unwrap(),
-    ))
+    )
 }
 
 fn active_series_pointer(backup_kind: &str, active_series_id: &str) -> (String, Value) {
@@ -209,7 +200,7 @@ fn put_body_has_expected_item_identifiers() {
     assert!(is_mls_account_secret_backup(&body));
     assert_eq!(
         body["contents"][0]["item_kind"].as_str(),
-        Some(MLS_ACCOUNT_SECRET_ITEM_KIND.as_str())
+        Some("mls_account_secret")
     );
     assert_eq!(
         body["contents"][0]["secret_id"].as_str(),
@@ -217,7 +208,6 @@ fn put_body_has_expected_item_identifiers() {
     );
     assert_eq!(body["backup_kind"], "secret_storage");
     // item_kind must be one both validators' allowlists accept.
-    assert_eq!(MLS_ACCOUNT_SECRET_ITEM_KIND.as_str(), "mls_account_secret");
     assert_eq!(
         mls_account_secret_backup_version(&body),
         crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION
@@ -285,6 +275,8 @@ fn round_trips_even_when_random_bytes_would_need_url_safe_alphabet() {
             DEVICE,
             &kek,
             &secret,
+            &test_auth(),
+            &test_sign,
             None,
         )
         .unwrap();
@@ -352,6 +344,8 @@ fn preferred_account_secret_requires_recovery_public_key() {
         1,
         ("ak:policy:01964137-0000-7000-8000-0000000000a1", 3),
         None,
+        &test_auth(),
+        &test_sign,
         None,
     )
     .unwrap();
@@ -397,7 +391,8 @@ fn select_account_secret_prefers_highest_series_seq() {
 #[test]
 fn verify_series_chain_accepts_single_genesis() {
     let genesis = wrap();
-    assert_eq!(backup_series_seq(&genesis), 0);
+    let genesis: arkret_sdk::KeyBackup = serde_json::from_value(genesis).unwrap();
+    assert_eq!(genesis.series_seq, 0);
     verify_series_chain(&genesis, std::slice::from_ref(&genesis))
         .expect("a lone genesis envelope is a valid one-link chain");
 }
@@ -413,8 +408,11 @@ fn verify_series_chain_rejects_missing_intermediate() {
     let mut forged_tail = genesis.clone();
     forged_tail["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000c2");
     forged_tail["series_seq"] = serde_json::json!(2);
-    forged_tail["supersedes_id"] = serde_json::json!("ak:backup:does-not-exist");
-    forged_tail["supersedes_digest"] = serde_json::json!("sha256:deadbeef");
+    forged_tail["supersedes_id"] =
+        serde_json::json!("ak:backup:01964137-0000-7000-8000-000000000099");
+    forged_tail["supersedes_digest"] = serde_json::json!(format!("sha256:{}", "d".repeat(64)));
+    let genesis: arkret_sdk::KeyBackup = serde_json::from_value(genesis).unwrap();
+    let forged_tail: arkret_sdk::KeyBackup = serde_json::from_value(forged_tail).unwrap();
 
     let err = verify_series_chain(&forged_tail, &[genesis, forged_tail.clone()])
         .expect_err("a chain missing series_seq 1 must be rejected");
@@ -433,15 +431,17 @@ fn verify_series_chain_accepts_well_formed_successor() {
         &derive_vault_kek(PASSPHRASE).unwrap(),
         ACCOUNT_SECRET,
         2,
+        &test_auth(),
+        &test_sign,
         Some(source_commit_ref.clone()),
     )
     .expect("SDK successor builder must seal the final series identity");
-    let successor = key_backup_wire(&successor);
+    let successor_wire = key_backup_wire(&successor);
 
-    verify_series_chain(&successor, &[genesis, successor.clone()])
+    verify_series_chain(&successor, &[predecessor.clone(), successor.clone()])
         .expect("an SDK-built successor must verify");
     let successor_envelope: arkret_sdk::KeyBackup =
-        serde_json::from_value(successor.clone()).unwrap();
+        serde_json::from_value(successor_wire.clone()).unwrap();
     assert_eq!(successor_envelope.series_seq, predecessor.series_seq + 1);
     assert_eq!(
         successor_envelope.supersedes_id.as_ref(),
@@ -453,7 +453,7 @@ fn verify_series_chain_accepts_well_formed_successor() {
         Some(&source_commit_ref)
     );
     assert_eq!(
-        decrypt_mls_account_secret_backup(PASSPHRASE, &successor).unwrap(),
+        decrypt_mls_account_secret_backup(PASSPHRASE, &successor_wire).unwrap(),
         ACCOUNT_SECRET.as_bytes(),
         "successor plaintext identity must decrypt under its final series metadata"
     );
@@ -468,6 +468,8 @@ fn private_plaintext_successor_is_sealed_with_final_series_metadata() {
         DEVICE,
         &kek,
         br#"{"realm":{"strand":{"title":"first"}}}"#,
+        &test_auth(),
+        &test_sign,
         None,
     )
     .unwrap();
@@ -478,6 +480,8 @@ fn private_plaintext_successor_is_sealed_with_final_series_metadata() {
         DEVICE,
         &kek,
         br#"{"realm":{"strand":{"title":"successor"}}}"#,
+        &test_auth(),
+        &test_sign,
         Some(source_commit_ref),
     )
     .unwrap();
@@ -506,6 +510,8 @@ fn recovery_public_key_backup_policy_ref_is_enforced_on_open() {
         1,
         ("ak:policy:01964137-0000-7000-8000-0000000000a1", 3),
         None,
+        &test_auth(),
+        &test_sign,
         None,
     )
     .unwrap();
@@ -561,6 +567,8 @@ fn recovery_public_key_successor_is_sealed_with_final_series_metadata() {
         1,
         recovery_policy_ref,
         None,
+        &test_auth(),
+        &test_sign,
         None,
     )
     .unwrap();
@@ -579,6 +587,8 @@ fn recovery_public_key_successor_is_sealed_with_final_series_metadata() {
         2,
         recovery_policy_ref,
         Some(&genesis_wire),
+        &test_auth(),
+        &test_sign,
         Some(backup_source_commit_ref()),
     )
     .unwrap();
@@ -613,6 +623,8 @@ fn recovery_public_key_backup_without_policy_ref_rejected_when_policy_expected()
         1,
         ("ak:policy:01964137-0000-7000-8000-0000000000a1", 3),
         None,
+        &test_auth(),
+        &test_sign,
         None,
     )
     .unwrap();
@@ -852,10 +864,12 @@ fn wrap_sidecar() -> (Vec<u8>, Value) {
         DEVICE,
         &kek,
         &json,
+        &test_auth(),
+        &test_sign,
         None,
     )
     .unwrap();
-    (json, sign_wire_envelope(key_backup_wire(&body)))
+    (json, key_backup_wire(&body))
 }
 
 #[test]
@@ -884,17 +898,13 @@ fn sidecar_backup_has_expected_identifiers_and_no_plaintext_leak() {
     assert!(is_mls_private_plaintext_backup(&body));
     assert_eq!(
         body["contents"][0]["item_kind"].as_str(),
-        Some(MLS_PRIVATE_PLAINTEXT_ITEM_KIND.as_str())
+        Some("mls_private_plaintext")
     );
     assert_eq!(
         body["contents"][0]["secret_id"].as_str(),
         Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID)
     );
     assert_eq!(body["backup_kind"], "secret_storage");
-    assert_eq!(
-        MLS_PRIVATE_PLAINTEXT_ITEM_KIND.as_str(),
-        "mls_private_plaintext"
-    );
     let serialized = serde_json::to_string(&body).unwrap();
     assert!(!serialized.contains("author body"));
     assert!(!serialized.contains("author synthesis"));

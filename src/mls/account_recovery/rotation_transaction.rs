@@ -2,11 +2,11 @@ use crate::mls::runtime::{active_secret_storage_series_id_for, iter_backup_bodie
 use anyhow::{Context, Result, anyhow};
 pub(super) use arkret_models_collaboration::events_payloads::key_backup::ControllerBackupTrustAnchor;
 use arkret_models_collaboration::events_payloads::key_backup::resolve_controller_backup_trust_anchor;
-use arkret_models_crypto::{BackupKind, BackupSeriesEraseRequestBody, BackupSeriesEraseStatus};
+use arkret_models_crypto::{BackupKind, SecurityTransactionTerminalOutcome};
 use arkret_sdk::{BackupObjectRef, BackupRotationKind, SecurityTransactionStep};
 use arkret_wire::{
-    BackupSeriesId, Base64UrlString, Did, EventsSubmitBatchRequestBody, Hash, LeaseBasisRef,
-    RiskTier, SchemaId, TransactionId, UnsignedClientStepAttestation,
+    BackupSeriesId, Base64UrlString, Did, EventsSubmitBatchRequestBody, Hash, SchemaId,
+    TransactionId,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -68,17 +68,26 @@ pub(crate) fn prepare_rotation_backup_material(
     }
 
     let kek = derive_vault_kek(normalized.as_bytes()).context("derive recovery KEK")?;
-    let account_backup_id = fresh_backup_id();
+    let account_backup_id = fresh_backup_id()?;
+    let auth = rotation_key_backup_auth_binding(signer, trust_anchor)?;
+    let sign = |bytes: &[u8]| {
+        signer.sign_raw(bytes).map_err(|error| {
+            arkret_crypto::KeyBackupError::InvalidInput(format!(
+                "device key backup signature: {error}"
+            ))
+        })
+    };
     let account_body = build_mls_account_secret_backup_body_with_kek_and_version(
-        &account_backup_id,
+        account_backup_id.as_str(),
         authority,
         device_id,
         &kek,
         &rotation.new_secret,
         rotation.new_version,
+        &auth,
+        &sign,
         None,
     )?;
-    let account_body = sign_rotation_key_backup(account_body, signer, trust_anchor)?;
     let secret_storage = prepare_class(
         list_payload,
         BackupRotationKind::SecretStorage,
@@ -100,29 +109,20 @@ pub(crate) fn prepare_rotation_backup_material(
     })
 }
 
-fn sign_rotation_key_backup(
-    envelope: arkret_sdk::KeyBackup,
+fn rotation_key_backup_auth_binding(
     signer: &std::sync::Arc<crate::event_signer::InksonEventSigner>,
     trust_anchor: &ControllerBackupTrustAnchor,
-) -> Result<arkret_sdk::KeyBackup> {
+) -> Result<arkret_crypto::backup::KeyBackupAuthBinding> {
     let device_id = signer
         .device_id()
         .ok_or_else(|| anyhow!("active key backup signer has no bound device id"))?;
-    let auth = arkret_sdk::UnsignedKeyBackupAuthData::new(
-        arkret_sdk::DeviceId::new(device_id.to_owned())?,
-        arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
+    Ok(arkret_crypto::backup::KeyBackupAuthBinding {
+        device_id: arkret_sdk::DeviceId::new(device_id.to_owned())?,
+        verification_method: arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
             .map_err(anyhow::Error::msg)?,
-        arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
-        trust_anchor.authorize_event_id.clone(),
-    )?;
-    let unsigned = arkret_sdk::UnsignedKeyBackup::new(envelope, auth)?;
-    let signature = Base64UrlString::new(
-        URL_SAFE_NO_PAD.encode(signer.sign_raw(&unsigned.signing_payload_bytes()?)?),
-    )
-    .map_err(anyhow::Error::msg)?;
-    unsigned
-        .attach_signature(signature)
-        .map_err(anyhow::Error::from)
+        signature_algorithm: arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
+        device_authorize_event_id: trust_anchor.authorize_event_id.clone(),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -182,9 +182,6 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let principal = Did::new(actor_id.to_owned())?;
     let control_realm =
         crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
-    let frontier = submitter
-        .seals_frontier_realm_view(control_realm.as_str())
-        .await?;
     // The active-series pointer binds the exact accepted PCR RealmCommit that
     // was current when the replacement series was selected.
     let source_realm_commit_id = submitter
@@ -199,7 +196,6 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         current_device_id,
         "user_request",
     )?
-    .seal_basis(frontier.seal_basis())
     .build_sdk_event(current_device_id)?;
     let mut pointer_events = Vec::with_capacity(prepared.classes.len());
     for class in &prepared.classes {
@@ -223,21 +219,9 @@ pub(crate) async fn execute_device_revoke_security_rotation(
             .map(crate::operation::LocalOperation::into_intent),
     );
     let signed_events = submitter.author_independent_events(all_events).await?;
-    let envelopes = signed_events
-        .iter()
-        .map(|event| event.event().clone())
-        .collect::<Vec<_>>();
-    let digest_suites = signed_events
-        .iter()
-        .map(arkret_sdk::AuthoredEvent::digest_suite)
-        .collect::<Vec<_>>();
-    crate::pcr_authority::acquire_for_events(&http, &envelopes, &digest_suites).await?;
-    let mut submissions = Vec::with_capacity(envelopes.len());
-    for (event, digest_suite) in envelopes.iter().zip(digest_suites.iter().copied()) {
-        submissions.push(
-            crate::pcr_authority::delayed_initial_submission(&http, event, digest_suite).await?,
-        );
-    }
+    let mut submissions = submitter
+        .prepare_initial_submissions(&signed_events)
+        .await?;
     let revoke_submission = EventsSubmitBatchRequestBody {
         events: vec![submissions.remove(0)],
     };
@@ -366,23 +350,19 @@ async fn drive_security_rotation(
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     state_store: &crate::runtime::input::StateStoreHandle,
     authority: &arkret_sdk::AccountId,
-    actor_id: &str,
+    _actor_id: &str,
     current_device_id: &str,
     target_device_id: &str,
     transaction: &mut arkret_sdk::SecurityTransaction,
 ) -> Result<CompletedSecurityRotation> {
     let http = api.sdk_http_client()?;
-    let submitter = api.event_submitter()?;
-    let principal = Did::new(actor_id.to_owned())?;
-    let control_realm =
-        crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
     let transaction_id = transaction.transaction_id.clone();
     let engine = crate::security_transaction::security_transaction_engine(
         http.clone(),
         secure_store.clone(),
     );
     let workflow = crate::fresh_device_recovery::DeviceRevokeSecurityRotation::new(engine);
-    if transaction.is_completed() {
+    if security_rotation_is_completed(transaction) {
         clear_pending_rotation(secure_store.as_ref(), target_device_id)?;
         let version =
             crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority)?
@@ -402,6 +382,7 @@ async fn drive_security_rotation(
             SecurityTransactionStep::Revoke
                 | SecurityTransactionStep::UploadNewMaterial
                 | SecurityTransactionStep::SwitchAuthoritativePointer
+                | SecurityTransactionStep::EraseOldMaterial
         )
     ) {
         *transaction = workflow
@@ -413,61 +394,6 @@ async fn drive_security_rotation(
         .security_rotation_plan()
         .ok_or_else(|| anyhow!("server returned a non-rotation transaction plan"))?
         .clone();
-    if transaction.next_required_step()? == Some(SecurityTransactionStep::EraseOldMaterial) {
-        let erase_frontier = submitter
-            .seals_frontier_realm_view(control_realm.as_str())
-            .await?;
-        let digest_suite = erase_frontier.live_digest_suite;
-        let erase_basis_leaf = erase_frontier.sole_leaf()?.clone();
-        let erase_lease = crate::pcr_authority::acquire_for_intent(
-            &http,
-            arkret_wire::AuthorizationLeaseIssueIntent {
-                scope_ref: arkret_sdk::ScopeRef::Realm {
-                    realm_id: control_realm.clone(),
-                },
-                action: arkret_sdk::CapabilityActionId::SELF_KEYS_BACKUP_SERIES_COMMAND_ERASE_V1
-                    .to_owned(),
-                authorization_rule_id: "realm_admission".to_owned(),
-                risk_tier: RiskTier::High,
-                basis_ref: LeaseBasisRef::Seal(erase_basis_leaf),
-            },
-            digest_suite,
-        )
-        .await?;
-        let erase_request = BackupSeriesEraseRequestBody {
-            transaction_id: transaction.transaction_id.clone(),
-            transaction_request_digest: transaction.request_digest.clone(),
-            prepared_plan_digest: transaction.prepared_plan_digest.clone(),
-            erase_confirmation_digest: plan.erase_confirmation_digest.clone(),
-            series: plan
-                .backup_rotations
-                .iter()
-                .map(|rotation| rotation.binding.clone())
-                .collect(),
-            authorization_lease: erase_lease,
-            cbs_proof_bundles: Vec::new(),
-        };
-        let erase = match workflow
-            .retry_pending_erase(&transaction.transaction_id)
-            .await
-            .map_err(anyhow::Error::from)?
-        {
-            Some(outcome) => outcome,
-            None => workflow
-                .erase_old_series(&transaction.transaction_id, &erase_request)
-                .await
-                .map_err(anyhow::Error::from)?,
-        };
-        if erase.status != BackupSeriesEraseStatus::Complete {
-            return Err(anyhow!(
-                "old backup series erasure is incomplete and remains retryable"
-            ));
-        }
-        *transaction = workflow
-            .refresh(&transaction.transaction_id)
-            .await
-            .map_err(anyhow::Error::from)?;
-    }
     if transaction.next_required_step()? != Some(SecurityTransactionStep::LocalCommit) {
         return Err(anyhow!("security rotation did not reach local commit"));
     }
@@ -500,25 +426,28 @@ async fn drive_security_rotation(
         device_id: arkret_sdk::DeviceId::new(current_device_id.to_owned())?,
         committed_at: crate::clock::now_utc(),
     };
-    let artifact = arkret_models_crypto::ClientStepAttestationArtifact::SecurityRotationLocalCommit(
-        local_commit,
-    );
+    let artifact =
+        arkret_models_crypto::ClientStepAttestationArtifact::SecurityRotation(local_commit);
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required for local commit"))?;
-    let attestation = UnsignedClientStepAttestation::new(
-        SecurityTransactionStep::LocalCommit,
-        plan.local_commit_digest.as_str().to_owned(),
-        transaction.transaction_id.clone(),
-        transaction.request_digest.clone(),
-        transaction.prepared_plan_digest.clone(),
+    let mut attestation = arkret_models_crypto::ClientStepAttestation {
+        step: SecurityTransactionStep::LocalCommit,
+        output_ref: plan.local_commit_digest.as_str().to_owned(),
+        transaction_id: transaction.transaction_id.clone(),
+        transaction_request_digest: transaction.request_digest.clone(),
+        prepared_plan_digest: transaction.prepared_plan_digest.clone(),
         artifact,
-        arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
-            .map_err(anyhow::Error::msg)?,
-    )?;
-    let signature =
-        arkret_sdk::NonEmptyString::new(signer.detached_jws_over(&attestation.signing_bytes()?)?)
-            .map_err(anyhow::Error::msg)?;
-    let attestation = attestation.attach_signature(signature)?;
+        auth_data: arkret_models_crypto::ClientStepAttestationAuthData {
+            verification_method: arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
+                .map_err(anyhow::Error::msg)?,
+            signature_algorithm: "Ed25519".to_owned(),
+            signature: Base64UrlString::new("AA".to_owned()).map_err(anyhow::Error::msg)?,
+        },
+    };
+    attestation.auth_data.signature = Base64UrlString::new(
+        URL_SAFE_NO_PAD.encode(signer.sign_raw(&attestation.signing_bytes()?)?),
+    )
+    .map_err(anyhow::Error::msg)?;
     let completed = workflow
         .continue_with_signed_local_commit(
             &transaction.transaction_id,
@@ -526,12 +455,12 @@ async fn drive_security_rotation(
                 request_digest: transaction.request_digest.clone(),
                 prepared_plan_digest: transaction.prepared_plan_digest.clone(),
                 expected_accepted_step_count: transaction.accepted_steps.len().try_into()?,
-                client_attestation: Some(attestation),
+                client_attestation: attestation,
             },
         )
         .await
         .map_err(anyhow::Error::from)?;
-    if !completed.is_completed() {
+    if !security_rotation_is_completed(&completed) {
         return Err(anyhow!("security rotation local commit was not accepted"));
     }
     clear_pending_rotation(secure_store.as_ref(), target_device_id)?;
@@ -544,6 +473,13 @@ async fn drive_security_rotation(
             .map(|rotation| rotation.binding.new_backups.len())
             .sum(),
     })
+}
+
+fn security_rotation_is_completed(transaction: &arkret_sdk::SecurityTransaction) -> bool {
+    matches!(
+        transaction.terminal_outcome,
+        Some(SecurityTransactionTerminalOutcome::Completed { .. })
+    )
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

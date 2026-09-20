@@ -66,6 +66,8 @@ pub fn build_mls_account_secret_backup_body_with_kek(
     device_id: &str,
     kek: &VaultKek,
     account_secret: &str,
+    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
     build_mls_account_secret_backup_body_with_kek_and_version(
@@ -75,6 +77,8 @@ pub fn build_mls_account_secret_backup_body_with_kek(
         kek,
         account_secret,
         crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION,
+        auth,
+        sign,
         source_commit_ref,
     )
 }
@@ -88,6 +92,8 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
     kek: &VaultKek,
     account_secret: &str,
     account_secret_version: u32,
+    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
     // Spec §7.5: item identifiers are set before sealing so the SDK-derived
@@ -106,6 +112,8 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
             secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
             secret_version: Some(account_secret_version),
         },
+        auth,
+        sign,
         source_commit_ref,
     )
 }
@@ -120,6 +128,8 @@ pub fn build_mls_account_secret_backup_successor_body_with_kek_and_version(
     kek: &VaultKek,
     account_secret: &str,
     account_secret_version: u32,
+    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
     crate::key_backup::build_passphrase_kdf_backup_successor_body(
@@ -133,6 +143,8 @@ pub fn build_mls_account_secret_backup_successor_body_with_kek_and_version(
             secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
             secret_version: Some(account_secret_version),
         },
+        auth,
+        sign,
         source_commit_ref,
     )
 }
@@ -165,6 +177,8 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
     device_id: &str,
     kek: &VaultKek,
     sidecar_json: &[u8],
+    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
     build_passphrase_kdf_backup_body(
@@ -180,6 +194,8 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
             secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
             secret_version: None,
         },
+        auth,
+        sign,
         source_commit_ref,
     )
 }
@@ -192,6 +208,8 @@ pub fn build_mls_private_plaintext_backup_successor_body_with_kek(
     device_id: &str,
     kek: &VaultKek,
     sidecar_json: &[u8],
+    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
     crate::key_backup::build_passphrase_kdf_backup_successor_body(
@@ -205,6 +223,8 @@ pub fn build_mls_private_plaintext_backup_successor_body_with_kek(
             secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
             secret_version: None,
         },
+        auth,
+        sign,
         source_commit_ref,
     )
 }
@@ -226,12 +246,7 @@ pub fn decrypt_mls_private_plaintext_backup(
 
 fn opened_single_secret(unlock_key: &[u8], body: &Value) -> Result<Vec<u8>> {
     let plaintext = open_passphrase_kdf_backup_body(unlock_key, body)?;
-    let arkret_models_crypto::KeyBackupKeybag::SecretStorage { items } = &plaintext.keybag else {
-        return Err(anyhow!(
-            "single-secret key backup must decrypt to a secret_storage keybag"
-        ));
-    };
-    let [item] = items.as_slice() else {
+    let [item] = plaintext.items.as_slice() else {
         return Err(anyhow!(
             "single-secret key backup must decrypt to exactly one plaintext item"
         ));
@@ -256,6 +271,8 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
     account_secret_version: u32,
     recovery_policy_ref: (&str, u64),
     previous_series_tail: Option<&Value>,
+    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> Result<KeyBackup> {
     crate::key_backup::build_recovery_public_key_backup_body_in_series(
@@ -272,9 +289,11 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
             secret_version: Some(account_secret_version),
         },
         account_secret.as_bytes(),
-        Some(recovery_policy_ref),
+        recovery_policy_ref,
         None,
         previous_series_tail,
+        auth,
+        sign,
         source_commit_ref,
     )
 }
@@ -324,12 +343,7 @@ pub fn open_mls_account_secret_recovery_public_key_backup(
     ensure_recovery_public_key_backup_policy_matches(body, expected_recovery_policy_ref)?;
     let plaintext =
         crate::key_backup::open_recovery_public_key_backup_body(recovery_private_key, body)?;
-    let arkret_models_crypto::KeyBackupKeybag::SecretStorage { items } = &plaintext.keybag else {
-        return Err(anyhow!(
-            "account-secret backup must decrypt to a secret_storage keybag"
-        ));
-    };
-    let [item] = items.as_slice() else {
+    let [item] = plaintext.items.as_slice() else {
         return Err(anyhow!(
             "account-secret backup must decrypt to exactly one plaintext item"
         ));

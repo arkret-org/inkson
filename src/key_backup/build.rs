@@ -1,8 +1,5 @@
-use arkret_models_crypto::{
-    HistorySecretRangeIndex, HistorySecretRangesItemKind, KeyBackup, KeyBackupContentIndex,
-    KeyBackupKeybag, SecretStorageContentIndex, SecretStorageSecret,
-};
-use arkret_wire::HPKE_SUITE_X25519_CHACHA20POLY1305_V1;
+use arkret_models_crypto::{KeyBackup, SecretStorageContentIndex, SecretStorageSecret};
+use arkret_wire::{Base64UrlString, HPKE_SUITE_X25519_CHACHA20POLY1305_V1};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::{Value, json};
@@ -21,20 +18,18 @@ fn plaintext_item(
     Ok(SecretStorageSecret {
         item_kind: item.item_kind,
         secret_id,
-        secret_b64u: B64.encode(secret),
+        secret_b64u: Base64UrlString::new(B64.encode(secret)).map_err(anyhow::Error::msg)?,
         secret_generation: item.secret_version.map(u64::from),
         extra: Default::default(),
     })
 }
 
-fn public_content_item(item: &SecretStorageSecret) -> anyhow::Result<KeyBackupContentIndex> {
-    Ok(KeyBackupContentIndex::SecretStorage(
-        SecretStorageContentIndex {
-            item_kind: item.item_kind,
-            secret_id: Some(item.secret_id.clone()),
-            secret_version: item.secret_version()?,
-        },
-    ))
+fn public_content_item(item: &SecretStorageSecret) -> anyhow::Result<SecretStorageContentIndex> {
+    Ok(SecretStorageContentIndex {
+        item_kind: item.item_kind,
+        secret_id: Some(item.secret_id.clone()),
+        secret_version: item.secret_version()?,
+    })
 }
 
 /// Spec §7.5 builder: assemble a `passphrase_kdf` backup envelope and seal
@@ -58,26 +53,31 @@ pub fn build_passphrase_kdf_backup_body(
     class: BackupKind,
     subdomain: &str,
     item: &SecretStorageContentIndex,
+    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
     let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
         .map_err(|error| anyhow::anyhow!("backup_id: {error}"))?;
     let actor_id = actor_id.clone();
     let device_id_typed = arkret_sdk::DeviceId::new(device_id.to_owned()).ok();
-    let envelope = arkret_crypto::backup::build_key_backup_envelope(
+    let envelope = arkret_crypto::backup::build_key_backup_envelope_with_extensions(
         backup_id,
         actor_id,
         device_id_typed,
         class,
         "kb_1",
         subdomain,
+        Default::default(),
         root,
         vec![plaintext_item(item, secret)?],
+        auth,
+        sign,
         source_commit_ref,
     )
     .map_err(|error| anyhow::anyhow!("build key backup: {error}"))?;
     envelope
-        .validate_envelope_fields()
+        .validate()
         .map_err(|error| anyhow::anyhow!("validate key backup: {error}"))?;
     Ok(envelope)
 }
@@ -94,6 +94,8 @@ pub fn build_passphrase_kdf_backup_successor_body(
     root: &VaultKek,
     secret: &[u8],
     item: &SecretStorageContentIndex,
+    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
     let envelope = arkret_crypto::backup::build_key_backup_successor_envelope(
@@ -103,11 +105,13 @@ pub fn build_passphrase_kdf_backup_successor_body(
         "kb_1",
         root,
         vec![plaintext_item(item, secret)?],
+        auth,
+        sign,
         source_commit_ref,
     )
     .map_err(|error| anyhow::anyhow!("build key backup successor: {error}"))?;
     envelope
-        .validate_envelope_fields()
+        .validate()
         .map_err(|error| anyhow::anyhow!("validate key backup successor: {error}"))?;
     Ok(envelope)
 }
@@ -165,9 +169,11 @@ pub fn build_recovery_public_key_backup_body_in_series(
     subdomain: &str,
     item: &SecretStorageContentIndex,
     plaintext: &[u8],
-    recovery_policy_ref: Option<(&str, u64)>,
+    recovery_policy_ref: (&str, u64),
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
+    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
     build_recovery_public_key_backup_body_for_items_in_series(
@@ -182,6 +188,8 @@ pub fn build_recovery_public_key_backup_body_in_series(
         recovery_policy_ref,
         series_id,
         previous_series_tail,
+        auth,
+        sign,
         source_commit_ref,
     )
 }
@@ -198,9 +206,11 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
     class: BackupKind,
     subdomain: &str,
     plaintext_items: Vec<SecretStorageSecret>,
-    recovery_policy_ref: Option<(&str, u64)>,
+    recovery_policy_ref: (&str, u64),
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
+    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
     if plaintext_items.is_empty() {
@@ -210,7 +220,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
         .iter()
         .map(public_content_item)
         .collect::<anyhow::Result<Vec<_>>>()?;
-    build_recovery_public_key_backup_body_for_keybag_in_series(
+    build_recovery_public_key_backup_body_for_items_and_index_in_series(
         backup_id,
         actor_id,
         device_id,
@@ -218,69 +228,19 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
         recovery_key_ref,
         class,
         subdomain,
-        KeyBackupKeybag::SecretStorage {
-            items: plaintext_items,
-        },
+        plaintext_items,
         items,
         recovery_policy_ref,
         series_id,
         previous_series_tail,
-        source_commit_ref,
-    )
-}
-
-/// Build one portable `mls_history` envelope from a keybag already restricted
-/// to local-authoritative exporter secrets by `arkret-state`.
-#[allow(clippy::too_many_arguments)]
-pub fn build_recovery_public_key_history_backup_body_in_series(
-    backup_id: &str,
-    actor_id: &arkret_sdk::ActorId,
-    device_id: &str,
-    recovery_public_key: &[u8],
-    recovery_key_ref: &str,
-    keybag: KeyBackupKeybag,
-    recovery_policy_ref: (&str, u64),
-    series_id: Option<&str>,
-    previous_series_tail: Option<&Value>,
-    source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
-) -> anyhow::Result<KeyBackup> {
-    let KeyBackupKeybag::MlsHistory {
-        effective_scope,
-        items,
-    } = &keybag
-    else {
-        anyhow::bail!("portable history backup requires an mls_history keybag");
-    };
-    if items.is_empty() {
-        anyhow::bail!("portable history backup requires at least one history range");
-    }
-    let public_items = vec![KeyBackupContentIndex::HistorySecretRanges(
-        HistorySecretRangeIndex {
-            item_kind: HistorySecretRangesItemKind::Value,
-            effective_scope: effective_scope.clone(),
-            ranges: items.iter().map(|item| item.epoch_range()).collect(),
-            extra: Default::default(),
-        },
-    )];
-    build_recovery_public_key_backup_body_for_keybag_in_series(
-        backup_id,
-        actor_id,
-        device_id,
-        recovery_public_key,
-        recovery_key_ref,
-        BackupKind::MlsHistory,
-        "history_secret_ranges",
-        keybag,
-        public_items,
-        Some(recovery_policy_ref),
-        series_id,
-        previous_series_tail,
+        auth,
+        sign,
         source_commit_ref,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_recovery_public_key_backup_body_for_keybag_in_series(
+fn build_recovery_public_key_backup_body_for_items_and_index_in_series(
     backup_id: &str,
     actor_id: &arkret_sdk::ActorId,
     device_id: &str,
@@ -288,15 +248,17 @@ fn build_recovery_public_key_backup_body_for_keybag_in_series(
     recovery_key_ref: &str,
     class: BackupKind,
     subdomain: &str,
-    keybag: KeyBackupKeybag,
-    items: Vec<KeyBackupContentIndex>,
-    recovery_policy_ref: Option<(&str, u64)>,
+    plaintext_items: Vec<SecretStorageSecret>,
+    items: Vec<SecretStorageContentIndex>,
+    recovery_policy_ref: (&str, u64),
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
+    auth: &arkret_crypto::backup::KeyBackupAuthBinding,
+    sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
 ) -> anyhow::Result<KeyBackup> {
-    if keybag.backup_kind() != class || keybag.item_count() == 0 {
-        anyhow::bail!("key backup keybag does not match its envelope class");
+    if plaintext_items.is_empty() {
+        anyhow::bail!("key backup plaintext must contain at least one item");
     }
     let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).ok();
     let created_at = crate::clock::now_utc_canonical();
@@ -331,10 +293,16 @@ fn build_recovery_public_key_backup_body_for_keybag_in_series(
             aead_aad_extensions: Default::default(),
         },
         contents: items,
-        ciphertext: String::new(),
-        ciphertext_digest: String::new(),
+        ciphertext: Base64UrlString::new("AA".to_owned()).map_err(anyhow::Error::msg)?,
+        ciphertext_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))?,
         plaintext_commitment: None,
-        auth_data: None,
+        auth_data: arkret_sdk::KeyBackupAuthData {
+            device_id: auth.device_id.clone(),
+            verification_method: auth.verification_method.clone(),
+            signature_algorithm: auth.signature_algorithm,
+            signature: Base64UrlString::new("AA".to_owned()).map_err(anyhow::Error::msg)?,
+            device_authorize_event_id: auth.device_authorize_event_id.clone(),
+        },
         retention: None,
         series_id: arkret_sdk::BackupSeriesId::new(
             series_id
@@ -345,38 +313,28 @@ fn build_recovery_public_key_backup_body_for_keybag_in_series(
         supersedes_id: None,
         supersedes_digest: None,
         source_commit_ref,
-        recovery_policy_ref: recovery_policy_ref
-            .map(|(policy_id, policy_version)| {
-                arkret_sdk::PolicyId::new(policy_id.to_owned()).map(|policy_id| {
-                    arkret_sdk::RecoveryPolicyRef {
-                        policy_id,
-                        policy_version,
-                    }
-                })
-            })
-            .transpose()?,
+        recovery_policy_ref: Some(arkret_sdk::RecoveryPolicyRef {
+            policy_id: arkret_sdk::PolicyId::new(recovery_policy_ref.0.to_owned())?,
+            policy_version: recovery_policy_ref.1,
+        }),
         extra: Default::default(),
     };
     if let Some(previous) = previous_series_tail {
         let predecessor = serde_json::from_value::<KeyBackup>(previous.clone())
             .map_err(|error| anyhow::anyhow!("typed key backup predecessor: {error}"))?;
+        let supersedes_digest =
+            crate::mls::account_recovery::series_supersedes_digest(&predecessor)?;
         body.series_id = predecessor.series_id;
         body.series_seq = predecessor
             .series_seq
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("key backup successor series_seq overflow"))?;
         body.supersedes_id = Some(predecessor.backup_id);
-        body.supersedes_digest = Some(crate::mls::account_recovery::series_supersedes_digest(
-            previous,
-        )?);
+        body.supersedes_digest = Some(supersedes_digest);
     }
     let plaintext = arkret_sdk::KeyBackupPlaintext {
-        schema: arkret_sdk::KeyBackupPlaintext::SCHEMA.to_owned(),
-        backup_id: body.backup_id.clone(),
-        series_id: body.series_id.clone(),
-        series_seq: body.series_seq,
-        keybag,
-        extra: Default::default(),
+        backup_kind: class,
+        items: plaintext_items,
     };
     let plaintext_bytes = crate::canonical::canonical_json_bytes(&plaintext)?;
     let aad = arkret_crypto::backup::key_backup_aead_aad(&body)
@@ -387,16 +345,24 @@ fn build_recovery_public_key_backup_body_for_keybag_in_series(
     body.encryption.aead.enc = Some(
         arkret_sdk::Base64UrlString::new(B64.encode(&sealed.enc)).map_err(anyhow::Error::msg)?,
     );
-    body.ciphertext = B64.encode(&sealed.ciphertext);
-    body.ciphertext_digest = format!(
+    body.ciphertext =
+        Base64UrlString::new(B64.encode(&sealed.ciphertext)).map_err(anyhow::Error::msg)?;
+    body.ciphertext_digest = arkret_sdk::Hash::new(format!(
         "sha256:{}",
         crate::canonical::sha256_digest(&sealed.ciphertext)
             .strip_prefix("sha256:")
             .unwrap_or_default()
-    );
-    body.validate_envelope_fields()
+    ))?;
+    body.auth_data.signature = Base64UrlString::new(
+        B64.encode(
+            sign(&body.signing_payload_bytes()?)
+                .map_err(|error| anyhow::anyhow!("sign key backup: {error}"))?,
+        ),
+    )
+    .map_err(anyhow::Error::msg)?;
+    body.validate()
         .map_err(|error| anyhow::anyhow!("validate built key backup: {error}"))?;
-    plaintext.validate_for_envelope(&body)?;
+    plaintext.validate_against(&body.contents)?;
     Ok(body)
 }
 
@@ -408,7 +374,7 @@ pub fn open_recovery_public_key_backup_body(
 ) -> anyhow::Result<arkret_sdk::KeyBackupPlaintext> {
     let body = serde_json::from_value::<KeyBackup>(body.clone())
         .map_err(|error| anyhow::anyhow!("typed recovery_public_key backup: {error}"))?;
-    body.validate_envelope_fields()?;
+    body.validate()?;
     let enc_b64 = body.encryption.aead.enc.as_ref().ok_or_else(|| {
         anyhow::anyhow!("recovery_public_key envelope missing encryption.aead.enc")
     })?;
@@ -419,12 +385,12 @@ pub fn open_recovery_public_key_backup_body(
         .decode(enc_b64.as_str())
         .map_err(|e| anyhow::anyhow!("enc base64url: {e}"))?;
     let ciphertext = B64
-        .decode(&body.ciphertext)
+        .decode(body.ciphertext.as_str())
         .map_err(|e| anyhow::anyhow!("ciphertext base64url: {e}"))?;
     let plaintext =
         crate::hpke_backup::hpke_open(recovery_private_key, &enc, &info, &aad, &ciphertext)?;
     let plaintext = serde_json::from_slice::<arkret_sdk::KeyBackupPlaintext>(&plaintext)
         .map_err(|error| anyhow::anyhow!("decode key backup plaintext: {error}"))?;
-    plaintext.validate_for_envelope(&body)?;
+    plaintext.validate_against(&body.contents)?;
     Ok(plaintext)
 }
