@@ -460,6 +460,17 @@ impl AgentAdminController {
             ));
             let controller_actor_id =
                 arkret_sdk::ActorId::account(key_state.controller_account_id.clone());
+            // The SDK lifecycle value is the observed UI state; the Event
+            // draft needs an explicit local authoring source-state decision.
+            // The governing Station rechecks the actual current transition.
+            let authoring_source = match status {
+                AgentLifecycleState::Active => arkret_event_draft::AgentLifecycleState::Active,
+                AgentLifecycleState::Paused => arkret_event_draft::AgentLifecycleState::Paused,
+                AgentLifecycleState::Deactivated => {
+                    last_op_status.set("Agent is already deactivated".to_owned());
+                    return;
+                }
+            };
             let operation = match arkret_event_draft::build_agent_deactivate_intent(
                 agent_actor_id.clone(),
                 controller_actor_id,
@@ -467,7 +478,7 @@ impl AgentAdminController {
                     realm_id: key_state.principal_control_realm_id.clone(),
                 },
                 key_state.controller_authorization_ref.clone(),
-                status,
+                authoring_source,
                 Some(reason.clone()),
                 changed_at,
             ) {

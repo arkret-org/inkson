@@ -980,13 +980,13 @@ pub fn approval_publication(request: &Value) -> anyhow::Result<arkret_sdk::Event
         serde_json::from_value(request.get("publication_event").cloned().ok_or_else(|| {
             anyhow::anyhow!("approval requires the complete pre-signed publication Event")
         })?)?;
-    anyhow::ensure!(
-        publication.auth_context.is_some()
-            && publication.seal_basis.is_none()
-            && arkret_schema::classify_event_execution(&publication)?
-                == Some(arkret_sdk::CbsEffectPlane::Data),
-        "approval publication must be an ordinary data Event"
-    );
+    // An Agent confirmation binds the complete pre-signed Event, but does
+    // not grant its authorization. The governing Station still runs that
+    // Event's own schema, grant and governance admission after approval.
+    arkret_schema::validate_event_for_submit(&publication)?;
+    let digest_suite = publication.event_id.digest_suite_code().digest_suite();
+    publication.verify_event_id_matches_content_with_digest_suite(digest_suite)?;
+    publication.validate_proof_bindings_with_digest_suite(digest_suite)?;
     anyhow::ensure!(
         request.get("agent_id").and_then(Value::as_str)
             == Some(publication.actor_id.signing_principal_id().as_str()),
