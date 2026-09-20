@@ -194,7 +194,6 @@ pub(super) fn SyncEffects(
 
     let realm_effects = runtime_services.effects.clone();
     let client_runtime = runtime_services.client.clone();
-    let realm_websocket_rail = runtime_services.websocket_rail.clone();
     use_effect(move || {
         let current_gen = sync_generation();
         let base = base_url();
@@ -229,7 +228,6 @@ pub(super) fn SyncEffects(
             state_store: runtime_adapter::state_store_handle(state_store),
             selected_realm_id: runtime_adapter::value_reader(selected_realm_id),
             route_enabled: runtime_adapter::value_reader(realm_events_route_enabled),
-            websocket_rail: realm_websocket_rail.clone(),
             realm_live_epoch: runtime_adapter::value_cell(realm_live_epoch),
             message_stream_hub,
             profiles: runtime_adapter::value_reader(profiles),

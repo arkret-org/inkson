@@ -124,9 +124,9 @@ pub(crate) fn issue_protocol_hlc_with_secret(
         now_ms: crate::clock::now_unix_ms(),
     };
     #[cfg(all(not(target_arch = "wasm32"), not(test)))]
-    let floor = native_stamp_store()?.advance_stamp_floor_blocking(scope.clone(), update)?;
+    let floor = native_stamp_store()?.advance_floor_sync(scope.clone(), update)?;
     #[cfg(any(target_arch = "wasm32", test))]
-    let floor = memory_stamp_store().advance_stamp_floor_blocking(scope.clone(), update)?;
+    let floor = memory_stamp_store().advance_floor_sync(scope.clone(), update)?;
     garth::hlc_from_floor(&scope, local_node_secret, floor).map_err(Into::into)
 }
 
@@ -158,4 +158,17 @@ fn memory_stamp_store() -> garth::MemoryStore {
         static STORE: garth::MemoryStore = garth::MemoryStore::new();
     }
     STORE.with(Clone::clone)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn synchronous_local_hlc_issuance_is_monotonic() {
+        let actor = "ak:did_core:web:sync-stamp-test.example";
+        let device = "ak:device:01964137-0000-7000-8000-000000000021";
+        let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let first = super::issue_protocol_hlc_with_secret(actor, device, realm, &[7; 32]).unwrap();
+        let second = super::issue_protocol_hlc_with_secret(actor, device, realm, &[7; 32]).unwrap();
+        assert!(second.as_str() > first.as_str());
+    }
 }
