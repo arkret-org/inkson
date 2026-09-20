@@ -3093,8 +3093,12 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("settings.devices.column_actions", "Actions");
     dict.set("settings.devices.this_device", "this device");
     dict.set("settings.devices.state_verified", "Verified");
-    dict.set("settings.devices.state_unverified", "Unverified");
-    dict.set("settings.devices.state_revoked", "Revoked");
+    dict.set("settings.devices.state_unresolved", "Unresolved");
+    dict.set("settings.devices.state_stale", "Stale");
+    dict.set("settings.devices.source_title", "Verified via {source}");
+    dict.set("settings.devices.source_genesis", "account creation");
+    dict.set("settings.devices.source_pairing_code", "pairing code");
+    dict.set("settings.devices.source_recovery", "account recovery");
     dict.set(
         "settings.devices.state_title",
         "Device verification state: {state}",

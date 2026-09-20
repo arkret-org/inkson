@@ -53,6 +53,7 @@ struct DeviceRow {
     device_id: String,
     display_name: String,
     verification_state: String,
+    verification_source: Option<String>,
     authorized_at: String,
 }
 
@@ -75,6 +76,10 @@ fn parse_devices(value: &Value) -> Vec<DeviceRow> {
                         .and_then(Value::as_str)
                         .unwrap_or("unresolved")
                         .to_owned();
+                    let verification_source = item
+                        .get("verification_source")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
                     let authorized_at = item
                         .get("authorized_at")
                         .and_then(Value::as_str)
@@ -84,6 +89,7 @@ fn parse_devices(value: &Value) -> Vec<DeviceRow> {
                         device_id,
                         display_name,
                         verification_state,
+                        verification_source,
                         authorized_at,
                     })
                 })
@@ -443,23 +449,23 @@ fn device_key_fingerprint(public_key: &arkret_sdk::PublicKey) -> String {
 }
 
 /// Element-style verification shield for the device list. Maps the
-/// `verification_state` (`device-lifecycle.md` §6) to a colored pill:
-/// verified → green shield, unverified → amber, revoked → red. Unknown or
-/// missing values fail closed to unverified.
+/// `verification_state` (`device-lifecycle.md` §10.1) to a colored pill:
+/// verified → green shield, unresolved → amber, stale → red. Unknown or
+/// missing values fail closed to unresolved.
 fn device_verification_badge(state: &str) -> Element {
     let raw = state.trim().to_ascii_lowercase();
     let normalized = match raw.as_str() {
-        "verified" | "unverified" | "revoked" => raw.as_str(),
-        _ => "unverified",
+        "verified" | "unresolved" | "stale" => raw.as_str(),
+        _ => "unresolved",
     };
     let (class, glyph, label) = match normalized {
         "verified" => ("badge success", "🛡", tr("settings.devices.state_verified")),
-        "unverified" => (
+        "unresolved" => (
             "badge warning",
             "⚠",
-            tr("settings.devices.state_unverified"),
+            tr("settings.devices.state_unresolved"),
         ),
-        "revoked" => ("badge danger", "⊘", tr("settings.devices.state_revoked")),
+        "stale" => ("badge danger", "⊘", tr("settings.devices.state_stale")),
         _ => unreachable!("verification state normalized"),
     };
     rsx! {
@@ -470,6 +476,15 @@ fn device_verification_badge(state: &str) -> Element {
             title: tr_args("settings.devices.state_title", &[("state", label.clone())]),
             "{glyph} {label}"
         }
+    }
+}
+
+fn device_verification_source_label(source: Option<&str>) -> Option<String> {
+    match source? {
+        "genesis" => Some(tr("settings.devices.source_genesis")),
+        "pairing_code" => Some(tr("settings.devices.source_pairing_code")),
+        "recovery" => Some(tr("settings.devices.source_recovery")),
+        _ => None,
     }
 }
 
@@ -501,6 +516,7 @@ fn render_device_row(
     } else {
         device_id_label.clone()
     };
+    let verification_source = device_verification_source_label(row.verification_source.as_deref());
     rsx! {
         div {
             class: "{row_class}",
@@ -543,6 +559,13 @@ fn render_device_row(
             div { class: "device-list-cell", role: "cell",
                 span { class: "device-list-cell-label", {tr("settings.devices.column_verification")} }
                 {device_verification_badge(&row.verification_state)}
+                if let Some(source) = verification_source {
+                    span {
+                        class: "muted device-verification-source",
+                        "data-testid": "device-verification-source",
+                        {tr_args("settings.devices.source_title", &[("source", source)])}
+                    }
+                }
             }
             div { class: "device-list-cell", role: "cell",
                 span { class: "device-list-cell-label", {tr("settings.devices.column_authorized")} }
@@ -898,6 +921,13 @@ fn render_pair_flow(
                             );
                             return;
                         };
+                        let Ok(pairing_token) = arkret_sdk::NonEmptyString::new(pairing_token)
+                        else {
+                            accept_status.set(
+                                "Paste a valid pairing link or token first.".to_owned(),
+                            );
+                            return;
+                        };
                         let Some(target_proof) =
                             extract_device_pairing_target_proof(&accept_input())
                         else {
@@ -1050,7 +1080,7 @@ fn render_pair_flow(
                                         accept_input.set(String::new());
                                         accept_code_input.set(String::new());
                                         accept_status.set(
-                                            format!("Device authorization accepted ({}). On the new device, check authorization status and sign in again. Encrypted Realms become available after KeyPackage publication and Welcome processing.", value.authorized_event_ref),
+                                            format!("Device authorization accepted ({}). On the new device, check authorization status and sign in again. Encrypted Realms become available after KeyPackage publication and Welcome processing.", value.authorized_event_ref.event_id),
                                         );
                                     }
                                     Err(err) => {
@@ -1119,6 +1149,7 @@ mod tests {
                     "display_name": "Chrome · Windows",
                     "status": "active",
                     "verification_state": "verified",
+                    "verification_source": "pairing_code",
                     "authorized_at": "2026-05-01T00:00:00.000Z"
                 },
                 {
@@ -1133,11 +1164,31 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].device_id, "device-1");
         assert_eq!(rows[0].display_name, "Chrome · Windows");
+        assert_eq!(rows[0].verification_source.as_deref(), Some("pairing_code"));
         assert_eq!(rows[0].authorized_at, "2026-05-01T00:00:00.000Z");
         // Missing display_name parses to an empty string (UI falls back
         // to the short device id).
         assert_eq!(rows[1].display_name, "");
         assert_eq!(rows[1].verification_state, "unresolved");
+        assert_eq!(rows[1].verification_source, None);
+    }
+
+    #[test]
+    fn verification_source_labels_are_closed_and_do_not_invent_provenance() {
+        assert_eq!(
+            device_verification_source_label(Some("genesis")),
+            Some(tr("settings.devices.source_genesis"))
+        );
+        assert_eq!(
+            device_verification_source_label(Some("pairing_code")),
+            Some(tr("settings.devices.source_pairing_code"))
+        );
+        assert_eq!(
+            device_verification_source_label(Some("recovery")),
+            Some(tr("settings.devices.source_recovery"))
+        );
+        assert_eq!(device_verification_source_label(Some("session")), None);
+        assert_eq!(device_verification_source_label(None), None);
     }
 
     #[test]

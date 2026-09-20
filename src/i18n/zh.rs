@@ -2578,8 +2578,12 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("settings.devices.column_actions", "操作");
     dict.set("settings.devices.this_device", "当前设备");
     dict.set("settings.devices.state_verified", "已验证");
-    dict.set("settings.devices.state_unverified", "未验证");
-    dict.set("settings.devices.state_revoked", "已吊销");
+    dict.set("settings.devices.state_unresolved", "待解析");
+    dict.set("settings.devices.state_stale", "已失效");
+    dict.set("settings.devices.source_title", "验证来源：{source}");
+    dict.set("settings.devices.source_genesis", "账户创建");
+    dict.set("settings.devices.source_pairing_code", "配对码");
+    dict.set("settings.devices.source_recovery", "账户恢复");
     dict.set("settings.devices.state_title", "设备验证状态:{state}");
     dict.set("settings.devices.revoke_title", "吊销设备");
     dict.set(

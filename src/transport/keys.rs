@@ -17,6 +17,27 @@
 
 use crate::models::{DeviceMessagesSendOutcome, KeysQueryOutcome};
 
+fn is_secret_sharing_kind(kind: &arkret_wire::ProtocolKind) -> bool {
+    matches!(
+        kind.as_str(),
+        arkret_wire::SECRET_REQUEST_KIND | arkret_wire::SECRET_SEND_KIND
+    )
+}
+
+fn has_current_verification_checkpoint(
+    devices: &[arkret_sdk::AccountDeviceSummary],
+    target_device_id: &arkret_sdk::DeviceId,
+) -> bool {
+    devices.iter().any(|device| {
+        &device.device_id == target_device_id
+            && device.status == arkret_sdk::DeviceSummaryStatus::Active
+            && device.verification_state == arkret_sdk::DeviceSummaryVerificationState::Verified
+            && device.verification_source.is_some()
+            && device.authorization_ref.is_some()
+            && device.validate().is_ok()
+    })
+}
+
 pub async fn query_keys(
     http: &arkret_sdk::http_client::Client,
     account_id: &arkret_sdk::AccountId,
@@ -105,6 +126,19 @@ pub async fn send_device_message_with_id(
         anyhow::bail!("device message target Station differs from the authenticated destination");
     }
     let target_device_id = arkret_sdk::DeviceId::new(target_device_id.to_owned())?;
+    if is_secret_sharing_kind(&kind) {
+        let viewer = http
+            .account_viewer()
+            .await
+            .map_err(|error| anyhow::anyhow!("verify secret-sharing checkpoint: {error}"))?;
+        if viewer.principal_id != account_id.principal_id
+            || !has_current_verification_checkpoint(&viewer.devices, &target_device_id)
+        {
+            anyhow::bail!(
+                "secret sharing requires a current verification checkpoint for the exact target device"
+            );
+        }
+    }
     let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)?.with_timezone(&chrono::Utc);
     let target = arkret_sdk::DeviceMessageTarget {
         device_message_id: message_id,
@@ -121,4 +155,87 @@ pub async fn send_device_message_with_id(
     http.send_device_messages(txn_id, &payload)
         .await
         .map_err(anyhow::Error::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arkret_sdk::{
+        DeviceSummaryStatus, DeviceSummaryVerificationSource, DeviceSummaryVerificationState,
+    };
+
+    fn device(
+        status: DeviceSummaryStatus,
+        verification_state: DeviceSummaryVerificationState,
+        verification_source: Option<DeviceSummaryVerificationSource>,
+        with_authorization_ref: bool,
+    ) -> arkret_sdk::AccountDeviceSummary {
+        serde_json::from_value(serde_json::json!({
+            "device_id": "ak:device:01964137-0000-7000-8000-0000000000c1",
+            "status": status,
+            "verification_state": verification_state,
+            "verification_source": verification_source,
+            "authorization_ref": with_authorization_ref.then(|| serde_json::json!({
+                "event_id": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
+                "commit_id": arkret_sdk::RealmCommitId::from_digest([7; 32]),
+                "stream_ref": {
+                    "kind": "realm",
+                    "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+                },
+                "stream_position": 1
+            }))
+        }))
+        .expect("valid device summary fixture")
+    }
+
+    fn target_device_id() -> arkret_sdk::DeviceId {
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-0000000000c1".to_owned())
+            .expect("device id")
+    }
+
+    #[test]
+    fn secret_sharing_kinds_are_closed() {
+        let request = arkret_wire::ProtocolKind::new(arkret_wire::SECRET_REQUEST_KIND).unwrap();
+        let send = arkret_wire::ProtocolKind::new(arkret_wire::SECRET_SEND_KIND).unwrap();
+        let other = arkret_wire::ProtocolKind::new("ak.example.notice").unwrap();
+        assert!(is_secret_sharing_kind(&request));
+        assert!(is_secret_sharing_kind(&send));
+        assert!(!is_secret_sharing_kind(&other));
+    }
+
+    #[test]
+    fn only_an_active_verified_exact_device_has_a_current_checkpoint() {
+        let target = target_device_id();
+        let active = device(
+            DeviceSummaryStatus::Active,
+            DeviceSummaryVerificationState::Verified,
+            Some(DeviceSummaryVerificationSource::PairingCode),
+            true,
+        );
+        assert!(has_current_verification_checkpoint(&[active], &target));
+
+        for invalid in [
+            device(
+                DeviceSummaryStatus::Revoked,
+                DeviceSummaryVerificationState::Stale,
+                Some(DeviceSummaryVerificationSource::PairingCode),
+                true,
+            ),
+            device(
+                DeviceSummaryStatus::GenerationFenced,
+                DeviceSummaryVerificationState::Stale,
+                Some(DeviceSummaryVerificationSource::Recovery),
+                true,
+            ),
+            device(
+                DeviceSummaryStatus::Active,
+                DeviceSummaryVerificationState::Unresolved,
+                None,
+                false,
+            ),
+        ] {
+            assert!(!has_current_verification_checkpoint(&[invalid], &target));
+        }
+        assert!(!has_current_verification_checkpoint(&[], &target));
+    }
 }
