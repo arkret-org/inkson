@@ -697,7 +697,6 @@ impl ChatController {
             self.editing_message.set(None);
             return;
         }
-        let mut revision_source = None;
         if let Some(message) = self
             .messages
             .write()
@@ -711,7 +710,6 @@ impl ChatController {
                 self.editing_message.set(None);
                 return;
             }
-            revision_source = message.revision_source.clone();
             message.revisions.push(message.body.clone());
             message.body = content.clone();
             message.content_format = Some(arkret_sdk::TextFormat::Markdown);
@@ -743,7 +741,6 @@ impl ChatController {
                     actor.as_str(),
                     &target_ref,
                     content_block,
-                    revision_source,
                 ) {
                     Ok(operation) => match authed_api_with_sync(&base_url, api_token, wait_for) {
                         Ok(api) => match api.event_submitter() {

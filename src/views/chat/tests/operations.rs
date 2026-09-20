@@ -589,19 +589,21 @@ fn chat_message_revise_operation_addresses_message_target_via_message_id() {
 }
 
 #[test]
-fn chat_message_revise_operation_supersedes_only_the_observed_winner() {
-    let winner = arkret_sdk::Hash::new(format!("sha256:{}", "32".repeat(32))).unwrap();
+fn chat_message_revise_operation_uses_only_the_registered_message_target() {
     let content = chat_content_block_for_body("next revision").unwrap();
     let op = chat_message_revise_operation_with_content(
         "ak:realm:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5",
         "ak:did_core:web:bob.example",
         "ak:message:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo",
         content,
-        Some(winner.clone()),
     )
     .expect("builds");
 
-    assert_eq!(op.intent().causal_refs(), vec![winner]);
+    assert_eq!(
+        op.payload()["message_id"],
+        "ak:message:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo"
+    );
+    assert!(!op.payload().contains_key("source"));
 }
 
 /// Same single-carrier rule for `message_redact_payload`.
