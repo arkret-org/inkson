@@ -137,8 +137,6 @@ pub enum CircleErrorKind {
     /// `circle_not_active` — `scope_circle_id` points at an archived
     /// or tombstoned Circle.
     NotActive,
-    /// `circle_not_archived` - restore requires an archived Circle.
-    NotArchived,
     /// `circle_member_must_be_realm_member` — attempted to add a
     /// non-Realm member to the Circle (strict-subset invariant).
     MemberNotInRealm,
@@ -146,12 +144,6 @@ pub enum CircleErrorKind {
     /// `scope_circle_id` on an object without an audited-high-risk
     /// path.
     ScopeRebindForbidden,
-    /// `metadata_encryption_floor_violation` — a write would expose
-    /// metadata below the effective floor.
-    MetadataFloorViolated,
-    /// `circle_encryption_below_realm_floor` — attempted to create a
-    /// plaintext Circle where the parent Realm requires E2EE.
-    EncryptionBelowRealmFloor,
 }
 
 impl CircleErrorKind {
@@ -161,15 +153,8 @@ impl CircleErrorKind {
         match arkret_sdk::ReasonCode::from_wire(reason) {
             arkret_sdk::ReasonCode::CircleRealmMismatch => Some(Self::RealmMismatch),
             arkret_sdk::ReasonCode::CircleNotActive => Some(Self::NotActive),
-            arkret_sdk::ReasonCode::CircleNotArchived => Some(Self::NotArchived),
             arkret_sdk::ReasonCode::CircleMemberMustBeRealmMember => Some(Self::MemberNotInRealm),
             arkret_sdk::ReasonCode::ScopeRebindForbidden => Some(Self::ScopeRebindForbidden),
-            arkret_sdk::ReasonCode::MetadataEncryptionFloorViolation => {
-                Some(Self::MetadataFloorViolated)
-            }
-            arkret_sdk::ReasonCode::CircleEncryptionBelowRealmFloor => {
-                Some(Self::EncryptionBelowRealmFloor)
-            }
             _ => None,
         }
     }
@@ -181,11 +166,8 @@ impl CircleErrorKind {
         match self {
             Self::RealmMismatch => "error.circle.realm_mismatch",
             Self::NotActive => "error.circle.not_active",
-            Self::NotArchived => "error.circle.not_archived",
             Self::MemberNotInRealm => "error.circle.member_not_in_realm",
             Self::ScopeRebindForbidden => "error.circle.scope_rebind_forbidden",
-            Self::MetadataFloorViolated => "error.circle.metadata_floor",
-            Self::EncryptionBelowRealmFloor => "error.circle.encryption_below_realm_floor",
         }
     }
 
@@ -200,18 +182,11 @@ impl CircleErrorKind {
             Self::NotActive => {
                 "The Circle is archived or tombstoned and can no longer receive messages."
             }
-            Self::NotArchived => "Only archived Circles can be restored.",
             Self::MemberNotInRealm => {
                 "Cannot add this user to the Circle — they are not an active member of the parent Realm."
             }
             Self::ScopeRebindForbidden => {
                 "Changing an existing object's Circle scope requires an audited admin action."
-            }
-            Self::MetadataFloorViolated => {
-                "This write would expose metadata below the Realm or Circle encryption floor."
-            }
-            Self::EncryptionBelowRealmFloor => {
-                "This Realm requires E2EE, so the Circle must stay MLS-backed."
             }
         }
     }
@@ -264,10 +239,6 @@ mod tests {
             Some(CircleErrorKind::NotActive)
         );
         assert_eq!(
-            CircleErrorKind::from_reason_code("circle_not_archived"),
-            Some(CircleErrorKind::NotArchived)
-        );
-        assert_eq!(
             CircleErrorKind::from_reason_code("circle_member_must_be_realm_member"),
             Some(CircleErrorKind::MemberNotInRealm)
         );
@@ -275,14 +246,13 @@ mod tests {
             CircleErrorKind::from_reason_code("scope_rebind_forbidden"),
             Some(CircleErrorKind::ScopeRebindForbidden)
         );
-        assert_eq!(
-            CircleErrorKind::from_reason_code("metadata_encryption_floor_violation"),
-            Some(CircleErrorKind::MetadataFloorViolated)
-        );
-        assert_eq!(
-            CircleErrorKind::from_reason_code("circle_encryption_below_realm_floor"),
-            Some(CircleErrorKind::EncryptionBelowRealmFloor)
-        );
+        for retired in [
+            "circle_not_archived",
+            "metadata_encryption_floor_violation",
+            "circle_encryption_below_realm_floor",
+        ] {
+            assert_eq!(CircleErrorKind::from_reason_code(retired), None);
+        }
         assert_eq!(CircleErrorKind::from_reason_code("unrelated"), None);
     }
 
@@ -309,11 +279,8 @@ mod tests {
         let keys = [
             CircleErrorKind::RealmMismatch.i18n_key(),
             CircleErrorKind::NotActive.i18n_key(),
-            CircleErrorKind::NotArchived.i18n_key(),
             CircleErrorKind::MemberNotInRealm.i18n_key(),
             CircleErrorKind::ScopeRebindForbidden.i18n_key(),
-            CircleErrorKind::MetadataFloorViolated.i18n_key(),
-            CircleErrorKind::EncryptionBelowRealmFloor.i18n_key(),
         ];
         let unique: std::collections::HashSet<_> = keys.iter().copied().collect();
         assert_eq!(unique.len(), keys.len(), "i18n keys must be distinct");
