@@ -830,7 +830,9 @@ fn singleton_private_account_data_uses_registered_encrypted_carrier() {
             "{key}"
         );
         assert!(!op.payload().contains_key("body"), "{key}");
-        assert_eq!(op.payload()["expected_revision"], 7);
+        assert_eq!(op.payload()["expected_server_revision"], 7);
+        assert!(!op.payload().contains_key("expected_revision"));
+        assert!(!op.payload().contains_key("source_pending_event_id"));
     }
 }
 
@@ -1078,7 +1080,7 @@ fn private_account_data_builders_emit_encrypted_payload() {
 }
 
 #[test]
-fn private_account_data_builder_emits_required_revision() {
+fn private_account_data_builder_emits_required_server_revision() {
     let key =
         scheduled_send_account_data_key("ak:scheduled_send:01904100-0000-7000-8000-000000000003")
             .unwrap();
@@ -1092,7 +1094,9 @@ fn private_account_data_builder_emits_required_revision() {
     .unwrap()
     .build("node");
     assert_eq!(op.kind(), "ak.account_data.set");
-    assert_eq!(op.payload()["expected_revision"], 7);
+    assert_eq!(op.payload()["expected_server_revision"], 7);
+    assert!(!op.payload().contains_key("expected_revision"));
+    assert!(!op.payload().contains_key("source_pending_event_id"));
     assert!(!op.payload().contains_key("body"));
     assert_eq!(op.payload()["encrypted_payload"]["ciphertext"], "opaque");
 }
@@ -1126,7 +1130,9 @@ fn build_account_data_tombstone_emits_canonical_payload() {
     assert_eq!(op.kind(), "ak.account_data.set");
     assert_eq!(op.payload()["key"], "ak.read_receipt.preferences");
     assert!(op.payload().get("holder_principal_id").is_none());
-    assert_eq!(op.payload()["expected_revision"], 3);
+    assert_eq!(op.payload()["expected_server_revision"], 3);
+    assert!(!op.payload().contains_key("expected_revision"));
+    assert!(!op.payload().contains_key("source_pending_event_id"));
     assert_eq!(op.payload()["tombstone"], true);
     assert!(op.payload()["updated_at"].is_string());
 }

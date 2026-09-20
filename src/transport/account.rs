@@ -1490,7 +1490,7 @@ async fn account_data_set_submission(
     submitter: &EventSubmitter,
     type_key: &str,
     value: Option<Value>,
-    expected_revision: u64,
+    expected_server_revision: u64,
 ) -> anyhow::Result<arkret_wire::Event> {
     let (holder, _) = account_data_holder()?;
     let realm_id =
@@ -1501,13 +1501,13 @@ async fn account_data_set_submission(
             holder.as_str(),
             type_key,
             value,
-            expected_revision,
+            expected_server_revision,
         ),
         None => crate::account_data::build_account_data_tombstone(
             realm_id.as_str(),
             holder.as_str(),
             type_key,
-            expected_revision,
+            expected_server_revision,
         ),
     }?;
     let event = builder.build_sdk_event("inkson")?;
@@ -1745,7 +1745,7 @@ pub async fn delete_account_data(submitter: &EventSubmitter, type_key: &str) -> 
 /// `ak.scheduled_send.v1:<scheduled_send_id>` through the account-data
 /// atomic revision loop; a stale revision re-reads the authoritative entry,
 /// merges on decrypted plaintext, and retries with the new
-/// `expected_revision`.
+/// `expected_server_revision`.
 pub async fn put_scheduled_send_plan(
     submitter: &EventSubmitter,
     value: &arkret_sdk::ScheduledSendValue,

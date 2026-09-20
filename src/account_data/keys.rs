@@ -18,7 +18,7 @@ pub fn build_account_data_set(
     actor: &str,
     key: &str,
     value: Value,
-    expected_revision: u64,
+    expected_server_revision: u64,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let descriptor = arkret_schema::account_data_pattern(key)
         .ok_or_else(|| anyhow::anyhow!("unregistered account_data key: {key}"))?;
@@ -35,11 +35,12 @@ pub fn build_account_data_set(
     };
     let payload = arkret_sdk::AccountDataSetPayload {
         key: arkret_sdk::NonEmptyString::new(key).map_err(anyhow::Error::msg)?,
-        expected_revision,
+        expected_server_revision,
         body,
         encrypted_payload,
         tombstone: false,
         updated_at: Some(crate::clock::now_utc_millis()),
+        source_pending_event_id: None,
     };
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::AccountDataSet,
@@ -50,15 +51,16 @@ pub fn build_account_data_tombstone(
     realm_id: &str,
     actor: &str,
     key: &str,
-    expected_revision: u64,
+    expected_server_revision: u64,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::AccountDataSetPayload {
         key: arkret_sdk::NonEmptyString::new(key).map_err(anyhow::Error::msg)?,
-        expected_revision,
+        expected_server_revision,
         body: arkret_sdk::AccountDataBody::Absent,
         encrypted_payload: None,
         tombstone: true,
         updated_at: Some(crate::clock::now_utc_millis()),
+        source_pending_event_id: None,
     };
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::AccountDataSet,
@@ -164,7 +166,7 @@ pub fn build_private_account_data_set(
     actor: &str,
     key: &str,
     encrypted_payload: Value,
-    expected_revision: u64,
+    expected_server_revision: u64,
 ) -> anyhow::Result<TypedOperationBuilder> {
     validate_private_account_data_key(key)?;
     let Value::Object(encrypted_payload) = encrypted_payload else {
@@ -172,11 +174,12 @@ pub fn build_private_account_data_set(
     };
     let payload = arkret_sdk::AccountDataSetPayload {
         key: arkret_sdk::NonEmptyString::new(key).map_err(anyhow::Error::msg)?,
-        expected_revision,
+        expected_server_revision,
         body: arkret_sdk::AccountDataBody::Absent,
         encrypted_payload: Some(encrypted_payload.into_iter().collect()),
         tombstone: false,
         updated_at: Some(crate::clock::now_utc_millis()),
+        source_pending_event_id: None,
     };
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::AccountDataSet,
@@ -188,16 +191,17 @@ pub fn build_private_account_data_tombstone(
     realm_id: &str,
     actor: &str,
     key: &str,
-    expected_revision: u64,
+    expected_server_revision: u64,
 ) -> anyhow::Result<TypedOperationBuilder> {
     validate_private_account_data_key(key)?;
     let payload = arkret_sdk::AccountDataSetPayload {
         key: arkret_sdk::NonEmptyString::new(key).map_err(anyhow::Error::msg)?,
-        expected_revision,
+        expected_server_revision,
         body: arkret_sdk::AccountDataBody::Absent,
         encrypted_payload: None,
         tombstone: true,
         updated_at: Some(crate::clock::now_utc_millis()),
+        source_pending_event_id: None,
     };
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::AccountDataSet,

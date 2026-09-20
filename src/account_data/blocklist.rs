@@ -337,7 +337,8 @@ pub fn unblock_target_in(
 
 /// Build the canonical blocklist payload for the next Account Data CAS write.
 ///
-/// The inner `version` and the outer `ak.account_data.set.expected_revision`
+/// The inner `version` and the outer
+/// `ak.account_data.set.expected_server_revision`
 /// share one counter.  Callers must therefore pass the exact accepted revision
 /// they are about to create (`current + 1`); this is not a schema version.
 pub fn build_blocklist_account_data_body(

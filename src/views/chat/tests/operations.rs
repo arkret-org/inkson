@@ -440,7 +440,7 @@ fn private_saved_item_uses_saved_account_data_not_pin_event() {
     .build("inkson");
     assert_eq!(op.kind(), "ak.account_data.set");
     assert_eq!(op.payload()["key"], item.account_data_key);
-    assert_eq!(op.payload()["expected_revision"], 0);
+    assert_eq!(op.payload()["expected_server_revision"], 0);
     assert_eq!(op.payload()["encrypted_payload"]["kind"], "saved_item");
     assert!(!op.payload().contains_key("body"));
     assert_ne!(op.kind(), "ak.pin.add");
