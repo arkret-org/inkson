@@ -169,13 +169,45 @@ pub(crate) fn accepted_pair_commit<'a>(
     Ok(matches[0])
 }
 
+/// Only the genesis-prefix commits of this Realm stream may define the
+/// founding digest. A time sort or a filtered founder-authored subset can
+/// silently select later Events, especially when authored timestamps tie.
+fn founding_genesis_prefix<'a>(
+    backfill: &'a crate::models::BackfillView,
+    realm_id: &str,
+) -> anyhow::Result<[&'a arkret_sdk::Event; 4]> {
+    let founding = backfill.0.committed_events.get(..4).ok_or_else(|| {
+        anyhow::anyhow!("accepted Direct Conversation founding unit is incomplete")
+    })?;
+    let expected_stream = arkret_wire::CommitStreamRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
+    };
+    let mut exact = Vec::with_capacity(4);
+    for (position, committed) in founding.iter().enumerate() {
+        anyhow::ensure!(
+            committed.commit().stream_ref == expected_stream
+                && committed.commit().stream_position == position as u64,
+            "Direct Conversation founding unit is not the Realm stream genesis prefix"
+        );
+        exact.push(
+            committed
+                .reducer_input()
+                .ok_or_else(|| anyhow::anyhow!("Direct Conversation founding Event is withheld"))?,
+        );
+    }
+    exact
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("accepted Direct Conversation founding unit is incomplete"))
+}
+
 pub(crate) async fn ensure_binding(
     api: &crate::transport::TransportClient,
     store: &crate::state::LocalStateStore,
     realm_id: &str,
-    events: &[arkret_sdk::Event],
+    backfill: &crate::models::BackfillView,
 ) -> anyhow::Result<()> {
     use arkret_sdk::{ActorId, EventKind};
+    let events = backfill.events();
     if store.realm_collaboration_role(realm_id)
         != Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
         || events
@@ -187,25 +219,10 @@ pub(crate) async fn ensure_binding(
     let account = crate::app::SessionContext::get()
         .active_account()
         .ok_or_else(|| anyhow::anyhow!("active account is unavailable"))?;
-    let create = events
-        .iter()
-        .find(|event| event.kind == EventKind::RealmCreate)
-        .ok_or_else(|| anyhow::anyhow!("accepted Direct Conversation genesis is unavailable"))?;
-    let mut founding = events
-        .iter()
-        .filter(|event| event.actor_id == create.actor_id)
-        .collect::<Vec<_>>();
-    founding.sort_by(|left, right| left.created_at.cmp(&right.created_at));
-    let exact: [&arkret_sdk::Event; 4] = founding
-        .into_iter()
-        .take(4)
-        .collect::<Vec<_>>()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("accepted Direct Conversation founding unit is incomplete"))?;
-    // The founding unit's own summary (Realm, main Strand, unit digest) is what
-    // `ak.direct_conversation.bound` binds. `arkret-sdk` no longer exposes a
-    // type for either the plan or the bound payload, so this endorsement cannot
-    // be authored until it does; see the migration report.
+    let exact = founding_genesis_prefix(backfill, realm_id)?;
+    let create = exact[0];
+    // The four committed genesis-prefix Events, never timestamps or an
+    // arbitrary founder-authored subset, bind the exact Realm/Strand unit.
     let plan = arkret_sdk::direct_conversation::DirectConversationFoundingPlan::from_events(exact)?;
     let peer_membership: arkret_sdk::MembershipPayload =
         serde_json::from_value(serde_json::to_value(&exact[2].payload)?)?;
@@ -240,7 +257,8 @@ pub(crate) async fn ensure_binding(
         .mls_checkpoint_for(realm_id)
         .ok_or_else(|| anyhow::anyhow!("MLS checkpoint is unavailable"))?;
     anyhow::ensure!(snapshot.epoch > 0, "waiting for the peer MLS Add");
-    let initial_state = accepted_pair_commit(events, realm_id, &snapshot.group_id, snapshot.epoch)?;
+    let initial_state =
+        accepted_pair_commit(&events, realm_id, &snapshot.group_id, snapshot.epoch)?;
     let peer_account = peer
         .as_account_id()
         .ok_or_else(|| anyhow::anyhow!("human Contact binding requires an account peer"))?;
@@ -310,4 +328,22 @@ pub(crate) async fn ensure_binding(
     );
     api.event_submitter()?.submit_sdk_event(&operation).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn direct_binding_never_invents_a_missing_founding_prefix() {
+        let empty = crate::models::BackfillView(arkret_wire::StreamScanOutcome {
+            committed_events: Vec::new(),
+            truncated: false,
+        });
+        assert!(
+            super::founding_genesis_prefix(
+                &empty,
+                "ak:realm:AWgGCEbMHnelRQfzqg1C_onV9Ej_FdpdAZyM_JoFgAd3",
+            )
+            .is_err()
+        );
+    }
 }

@@ -586,7 +586,8 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     // the complete accepted Realm history before deciding that there is no
     // admission work; otherwise a temporarily absent projection row creates a
     // permanent pre-filter deadlock and no later Welcome can ever be authored.
-    let accepted_events = api.event_submitter()?.backfill(&realm_id).await?.events();
+    let backfill = api.event_submitter()?.backfill(&realm_id).await?;
+    let accepted_events = backfill.events();
     {
         let mut store = state_store.write();
         crate::sync_engine::ingest_membership_projection_events(
@@ -732,8 +733,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     }
     if pending.is_empty() {
         let local_state = state_store.read().clone();
-        crate::mls::direct_binding::ensure_binding(api, &local_state, &realm_id, &accepted_events)
-            .await?;
+        crate::mls::direct_binding::ensure_binding(api, &local_state, &realm_id, &backfill).await?;
         return Ok(MlsAdmissionReconcileOutcome {
             admitted: 0,
             deferred: usize::from(
