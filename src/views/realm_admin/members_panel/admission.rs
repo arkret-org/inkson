@@ -25,7 +25,7 @@ pub(super) fn mls_admission_authoring_lock(realm_id: &str) -> Arc<tokio::sync::M
 
 pub(crate) async fn submit_mls_admission_for_invitee(
     api: &crate::transport::TransportClient,
-    state_store: SyncSignal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -156,27 +156,6 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             })?
     };
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    ensure_mls_genesis_frontier_for_invite(
-        api,
-        state_store,
-        secure_store.as_ref(),
-        &realm_id,
-        &mls_actor_id,
-        &device_id,
-    )
-    .await?;
-    // Verify the current governance frontier before consuming a one-time
-    // KeyPackage. The roster projection only schedules this attempt; it never
-    // authorizes the claim or the resulting Add commit.
-    ensure_mls_governance_result_for_next_commit(
-        api,
-        state_store,
-        &realm_id,
-        &mls_actor_id,
-        &device_id,
-        &[],
-    )
-    .await?;
     let claim_request_id = crate::mls_api_helpers::generate_mls_claim_request_id()?;
     let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     let claim_outcome = mls_clients
@@ -208,56 +187,40 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             == invitee_actor,
         "KeyPackage claim actor does not match the selected complete member ActorId"
     );
-    // Refresh after the claim as well: membership/policy may have advanced
-    // while the remote claim request was in flight.
-    ensure_mls_governance_result_for_next_commit(
-        api,
-        state_store,
-        &realm_id,
-        &mls_actor_id,
-        &device_id,
-        &[(&claim, &claim_receipt)],
-    )
-    .await?;
-    let requester_device_authorize_event_id =
-        crate::mls::admission::current_requester_device_authorize_event_id(
-            &api.sdk_http_client()?,
-            &device_id,
-        )
-        .await
-        .map_err(anyhow::Error::msg)?;
     let local_state = state_store.read().clone();
     let admission = crate::mls::admission::build_realm_mls_admission_events_from_claim(
-        &api.sdk_http_client()?,
         &local_state,
         secure_store.as_ref(),
         &realm_id,
         &account.authority,
         &mls_actor_id,
         &account.device_id,
-        Some(&requester_device_authorize_event_id),
         &claim,
         &claim_request_id,
         &claim_receipt,
     )
-    .await
     .map_err(|err| anyhow::anyhow!(err))?;
-    let next_epoch = admission.snapshot.epoch;
+    let next_epoch = admission.staged_checkpoint.epoch;
     let invitee_device_id = claim.device_id.clone();
-    // Persist the entire fail-closed admission saga before the first write.
-    // The durable outbound item submits Commit first, then the exact signed
-    // Welcome. Only the Station-accepted artifact consumer may publish
-    // the snapshot/history secret. A page close between any two steps resumes
-    // from the same immutable material on the next sync drain instead of
-    // consuming the KeyPackage and losing the Welcome.
-    api.event_submitter()?
-        .submit_mls_admission_with_snapshot(
-            &admission.commit,
-            vec![admission.welcome],
-            realm_id.clone(),
-            mls_actor_id,
-            device_id.clone(),
-            admission.snapshot,
+    let submitter = api.event_submitter()?;
+    let authored_commit = submitter
+        .author_for_direct_submission(&admission.commit)
+        .await?;
+    let welcomes = (admission.welcomes)(authored_commit.event()).map_err(anyhow::Error::msg)?;
+    // The staged state contains the pending MLS Commit. Persist it before the
+    // atomic authority submission so a page close after Station acceptance can
+    // still merge the exact accepted epoch; the durable outbound item freezes
+    // both the authored Commit and all producer-signed Welcome deliveries.
+    state_store
+        .write()
+        .save_mls_checkpoint(realm_id.clone(), admission.staged_checkpoint)
+        .map_err(anyhow::Error::msg)?;
+    submitter
+        .submit_mls_commit(
+            authored_commit,
+            welcomes,
+            account.device_id.clone(),
+            admission.authority_hints,
             &crate::app::runtime_adapter::state_store_handle(state_store),
         )
         .await?;
@@ -319,14 +282,14 @@ async fn direct_contact_claim_route(
             if actual != expected.as_str() {
                 return None;
             }
-            garth::sync_client::accepted_human_event_signing_device(event)
+            crate::sync_parse::accepted_human_event_signing_device(event)
         })
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "Contact endpoint resolution returned {} Events, {} by the peer, {} with a device proof",
                 resolved.len(),
                 resolved.iter().filter(|event| event.actor_id == *peer).count(),
-                resolved.iter().filter(|event| garth::sync_client::accepted_human_event_signing_device(event).is_some()).count(),
+                resolved.iter().filter(|event| crate::sync_parse::accepted_human_event_signing_device(event).is_some()).count(),
             )
         })?;
     Ok(AcceptedInviteClaimRoute {
@@ -678,61 +641,6 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     }));
     if pending.is_empty() {
         let local_state = state_store.read().clone();
-        if local_state.realm_collaboration_role(&realm_id)
-            == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
-            && accepted_events.iter().any(|event| {
-                event.kind == arkret_sdk::EventKind::RealmCreate
-                    && event.actor_id.to_string() == self_actor
-            })
-        {
-            // Repair an unfinished endpoint handoff by an ordinary Remove/Add
-            // in the existing group. A new claim still proves current authority.
-            let snapshot = local_state.mls_checkpoint_for(&realm_id).ok_or_else(|| {
-                anyhow::anyhow!("local Direct Conversation MLS state is unavailable")
-            })?;
-            let current = crate::mls::direct_binding::accepted_pair_commit(
-                &accepted_events,
-                &realm_id,
-                &snapshot.group_id,
-                snapshot.epoch,
-            )?;
-            for event in &accepted_events {
-                if event.kind != arkret_sdk::EventKind::MlsWelcome {
-                    continue;
-                }
-                let welcome: arkret_sdk::MlsWelcomePayload =
-                    serde_json::from_value(serde_json::to_value(&event.payload)?)?;
-                if current.event_id != welcome.commit_ref
-                    || welcome.expires_at > crate::clock::now_utc()
-                {
-                    continue;
-                }
-                let arkret_sdk::MlsWelcomeRecipient::Device {
-                    recipient_device_id,
-                } = welcome.recipient
-                else {
-                    continue;
-                };
-                if let Some(principal) = welcome.recipient_principal_id
-                    && let Some(peer) = group_member_ids.iter().find(|peer| {
-                        serde_json::from_str::<arkret_sdk::ActorId>(peer)
-                            .is_ok_and(|actor| actor.signing_principal_id() == &principal)
-                    })
-                {
-                    let route = direct_contact_claim_route(
-                        &http,
-                        &serde_json::from_str::<arkret_sdk::ActorId>(peer)?,
-                    )
-                    .await?;
-                    if route.target_device_id.as_deref() == Some(recipient_device_id.as_str()) {
-                        pending.push((peer.clone(), None));
-                    }
-                }
-            }
-        }
-    }
-    if pending.is_empty() {
-        let local_state = state_store.read().clone();
         crate::mls::direct_binding::ensure_binding(api, &local_state, &realm_id, &backfill).await?;
         return Ok(MlsAdmissionReconcileOutcome {
             admitted: 0,
@@ -835,290 +743,4 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         }
     }
     Ok(outcome)
-}
-
-pub(super) fn mls_group_state_event_ref_ready(store: &LocalStateStore, realm_id: &str) -> bool {
-    let seal_view = store.seal_view_for_realm(realm_id);
-    seal_view
-        .frontier
-        .iter()
-        .chain(seal_view.leaves.iter())
-        .any(|value| arkret_sdk::EventId::new(value.clone()).is_ok())
-}
-
-pub(super) async fn ensure_mls_genesis_frontier_for_invite(
-    api: &crate::transport::TransportClient,
-    mut state_store: SyncSignal<LocalStateStore>,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
-) -> anyhow::Result<()> {
-    let account = crate::app::SessionContext::get()
-        .active_account()
-        .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
-    anyhow::ensure!(
-        account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
-        "MLS genesis identity does not match the active account"
-    );
-    {
-        let store = state_store.read();
-        if mls_group_state_event_ref_ready(&store, realm_id) {
-            return Ok(());
-        }
-    }
-    if let Some(event_id) = api
-        .event_submitter()?
-        .find_mls_genesis_event_id(realm_id)
-        .await?
-    {
-        state_store
-            .write()
-            .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id)
-            .map_err(anyhow::Error::msg)?;
-        return Ok(());
-    }
-    {
-        let store = state_store.read();
-        if store.mls_genesis_emitted_for(realm_id) {
-            anyhow::bail!(
-                "local MLS genesis event id is not available yet; sync this Realm before inviting into its encrypted group"
-            );
-        }
-    }
-    let summary = {
-        let store = state_store.read();
-        crate::mls::runtime::initial_mls_checkpoint_summary_from_existing(
-            &store,
-            secure_store,
-            realm_id,
-            &account.authority,
-            &account.device_id,
-        )
-        .map_err(|err| anyhow::anyhow!(err.user_message()))?
-    }
-    .ok_or_else(|| {
-        anyhow::anyhow!(
-            "local epoch-0 MLS snapshot is not available; create or restore this device's MLS state before inviting into an encrypted Realm"
-        )
-    })?;
-    let leaves = crate::mls::governance_proof::singleton_security_frontier_leaf(
-        &arkret_sdk::ActorId::account(account.authority.clone()),
-        device_id,
-    )
-    .map_err(anyhow::Error::msg)?;
-    let genesis_request = crate::mls::governance_proof::frontier_request(
-        &state_store.read(),
-        realm_id,
-        None,
-        summary.group_id.clone(),
-        0,
-        0,
-        leaves.clone(),
-    )
-    .map_err(anyhow::Error::msg)?;
-    crate::mls::governance_proof::fetch_and_cache_frontier(
-        api,
-        crate::app::runtime_adapter::state_store_handle(state_store),
-        &genesis_request,
-        &leaves,
-    )
-    .await
-    .map_err(anyhow::Error::msg)?;
-    let genesis_event = {
-        let mut store = state_store.write();
-        crate::mls::group_events::build_creator_mls_genesis_event(
-            &mut store,
-            realm_id,
-            actor_id,
-            Some(&summary),
-        )
-        .map_err(|err| anyhow::anyhow!(err))?
-    }
-    .ok_or_else(|| {
-        anyhow::anyhow!(
-            "local MLS genesis event is already marked emitted but no group-state event id is available; sync this Realm before inviting"
-        )
-    })?;
-    crate::mls::runtime::upload_mls_genesis_public_material(api, &summary)
-        .await
-        .map_err(|error| anyhow::anyhow!(error.user_message()))?;
-    match api
-        .event_submitter()?
-        .submit_sdk_event(&genesis_event)
-        .await
-    {
-        Ok(accepted) => {
-            // The accepted id is the only one encrypted writes may bind to.
-            let event_id = arkret_sdk::EventId::new(accepted.event_id.clone())
-                .map_err(|error| anyhow::anyhow!("accepted MLS genesis id invalid: {error}"))?;
-            state_store
-                .write()
-                .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id)
-                .map_err(anyhow::Error::msg)?;
-            Ok(())
-        }
-        Err(err) => {
-            if crate::ephemeral::events_submit_rejected_for_reason(
-                &err,
-                &arkret_sdk::ReasonCode::MlsGenesisAlreadyExists,
-            ) {
-                if let Some(event_id) = api
-                    .event_submitter()?
-                    .find_mls_genesis_event_id(realm_id)
-                    .await?
-                {
-                    state_store
-                        .write()
-                        .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id)
-                        .map_err(anyhow::Error::msg)?;
-                    return Ok(());
-                }
-                anyhow::bail!(
-                    "MLS genesis already exists server-side but the local event id is unavailable; sync this Realm before inviting"
-                );
-            }
-            Err(err)
-        }
-    }
-}
-
-pub(super) async fn ensure_mls_governance_result_for_next_commit(
-    api: &crate::transport::TransportClient,
-    state_store: SyncSignal<LocalStateStore>,
-    realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
-    added_claims: &[(
-        &arkret_sdk::KeyPackageClaimRecord,
-        &arkret_sdk::PeerKeyPackageClaimReceipt,
-    )],
-) -> anyhow::Result<()> {
-    let account = crate::app::SessionContext::get()
-        .active_account()
-        .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
-    anyhow::ensure!(
-        account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
-        "MLS governance proof identity does not match the active account"
-    );
-    refresh_mls_governance_target_basis(api, state_store, realm_id, added_claims).await?;
-    let leaves = if added_claims.is_empty() {
-        crate::mls::governance_proof::current_security_frontier_leaves(
-            &state_store.read(),
-            realm_id,
-            None,
-            &account.authority,
-            &account.device_id,
-        )
-        .map_err(anyhow::Error::msg)?
-    } else {
-        let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
-            .map_err(|error| anyhow::anyhow!("invalid MLS Realm id: {error}"))?;
-        let effective_scope = arkret_sdk::ScopeRef::Realm { realm_id };
-        let key_packages = added_claims
-            .iter()
-            .map(|(claim, _)| crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim))
-            .collect::<Result<Vec<_>, _>>()?;
-        let target_actors = added_claims
-            .iter()
-            .map(|(claim, receipt)| crate::mls::governance_proof::claimed_actor_id(claim, receipt))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(anyhow::Error::msg)?;
-        crate::mls::governance_proof::preview_security_frontier_with_added_keypackages(
-            &state_store.read(),
-            &effective_scope,
-            &account.authority,
-            &account.device_id,
-            &key_packages,
-            &target_actors,
-        )
-        .map_err(anyhow::Error::msg)?
-    };
-    let request = {
-        let store = state_store.read();
-        let snapshot = store.mls_checkpoint_for(realm_id).ok_or_else(|| {
-            anyhow::anyhow!("local MLS snapshot is unavailable for governance proof request")
-        })?;
-        crate::mls::governance_proof::frontier_request(
-            &store,
-            realm_id,
-            None,
-            snapshot.group_id,
-            snapshot.epoch,
-            snapshot.epoch.saturating_add(1),
-            leaves.clone(),
-        )
-        .map_err(anyhow::Error::msg)?
-    };
-    crate::mls::governance_proof::fetch_and_cache_frontier(
-        api,
-        crate::app::runtime_adapter::state_store_handle(state_store),
-        &request,
-        &leaves,
-    )
-    .await
-    .map(|_| ())
-    .map_err(anyhow::Error::msg)
-}
-
-pub(super) async fn refresh_mls_governance_target_basis(
-    api: &crate::transport::TransportClient,
-    mut state_store: SyncSignal<LocalStateStore>,
-    realm_id: &str,
-    added_claims: &[(
-        &arkret_sdk::KeyPackageClaimRecord,
-        &arkret_sdk::PeerKeyPackageClaimReceipt,
-    )],
-) -> anyhow::Result<()> {
-    const ATTEMPTS: usize = 20;
-    const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
-
-    let account = crate::app::SessionContext::get()
-        .active_account()
-        .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
-    let epoch = crate::identity::device_directory::cache_epoch();
-    let actors = added_claims
-        .iter()
-        .map(|(claim, receipt)| crate::mls::governance_proof::claimed_actor_id(claim, receipt))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(anyhow::Error::msg)?;
-    let http = api.sdk_http_client()?;
-    let submitter = api.event_submitter()?;
-    for attempt in 0..ATTEMPTS {
-        let result: anyhow::Result<_> = async {
-            let view = submitter.seals_frontier_realm_view(realm_id).await?;
-            for actor in &actors {
-                let request = arkret_sdk::HistoryAuthorityRequestBody {
-                    effective_scope: arkret_sdk::HistoryEffectiveScope::Realm {
-                        realm_id: view.realm_id.clone(),
-                    },
-                    actor_id: actor.clone(),
-                    seal_basis: view.seal_basis.clone(),
-                };
-                let outcome = http.history_authority(&request).await?;
-                outcome.validate_for_account(&request, &account.authority)?;
-            }
-            Ok(view)
-        }
-        .await;
-        anyhow::ensure!(
-            epoch == crate::identity::device_directory::cache_epoch(),
-            "account session changed during MLS membership refresh"
-        );
-        match result {
-            Ok(view) => {
-                state_store.write().cache_realm_governance_frontier(view).map_err(anyhow::Error::msg)?;
-                return Ok(());
-            }
-            Err(error) if attempt + 1 < ATTEMPTS && (
-                crate::api_error::is_realm_seal_frontier_pending_error(&error)
-                || error.downcast_ref::<arkret_sdk::http_client::Error>().is_some_and(|error| matches!(error,
-                    arkret_sdk::http_client::Error::Api { error, .. }
-                    if matches!(error.code(), "not_found" | "state_mismatch" | "frontier_unavailable")))) => {
-                crate::runtime_helpers::sleep_for(DELAY).await;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    unreachable!("Realm membership refresh returns on its final attempt")
 }
