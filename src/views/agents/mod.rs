@@ -1,11 +1,8 @@
 //! Agent administration, approval, and lifecycle surfaces.
 
 mod admin;
-mod bootstrap;
 mod components;
 pub(crate) mod model;
-
-pub(crate) use bootstrap::{bootstrap_provisioned_agent, seal_self_principal_event_current};
 
 #[cfg(test)]
 mod tests;

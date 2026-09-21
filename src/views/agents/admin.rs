@@ -184,8 +184,6 @@ pub fn AgentAdminPanel(
         selected_key_state_owned,
         deactivate_status,
         selected_has_pcr_binding,
-        selected_pcr_bootstrap_target,
-        selected_should_offer_security_refresh,
         selected_pairing_request_id,
         selected_pairing_code,
         selected_pairing_is_expired,
@@ -211,12 +209,10 @@ pub fn AgentAdminPanel(
     let replace_pause_key_state = selected_key_state_owned.clone();
     let deactivate_controller_principal_id = controller_principal_id.clone();
     let deactivate_key_state = selected_key_state_owned.clone();
-    let security_refresh_target = selected_pcr_bootstrap_target.clone();
     let active_pairing_action_id = pairing_action_agent_id();
     let any_pairing_action_in_flight = !active_pairing_action_id.is_empty();
     let selected_pairing_action_in_flight =
         !selected_id_now.is_empty() && active_pairing_action_id == selected_id_now;
-    let selected_pairing_action_phase = pairing_action_phase();
     let agent_provision_in_flight = provision_in_flight();
 
     rsx! {
@@ -569,7 +565,6 @@ pub fn AgentAdminPanel(
                                     agent_state_label(&selected_runtime_state)
                                 };
                                 let replacement_agent_slug = selected_slug.clone();
-                                let pcr_bootstrap_target = selected_pcr_bootstrap_target.clone();
                                 rsx! {
                                     div {
                                         class: "agent-admin-section agent-admin-pairing-card",
@@ -584,63 +579,6 @@ pub fn AgentAdminPanel(
                                             }
                                             div { class: "agent-admin-pairing-head-actions",
                                                 span { class: "{pairing_badge}", "{pairing_label}" }
-                                            }
-                                        }
-                                        if !selected_has_pcr_binding {
-                                            div {
-                                                class: "agent-admin-status",
-                                                "data-testid": "agent-admin-pcr-recovery-pending",
-                                                if selected_pairing_is_expired {
-                                                    "This pairing code expired before setup finished. Pair again to finish protecting this Agent and create a new code. The Agent and its settings will stay the same."
-                                                } else {
-                                                    "Finish protecting this Agent before connecting a runtime. This lets you restore it if its runtime or keys are lost."
-                                                }
-                                            }
-                                            div { class: "actions",
-                                                Button {
-                                                    variant: ButtonVariant::Primary,
-                                                    "data-testid": "agent-admin-finish-pcr-recovery-button",
-                                                    disabled: pcr_bootstrap_target.is_none() || any_pairing_action_in_flight,
-                                                    onclick: {
-                                                        let base = base_url.clone();
-                                                        let target = pcr_bootstrap_target.clone();
-                                                        let pairing_expired = selected_pairing_is_expired;
-                                                        let slug = replacement_agent_slug.clone();
-                                                        move |_| {
-                                                            let Some((agent_id, realm_id, _)) = target.clone() else {
-                                                                last_op_status.set(
-                                                                    "Agent PCR binding is unavailable; refresh the Agent details and retry."
-                                                                        .to_owned(),
-                                                                );
-                                                                return;
-                                                            };
-                                                            if !pairing_action_agent_id.peek().is_empty() {
-                                                                return;
-                                                            }
-                                                            pairing_action_agent_id.set(agent_id.to_string());
-                                                            pairing_action_phase.set(PairingActionPhase::RepairingRecovery);
-                                                            controller.finish_pcr_recovery(
-                                                                base.clone(),
-                                                                token(),
-                                                                agent_id,
-                                                                realm_id,
-                                                                pairing_expired,
-                                                                slug.clone(),
-                                                            );
-                                                        }
-                                                    },
-                                                    if selected_pairing_action_in_flight {
-                                                        match selected_pairing_action_phase {
-                                                            PairingActionPhase::IssuingPairing => "Creating code…",
-                                                            PairingActionPhase::RefreshingAgent => "Refreshing Agent…",
-                                                            _ => "Repairing recovery…",
-                                                        }
-                                                    } else if selected_pairing_is_expired {
-                                                        "Pair again"
-                                                    } else {
-                                                        "Finish setup"
-                                                    }
-                                                }
                                             }
                                         }
                                         if selected_has_pcr_binding && selected_pairing_is_expired {
@@ -814,39 +752,6 @@ pub fn AgentAdminPanel(
                                 }
                             }
                             div { class: "actions",
-                                    if selected_should_offer_security_refresh {
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "agent-admin-refresh-security-state-button",
-                                            disabled: any_pairing_action_in_flight,
-                                            onclick: {
-                                                let base = base_url.clone();
-                                                let target = security_refresh_target.clone();
-                                                move |_| {
-                                                    let Some((agent_id, realm_id, _)) = target.clone() else {
-                                                        last_op_status.set("Agent security binding is unavailable; refresh details and retry.".to_owned());
-                                                        return;
-                                                    };
-                                                    if !pairing_action_agent_id.peek().is_empty() {
-                                                        return;
-                                                    }
-                                                    pairing_action_agent_id.set(agent_id.to_string());
-                                                    pairing_action_phase.set(PairingActionPhase::RepairingRecovery);
-                                                    controller.refresh_security_state(
-                                                        base.clone(),
-                                                        token(),
-                                                        agent_id,
-                                                        realm_id,
-                                                    );
-                                                }
-                                            },
-                                            if selected_pairing_action_in_flight {
-                                                "Refreshing security…"
-                                            } else {
-                                                "Refresh security state"
-                                            }
-                                        }
-                                    }
                                     if selected_can_replace_runtime && !replace_runtime_confirm_open() {
                                         Button {
                                             variant: ButtonVariant::Secondary,

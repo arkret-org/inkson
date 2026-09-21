@@ -18,10 +18,6 @@ pub(super) fn should_offer_pairing_renewal(has_pcr_binding: bool, runtime_state:
     has_pcr_binding && matches!(runtime_state, "pending_runtime_key" | "pairing_expired")
 }
 
-pub(super) fn should_offer_security_refresh(has_key_state: bool, lifecycle_state: &str) -> bool {
-    has_key_state && lifecycle_state != "deactivated"
-}
-
 pub(super) fn should_show_pairing_card(
     runtime_state: &str,
     has_pairing_handle: bool,
@@ -147,7 +143,6 @@ pub(super) fn update_agent_status(rows: &mut [AgentView], id: &str, status: Agen
 pub(super) enum PairingActionPhase {
     #[default]
     Idle,
-    RepairingRecovery,
     IssuingPairing,
     RefreshingAgent,
 }
@@ -263,8 +258,6 @@ pub(super) struct AgentAdminView {
     pub(super) selected_key_state_owned: Option<KeyState>,
     pub(super) deactivate_status: AgentLifecycleState,
     pub(super) selected_has_pcr_binding: bool,
-    pub(super) selected_pcr_bootstrap_target: Option<PcrBootstrapTarget>,
-    pub(super) selected_should_offer_security_refresh: bool,
     pub(super) selected_pairing_request_id: String,
     pub(super) selected_pairing_code: String,
     pub(super) selected_pairing_is_expired: bool,
@@ -278,16 +271,6 @@ pub(super) struct AgentAdminView {
     pub(super) selected_content_capabilities: Vec<(AgentGrantPreset, bool)>,
     pub(super) selected_service_capabilities: Vec<(AgentServiceScopePreset, bool)>,
 }
-
-/// The Agent, its principal-control Realm and the controller authorization the
-/// PCR-bootstrap and security-refresh commands address. `None` whenever the
-/// directory row and the key state disagree about which Agent this is, so a
-/// mismatched projection can never be sealed under the wrong Agent.
-pub(super) type PcrBootstrapTarget = (
-    arkret_sdk::DidCoreId,
-    arkret_sdk::RealmId,
-    arkret_sdk::DidUrl,
-);
 
 pub(super) fn build_agent_admin_view(
     rows: &[AgentView],
@@ -339,19 +322,6 @@ pub(super) fn build_agent_admin_view(
         .map(|agent| agent.agent.lifecycle)
         .unwrap_or_default();
     let selected_has_pcr_binding = selected_key_state.is_some();
-    let selected_pcr_bootstrap_target = selected_agent.as_ref().and_then(|agent| {
-        let key_state = agent.key_state.as_ref()?;
-        let agent_id = agent.agent.agent_id.clone();
-        (agent_id == key_state.agent_id).then(|| {
-            (
-                agent_id,
-                key_state.principal_control_realm_id.clone(),
-                key_state.controller_authorization_ref.clone(),
-            )
-        })
-    });
-    let selected_should_offer_security_refresh =
-        should_offer_security_refresh(selected_key_state.is_some(), &selected_status);
     let selected_pairing_request_id = selected_key_state
         .and_then(|key_state| key_state.pairing_request_id.as_deref())
         .unwrap_or_default();
@@ -423,8 +393,6 @@ pub(super) fn build_agent_admin_view(
         selected_key_state_owned: selected_key_state.cloned(),
         deactivate_status,
         selected_has_pcr_binding,
-        selected_pcr_bootstrap_target,
-        selected_should_offer_security_refresh,
         selected_pairing_request_id: selected_pairing_request_id.to_owned(),
         selected_pairing_code: selected_pairing_code.to_owned(),
         selected_pairing_is_expired,

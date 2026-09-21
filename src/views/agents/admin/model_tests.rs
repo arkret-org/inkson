@@ -1,14 +1,6 @@
 use super::*;
 
 #[test]
-fn security_refresh_is_available_without_replacing_an_existing_runtime() {
-    assert!(should_offer_security_refresh(true, "active"));
-    assert!(should_offer_security_refresh(true, "paused"));
-    assert!(!should_offer_security_refresh(false, "active"));
-    assert!(!should_offer_security_refresh(true, "deactivated"));
-}
-
-#[test]
 fn agent_slug_input_is_trimmed_and_lowercased() {
     assert_eq!(normalize_agent_slug(" AA "), "aa");
     assert_eq!(normalize_agent_slug("Summary_V2"), "summary_v2");
@@ -460,7 +452,6 @@ fn panel_view_drops_a_selection_the_active_filter_excludes() {
     let excluded = build_agent_admin_view(&rows, &selected, "active", &now_before_expiry());
     assert!(excluded.selected_status.is_empty());
     assert!(!excluded.selected_has_pcr_binding);
-    assert!(excluded.selected_pcr_bootstrap_target.is_none());
 }
 
 #[test]
@@ -525,43 +516,6 @@ fn panel_view_expires_a_live_handle_once_the_clock_passes_its_deadline() {
     assert_eq!(view.selected_runtime_state, "pending_runtime_key");
     assert!(view.selected_pairing_is_expired);
     assert!(view.selected_should_show_pairing_card);
-}
-
-#[test]
-fn panel_view_refuses_a_bootstrap_target_when_the_row_and_key_state_name_different_agents() {
-    let mut rows = vec![test_pairing_view(
-        AgentLifecycleState::Active,
-        AgentRuntimeState::PendingRuntimeKey,
-    )];
-    let selected = agent_id(&rows[0]);
-    rows[0].key_state.as_mut().unwrap().agent_id = arkret_sdk::project_did_to_core_id(
-        &arkret_sdk::Did::new("did:web:agents.example:other").unwrap(),
-    )
-    .unwrap();
-
-    let view = build_agent_admin_view(&rows, &selected, "all", &now_before_expiry());
-
-    // Sealing the PCR under a key state that names another Agent would file the
-    // acceptance against the wrong principal, so the command has no target at
-    // all rather than a guessed one.
-    assert!(view.selected_pcr_bootstrap_target.is_none());
-    assert!(view.selected_has_pcr_binding);
-}
-
-#[test]
-fn panel_view_offers_security_refresh_for_every_live_lifecycle_state() {
-    for (lifecycle, expected) in [
-        (AgentLifecycleState::Active, true),
-        (AgentLifecycleState::Paused, true),
-        (AgentLifecycleState::Deactivated, false),
-    ] {
-        let rows = vec![test_pairing_view(lifecycle, AgentRuntimeState::Ready)];
-        let view = build_agent_admin_view(&rows, &agent_id(&rows[0]), "all", &now_before_expiry());
-        assert_eq!(
-            view.selected_should_offer_security_refresh, expected,
-            "lifecycle {lifecycle:?}"
-        );
-    }
 }
 
 #[test]

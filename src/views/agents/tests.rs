@@ -10,27 +10,31 @@ mod agent_tests {
         summarize_runtime_key_approval_request,
     };
 
-    fn provision_outcome_fixture() -> arkret_sdk::AgentProvisionOutcome {
-        arkret_sdk::AgentProvisionOutcome {
+    fn provision_outcome_fixture() -> arkret_sdk::AgentProvisionComplete {
+        arkret_sdk::AgentProvisionComplete {
+            status: arkret_sdk::AgentProvisionCompleteStatus::Complete,
             agent_id: crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary")
                 .unwrap(),
-            provision_ref: arkret_wire::CommittedEventRef {
-                event_id: arkret_sdk::EventId::from_digest(
-                    arkret_sdk::DigestSuite::Sha256,
-                    [7; 32],
-                ),
-                commit_id: arkret_sdk::RealmCommitId::from_digest([8; 32]),
-                stream_ref: arkret_wire::CommitStreamRef::Realm {
-                    realm_id: arkret_sdk::RealmId::new(
-                        "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
-                    )
-                    .unwrap(),
-                },
-                stream_position: 1,
+            did: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
+            initial_resolution: arkret_sdk::ResolutionCommitment {
+                did: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
+                method_history_head: arkret_sdk::Hash::new(
+                    "sha256:0707070707070707070707070707070707070707070707070707070707070707",
+                )
+                .unwrap(),
+                version_id: "1-fixture".to_owned(),
             },
+            principal_control_realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
+            )
+            .unwrap(),
+            controller_authorization_ref: arkret_sdk::DidUrl::new(
+                "did:web:agents.example:summary#managed-controller",
+            )
+            .unwrap(),
             pairing_request_id: arkret_sdk::OpaqueLocalId::new("0197-req").unwrap(),
-            pairing_code: "123456".to_owned(),
-            pairing_expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00.000Z")
+            pairing_code: Some("123456".to_owned()),
+            expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
         }
@@ -292,6 +296,21 @@ mod agent_tests {
         assert!(value.get("content_grant_summary").is_none());
         assert_eq!(value.as_object().unwrap().len(), 6);
         assert!(!raw.contains("private_key"));
+    }
+
+    #[test]
+    fn bootstrap_rejects_complete_outcome_without_one_time_pairing_code() {
+        let mut outcome = provision_outcome_fixture();
+        outcome.pairing_code = None;
+
+        let error = build_agent_pairing_bootstrap_json(
+            "https://arkret.example/",
+            "ak:did_core:web:arkret.example",
+            &outcome,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("omitted pairing_code"));
     }
 
     #[test]

@@ -8,10 +8,9 @@ use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::views::agents::{
-    bootstrap_provisioned_agent, build_agent_key_authorization_for_pairing,
-    build_requested_scope_disclosure_for_pairing, into_agent_key_pair_request,
-    parse_runtime_key_approval_request, runtime_key_pairing_error_message,
-    summarize_runtime_key_approval_request,
+    build_agent_key_authorization_for_pairing, build_requested_scope_disclosure_for_pairing,
+    into_agent_key_pair_request, parse_runtime_key_approval_request,
+    runtime_key_pairing_error_message, summarize_runtime_key_approval_request,
 };
 use crate::views::helpers::short_protocol_id;
 
@@ -394,7 +393,6 @@ pub fn AgentRuntimeApprovalPrompt(
                             let request_key = approve_request.request_key.clone();
                             let key_state = approve_request.key_state.clone();
                             let approval_agent_id = approve_request.agent_id.clone();
-                            let approval_account = account.clone();
                             status.set(crate::i18n::tr("agent_runtime.approving"));
                             approving.set(true);
                             spawn(async move {
@@ -402,7 +400,6 @@ pub fn AgentRuntimeApprovalPrompt(
                                     let body = body.clone();
                                     let key_state = key_state.clone();
                                     let controller_did = controller_did.clone();
-                                    let account = approval_account.clone();
                                     async move {
                                         let description = api.describe_cached().await?;
                                         let service_id = description.service_id.to_string();
@@ -427,7 +424,6 @@ pub fn AgentRuntimeApprovalPrompt(
                                                 &key_state,
                                                 &body,
                                             )?;
-                                        let agent_did = body.agent_id.clone();
                                         let authorize_submission = submitter
                                             .prepare_initial_submissions(std::slice::from_ref(
                                                 &authorize_event,
@@ -471,51 +467,26 @@ pub fn AgentRuntimeApprovalPrompt(
                                                 "agent key pairing authorization commit could not be verified"
                                             );
                                         }
-                                        let recovery_refresh_error = bootstrap_provisioned_agent(
-                                            &api,
-                                            state_store,
-                                            &account,
-                                            &agent_did,
-                                            &key_state.principal_control_realm_id,
-                                        )
-                                        .await
-                                        .err()
-                                        .map(|error| error.to_string());
-                                        Ok::<_, anyhow::Error>((outcome, recovery_refresh_error))
+                                        Ok::<_, anyhow::Error>(outcome)
                                     }
                                 })
                                 .await;
                                 approving.set(false);
                                 match result {
-                                    Ok((outcome, recovery_refresh_error)) => {
+                                    Ok(outcome) => {
                                         handled.write().insert(request_key);
                                         pending.set(None);
                                         let next = owned_agents_rev.peek().saturating_add(1);
                                         owned_agents_rev.set(next);
-                                        status.set(if let Some(error) = recovery_refresh_error {
-                                            crate::i18n::tr_args(
-                                                "agent_runtime.approved_refresh_failed",
-                                                &[
-                                                    (
-                                                        "id",
-                                                        short_protocol_id(
-                                                            outcome.authorize_ref.event_id.as_str(),
-                                                        ),
-                                                    ),
-                                                    ("error", error),
-                                                ],
-                                            )
-                                        } else {
-                                            crate::i18n::tr_args(
-                                                "agent_runtime.approved_current",
-                                                &[(
-                                                    "id",
-                                                    short_protocol_id(
-                                                        outcome.authorize_ref.event_id.as_str(),
-                                                    ),
-                                                )],
-                                            )
-                                        });
+                                        status.set(crate::i18n::tr_args(
+                                            "agent_runtime.approved_current",
+                                            &[(
+                                                "id",
+                                                short_protocol_id(
+                                                    outcome.authorize_ref.event_id.as_str(),
+                                                ),
+                                            )],
+                                        ));
                                     }
                                     Err(err) => {
                                         tracing::warn!(

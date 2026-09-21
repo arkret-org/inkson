@@ -384,7 +384,7 @@ pub fn requested_scope_for_presets(
 pub fn build_agent_pairing_bootstrap_json(
     base_url: &str,
     service_id: &str,
-    outcome: &arkret_sdk::AgentProvisionOutcome,
+    outcome: &arkret_sdk::AgentProvisionComplete,
 ) -> serde_json::Result<String> {
     let base_url = base_url.trim_end_matches('/');
     let bootstrap = AgentPairingBootstrap {
@@ -394,8 +394,11 @@ pub fn build_agent_pairing_bootstrap_json(
             .map_err(json_invalid_input)?,
         agent_id: outcome.agent_id.clone(),
         pairing_request_id: outcome.pairing_request_id.clone(),
-        pairing_code: outcome.pairing_code.clone(),
-        pairing_expires_at: outcome.pairing_expires_at,
+        pairing_code: outcome
+            .pairing_code
+            .clone()
+            .ok_or_else(|| json_invalid_input("complete Agent outcome omitted pairing_code"))?,
+        pairing_expires_at: outcome.expires_at,
     };
     serde_json::to_string_pretty(&bootstrap)
 }
