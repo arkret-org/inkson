@@ -35,25 +35,10 @@ pub(crate) struct RealmProjectionInput {
     pub title: String,
     pub summary: String,
     pub discoverability: String,
-    /// Wire value the user picked from `ENCRYPTION_PROFILE_OPTIONS`
-    /// (e.g. `mls_rfc9420`). Written through verbatim — the optimistic
-    /// body must match exactly what the user chose.
-    pub encryption_profile: String,
-    /// Effective Realm content capability selected at creation time. The
-    /// optimistic projection is authoritative for local writes until account
-    /// sync replaces it, so omitting this field would silently downgrade
-    /// shared-history content to the `mls_rfc9420` scheme.
-    pub content_scheme: String,
     /// Initial history access selected at creation time.
     pub history_access: String,
     pub plaintext_visible_services: Vec<String>,
     pub collaboration_role: Option<arkret_sdk::CollaborationRealmRole>,
-    /// Recommended content/metadata floor (e.g. `e2ee_required`), or `None`
-    /// to omit the floor keys entirely. The caller decides this via
-    /// [`crate::event_builders::encryption_profile_uses_recommended_floor`] so the
-    /// "which profile recommends which floor" rule stays single-sourced in
-    /// `crate::api` instead of being duplicated here.
-    pub encryption_floor: Option<String>,
 }
 
 /// Caller-supplied fields for an optimistic Space projection body.
@@ -91,12 +76,9 @@ impl OptimisticRealmTreeProjection {
             title,
             summary,
             discoverability,
-            encryption_profile,
-            content_scheme,
             history_access,
             plaintext_visible_services,
             collaboration_role,
-            encryption_floor,
         } = input;
         // Realm metadata is mirrored at the body top level *and* under
         // `summary` because the two have different readers, and neither set
@@ -121,28 +103,20 @@ impl OptimisticRealmTreeProjection {
             owner: owner.clone(),
             admins: admins.clone(),
             members: members.clone(),
-            encryption_profile: encryption_profile.clone(),
-            content_scheme: content_scheme.clone(),
             history_access: history_access.clone(),
             plaintext_visible_services: plaintext_visible_services.clone(),
             collaboration_role,
-            content_encryption_floor: encryption_floor.clone(),
-            metadata_encryption_floor: encryption_floor.clone(),
             summary: RealmProjectionSummary {
                 title,
                 summary,
                 category: "collaboration",
                 tags: Vec::new(),
                 discoverability,
-                encryption_profile,
-                content_scheme,
                 history_access,
                 plaintext_visible_services,
                 owner,
                 admins,
                 members,
-                content_encryption_floor: encryption_floor.clone(),
-                metadata_encryption_floor: encryption_floor,
             },
             event_feed: ProjectionEventFeed::default(),
         }))
@@ -179,16 +153,10 @@ pub(crate) struct RealmProjectionBody {
     owner: String,
     admins: Vec<String>,
     members: Vec<String>,
-    encryption_profile: String,
-    content_scheme: String,
     history_access: String,
     plaintext_visible_services: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     collaboration_role: Option<arkret_sdk::CollaborationRealmRole>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    content_encryption_floor: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    metadata_encryption_floor: Option<String>,
     summary: RealmProjectionSummary,
     #[serde(rename = "timeline")]
     event_feed: ProjectionEventFeed,
@@ -201,17 +169,11 @@ struct RealmProjectionSummary {
     category: &'static str,
     tags: Vec<String>,
     discoverability: String,
-    encryption_profile: String,
-    content_scheme: String,
     history_access: String,
     plaintext_visible_services: Vec<String>,
     owner: String,
     admins: Vec<String>,
     members: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    content_encryption_floor: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    metadata_encryption_floor: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -293,35 +255,6 @@ pub(crate) fn realm_projection_control_purpose(body: &Value) -> Option<&str> {
 
 pub(crate) fn realm_projection_is_principal_control(body: &Value) -> bool {
     realm_projection_control_purpose(body).is_some()
-}
-
-/// The local creator's pre-Genesis content-scheme intent, if one was authored
-/// on this device.
-///
-/// This is **not** the accepted binding. `realm-and-space.md` §2.3 and the 1920
-/// ruling make `content_scheme` a create-time local intent that only becomes
-/// the group's protocol-immutable value at `GenesisAccepted`; the accepted
-/// value is published as `ak.component.mls.epoch.v1` and is read through
-/// `LocalStateStore::accepted_mls_epoch_binding`. The single legitimate
-/// consumer here is the pre-Genesis `proposed_group_genesis_binding` branch,
-/// which has to resubmit the exact proposal the interrupted creator
-/// transaction carried. Sending, decrypting, Signal and history recovery must
-/// never read it.
-pub(crate) fn realm_projection_pre_genesis_content_scheme(body: &Value) -> Option<String> {
-    let null = Value::Null;
-    for container in [
-        body,
-        body.get("summary").unwrap_or(&null),
-        body.get("object").unwrap_or(&null),
-        body.get("realm").unwrap_or(&null),
-        body.get("metadata").unwrap_or(&null),
-    ] {
-        if let Some(scheme) = string_field(container, &["content_scheme"]) {
-            return Some(scheme);
-        }
-    }
-
-    None
 }
 
 fn nested_string_field(value: &Value, parent: &str, keys: &[&str]) -> Option<String> {
@@ -886,39 +819,7 @@ mod tests {
     }
 
     #[test]
-    fn content_scheme_remains_pending_without_an_explicit_authoring_selector() {
-        let transient_projection = json!({
-            "member_roster_entries_limited": false,
-            "member_roster_entries": []
-        });
-
-        assert_eq!(
-            realm_projection_pre_genesis_content_scheme(&transient_projection),
-            None,
-            "a roster-only frame may not guess a content wire scheme"
-        );
-        assert_eq!(
-            realm_projection_pre_genesis_content_scheme(&json!({
-                "current": {"entries": [{
-                    "selector": {
-                        "scope_ref": {
-                            "kind": "realm",
-                            "realm_id": "ak:realm:AWgGCEbMHnelRQfzqg1C_onV9Ej_FdpdAZyM_JoFgAd3"
-                        },
-                        "cell_id": "ak:cell:ak.component.realm.genesis.v1:null"
-                    },
-                    "result": {"status": "value", "value": {
-                        "encryption_profile": "mls_rfc9420"
-                    }}
-                }]}
-            })),
-            None,
-            "the Realm genesis profile is not the MLS group content scheme"
-        );
-    }
-
-    #[test]
-    fn optimistic_realm_projection_serializes_typed_encryption_floor() {
+    fn optimistic_realm_projection_omits_retired_creation_security_axes() {
         let body = OptimisticRealmTreeProjection::realm(RealmProjectionInput {
             owner: "did:web:alice.example".to_owned(),
             admins: vec!["did:web:alice.example".to_owned()],
@@ -929,57 +830,29 @@ mod tests {
             title: "Launch".to_owned(),
             summary: "Launch planning".to_owned(),
             discoverability: "restricted".to_owned(),
-            encryption_profile: "mls_rfc9420".to_owned(),
-            content_scheme: "mls_exporter_aead_v1".to_owned(),
             history_access: "all_history_for_current_members".to_owned(),
             plaintext_visible_services: vec!["directory".to_owned()],
             collaboration_role: None,
-            encryption_floor: Some("e2ee_required".to_owned()),
         })
         .into_value();
 
         assert_eq!(body["__kind"], "realm");
-        assert_eq!(body["encryption_profile"], "mls_rfc9420");
-        assert_eq!(body["content_encryption_floor"], "e2ee_required");
-        assert_eq!(body["metadata_encryption_floor"], "e2ee_required");
-        assert_eq!(body["summary"]["content_encryption_floor"], "e2ee_required");
-        assert_eq!(
-            body["summary"]["metadata_encryption_floor"],
-            "e2ee_required"
-        );
-        assert_eq!(body["content_scheme"], "mls_exporter_aead_v1");
-        assert_eq!(body["summary"]["content_scheme"], "mls_exporter_aead_v1");
+        for container in [&body, &body["summary"]] {
+            for key in [
+                "encryption_profile",
+                "content_scheme",
+                "content_encryption_floor",
+                "metadata_encryption_floor",
+            ] {
+                assert!(container.get(key).is_none(), "retired creation axis {key}");
+            }
+        }
         assert_eq!(body["history_access"], "all_history_for_current_members");
         assert_eq!(
             body["summary"]["history_access"],
             "all_history_for_current_members"
         );
         assert_eq!(body["timeline"]["events"], json!([]));
-    }
-
-    #[test]
-    fn optimistic_realm_projection_omits_plaintext_floor() {
-        let body = OptimisticRealmTreeProjection::realm(RealmProjectionInput {
-            owner: "did:web:alice.example".to_owned(),
-            admins: vec!["did:web:alice.example".to_owned()],
-            members: vec!["did:web:alice.example".to_owned()],
-            title: "Public".to_owned(),
-            summary: String::new(),
-            discoverability: "public".to_owned(),
-            encryption_profile: "none".to_owned(),
-            content_scheme: "mls_rfc9420".to_owned(),
-            history_access: "since_join".to_owned(),
-            plaintext_visible_services: Vec::new(),
-            collaboration_role: None,
-            encryption_floor: None,
-        })
-        .into_value();
-
-        assert_eq!(body["encryption_profile"], "none");
-        assert!(body.get("content_encryption_floor").is_none());
-        assert!(body.get("metadata_encryption_floor").is_none());
-        assert!(body["summary"].get("content_encryption_floor").is_none());
-        assert!(body["summary"].get("metadata_encryption_floor").is_none());
     }
 
     #[test]

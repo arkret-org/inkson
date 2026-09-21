@@ -1036,16 +1036,6 @@ pub(super) fn RealmsSection(
                                                         } else {
                                                             vec![actor.clone()]
                                                         };
-                                                        // Single-source the "which profile
-                                                        // recommends which floor" rule.
-                                                        let projection_floor =
-                                                            crate::event_builders::encryption_profile_uses_recommended_floor(
-                                                                &encryption_profile,
-                                                            )
-                                                            .then(|| {
-                                                                crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR
-                                                                    .to_owned()
-                                                            });
                                                         let projection_body =
                                                             crate::realm_tree::OptimisticRealmTreeProjection::realm(
                                                                 crate::realm_tree::RealmProjectionInput {
@@ -1055,12 +1045,9 @@ pub(super) fn RealmsSection(
                                                                     title: title.clone(),
                                                                     summary: summary.clone(),
                                                                     discoverability: discoverability.clone(),
-                                                                    encryption_profile: encryption_profile.clone(),
-                                                                    content_scheme: content_scheme.clone(),
                                                                     history_access: history_access.clone(),
                                                                     plaintext_visible_services: plaintext_services.clone(),
                                                                     collaboration_role: None,
-                                                                    encryption_floor: projection_floor,
                                                                 },
                                                             )
                                                             .into_value();
