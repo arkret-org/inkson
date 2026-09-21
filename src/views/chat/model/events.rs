@@ -687,6 +687,94 @@ fn fold_revision_group(
     true
 }
 
+/// Ordinary chat projection only consumes a proof-verified Event whose signed
+/// scope is this Realm or one of its Circles. A native Sidecar Event may name
+/// the same source Strand in its payload, but that does not authorize an echo
+/// into the shared timeline. Missing proof/scope stays out of this fold.
+fn verified_ordinary_chat_event_scope(
+    realm_id: &str,
+    event: &Value,
+    state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
+) -> bool {
+    let Some(envelope) = message_candidates(event).into_iter().find(|candidate| {
+        candidate
+            .get("producer_proof")
+            .and_then(Value::as_object)
+            .is_some()
+            && candidate
+                .get("actor_id")
+                .and_then(actor_principal_from_value)
+                .is_some_and(|actor| !actor.trim().is_empty())
+    }) else {
+        return false;
+    };
+    let Some(signed_realm_id) = envelope.get("realm_id").and_then(Value::as_str) else {
+        return false;
+    };
+    if !realm_id.is_empty() && realm_id != signed_realm_id {
+        return false;
+    }
+    if verify_chat_envelope_proof_for_realm(signed_realm_id, event, state_store, decrypt_identity)
+        != ChatProofVerdict::Verified
+    {
+        return false;
+    }
+    let Some(scope) = envelope
+        .get("scope_ref")
+        .and_then(|value| serde_json::from_value::<arkret_sdk::ScopeRef>(value.clone()).ok())
+    else {
+        return false;
+    };
+    match scope {
+        arkret_sdk::ScopeRef::Realm {
+            realm_id: scope_realm_id,
+        }
+        | arkret_sdk::ScopeRef::Circle {
+            realm_id: scope_realm_id,
+            ..
+        } => scope_realm_id.as_str() == signed_realm_id,
+        arkret_sdk::ScopeRef::Sidecar { .. } | arkret_sdk::ScopeRef::RealmGenesis => false,
+        _ => false,
+    }
+}
+
+/// An unverified tombstone cannot be rendered as an attributed row. Its only
+/// safe local effect is to suppress an exact already-visible target, never to
+/// replace content or assert a new revision.
+fn unverified_tombstone_suppression_target(
+    expected_realm_id: &str,
+    event: &Value,
+) -> Option<(String, String)> {
+    let candidates = message_candidates(event);
+    if !message_is_redaction_tombstone(&candidates) {
+        return None;
+    }
+    let realm_id = event
+        .get("realm_id")
+        .and_then(Value::as_str)
+        .or_else(|| first_string_in_candidates(&candidates, &["realm_id"]))?;
+    arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?;
+    if !expected_realm_id.is_empty() && expected_realm_id != realm_id {
+        return None;
+    }
+    // A local redaction replacement can retain the original event_id while
+    // carrying a distinct protocol message_id. That explicit typed target
+    // must win over the create-id derivation or the old body remains visible.
+    let target = candidates
+        .iter()
+        .find_map(|candidate| candidate.get("message_id").and_then(Value::as_str))
+        .or_else(|| {
+            event
+                .pointer("/unsigned/local_target_ref")
+                .and_then(Value::as_str)
+        })
+        .map(ToOwned::to_owned)
+        .or_else(|| message_protocol_message_id_from_candidates(&candidates))?;
+    let target = arkret_sdk::MessageId::new(target).ok()?;
+    Some((realm_id.to_owned(), target.to_string()))
+}
+
 fn fold_event_list_into_chat_messages(
     mut messages: Vec<ChatMessage>,
     realm_id: &str,
@@ -694,9 +782,18 @@ fn fold_event_list_into_chat_messages(
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
+    let mut ordinary_events = Vec::new();
+    let mut suppressed_targets = std::collections::BTreeSet::new();
+    for event in events {
+        if verified_ordinary_chat_event_scope(realm_id, event, state_store, decrypt_identity) {
+            ordinary_events.push(event.clone());
+        } else if let Some(target) = unverified_tombstone_suppression_target(realm_id, event) {
+            suppressed_targets.insert(target);
+        }
+    }
     let mut durable_messages = Vec::new();
     let mut pending_revisions = BTreeMap::<String, Vec<ChatMessage>>::new();
-    for event in events {
+    for event in &ordinary_events {
         let candidates = message_candidates(event);
         let revision_target_ref = message_revision_target_ref_from_candidates(&candidates);
         let Some(message) =
@@ -729,8 +826,18 @@ fn fold_event_list_into_chat_messages(
             push_or_merge_create_message(&mut messages, revision);
         }
     }
-    apply_message_redactions(&mut messages, events);
-    apply_reaction_markers(&mut messages, events);
+    apply_message_redactions(&mut messages, &ordinary_events);
+    apply_reaction_markers(&mut messages, &ordinary_events);
+    messages.retain(|message| {
+        let target_ref = message
+            .protocol_message_id
+            .as_deref()
+            .unwrap_or(&message.id);
+        !suppressed_targets.contains(&(
+            message.realm_id.clone(),
+            canonical_message_revision_target(target_ref),
+        ))
+    });
     messages
 }
 

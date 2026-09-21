@@ -215,7 +215,13 @@ fn project_visible_messages(
     selected_realm_id: &str,
     sidecar_projection: Option<(&str, arkret_sdk::AgentSidecarDisplayMode)>,
     exchange_projections: &[arkret_sdk::AgentSidecarExchangeProjection],
+    sidecar_current_available: bool,
 ) -> Vec<ChatMessage> {
+    if sidecar_projection.is_some() && !sidecar_current_available {
+        // Unknown Sidecar current is not an empty exchange. Do not render a
+        // private-session timeline without a verified projection.
+        return Vec::new();
+    }
     let mut visible = Vec::new();
     let mut positions = std::collections::BTreeMap::<String, usize>::new();
     let mut echo_projection_by_event = std::collections::BTreeMap::new();
@@ -340,6 +346,16 @@ fn project_visible_messages(
     visible
 }
 
+/// Bare UI rows do not retain the signed Event scope that created them.
+/// In particular, older native Sidecar optimistic rows can carry the source
+/// Strand ID and would be indistinguishable from an ordinary Realm message.
+/// Until optimistic rows have trustworthy route provenance, rebuild visible
+/// chat exclusively from verified durable Events. This only clips rendering:
+/// the controller's pending submission/retry signal remains untouched.
+fn verified_scope_timeline_seed(_unscoped_rows: &[ChatMessage]) -> Vec<ChatMessage> {
+    Vec::new()
+}
+
 fn owned_agent_ids_from_composer(
     mentions_enabled: bool,
     mentions: &[MentionNode],
@@ -427,12 +443,7 @@ fn validate_native_prepared_sidecar_binding(
                 != (arkret_sdk::ScopeRef::Realm {
                     realm_id: source_realm_id.clone(),
                 })
-            || create.payload.len() != 1
-            || create
-                .payload
-                .get("encryption_profile")
-                .and_then(Value::as_str)
-                != Some("mls_rfc9420")
+            || !create.payload.is_empty()
             || arkret_sdk::SidecarId::from_event_id(&create.event_id) != *sidecar_id)
     {
         anyhow::bail!("native Sidecar create draft differs from its reservation");
@@ -876,6 +887,11 @@ async fn submit_source_routed_sidecar_message(
     view: &arkret_sdk::AgentSidecarView,
 ) -> anyhow::Result<SourceRoutedSidecarMessageOutcome> {
     crate::sidecar::validate_agent_sidecar_view(view)?;
+    crate::sidecar::cached_sidecar_exchange_projections(
+        &state_store.read(),
+        authority,
+        source_realm_id,
+    )?;
     if attached_source_strand_id != routed_source_strand_id {
         anyhow::bail!("native Sidecar send source differs from its attached context");
     }
@@ -1089,7 +1105,6 @@ async fn submit_source_routed_sidecar_message(
             attached_source_strand_id,
             &intent_digest,
         );
-        crate::sidecar::record_accepted_sidecar_exchange_request(&mut store, &pending, &event_id)?;
     }
     Ok(SourceRoutedSidecarMessageOutcome { event_id })
 }
@@ -1261,7 +1276,7 @@ pub fn ChatPanel(
     // A4 — base_url / state_store from session context instead of props.
     let session_context = crate::app::SessionContext::get();
     let base_url = session_context.base_url.read().clone();
-    let mut state_store = session_context.state_store;
+    let state_store = session_context.state_store;
     let Some(active_account) = session_context.active_account.read().clone() else {
         return rsx! {};
     };
@@ -1283,8 +1298,6 @@ pub fn ChatPanel(
     let navigator = use_navigator();
     let controller = use_chat_controller(&selected_realm_id, &initial_strand_id, &principal_id);
     let mut migrated_draft_applied_for = use_signal(String::new);
-    let mut sidecar_exchange_fold_basis_seen = use_signal(String::new);
-    let sidecar_close_retry_epoch = use_signal(|| 0_u64);
     {
         let state_store = state_store;
         use_effect(move || {
@@ -1432,11 +1445,15 @@ pub fn ChatPanel(
     // `state_store` subscriber on each render — including this component —
     // which spins ChatPanel into an infinite re-render that hangs the page
     // as soon as the panel mounts (e.g. the card-detail Discussion tab).
-    let sidecar_exchange_projections = crate::sidecar::cached_sidecar_exchange_projections(
+    let sidecar_exchange_current = crate::sidecar::cached_sidecar_exchange_projections(
         &state_store.read(),
         &authority,
         &selected_realm_id,
     );
+    let sidecar_exchange_projections = sidecar_exchange_current
+        .as_ref()
+        .cloned()
+        .unwrap_or_default();
     for projection in &sidecar_exchange_projections {
         private_sidecar_strand_ids.insert(projection.source_track_ref.strand_id.to_string());
     }
@@ -1592,7 +1609,9 @@ pub fn ChatPanel(
         }
     });
     let sidecar_send_block_reason = sidecar_session.as_ref().and_then(|session| {
-        if !session.membership_ready() {
+        if let Err(error) = &sidecar_exchange_current {
+            Some(format!("Sidecar exchange is unavailable: {error}"))
+        } else if !session.membership_ready() {
             Some(format!(
                 "Private access is still reconciling for {} principal(s). Sending is disabled until the native Sidecar MLS snapshot is available on this device.",
                 session.pending_reconciliation_count()
@@ -1606,10 +1625,8 @@ pub fn ChatPanel(
             None
         }
     });
-    // Fold the durable lifecycle log directly onto the controller's
-    // optimistic rows. A sender's create can still be controller-only when a
-    // remote reaction arrives, so projecting raw operations in isolation
-    // would discard that control event for lack of a target message.
+    // Fold the durable lifecycle log from verified Events. Bare controller
+    // rows have no signed scope provenance and cannot seed the shared view.
     // Folding the complete durable operation log is intentionally memoized.
     // Presence heartbeats, panel toggles, typing timers, and composer changes
     // all re-render ChatPanel; repeating the full lifecycle fold on each of
@@ -1630,7 +1647,7 @@ pub fn ChatPanel(
             let snapshot = store.load();
             let decrypt_identity = Some((&authority, principal_id.as_str(), &device_id));
             let mut folded = fold_local_state_into_chat_messages_with_sidecar(
-                messages(),
+                verified_scope_timeline_seed(messages.peek().as_slice()),
                 &snapshot,
                 Some(&store),
                 decrypt_identity,
@@ -1647,87 +1664,6 @@ pub fn ChatPanel(
             folded
         }
     });
-    {
-        let close_base_url = base_url.clone();
-        let principal_id = principal_id.clone();
-        let authority = authority.clone();
-        let device_id = account_device_id.clone();
-        let selected_realm_id = selected_realm_id.clone();
-        let all_messages_for_fold = all_messages_snapshot;
-        let active_sidecar = sidecar_session.clone();
-        let session_scope_hints = active_sidecar
-            .as_ref()
-            .map(|session| {
-                vec![crate::sidecar::SidecarExchangeScopeHint {
-                    source_strand_id: session.source_strand_id.clone(),
-                    sidecar_id: session.sidecar_id.clone(),
-                }]
-            })
-            .unwrap_or_default();
-        use_effect(move || {
-            let cursor = sync_cursor();
-            let realm_epoch = realm_live_epoch();
-            let close_retry_epoch = sidecar_close_retry_epoch();
-            // Accepted rows keyed by protocol message id: a pending
-            // submission whose request Event landed (e.g. the cache write
-            // raced a crash) is recognised by its message id and folded to
-            // `delivered` — the Event-truth successor of the old
-            // "Pending → Delivered" account-data retry.
-            let accepted_event_by_message_id = all_messages_for_fold
-                .read()
-                .iter()
-                .filter(|message| !message.pending && !message.failed)
-                .filter_map(|message| {
-                    message
-                        .protocol_message_id
-                        .clone()
-                        .map(|message_id| (message_id, message.id.clone()))
-                })
-                .collect::<std::collections::BTreeMap<_, _>>();
-            let basis = format!("{cursor}\u{1f}{realm_epoch}\u{1f}{close_retry_epoch}");
-            if sidecar_exchange_fold_basis_seen.peek().as_str() == basis {
-                return;
-            }
-            sidecar_exchange_fold_basis_seen.set(basis);
-            let mut store = state_store.write();
-            for (key, pending) in crate::sidecar::pending_sidecar_submissions(&store, &principal_id)
-            {
-                let Some(accepted_event_id) = accepted_event_by_message_id.get(&pending.message_id)
-                else {
-                    continue;
-                };
-                store.remove_plain_local_data(&key);
-                if let Err(error) = crate::sidecar::record_accepted_sidecar_exchange_request(
-                    &mut store,
-                    &pending,
-                    accepted_event_id,
-                ) {
-                    tracing::warn!(%error, "accepted Sidecar request fold cache write failed");
-                }
-            }
-            // Receive-side Event-truth fold: decrypt exchange bindings and
-            // durable control Events from the synced private-Strand history
-            // and refresh the local fold cache (`zh/models/sidecar.md` §7.2.4).
-            crate::sidecar::refold_sidecar_exchanges_from_history(
-                &mut store,
-                &principal_id,
-                &authority,
-                &device_id,
-                &selected_realm_id,
-                &session_scope_hints,
-            );
-            let retryable_closes = crate::sidecar::pending_sidecar_auto_close_intents(
-                &store,
-                &principal_id,
-                &selected_realm_id,
-            )
-            .into_iter()
-            .filter(|intent| intent.accepted_control_event_id.is_none())
-            .collect::<Vec<_>>();
-            drop(store);
-            let _ = (&close_base_url, &active_sidecar, retryable_closes, token());
-        });
-    }
     let all_messages_snapshot = all_messages_snapshot.read().clone();
     let sidecar_projection: Option<(&str, arkret_sdk::AgentSidecarDisplayMode)> = sidecar_session
         .as_ref()
@@ -1738,6 +1674,7 @@ pub fn ChatPanel(
         &selected_realm_id,
         sidecar_projection,
         &sidecar_exchange_projections,
+        sidecar_exchange_current.is_ok(),
     );
     // Dioxus may retain the child timeline across context-backed signal updates. Key the
     // projection boundary by every visible timeline row so lifecycle folds cannot
@@ -2590,6 +2527,14 @@ pub fn ChatPanel(
                     }
                 }
 
+                if sidecar_mode && sidecar_exchange_current.is_err() {
+                    div {
+                        class: "event warning-banner",
+                        "data-testid": "sidecar-timeline-current-pending",
+                        role: "status",
+                        "Private exchange history is unavailable until its Sidecar Commit history is verified. No conversation result is being shown as current."
+                    }
+                } else {
                 ChatTimeline {
                     key: "{_timeline_projection_key}",
                     controller,
@@ -2620,6 +2565,7 @@ pub fn ChatPanel(
                         sync_cursor,
                         frontier_state,
                     }
+                }
                 }
             }
 

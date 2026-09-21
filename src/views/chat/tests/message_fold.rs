@@ -2,6 +2,38 @@
 
 use super::*;
 
+// Positive fold fixtures represent signed ordinary Realm Events. Keep their
+// signed scope explicit: an attributed Event with no signed scope is no longer
+// eligible for the ordinary timeline, even when payload.strand_id matches.
+fn sign_chat_fixture(value: &mut Value) {
+    fn add_realm_scope(value: &mut Value) {
+        match value {
+            Value::Array(values) => values.iter_mut().for_each(add_realm_scope),
+            Value::Object(object) => {
+                if object.contains_key("actor_id")
+                    && !object.contains_key("scope_ref")
+                    && let Some(realm_id) = object.get("realm_id").cloned()
+                {
+                    object.insert(
+                        "scope_ref".to_owned(),
+                        json!({"kind":"realm","realm_id":realm_id}),
+                    );
+                }
+                object.values_mut().for_each(add_realm_scope);
+            }
+            _ => {}
+        }
+    }
+    add_realm_scope(value);
+    super::sign_chat_fixture(value);
+}
+
+fn sign_chat_fixtures(values: &mut [Value]) {
+    for value in values {
+        sign_chat_fixture(value);
+    }
+}
+
 #[test]
 fn optimistic_chat_ids_do_not_claim_protocol_identity() {
     let id = new_chat_local_id();
@@ -808,7 +840,7 @@ fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
 }
 
 #[test]
-fn chat_messages_keep_standalone_server_redacted_revision_tombstone() {
+fn chat_messages_do_not_render_standalone_proofless_redacted_revision() {
     let events = vec![json!({
         "event_id": "ak:event:Al7Qnsn3l-7MwwweunecsEKX84zMkYIeBOIm-5M-YYkQ",
         "kind": "ak.message.revise",
@@ -837,13 +869,9 @@ fn chat_messages_keep_standalone_server_redacted_revision_tombstone() {
         None,
     );
 
-    assert_eq!(messages.len(), 1);
-    assert_eq!(
-        messages[0].protocol_message_id.as_deref(),
-        Some("ak:message:AALmz4zWkDYecrEZnVupSWR2EqdHzYP-bSwUXf4qQ82E")
-    );
-    assert!(messages[0].redacted);
-    assert!(messages[0].body.is_empty());
+    // A proofless projection-only tombstone may suppress an already known
+    // exact target, but cannot invent an attributed standalone message row.
+    assert!(messages.is_empty());
 }
 
 #[test]
@@ -1234,7 +1262,7 @@ fn message_operations_from_events_folds_shared_pin_control_events() {
 }
 
 #[test]
-fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
+fn local_redaction_tombstone_without_signed_scope_cannot_render_row() {
     let remote_actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
         arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:remote-station.example").unwrap(),
@@ -1304,11 +1332,9 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
         }],
         ..ClientLocalState::default()
     };
-    sign_chat_fixture(&mut state.raw_operations[0].payload);
+    // This local replacement has no signed scope; it can only suppress an
+    // exact existing target, not become a new attributed timeline row.
+    super::sign_chat_fixture(&mut state.raw_operations[0].payload);
     let restored = chat_messages_from_local_state_with_sidecar(&state, None, None);
-    assert_eq!(restored.len(), 1);
-    assert_eq!(restored[0].id, message.id);
-    assert!(restored[0].redacted);
-    assert_eq!(restored[0].body, "");
-    assert_eq!(restored[0].reply_to, None);
+    assert!(restored.is_empty());
 }

@@ -39,106 +39,184 @@ fn chat_message_matches_protocol_id_after_server_rekeys_render_id() {
     );
 }
 
-/// A valid `delivered` Event-fold projection (§7.2.4 shape: no Pending, no
-/// updated_hlc; coordinator + folded_frontier are required).
-fn delivered_exchange_projection_fixture(
-    realm_id: &str,
-    source_strand_id: &str,
-    source_event_id: Option<&str>,
-    request_event_id: &str,
-) -> arkret_sdk::AgentSidecarExchangeProjection {
-    let coordinator =
-        crate::mls_api_helpers::principal_core_id("ak:did_core:web:example.test:agents:assistant")
-            .unwrap();
-    let request_event = arkret_sdk::EventId::new(request_event_id).unwrap();
-    arkret_sdk::AgentSidecarExchangeProjection {
-        schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
-        controller_account_id: arkret_sdk::AccountId::new(
-            crate::mls_api_helpers::principal_core_id("ak:did_core:web:example.test:alice")
-                .unwrap(),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example".to_owned()).unwrap(),
-        ),
-        sidecar_id: arkret_sdk::SidecarId::new(
-            "ak:sidecar:AWea2MtI5dOI1LSRyI266_gQVrWUd0po0dxZiJNsH8kN",
-        )
-        .unwrap(),
-        exchange_id: arkret_sdk::AgentSidecarExchangeId::new("exchange-01964137000000000008")
-            .unwrap(),
-        source_track_ref: arkret_sdk::SidecarSourceTrackRef {
-            realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
-            strand_id: arkret_sdk::StrandId::new(source_strand_id).unwrap(),
-            track_name: "discussion".to_owned(),
-        },
-        source_event_id: source_event_id.map(|anchor| arkret_sdk::EventId::new(anchor).unwrap()),
-        source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
-        client_order_key: "device-1-1".to_owned(),
-        addressed_agent_ids: vec![coordinator.clone()],
-        coordinator_agent_id: coordinator,
-        coordinator_assignment_event_id: request_event.clone(),
-        participating_agent_ids: Vec::new(),
-        private_request_event_id: request_event.clone(),
-        user_facing_response_event_ids: Vec::new(),
-        status: arkret_sdk::AgentSidecarExchangeStatus::Delivered,
-        failure_reason_code: None,
-        terminal_event_id: None,
-        folded_frontier: arkret_sdk::AgentSidecarExchangeFoldedFrontier {
-            event_ids: vec![request_event.clone()],
-            event_set_digest: arkret_sdk::agent_sidecar_exchange_event_set_digest(&[request_event])
-                .unwrap(),
-            max_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
-        },
-    }
-}
-
 #[test]
-fn source_routed_echo_is_private_and_stably_follows_its_anchor() {
+fn signed_sidecar_event_with_source_strand_id_never_enters_ordinary_timeline() {
     let realm = "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5";
     let source = "ak:strand:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N";
-    let anchor = "ak:event:ATrYU3cGlcWkAcHXWgJ8sIYfraoV9pIwEHNNStEqHvFh";
-    let echo = "ak:event:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc";
-    let later = "ak:event:AS7wchHFRbXWnMQPln42BrokXsPCf18uboKMm-yhYquI";
-    let projection = delivered_exchange_projection_fixture(realm, source, Some(anchor), echo);
-    let messages = vec![
-        sidecar_projection_message_for_realm(realm, anchor, source, "anchor"),
-        sidecar_projection_message_for_realm(realm, later, source, "later shared"),
-        sidecar_projection_message_for_realm(realm, echo, source, "private echo"),
-    ];
-
-    let visible = project_visible_messages(&messages, source, realm, None, &[projection]);
-
+    let mut shared = json!({
+        "event_id": "ak:event:ATrYU3cGlcWkAcHXWgJ8sIYfraoV9pIwEHNNStEqHvFh",
+        "kind": "ak.message.create",
+        "realm_id": realm,
+        "scope_ref": {"kind": "realm", "realm_id": realm},
+        "actor_id": {"kind":"account","account_id":{
+            "principal_id":"ak:did_core:web:alice.example",
+            "station_id":"ak:did_core:web:principal.example"
+        }},
+        "created_at": "2026-07-08T01:44:39.000Z",
+        "payload": {
+            "content": {"kind":"ak.content.text","body":"shared"},
+            "strand_id": source,
+            "track_name": "discussion"
+        }
+    });
+    let mut private = shared.clone();
+    private["event_id"] = json!("ak:event:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc");
+    private["scope_ref"] = json!({
+        "kind": "sidecar",
+        "realm_id": realm,
+        "sidecar_id": "ak:sidecar:AWea2MtI5dOI1LSRyI266_gQVrWUd0po0dxZiJNsH8kN"
+    });
+    private["payload"]["content"]["body"] = json!("private");
+    sign_chat_fixture(&mut shared);
+    sign_chat_fixture(&mut private);
     assert_eq!(
-        visible
-            .iter()
-            .map(|message| message.id.as_str())
-            .collect::<Vec<_>>(),
-        vec![anchor, echo, later]
+        verify_chat_envelope_proof(&shared),
+        ChatProofVerdict::Verified
     );
-    assert_eq!(visible[1].strand_id, source);
+    assert_eq!(
+        verify_chat_envelope_proof(&private),
+        ChatProofVerdict::Verified
+    );
+
+    let events = vec![private, shared];
+    let synced = chat_messages_from_events_with_sidecar(realm, &events, None, None);
+    assert_eq!(synced.len(), 1);
+    assert_eq!(synced[0].body, "shared");
+    assert_eq!(
+        project_visible_messages(&synced, source, realm, None, &[], false).len(),
+        1,
+        "an ordinary Realm view still displays verified durable rows"
+    );
+
+    let records = message_operations_from_events(realm, &events);
+    assert_eq!(
+        records.len(),
+        2,
+        "both signed Events reach the local input boundary"
+    );
+    let local = ClientLocalState {
+        raw_operations: records,
+        ..ClientLocalState::default()
+    };
+    let restored = chat_messages_from_local_state_with_sidecar(&local, None, None);
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].body, "shared");
 }
 
 #[test]
-fn source_routed_echo_waits_until_its_anchor_is_visible() {
+fn unscoped_chat_seed_cannot_enter_ordinary_realm_projection() {
     let realm = "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5";
     let source = "ak:strand:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N";
-    let missing_anchor = "ak:event:ATrYU3cGlcWkAcHXWgJ8sIYfraoV9pIwEHNNStEqHvFh";
-    let echo = "ak:event:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc";
-    let mut projection =
-        delivered_exchange_projection_fixture(realm, source, Some(missing_anchor), echo);
-    let messages = vec![sidecar_projection_message_for_realm(
+    // The old optimistic Sidecar row has already lost its signed scope and
+    // even uses the ordinary source Strand. Its shape is otherwise identical
+    // to a normal local optimistic row, so neither is trusted as a seed.
+    let private_seed = sidecar_projection_message_for_realm(
         realm,
-        echo,
+        "local-message:old-private-row",
         source,
-        "private echo",
-    )];
+        "private body",
+    );
+    let scoped_seed = verified_scope_timeline_seed(&[private_seed.clone()]);
+    assert!(scoped_seed.is_empty());
+    assert!(project_visible_messages(&scoped_seed, source, realm, None, &[], false).is_empty());
+    assert!(
+        project_visible_messages(
+            &[private_seed],
+            source,
+            realm,
+            Some((source, arkret_sdk::AgentSidecarDisplayMode::ContextMerged)),
+            &[],
+            false,
+        )
+        .is_empty(),
+        "unavailable exchange current hides even an active Sidecar timeline"
+    );
+}
+
+#[test]
+fn unverified_projection_tombstone_suppresses_exact_visible_body() {
+    let realm = "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5";
+    let event_id = "ak:event:ATrYU3cGlcWkAcHXWgJ8sIYfraoV9pIwEHNNStEqHvFh";
+    let message_id =
+        arkret_sdk::MessageId::from_event_id(&arkret_sdk::EventId::new(event_id).unwrap());
+    let mut shared = json!({
+        "event_id": event_id,
+        "kind": "ak.message.create",
+        "realm_id": realm,
+        "scope_ref": {"kind": "realm", "realm_id": realm},
+        "actor_id": {"kind":"account","account_id":{
+            "principal_id":"ak:did_core:web:alice.example",
+            "station_id":"ak:did_core:web:principal.example"
+        }},
+        "created_at": "2026-07-08T01:44:39.000Z",
+        "payload": {
+            "content": {"kind":"ak.content.text","body":"must not survive redaction"},
+            "strand_id":"ak:strand:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N",
+            "track_name":"discussion"
+        }
+    });
+    sign_chat_fixture(&mut shared);
+    let tombstone = json!({
+        "event_id":"ak:event:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
+        "kind":"ak.message.revise",
+        "realm_id":realm,
+        "actor_id":{"kind":"account","account_id":{
+            "principal_id":"ak:did_core:web:alice.example",
+            "station_id":"ak:did_core:web:principal.example"
+        }},
+        "payload":{
+            "message_id":message_id.as_str(),
+            "redacted":true,
+            "state":"redacted",
+            "content":{"kind":"ak.content.text","body":"[redacted]"}
+        },
+        "unsigned":{"projection_only":true,"local_target_ref":message_id.as_str()},
+        "producer_proof":null
+    });
+    let ordinary = chat_messages_from_events_with_sidecar(realm, &[shared.clone()], None, None);
+    assert_eq!(ordinary.len(), 1);
+    assert_eq!(ordinary[0].body, "must not survive redaction");
+    let mut cross_realm = tombstone.clone();
+    cross_realm["realm_id"] = json!("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0");
+    let cross_realm_result =
+        chat_messages_from_events_with_sidecar(realm, &[shared.clone(), cross_realm], None, None);
+    assert_eq!(cross_realm_result.len(), 1);
+    assert_eq!(cross_realm_result[0].body, "must not survive redaction");
+
+    let mut no_target = tombstone.clone();
+    no_target["payload"]
+        .as_object_mut()
+        .unwrap()
+        .remove("message_id");
+    no_target["unsigned"]
+        .as_object_mut()
+        .unwrap()
+        .remove("local_target_ref");
+    let no_target_result =
+        chat_messages_from_events_with_sidecar(realm, &[shared.clone(), no_target], None, None);
+    assert_eq!(no_target_result.len(), 1);
+    assert_eq!(no_target_result[0].body, "must not survive redaction");
 
     assert!(
-        project_visible_messages(&messages, source, realm, None, &[projection.clone()]).is_empty()
+        chat_messages_from_events_with_sidecar(realm, &[shared.clone(), tombstone], None, None,)
+            .is_empty()
     );
 
-    projection.source_event_id = None;
-    let visible = project_visible_messages(&messages, source, realm, None, &[projection]);
-    assert_eq!(visible.len(), 1);
-    assert_eq!(visible[0].id, echo);
+    // A local replacement may keep a different create EventId. Its explicit
+    // protocol message_id, not that EventId, is the exact suppression target.
+    let local_replacement = json!({
+        "event_id":"ak:event:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
+        "kind":"ak.message.create",
+        "realm_id":realm,
+        "message_id":message_id.as_str(),
+        "redacted":true,
+        "state":"redacted",
+        "producer_proof":null
+    });
+    assert!(
+        chat_messages_from_events_with_sidecar(realm, &[shared, local_replacement], None, None)
+            .is_empty()
+    );
 }
 
 /// §7.2.1 producer shape: the typed request binding lives ONLY in the
@@ -160,7 +238,7 @@ fn routed_request_binding_travels_only_in_encrypted_metadata_plaintext() {
             track_name: "discussion".to_owned(),
         },
         source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
-        client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
+        client_order_key: "device-1-1".to_owned(),
         addressed_agent_ids: vec![
             crate::mls_api_helpers::principal_core_id(
                 "ak:did_core:web:example.test:agents:assistant",
@@ -214,5 +292,5 @@ fn sidecar_native_message_never_appears_in_the_source_without_a_projection() {
         realm, native, private, "native",
     )];
 
-    assert!(project_visible_messages(&messages, source, realm, None, &[]).is_empty());
+    assert!(project_visible_messages(&messages, source, realm, None, &[], true).is_empty());
 }

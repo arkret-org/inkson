@@ -74,7 +74,6 @@ mod types;
 pub use types::*;
 
 mod mls_sidecar;
-pub(crate) use mls_sidecar::{mls_scope_checkpoint_key, mls_scope_checkpoint_key_for_group};
 
 mod identity_links;
 
@@ -349,19 +348,6 @@ impl LocalStateStore {
         self.sidecar_projection_fold
             .view_state(&controller_account_id.to_string(), realm_id, strand_id)
             .cloned()
-    }
-
-    pub(crate) fn apply_sidecar_exchange_projection(
-        &mut self,
-        projection: arkret_sdk::AgentSidecarExchangeProjection,
-    ) -> arkret_sdk::Result<()> {
-        self.sidecar_projection_fold
-            .apply_folded_exchange(projection)
-            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
-    }
-
-    pub(crate) fn sidecar_projection_fold_snapshot(&self) -> crate::sidecar::SidecarProjectionFold {
-        self.sidecar_projection_fold.clone()
     }
 
     const SECURE_IDENTITY_KEY: &'static str = "identity.local.primary.v1";
