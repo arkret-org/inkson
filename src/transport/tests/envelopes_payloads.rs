@@ -6,7 +6,6 @@ use crate::event_builders::{
     build_realm_create_event, build_realm_state_event_for_station, build_space_create_event,
 };
 use crate::operation::TypedOperationBuilder;
-use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
 use crate::realm_helpers::validate_join_rule_v1;
 
 fn test_genesis_salt() -> arkret_sdk::GenesisSalt {
@@ -173,19 +172,18 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
 
     // Bootstrap order: create, profile, policy bundle, join_rule,
     // history_access, discovery, plaintext_visible, creator member join.
-    assert_eq!(
-        events[2].payload["content_encryption_floor"],
-        RECOMMENDED_REALM_ENCRYPTION_FLOOR
-    );
-    assert_eq!(
-        events[2].payload["metadata_encryption_floor"],
-        RECOMMENDED_REALM_ENCRYPTION_FLOOR
-    );
+    for removed in [
+        "content_encryption_floor",
+        "metadata_encryption_floor",
+        "encryption_profile",
+        "content_scheme",
+    ] {
+        assert!(
+            !events[2].payload.contains_key(removed),
+            "Realm policy bundle must not restate {removed}"
+        );
+    }
     assert_eq!(events[2].payload["policy_revision"], 1);
-    assert!(
-        !events[2].payload.contains_key("content_scheme"),
-        "the Realm policy bundle must not duplicate the MLS Genesis content scheme"
-    );
     assert_eq!(events[3].payload["value"], "invite");
     assert_eq!(events[4].payload["from"], serde_json::Value::Null);
     assert_eq!(events[4].payload["to"], "all_history_for_current_members");
@@ -314,7 +312,9 @@ fn realm_bootstrap_prejoin_history_does_not_author_retired_encryption_axes() {
         "e2ee_required",
     ] {
         assert!(
-            events.iter().all(|event| !event.payload.contains_key(retired)),
+            events
+                .iter()
+                .all(|event| !event.payload.contains_key(retired)),
             "Realm bootstrap must not author {retired}"
         );
     }

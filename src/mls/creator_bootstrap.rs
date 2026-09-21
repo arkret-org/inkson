@@ -43,8 +43,7 @@ fn creator_genesis_resume_action(
     Ok(CreatorGenesisResumeAction::Author)
 }
 
-/// Whether this client is the creator of an encrypted `realm_id` whose MLS
-/// bootstrap is still incomplete.
+/// Whether local epoch-zero work for a Realm is still incomplete.
 ///
 /// Cheap and synchronous so UI effects can gate on it without spawning. The
 /// creator check is only a cheap scheduling hint. The asynchronous entry point
@@ -90,6 +89,22 @@ fn creator_mls_bootstrap_incomplete(store: &LocalStateStore, realm_id: &str) -> 
         .is_err()
 }
 
+fn has_staged_creator_genesis(store: &LocalStateStore, realm_id: &str) -> bool {
+    store.mls_checkpoint_for(realm_id).is_some()
+}
+
+fn creator_genesis_has_resume_evidence(
+    accepted: bool,
+    staged_checkpoint: bool,
+    durable_queued_genesis: bool,
+) -> bool {
+    if accepted {
+        staged_checkpoint
+    } else {
+        staged_checkpoint || durable_queued_genesis
+    }
+}
+
 /// Compare the complete account identity with exact accepted founding authority.
 pub(crate) async fn authenticated_account_is_realm_creator(
     api: &crate::transport::TransportClient,
@@ -104,29 +119,42 @@ pub(crate) async fn authenticated_account_is_realm_creator(
         .map_err(|error| format!("resolve accepted Realm creator: {error}"))
 }
 
-/// Refresh the accepted Seal view, acquire + verify + pin the governance
-/// proof, create the epoch-0 creator group and submit `ak.mls.genesis`.
-///
-/// Idempotent and safe to re-enter: it returns early only after the accepted
-/// Genesis is present in the locally verified checkpoint and its accepted MLS
-/// artifact is durable. A server-side duplicate genesis is resolved to its
-/// accepted Event id rather than treated as an error.
-/// Select the unfinished Genesis transaction, not every device of its account.
-/// Once Genesis exists, a device without that local group must join/recover.
+/// Background recovery gate for an already accepted or staged creator Genesis.
+/// Absence of accepted/staged work is a plaintext Realm, not an implicit MLS
+/// activation request. A candidate is still checked against accepted creator
+/// authority before any resume work proceeds.
 pub(crate) async fn should_resume_creator_genesis(
     api: &crate::transport::TransportClient,
     state_store: &StateStoreHandle,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
 ) -> Result<bool, String> {
-    let accepted = api
-        .event_submitter()
-        .map_err(|e| e.to_string())?
+    let submitter = api.event_submitter().map_err(|e| e.to_string())?;
+    let accepted = submitter
         .find_mls_genesis_event_id(realm_id)
         .await
         .map_err(|e| e.to_string())?;
+    let staged_checkpoint = state_store.read(|store| has_staged_creator_genesis(store, realm_id));
     if accepted.is_some() {
-        return Ok(state_store.read(|store| store.mls_checkpoint_for(realm_id).is_some()));
+        return Ok(creator_genesis_has_resume_evidence(
+            true,
+            staged_checkpoint,
+            false,
+        ));
+    }
+    // A plaintext Realm with no accepted Genesis is not an implicit request
+    // to activate MLS. Only an already-staged checkpoint or a byte-identical
+    // durable queue item may be resumed by background effects.
+    let durable_queued_genesis = if staged_checkpoint {
+        false
+    } else {
+        submitter
+            .has_durable_mls_genesis_for_realm(realm_id)
+            .await
+            .map_err(|e| e.to_string())?
+    };
+    if !creator_genesis_has_resume_evidence(false, staged_checkpoint, durable_queued_genesis) {
+        return Ok(false);
     }
     authenticated_account_is_realm_creator(api, state_store, realm_id, authority).await
 }
@@ -157,12 +185,41 @@ async fn converge_accepted_creator_genesis(
     Ok(())
 }
 
+/// Explicitly start MLS after Realm creation. This does not change the
+/// `ak.realm.create` payload; only an accepted Genesis activates the scope.
+pub(crate) async fn start_creator_realm_mls_genesis(
+    api: &crate::transport::TransportClient,
+    state_store: &StateStoreHandle,
+    realm_id: &str,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+) -> Result<(), String> {
+    bootstrap_creator_realm_mls_genesis(api, state_store, realm_id, authority, device_id, true)
+        .await
+}
+
+/// Resume only a previously staged epoch-zero checkpoint or durable Genesis
+/// queue item. A plaintext Realm with neither is not an activation request.
+/// The common implementation is idempotent and converges exact accepted
+/// Genesis evidence before reporting success.
 pub(crate) async fn ensure_creator_realm_mls_genesis(
     api: &crate::transport::TransportClient,
     state_store: &StateStoreHandle,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
+) -> Result<(), String> {
+    bootstrap_creator_realm_mls_genesis(api, state_store, realm_id, authority, device_id, false)
+        .await
+}
+
+async fn bootstrap_creator_realm_mls_genesis(
+    api: &crate::transport::TransportClient,
+    state_store: &StateStoreHandle,
+    realm_id: &str,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    explicit_start: bool,
 ) -> Result<(), String> {
     let actor_id = authority.principal_id.as_str();
     let realm_id = realm_id.trim();
@@ -184,14 +241,6 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     if !authenticated_account_is_realm_creator(api, state_store, realm_id, authority).await? {
         return Err("the authenticated actor is not the accepted Realm creator".to_owned());
     }
-    if !submitter
-        .accepted_realm_is_encrypted(realm_id)
-        .await
-        .map_err(|error| format!("resolve accepted Realm encryption profile: {error}"))?
-    {
-        return Ok(());
-    }
-
     // An accepted Genesis is the authoritative completion record. Resolve it,
     // or drain its byte-identical durable queue item, before reading or
     // rebuilding any pre-Genesis proposal, proof, or epoch-0 authoring state.
@@ -232,6 +281,11 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
             accepted_event_id,
         )
         .await;
+    }
+    if !explicit_start && !state_store.read(|store| has_staged_creator_genesis(store, realm_id)) {
+        return Err(
+            "creator MLS resume has no accepted Genesis or staged local checkpoint".to_owned(),
+        );
     }
     if state_store.read(|store| store.mls_genesis_emitted_for(realm_id)) {
         // A local marker cannot overrule the Station's complete accepted Event
@@ -472,16 +526,19 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     })?;
     // The accepted Genesis Event id is bound to the epoch-zero checkpoint by
     // `mark_mls_genesis_emitted_*`; that binding is the completion boundary.
-    if state_store.read(|store| {
-        store
-            .mls_group_state_ref_for_effective_scope(
-                realm_id,
-                None,
-                &accepted_event_id.to_string(),
-                0,
-            )
-            .is_err()
-            && store.mls_checkpoint_for(realm_id).is_none()
+    if !state_store.read(|store| {
+        let Some(checkpoint) = store.mls_checkpoint_for(realm_id) else {
+            return false;
+        };
+        checkpoint.group_state_event_id.as_ref() == Some(&accepted_event_id)
+            && store
+                .mls_group_state_ref_for_effective_scope(
+                    realm_id,
+                    None,
+                    &checkpoint.group_id,
+                    checkpoint.epoch,
+                )
+                .is_ok()
     }) {
         return Err("accepted MLS Genesis did not become durably ready".to_owned());
     }
@@ -608,6 +665,33 @@ mod tests {
     }
 
     #[test]
+    fn plaintext_realm_without_staged_genesis_is_not_a_resume_intent() {
+        let mut store = temp_store("no-implicit-start");
+        store.save_realm_tree_projection(REALM, realm_projection(ACTOR));
+        assert!(!has_staged_creator_genesis(&store, REALM));
+
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
+        };
+        store
+            .save_mls_checkpoint(
+                REALM,
+                epoch_zero_snapshot(scope.canonical_mls_group_id().unwrap().to_string()),
+            )
+            .unwrap();
+        assert!(has_staged_creator_genesis(&store, REALM));
+    }
+
+    #[test]
+    fn background_resume_requires_staged_or_exact_queued_genesis() {
+        assert!(!creator_genesis_has_resume_evidence(false, false, false));
+        assert!(creator_genesis_has_resume_evidence(false, true, false));
+        assert!(creator_genesis_has_resume_evidence(false, false, true));
+        assert!(!creator_genesis_has_resume_evidence(true, false, true));
+        assert!(creator_genesis_has_resume_evidence(true, true, false));
+    }
+
+    #[test]
     fn optimistic_encrypted_realm_is_incomplete_before_authority_current_arrives() {
         let mut store = temp_store("optimistic-incomplete");
         store.save_realm_tree_projection(
@@ -625,26 +709,22 @@ mod tests {
     }
 
     #[test]
-    fn emitted_genesis_with_stale_checkpoint_remains_pending() {
+    fn checkpoint_event_ref_without_emitted_marker_remains_pending() {
         let mut store = temp_store("stale-checkpoint");
         store.save_realm_tree_projection(REALM, realm_projection(ACTOR));
         let scope = arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
         };
-        let group_id = scope.canonical_mls_group_id().unwrap();
-        store
-            .save_mls_checkpoint(REALM, epoch_zero_snapshot(group_id.clone()))
-            .unwrap();
+        let group_id = scope.canonical_mls_group_id().unwrap().to_string();
         let accepted_genesis =
             arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
                 .unwrap();
-        store
-            .mark_mls_genesis_emitted_for_effective_scope_with_event(REALM, None, &accepted_genesis)
-            .unwrap();
+        let mut snapshot = epoch_zero_snapshot(group_id);
+        snapshot.group_state_event_id = Some(accepted_genesis.clone());
+        store.save_mls_checkpoint(REALM, snapshot).unwrap();
 
-        // The emitted marker plus its accepted Event id do not replace durable
-        // MLS application: the epoch-zero checkpoint still has to name the
-        // accepted transition before the group may be used.
+        // An isolated local field is not an accepted Genesis or an emitted
+        // marker. Only the authenticated Station result can drive convergence.
         assert_eq!(
             store
                 .mls_checkpoint_for(REALM)
@@ -652,11 +732,7 @@ mod tests {
                 .group_state_event_id,
             Some(accepted_genesis)
         );
-        assert!(
-            store
-                .accepted_current_realm_mls_transition_evidence(REALM)
-                .is_err()
-        );
+        assert!(!store.mls_genesis_emitted_for(REALM));
         assert!(creator_mls_bootstrap_pending(&store, REALM, ACTOR));
     }
 
@@ -687,7 +763,7 @@ mod tests {
         let scope = arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
         };
-        let group_id = scope.canonical_mls_group_id().unwrap();
+        let group_id = scope.canonical_mls_group_id().unwrap().to_string();
         store
             .save_mls_checkpoint(REALM, epoch_zero_snapshot(group_id.clone()))
             .unwrap();
@@ -741,7 +817,7 @@ mod tests {
         let scope = arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
         };
-        let group_id = scope.canonical_mls_group_id().unwrap();
+        let group_id = scope.canonical_mls_group_id().unwrap().to_string();
         let mut advanced = epoch_zero_snapshot(group_id);
         advanced.epoch = 3;
         store.save_mls_checkpoint(REALM, advanced).unwrap();

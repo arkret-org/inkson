@@ -159,6 +159,9 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   await page.getByTestId("new-realm-next-button").click();
   const boundaryPanel = page.getByTestId("realm-lifecycle-strand");
   await expect(page.getByTestId("realm-discoverability-input")).toBeVisible();
+  await expect(page.getByTestId("realm-mls-activation-input")).toBeVisible();
+  await expect(page.getByTestId("realm-encryption-profile-input")).toHaveCount(0);
+  await expect(page.getByTestId("realm-content-scheme-input")).toHaveCount(0);
   await expect(
     boundaryPanel.locator(".setup-step-panel > .event-head"),
   ).toHaveCount(0);
@@ -179,6 +182,11 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
     "title",
     /Who can discover that this Realm exists\?.*Visible in Search/,
   );
+  // This test exercises plaintext Realm/Space navigation. MLS activation is
+  // a separate accepted Genesis flow, not a create-time profile or a mock
+  // server claim.
+  await page.getByTestId("realm-mls-activation-input").click();
+  await page.getByRole("option", { name: "Not now" }).click();
   await page.getByTestId("new-realm-next-button").click();
   await expect(
     setupPanel.getByRole("button", { name: "Create Realm" }),
@@ -213,7 +221,7 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
     /Created ak:realm:/,
   );
   await expect(page.getByTestId("realm-lifecycle-strand")).toContainText(
-    "canonical policy listed / invite / all_history_for_current_members",
+    "canonical policy listed / invite / since_join",
   );
   await expect(page.getByTestId("realm-setup-done")).toBeVisible();
   await expect(

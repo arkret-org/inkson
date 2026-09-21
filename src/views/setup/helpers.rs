@@ -40,52 +40,20 @@ pub(super) fn policy_combination_hint(
     None
 }
 
-pub(super) fn history_access_admits_prejoin(history_access: &str) -> bool {
-    history_access.trim() == "all_history_for_current_members"
+/// Whether the wizard should explicitly start MLS after Realm creation.
+/// This is local workflow intent, never a Realm profile or activation proof.
+pub(super) fn mls_activation_requested(selection: &str) -> bool {
+    selection == "after_create"
 }
 
-/// Whether the wizard's encryption selection asks for an end-to-end encrypted
-/// Realm.
-///
-/// This is a host-side reading of this wizard's own closed option list
-/// ([`super::data::ENCRYPTION_PROFILE_OPTIONS`]), not a protocol judgement. A
-/// scope is plaintext until its own accepted `ak.mls.genesis` and irreversibly
-/// RFC 9420 afterwards, so "is this scope encrypted" is answered by
-/// [`crate::current_projection::scope_has_accepted_mls_genesis`]; at create
-/// time no scope has a genesis yet, and this selection is only the intent the
-/// creator is expressing.
-pub(super) fn encryption_selection_is_e2ee(selection: &str) -> bool {
-    !matches!(selection.trim(), "" | "none")
-}
-
-pub(super) fn normalize_content_scheme(
-    encryption_is_e2ee: bool,
+/// The governing Station can accept the first MLS Genesis only while the
+/// current Realm history policy is `since_join`.
+pub(super) fn mls_activation_history_hint(
+    activation_requested: bool,
     history_access: &str,
-    content_scheme: &str,
-) -> String {
-    if encryption_is_e2ee && history_access_admits_prejoin(history_access) {
-        "mls_exporter_aead_v1".to_owned()
-    } else {
-        content_scheme.to_owned()
-    }
-}
-
-/// i18n key for the content-scheme constraint violation, or `None` when the
-/// current combination is valid. Key, not display text — see
-/// [`policy_combination_hint`].
-pub(super) fn content_scheme_constraint_hint(
-    encryption_is_e2ee: bool,
-    history_access: &str,
-    content_scheme: &str,
 ) -> Option<&'static str> {
-    if encryption_is_e2ee
-        && history_access_admits_prejoin(history_access)
-        && content_scheme.trim() == "mls_rfc9420"
-    {
-        Some("setup.content_scheme.prejoin_requires_exporter")
-    } else {
-        None
-    }
+    (activation_requested && history_access != "since_join")
+        .then_some("setup.mls_activation.requires_since_join")
 }
 
 #[cfg(test)]
@@ -93,50 +61,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prejoin_history_access_is_detected() {
-        assert!(history_access_admits_prejoin(
-            "all_history_for_current_members"
-        ));
-        assert!(!history_access_admits_prejoin("since_join"));
+    fn only_explicit_local_choice_requests_mls_start() {
+        assert!(mls_activation_requested("after_create"));
+        assert!(!mls_activation_requested("not_now"));
+        assert!(!mls_activation_requested("mls_rfc9420"));
+        assert!(!mls_activation_requested(""));
     }
 
     #[test]
-    fn e2ee_prejoin_history_normalizes_to_exporter_scheme() {
-        assert_eq!(
-            normalize_content_scheme(true, "all_history_for_current_members", "mls_rfc9420"),
-            "mls_exporter_aead_v1"
-        );
-        assert_eq!(
-            normalize_content_scheme(true, "since_join", "mls_rfc9420"),
-            "mls_rfc9420"
-        );
-        assert_eq!(
-            normalize_content_scheme(false, "all_history_for_current_members", "mls_rfc9420"),
-            "mls_rfc9420"
-        );
-    }
-
-    #[test]
-    fn encryption_selection_reads_the_wizard_option_list() {
-        assert!(encryption_selection_is_e2ee("mls_rfc9420"));
-        assert!(!encryption_selection_is_e2ee("none"));
-        assert!(!encryption_selection_is_e2ee(" "));
-    }
-
-    #[test]
-    fn invalid_history_content_scheme_hint_is_specific() {
-        assert!(
-            content_scheme_constraint_hint(true, "all_history_for_current_members", "mls_rfc9420")
-                .is_some()
-        );
-        assert!(
-            content_scheme_constraint_hint(
-                true,
-                "all_history_for_current_members",
-                "mls_exporter_aead_v1"
-            )
-            .is_none()
-        );
-        assert!(content_scheme_constraint_hint(true, "since_join", "mls_rfc9420").is_none());
+    fn mls_start_requires_current_since_join_without_exporter_fallback() {
+        assert!(mls_activation_history_hint(true, "all_history_for_current_members").is_some());
+        assert!(mls_activation_history_hint(true, "since_join").is_none());
+        assert!(mls_activation_history_hint(false, "all_history_for_current_members").is_none());
     }
 }

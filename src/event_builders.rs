@@ -5,7 +5,6 @@
 use serde_json::Value;
 
 use crate::operation::{EventKind, TypedOperationBuilder, trim_realm_id};
-use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_PROFILE;
 
 /// Event authoring instant normalized to the protocol's millisecond profile.
 fn event_timestamp() -> chrono::DateTime<chrono::Utc> {
@@ -655,44 +654,6 @@ pub fn build_direct_conversation_founding_steps(
 /// explicit instead of leaving a real-looking Realm id in a genesis call.
 const DIRECT_CONVERSATION_GENESIS_SCOPE_PLACEHOLDER: &str =
     "ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR";
-
-pub fn encryption_profile_uses_recommended_floor(profile: &str) -> bool {
-    profile
-        .trim()
-        .eq_ignore_ascii_case(RECOMMENDED_REALM_ENCRYPTION_PROFILE)
-}
-
-/// Resolve the effective §2.10 content scheme (capability axis) from the
-/// optional caller selection: `None` or any history-capable choice ⇒ the
-/// history-shareable `mls_exporter_aead_v1` default; an explicit `mls_rfc9420`
-/// pins the forward-secret-only scheme. See [[content-scheme-capability-vs-toggle]].
-pub fn resolve_realm_content_scheme(content_scheme: Option<&str>) -> &'static str {
-    match content_scheme.map(str::trim) {
-        Some("mls_rfc9420") => "mls_rfc9420",
-        _ => "mls_exporter_aead_v1",
-    }
-}
-
-pub fn validate_realm_history_content_scheme_for_profile(
-    encryption_profile: &str,
-    history_access: &str,
-    content_scheme: Option<&str>,
-) -> anyhow::Result<()> {
-    if !encryption_profile_uses_recommended_floor(encryption_profile) {
-        return Ok(());
-    }
-    let history_access =
-        parse_wire_enum::<arkret_sdk::HistoryAccess>("history_access", history_access)?;
-    if resolve_realm_content_scheme(content_scheme) == "mls_rfc9420"
-        && history_access != arkret_sdk::HistoryAccess::SinceJoin
-    {
-        anyhow::bail!(
-            "{}: mls_rfc9420 requires history_access=since_join",
-            arkret_sdk::error_codes::ReasonCode::HISTORY_ACCESS_REQUIRES_HISTORY_CAPABLE_SCHEME
-        );
-    }
-    Ok(())
-}
 
 /// Genesis `ak.realm.policy_bundle` payload. Realm creation has no content
 /// scheme or encryption-profile branch; the Station admits the same closed

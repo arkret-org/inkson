@@ -1941,22 +1941,15 @@ fn setup_strings(dict: &mut TranslationDict) {
     );
     dict.set("setup.axis.history_access.unset", "尚未设置历史访问范围。");
     dict.set("setup.axis.encryption", "加密");
-    dict.set("setup.axis.encryption.question", "保护方式");
-    dict.set("setup.axis.encryption.unset", "尚未设置加密配置。");
-    dict.set("setup.axis.encryption.locked", "创建后不可更改。");
-    dict.set("setup.axis.content_scheme", "内容方案");
+    dict.set("setup.axis.mls_activation", "创建后初始化 MLS");
     dict.set(
-        "setup.axis.content_scheme.question",
-        "这个 Realm 使用哪种 MLS 内容方案？",
+        "setup.axis.mls_activation.question",
+        "Realm 被接纳后，是否由本设备启动 MLS？",
     );
-    dict.set("setup.axis.content_scheme.unset", "尚未设置内容方案。");
+    dict.set("setup.axis.mls_activation.unset", "尚未选择 MLS 启动方式。");
     dict.set(
-        "setup.axis.content_scheme.prejoin_forced",
-        "加入前历史使用 content_scheme=mls_exporter_aead_v1。",
-    );
-    dict.set(
-        "setup.axis.content_scheme.capability_only",
-        "仅表示能力——实际投递仍取决于历史可见性。",
+        "setup.axis.mls_activation.separate",
+        "Realm 创建后仍是明文；只有单独的 MLS Genesis 被接纳后才启用加密。",
     );
     dict.set("setup.axis.security_class", "安全等级");
     dict.set(
@@ -2008,7 +2001,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     // 引导进度面包屑，创建成功后以 " · " 连接显示在“引导状态”一行。
     dict.set(
         "setup.progress.accepted",
-        "Realm {id} 已受理;正在完成加密设置",
+        "Realm {id} 已受理；正在完成后续设置",
     );
     dict.set("setup.progress.created", "已创建 {id}");
     dict.set(
@@ -2016,10 +2009,9 @@ fn setup_strings(dict: &mut TranslationDict) {
         "规范策略 {discoverability} / {join_rule} / {history_access}",
     );
     dict.set("setup.progress.plaintext_services", "未加密服务:{count} 个");
-    dict.set("setup.progress.mls_ready_local", "本设备加密已就绪");
     dict.set(
-        "setup.progress.floor_required",
-        "元数据与内容均为端到端加密",
+        "setup.progress.mls_ready_local",
+        "MLS Genesis 已接纳，本设备加密已启用",
     );
     dict.set(
         "setup.error.signer_not_ready",
@@ -2027,6 +2019,10 @@ fn setup_strings(dict: &mut TranslationDict) {
     );
     dict.set("setup.error.create_failed", "创建失败:{error}");
     dict.set("setup.error.created_then_failed", "已创建 {id};{error}");
+    dict.set(
+        "setup.error.mls_activation_failed",
+        "Realm {id} 已创建，但本设备尚未确认 MLS 激活；验证前请勿发送：{error}",
+    );
     dict.set("setup.error.invalid_server_url", "无效的服务器地址:{error}");
     dict.set(
         "setup.error.invalid_default_strand_id",
@@ -2037,16 +2033,16 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.done.created_realm", "已创建的 Realm");
     dict.set("setup.done.empty", "请先创建 Realm，再打开下一个上下文。");
 
-    // 加密领域的恢复门禁。
+    // 创建后显式 MLS 启动的恢复门禁。
     dict.set(
         "setup.recovery_gate.aria",
-        "创建加密 Realm 前先设置恢复方式",
+        "启动此 Realm 的 MLS 前先设置恢复方式",
     );
     dict.set("setup.recovery_gate.title", "请先设置恢复方式");
-    dict.set("setup.recovery_gate.badge", "加密 Realm");
+    dict.set("setup.recovery_gate.badge", "MLS 初始化");
     dict.set(
         "setup.recovery_gate.body",
-        "这个 Realm 是端到端加密的。如果你丢失本设备且没有配置恢复密钥或备份，其中的内容将永久无法恢复。请先设置 24 词恢复密钥并备份密钥，再创建它。",
+        "Realm 创建后才会请求启动 MLS。若丢失本设备且未配置恢复密钥或备份，加密内容可能无法恢复。请在请求 MLS Genesis 前先完成恢复设置。",
     );
     dict.set(
         "setup.recovery_gate.checking",
@@ -2137,29 +2133,15 @@ fn setup_option_strings(dict: &mut TranslationDict) {
         "每个当前成员都可恢复该领域保留的全部历史；以后只能单向收紧为加入后历史。",
     );
 
-    dict.set("setup.opt.encryption_profile.mls_rfc9420", "加密");
+    dict.set("setup.opt.mls_activation.after_create", "创建后启动 MLS");
     dict.set(
-        "setup.opt.encryption_profile.mls_rfc9420.hint",
-        "推荐。元数据与内容均使用 MLS 端到端加密。",
+        "setup.opt.mls_activation.after_create.hint",
+        "要求历史范围为加入后，并先配置恢复材料；仅在 Genesis 被接纳后加密才生效。",
     );
-    dict.set("setup.opt.encryption_profile.none", "不加密");
+    dict.set("setup.opt.mls_activation.not_now", "暂不启动");
     dict.set(
-        "setup.opt.encryption_profile.none.hint",
-        "明文对服务器可见。仅用于公开 Realm。",
-    );
-
-    dict.set(
-        "setup.opt.content_scheme.mls_exporter_aead_v1",
-        "MLS exporter AEAD",
-    );
-    dict.set(
-        "setup.opt.content_scheme.mls_exporter_aead_v1.hint",
-        "content_scheme=mls_exporter_aead_v1。可以把加入之前的历史授予新成员。前向保密性降为按 epoch 粒度。",
-    );
-    dict.set("setup.opt.content_scheme.mls_rfc9420", "MLS PrivateMessage");
-    dict.set(
-        "setup.opt.content_scheme.mls_rfc9420.hint",
-        "content_scheme=mls_rfc9420。加入前的历史永远无法共享给后加入者。前向保密性为按消息粒度。",
+        "setup.opt.mls_activation.not_now.hint",
+        "先创建明文 Realm，以后可单独通过 MLS Genesis 激活加密。",
     );
 
     dict.set("setup.opt.security_class.standard", "标准");
@@ -2252,8 +2234,8 @@ fn setup_policy_hint_strings(dict: &mut TranslationDict) {
         "仅限邀请的发现策略配上公开加入，通常说明发现模型没有想清楚。",
     );
     dict.set(
-        "setup.content_scheme.prejoin_requires_exporter",
-        "加入前历史要求 content_scheme=mls_exporter_aead_v1。",
+        "setup.mls_activation.requires_since_join",
+        "MLS Genesis 要求当前历史范围为“加入后”；请选择该策略，或暂不启动 MLS。",
     );
 }
 

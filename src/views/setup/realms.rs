@@ -4,13 +4,13 @@ use dioxus::prelude::*;
 use dioxus_router::Link;
 
 use super::data::{
-    CONTENT_SCHEME_OPTIONS, DISCOVERABILITY_OPTIONS, ENCRYPTION_PROFILE_OPTIONS,
-    FEDERATION_POLICY_OPTIONS, HASH_PROFILE_OPTIONS, HISTORY_ACCESS_OPTIONS, JOIN_RULE_OPTIONS,
-    SECURITY_CLASS_OPTIONS, option_hint,
+    DISCOVERABILITY_OPTIONS, FEDERATION_POLICY_OPTIONS, HASH_PROFILE_OPTIONS,
+    HISTORY_ACCESS_OPTIONS, JOIN_RULE_OPTIONS, MLS_ACTIVATION_OPTIONS, SECURITY_CLASS_OPTIONS,
+    option_hint,
 };
 use super::helpers::{
-    content_scheme_constraint_hint, encryption_selection_is_e2ee, history_access_admits_prejoin,
-    normalize_content_scheme, plaintext_services_for_policy, policy_combination_hint,
+    mls_activation_history_hint, mls_activation_requested, plaintext_services_for_policy,
+    policy_combination_hint,
 };
 use super::model::{NEW_REALM_STEPS, NewRealmStep};
 use crate::api_error::is_auth_expired_error;
@@ -42,10 +42,10 @@ struct BootstrapProgressStrings {
     canonical_policy: String,
     plaintext_services: String,
     mls_ready_local: String,
-    floor_required: String,
     signer_not_ready: String,
     create_failed: String,
     created_then_failed: String,
+    mls_activation_failed: String,
     invalid_server_url: String,
     session_expired: String,
 }
@@ -58,10 +58,10 @@ impl BootstrapProgressStrings {
             canonical_policy: tr("setup.progress.canonical_policy"),
             plaintext_services: tr("setup.progress.plaintext_services"),
             mls_ready_local: tr("setup.progress.mls_ready_local"),
-            floor_required: tr("setup.progress.floor_required"),
             signer_not_ready: tr("setup.error.signer_not_ready"),
             create_failed: tr("setup.error.create_failed"),
             created_then_failed: tr("setup.error.created_then_failed"),
+            mls_activation_failed: tr("setup.error.mls_activation_failed"),
             invalid_server_url: tr("setup.error.invalid_server_url"),
             session_expired: tr("setup.error.session_expired"),
         }
@@ -167,8 +167,7 @@ pub(super) fn RealmsSection(
     mut realm_discoverability: Signal<String>,
     mut realm_policy_join_rule: Signal<String>,
     mut realm_policy_history_access: Signal<String>,
-    mut realm_encryption_profile: Signal<String>,
-    mut realm_content_scheme: Signal<String>,
+    mut realm_mls_activation: Signal<String>,
     mut realm_security_class: Signal<String>,
     mut realm_federation_policy: Signal<String>,
     mut realm_digest_algorithm: Signal<String>,
@@ -187,8 +186,7 @@ pub(super) fn RealmsSection(
     let realm_policy_join_rule_selected = use_memo(move || Some(realm_policy_join_rule()));
     let realm_policy_history_access_selected =
         use_memo(move || Some(realm_policy_history_access()));
-    let realm_encryption_profile_selected = use_memo(move || Some(realm_encryption_profile()));
-    let realm_content_scheme_selected = use_memo(move || Some(realm_content_scheme()));
+    let realm_mls_activation_selected = use_memo(move || Some(realm_mls_activation()));
     let realm_security_class_selected = use_memo(move || Some(realm_security_class()));
     let realm_federation_policy_selected = use_memo(move || Some(realm_federation_policy()));
     let realm_digest_algorithm_selected = use_memo(move || Some(realm_digest_algorithm()));
@@ -200,15 +198,10 @@ pub(super) fn RealmsSection(
     let discoverability_value = realm_discoverability();
     let join_rule_value = realm_policy_join_rule();
     let history_access_value = realm_policy_history_access();
-    let encryption_profile_value = realm_encryption_profile();
-    let content_scheme_value = realm_content_scheme();
-    let encryption_is_e2ee = encryption_selection_is_e2ee(&encryption_profile_value);
-    let history_requires_exporter_aead =
-        encryption_is_e2ee && history_access_admits_prejoin(&history_access_value);
-    let content_scheme_warning = content_scheme_constraint_hint(
-        encryption_is_e2ee,
+    let mls_activation_value = realm_mls_activation();
+    let mls_history_warning = mls_activation_history_hint(
+        mls_activation_requested(&mls_activation_value),
         &history_access_value,
-        &content_scheme_value,
     );
     let security_class_value = realm_security_class();
     let federation_policy_value = realm_federation_policy();
@@ -242,29 +235,16 @@ pub(super) fn RealmsSection(
         ),
     ]
     .join(" ");
-    let encryption_help = [
-        tr("setup.axis.encryption.question"),
+    let mls_activation_help = [
+        tr("setup.axis.mls_activation.question"),
         option_hint(
-            &ENCRYPTION_PROFILE_OPTIONS,
-            &encryption_profile_value,
-            "setup.axis.encryption.unset",
+            &MLS_ACTIVATION_OPTIONS,
+            &mls_activation_value,
+            "setup.axis.mls_activation.unset",
         ),
-        tr("setup.axis.encryption.locked"),
+        tr("setup.axis.mls_activation.separate"),
     ]
     .join(" ");
-    let mut content_scheme_help_parts = vec![
-        tr("setup.axis.content_scheme.question"),
-        option_hint(
-            &CONTENT_SCHEME_OPTIONS,
-            &content_scheme_value,
-            "setup.axis.content_scheme.unset",
-        ),
-        tr("setup.axis.content_scheme.capability_only"),
-    ];
-    if history_requires_exporter_aead {
-        content_scheme_help_parts.push(tr("setup.axis.content_scheme.prejoin_forced"));
-    }
-    let content_scheme_help = content_scheme_help_parts.join(" ");
     let security_class_help = [
         tr("setup.axis.security_class.question"),
         option_hint(
@@ -308,7 +288,7 @@ pub(super) fn RealmsSection(
     );
     let current_policy_error = matches!(current_visibility_hint, Some(("error", _, _)));
     let basics_ready = !title_value.trim().is_empty();
-    let boundary_ready = !current_policy_error && content_scheme_warning.is_none();
+    let boundary_ready = !current_policy_error && mls_history_warning.is_none();
     let create_blocker = if has_created_realm {
         Some(tr("setup.blocker.already_created"))
     } else if !has_session {
@@ -541,15 +521,6 @@ pub(super) fn RealmsSection(
                                         value: Some(realm_policy_history_access_selected.into()),
                                         on_value_change: move |v: Option<String>| {
                                             if let Some(v) = v {
-                                                if history_access_admits_prejoin(&v)
-                                                    && encryption_selection_is_e2ee(
-                                                        &realm_encryption_profile(),
-                                                    )
-                                                {
-                                                    realm_content_scheme.set(
-                                                        "mls_exporter_aead_v1".to_owned(),
-                                                    );
-                                                }
                                                 realm_policy_history_access.set(v);
                                             }
                                         },
@@ -564,35 +535,24 @@ pub(super) fn RealmsSection(
                                     }
                                 }
                             }
-                            // These create-locked Realm fields are shown here so the user
-                            // makes the permanent choice intentionally.
+                            // This is a local follow-up action, not a Realm-create
+                            // encryption profile. Only accepted Genesis activates MLS.
                             div { class: "metric directory-axis-card setup-axis-card",
                                 div { class: "setup-axis-card-heading",
-                                    strong { {tr("setup.axis.encryption")} }
-                                    HelpTip { text: encryption_help }
+                                    strong { {tr("setup.axis.mls_activation")} }
+                                    HelpTip { text: mls_activation_help }
                                 }
                                 div { class: "workflow-form setup-field",
                                     Select::<String> {
-                                        "data-testid": "realm-encryption-profile-input",
-                                        "aria-label": tr("setup.axis.encryption"),
-                                        value: Some(realm_encryption_profile_selected.into()),
+                                        "data-testid": "realm-mls-activation-input",
+                                        "aria-label": tr("setup.axis.mls_activation"),
+                                        value: Some(realm_mls_activation_selected.into()),
                                         on_value_change: move |v: Option<String>| {
                                             if let Some(v) = v {
-                                                let encrypted =
-                                                    encryption_selection_is_e2ee(&v);
-                                                if encrypted
-                                                    && history_access_admits_prejoin(
-                                                        &realm_policy_history_access(),
-                                                    )
-                                                {
-                                                    realm_content_scheme.set(
-                                                        "mls_exporter_aead_v1".to_owned(),
-                                                    );
-                                                }
-                                                realm_encryption_profile.set(v);
+                                                realm_mls_activation.set(v);
                                             }
                                         },
-                                        for (i, (option_value, label, _)) in ENCRYPTION_PROFILE_OPTIONS.iter().enumerate() {
+                                        for (i, (option_value, label, _)) in MLS_ACTIVATION_OPTIONS.iter().enumerate() {
                                             SelectOption::<String> {
                                                 index: i,
                                                 value: option_value.to_string(),
@@ -601,51 +561,9 @@ pub(super) fn RealmsSection(
                                             }
                                         }
                                     }
-                                }
-                            }
-                            // encryption-and-audit.md §2.10 — `content_scheme`
-                            // capability axis. Only meaningful for E2EE realms;
-                            // orthogonal to history access (the runtime
-                            // delivery toggle). Default exporter-AEAD.
-                            if encryption_is_e2ee {
-                                div { class: "metric directory-axis-card setup-axis-card",
-                                    div { class: "setup-axis-card-heading",
-                                        strong { {tr("setup.axis.content_scheme")} }
-                                        HelpTip { text: content_scheme_help }
-                                    }
-                                    div { class: "workflow-form setup-field",
-                                        Select::<String> {
-                                            "data-testid": "realm-content-scheme-input",
-                                            "aria-label": tr("setup.axis.content_scheme"),
-                                            value: Some(realm_content_scheme_selected.into()),
-                                            on_value_change: move |v: Option<String>| {
-                                                if let Some(v) = v {
-                                                    if v == "mls_rfc9420"
-                                                        && history_access_admits_prejoin(
-                                                            &realm_policy_history_access(),
-                                                        )
-                                                    {
-                                                        realm_policy_history_access
-                                                            .set("since_join".to_owned());
-                                                    }
-                                                    realm_content_scheme.set(v);
-                                                }
-                                            },
-                                            for (i, (option_value, label, _)) in CONTENT_SCHEME_OPTIONS.iter().enumerate() {
-                                                SelectOption::<String> {
-                                                    index: i,
-                                                    value: option_value.to_string(),
-                                                    text_value: tr(label),
-                                                    disabled: history_requires_exporter_aead
-                                                        && *option_value == "mls_rfc9420",
-                                                    {tr(label)}
-                                                }
-                                            }
-                                        }
-                                        if let Some(hint) = content_scheme_warning {
-                                            div { class: "inline-warn",
-                                                span { class: "body", "{hint}" }
-                                            }
+                                    if let Some(hint) = mls_history_warning {
+                                        div { class: "inline-warn",
+                                            span { class: "body", {tr(hint)} }
                                         }
                                     }
                                 }
@@ -808,36 +726,17 @@ pub(super) fn RealmsSection(
                                     move |_| {
                                         let strings = strings.clone();
                                         let history_access = realm_policy_history_access();
-                                        let encryption_profile = realm_encryption_profile();
-                                        let content_scheme = normalize_content_scheme(
-                                            encryption_selection_is_e2ee(
-                                                &encryption_profile,
-                                            ),
-                                            &history_access,
-                                            &realm_content_scheme(),
-                                        );
-                                        if let Err(error) =
-                                            crate::event_builders::validate_realm_history_content_scheme_for_profile(
-                                                &encryption_profile,
-                                                &history_access,
-                                                Some(content_scheme.as_str()),
-                                            )
+                                        let request_mls_genesis =
+                                            mls_activation_requested(&realm_mls_activation());
+                                        if let Some(hint) =
+                                            mls_activation_history_hint(request_mls_genesis, &history_access)
                                         {
-                                            let message = error.to_string();
-                                            realm_state.set(message.clone());
-                                            crate::components::feedback::toast_error(
-                                                "feedback.realm_create_failed",
-                                                vec![],
-                                                Some(message),
-                                            );
+                                            realm_state.set(tr(hint));
                                             return;
                                         }
                                         // `recovery_material_pending` is a normative hard gate:
-                                        // encrypted Realm creation requires a configured recovery path.
-                                        if encryption_selection_is_e2ee(
-                                            &encryption_profile,
-                                        )
-                                        {
+                                        // explicit MLS initialization requires a recovery path.
+                                        if request_mls_genesis {
                                             let recovery_gate_state = active_account().map_or(
                                                 EncryptedRealmRecoveryGateState::Checking,
                                                 |_account| {
@@ -1089,9 +988,7 @@ pub(super) fn RealmsSection(
                                                             &[("id", realm_id.clone())],
                                                         ));
 
-                                                        if encryption_selection_is_e2ee(
-                                                            &encryption_profile,
-                                                        ) {
+                                                        if request_mls_genesis {
                                                             tracing::debug!(
                                                                 realm_id = %realm_id,
                                                                 phase = "mls_genesis",
@@ -1104,7 +1001,7 @@ pub(super) fn RealmsSection(
                                                             // an interrupted attempt (unmount / network / closed tab) is
                                                             // replayed by the per-Realm bootstrap effect instead of leaving
                                                             // the Realm permanently unable to perform encrypted writes.
-                                                            match crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
+                                                            match crate::mls::creator_bootstrap::start_creator_realm_mls_genesis(
                                                                      &api,
                                                                      &crate::app::runtime_adapter::state_store_handle(state_store),
                                                                      &realm_id,
@@ -1130,7 +1027,7 @@ pub(super) fn RealmsSection(
                                                                             "Realm setup phase failed"
                                                                         );
                                                                         let message = BootstrapProgressStrings::fill(
-                                                                            &strings.created_then_failed,
+                                                                            &strings.mls_activation_failed,
                                                                             &[
                                                                                 ("id", realm_id.clone()),
                                                                                 ("error", err.to_string()),
@@ -1173,23 +1070,14 @@ pub(super) fn RealmsSection(
                                                                 )],
                                                             ));
                                                         }
-                                                        if encryption_selection_is_e2ee(
-                                                            &encryption_profile,
-                                                        ) {
+                                                        if request_mls_genesis {
                                                             steps.push(strings.mls_ready_local.clone());
-                                                        }
-                                                        if crate::event_builders::encryption_profile_uses_recommended_floor(
-                                                            &encryption_profile,
-                                                        ) {
-                                                            steps.push(strings.floor_required.clone());
                                                         }
 
                                                         let message = steps.join(" · ");
                                                         realm_create_busy.set(false);
                                                         realm_state.set(message);
-                                                        if encryption_selection_is_e2ee(
-                                                            &encryption_profile,
-                                                        ) && let Some(signal) = backup_trigger_signal {
+                                                        if request_mls_genesis && let Some(signal) = backup_trigger_signal {
                                                             // Realm bootstrap creates the account MLS secret
                                                             // before the first encrypted message/card write,
                                                             // so attempt the recovery-public-key backup here

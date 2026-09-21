@@ -77,9 +77,10 @@ fn keys_resolve_to_real_text_in_both_locales() {
     );
 }
 
-/// The Realm wizard's option tables are `(wire_value, label_key, hint_key)`.
+/// The Realm wizard's option tables are `(value, label_key, hint_key)`.
 /// A typo in a key would render the raw key in the form, so pin the exact
-/// shape the dictionaries must carry for every wire value in the spec enums.
+/// shape the dictionaries must carry for each wire enum and the local MLS
+/// follow-up action.
 #[test]
 fn option_table_keys_exist_for_every_wire_value() {
     let en = english_translations();
@@ -100,8 +101,7 @@ fn option_table_keys_exist_for_every_wire_value() {
             "history_access",
             &["since_join", "all_history_for_current_members"],
         ),
-        ("encryption_profile", &["mls_rfc9420", "none"]),
-        ("content_scheme", &["mls_exporter_aead_v1", "mls_rfc9420"]),
+        ("mls_activation", &["after_create", "not_now"]),
         ("security_class", &["standard", "high_assurance"]),
         (
             "federation_policy",

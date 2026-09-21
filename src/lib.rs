@@ -109,7 +109,6 @@ pub mod security_transaction;
 pub mod push;
 pub(crate) mod random;
 pub mod rank;
-pub mod realm_defaults;
 pub mod realm_events_engine;
 /// R28-B — pure realm-tree / projection / field-extraction helpers
 /// extracted out of the (formerly 12k-line) `app` module so the

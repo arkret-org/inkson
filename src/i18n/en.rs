@@ -2384,28 +2384,18 @@ fn setup_strings(dict: &mut TranslationDict) {
         "History access is not set.",
     );
     dict.set("setup.axis.encryption", "Encryption");
-    dict.set("setup.axis.encryption.question", "Protection");
+    dict.set("setup.axis.mls_activation", "Initialize MLS after creation");
     dict.set(
-        "setup.axis.encryption.unset",
-        "Encryption profile is not set.",
-    );
-    dict.set("setup.axis.encryption.locked", "Locked after creation.");
-    dict.set("setup.axis.content_scheme", "Content scheme");
-    dict.set(
-        "setup.axis.content_scheme.question",
-        "Which MLS content scheme should this Realm use?",
+        "setup.axis.mls_activation.question",
+        "Should this device start MLS after the Realm is accepted?",
     );
     dict.set(
-        "setup.axis.content_scheme.unset",
-        "Content scheme is not set.",
+        "setup.axis.mls_activation.unset",
+        "MLS start choice is not set.",
     );
     dict.set(
-        "setup.axis.content_scheme.prejoin_forced",
-        "Pre-join history uses content_scheme=mls_exporter_aead_v1.",
-    );
-    dict.set(
-        "setup.axis.content_scheme.capability_only",
-        "Capability only — actual delivery still follows History visibility.",
+        "setup.axis.mls_activation.separate",
+        "Realm creation stays plaintext until a separate MLS Genesis is accepted.",
     );
     dict.set("setup.axis.security_class", "Security class");
     dict.set(
@@ -2464,7 +2454,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     // "Bootstrap state" line after a successful create.
     dict.set(
         "setup.progress.accepted",
-        "Realm {id} accepted; finishing encrypted setup",
+        "Realm {id} accepted; finishing setup",
     );
     dict.set("setup.progress.created", "Created {id}");
     dict.set(
@@ -2477,11 +2467,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     );
     dict.set(
         "setup.progress.mls_ready_local",
-        "Encryption ready on this device",
-    );
-    dict.set(
-        "setup.progress.floor_required",
-        "Metadata and content are end-to-end encrypted",
+        "MLS Genesis accepted; encryption active on this device",
     );
     dict.set(
         "setup.error.signer_not_ready",
@@ -2489,6 +2475,10 @@ fn setup_strings(dict: &mut TranslationDict) {
     );
     dict.set("setup.error.create_failed", "create failed: {error}");
     dict.set("setup.error.created_then_failed", "created {id}; {error}");
+    dict.set(
+        "setup.error.mls_activation_failed",
+        "Realm {id} was created, but MLS activation was not confirmed on this device. Do not send until it is verified: {error}",
+    );
     dict.set(
         "setup.error.invalid_server_url",
         "invalid server URL: {error}",
@@ -2505,16 +2495,16 @@ fn setup_strings(dict: &mut TranslationDict) {
         "Create a Realm before opening the next context.",
     );
 
-    // Encrypted-Realm recovery gate.
+    // Recovery gate for the explicit post-create MLS start.
     dict.set(
         "setup.recovery_gate.aria",
-        "Set up recovery before creating an encrypted Realm",
+        "Set up recovery before starting MLS for this Realm",
     );
     dict.set("setup.recovery_gate.title", "Set up recovery first");
-    dict.set("setup.recovery_gate.badge", "encrypted Realm");
+    dict.set("setup.recovery_gate.badge", "MLS initialization");
     dict.set(
         "setup.recovery_gate.body",
-        "This Realm is end-to-end encrypted. If you lose this device and have no Recovery Key or backup configured, its contents are permanently unrecoverable. Set up your 24-word Recovery Key and back up your keys before creating it.",
+        "MLS will be started only after the Realm is created. If you lose this device without a Recovery Key or backup, encrypted content may be unrecoverable. Configure recovery before requesting MLS Genesis.",
     );
     dict.set(
         "setup.recovery_gate.checking",
@@ -2605,29 +2595,18 @@ fn setup_option_strings(dict: &mut TranslationDict) {
         "Every current member can recover all retained Realm history. The policy may later tighten only to since_join.",
     );
 
-    dict.set("setup.opt.encryption_profile.mls_rfc9420", "Encrypted");
     dict.set(
-        "setup.opt.encryption_profile.mls_rfc9420.hint",
-        "Recommended. Metadata and content use MLS E2EE.",
-    );
-    dict.set("setup.opt.encryption_profile.none", "No encryption");
-    dict.set(
-        "setup.opt.encryption_profile.none.hint",
-        "Plaintext is visible to the server. Use only for public Realms.",
-    );
-
-    dict.set(
-        "setup.opt.content_scheme.mls_exporter_aead_v1",
-        "MLS exporter AEAD",
+        "setup.opt.mls_activation.after_create",
+        "Start MLS after creation",
     );
     dict.set(
-        "setup.opt.content_scheme.mls_exporter_aead_v1.hint",
-        "content_scheme=mls_exporter_aead_v1. New members can be granted history from before they joined. Forward secrecy is per-epoch.",
+        "setup.opt.mls_activation.after_create.hint",
+        "Requires since-join history and recovery setup. Encryption starts only when Genesis is accepted.",
     );
-    dict.set("setup.opt.content_scheme.mls_rfc9420", "MLS PrivateMessage");
+    dict.set("setup.opt.mls_activation.not_now", "Not now");
     dict.set(
-        "setup.opt.content_scheme.mls_rfc9420.hint",
-        "content_scheme=mls_rfc9420. Pre-join history can never be shared with late joiners. Per-message forward secrecy.",
+        "setup.opt.mls_activation.not_now.hint",
+        "Create a plaintext Realm. A separate MLS Genesis can activate encryption later.",
     );
 
     dict.set("setup.opt.security_class.standard", "Standard");
@@ -2723,8 +2702,8 @@ fn setup_policy_hint_strings(dict: &mut TranslationDict) {
         "Invite-only discovery paired with public join usually means the discovery model is underspecified.",
     );
     dict.set(
-        "setup.content_scheme.prejoin_requires_exporter",
-        "Pre-join history requires content_scheme=mls_exporter_aead_v1.",
+        "setup.mls_activation.requires_since_join",
+        "MLS Genesis requires current history access to be Since join. Choose that policy or create without MLS for now.",
     );
 }
 

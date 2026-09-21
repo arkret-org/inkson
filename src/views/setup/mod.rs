@@ -49,14 +49,11 @@ pub fn SetupPanel(
     let realm_alias = use_signal(String::new);
     let realm_discoverability = use_signal(|| "listed".to_owned());
     let realm_policy_join_rule = use_signal(|| "invite".to_owned());
-    let realm_policy_history_access = use_signal(|| "all_history_for_current_members".to_owned());
-    // Spec realm-and-space.md §2.3 — `encryption_profile` and `security_class`
-    // are Realm create-locked fields; default to the safe `mls_rfc9420` +
-    // `standard` case.
-    let realm_encryption_profile = use_signal(|| "mls_rfc9420".to_owned());
-    // §2.10 content-scheme capability axis: default to history-capable
-    // (exporter-aead) so collaboration realms can share pre-join history.
-    let realm_content_scheme = use_signal(|| "mls_exporter_aead_v1".to_owned());
+    // The first accepted MLS Genesis requires current history_access=since_join.
+    // Default to that policy and request a separate post-create MLS start;
+    // neither choice is an encryption field on ak.realm.create.
+    let realm_policy_history_access = use_signal(|| "since_join".to_owned());
+    let realm_mls_activation = use_signal(|| "after_create".to_owned());
     let realm_security_class = use_signal(|| "standard".to_owned());
     // Spec realm-and-space.md §2.3 advanced create-locked fields; safe defaults
     // `restricted` / `sha256`. The Realm notary signer is frozen from verified
@@ -99,8 +96,7 @@ pub fn SetupPanel(
                     realm_discoverability,
                     realm_policy_join_rule,
                     realm_policy_history_access,
-                    realm_encryption_profile,
-                    realm_content_scheme,
+                    realm_mls_activation,
                     realm_security_class,
                     realm_federation_policy,
                     realm_digest_algorithm,

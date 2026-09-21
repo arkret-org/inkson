@@ -75,38 +75,18 @@ pub(super) const HISTORY_ACCESS_OPTIONS: [(&str, &str, &str); 2] = [
     ),
 ];
 
-// Spec realm-and-space.md §2.3 — `encryption_profile` enum on the
-// Realm create event. `create-locked`, so this choice is permanent for
-// the lifetime of the Realm.
-pub(super) const ENCRYPTION_PROFILE_OPTIONS: [(&str, &str, &str); 2] = [
+// Local follow-up workflow only. Realm creation carries no encryption
+// profile; only the later accepted ak.mls.genesis activates MLS.
+pub(super) const MLS_ACTIVATION_OPTIONS: [(&str, &str, &str); 2] = [
     (
-        "mls_rfc9420",
-        "setup.opt.encryption_profile.mls_rfc9420",
-        "setup.opt.encryption_profile.mls_rfc9420.hint",
+        "after_create",
+        "setup.opt.mls_activation.after_create",
+        "setup.opt.mls_activation.after_create.hint",
     ),
     (
-        "none",
-        "setup.opt.encryption_profile.none",
-        "setup.opt.encryption_profile.none.hint",
-    ),
-];
-
-// encryption-and-audit.md §2.10 — Realm `content_scheme` (the capability axis,
-// orthogonal to `history_access`, the scope-level delivery policy).
-// `mls_exporter_aead_v1` makes every epoch's content structurally shareable to
-// late joiners (forward secrecy degrades to per-epoch, §2.10.5);
-// `mls_rfc9420` keeps per-message forward secrecy and makes pre-join history
-// permanently unshareable. Default capable — matches most collaboration needs.
-pub(super) const CONTENT_SCHEME_OPTIONS: [(&str, &str, &str); 2] = [
-    (
-        "mls_exporter_aead_v1",
-        "setup.opt.content_scheme.mls_exporter_aead_v1",
-        "setup.opt.content_scheme.mls_exporter_aead_v1.hint",
-    ),
-    (
-        "mls_rfc9420",
-        "setup.opt.content_scheme.mls_rfc9420",
-        "setup.opt.content_scheme.mls_rfc9420.hint",
+        "not_now",
+        "setup.opt.mls_activation.not_now",
+        "setup.opt.mls_activation.not_now.hint",
     ),
 ];
 
