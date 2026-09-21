@@ -98,7 +98,7 @@ pub(crate) fn moderation_operations_from_client_events(
         .iter()
         .filter_map(|client_event| match client_event {
             garth::ClientEvent::Message(message) => Some(&message.event),
-            garth::ClientEvent::Event(event) => Some(event),
+            garth::ClientEvent::Event(event) => Some(event.as_ref()),
             _ => None,
         })
         .filter_map(moderation_operation_from_event)
@@ -122,8 +122,6 @@ mod tests {
             realm_scope(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:moderator.example").unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-            1,
-            arkret_sdk::Hlc::new("019f73a34c00-0000-12345678").unwrap(),
             json!({
                 "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
                 "decision": "quarantine",
@@ -140,14 +138,12 @@ mod tests {
             realm_scope(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:moderator.example").unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-            2,
-            arkret_sdk::Hlc::new("019f73a34c00-0001-12345678").unwrap(),
             json!({}),
         )
         .unwrap();
         let records = moderation_operations_from_client_events(&[
-            garth::ClientEvent::Event(decision),
-            garth::ClientEvent::Event(message),
+            garth::ClientEvent::Event(Box::new(decision)),
+            garth::ClientEvent::Event(Box::new(message)),
         ]);
 
         assert_eq!(records.len(), 1);

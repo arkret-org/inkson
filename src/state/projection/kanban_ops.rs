@@ -252,8 +252,6 @@ pub(crate) fn sdk_events_from_values(values: &[serde_json::Value]) -> Vec<arkret
                 arkret_sdk::ScopeRef::Realm { realm_id },
                 actor_id.signing_principal_id().clone(),
                 actor_id.route_service_id().clone(),
-                1,
-                arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").ok()?,
                 payload,
             )
             .ok()?;
@@ -300,8 +298,6 @@ mod tests {
             },
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
-            1,
-            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             serde_json::json!({
                 "event_ref": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
                 "occurrence": null,
@@ -334,8 +330,6 @@ mod tests {
             },
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-            1,
-            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             json!({
                 "target_ref": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
                 "patch": {"title": {"$op": "set", "value": "Updated"}}
@@ -347,7 +341,8 @@ mod tests {
                 .unwrap();
 
         let original = serde_json::to_value(&event).unwrap();
-        let records = kanban_operations_from_client_events(&[garth::ClientEvent::Event(event)]);
+        let records =
+            kanban_operations_from_client_events(&[garth::ClientEvent::Event(Box::new(event))]);
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].payload["kind"], "ak.strand.update");

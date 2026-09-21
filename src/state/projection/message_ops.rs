@@ -207,8 +207,6 @@ mod tests {
             },
             arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-            1,
-            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             payload,
         )
         .unwrap();
@@ -295,7 +293,7 @@ mod tests {
             .try_decode_event(event)
             .unwrap();
         let client_event = match decoded {
-            garth::DecodedInbound::Message(message) => garth::ClientEvent::Message(*message),
+            garth::DecodedInbound::Message(message) => garth::ClientEvent::Message(message),
             other => panic!("expected message, got {other:?}"),
         };
 

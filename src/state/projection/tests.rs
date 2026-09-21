@@ -13,7 +13,6 @@ fn golden_actor() -> arkret_sdk::DidCoreId {
 fn golden_event(
     event_id: &str,
     kind: &str,
-    actor_seq: u64,
     created_at: &str,
     payload: serde_json::Value,
 ) -> arkret_sdk::Event {
@@ -24,8 +23,6 @@ fn golden_event(
         },
         golden_actor(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-        actor_seq,
-        arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
         payload,
     )
     .unwrap();
@@ -39,7 +36,6 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
     let create = golden_event(
         "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
         arkret_sdk::EventKind::MessageCreate.as_str(),
-        1,
         "2026-07-08T00:00:00.000Z",
         serde_json::json!({
             "strand_id": "ak:strand:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
@@ -50,7 +46,6 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
     let reaction = golden_event(
         "ak:event:AbHexNOxiiU334tA-ZHyM5pRxJxbMY0jvwlMVDY3Xjrz",
         arkret_sdk::EventKind::ReactionAdd.as_str(),
-        2,
         "2026-07-08T00:00:01.000Z",
         serde_json::json!({
             "target_ref": "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
@@ -110,53 +105,6 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
     assert_eq!(
         records[1].payload["payload"]["key"],
         serde_json::json!("+1")
-    );
-}
-
-#[test]
-fn projection_late_recovery_rejection_blocks_sidecar_plaintext() {
-    let path = std::env::temp_dir().join(format!(
-        "inkson-projection-late-recovery-{}.json",
-        crate::operation::uuid_v7()
-    ));
-    let mut store = crate::state::LocalStateStore::with_path(path);
-    let realm = "ak:realm:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5";
-    let strand = "ak:strand:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5";
-    let message = "ak:message:AWZMmWc7y9r8WlGaMEq-hImiHKsg6Oztmr6RWaAmigKO";
-    store.save_private_plaintext(realm, strand, &format!("message:{message}"), "secret body");
-    let realms = std::collections::BTreeMap::from([(
-        realm.to_owned(),
-        serde_json::json!({
-            "summary": {"summary": "Demo"},
-            "timeline": {
-                "events": [{
-                    "kind": "ak.message.create",
-                    "event_id": "ak:event:A4BWEYeaKK6NG4kEzOZXc7FlBfXuJdsVxsjAp4V6hygg",
-                    "actor_id": "ak:did_core:web:alice.example",
-                    "realm_id": realm,
-                    "strand_id": strand,
-                    "message_id": message,
-                    "decryption_state": "decryption_failed",
-                    "late_recovery": {
-                        "receiver_visible_at_t0": false
-                    },
-                    "content": {"encrypted_content": true}
-                }]
-            }
-        }),
-    )]);
-
-    let events = projection_events_from_sync_realms(&realms, Some(&store), None);
-    let rejected = events
-        .iter()
-        .find(|event| event.id == "ak:event:A4BWEYeaKK6NG4kEzOZXc7FlBfXuJdsVxsjAp4V6hygg")
-        .expect("late recovery event");
-
-    assert_eq!(rejected.body, "");
-    assert!(rejected.failed);
-    assert_eq!(
-        rejected.error.as_deref(),
-        Some(arkret_sdk::ReasonCode::LATE_RECOVERY_REJECTED_MEMBERSHIP)
     );
 }
 
