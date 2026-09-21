@@ -796,55 +796,37 @@ pub fn build_space_lifecycle_event(
     .build_sdk_event("inkson")
 }
 
-/// Build a replacement for the singleton Realm profile causal register.
+/// Build a complete replacement for the Realm profile.
 ///
-/// The producer signs an optional value predicate and the exact deterministic
-/// winner it observed. Concurrent writes still converge by `(depth, EventId)`;
-/// the predicate is a product CAS guard, not causal-register conflict repair.
+/// `ak.realm.profile` is a closed, typed whole-value payload. The governing
+/// Station orders accepted replacements through `RealmCommit`; producers do
+/// not attach a local causal head or a generic precondition to the Event.
 pub fn build_realm_profile_replacement_event(
     realm_id: &str,
     actor_id: &str,
     digest_suite: arkret_sdk::DigestSuite,
     payload: arkret_sdk::RealmProfile,
-    expected_head: Value,
-    expected_head_digest: arkret_sdk::Hash,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
-    Ok(
-        build_realm_state_event_for_station_with_set_head::<arkret_sdk::event_spec::RealmProfile>(
-            crate::operation::authoring_station_id()?,
-            realm_id,
-            actor_id,
-            digest_suite,
-            payload,
-            Some(expected_head),
-        )?
-        .with_causal_refs(vec![expected_head_digest]),
+    build_realm_state_event_for_station::<arkret_sdk::event_spec::RealmProfile>(
+        crate::operation::authoring_station_id()?,
+        realm_id,
+        actor_id,
+        digest_suite,
+        payload,
     )
 }
 
-/// Build a Realm profile update over the deterministic current winner.
+/// Build a complete Realm profile value from the update UI.
+///
+/// The UI may call this an update, but the formal carrier is still the closed
+/// `ak.realm.profile` replacement payload; commit order supplies authority.
 pub fn build_realm_profile_update_event(
     realm_id: &str,
     actor_id: &str,
     digest_suite: arkret_sdk::DigestSuite,
     payload: arkret_sdk::RealmProfile,
-    causal_refs: Vec<arkret_sdk::Hash>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
-    anyhow::ensure!(
-        causal_refs.len() <= 1,
-        "Realm profile update requires at most one deterministic current winner"
-    );
-    Ok(
-        build_realm_state_event_for_station_with_set_head::<arkret_sdk::event_spec::RealmProfile>(
-            crate::operation::authoring_station_id()?,
-            realm_id,
-            actor_id,
-            digest_suite,
-            payload,
-            None,
-        )?
-        .with_causal_refs(causal_refs),
-    )
+    build_realm_profile_replacement_event(realm_id, actor_id, digest_suite, payload)
 }
 
 /// Build a Realm facet state event (`ak.realm.join_rule`,
@@ -855,26 +837,8 @@ pub fn build_realm_state_event_for_station<K: arkret_sdk::EventSpec>(
     station_id: arkret_sdk::DidCoreId,
     realm_id: &str,
     actor_id: &str,
-    digest_suite: arkret_sdk::DigestSuite,
+    _digest_suite: arkret_sdk::DigestSuite,
     payload: K::Payload,
-) -> anyhow::Result<crate::operation::LocalOperation> {
-    build_realm_state_event_for_station_with_set_head::<K>(
-        station_id,
-        realm_id,
-        actor_id,
-        digest_suite,
-        payload,
-        None,
-    )
-}
-
-fn build_realm_state_event_for_station_with_set_head<K: arkret_sdk::EventSpec>(
-    station_id: arkret_sdk::DidCoreId,
-    realm_id: &str,
-    actor_id: &str,
-    digest_suite: arkret_sdk::DigestSuite,
-    payload: K::Payload,
-    set_expected_head: Option<Value>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let realm_id = arkret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))?;
     let builder = TypedOperationBuilder::new_for_station::<K>(

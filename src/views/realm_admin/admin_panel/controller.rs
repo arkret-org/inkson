@@ -58,7 +58,6 @@ impl RealmAdminController {
                                 &actor_id,
                                 digest_suite,
                                 patch,
-                                Vec::new(),
                             )
                             .await
                         }
@@ -69,7 +68,6 @@ impl RealmAdminController {
                                 &subject_id,
                                 &actor_id,
                                 patch,
-                                Vec::new(),
                             )
                             .await
                         }

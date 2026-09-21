@@ -238,7 +238,6 @@ pub async fn update_realm_metadata(
     actor_id: &str,
     digest_suite: arkret_sdk::DigestSuite,
     patch: Value,
-    causal_refs: Vec<arkret_sdk::Hash>,
 ) -> anyhow::Result<SubmitEventResult> {
     let fields = patch
         .as_object()
@@ -261,8 +260,7 @@ pub async fn update_realm_metadata(
         optional_profile_string(fields.get("avatar_blob_ref"), "avatar_blob_ref")?
             .map(arkret_sdk::BlobRef::new)
             .transpose()?;
-    let event =
-        build_realm_profile_update_event(realm_id, actor_id, digest_suite, profile, causal_refs)?;
+    let event = build_realm_profile_update_event(realm_id, actor_id, digest_suite, profile)?;
     submitter.submit_sdk_event(&event).await
 }
 
@@ -366,11 +364,9 @@ pub async fn update_space_metadata(
     space_id: &str,
     actor_id: &str,
     patch: Value,
-    causal_refs: Vec<arkret_sdk::Hash>,
 ) -> anyhow::Result<SubmitEventResult> {
     let event = ak_ops::space_update_patch(realm_id, actor_id, space_id, patch)?
-        .build_sdk_event("inkson")?
-        .with_causal_refs(causal_refs);
+        .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
 
@@ -708,29 +704,6 @@ pub async fn moderation_lift(
 mod tests {
     use super::*;
 
-    fn settled_realm_profile_winner(
-        rows: &[arkret_wire::CommittedEventView],
-    ) -> anyhow::Result<(Value, arkret_sdk::Hash)> {
-        let writes = rows
-            .iter()
-            .filter_map(arkret_wire::CommittedEventView::reducer_input)
-            .filter(|event| event.kind == arkret_sdk::EventKind::RealmProfile)
-            .map(|event| {
-                arkret_sdk::StateWrite::new(
-                    event.event_id.clone(),
-                    arkret_sdk::LatticeOp {
-                        op_type: arkret_sdk::LatticeOpType::Set,
-                        value: Some(Value::Object(event.payload.clone().into_iter().collect())),
-                        ..arkret_sdk::LatticeOp::empty()
-                    },
-                )
-                .with_supersedes(event.causal_refs.clone())
-            })
-            .collect::<Vec<_>>();
-        let state = arkret_sdk::causal_register_state(&writes)?;
-        Ok((state.winner.value, state.winner.event_id.event_digest()))
-    }
-
     const REALM_ID: &str = "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
     const ACTOR_ID: &str = "ak:did_core:web:alice.example";
     const SERVICE_DID: &str = "did:web:server.example";
@@ -815,83 +788,45 @@ mod tests {
     }
 
     #[test]
-    fn realm_profile_replacement_supersedes_the_identified_causal_head() {
-        let initial = build_realm_state_event_for_station::<arkret_sdk::event_spec::RealmProfile>(
-            crate::test_support::core_id(crate::test_support::STATION_ID),
-            REALM_ID,
-            ACTOR_ID,
-            arkret_sdk::DigestSuite::Sha256,
-            arkret_sdk::RealmProfile::new("Engineering").unwrap(),
-        )
-        .unwrap();
-        let initial_row = committed_row(crate::operation::author_for_test(&initial).into_event());
-        let (expected, expected_digest) =
-            settled_realm_profile_winner(std::slice::from_ref(&initial_row)).unwrap();
-
+    fn realm_profile_replacement_is_a_closed_typed_event_without_producer_ordering() {
         let replacement = build_realm_profile_replacement_event(
             REALM_ID,
             ACTOR_ID,
             arkret_sdk::DigestSuite::Sha256,
             arkret_sdk::RealmProfile::new("Platform").unwrap(),
-            expected.clone(),
-            expected_digest.clone(),
         )
         .unwrap();
+        let authored = crate::operation::author_for_test(&replacement);
+        assert_eq!(authored.kind, arkret_sdk::EventKind::RealmProfile);
+        let profile = serde_json::from_value::<arkret_sdk::RealmProfile>(Value::Object(
+            authored.payload.clone().into_iter().collect(),
+        ))
+        .unwrap();
+        assert_eq!(profile.title, "Platform");
 
-        let [guard] = replacement.intent().preconditions() else {
-            panic!("profile replacement must carry one exact causal-basis predicate");
-        };
-        assert_eq!(guard.cell_id.as_str(), arkret_wire::REALM_PROFILE_CELL);
-        assert_eq!(guard.predicate.op, arkret_sdk::PredicateOp::HeadEq);
-        assert_eq!(guard.predicate.value.as_ref(), Some(&expected));
-        assert_eq!(replacement.intent().causal_refs(), &[expected_digest]);
-
-        let mut rows = vec![
-            initial_row,
-            committed_row(crate::operation::author_for_test(&replacement).into_event()),
-        ];
-        assert_eq!(
-            settled_realm_profile_winner(&rows).unwrap().0["title"],
-            serde_json::json!("Platform")
-        );
-        rows.reverse();
-        assert_eq!(
-            settled_realm_profile_winner(&rows).unwrap().0["title"],
-            serde_json::json!("Platform"),
-            "event pagination order must not change the causal-register winner"
+        let envelope = serde_json::to_value(authored.event()).unwrap();
+        assert!(
+            arkret_wire::forbidden_wire::forbidden_wire_violation(
+                "event_envelope",
+                "*",
+                &envelope,
+            )
+            .is_none(),
+            "profile producer Event must not carry retired ordering coordinates"
         );
     }
 
     #[test]
-    fn realm_profile_history_selects_a_deterministic_concurrent_value() {
-        let initial = build_realm_state_event_for_station::<arkret_sdk::event_spec::RealmProfile>(
-            crate::test_support::core_id(crate::test_support::STATION_ID),
+    fn realm_profile_update_ui_emits_the_same_closed_replacement_carrier() {
+        let update = build_realm_profile_update_event(
             REALM_ID,
             ACTOR_ID,
             arkret_sdk::DigestSuite::Sha256,
-            arkret_sdk::RealmProfile::new("Engineering").unwrap(),
+            arkret_sdk::RealmProfile::new("Product").unwrap(),
         )
         .unwrap();
-        let unguarded =
-            build_realm_state_event_for_station::<arkret_sdk::event_spec::RealmProfile>(
-                crate::test_support::core_id(crate::test_support::STATION_ID),
-                REALM_ID,
-                ACTOR_ID,
-                arkret_sdk::DigestSuite::Sha256,
-                arkret_sdk::RealmProfile::new("Platform").unwrap(),
-            )
-            .unwrap();
-        let mut unguarded_event = crate::operation::author_for_test(&unguarded).into_event();
-        unguarded_event.preconditions.clear();
-        let rows = vec![
-            committed_row(crate::operation::author_for_test(&initial).into_event()),
-            committed_row(unguarded_event),
-        ];
-
-        let first = settled_realm_profile_winner(&rows).unwrap();
-        let mut reversed = rows;
-        reversed.reverse();
-        let second = settled_realm_profile_winner(&reversed).unwrap();
-        assert_eq!(first, second);
+        let event = crate::operation::author_for_test(&update);
+        assert_eq!(event.kind, arkret_sdk::EventKind::RealmProfile);
+        assert_eq!(event.payload["title"], serde_json::json!("Product"));
     }
 }
