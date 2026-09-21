@@ -4,15 +4,6 @@ use super::model::*;
 use crate::components::ActorIdentityLabel;
 use crate::views::helpers::{MentionNode, short_protocol_id};
 
-pub(super) fn push_unique_mention_node(mentions: &mut Vec<MentionNode>, mention: MentionNode) {
-    if !mentions
-        .iter()
-        .any(|existing| existing.target() == mention.target())
-    {
-        mentions.push(mention);
-    }
-}
-
 pub(super) fn render_message_text_block(
     key: String,
     text: String,

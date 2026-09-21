@@ -78,13 +78,6 @@ pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {
     normalize_wait_for_sync_token(sync_cursor.as_ref())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AgentSelectorMentionToken {
-    pub mention_text_original: String,
-    pub controller_handle: String,
-    pub agent_slug: String,
-}
-
 fn normalize_inline_token(token: &str) -> &str {
     token.trim_matches(|ch: char| {
         matches!(
@@ -92,47 +85,6 @@ fn normalize_inline_token(token: &str) -> &str {
             ',' | '.' | '!' | '?' | ':' | ';' | ')' | '(' | '[' | ']' | '"' | '\''
         )
     })
-}
-
-pub fn parse_agent_selector_mention_tokens(input: &str) -> Vec<AgentSelectorMentionToken> {
-    let mut tokens = Vec::new();
-    for token in input.split_whitespace() {
-        let normalized = normalize_inline_token(token);
-        let Some(rest) = normalized.strip_prefix('@') else {
-            continue;
-        };
-        let Some((controller_handle, agent_slug)) = rest.split_once('/') else {
-            continue;
-        };
-        if controller_handle.is_empty()
-            || arkret_models_identity::validate_agent_slug(agent_slug).is_err()
-        {
-            continue;
-        }
-        let controller_handle = if controller_handle.eq_ignore_ascii_case("me") {
-            "me".to_owned()
-        } else {
-            let Some(parsed) = crate::identity::handle::parse_user_handle(controller_handle) else {
-                continue;
-            };
-            parsed.handle
-        };
-        tokens.push(AgentSelectorMentionToken {
-            mention_text_original: normalized.to_owned(),
-            controller_handle,
-            agent_slug: agent_slug.to_owned(),
-        });
-    }
-    tokens.sort_by(|left, right| {
-        left.controller_handle
-            .cmp(&right.controller_handle)
-            .then(left.agent_slug.cmp(&right.agent_slug))
-            .then(left.mention_text_original.cmp(&right.mention_text_original))
-    });
-    tokens.dedup_by(|left, right| {
-        left.controller_handle == right.controller_handle && left.agent_slug == right.agent_slug
-    });
-    tokens
 }
 
 /// Parse audience tokens (`@here` / `@all` / …) from raw message text into
@@ -340,23 +292,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_agent_selector_tokens_without_materializing_mentions() {
-        let tokens = parse_agent_selector_mention_tokens(
-            "ask @alice:example.com/summary, @me/digest, not @bob:Bad",
+    fn raw_agent_selector_text_does_not_materialize_mentions() {
+        let mentions = parse_mention_nodes("ask @alice:example.com/summary or @me/digest");
+        assert!(
+            mentions.is_empty(),
+            "0364 D2 keeps selector-like text inert"
         );
-        assert_eq!(tokens.len(), 2);
-        assert_eq!(
-            tokens[0].mention_text_original,
-            "@alice:example.com/summary"
-        );
-        assert_eq!(tokens[0].controller_handle, "alice:example.com");
-        assert_eq!(tokens[0].agent_slug, "summary");
-        assert_eq!(tokens[1].mention_text_original, "@me/digest");
-        assert_eq!(tokens[1].controller_handle, "me");
-        assert_eq!(tokens[1].agent_slug, "digest");
-
-        let mentions = parse_mention_nodes("ask @alice:example.com/summary");
-        assert!(mentions.is_empty());
     }
 
     fn mention_test_account(principal: &str, station: &str) -> arkret_sdk::AccountId {

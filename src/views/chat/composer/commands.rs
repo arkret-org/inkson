@@ -231,7 +231,6 @@ pub(super) fn send_poll(
 pub(super) struct OwnedAgentSidecarRoute {
     pub base_url: String,
     pub api_token: String,
-    pub wait_for: Option<String>,
     /// Correlates the reserve request with its `sidecar.route.requested` log
     /// line, and travels into the opened session.
     pub trace_id: String,
@@ -244,19 +243,11 @@ pub(super) struct OwnedAgentSidecarRoute {
     pub mentions_enabled: bool,
     pub mentions: Vec<MentionNode>,
     pub body: String,
-    pub own_controller_handle: Option<String>,
-    pub roster_accounts:
-        std::collections::BTreeMap<arkret_sdk::DidCoreId, Option<arkret_sdk::AccountId>>,
-    pub inserted_candidates: Vec<crate::messaging::mentions::MentionCandidate>,
     pub participants: Vec<SpaceParticipant>,
 }
 
-/// Reserve (or reuse) the private sidecar an `@me/<agent>` mention addresses,
-/// and hand the draft over to it.
-///
-/// The agent selector is resolved first because the mention text alone does
-/// not name an account; only the resolved mentions say which owned agent the
-/// message is for.
+/// Reserve (or reuse) a private sidecar for already-structured, exact Agent
+/// AccountId mentions and hand the draft over to it.
 pub(super) fn route_to_owned_agent_sidecar(
     controller: ChatController,
     mut sidecar_session: Signal<Option<crate::sidecar::HostedSidecarState>>,
@@ -269,7 +260,6 @@ pub(super) fn route_to_owned_agent_sidecar(
         let OwnedAgentSidecarRoute {
             base_url,
             api_token,
-            wait_for,
             trace_id,
             realm_id,
             strand_id,
@@ -278,36 +268,12 @@ pub(super) fn route_to_owned_agent_sidecar(
             controller_did,
             device_id,
             mentions_enabled,
-            mut mentions,
+            mentions,
             body,
-            own_controller_handle,
-            roster_accounts,
-            inserted_candidates,
             participants,
         } = route;
-        for mention in resolve_agent_selector_mentions(
-            mentions_enabled,
-            &base_url,
-            api_token.clone(),
-            wait_for,
-            &mentions,
-            &body,
-            &realm_id,
-            &actor,
-            own_controller_handle.as_deref(),
-            &roster_accounts,
-        )
-        .await
-        {
-            push_unique_mention_node(&mut mentions, mention);
-        }
-        let addressed_agent_ids = owned_agent_ids_from_composer(
-            mentions_enabled,
-            &body,
-            &mentions,
-            &inserted_candidates,
-            &actor,
-        );
+        let addressed_agent_ids =
+            owned_agent_ids_from_composer(mentions_enabled, &mentions, &participants, &actor);
         let sidecar_outcome = ensure_owned_agent_sidecar(
             &base_url,
             api_token.clone(),
@@ -327,7 +293,6 @@ pub(super) fn route_to_owned_agent_sidecar(
                     sidecar_id,
                     view: sidecar_view,
                 } = sidecar;
-                let addressed_agent_ids = owned_agent_ids_from_mentions(&mentions, &actor);
                 let native_scope = arkret_sdk::ScopeRef::Sidecar {
                     realm_id: sidecar_view.sidecar.realm_id.clone(),
                     sidecar_id: sidecar_id.clone(),
@@ -395,17 +360,12 @@ pub(super) struct PlaintextSendRequest {
     pub body: String,
     pub reply_to: Option<String>,
     pub mentions: Vec<MentionNode>,
-    pub mentions_enabled: bool,
-    pub own_controller_handle: Option<String>,
-    pub roster_accounts:
-        std::collections::BTreeMap<arkret_sdk::DidCoreId, Option<arkret_sdk::AccountId>>,
 }
 
 /// Send a message into a plaintext Strand.
 ///
-/// Resolves the agent selectors first, because a `@me/<agent>` mention has no
-/// account behind it until it is resolved, and the wire `mentions[]` must
-/// carry complete `AccountId`s.
+/// Only already-structured mentions with complete AccountIds enter the wire;
+/// raw controller/slug text is inert under 0364 D2.
 pub(super) fn send_plaintext_message(
     controller: ChatController,
     mut frontier_state: Signal<String>,
@@ -426,27 +386,8 @@ pub(super) fn send_plaintext_message(
             local_id,
             body,
             reply_to,
-            mut mentions,
-            mentions_enabled,
-            own_controller_handle,
-            roster_accounts,
+            mentions,
         } = request;
-        for mention in resolve_agent_selector_mentions(
-            mentions_enabled,
-            &base_url,
-            api_token.clone(),
-            wait_for.clone(),
-            &mentions,
-            &body,
-            &realm_id,
-            &actor,
-            own_controller_handle.as_deref(),
-            &roster_accounts,
-        )
-        .await
-        {
-            push_unique_mention_node(&mut mentions, mention);
-        }
         if let Some(found) = messages
             .write()
             .iter_mut()
@@ -628,7 +569,6 @@ fn fail_optimistic_send_row(mut messages: Signal<Vec<ChatMessage>>, local_id: &s
 pub(super) struct SidecarSendRequest {
     pub base_url: String,
     pub api_token: String,
-    pub wait_for: Option<String>,
     pub session: crate::sidecar::HostedSidecarState,
     /// Strand the routed copy is addressed to inside the sidecar.
     pub sidecar_strand_id: String,
@@ -641,10 +581,6 @@ pub(super) struct SidecarSendRequest {
     pub local_id: String,
     pub body: String,
     pub mentions: Vec<MentionNode>,
-    pub mentions_enabled: bool,
-    pub own_controller_handle: Option<String>,
-    pub roster_accounts:
-        std::collections::BTreeMap<arkret_sdk::DidCoreId, Option<arkret_sdk::AccountId>>,
 }
 
 pub(super) fn send_sidecar_message(controller: ChatController, request: SidecarSendRequest) {
@@ -656,7 +592,6 @@ pub(super) fn send_sidecar_message(controller: ChatController, request: SidecarS
         let SidecarSendRequest {
             base_url,
             api_token,
-            wait_for,
             session,
             sidecar_strand_id,
             source_event_id,
@@ -666,27 +601,8 @@ pub(super) fn send_sidecar_message(controller: ChatController, request: SidecarS
             local_id,
             body,
             mentions,
-            mentions_enabled,
-            own_controller_handle,
-            roster_accounts,
         } = request;
-        let mut resolved_mentions = mentions;
-        for mention in resolve_agent_selector_mentions(
-            mentions_enabled,
-            &base_url,
-            api_token.clone(),
-            wait_for,
-            &resolved_mentions,
-            &body,
-            &session.source_realm_id,
-            &actor,
-            own_controller_handle.as_deref(),
-            &roster_accounts,
-        )
-        .await
-        {
-            push_unique_mention_node(&mut resolved_mentions, mention);
-        }
+        let resolved_mentions = mentions;
         let view =
             match crate::transport::auth::authed_api_with_sync(&base_url, api_token.clone(), None)
                 .and_then(|api| api.sdk_http_client())
@@ -746,8 +662,8 @@ pub(super) fn send_sidecar_message(controller: ChatController, request: SidecarS
     });
 }
 
-/// One encrypted chat send: resolve selectors, build the MLS payload, submit
-/// it, and persist the author's own plaintext into the actor-private sidecar.
+/// One encrypted chat send: build the MLS payload, submit it, and persist the
+/// author's own plaintext into the actor-private sidecar.
 ///
 /// The author cannot decrypt their own ciphertext on a later device, so the
 /// sidecar copy is what makes their own messages readable after a reload. It
@@ -767,10 +683,6 @@ pub(super) struct EncryptedSendRequest {
     pub body: String,
     pub reply_to: Option<String>,
     pub mentions: Vec<MentionNode>,
-    pub mentions_enabled: bool,
-    pub own_controller_handle: Option<String>,
-    pub roster_accounts:
-        std::collections::BTreeMap<arkret_sdk::DidCoreId, Option<arkret_sdk::AccountId>>,
     /// Present only when the MLS backup prompt is mounted; a first encrypted
     /// write arms it.
     pub backup_trigger_signal: Option<Signal<bool>>,
@@ -798,32 +710,12 @@ pub(super) fn send_encrypted_message(
         body,
         reply_to,
         mentions,
-        mentions_enabled,
-        own_controller_handle,
-        roster_accounts,
         backup_trigger_signal,
     } = request;
     let base_for_backup_trigger = base.clone();
     let token_for_backup_trigger = api_token.clone();
     let actor_for_backup_trigger = actor.clone();
     spawn(async move {
-        let mut mentions = mentions;
-        for mention in resolve_agent_selector_mentions(
-            mentions_enabled,
-            &base,
-            api_token.clone(),
-            wait_for.clone(),
-            &mentions,
-            &body,
-            &realm,
-            &actor,
-            own_controller_handle.as_deref(),
-            &roster_accounts,
-        )
-        .await
-        {
-            push_unique_mention_node(&mut mentions, mention);
-        }
         if let Some(found) = messages
             .write()
             .iter_mut()

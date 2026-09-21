@@ -149,75 +149,89 @@ fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
 #[test]
 fn owned_agent_ids_only_select_current_controllers_agents() {
     let controller = "ak:did_core:web:example.com:users:alice";
-    let own_agent = arkret_sdk::Mention::new(local_fixture_account(
-        "ak:did_core:web:agents.example:summary",
-    ))
-    .with_agent_selector_metadata(
-        local_fixture_account(controller),
-        arkret_sdk::Handle::parse("alice:example.com").unwrap(),
-        "summary",
+    let agent_id = "ak:did_core:web:agents.example:summary";
+    let exact_account = local_fixture_account(agent_id);
+    let mention = MentionNode::mention(arkret_sdk::Mention::new(exact_account.clone()));
+    let owned = SpaceParticipant {
+        actor_id: Some(arkret_sdk::ActorId::account(exact_account.clone())),
+        principal_id: exact_account.principal_id.clone(),
+        display_name: None,
+        handle_label: None,
+        display_name_rank: 1,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: true,
+        agent_metadata: Some(AgentParticipantMetadata {
+            controller_principal_id: controller.to_owned(),
+            controller_handle: String::new(),
+            agent_slug: String::new(),
+            display_name: String::new(),
+        }),
+    };
+    assert_eq!(
+        owned_agent_ids_from_composer(
+            true,
+            std::slice::from_ref(&mention),
+            std::slice::from_ref(&owned),
+            controller,
+        ),
+        vec![agent_id]
     );
-    let other_agent = arkret_sdk::Mention::new(local_fixture_account(
-        "ak:did_core:web:agents.example:review",
-    ))
-    .with_agent_selector_metadata(
-        local_fixture_account("ak:did_core:web:example.com:users:bob"),
-        arkret_sdk::Handle::parse("bob:example.com").unwrap(),
-        "review",
+    let wrong_owner = SpaceParticipant {
+        agent_metadata: Some(AgentParticipantMetadata {
+            controller_principal_id: "ak:did_core:web:example.com:users:bob".to_owned(),
+            ..owned.agent_metadata.clone().unwrap()
+        }),
+        ..owned.clone()
+    };
+    assert!(
+        owned_agent_ids_from_composer(
+            true,
+            std::slice::from_ref(&mention),
+            &[wrong_owner],
+            controller
+        )
+        .is_empty()
     );
-
-    let ids = owned_agent_ids_from_mentions(
-        &[
-            MentionNode::mention(own_agent.clone()),
-            MentionNode::mention(other_agent),
-            MentionNode::mention(own_agent),
-        ],
-        controller,
+    let missing_roster = SpaceParticipant {
+        actor_id: None,
+        ..owned.clone()
+    };
+    assert!(
+        owned_agent_ids_from_composer(
+            true,
+            std::slice::from_ref(&mention),
+            &[missing_roster],
+            controller
+        )
+        .is_empty()
     );
-
-    assert_eq!(ids, vec!["ak:did_core:web:agents.example:summary"]);
+    let wrong_station = SpaceParticipant {
+        actor_id: Some(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            exact_account.principal_id.clone(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example").unwrap(),
+        ))),
+        ..owned
+    };
+    assert!(
+        owned_agent_ids_from_composer(true, &[mention], &[wrong_station], controller).is_empty()
+    );
 }
 
 #[test]
-fn composer_owned_agent_ids_keep_verified_picker_agent_before_handle_loads() {
+fn raw_agent_selector_text_does_not_trigger_private_sidecar_route() {
     let controller = "ak:did_core:web:example.com:users:alice";
-    let picker = vec![crate::messaging::mentions::MentionCandidate {
-        subject_account_id: local_fixture_account("ak:did_core:web:agents.example:summary"),
-        display_name: "Summary Assistant".to_owned(),
-        insert_label: "me/summary".to_owned(),
-        subtitle: "Your agent".to_owned(),
-        is_agent: true,
-        controller_subject_account_id: Some(local_fixture_account(controller)),
-        controller_handle_at_time: String::new(),
-        agent_slug_at_time: "summary".to_owned(),
-    }];
-
-    let ids = owned_agent_ids_from_composer(
-        true,
-        "ask @me/summary for an update",
-        &[],
-        &picker,
-        controller,
-    );
-
-    assert_eq!(ids, vec!["ak:did_core:web:agents.example:summary"]);
-    assert!(
-        owned_agent_ids_from_composer(true, "ask for an update", &[], &picker, controller)
-            .is_empty()
-    );
+    let mentions = composer_mention_nodes(true, "ask @me/summary for an update", &[], controller);
+    assert!(mentions.is_empty());
+    assert!(owned_agent_ids_from_composer(true, &mentions, &[], controller).is_empty());
 }
 
 #[test]
 fn owned_agent_mentions_do_not_reopen_sidecar_from_private_composer() {
-    assert!(should_route_owned_agent_to_sidecar(
-        false, false, true, true
-    ));
-    assert!(!should_route_owned_agent_to_sidecar(
-        true, false, true, true
-    ));
-    assert!(!should_route_owned_agent_to_sidecar(
-        false, true, true, true
-    ));
+    assert!(should_route_owned_agent_to_sidecar(false, false, true));
+    assert!(!should_route_owned_agent_to_sidecar(true, false, true));
+    assert!(!should_route_owned_agent_to_sidecar(false, true, true));
+    assert!(!should_route_owned_agent_to_sidecar(false, false, false));
 }
 
 #[test]
@@ -255,14 +269,7 @@ fn direct_chat_disables_mention_ui_triggers_and_send_metadata() {
         "direct-chat sends must not carry mention metadata"
     );
     assert!(
-        owned_agent_ids_from_composer(
-            mentions_enabled,
-            "ask @me/summary",
-            &[],
-            &stale_picker,
-            principal_id,
-        )
-        .is_empty(),
+        owned_agent_ids_from_composer(mentions_enabled, &[], &[], principal_id).is_empty(),
         "direct-chat text must not trigger agent mention routing"
     );
 

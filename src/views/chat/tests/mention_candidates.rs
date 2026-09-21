@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn mention_candidate_for_own_agent_uses_me_alias() {
+fn inventory_only_agent_has_no_guessed_station_or_selector_candidate() {
     let controller = SpaceParticipant {
         actor_id: Some(local_fixture_actor(
             "ak:did_core:web:example.com:users:alice",
@@ -40,23 +40,10 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
         }),
     };
     let participants = vec![controller.clone(), agent.clone()];
-    let candidate =
+    assert!(
         mention_candidate_for_participant(&agent, &participants, controller.principal_id.as_str())
-            .expect("agent mention candidate");
-    assert_eq!(candidate.display_name, "Summary Assistant");
-    assert_eq!(candidate.insert_label(), "me/summary");
-    assert_eq!(
-        candidate.subject_account_id,
-        local_fixture_account("ak:did_core:web:agents.example:summary")
+            .is_none()
     );
-    assert_eq!(
-        candidate.controller_subject_account_id,
-        Some(local_fixture_account(
-            "ak:did_core:web:example.com:users:alice"
-        ))
-    );
-    assert_eq!(candidate.controller_handle_at_time, "alice:example.com");
-    assert_eq!(candidate.agent_slug_at_time, "summary");
 }
 
 #[test]
@@ -127,42 +114,28 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
 }
 
 #[test]
-fn resolved_owned_agent_chip_suppresses_duplicate_directory_lookup() {
+fn raw_agent_selector_text_does_not_create_target_or_notification() {
     let controller = "ak:did_core:web:example.com:users:alice";
-    let mention = arkret_sdk::Mention::new(local_fixture_account(
-        "ak:did_core:web:agents.example:summary",
-    ))
-    .with_agent_selector_metadata(
-        local_fixture_account(controller),
-        arkret_sdk::Handle::parse("alice:example.com").unwrap(),
-        "summary",
-    )
-    .with_mention_text_original("@me/summary");
-    let mentions = vec![MentionNode::mention(mention)];
-    let owned = parse_agent_selector_mention_tokens("ask @me/summary")
-        .into_iter()
-        .next()
-        .unwrap();
-    let remote = parse_agent_selector_mention_tokens("ask @alice:example.com/summary")
-        .into_iter()
-        .next()
-        .unwrap();
-    let unresolved = parse_agent_selector_mention_tokens("ask @me/digest")
-        .into_iter()
-        .next()
-        .unwrap();
-
-    assert!(agent_selector_mention_is_already_resolved(
-        &mentions, &owned, controller
-    ));
-    assert!(agent_selector_mention_is_already_resolved(
-        &mentions, &remote, controller
-    ));
-    assert!(!agent_selector_mention_is_already_resolved(
-        &mentions,
-        &unresolved,
-        controller
-    ));
+    assert!(
+        composer_mention_nodes(
+            true,
+            "ask @me/summary or @alice:example.com/summary",
+            &[],
+            controller,
+        )
+        .is_empty()
+    );
+    let legacy_chip = crate::messaging::mentions::MentionCandidate {
+        subject_account_id: local_fixture_account("ak:did_core:web:agents.example:summary"),
+        display_name: "Summary".to_owned(),
+        insert_label: "me/summary".to_owned(),
+        subtitle: String::new(),
+        is_agent: true,
+        controller_subject_account_id: Some(local_fixture_account(controller)),
+        controller_handle_at_time: "alice:example.com".to_owned(),
+        agent_slug_at_time: "summary".to_owned(),
+    };
+    assert!(composer_mention_nodes(true, "ask @me/summary", &[legacy_chip], controller).is_empty());
 }
 
 #[test]
@@ -233,45 +206,22 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
         is_agent: false,
         agent_metadata: None,
     };
-    let clicked_agent = mention_candidate_for_explicit_target(
-        &unannotated_owned_agent,
-        std::slice::from_ref(&unannotated_owned_agent),
-        principal_id,
-        &std::collections::BTreeSet::new(),
-        Some("summary"),
-        Some("alice:example.com"),
-    )
-    .expect("explicit owned-agent mention");
-    assert_eq!(clicked_agent.insert_label(), "me/summary");
-    assert!(clicked_agent.is_agent);
-    assert_eq!(
-        clicked_agent.controller_subject_account_id,
-        Some(local_fixture_account(principal_id))
-    );
-    assert_eq!(clicked_agent.agent_slug_at_time, "summary");
-
-    let before_handle_load = owned_agent_mention_candidate(
-        unannotated_owned_agent.principal_id.as_str(),
-        Some("summary"),
-        principal_id,
-        None,
-    )
-    .expect("@me selector must not wait for the account handle");
-    assert_eq!(before_handle_load.insert_label(), "me/summary");
-    assert!(before_handle_load.controller_handle_at_time.is_empty());
     assert!(
-        composer_mention_nodes(
-            true,
-            "ask @me/summary",
-            std::slice::from_ref(&before_handle_load),
+        mention_candidate_for_explicit_target(
+            &unannotated_owned_agent,
+            std::slice::from_ref(&unannotated_owned_agent),
             principal_id,
+            &std::collections::BTreeSet::new(),
+            Some("summary"),
+            Some("alice:example.com"),
         )
-        .is_empty()
+        .is_none()
     );
+    assert!(participant_mention_account(&unannotated_owned_agent).is_none());
 }
 
 #[test]
-fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
+fn known_agent_account_candidate_uses_full_identity_not_selector_label() {
     let controller = SpaceParticipant {
         actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
@@ -287,7 +237,9 @@ fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
         agent_metadata: None,
     };
     let agent = SpaceParticipant {
-        actor_id: None,
+        actor_id: Some(local_fixture_actor(
+            "ak:did_core:web:agents.example:summary",
+        )),
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:agents.example:summary".to_owned(),
         )
@@ -314,7 +266,23 @@ fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
     )
     .expect("agent mention candidate");
 
-    assert_eq!(candidate.insert_label(), "bob:example.com/summary");
+    assert_eq!(
+        candidate.insert_label(),
+        local_fixture_account("ak:did_core:web:agents.example:summary").to_string()
+    );
+    assert!(candidate.controller_subject_account_id.is_none());
+    assert!(candidate.agent_slug_at_time.is_empty());
+    assert!(agent_selector_label(&agent).is_none());
+    let draft = format!("ask @{}", candidate.insert_label());
+    let nodes = composer_mention_nodes(
+        true,
+        &draft,
+        std::slice::from_ref(&candidate),
+        "ak:did_core:web:example.com:users:alice",
+    );
+    let mention = nodes[0].as_mention().expect("known full AccountId mention");
+    assert_eq!(mention.subject_account_id, candidate.subject_account_id);
+    assert!(mention.agent_slug_at_time.is_none());
 }
 
 #[test]

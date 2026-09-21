@@ -25,8 +25,7 @@ use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::{
-    MentionNode, active_sync_token, parse_agent_selector_mention_tokens, parse_mention_nodes,
-    short_protocol_id,
+    MentionNode, active_sync_token, parse_mention_nodes, short_protocol_id,
 };
 
 mod circle_welcome;
@@ -341,221 +340,39 @@ fn project_visible_messages(
     visible
 }
 
-/// Principal → complete account, as attested by the current Realm roster.
-///
-/// A principal that appears under two different accounts in the same Realm is
-/// recorded as ambiguous (`None`): §3.8 forbids collapsing them, so a mention
-/// that would have to pick one MUST fail closed instead.
-pub(super) type RosterAccountIndex =
-    std::collections::BTreeMap<arkret_sdk::DidCoreId, Option<arkret_sdk::AccountId>>;
-
-pub(super) fn roster_account_index(
-    participants: &[crate::views::chat::model::SpaceParticipant],
-) -> RosterAccountIndex {
-    let mut index = RosterAccountIndex::new();
-    for participant in participants {
-        let Some(account) = crate::views::chat::model::participant_mention_account(participant)
-        else {
-            continue;
-        };
-        match index.entry(account.principal_id.clone()) {
-            std::collections::btree_map::Entry::Vacant(slot) => {
-                slot.insert(Some(account));
-            }
-            std::collections::btree_map::Entry::Occupied(mut slot) => {
-                if slot.get().as_ref() != Some(&account) {
-                    slot.insert(None);
-                }
-            }
-        }
-    }
-    index
-}
-
-/// Unambiguous account for `principal_id` in this Realm, or `None`.
-fn roster_account_for(
-    index: &RosterAccountIndex,
-    principal_id: &arkret_sdk::DidCoreId,
-) -> Option<arkret_sdk::AccountId> {
-    index.get(principal_id).cloned().flatten()
-}
-
-/// Resolve `@controller/agent` selector tokens against the signed agent
-/// claim rather than the Realm roster.
-///
-/// The ruling behind that choice:
-///
-/// `tasks/spec-done/2026-09-05-1310-agent-selector-mention-has-no-normative-station-source.md`
-async fn resolve_agent_selector_mentions(
+fn owned_agent_ids_from_composer(
     mentions_enabled: bool,
-    base_url: &str,
-    api_token: String,
-    wait_for_sync_token: Option<String>,
-    already_resolved: &[MentionNode],
-    body: &str,
-    realm_id: &str,
-    requester: &str,
-    own_controller_handle: Option<&str>,
-    roster_accounts: &RosterAccountIndex,
-) -> Vec<MentionNode> {
+    mentions: &[MentionNode],
+    participants: &[crate::views::chat::model::SpaceParticipant],
+    controller_principal_id: &str,
+) -> Vec<String> {
     if !mentions_enabled {
         return Vec::new();
     }
-    let tokens = parse_agent_selector_mention_tokens(body);
-    if tokens.is_empty() {
-        return Vec::new();
-    }
-    let Ok(api) = authed_api_with_sync(base_url, api_token, wait_for_sync_token) else {
-        return Vec::new();
-    };
-    let mut mentions = Vec::new();
-    for token in tokens {
-        if agent_selector_mention_is_already_resolved(already_resolved, &token, requester) {
-            continue;
-        }
-        let controller_handle = if token.controller_handle == "me" {
-            let Some(handle) = own_controller_handle
-                .map(str::trim)
-                .filter(|handle| !handle.is_empty())
-            else {
-                continue;
-            };
-            handle
-        } else {
-            token.controller_handle.as_str()
-        };
-        let Ok(outcome) = api
-            .resolve_agent_selector_mention(
-                controller_handle,
-                &token.agent_slug,
-                realm_id,
-                requester,
-            )
-            .await
-        else {
-            continue;
-        };
-        let Ok(controller_handle) = arkret_sdk::Handle::parse(controller_handle) else {
-            continue;
-        };
-        // The signed claim names one complete AccountId, so the persisted
-        // mention target is copied from it verbatim. The roster join this used
-        // to do was a guess with two failure modes the ruling names: it
-        // silently excluded an authorized agent that is not a Realm member,
-        // and it had no answer when the same principal held accounts on two
-        // Stations. See the ruling named on this function.
-        let subject_account_id = outcome.subject_account_id.clone();
-        // The controller half is optional audit metadata and its authoritative
-        // source is the verified controller handle claim, not the roster. When
-        // the roster cannot supply it the mention is still written; a guessed
-        // controller account would be worse than an absent one.
-        let controller_subject_account_id =
-            roster_account_for(roster_accounts, &outcome.controller_subject_id);
-        let mut mention = arkret_sdk::Mention::new(subject_account_id);
-        if let Some(controller_subject_account_id) = controller_subject_account_id {
-            mention = mention.with_agent_selector_metadata(
-                controller_subject_account_id,
-                controller_handle,
-                outcome.agent_slug,
-            );
-        }
-        let mention = mention
-            .with_mention_text_original(token.mention_text_original)
-            .with_resolved_at(chrono::Utc::now());
-        mentions.push(MentionNode::mention(mention));
-    }
-    mentions
-}
-
-fn agent_selector_mention_is_already_resolved(
-    mentions: &[MentionNode],
-    token: &crate::views::helpers::AgentSelectorMentionToken,
-    requester: &str,
-) -> bool {
-    mentions
-        .iter()
-        .filter_map(MentionNode::as_mention)
-        .any(|mention| {
-            if mention.agent_slug_at_time.as_deref() != Some(token.agent_slug.as_str()) {
-                return false;
-            }
-            if token.controller_handle == "me" {
-                return mention
-                    .controller_subject_account_id
-                    .as_ref()
-                    .is_some_and(|controller| {
-                        same_principal_core(controller.principal_id.as_str(), requester)
-                    });
-            }
-            mention
-                .controller_handle_at_time
-                .as_ref()
-                .is_some_and(|handle| handle.to_string() == token.controller_handle)
-        })
-}
-
-fn owned_agent_ids_from_mentions(
-    mentions: &[MentionNode],
-    controller_principal_id: &str,
-) -> Vec<String> {
+    // Route only a structured, complete AccountId selected from an actor row
+    // that the current controller-owned Agent inventory also names. Historic
+    // selector metadata, slug text and a principal-only match are insufficient.
     let mut agent_ids = mentions
         .iter()
         .filter_map(MentionNode::as_mention)
         .filter(|mention| {
-            mention
-                .controller_subject_account_id
-                .as_ref()
-                .is_some_and(|controller| {
-                    same_principal_core(controller.principal_id.as_str(), controller_principal_id)
-                })
-        })
-        .map(|mention| mention.subject_account_id.principal_id.as_str().to_owned())
-        .collect::<Vec<_>>();
-    agent_ids.sort_unstable();
-    agent_ids.dedup();
-    agent_ids
-}
-
-fn owned_agent_ids_from_composer(
-    mentions_enabled: bool,
-    body: &str,
-    mentions: &[MentionNode],
-    picker: &[crate::messaging::mentions::MentionCandidate],
-    controller_principal_id: &str,
-) -> Vec<String> {
-    if !mentions_enabled {
-        return Vec::new();
-    }
-    let selector_slugs = parse_agent_selector_mention_tokens(body)
-        .into_iter()
-        .filter(|token| token.controller_handle == "me")
-        .map(|token| token.agent_slug)
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut agent_ids = owned_agent_ids_from_mentions(mentions, controller_principal_id);
-    agent_ids.extend(
-        picker
-            .iter()
-            .filter(|candidate| candidate.is_agent)
-            .filter(|candidate| {
-                candidate
-                    .controller_subject_account_id
-                    .as_ref()
-                    .is_some_and(|controller| {
+            participants.iter().any(|participant| {
+                participant.is_agent
+                    && participant
+                        .actor_id
+                        .as_ref()
+                        .and_then(arkret_sdk::ActorId::as_account_id)
+                        == Some(&mention.subject_account_id)
+                    && participant.agent_metadata.as_ref().is_some_and(|metadata| {
                         same_principal_core(
-                            controller.principal_id.as_str(),
+                            &metadata.controller_principal_id,
                             controller_principal_id,
                         )
                     })
             })
-            .filter(|candidate| selector_slugs.contains(candidate.agent_slug_at_time.trim()))
-            .map(|candidate| {
-                candidate
-                    .subject_account_id
-                    .principal_id
-                    .as_str()
-                    .to_owned()
-            }),
-    );
+        })
+        .map(|mention| mention.subject_account_id.principal_id.as_str().to_owned())
+        .collect::<Vec<_>>();
     agent_ids.sort_unstable();
     agent_ids.dedup();
     agent_ids
@@ -565,11 +382,8 @@ fn should_route_owned_agent_to_sidecar(
     is_sidecar_composer: bool,
     selected_channel_is_circle_scoped: bool,
     has_owned_agent_ids: bool,
-    has_self_agent_selector: bool,
 ) -> bool {
-    !is_sidecar_composer
-        && !selected_channel_is_circle_scoped
-        && (has_owned_agent_ids || has_self_agent_selector)
+    !is_sidecar_composer && !selected_channel_is_circle_scoped && has_owned_agent_ids
 }
 
 #[derive(Clone, Debug)]
@@ -1330,18 +1144,16 @@ fn composer_mention_nodes(
         }) {
             continue;
         }
-        // `@me/<slug>` is allowed into the draft before the signed account
-        // primary handle finishes loading. Do not turn that incomplete chip
-        // into a generic actor mention; the send path resolves the selector
-        // once the authoritative controller account and handle are available.
+        let insert_label = chip.insert_label().to_owned();
+        // 0364 D2: an Agent mention needs an explicitly selected chip carrying
+        // a complete AccountId and its visible inserted text. A stale chip or
+        // raw controller/slug token must not become a target.
         if chip.is_agent
-            && (chip.controller_subject_account_id.is_none()
-                || chip.controller_handle_at_time.trim().is_empty()
-                || chip.agent_slug_at_time.trim().is_empty())
+            && (insert_label != chip.subject_account_id.to_string()
+                || !body.contains(&format!("@{insert_label}")))
         {
             continue;
         }
-        let insert_label = chip.insert_label().to_owned();
         let parsed_handle = (!chip.is_agent)
             .then(|| crate::identity::handle::parse_user_handle(&insert_label))
             .flatten();
@@ -1354,17 +1166,6 @@ fn composer_mention_nodes(
             parsed_handle.and_then(|parsed| arkret_sdk::Handle::parse(&parsed.handle).ok())
         {
             mention = mention.with_handle_at_time(handle);
-        }
-        if let (Some(controller_subject_account_id), Ok(controller_handle)) = (
-            chip.controller_subject_account_id.clone(),
-            arkret_sdk::Handle::parse(&chip.controller_handle_at_time),
-        ) && !chip.agent_slug_at_time.trim().is_empty()
-        {
-            mention = mention.with_agent_selector_metadata(
-                controller_subject_account_id,
-                controller_handle,
-                chip.agent_slug_at_time.clone(),
-            );
         }
         mentions.push(MentionNode::mention(mention));
     }

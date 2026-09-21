@@ -202,14 +202,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         );
     let participants_for_plaintext_sidecar = participants_for_messages.clone();
     let participants_for_encrypted_sidecar = participants_for_messages.clone();
-    // Agent selector resolution returns principal DIDs; the persisted mention
-    // needs the complete AccountId, which only the Realm roster attests.
-    let roster_accounts = super::roster_account_index(&participants_for_messages);
-    let roster_accounts_for_plaintext_sidecar = roster_accounts.clone();
-    let roster_accounts_for_encrypted_sidecar = roster_accounts.clone();
-    let roster_accounts_for_retry = roster_accounts.clone();
-    let roster_accounts_for_sidecar_session = roster_accounts.clone();
-    let roster_accounts_for_send = roster_accounts;
     let composer_placeholder = chat_composer_placeholder(mentions_enabled);
 
     {
@@ -249,25 +241,26 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 if mention_insert_request_seen.peek().as_str() == request.request_id {
                     return;
                 }
-                let candidate = owned_agent_mention_candidate(
-                    &request.target_id,
-                    request.agent_slug.as_deref(),
-                    &request_principal_id,
-                    request_controller_handle.as_deref(),
-                )
-                .or_else(|| {
-                    let participant = request_participants.iter().find(|participant| {
-                        participant.principal_id.as_str().trim() == request.target_id.trim()
-                    })?;
-                    mention_candidate_for_explicit_target(
-                        participant,
-                        &request_participants,
-                        &request_principal_id,
-                        &request_public_agent_ids,
-                        None,
-                        request_controller_handle.as_deref(),
-                    )
-                });
+                let candidate = if request.agent_slug.is_some() {
+                    // A slug is not a target identity under 0364 D2.
+                    None
+                } else {
+                    request_participants
+                        .iter()
+                        .find(|participant| {
+                            participant.principal_id.as_str().trim() == request.target_id.trim()
+                        })
+                        .and_then(|participant| {
+                            mention_candidate_for_explicit_target(
+                                participant,
+                                &request_participants,
+                                &request_principal_id,
+                                &request_public_agent_ids,
+                                None,
+                                request_controller_handle.as_deref(),
+                            )
+                        })
+                };
                 let Some(candidate) = candidate else {
                     return;
                 };
@@ -949,10 +942,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
                             let actor = principal_id.clone();
-                            let own_controller_handle = own_controller_handle.clone();
                             let sidecar_device_id = device_id.clone();
                             move |_| {
-                                let own_controller_handle = own_controller_handle.clone();
                                 let authority_for_sidecar = plaintext_sidecar_authority.clone();
                                 let did_for_sidecar = plaintext_sidecar_did.clone();
                                 let device_id_for_sidecar = sidecar_device_id.clone();
@@ -978,9 +969,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 };
                                 let local_owned_agent_ids = owned_agent_ids_from_composer(
                                     mentions_enabled,
-                                    &body,
                                     &mentions,
-                                    &inserted_candidates,
+                                    &participants_for_plaintext_sidecar,
                                     &actor,
                                 );
                                 let targets_owned_agent = mentions_enabled
@@ -988,9 +978,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         active_sidecar_present,
                                         selected_channel_is_circle_scoped,
                                         !local_owned_agent_ids.is_empty(),
-                                        parse_agent_selector_mention_tokens(&body)
-                                            .iter()
-                                            .any(|token| token.controller_handle == "me"),
                                     );
                                 if targets_owned_agent {
                                     sidecar_route_pending.set(true);
@@ -1010,7 +997,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         commands::OwnedAgentSidecarRoute {
                                             base_url: base.clone(),
                                             api_token: token(),
-                                            wait_for: active_sync_token(sync_cursor()),
                                             trace_id,
                                             realm_id: realm.clone(),
                                             strand_id: channel.strand_id.clone(),
@@ -1021,9 +1007,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             mentions_enabled,
                                             mentions,
                                             body: body.clone(),
-                                            own_controller_handle: own_controller_handle.clone(),
-                                            roster_accounts: roster_accounts_for_plaintext_sidecar.clone(),
-                                            inserted_candidates,
                                             participants: participants_for_plaintext_sidecar.clone(),
                                         },
                                     );
@@ -1083,7 +1066,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 // pending send state.
                                 mention_picker_state.write().clear();
                                 let wait_for = active_sync_token(sync_cursor());
-                                let roster_accounts = roster_accounts_for_retry.clone();
                                 commands::send_plaintext_message(
                                     controller,
                                     frontier_state,
@@ -1098,9 +1080,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         body,
                                         reply_to,
                                         mentions,
-                                        mentions_enabled,
-                                        own_controller_handle,
-                                        roster_accounts,
                                     },
                                 );
                                 chat_draft.set(String::new());
@@ -1123,14 +1102,12 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
                             let actor = principal_id.clone();
-                            let own_controller_handle = own_controller_handle.clone();
                             let selected_strand = selected_channel_value.clone();
                             let pending_mls_binding = selected_realm_pending_mls_binding;
                             let sidecar_device_id = device_id.clone();
                             let pending_mls_binding_reason =
                                 selected_realm_pending_mls_binding_reason.clone();
                             move |_| {
-                                let own_controller_handle = own_controller_handle.clone();
                                 let authority_for_sidecar = secure_sidecar_authority.clone();
                                 let did_for_sidecar = secure_sidecar_did.clone();
                                 let device_id_for_sidecar = sidecar_device_id.clone();
@@ -1168,9 +1145,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let strand_id = selected_strand.clone();
                                 let local_owned_agent_ids = owned_agent_ids_from_composer(
                                     mentions_enabled,
-                                    &body,
                                     &mentions,
-                                    &inserted_candidates,
+                                    &participants_for_encrypted_sidecar,
                                     &actor,
                                 );
                                 let active_sidecar_for_send = active_sidecar_session.clone();
@@ -1179,9 +1155,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         active_sidecar_for_send.is_some(),
                                         selected_channel_is_circle_scoped,
                                         !local_owned_agent_ids.is_empty(),
-                                        parse_agent_selector_mention_tokens(&body)
-                                            .iter()
-                                            .any(|token| token.controller_handle == "me"),
                                     );
                                 if targets_owned_agent {
                                     sidecar_route_pending.set(true);
@@ -1201,7 +1174,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         commands::OwnedAgentSidecarRoute {
                                             base_url: base.clone(),
                                             api_token: token(),
-                                            wait_for: active_sync_token(sync_cursor()),
                                             trace_id,
                                             realm_id: realm.clone(),
                                             strand_id: strand_id.clone(),
@@ -1212,9 +1184,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             mentions_enabled,
                                             mentions,
                                             body: body.clone(),
-                                            own_controller_handle: own_controller_handle.clone(),
-                                            roster_accounts: roster_accounts_for_encrypted_sidecar.clone(),
-                                            inserted_candidates,
                                             participants: participants_for_encrypted_sidecar.clone(),
                                         },
                                     );
@@ -1259,21 +1228,16 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
 
                                     let base = base.clone();
                                     let api_token = token();
-                                    let wait_for = active_sync_token(sync_cursor());
-                                    let own_controller_handle = own_controller_handle.clone();
                                     let source_event_id = latest_source_event_anchor(
                                         &messages.read(),
                                         &session.source_realm_id,
                                         &session.source_strand_id,
                                     );
-                                    let roster_accounts =
-                                        roster_accounts_for_sidecar_session.clone();
                                     commands::send_sidecar_message(
                                         controller,
                                         commands::SidecarSendRequest {
                                             base_url: base,
                                             api_token,
-                                            wait_for,
                                             session,
                                             sidecar_strand_id: source_strand_id,
                                             source_event_id,
@@ -1283,9 +1247,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             local_id,
                                             body,
                                             mentions,
-                                            mentions_enabled,
-                                            own_controller_handle,
-                                            roster_accounts,
                                         },
                                     );
                                     return;
@@ -1330,7 +1291,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let wait_for = active_sync_token(sync_cursor());
                                 let backup_trigger_signal =
                                     crate::components::try_needs_mls_backup_signal();
-                                let roster_accounts = roster_accounts_for_send.clone();
                                 commands::send_encrypted_message(
                                     controller,
                                     frontier_state,
@@ -1347,9 +1307,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         body,
                                         reply_to,
                                         mentions,
-                                        mentions_enabled,
-                                        own_controller_handle,
-                                        roster_accounts,
                                         backup_trigger_signal,
                                     },
                                 );
