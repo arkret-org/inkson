@@ -20,7 +20,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use dioxus::prelude::*;
 
 use crate::runtime::projection::AdmittedSignal;
-use serde_json::Value;
 
 /// Inbound invite presented to the user as a ring. Set on the hub when an
 /// `invite` arrives for a call the local client has no active session for.
@@ -382,7 +381,7 @@ pub fn route_decoded_signal(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::*;
 
@@ -463,12 +462,28 @@ mod tests {
         .expect("fixture signal must seal")
     }
 
+    /// Mirror the production receiver boundary: only a typed plaintext paired
+    /// with its verified envelope-derived sequence domain reaches this product
+    /// adapter. Invalid raw plaintext is rejected before this carrier exists.
+    fn admitted_signal(
+        envelope: &arkret_wire::SignalEnvelope,
+        plaintext: Value,
+    ) -> anyhow::Result<AdmittedSignal> {
+        let bytes = arkret_sdk::canonical::canonical_json_bytes(&plaintext)?;
+        Ok(AdmittedSignal {
+            domain: arkret_sdk::SignalSequenceDomain::from_verified_envelope(envelope, None)?,
+            payload: garth::open_signal_plaintext(&bytes)?,
+            expires_at: envelope.expires_at,
+        })
+    }
+
     #[test]
     fn decodes_invite_and_video_flag() {
         let (envelope, plaintext) =
             sealed_call_signal(41, PEER_ACTOR, PEER_DEVICE, 1, invite(true));
 
-        let decoded = decode_call_signal(&envelope, &plaintext).expect("decodes");
+        let admitted = admitted_signal(&envelope, plaintext).expect("admitted fixture");
+        let decoded = decode_call_signal(&admitted).expect("decodes");
 
         assert!(matches!(
             decoded.signal,
@@ -491,7 +506,8 @@ mod tests {
     fn decoded_signal_carries_the_in_ciphertext_sequence() {
         let (envelope, plaintext) = sealed_call_signal(42, PEER_ACTOR, PEER_DEVICE, 2, candidate());
 
-        let decoded = decode_call_signal(&envelope, &plaintext).expect("decodes");
+        let admitted = admitted_signal(&envelope, plaintext).expect("admitted fixture");
+        let decoded = decode_call_signal(&admitted).expect("decodes");
 
         assert!(matches!(
             decoded.signal,
@@ -510,21 +526,31 @@ mod tests {
     fn decode_skips_plaintext_that_is_not_a_call_signal() {
         let (envelope, _) = sealed_call_signal(43, PEER_ACTOR, PEER_DEVICE, 1, invite(false));
 
-        // A typing body decrypted out of the same rail is not a call signal.
-        assert!(decode_call_signal(&envelope, &json!({"kind": "ak.typing"})).is_none());
-        // Neither is a call body whose signal_kind is outside the canonical
-        // enum, even though the envelope authenticated.
+        // A typed body from another registered profile is not a call signal.
+        let typing = admitted_signal(
+            &envelope,
+            json!({
+                "kind": "ak.typing",
+                "payload_sequence": 1,
+                "strand_id": "ak:strand:Aa6k_ga4nHTT-mJwrlDP8oeaq3P1Wg9B6K8RtTXZyUY0",
+                "typing": true
+            }),
+        )
+        .expect("typing fixture is a registered Signal plaintext");
+        assert!(decode_call_signal(&typing).is_none());
+        // A call body whose signal_kind is outside the canonical enum is
+        // rejected by the closed-profile parser before the product adapter.
         assert!(
-            decode_call_signal(
+            admitted_signal(
                 &envelope,
-                &json!({
+                json!({
                     "kind": "ak.call.signal",
                     "call_id": TEST_CALL,
                     "signal_kind": "sdp_offer",
                     "payload_sequence": 1
                 })
             )
-            .is_none()
+            .is_err()
         );
     }
 
@@ -617,7 +643,8 @@ mod tests {
 
         // The product adapter receives only the envelope-derived identity and
         // already-opened body. Cryptographic admission was completed by garth.
-        let decoded = decode_call_signal(&envelope, &plaintext).expect("decodes");
+        let admitted = admitted_signal(&envelope, plaintext).expect("admitted fixture");
+        let decoded = decode_call_signal(&admitted).expect("decodes");
         match decide_route(&decoded, "did:web:me", false, &RouteState::default()) {
             RouteDecision::Ring(info) => {
                 assert_eq!(info.peer_actor, "ak:did_core:web:caller.example")
