@@ -37,20 +37,13 @@ pub fn build_realm_bootstrap_steps_for_station(
     discoverability: &str,
     join_rule: &str,
     history_access: &str,
-    encryption_profile: &str,
     security_class: &str,
     federation_policy: &str,
     digest_algorithm: &str,
     trust_domain: &str,
     plaintext_visible_services: &[String],
     alias: Option<&str>,
-    content_scheme: Option<&str>,
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
-    validate_realm_history_content_scheme_for_profile(
-        encryption_profile,
-        history_access,
-        content_scheme,
-    )?;
     let create_event = build_realm_create_event_for_station(
         station_id.clone(),
         genesis_salt,
@@ -72,10 +65,8 @@ pub fn build_realm_bootstrap_steps_for_station(
         discoverability: discoverability.to_owned(),
         join_rule: join_rule.to_owned(),
         history_access: history_access.to_owned(),
-        encryption_profile: encryption_profile.to_owned(),
         federation_policy: federation_policy.to_owned(),
         alias: alias.map(ToOwned::to_owned),
-        content_scheme: content_scheme.map(ToOwned::to_owned),
         plaintext_visible_services: plaintext_visible_services.to_vec(),
     };
     let membership_facets = facets.clone();
@@ -117,10 +108,8 @@ pub struct RealmBootstrapFacets {
     pub discoverability: String,
     pub join_rule: String,
     pub history_access: String,
-    pub encryption_profile: String,
     pub federation_policy: String,
     pub alias: Option<String>,
-    pub content_scheme: Option<String>,
     pub plaintext_visible_services: Vec<String>,
 }
 
@@ -131,7 +120,6 @@ pub fn build_realm_bootstrap_facet_intents(
     digest_suite: arkret_sdk::DigestSuite,
 ) -> anyhow::Result<Vec<crate::operation::EventIntent>> {
     let actor_id = facets.actor_id.as_str();
-    let encryption_profile = facets.encryption_profile.as_str();
     let history_access = parse_wire_enum::<arkret_sdk::HistoryAccess>(
         "history_access",
         facets.history_access.as_str(),
@@ -160,8 +148,7 @@ pub fn build_realm_bootstrap_facet_intents(
     // authority is the Realm genesis itself, admitted by the governance Station
     // named in that genesis, so there is no wire slot for a self-issued
     // genesis grant.
-    let mut policy_bundle = recommended_realm_policy_bundle_for_profile(encryption_profile)
-        .unwrap_or_else(|| arkret_sdk::RealmPolicyBundlePayload::new(1));
+    let mut policy_bundle = arkret_sdk::RealmPolicyBundlePayload::new(1);
     policy_bundle.federation_policy = Some(parse_wire_enum(
         "federation_policy",
         &facets.federation_policy,
@@ -707,19 +694,11 @@ pub fn validate_realm_history_content_scheme_for_profile(
     Ok(())
 }
 
-/// Genesis `ak.realm.policy_bundle` payload.
-///
-/// `content_scheme` is deliberately absent: realm-and-space.md §2.3 freezes it
-/// at the accepted MLS group Genesis and the closed bundle schema does not
-/// declare it, so a bundle revision can neither select nor restate it.
+/// Genesis `ak.realm.policy_bundle` payload. Realm creation has no content
+/// scheme or encryption-profile branch; the Station admits the same closed
+/// policy facet regardless of later MLS activation.
 pub fn recommended_realm_policy_bundle_value() -> arkret_sdk::RealmPolicyBundlePayload {
     arkret_sdk::RealmPolicyBundlePayload::new(1)
-}
-
-pub fn recommended_realm_policy_bundle_for_profile(
-    profile: &str,
-) -> Option<arkret_sdk::RealmPolicyBundlePayload> {
-    encryption_profile_uses_recommended_floor(profile).then(recommended_realm_policy_bundle_value)
 }
 
 /// Build a `ak.space.create` event per spec realm-and-space.md §3.2.
@@ -1427,7 +1406,6 @@ mod genesis_authority_tests {
                 "invite_only",
                 "invite",
                 "since_join",
-                "mls_rfc9420",
                 "standard",
                 "closed",
                 "sha256",
@@ -1437,7 +1415,6 @@ mod genesis_authority_tests {
                 // create-time alias path. Passing `None` here is what let an
                 // `object.alias` survive unnoticed in the first place.
                 Some("general"),
-                None,
             )
             .unwrap(),
         )
@@ -1512,13 +1489,11 @@ mod genesis_authority_tests {
                 "invite_only",
                 "invite",
                 "since_join",
-                "mls_rfc9420",
                 "standard",
                 "closed",
                 "sha256",
                 "ak:trust_domain:did.web.example",
                 &[],
-                None,
                 None,
             )
             .unwrap(),

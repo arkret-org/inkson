@@ -279,14 +279,12 @@ fn authored_realm_bootstrap(
             "listed",
             "invite",
             "since_join",
-            "mls_rfc9420",
             "standard",
             "restricted",
             "sha256",
             "ak:trust_domain:server.example",
             plaintext_visible_services,
             alias,
-            None,
         )
         .expect("build_realm_bootstrap_steps succeeds"),
     )

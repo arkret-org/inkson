@@ -164,10 +164,8 @@ fn demo_realm_genesis() -> Result<Value> {
         discoverability: "listed".to_owned(),
         join_rule: "invite".to_owned(),
         history_access: "all_history_for_current_members".to_owned(),
-        encryption_profile: "mls_rfc9420".to_owned(),
         federation_policy: "restricted".to_owned(),
         alias: None,
-        content_scheme: Some("mls_exporter_aead_v1".to_owned()),
         plaintext_visible_services: Vec::new(),
     };
     let followups = inkson::event_builders::build_realm_bootstrap_facet_intents(

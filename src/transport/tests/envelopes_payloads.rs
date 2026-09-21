@@ -43,13 +43,11 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "listed",
             "invite",
             "all_history_for_current_members",
-            "mls_rfc9420",
             "standard",
             "restricted",
             "sha256",
             "ak:trust_domain:server.example",
             &["did:web:server.example".to_owned()],
-            None,
             None,
         )
         .unwrap(),
@@ -283,37 +281,7 @@ fn realm_create_carries_only_the_closed_genesis_members() {
 }
 
 #[test]
-fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
-    let err = build_realm_bootstrap_steps_for_station(
-        crate::test_support::core_id(crate::test_support::STATION_ID),
-        test_genesis_salt(),
-        "did:web:alice.example",
-        "did:web:server.example",
-        "https://server.example",
-        "Strict history",
-        None,
-        "listed",
-        "invite",
-        "all_history_for_current_members",
-        "mls_rfc9420",
-        "standard",
-        "restricted",
-        "sha256",
-        "ak:trust_domain:server.example",
-        &[],
-        None,
-        Some("mls_rfc9420"),
-    )
-    .err()
-    .expect("pre-join history requires the history-capable content scheme");
-
-    assert!(err.to_string().contains(
-        arkret_sdk::error_codes::ReasonCode::HISTORY_ACCESS_REQUIRES_HISTORY_CAPABLE_SCHEME
-    ));
-}
-
-#[test]
-fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
+fn realm_bootstrap_prejoin_history_does_not_author_retired_encryption_axes() {
     let events = crate::event_submit::author_event_unit_for_test(
         build_realm_bootstrap_steps_for_station(
             crate::test_support::core_id(crate::test_support::STATION_ID),
@@ -321,32 +289,35 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
             "did:web:alice.example",
             "did:web:server.example",
             "https://server.example",
-            "Strict history",
+            "Current history policy",
             None,
             "listed",
             "invite",
-            "since_join",
-            "mls_rfc9420",
+            "all_history_for_current_members",
             "standard",
             "restricted",
             "sha256",
             "ak:trust_domain:server.example",
             &[],
             None,
-            Some("mls_rfc9420"),
         )
-        .expect("joined history with the strict scheme is authorable"),
+        .expect("pre-MLS history policy is authorable without encryption axes"),
     )
     .expect("the Realm bootstrap unit authors");
 
-    // The choice is validated during Realm bootstrap preparation but is frozen
-    // only by the accepted MLS group Genesis. It must not leak into the mutable
-    // Realm policy bundle or any other ordinary Realm bootstrap Event.
-    assert!(
-        events
-            .iter()
-            .all(|event| !event.payload.contains_key("content_scheme"))
-    );
+    // `history_access` is a distinct current policy; no retired create-time
+    // encryption axis may leak into any Realm bootstrap Event.
+    for retired in [
+        "content_scheme",
+        "encryption_profile",
+        "encryption_floor",
+        "e2ee_required",
+    ] {
+        assert!(
+            events.iter().all(|event| !event.payload.contains_key(retired)),
+            "Realm bootstrap must not author {retired}"
+        );
+    }
 }
 
 /// Regression: every genesis bootstrap envelope must produce the SAME
@@ -372,13 +343,11 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
             "listed",
             "invite",
             "all_history_for_current_members",
-            "mls_rfc9420",
             "standard",
             "restricted",
             "sha256",
             "ak:trust_domain:server.example",
             &["did:web:server.example".to_owned()],
-            None,
             None,
         )
         .unwrap(),
@@ -556,13 +525,11 @@ fn realm_bootstrap_payloads_match_spec_schema() {
             "listed",
             "invite",
             "all_history_for_current_members",
-            "mls_rfc9420",
             "standard",
             "restricted",
             "sha256",
             "ak:trust_domain:server.example",
             &["did:web:server.example".to_owned()],
-            None,
             None,
         )
         .unwrap(),

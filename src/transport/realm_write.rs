@@ -52,14 +52,12 @@ pub async fn create_realm(
     discoverability: &str,
     join_rule: &str,
     history_access: &str,
-    encryption_profile: &str,
     security_class: &str,
     federation_policy: &str,
     digest_algorithm: &str,
     trust_domain: &str,
     plaintext_visible_services: Vec<String>,
     alias: Option<&str>,
-    content_scheme: Option<&str>,
 ) -> anyhow::Result<RealmCreateResult> {
     let actor_id = actor_id.trim();
     if actor_id.is_empty() {
@@ -100,14 +98,12 @@ pub async fn create_realm(
         discoverability,
         join_rule,
         history_access,
-        encryption_profile,
         security_class,
         federation_policy,
         digest_algorithm,
         trust_domain,
         &plaintext_visible_services,
         alias,
-        content_scheme,
     )?;
     // Genesis Realm bootstrap has no prior snapshot head. All follow-up
     // facets use the staged authority root, and creator membership is the

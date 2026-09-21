@@ -976,14 +976,12 @@ pub(super) fn RealmsSection(
                                                         &discoverability,
                                                         &join_rule,
                                                         &history_access,
-                                                        &encryption_profile,
                                                         &security_class,
                                                         &federation_policy,
                                                         &digest_algorithm,
                                                         &trust_domain,
                                                         plaintext_services.clone(),
                                                         (!alias.trim().is_empty()).then(|| alias.trim()),
-                                                        Some(content_scheme.as_str()),
                                                     ).await {
                                                     Ok(realm) => {
                                                         // R15: ak.realm.create now returns
