@@ -665,24 +665,29 @@ pub async fn direct_conversation_found(
 
 /// Author, sign and submit the resolver-authorized founding Events.
 ///
-/// The founding authority evidence is a caller input: the resolver outcome
-/// carries only `expected_contact_revision`, so the pair's root Contact round
-/// evidence (or the controller/Agent provision reference) must be supplied by
-/// the caller that read it. Coordinates are read back by re-resolving after the
-/// last Event commits; the founding submission itself returns only its commits.
+/// The resolver's `CreationRequired.next_founding_input` carries the exact
+/// founding evidence for this authority-evaluated pair. Coordinates are read
+/// back by re-resolving after the last Event commits; the founding submission
+/// itself returns only its commits.
+fn founding_evidence_for_resolve(
+    resolve: &arkret_sdk::DirectConversationResolveOutcome,
+) -> anyhow::Result<&arkret_sdk::DirectConversationFoundingAuthorityEvidence> {
+    let arkret_sdk::DirectConversationResolveOutcome::CreationRequired {
+        next_founding_input,
+    } = resolve
+    else {
+        anyhow::bail!("Direct Conversation resolver did not grant founding authority");
+    };
+    Ok(&next_founding_input.founding_authority_evidence)
+}
+
 pub async fn create_direct_conversation_from_resolve(
     submitter: &crate::event_submit::EventSubmitter,
     resolve: &arkret_sdk::DirectConversationResolveOutcome,
     founder_account: &arkret_sdk::AccountId,
     peer_account: &arkret_sdk::AccountId,
-    founding_authority: &arkret_sdk::DirectConversationFoundingAuthorityEvidence,
 ) -> anyhow::Result<Vec<crate::models::SubmitEventResult>> {
-    if !matches!(
-        resolve,
-        arkret_sdk::DirectConversationResolveOutcome::CreationRequired { .. }
-    ) {
-        anyhow::bail!("Direct Conversation resolver did not grant founding authority");
-    }
+    let founding_authority = founding_evidence_for_resolve(resolve)?;
     anyhow::ensure!(
         submitter.authority()? == founder_account,
         "Direct Conversation founder differs from the authenticated AccountId"
@@ -1802,6 +1807,31 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn direct_conversation_founding_uses_only_resolver_authorized_evidence() {
+        let evidence = arkret_sdk::DirectConversationFoundingAuthorityEvidence::ControllerAgent {
+            agent_provision_ref: arkret_sdk::EventId::new(
+                "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            )
+            .unwrap(),
+            controller_binding_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64)))
+                .unwrap(),
+        };
+        let authorized = arkret_sdk::DirectConversationResolveOutcome::CreationRequired {
+            next_founding_input: arkret_sdk::DirectConversationFoundingInput {
+                founding_authority_evidence: evidence.clone(),
+            },
+        };
+        assert_eq!(
+            founding_evidence_for_resolve(&authorized).unwrap(),
+            &evidence
+        );
+        let blocked = arkret_sdk::DirectConversationResolveOutcome::CreationBlocked {
+            blockers: Vec::new(),
+        };
+        assert!(founding_evidence_for_resolve(&blocked).is_err());
+    }
 
     fn accepted_contact_row_for_scope_update() -> arkret_sdk::ContactListRow {
         serde_json::from_value(json!({

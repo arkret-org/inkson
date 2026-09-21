@@ -817,6 +817,8 @@ fn ContactRow(
                                                         (Some(actor), Some(peer_did)) => {
                                                             row_status.set(tr("contacts.dm.creating"));
                                                             let resolve_for_create = outcome.clone();
+                                                            let resolve_store = state_store.clone();
+                                                            let resolve_peer = peer.clone();
                                                             match with_authed_api(
                                                                 &base,
                                                                 api_token.clone(),
@@ -827,17 +829,28 @@ fn ContactRow(
                                                                         &actor,
                                                                         &peer_did,
                                                                     )
-                                                                    .await
+                                                                    .await?;
+                                                                    crate::transport::account::direct_conversation_resolve(
+                                                                        &api,
+                                                                        &resolve_store,
+                                                                        &resolve_peer,
+                                                                        None,
+                                                                        false,
+                                                                    ).await
                                                                 },
                                                             )
                                                             .await
                                                             {
-                                                                Ok(accepted) => {
-                                                                    row_status.set(String::new());
-                                                                    nav.push(Route::DirectConversation {
-                                                                        realm_id: accepted.receipt.realm_id.to_string(),
-                                                                        strand_id: accepted.receipt.main_strand_id.to_string(),
-                                                                    });
+                                                                Ok(resolved) => {
+                                                                    if let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(&resolved) {
+                                                                        row_status.set(String::new());
+                                                                        nav.push(Route::DirectConversation {
+                                                                            realm_id: coordinates.realm_id.to_string(),
+                                                                            strand_id: coordinates.main_strand_id.to_string(),
+                                                                        });
+                                                                    } else {
+                                                                        row_status.set(tr("contacts.dm.not_ready"));
+                                                                    }
                                                                 }
                                                                 Err(error) => row_status.set(format!(
                                                                     "Direct Conversation creation failed: {}",
