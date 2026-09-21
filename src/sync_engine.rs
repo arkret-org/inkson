@@ -31,7 +31,7 @@ use arkret_models_collaboration::sync_frames::account_subscribe::{
     AccountSubscribeFrameKind, SyncFilter, SyncRequestBody,
 };
 use arkret_sdk::EventPayloadExt as _;
-use arkret_wire::{AccountDataKey, event_kind_str};
+use arkret_wire::AccountDataKey;
 use garth::subscription::{AccountBatchProjector, AccountSubscription, SubscriptionControl};
 #[cfg(test)]
 use garth::{ClientEvent, ClientProjector};
@@ -1298,22 +1298,55 @@ impl RemovalSchedule {
     }
 }
 
-fn removal_scope_stamp(store: &LocalStateStore, scope: &arkret_sdk::ScopeRef) -> Option<String> {
+fn removal_scope_stamp(
+    store: &LocalStateStore,
+    scope: &arkret_sdk::ScopeRef,
+    desired_members: &BTreeSet<arkret_sdk::ActorId>,
+) -> Option<String> {
     let checkpoint = store.mls_checkpoint_for_scope(scope)?;
     let base = store
         .mls_group_state_ref_for_scope(scope, &checkpoint.group_id, checkpoint.epoch)
         .ok()?;
-    let mut basis = store
-        .seal_view_for_realm(scope.realm_id_opt()?.as_str())
-        .frontier;
-    basis.sort();
-    basis.dedup();
-    arkret_sdk::canonical::canonical_sha256(&(checkpoint, base, basis)).ok()
+    let current = store.current_mls_group_for_scope(scope)?;
+    if current.effective_scope != *scope
+        || current.epoch != checkpoint.epoch
+        || current.current_mls_commit_event_ref != base
+        || current.current_key_access_revision != current.covered_key_access_revision
+    {
+        return None;
+    }
+    arkret_sdk::canonical::canonical_sha256(&(
+        checkpoint,
+        base,
+        current.current_key_access_revision,
+        desired_members,
+    ))
+    .ok()
+}
+
+/// Compute the actors that still occupy verified MLS leaves but no longer
+/// belong to the complete Station-projected desired roster.  The desired
+/// roster is only a reconciliation trigger: the MLS runtime derives the exact
+/// leaves from the restored group's verified bindings and the governing
+/// Station validates the resulting public tree on submission.
+fn removal_targets(
+    group_members: impl IntoIterator<Item = arkret_sdk::ActorId>,
+    desired_members: &BTreeSet<arkret_sdk::ActorId>,
+) -> Vec<arkret_sdk::ActorId> {
+    let mut targets = group_members
+        .into_iter()
+        .filter(|actor| !desired_members.contains(actor))
+        .collect::<Vec<_>>();
+    targets.sort();
+    targets.dedup();
+    targets
 }
 
 #[cfg(test)]
 mod removal_schedule_tests {
     use super::*;
+
+    const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     #[test]
     fn pending_realm_round_robin_does_not_starve_later_realms() {
@@ -1326,6 +1359,62 @@ mod removal_schedule_tests {
         assert_eq!(schedule.next_realm(&[]), Some(a.clone()));
         schedule.pending.remove(&a);
         assert_eq!(schedule.next_realm(&[]), Some(b));
+    }
+
+    #[test]
+    fn removal_targets_keep_complete_actor_ids_and_remove_only_extras() {
+        let station =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example".to_owned()).unwrap();
+        let kept = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:kept.example".to_owned()).unwrap(),
+            station.clone(),
+        ));
+        let removed = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:removed.example".to_owned()).unwrap(),
+            station,
+        ));
+        let desired = BTreeSet::from([kept.clone()]);
+
+        assert_eq!(
+            removal_targets([removed.clone(), kept, removed.clone()], &desired,),
+            vec![removed]
+        );
+    }
+
+    #[test]
+    fn empty_removal_stamp_requires_exact_covered_station_current() {
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+        };
+        let group_id = scope.canonical_mls_group_id().unwrap();
+        let base =
+            arkret_sdk::EventId::new("ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml")
+                .unwrap();
+        let mut store = crate::state::isolated_store_for_tests("removal-empty-stamp");
+        let checkpoint = crate::mls::persistence::encrypt_state(
+            REALM,
+            &group_id,
+            1,
+            b"snapshot-bytes",
+            "secret",
+            &[1; 16],
+        );
+        store
+            .save_mls_checkpoint_for_scope(&scope, checkpoint)
+            .unwrap();
+        store
+            .record_mls_group_state_ref_for_scope(&scope, &group_id, 1, base)
+            .unwrap();
+        let desired = BTreeSet::new();
+
+        assert!(removal_scope_stamp(&store, &scope, &desired).is_none());
+        crate::test_support::install_accepted_mls_group_at_epoch(&mut store, &scope, 1, 7);
+        assert!(removal_scope_stamp(&store, &scope, &desired).is_some());
+
+        let mut projection = store.realm_tree_projection(REALM).unwrap();
+        projection["current"][0]["value"]["covered_key_access_revision"] = serde_json::json!(6);
+        store.save_realm_tree_projection(REALM, projection);
+        assert!(removal_scope_stamp(&store, &scope, &desired).is_none());
     }
 }
 
@@ -1370,17 +1459,28 @@ async fn run_circle_scope_rotate_pass(
         if !removal_session_current(start_generation, &generation, ctx) {
             return;
         }
-        let mut scopes = vec![arkret_sdk::ScopeRef::Realm {
-            realm_id: realm.clone(),
-        }];
-        // This read discovers scopes only; member_ids never decide removals.
+        let realm_desired_members = ctx
+            .state_store
+            .read(|store| store.complete_joined_member_hint_for_realm(realm.as_str()));
+        let mut scopes = Vec::new();
+        if let Ok(Some(desired_members)) = realm_desired_members.as_ref() {
+            scopes.push((
+                arkret_sdk::ScopeRef::Realm {
+                    realm_id: realm.clone(),
+                },
+                desired_members.clone(),
+            ));
+        }
+        // CircleView is the authenticated governing Station's complete current
+        // view. Unlike a local event projection it has no partial-page
+        // semantics, so its member_ids may drive conservative reconciliation.
         let circles =
             crate::transport::auth::with_authed_sdk_client(&base, token.clone(), |http| {
                 let realm = realm.clone();
                 async move { crate::transport::circle::list_circles(&http, realm.as_str()).await }
             })
             .await;
-        let mut all_reconciled = circles.is_ok();
+        let mut all_reconciled = circles.is_ok() && matches!(realm_desired_members, Ok(Some(_)));
 
         if let Ok(circles) = circles {
             for circle in circles.circle_views {
@@ -1403,13 +1503,13 @@ async fn run_circle_scope_rotate_pass(
                     )
                 });
                 if has_mls_genesis {
-                    scopes.push(scope);
+                    scopes.push((scope, circle.member_ids.into_iter().collect()));
                 }
             }
         }
         let relevant_scopes = scopes
             .into_iter()
-            .filter(|scope| {
+            .filter(|(scope, _)| {
                 ctx.state_store
                     .read(|store| store.mls_checkpoint_for_scope(scope).is_some())
             })
@@ -1433,19 +1533,57 @@ async fn run_circle_scope_rotate_pass(
             if !removal_session_current(start_generation, &generation, ctx) {
                 return;
             }
+            let (scope, desired_members) = scope;
             if ctx
                 .state_store
                 .read(|store| store.mls_checkpoint_for_scope(&scope).is_none())
             {
                 continue;
             }
-            let frozen = match ctx.state_store.read(|store| {
-                crate::circle_mls::MembershipRemovalSnapshot::capture(
+            let circle_id = match &scope {
+                arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str()),
+                _ => None,
+            };
+            let secure = crate::secure_key_store::default_secure_key_store("inkson");
+            let Some(group_members) = ctx.state_store.read(|store| {
+                crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
                     store,
-                    scope.clone(),
+                    secure.as_ref(),
+                    realm.as_str(),
+                    circle_id,
                     authority,
                     device,
                 )
+            }) else {
+                all_reconciled = false;
+                tracing::debug!(%realm, "verified MLS roster is not ready for removal reconciliation");
+                continue;
+            };
+            let targets = removal_targets(group_members, &desired_members);
+            if targets.is_empty() {
+                let stamp = ctx
+                    .state_store
+                    .read(|store| removal_scope_stamp(store, &scope, &desired_members));
+                if let Some(stamp) = stamp {
+                    let Ok(group) = scope.canonical_mls_group_id() else {
+                        all_reconciled = false;
+                        continue;
+                    };
+                    schedule
+                        .lock()
+                        .unwrap()
+                        .scopes
+                        .entry(realm.clone())
+                        .or_default()
+                        .empty
+                        .insert(group.to_string(), stamp);
+                } else {
+                    all_reconciled = false;
+                }
+                continue;
+            }
+            let frozen = match ctx.state_store.read(|store| {
+                crate::circle_mls::MembershipRemovalSnapshot::capture(store, scope.clone(), targets)
             }) {
                 Ok(value) => value,
                 Err(error) => {
@@ -1470,23 +1608,6 @@ async fn run_circle_scope_rotate_pass(
                             .map_err(anyhow::Error::msg)
                     };
                     fence()?;
-                    let outcome = api
-                        .sdk_http_client()?
-                        .mls_membership_removal(
-                            &frozen.request,
-                            authority,
-                            &frozen.local_mls_leaves,
-                        )
-                        .await?;
-                    fence()?;
-                    outcome.validate_for_request(
-                        &frozen.request,
-                        authority,
-                        &frozen.local_mls_leaves,
-                    )?;
-                    if outcome.remove_leaf_indices.is_empty() {
-                        return Ok(None);
-                    }
                     // The MLS governance frontier and its cached proof bundle
                     // are gone with the Seal family: the Commit that removes
                     // these leaves is submitted as one atomic
@@ -1494,7 +1615,6 @@ async fn run_circle_scope_rotate_pass(
                     // against the group state it already holds.
                     fence()?;
                     let local = ctx.state_store.read(Clone::clone);
-                    let secure = crate::secure_key_store::default_secure_key_store("inkson");
                     let draft = crate::circle_mls::build_remove_scope_rotate_draft(
                         &local,
                         secure.as_ref(),
@@ -1502,88 +1622,47 @@ async fn run_circle_scope_rotate_pass(
                         actor,
                         device,
                         frozen,
-                        &outcome,
                     )
-                    .await
                     .map_err(anyhow::Error::msg)?;
                     fence()?;
+                    // The staged state includes the pending Commit and must be
+                    // durable before the first network side effect. The MLS
+                    // submission lane installs it only after Station
+                    // acceptance and can replay the exact signed request after
+                    // an unknown outcome.
+                    ctx.state_store
+                        .write(|store| {
+                            frozen.ensure_current(store)?;
+                            store.save_mls_checkpoint_for_scope(
+                                &scope,
+                                draft.staged_checkpoint.clone(),
+                            )
+                        })
+                        .map_err(anyhow::Error::msg)?;
+                    anyhow::ensure!(
+                        removal_session_current(start_generation, generation, ctx),
+                        "MLS removal account session changed"
+                    );
                     let submitter = api.event_submitter()?;
-                    let authored = submitter.author_event_unit(draft.steps).await?;
-                    fence()?;
-                    let commit_id = authored
-                        .iter()
-                        .find(|e| e.kind.as_str() == event_kind_str::MLS_COMMIT)
-                        .map(|e| e.event_id().clone())
-                        .context("MLS Remove unit has no Commit")?;
-                    if let arkret_sdk::ScopeRef::Circle { circle_id, .. } = scope {
-                        let idempotency = crate::operation::uuid_v7();
-                        let body = arkret_sdk::CircleScopeRotateRequestBody {
-                            events: authored.iter().map(|e| e.event().clone()).collect(),
-                            idempotency_key: Some(idempotency.clone()),
-                        };
-                        submitter
-                            .http()
-                            .circle_scope_rotate(circle_id.as_str(), &idempotency, &body)
-                            .await?;
-                    } else {
-                        // There is no batch submission in the authority
-                        // protocol: each Event is answered by its own
-                        // RealmCommit, so the unit is submitted in order and
-                        // stops at the first Event the Station refuses.
-                        submitter
-                            .submit_signed_sdk_events_in_order(&authored)
-                            .await?;
-                    }
-                    fence()?;
-                    Ok(Some((draft.post_commit_checkpoint, commit_id)))
+                    let authored = submitter
+                        .author_for_direct_submission(&draft.commit_event)
+                        .await?;
+                    submitter
+                        .submit_mls_commit(
+                            authored,
+                            Vec::new(),
+                            device.clone(),
+                            Vec::new(),
+                            &ctx.state_store,
+                        )
+                        .await?;
+                    Ok::<_, anyhow::Error>(draft.removed_actors.len())
                 }
             })
             .await;
             match submitted {
-                Ok(None) => {
-                    let stamp = ctx.state_store.read(|store| {
-                        frozen.ensure_current(store).ok()?;
-                        removal_scope_stamp(store, &scope)
-                    });
-                    if let Some(stamp) = stamp {
-                        schedule
-                            .lock()
-                            .unwrap()
-                            .scopes
-                            .entry(realm.clone())
-                            .or_default()
-                            .empty
-                            .insert(frozen.request.mls_group_id.to_string(), stamp);
-                    } else {
-                        all_reconciled = false;
-                    }
-                }
-                Ok(Some((checkpoint, commit))) => {
-                    if !removal_session_current(start_generation, &generation, ctx) {
-                        return;
-                    }
-                    let installed = ctx.state_store.write(|store| {
-                        // Compare-and-install under the same host state write guard.
-                        frozen.ensure_current(store)?;
-                        let circle = match &scope {
-                            arkret_sdk::ScopeRef::Circle { circle_id, .. } => {
-                                Some(circle_id.as_str())
-                            }
-                            _ => None,
-                        };
-                        store.record_mls_group_state_ref_for_effective_scope(
-                            realm.to_string(),
-                            circle,
-                            checkpoint.group_id.as_str(),
-                            checkpoint.epoch,
-                            commit,
-                        )?;
-                        store.save_mls_checkpoint_for_scope(&scope, checkpoint)?;
-                        Ok::<_, String>(())
-                    });
-                    if let Err(error) = installed {
-                        tracing::warn!(%realm, %error, "accepted MLS Remove awaits current-state reconciliation");
-                    }
+                Ok(removed_count) => {
+                    tracing::info!(%realm, ?scope, removed_count, "MLS member-removal commit accepted");
                     // Preserve the existing one-Commit-per-pass write bound.
                     return;
                 }
@@ -1594,7 +1673,7 @@ async fn run_circle_scope_rotate_pass(
                     }
                     ctx.state_store.write(|store| {
                         store.record_move_submission(
-                            format!("mls-removal:{}:{}", realm, frozen.request.mls_group_id),
+                            format!("mls-removal:{}:{}", realm, frozen.mls_group_id),
                             realm.to_string(),
                             "mls_member_remove",
                             crate::state::MoveSubmissionState::PendingMlsBinding,
@@ -1614,11 +1693,11 @@ async fn run_circle_scope_rotate_pass(
             let round = scheduling.scopes.entry(realm.clone()).or_default();
             let complete = all_reconciled
                 && ctx.state_store.write(|store| {
-                    let exact = relevant_scopes.iter().all(|scope| {
+                    let exact = relevant_scopes.iter().all(|(scope, desired_members)| {
                         let Ok(group) = scope.canonical_mls_group_id() else {
                             return false;
                         };
-                        removal_scope_stamp(store, scope)
+                        removal_scope_stamp(store, scope, desired_members)
                             .is_some_and(|stamp| round.empty.get(group.as_str()) == Some(&stamp))
                     });
                     if exact {
