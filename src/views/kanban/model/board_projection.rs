@@ -300,20 +300,6 @@ fn apply_rsvp_set_to_view(
         return;
     };
     let source_event_digest = event_id.event_digest().to_string();
-    // A holder-local accepted RSVP was built immediately after a complete
-    // Event-log read. Retain that observed schedule winner until the regular
-    // synchronized Strand projection catches up. This is not inferred from a
-    // remote RSVP assertion: only the local authoring path writes the marker.
-    if view.schedule_revision_source.is_none()
-        && let Some(observed) = record
-            .payload
-            .get("locally_observed_schedule_winner")
-            .and_then(Value::as_str)
-    {
-        view.schedule_revision_source = arkret_sdk::Hash::new(observed.to_owned())
-            .ok()
-            .map(|value| value.to_string());
-    }
     let cell = if let Some(cell) = view
         .rsvps
         .iter_mut()
@@ -1033,7 +1019,7 @@ mod tests {
     fn sdk_event(
         event_id: &str,
         kind: &str,
-        actor_seq: u64,
+        _actor_seq: u64,
         created_at: &str,
         payload: Value,
     ) -> arkret_sdk::Event {
@@ -1044,8 +1030,6 @@ mod tests {
             },
             sdk_actor_id(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-            actor_seq,
-            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             payload,
         )
         .unwrap();
@@ -1412,13 +1396,15 @@ mod tests {
     #[test]
     fn accepted_create_draft_handle_hint_aliases_selection_and_children() {
         let draft_board = "ak:space:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR";
-        let mut board_create = space_create_event(BOARD, "board", "Board1", None);
-        board_create
-            .unsigned
-            .insert("local_target_ref".to_owned(), json!(draft_board));
+        let board_create = space_create_event(BOARD, "board", "Board1", None);
         let list_create = space_create_event(LIST_A, "list", "Todos", Some(draft_board));
 
-        let ops = kanban_operations_from_events(&[board_create, list_create]);
+        let mut ops = kanban_operations_from_events(&[board_create, list_create]);
+        ops[0]
+            .payload
+            .as_object_mut()
+            .unwrap()
+            .insert("local_target_ref".to_owned(), json!(draft_board));
         let (columns, options, board_id) = project_board(&ops, draft_board, REALM, None);
 
         assert_eq!(
@@ -1441,14 +1427,16 @@ mod tests {
     /// claims ANOTHER accepted object's id must never alias that object away.
     #[test]
     fn draft_handle_hint_cannot_alias_an_accepted_object_away() {
-        let mut second_board = space_create_event(LIST_B, "board", "Board2", None);
-        second_board
-            .unsigned
-            .insert("local_target_ref".to_owned(), json!(BOARD));
-        let ops = kanban_operations_from_events(&[
+        let second_board = space_create_event(LIST_B, "board", "Board2", None);
+        let mut ops = kanban_operations_from_events(&[
             space_create_event(BOARD, "board", "Board1", None),
             second_board,
         ]);
+        ops[1]
+            .payload
+            .as_object_mut()
+            .unwrap()
+            .insert("local_target_ref".to_owned(), json!(BOARD));
         let aliases = event_derived_target_aliases(&ops);
         assert!(
             !aliases.contains_key(BOARD),
@@ -1468,21 +1456,12 @@ mod tests {
         let canonical_card = "ak:strand:AfHHAbZEhEweHE9b7WfITgHFGzMsezbGka7mm16yesUQ";
         let list_operation_alias = "ak:operation:01904100-0000-7000-8000-000000000091";
         let card_operation_alias = "ak:operation:01904100-0000-7000-8000-000000000092";
-        let mut canonical_list_create =
-            space_create_event(canonical_list, "list", "Todo", Some(BOARD));
-        canonical_list_create.unsigned.insert(
-            "local_operation_idempotency_alias".to_owned(),
-            json!(list_operation_alias),
-        );
-        let mut canonical_card_create = strand_create_event(
+        let canonical_list_create = space_create_event(canonical_list, "list", "Todo", Some(BOARD));
+        let canonical_card_create = strand_create_event(
             canonical_card,
             "ak:did_core:web:alice.example",
             "same card",
             "2026-06-28T00:02:00.000Z",
-        );
-        canonical_card_create.unsigned.insert(
-            "local_operation_idempotency_alias".to_owned(),
-            json!(card_operation_alias),
         );
         // The placement Move may still reference the optimistic List id when
         // both writes were authored close together. The accepted List alias
@@ -1501,6 +1480,14 @@ mod tests {
             canonical_card_create,
             canonical_card_place,
         ]);
+        ops[1].payload.as_object_mut().unwrap().insert(
+            "local_operation_idempotency_alias".to_owned(),
+            json!(list_operation_alias),
+        );
+        ops[2].payload.as_object_mut().unwrap().insert(
+            "local_operation_idempotency_alias".to_owned(),
+            json!(card_operation_alias),
+        );
         ops.push(local_op(
             list_operation_alias,
             "2026-06-28T00:00:01.000Z",

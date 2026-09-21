@@ -798,11 +798,6 @@ pub(super) fn dispatch_calendar_rsvp(
                     return;
                 };
                 let accepted_event_id = response.event_id.clone();
-                let observed_schedule_winner = body
-                    .entry
-                    .schedule_basis_refs
-                    .first()
-                    .map(ToString::to_string);
                 state_store.write().upsert_raw_operation(
                     accepted_event_id.clone(),
                     Some(realm_id),
@@ -817,7 +812,6 @@ pub(super) fn dispatch_calendar_rsvp(
                         ),
                         "write_state": "synced",
                         "body": body,
-                        "locally_observed_schedule_winner": observed_schedule_winner,
                     }),
                 );
                 board_status.set(format!(

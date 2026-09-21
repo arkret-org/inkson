@@ -152,7 +152,7 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
 
 #[test]
 fn calendar_rsvp_update_carries_only_the_typed_schedule_basis() {
-    let schedule = arkret_sdk::Hash::new(FRONTIER).unwrap();
+    let schedule = arkret_sdk::Hash::new(SCHEDULE_SOURCE).unwrap();
     let schedule_event = arkret_sdk::EventId::from_event_digest(&schedule).unwrap();
     let calendar = CalendarCardFields {
         start: "2026-06-20T09:00:00".to_owned(),
@@ -188,8 +188,8 @@ fn calendar_rsvp_without_an_observed_schedule_fails_closed() {
         tzdb_version: "2025a".to_owned(),
         ..CalendarCardFields::default()
     };
-    // No frontier means we cannot claim to have observed the schedule, so
-    // authoring refuses instead of signing an unbacked basis.
+    // No Station-selected schedule source means authoring refuses instead of
+    // signing an unbacked basis.
     assert!(
         calendar_rsvp_operation(
             TEST_REALM_ID,
@@ -263,8 +263,8 @@ fn calendar_projection_reads_schedule_and_plain_location() {
     assert_eq!(card.calendar.recurrence_by_day, "MO, WE");
     assert_eq!(card.calendar.location, "Board room");
     assert!(!card.calendar.location_locked);
-    // The frontier reaches the card, which is what lets RSVP authoring sign a
-    // basis it can actually back.
+    // The Station-selected schedule source reaches the card, which lets RSVP
+    // authoring name the exact schedule Event it was shown.
     assert_eq!(card.calendar_schedule_basis_refs().len(), 1);
 }
 
@@ -371,7 +371,7 @@ fn calendar_agenda_uses_shared_recurrence_expansion() {
     let now = chrono::DateTime::parse_from_rfc3339("2026-06-21T00:00:00Z")
         .unwrap()
         .with_timezone(&chrono::Utc);
-    let items = calendar_agenda(&calendar, &[FRONTIER.to_owned()], now).unwrap();
+    let items = calendar_agenda(&calendar, &[SCHEDULE_SOURCE.to_owned()], now).unwrap();
     assert_eq!(
         items
             .iter()
@@ -387,13 +387,13 @@ fn calendar_agenda_uses_shared_recurrence_expansion() {
 }
 
 #[test]
-fn card_without_a_projected_frontier_cannot_author_an_rsvp() {
+fn card_without_a_projected_schedule_source_cannot_author_an_rsvp() {
     let card = test_card(TEST_CALENDAR_STRAND_ID, "U");
     assert!(card.calendar_schedule_basis_refs().is_empty());
 }
 
 #[test]
-fn locally_accepted_rsvp_retains_the_observed_schedule_frontier() {
+fn locally_accepted_rsvp_does_not_supply_missing_schedule_current() {
     let source_event_id =
         arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [9_u8; 32]);
     let projected = vec![crate::state::projection_views::StrandProjectionView {
@@ -428,11 +428,10 @@ fn locally_accepted_rsvp_retains_the_observed_schedule_frontier() {
             "event_id": source_event_id,
             "actor_id": "ak:did_core:web:alice.example",
             "write_state": "synced",
-            "locally_observed_schedule_winner": FRONTIER,
             "body": {
                 "event_ref": TEST_CALENDAR_STRAND_ID,
                 "entry": {
-                    "schedule_basis_refs": [FRONTIER],
+                    "schedule_basis_refs": [schedule_event(SCHEDULE_SOURCE)],
                     "response": {"status": "accepted"}
                 }
             }
@@ -440,7 +439,7 @@ fn locally_accepted_rsvp_retains_the_observed_schedule_frontier() {
     };
 
     let views = strand_views_from_projection_and_ops(&projected, &[accepted]);
-    assert_eq!(views[0].schedule_revision_source.as_deref(), Some(FRONTIER));
+    assert!(views[0].schedule_revision_source.is_none());
     assert_eq!(views[0].rsvps.len(), 1);
 }
 
@@ -511,9 +510,9 @@ fn calendar_overlay_replaces_the_whole_schedule_subtree() {
 }
 
 #[test]
-fn calendar_overlay_does_not_invent_a_schedule_frontier_from_one_update() {
+fn calendar_overlay_does_not_invent_a_schedule_source_from_one_update() {
     let mut card = test_card(TEST_CALENDAR_STRAND_ID, "U");
-    card.calendar_schedule_basis_refs = vec![FRONTIER.to_owned()];
+    card.calendar_schedule_basis_refs = vec![SCHEDULE_SOURCE.to_owned()];
     let columns = vec![KanbanColumn {
         id: "ak:space:list-a".to_owned(),
         title: "A".to_owned(),
@@ -532,7 +531,6 @@ fn calendar_overlay_does_not_invent_a_schedule_frontier_from_one_update() {
             "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000ca11",
             "event_id": event_id,
             "write_state": "synced",
-            "causal_refs": [FRONTIER],
             "body": {
                 "strand_id": TEST_CALENDAR_STRAND_ID,
                 "patch": {
@@ -555,7 +553,7 @@ fn calendar_overlay_does_not_invent_a_schedule_frontier_from_one_update() {
     let overlaid = overlay_local_card_update_records(columns, &[accepted], None);
     assert_eq!(
         overlaid[0].cards[0].calendar_schedule_basis_refs,
-        vec![FRONTIER.to_owned()]
+        vec![SCHEDULE_SOURCE.to_owned()]
     );
 }
 
@@ -568,13 +566,19 @@ fn rsvp_winner(digest_byte: u8, basis: &str, status: &str) -> RsvpWinnerProjecti
         source_event_id: source_event_id.to_string(),
         source_event_digest: format!("sha256:{}", format!("{digest_byte:02x}").repeat(32)),
         entry: json!({
-            "schedule_basis_refs": [basis],
+            "schedule_basis_refs": [schedule_event(basis)],
             "response": {"status": status}
         }),
     }
 }
 
-const FRONTIER: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+fn schedule_event(digest: &str) -> arkret_sdk::EventId {
+    arkret_sdk::EventId::from_event_digest(&arkret_sdk::Hash::new(digest.to_owned()).unwrap())
+        .unwrap()
+}
+
+const SCHEDULE_SOURCE: &str =
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 #[test]
 fn rsvp_display_shows_own_answer_and_aggregate() {
@@ -582,20 +586,20 @@ fn rsvp_display_shows_own_answer_and_aggregate() {
         RsvpCellProjectionView {
             occurrence: None,
             actor_id: "ak:did_core:web:alice.example".to_owned(),
-            winner: Some(rsvp_winner(1, FRONTIER, "accepted")),
+            winner: Some(rsvp_winner(1, SCHEDULE_SOURCE, "accepted")),
             retained_writes: Vec::new(),
         },
         RsvpCellProjectionView {
             occurrence: None,
             actor_id: "ak:did_core:web:bob.example".to_owned(),
-            winner: Some(rsvp_winner(2, FRONTIER, "declined")),
+            winner: Some(rsvp_winner(2, SCHEDULE_SOURCE, "declined")),
             retained_writes: Vec::new(),
         },
     ];
 
     let display = calendar_rsvp_display(
         &cells,
-        &[FRONTIER.to_owned()],
+        &[SCHEDULE_SOURCE.to_owned()],
         None,
         "ak:did_core:web:alice.example",
     );
@@ -610,13 +614,13 @@ fn rsvp_display_matches_a_complete_account_actor_to_the_self_principal() {
     let cells = vec![RsvpCellProjectionView {
         occurrence: None,
         actor_id: r#"{"account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"},"kind":"account"}"#.to_owned(),
-        winner: Some(rsvp_winner(1, FRONTIER, "accepted")),
+        winner: Some(rsvp_winner(1, SCHEDULE_SOURCE, "accepted")),
         retained_writes: Vec::new(),
     }];
 
     let display = calendar_rsvp_display(
         &cells,
-        &[FRONTIER.to_owned()],
+        &[SCHEDULE_SOURCE.to_owned()],
         None,
         "ak:did_core:web:alice.example",
     );
@@ -629,13 +633,13 @@ fn rsvp_display_uses_the_deterministic_concurrent_winner() {
     let cells = vec![RsvpCellProjectionView {
         occurrence: None,
         actor_id: "ak:did_core:web:alice.example".to_owned(),
-        winner: Some(rsvp_winner(2, FRONTIER, "declined")),
+        winner: Some(rsvp_winner(2, SCHEDULE_SOURCE, "declined")),
         retained_writes: Vec::new(),
     }];
 
     let display = calendar_rsvp_display(
         &cells,
-        &[FRONTIER.to_owned()],
+        &[SCHEDULE_SOURCE.to_owned()],
         None,
         "ak:did_core:web:alice.example",
     );
@@ -655,7 +659,7 @@ fn rsvp_display_excludes_winners_resting_on_an_unknown_schedule() {
 
     let display = calendar_rsvp_display(
         &cells,
-        &[FRONTIER.to_owned()],
+        &[SCHEDULE_SOURCE.to_owned()],
         None,
         "ak:did_core:web:alice.example",
     );
@@ -671,20 +675,20 @@ fn rsvp_display_prefers_the_instance_answer_over_the_series_fallback() {
         RsvpCellProjectionView {
             occurrence: None,
             actor_id: "ak:did_core:web:alice.example".to_owned(),
-            winner: Some(rsvp_winner(1, FRONTIER, "accepted")),
+            winner: Some(rsvp_winner(1, SCHEDULE_SOURCE, "accepted")),
             retained_writes: Vec::new(),
         },
         RsvpCellProjectionView {
             occurrence: Some(occurrence.to_owned()),
             actor_id: "ak:did_core:web:alice.example".to_owned(),
-            winner: Some(rsvp_winner(2, FRONTIER, "declined")),
+            winner: Some(rsvp_winner(2, SCHEDULE_SOURCE, "declined")),
             retained_writes: Vec::new(),
         },
     ];
 
     let display = calendar_rsvp_display(
         &cells,
-        &[FRONTIER.to_owned()],
+        &[SCHEDULE_SOURCE.to_owned()],
         Some(occurrence),
         "ak:did_core:web:alice.example",
     );

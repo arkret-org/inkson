@@ -54,7 +54,6 @@ pub struct RsvpRetainedWrite {
     pub source_event_id: String,
     pub source_event_digest: String,
     pub entry: serde_json::Value,
-    pub causal_refs: Vec<arkret_sdk::Hash>,
 }
 
 /// Server-side Strand row from `GET /_arkret/self/realms/{realm_id}/strands`.
@@ -160,7 +159,7 @@ impl From<arkret_sdk::ProjectionStrandRow> for StrandProjectionView {
             // The SDK strand projection row carries neither Strand content nor
             // `metadata.fields`; the server never emits them on this endpoint,
             // so they default to empty. The same applies to the calendar
-            // activation axis and schedule frontier, so a card built from this
+            // activation axis and current schedule source, so a card built from this
             // row keeps RSVP authoring fail-closed until the richer projection
             // read supplies them.
             content: None,
