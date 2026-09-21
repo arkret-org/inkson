@@ -107,6 +107,7 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
     .unwrap();
+    let basis_event = arkret_sdk::EventId::from_event_digest(&basis).unwrap();
     let calendar = CalendarCardFields {
         start: "2026-06-20T09:00:00".to_owned(),
         end: "2026-06-20T10:00:00".to_owned(),
@@ -124,8 +125,7 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
         "accepted",
         "2026-06-20T09:00:00[Asia/Shanghai]",
         &calendar,
-        vec![basis.clone()],
-        None,
+        vec![basis_event.clone()],
     )
     .unwrap();
 
@@ -140,55 +140,20 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
     assert_eq!(event.payload()["entry"]["response"]["status"], "accepted");
     assert_eq!(
         event.payload()["entry"]["schedule_basis_refs"],
-        json!([basis.as_str()])
+        json!([basis_event.as_str()])
     );
-    // The basis must be causally carried, otherwise a receiver rejects it.
-    assert_eq!(
-        event
-            .intent()
-            .causal_refs()
-            .iter()
-            .map(arkret_sdk::Hash::as_str)
-            .collect::<Vec<_>>(),
-        vec![basis.as_str()]
-    );
-    // v1 ships no producer `effects[]`. The receiver derives the write from the
-    // registered `ak.rsvp.set` contract, whose `effect_projection` is
-    // `set value = {"field": "payload.entry"}` over the causal-register facet —
-    // so asserting the projection is the successor to the old array, and a
-    // stronger claim: the pre-closure client shipped no effect at all and the
-    // Event never reached its cell.
-    let writes = crate::operation::pre_authoring_cell_writes(
-        event.intent(),
-        arkret_sdk::DigestSuite::Sha256,
-    )
-    .unwrap();
-    assert_eq!(writes.len(), 1);
+    let envelope = serde_json::to_value(crate::operation::author_for_test(&event).event()).unwrap();
     assert!(
-        writes[0]
-            .cell_id
-            .as_str()
-            .starts_with("ak:cell:ak.component.calendar.rsvp.v1:")
-    );
-    assert_eq!(
-        crate::operation::direct_registered_cell_writes(
-            &crate::operation::author_for_test(&event),
-            arkret_sdk::DigestSuite::Sha256,
-        )
-        .unwrap()[0]
-            .op
-            .value
-            .as_ref()
-            .unwrap(),
-        &event.payload()["entry"]
+        arkret_wire::forbidden_wire::forbidden_wire_violation("event_envelope", "*", &envelope,)
+            .is_none()
     );
     assert_registered_payload_valid(&event);
 }
 
 #[test]
-fn calendar_rsvp_update_causally_references_the_same_cell_winner() {
+fn calendar_rsvp_update_carries_only_the_typed_schedule_basis() {
     let schedule = arkret_sdk::Hash::new(FRONTIER).unwrap();
-    let prior = arkret_sdk::Hash::new(format!("sha256:{}", "bb".repeat(32))).unwrap();
+    let schedule_event = arkret_sdk::EventId::from_event_digest(&schedule).unwrap();
     let calendar = CalendarCardFields {
         start: "2026-06-20T09:00:00".to_owned(),
         end: "2026-06-20T10:00:00".to_owned(),
@@ -204,12 +169,14 @@ fn calendar_rsvp_update_causally_references_the_same_cell_winner() {
         "declined",
         "",
         &calendar,
-        vec![schedule.clone()],
-        Some(prior.clone()),
+        vec![schedule_event.clone()],
     )
     .unwrap();
 
-    assert_eq!(event.intent().causal_refs(), &[schedule, prior]);
+    assert_eq!(
+        event.payload()["entry"]["schedule_basis_refs"],
+        json!([schedule_event])
+    );
 }
 
 #[test]
@@ -232,7 +199,6 @@ fn calendar_rsvp_without_an_observed_schedule_fails_closed() {
             "",
             &calendar,
             Vec::new(),
-            None,
         )
         .is_err()
     );
@@ -659,33 +625,6 @@ fn rsvp_display_matches_a_complete_account_actor_to_the_self_principal() {
 }
 
 #[test]
-fn rsvp_authoring_finds_the_exact_previous_cell_winner() {
-    let occurrence = "2026-06-20T09:00:00[Asia/Shanghai]";
-    let cells = vec![
-        RsvpCellProjectionView {
-            occurrence: None,
-            actor_id: "ak:did_core:web:alice.example".to_owned(),
-            winner: Some(rsvp_winner(1, FRONTIER, "accepted")),
-            retained_writes: Vec::new(),
-        },
-        RsvpCellProjectionView {
-            occurrence: Some(occurrence.to_owned()),
-            actor_id: r#"{"account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"},"kind":"account"}"#.to_owned(),
-            winner: Some(rsvp_winner(2, FRONTIER, "declined")),
-            retained_writes: Vec::new(),
-        },
-    ];
-
-    assert_eq!(
-        calendar_rsvp_winner_source(&cells, Some(occurrence), "ak:did_core:web:alice.example")
-            .unwrap()
-            .unwrap()
-            .as_str(),
-        rsvp_winner(2, FRONTIER, "declined").source_event_digest
-    );
-}
-
-#[test]
 fn rsvp_display_uses_the_deterministic_concurrent_winner() {
     let cells = vec![RsvpCellProjectionView {
         occurrence: None,
@@ -751,109 +690,4 @@ fn rsvp_display_prefers_the_instance_answer_over_the_series_fallback() {
     );
     // Instance overrides series; the two tiers are never unioned.
     assert_eq!(display.own_status.as_deref(), Some("declined"));
-}
-
-#[test]
-fn schedule_winner_is_invariant_under_unrelated_branch_arrival_order() {
-    let realm = arkret_sdk::RealmId::new(TEST_REALM_ID).unwrap();
-    let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-        "ak:did_core:web:alice.example".parse().unwrap(),
-        "ak:did_core:web:station.example".parse().unwrap(),
-    ));
-    let suite = arkret_sdk::DigestSuite::Sha256;
-    let source = |kind: &str, seq, payload: Value, bases: &[&arkret_sdk::Event]| {
-        let mut event = arkret_wire::test_support::raw_event_for_actor_at(
-            kind,
-            arkret_sdk::ScopeRef::Realm {
-                realm_id: realm.clone(),
-            },
-            actor.clone(),
-            seq,
-            "000000000001-0000-00000000".parse().unwrap(),
-            payload,
-            "2026-09-11T00:00:00.000Z".parse().unwrap(),
-        )
-        .unwrap();
-        event.causal_refs = bases
-            .iter()
-            .map(|e| {
-                e.event_digest_with_digest_suite(suite)
-                    .unwrap()
-                    .parse()
-                    .unwrap()
-            })
-            .collect();
-        event.event_id = event.derive_event_id_with_digest_suite(suite).unwrap();
-        event
-    };
-    let a = source(
-        "ak.strand.create",
-        1,
-        json!({"object":{
-            "schema":"ak.schema.strand.v1","realm_id":realm,
-            "created_by":actor,"created_at":"2026-09-11T00:00:00.000Z",
-            "schema_refs":["ak.schema.calendar_event.v1"],
-            "tracks":{"synthesis":{"enabled":true,"is_primary":true}},
-            "metadata":{"fields":{"calendar":{
-                "start":"2026-09-11T09:00:00","end":"2026-09-11T10:00:00",
-                "timezone":"Etc/UTC","tzdb_version":"2025b","all_day":false,"status":"confirmed"
-            }}}
-        }}),
-        &[],
-    );
-    let strand = arkret_sdk::StrandId::from_event_id(&a.event_id).to_string();
-    let t = source(
-        "ak.strand.update",
-        2,
-        json!({"target_ref":strand,
-        "patch":{"metadata.title":{"$op":"set","value":"title"}}}),
-        &[&a],
-    );
-    let c = source(
-        "ak.strand.update",
-        3,
-        json!({"target_ref":strand,
-        "patch":{"metadata.fields.calendar.start":{"$op":"set","value":"2026-09-11T09:30:00"}}}),
-        &[&t],
-    );
-    let x = source(
-        "ak.strand.update",
-        4,
-        json!({"target_ref":strand,
-        "patch":{"metadata.summary":{"$op":"set","value":"branch"}}}),
-        &[&a],
-    );
-    assert_eq!(
-        calendar_schedule_revision_winner_at_source(
-            &[a.clone(), t.clone(), c.clone(), x.clone()],
-            &strand,
-            suite,
-            &t.event_id,
-        )
-        .unwrap(),
-        a.event_id.event_digest(),
-        "new schedule C must not be attached to the old displayed value T",
-    );
-    assert!(
-        calendar_schedule_revision_winner_at_source(
-            &[t.clone(), c.clone()],
-            &strand,
-            suite,
-            &t.event_id,
-        )
-        .is_err(),
-        "a missing ancestor must not produce an invented basis"
-    );
-    let expected = c.event_id.event_digest();
-    for events in [
-        vec![a.clone(), t.clone(), c.clone(), x.clone()],
-        vec![a.clone(), t.clone(), x.clone(), c.clone()],
-        vec![a.clone(), x.clone(), t.clone(), c.clone()],
-        vec![c, x, t, a],
-    ] {
-        assert_eq!(
-            calendar_schedule_revision_winner(&events, &strand, suite).unwrap(),
-            expected
-        );
-    }
 }

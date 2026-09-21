@@ -63,10 +63,9 @@ pub(crate) struct KanbanCard {
     pub(crate) assignee: String,
     pub(crate) assigned_to_relations: Vec<CardAssignedToRelation>,
     pub(crate) due: String,
-    /// Deterministic schedule revision winner this client observed for the
-    /// card's calendar, as one `event_digest`. Empty means the projection has
-    /// not exposed a readable winner yet, and RSVP authoring fails closed with
-    /// `calendar_schedule_unavailable` rather than signing an unbacked basis.
+    /// Schedule revision selected by the governing Station, represented in
+    /// the projection as one Event digest. Empty means the projection has not
+    /// exposed a readable winner yet, and RSVP authoring fails closed.
     pub(crate) calendar_schedule_basis_refs: Vec<String>,
     /// Authority-signed revision the displayed complete current value was
     /// selected at: the exact `RealmCommit` and its position in that Strand's
@@ -97,15 +96,15 @@ pub(crate) struct KanbanCard {
 }
 
 impl KanbanCard {
-    /// Parses the observed schedule revision winner into an SDK digest.
+    /// Retype the projected Event digest as the EventId the RSVP payload names.
     ///
-    /// Anything unparseable is dropped rather than guessed: an invalid digest
-    /// can never be a legitimate schedule basis, and signing it would produce
-    /// an RSVP a receiver rejects with `rsvp_basis_not_causal`.
-    pub(crate) fn calendar_schedule_basis_refs(&self) -> Vec<arkret_sdk::Hash> {
+    /// Anything unparseable is dropped rather than guessed. The digest suite
+    /// and bytes are preserved by the canonical retype.
+    pub(crate) fn calendar_schedule_basis_refs(&self) -> Vec<arkret_sdk::EventId> {
         self.calendar_schedule_basis_refs
             .iter()
             .filter_map(|value| arkret_sdk::Hash::new(value.clone()).ok())
+            .filter_map(|digest| arkret_sdk::EventId::from_event_digest(&digest).ok())
             .collect()
     }
 }

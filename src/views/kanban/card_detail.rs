@@ -527,10 +527,16 @@ fn encrypted_realm_write_mls_ready(
     // but before its checkpoint is advanced. Treat that state as recoverable,
     // not ready, so Save re-enters the bootstrap convergence path instead of
     // failing later while retaining the epoch history secret.
-    if state_store
-        .accepted_current_realm_mls_transition_evidence(realm_id)
-        .is_err()
-    {
+    let Ok(realm_id) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
+        return false;
+    };
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: realm_id.clone(),
+    };
+    if !crate::current_projection::scope_has_accepted_mls_genesis(
+        &state_store.cached_current_entries(realm_id.as_str()),
+        &scope,
+    ) {
         return false;
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -735,20 +741,6 @@ pub(super) fn dispatch_calendar_rsvp(
     let submit_token = token();
     let strand_id = card.primary_strand_id.clone();
     let calendar = card.calendar.clone();
-    let rsvp_occurrence = (!occurrence.trim().is_empty()
-        && !calendar.recurrence_frequency.trim().is_empty())
-    .then_some(occurrence.trim().to_owned());
-    let current_rsvp_source = match calendar_rsvp_winner_source(
-        &card.calendar_rsvp_cells,
-        rsvp_occurrence.as_deref(),
-        &actor_id,
-    ) {
-        Ok(source) => source,
-        Err(err) => {
-            board_status.set(format!("cannot build RSVP: {err:#}"));
-            return;
-        }
-    };
     let build_realm_id = realm_id.clone();
     let build_actor_id = actor_id.clone();
     spawn(async move {
@@ -760,7 +752,6 @@ pub(super) fn dispatch_calendar_rsvp(
             &occurrence,
             &calendar,
             schedule_basis_refs,
-            current_rsvp_source,
         );
         match built {
             Ok(event) => {

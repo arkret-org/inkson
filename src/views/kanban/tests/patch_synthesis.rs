@@ -195,18 +195,23 @@ fn terminally_failed_card_update_never_overlays_the_projection() {
 }
 
 #[test]
-fn authored_card_update_always_carries_the_object_causal_base() {
-    let basis = arkret_sdk::Hash::new(format!("sha256:{}", "3".repeat(64))).unwrap();
+fn authored_card_update_uses_the_closed_typed_patch_without_causal_coordinates() {
     let operation = build_card_detail_update_operation(
         TEST_REALM_ID,
         "ak:did_core:web:alice.example",
         "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
         json!({"metadata.title": {"$op": "set", "value": "new"}}),
-        vec![basis.clone()],
     )
     .unwrap();
 
-    assert_eq!(operation.intent().causal_refs(), &[basis]);
+    assert_eq!(
+        operation.payload()["target_ref"],
+        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig"
+    );
+    assert_eq!(
+        operation.payload()["patch"]["metadata.title"]["value"],
+        "new"
+    );
 }
 
 #[test]
@@ -1026,11 +1031,7 @@ fn clearing_card_summary_emits_unset() {
     // compliant reducer.
     let wire: arkret_sdk::Patch =
         serde_json::from_value(patch.clone()).expect("patch decodes as ak.patch.v1");
-    arkret_sdk::validate_patch_semantic_safety(
-        &wire,
-        arkret_sdk::PatchTargetKind::from_typed_target(&current.id),
-    )
-    .expect("metadata.summary unset is accepted");
+    arkret_sdk::validate_patch_semantic_safety(&wire).expect("metadata.summary unset is accepted");
 
     // The registered slots are the ones that stay refused.
     for slot in arkret_wire::generated::REDACTABLE_FIELD_PATHS {
@@ -1038,11 +1039,7 @@ fn clearing_card_summary_emits_unset() {
         rejected
             .insert_op(*slot, arkret_sdk::PatchOp::unset())
             .unwrap();
-        let rejection = arkret_sdk::validate_patch_semantic_safety(
-            &rejected,
-            arkret_sdk::PatchTargetKind::from_typed_target(&current.id),
-        )
-        .unwrap_err();
+        let rejection = arkret_sdk::validate_patch_semantic_safety(&rejected).unwrap_err();
         assert!(
             rejection
                 .to_string()
@@ -1168,23 +1165,27 @@ fn seed_strand_ids_are_valid_object_patch_targets() {
 }
 
 #[test]
-fn card_current_keeps_value_and_event_together_across_remote_replacement() {
+fn card_current_keeps_value_and_revision_together_across_remote_replacement() {
     let id = "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig";
     let source = |byte, title: &str| {
-        let event = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [byte; 32]);
-        let entry: arkret_sdk::CurrentResultEntry = serde_json::from_value(json!({
-            "selector":{"scope_ref":{"kind":"realm","realm_id":TEST_REALM_ID},
-                "cell_id":format!("ak:cell:ak.component.strand.object.v1:{id}")},
-            "target":{"kind":"strand","strand_id":id},"revision":1,
-            "result":{"status":"value","source":{"event_id":event,"depth":0},"value":{
+        let revision = arkret_wire::CurrentRevision {
+            commit_id: arkret_wire::RealmCommitId::from_digest([byte; 32]),
+            stream_position: u64::from(byte),
+        };
+        let entry = arkret_wire::TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::Strand {
+                strand_id: arkret_sdk::StrandId::new(id.to_owned()).unwrap(),
+            },
+            revision: revision.clone(),
+            value: json!({
                 "id":id,"schema":"ak.schema.strand.v1","realm_id":TEST_REALM_ID,
                 "metadata":{"title":title},"tracks":{"synthesis":{"enabled":true,"is_primary":true}},
                 "created_by":{"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example",
                     "station_id":"ak:did_core:web:station.example"}},
                 "created_at":"2026-09-11T00:00:00.000Z"
-            }}
-        })).unwrap();
-        (event, entry)
+            }),
+        };
+        (revision, entry)
     };
     let (event_a, a) = source(1, "A");
     let (event_b, b) = source(2, "B");
@@ -1199,11 +1200,11 @@ fn card_current_keeps_value_and_event_together_across_remote_replacement() {
     let editor_snapshot = columns[0].cards[0].clone();
     install_current_card_sources(&mut columns, &[b.clone()], &[], None, "");
     assert_eq!(editor_snapshot.title, "A");
-    assert_eq!(editor_snapshot.authoring_basis.unwrap().1, event_a);
+    assert_eq!(editor_snapshot.authoring_basis.unwrap(), event_a);
     assert_eq!(columns[0].cards[0].title, "B");
     assert_eq!(
-        columns[0].cards[0].authoring_basis.as_ref().unwrap().1,
-        event_b
+        columns[0].cards[0].authoring_basis.as_ref().unwrap(),
+        &event_b
     );
 }
 

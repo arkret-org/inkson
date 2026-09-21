@@ -327,7 +327,7 @@ pub(super) async fn dispatch_card_detail_update(
         }
     };
     let api_token = token();
-    let Some((source_scope, source_event)) = current.authoring_basis.clone() else {
+    let Some(_current_revision) = current.authoring_basis.clone() else {
         board_status
             .set("The complete current card value is not available for editing yet.".to_owned());
         return false;
@@ -351,14 +351,16 @@ pub(super) async fn dispatch_card_detail_update(
         }
         None => None,
     };
-    if sidecar_effective_scope
-        .as_ref()
-        .is_some_and(|scope| scope != &source_scope)
-    {
-        board_status.set("The draft source belongs to a different effective scope".to_owned());
-        return false;
-    }
-    let object_basis_ref = source_event.event_digest();
+    let source_scope = match sidecar_effective_scope.clone() {
+        Some(scope) => scope,
+        None => match arkret_sdk::RealmId::new(realm_id.clone()) {
+            Ok(realm_id) => arkret_sdk::ScopeRef::Realm { realm_id },
+            Err(error) => {
+                board_status.set(format!("invalid card Realm id: {error}"));
+                return false;
+            }
+        },
+    };
     // R4 fail-closed: when the Realm security state is unknown (`None`),
     // treat the scope as encrypted so we take the encrypt path rather than
     // emitting a plaintext patch. The plaintext-block guard below still
@@ -460,7 +462,6 @@ pub(super) async fn dispatch_card_detail_update(
         None
     };
     let sidecar_effective_scope = sidecar_effective_scope.clone();
-    let object_basis_refs = vec![object_basis_ref];
     let update_realm_id = realm_id.clone();
     let update_actor_id = actor_id.clone();
     let update_strand_id = current.id.clone();
@@ -503,7 +504,6 @@ pub(super) async fn dispatch_card_detail_update(
             &update_actor_id,
             &update_strand_id,
             sealed_patch,
-            object_basis_refs,
         ) {
             Ok(op) => {
                 let op = op.with_local_operation_id(local_operation_id);
@@ -651,9 +651,7 @@ pub(super) fn build_card_detail_update_operation(
     actor_id: &str,
     strand_id: &str,
     patch: Value,
-    object_basis_refs: Vec<arkret_sdk::Hash>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     crate::operation::ak_ops::strand_update_patch(realm_id, actor_id, strand_id, patch)?
-        .causal_refs(object_basis_refs)
         .build_sdk_event("inkson")
 }

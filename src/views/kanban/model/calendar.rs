@@ -1,5 +1,3 @@
-use arkret_sdk::EventPayloadExt as _;
-
 use super::*;
 
 pub(crate) const CALENDAR_PROFILE_FIELD: &str = "profile";
@@ -399,9 +397,11 @@ pub(crate) fn calendar_rsvp_operation(
     status: &str,
     occurrence: &str,
     calendar: &CalendarCardFields,
-    schedule_basis_refs: Vec<arkret_sdk::Hash>,
-    current_rsvp_source: Option<arkret_sdk::Hash>,
+    schedule_basis_refs: Vec<arkret_sdk::EventId>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
+    let [schedule_basis_event] = schedule_basis_refs.as_slice() else {
+        anyhow::bail!("calendar_schedule_unavailable - expected exactly one schedule Event");
+    };
     let calendar_fields = calendar_event_fields_from_draft(calendar).map_err(anyhow::Error::msg)?;
     crate::calendar::build_calendar_rsvp_event(
         realm_id,
@@ -411,38 +411,8 @@ pub(crate) fn calendar_rsvp_operation(
         (!occurrence.trim().is_empty() && !calendar.recurrence_frequency.trim().is_empty())
             .then_some(occurrence.trim()),
         &calendar_fields,
-        schedule_basis_refs,
-        current_rsvp_source,
+        schedule_basis_event.clone(),
     )
-}
-
-/// Returns the source of the currently observed winner for the exact RSVP
-/// cell that a new response will overwrite. The responder comparison uses the
-/// signing principal because server rows may serialize a full Account actor.
-pub(crate) fn calendar_rsvp_winner_source(
-    cells: &[crate::state::projection_views::RsvpCellProjectionView],
-    occurrence: Option<&str>,
-    self_actor_id: &str,
-) -> anyhow::Result<Option<arkret_sdk::Hash>> {
-    let mut matching = cells.iter().filter(|cell| {
-        cell.occurrence.as_deref() == occurrence
-            && serde_json::from_str::<arkret_sdk::ActorId>(&cell.actor_id)
-                .ok()
-                .map(|actor| actor.signing_principal_id().as_str() == self_actor_id.trim())
-                .unwrap_or_else(|| cell.actor_id.trim() == self_actor_id.trim())
-    });
-    let Some(cell) = matching.next() else {
-        return Ok(None);
-    };
-    if matching.next().is_some() {
-        anyhow::bail!("RSVP projection contains duplicate cells for this responder");
-    }
-    cell.winner
-        .as_ref()
-        .map(|winner| {
-            arkret_sdk::Hash::new(winner.source_event_digest.clone()).map_err(anyhow::Error::from)
-        })
-        .transpose()
 }
 
 pub(crate) fn calendar_occurrence_hint(calendar: &CalendarCardFields) -> String {
