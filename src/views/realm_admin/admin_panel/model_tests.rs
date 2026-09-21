@@ -1,78 +1,39 @@
 use super::*;
 
-fn root() -> arkret_policy::realm_bootstrap::RealmAuthorityRootValue {
-    arkret_policy::realm_bootstrap::RealmAuthorityRootValue {
-        controller_actor_id: crate::mls_api_helpers::local_account_actor_id(
-            "ak:did_core:web:alice.example",
-        )
-        .unwrap(),
-        controller_epoch: 3,
-        authority_generation: 1,
-    }
-}
-
 const REALM: &str = "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM";
 
 #[test]
-fn owner_transfer_payload_pins_digest_and_new_controller() {
-    let successor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-        "ak:did_core:web:bob.example".parse().unwrap(),
-        "ak:did_core:web:remote-station.example".parse().unwrap(),
-    ));
-    let payload =
-        build_owner_transfer_payload(REALM, &root(), &successor.to_string(), "detached-proof")
-            .unwrap();
-    assert_eq!(payload.patch.controller_actor_id, successor);
+fn governance_events_fail_closed_without_verified_authority_root_current() {
     assert_eq!(
-        payload.expected_state_digest.as_str(),
-        crate::canonical::canonical_sha256(&root()).unwrap()
-    );
-    // The full builder chain accepts this payload (root authorization ref
-    // stamped by the SDK intent builder).
-    let intent = crate::event_builders::build_realm_owner_transfer_control_intent(
-        "did:web:alice.example",
-        payload,
-    )
-    .unwrap();
-    assert_eq!(
-        intent.kind().as_str(),
-        arkret_wire::event_kind_str::REALM_OWNER_TRANSFER
+        governance_authoring_gate(),
+        Err(VERIFIED_AUTHORITY_ROOT_UNAVAILABLE),
     );
 }
 
 #[test]
-fn owner_transfer_payload_rejects_an_empty_acceptance_proof() {
-    let successor = root().controller_actor_id.to_string();
-    assert!(build_owner_transfer_payload(REALM, &root(), &successor, "  ").is_err());
-}
-
-#[test]
-fn owner_transfer_does_not_infer_a_station_from_a_principal() {
-    assert!(
-        build_owner_transfer_payload(
-            REALM,
-            &root(),
-            "ak:did_core:web:bob.example",
-            "detached-proof"
-        )
-        .is_err()
-    );
-    assert!(
-        build_owner_transfer_payload(REALM, &root(), "did:web:bob.example", "detached-proof")
-            .is_err()
-    );
-}
-
-#[test]
-fn authority_reset_payload_requires_local_destructive_confirmation() {
-    let payload = build_authority_reset_payload(
-        REALM,
-        &root(),
-        arkret_wire::event_kind_str::REALM_AUTHORITY_RESET,
-    )
-    .unwrap();
-    assert_eq!(payload.realm_id.as_str(), REALM);
-    assert!(build_authority_reset_payload(REALM, &root(), "yes really").is_err());
+fn capability_basis_uses_the_verified_generation_anchor() {
+    let realm_id = arkret_sdk::RealmId::new(REALM).unwrap();
+    let event_id =
+        arkret_sdk::EventId::new("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19").unwrap();
+    let basis = crate::state::PersistedRealmAuthorityBasis {
+        realm_id: realm_id.clone(),
+        current_service_id: "did:web:station.example".parse().unwrap(),
+        current_generation: 4,
+        genesis_ref: arkret_wire::CommittedEventRef {
+            event_id: event_id.clone(),
+            commit_id: arkret_wire::RealmCommitId::new(
+                "ak:realm_commit:0196419b-0000-7000-8000-000000000001",
+            )
+            .unwrap(),
+            stream_ref: arkret_wire::CommitStreamRef::Realm { realm_id },
+            stream_position: 0,
+        },
+        last_authority_change_ref: None,
+        validated_at: chrono::Utc::now(),
+    };
+    let issuer = capability_issuer_basis(&basis);
+    assert_eq!(issuer.authority_generation, 4);
+    assert_eq!(issuer.authority_event_ref, event_id);
 }
 
 #[test]
@@ -83,20 +44,11 @@ fn governance_failure_hints_cover_the_reducer_rejection_reasons() {
     assert_eq!(governance_failure_hint("network timeout"), None);
 }
 
-// --- security health ladder ------------------------------------------------
-
-#[test]
-fn a_paused_notary_outranks_every_other_alert() {
-    let health = realm_security_health(true, true);
-    assert_eq!(health.label, "Writes paused");
-    assert_eq!(health.badge, "badge red");
-    assert!(health.next_step.contains("Realm security service"));
-    assert_eq!(health.alert_count, 2);
-}
+// --- security health -------------------------------------------------------
 
 #[test]
 fn a_pending_binding_is_reported() {
-    let health = realm_security_health(false, true);
+    let health = realm_security_health(true);
     assert_eq!(health.label, "Binding pending");
     assert_eq!(health.badge, "badge amber");
     assert_eq!(health.alert_count, 1);
@@ -104,63 +56,10 @@ fn a_pending_binding_is_reported() {
 
 #[test]
 fn a_quiet_realm_reports_no_action_and_no_alerts() {
-    let health = realm_security_health(false, false);
+    let health = realm_security_health(false);
     assert_eq!(health.label, "No active alerts");
     assert_eq!(health.badge, "badge green");
     assert_eq!(health.alert_count, 0);
-}
-
-// --- seal diagnostics ------------------------------------------------------
-
-#[test]
-fn seal_diagnostics_name_the_reason_a_value_is_absent() {
-    let empty = seal_diagnostics(&crate::state::LocalSealView::default());
-    assert!(empty.frontier_label.contains("no Seal seen"));
-    assert_eq!(empty.state_root_label, "(not published)");
-    assert!(empty.mls_epoch_label.contains("no MLS epoch published"));
-}
-
-#[test]
-fn seal_diagnostics_render_the_published_values() {
-    let mut view = crate::state::LocalSealView {
-        frontier: vec!["head-a".to_owned()],
-        ..crate::state::LocalSealView::default()
-    };
-    view.state_root = Some("sha256:root".to_owned());
-    view.mls_epoch = Some(7);
-    let rendered = seal_diagnostics(&view);
-    assert_eq!(rendered.frontier_label, "head-a");
-    assert_eq!(rendered.state_root_label, "sha256:root");
-    assert_eq!(rendered.mls_epoch_label, "7");
-}
-
-// --- owner-transfer candidates --------------------------------------------
-
-#[test]
-fn transfer_candidates_exclude_this_account_and_unparsable_members() {
-    let alice = crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:alice.example")
-        .expect("alice actor");
-    let bob = crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:bob.example")
-        .expect("bob actor");
-    let alice_wire = serde_json::to_string(&alice).expect("alice wire");
-    let bob_wire = serde_json::to_string(&bob).expect("bob wire");
-    let members = vec![
-        alice_wire.clone(),
-        bob_wire.clone(),
-        "ak:did_core:web:carol.example".to_owned(),
-    ];
-
-    let candidates = governance_transfer_candidates(&members, Some(&alice));
-    assert_eq!(
-        candidates,
-        vec![bob_wire.clone()],
-        "the successor is addressed by exact ActorId, so a bare principal is not a candidate"
-    );
-    assert_eq!(
-        governance_transfer_candidates(&members, None),
-        vec![alice_wire, bob_wire],
-        "with no signed-in actor nothing is excluded for being self"
-    );
 }
 
 // --- metadata editor reconciliation ---------------------------------------

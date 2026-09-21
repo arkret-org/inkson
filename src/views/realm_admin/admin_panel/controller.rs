@@ -14,86 +14,11 @@ pub(super) struct RealmAdminController {
     pub(super) status_msg: Signal<String>,
     pub(super) sync_cursor: Signal<String>,
     pub(super) state_store: SyncSignal<LocalStateStore>,
-    pub(super) gov_transfer_target: Signal<String>,
-    pub(super) gov_transfer_acceptance: Signal<String>,
     pub(super) metadata_alias: Signal<String>,
     pub(super) admin_grant_id: Signal<String>,
 }
 
 impl RealmAdminController {
-    /// `ak.realm.owner.transfer`. The payload is built and validated in the
-    /// dialog; by the time it reaches here the successor and their acceptance
-    /// proof are already fixed.
-    pub(super) fn transfer_owner(
-        mut self,
-        base_url: String,
-        api_token: String,
-        actor_id: String,
-        payload: arkret_sdk::RealmOwnerTransferPayload,
-        successor_label: String,
-    ) {
-        spawn(async move {
-            match crate::transport::auth::with_event_submitter(
-                &base_url,
-                api_token,
-                |sub| async move {
-                    crate::transport::realm_write::transfer_realm_owner(&sub, &actor_id, payload)
-                        .await
-                },
-            )
-            .await
-            {
-                Ok(resp) => {
-                    self.gov_transfer_target.set(String::new());
-                    self.gov_transfer_acceptance.set(String::new());
-                    self.status_msg.set(format!(
-                        "owner transfer submitted: event_id={} — once sealed, {} is the root \
-                         controller and this account is demoted",
-                        short_protocol_id(&resp.event_id),
-                        short_protocol_id(&successor_label),
-                    ));
-                }
-                Err(err) => self.status_msg.set(governance_failure_message(
-                    "owner transfer failed",
-                    &err.display(),
-                )),
-            }
-        });
-    }
-
-    /// `ak.realm.authority.reset` — voids every grant issued under the current
-    /// generation once sealed.
-    pub(super) fn reset_authority(
-        mut self,
-        base_url: String,
-        api_token: String,
-        actor_id: String,
-        payload: arkret_sdk::RealmAuthorityResetPayload,
-    ) {
-        spawn(async move {
-            match crate::transport::auth::with_event_submitter(
-                &base_url,
-                api_token,
-                |sub| async move {
-                    crate::transport::realm_write::reset_realm_authority(&sub, &actor_id, payload)
-                        .await
-                },
-            )
-            .await
-            {
-                Ok(resp) => self.status_msg.set(format!(
-                    "authority reset submitted: event_id={} — every grant issued under the \
-                     previous generation is void once sealed",
-                    short_protocol_id(&resp.event_id),
-                )),
-                Err(err) => self.status_msg.set(governance_failure_message(
-                    "authority reset failed",
-                    &err.display(),
-                )),
-            }
-        });
-    }
-
     /// Realm or Space profile update, optionally setting the Realm alias in
     /// the same governance checkpoint.
     #[allow(clippy::too_many_arguments)]
@@ -114,7 +39,6 @@ impl RealmAdminController {
                 kind,
                 event_kind,
                 updates_alias,
-                causal_refs,
             } = subject;
             let submit_home_realm_id = home_realm_id.clone();
             match crate::transport::auth::with_event_submitter(
@@ -134,7 +58,7 @@ impl RealmAdminController {
                                 &actor_id,
                                 digest_suite,
                                 patch,
-                                causal_refs,
+                                Vec::new(),
                             )
                             .await
                         }
@@ -145,7 +69,7 @@ impl RealmAdminController {
                                 &subject_id,
                                 &actor_id,
                                 patch,
-                                causal_refs,
+                                Vec::new(),
                             )
                             .await
                         }
@@ -291,75 +215,60 @@ impl RealmAdminController {
                 &account.device_id,
             )
             .map_err(|err| err.user_message());
-            let (commit_envelope, snapshot, previous_governance_binding) = match built {
-                Ok(parts) => parts,
+            let staged = match built {
+                Ok(staged) => staged,
                 Err(err) => {
                     self.status_msg.set(format!("rotate failed: {err}"));
                     return;
                 }
             };
-            let schedule_hash = commit_envelope.commit_digest.clone();
             let commit_event = match crate::mls::group_events::mls_commit_event_from_store(
                 &local_state,
                 &realm_id,
                 &actor_id,
-                &schedule_hash,
-                &commit_envelope,
-                &previous_governance_binding,
-            )
-            .await
-            {
+                &staged.envelope,
+            ) {
                 Ok(event) => event,
                 Err(err) => {
                     self.status_msg.set(format!("rotate failed: {err}"));
                     return;
                 }
             };
-            let next_epoch = commit_envelope.epoch;
+            let next_epoch = staged.envelope.epoch;
+            // The checkpoint with the pending Commit must be durable before
+            // the first network I/O so an accepted epoch can always merge
+            // after a crash or an unknown submission outcome.
+            if let Err(error) = self
+                .state_store
+                .write()
+                .save_mls_checkpoint(realm_id.clone(), staged.staged_checkpoint)
+            {
+                self.status_msg.set(format!(
+                    "rotate failed: MLS checkpoint persist failed: {error}"
+                ));
+                return;
+            }
+            let state_store_handle =
+                crate::app::runtime_adapter::state_store_handle(self.state_store);
+            let submit_device_id = account.device_id.clone();
             match crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
-                api.event_submitter()?.submit_sdk_event(&commit_event).await
+                let submitter = api.event_submitter()?;
+                let authored = submitter
+                    .author_for_direct_submission(&commit_event)
+                    .await?;
+                submitter
+                    .submit_mls_commit(
+                        authored,
+                        Vec::new(),
+                        submit_device_id,
+                        Vec::new(),
+                        &state_store_handle,
+                    )
+                    .await
             })
             .await
             {
-                Ok(accepted) => {
-                    // Persist-on-accept: only advance the local snapshot after
-                    // the server accepted the ak.mls.commit, and bind it to the
-                    // id the server accepted.
-                    let commit_event_id = match arkret_sdk::EventId::new(accepted.event_id.clone())
-                    {
-                        Ok(event_id) => event_id,
-                        Err(error) => {
-                            self.status_msg.set(format!(
-                                "rotate accepted but its Event id is invalid: {error}"
-                            ));
-                            return;
-                        }
-                    };
-                    if let Err(error) = self
-                        .state_store
-                        .write()
-                        .record_mls_group_state_ref_for_effective_scope(
-                            realm_id.clone(),
-                            None,
-                            snapshot.group_id.as_str(),
-                            snapshot.epoch,
-                            commit_event_id,
-                        )
-                    {
-                        self.status_msg.set(format!(
-                            "rotate accepted but MLS reference persistence failed: {error}"
-                        ));
-                        return;
-                    }
-                    if let Err(error) = self
-                        .state_store
-                        .write()
-                        .save_mls_checkpoint(realm_id.clone(), snapshot)
-                    {
-                        self.status_msg
-                            .set(format!("MLS snapshot persist failed: {error}"));
-                        return;
-                    }
+                Ok(_) => {
                     // A self-update is also the spec-defined recovery commit
                     // when a historical membership transition changed the
                     // frontier without changing the current MLS roster. Never
@@ -477,7 +386,7 @@ impl RealmAdminController {
         realm_id: String,
         actor_id: String,
         subject: arkret_sdk::AccountId,
-        issuer_root_basis: crate::operation::ak_ops::IssuerRootBasis,
+        issuer_root_basis: crate::operation::ak_ops::IssuerRealmAuthorityBasis,
     ) {
         spawn(async move {
             match crate::transport::auth::with_event_submitter(
@@ -489,7 +398,7 @@ impl RealmAdminController {
                         &realm_id,
                         &actor_id,
                         &subject,
-                        issuer_root_basis,
+                        &issuer_root_basis,
                     )
                     .await
                 },
@@ -608,7 +517,6 @@ pub(super) struct MetadataWriteSubject {
     pub(super) kind: RealmTreeNodeKind,
     pub(super) event_kind: &'static str,
     pub(super) updates_alias: bool,
-    pub(super) causal_refs: Vec<arkret_sdk::Hash>,
 }
 
 /// The values a successful Realm profile save writes back into local state.
@@ -616,13 +524,4 @@ pub(super) struct AcceptedRealmProfile {
     pub(super) title: String,
     pub(super) summary: Option<String>,
     pub(super) avatar_blob_ref: Option<String>,
-}
-
-/// Append the operator guidance for a known authority-root rejection to the
-/// raw error text. Both governance commands report failures this way.
-fn governance_failure_message(prefix: &str, error_text: &str) -> String {
-    let hint = governance_failure_hint(error_text)
-        .map(|hint| format!(" — {hint}"))
-        .unwrap_or_default();
-    format!("{prefix}: {error_text}{hint}")
 }
