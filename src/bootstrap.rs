@@ -60,20 +60,19 @@ pub(crate) fn local_state_has_encrypted_realm(state_store: &LocalStateStore) -> 
 }
 
 pub(crate) fn local_mls_epoch_floor_all(state_store: &LocalStateStore) -> u64 {
-    let mut max_epoch = 0_u64;
-    for (realm_id, snapshot) in state_store.mls_local_checkpoints() {
-        max_epoch = max_epoch.max(snapshot.epoch);
-        max_epoch = max_epoch.max(
-            state_store
-                .seal_view_for_realm(&realm_id)
-                .mls_epoch
-                .unwrap_or(0),
-        );
-    }
-    for seal_view in state_store.seal_views().values() {
-        max_epoch = max_epoch.max(seal_view.mls_epoch.unwrap_or(0));
-    }
-    max_epoch
+    // This is only a local change-detection key for recovery prompts and
+    // Kanban refresh. A retired Seal mirror cannot supply an authoritative
+    // MLS epoch; the persisted encrypted checkpoint is the local source.
+    max_local_checkpoint_epoch(
+        state_store
+            .mls_local_checkpoints()
+            .into_values()
+            .map(|snapshot| snapshot.epoch),
+    )
+}
+
+fn max_local_checkpoint_epoch(epochs: impl IntoIterator<Item = u64>) -> u64 {
+    epochs.into_iter().max().unwrap_or(0)
 }
 
 pub(crate) fn recovery_setup_prompt_required_for_local_state(
@@ -950,6 +949,12 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_mls_refresh_epoch_comes_only_from_persisted_checkpoints() {
+        assert_eq!(max_local_checkpoint_epoch([]), 0);
+        assert_eq!(max_local_checkpoint_epoch([2, 7, 3]), 7);
+    }
 
     /// One account-viewer device row.
     fn device_row(device_id: &str, extra: serde_json::Value) -> Value {
