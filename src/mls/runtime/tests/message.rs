@@ -100,7 +100,7 @@ fn creator_realm_state_snapshot_bootstrap_makes_space_encryptable() {
     super::seed_current_group_state_ref(&mut state, realm);
     // Ordinary application messages ride epoch 0; no commit event or
     // post-commit snapshot is returned.
-    let encrypted = encrypt_values_with_device_snapshot(
+    let (_, encrypted_values) = encrypt_values_with_device_snapshot(
         &mut state,
         &secure,
         realm,
@@ -110,11 +110,9 @@ fn creator_realm_state_snapshot_bootstrap_makes_space_encryptable() {
         &[br#""private""#.to_vec()],
     )
     .unwrap();
-    assert_eq!(encrypted.2.len(), 1);
-    assert!(encrypted.3.is_none());
-    assert!(encrypted.4.is_none());
+    assert_eq!(encrypted_values.len(), 1);
     assert_eq!(state.mls_checkpoint_for(realm).unwrap().epoch, 0);
-    let encrypted_again = encrypt_values_with_device_snapshot(
+    let (_, encrypted_values_again) = encrypt_values_with_device_snapshot(
         &mut state,
         &secure,
         realm,
@@ -124,9 +122,7 @@ fn creator_realm_state_snapshot_bootstrap_makes_space_encryptable() {
         &[br#""private-again""#.to_vec()],
     )
     .unwrap();
-    assert_eq!(encrypted_again.2.len(), 1);
-    assert!(encrypted_again.3.is_none());
-    assert!(encrypted_again.4.is_none());
+    assert_eq!(encrypted_values_again.len(), 1);
     assert_eq!(state.mls_checkpoint_for(realm).unwrap().epoch, 0);
 }
 
@@ -871,7 +867,7 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
     )
     .unwrap();
     super::seed_current_group_state_ref(&mut state, realm);
-    let (_, _, encrypted_values, ..) = encrypt_values_with_device_snapshot(
+    let (_, encrypted_values) = encrypt_values_with_device_snapshot(
         &mut state,
         &secure,
         realm,
@@ -1053,17 +1049,16 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
     super::seed_current_group_state_ref(&mut state, realm);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
 
-    let (_schedule_hash, member_ids, encrypted_values, _commit, _new_envelope, _) =
-        encrypt_values_with_device_snapshot(
-            &mut state,
-            &store,
-            realm,
-            &fixture::authority(actor),
-            &fixture::device_id(device),
-            "text/plain",
-            &[b"secret".to_vec()],
-        )
-        .unwrap();
+    let (member_ids, encrypted_values) = encrypt_values_with_device_snapshot(
+        &mut state,
+        &store,
+        realm,
+        &fixture::authority(actor),
+        &fixture::device_id(device),
+        "text/plain",
+        &[b"secret".to_vec()],
+    )
+    .unwrap();
 
     assert_eq!(member_ids.len(), 1);
     assert_eq!(encrypted_values.len(), 1);
