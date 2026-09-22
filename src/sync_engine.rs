@@ -3157,7 +3157,9 @@ mod tests {
         assert!(!device_summary_revokes_local_device(
             &viewer, &other, device
         ));
-        viewer.devices[0].status = arkret_sdk::DeviceSummaryStatus::RevocationPending;
+        // `revocation_pending` is derived from accepted proposals plus their
+        // RealmCommit results; it is not a stored device-summary status.
+        viewer.devices[0].status = arkret_sdk::DeviceSummaryStatus::Active;
         assert!(!device_summary_revokes_local_device(
             &viewer, &principal, device
         ));
