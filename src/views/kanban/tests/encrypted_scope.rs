@@ -25,6 +25,50 @@ fn active_account_scope(actor: &str, device: &str) -> ActiveAccountScopeTestGuar
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn pending_welcome_delivery(
+    scope: &arkret_sdk::ScopeRef,
+    recipient_actor: &str,
+    recipient_device: &str,
+    welcome_id: &str,
+    draft: &arkret_sdk::mls::MlsWelcomeDraft,
+) -> arkret_wire::MlsWelcomeDelivery {
+    let recipient_device = fixture::device_id(recipient_device);
+    assert_eq!(
+        draft.recipient,
+        arkret_sdk::MlsEndpointIdentity::human_device(
+            crate::mls_api_helpers::principal_core_id(recipient_actor).unwrap(),
+            recipient_device.clone(),
+        )
+    );
+    let delivery = arkret_wire::MlsWelcomeDelivery {
+        welcome_id: arkret_wire::MlsWelcomeDeliveryId::new(welcome_id).unwrap(),
+        realm_id: scope.realm_id_opt().unwrap().clone(),
+        effective_scope: scope.clone(),
+        commit_event_ref: arkret_sdk::EventId::new(
+            "ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml",
+        )
+        .unwrap(),
+        recipient_actor_id: arkret_sdk::ActorId::account(fixture::authority(recipient_actor)),
+        recipient_endpoint: arkret_wire::MlsWelcomeRecipientEndpoint::Device {
+            device_id: recipient_device,
+        },
+        keypackage_claim_ref: draft.keypackage_claim_ref.clone(),
+        ciphertext_b64: draft.ciphertext_b64.clone(),
+        producer_proof: arkret_wire::DetachedObjectSignature {
+            context: arkret_wire::DetachedSignatureContext::MlsWelcomeDelivery,
+            signature_algorithm: arkret_wire::DetachedSignatureAlgorithm::Ed25519,
+            verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device-key")
+                .unwrap(),
+            signed_digest: arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap(),
+            created_at: "2026-09-22T00:00:00.000Z".parse().unwrap(),
+            sig: arkret_sdk::Base64UrlString::new("A".repeat(86)).unwrap(),
+        },
+    };
+    delivery.validate_shape().unwrap();
+    delivery
+}
+
 fn seed_device_authorization(actor: &str, device: &str) {
     let actor = crate::mls_api_helpers::principal_core_id(actor).unwrap();
     let key = ed25519_dalek::SigningKey::from_bytes(&[41; 32])
@@ -371,6 +415,13 @@ async fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
     };
     let mut alice_group = alice.create_group(&scope).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
+    let pending_welcome = pending_welcome_delivery(
+        &scope,
+        bob_actor,
+        bob_device,
+        "ak:mls_welcome_delivery:01904100-0000-7000-8000-0000000000ff",
+        &add.welcome,
+    );
 
     let mut state = isolated_store_for_tests("pending-local-welcome");
     state.ingest_to_device_messages(&[serde_json::from_value(json!({
@@ -392,7 +443,7 @@ async fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
         "expires_at": arkret_sdk::canonical::format_timestamp_canonical(
             chrono::Utc::now() + chrono::Duration::hours(1)
         ),
-        "content": serde_json::to_value(&add.welcome).unwrap(),
+        "content": serde_json::to_value(&pending_welcome).unwrap(),
         "unsigned": {
             "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000ff",
             "key_package_id": bob_key_package.keypackage_id.clone(),
@@ -458,6 +509,13 @@ async fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
     };
     let mut alice_group = alice.create_group(&scope).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
+    let pending_welcome = pending_welcome_delivery(
+        &scope,
+        bob_actor,
+        bob_device,
+        "ak:mls_welcome_delivery:01904100-0000-7000-8000-0000000000f1",
+        &add.welcome,
+    );
 
     let mut state = isolated_store_for_tests("pending-local-welcome-with-state");
     state.ingest_to_device_messages(&[serde_json::from_value(json!({
@@ -479,7 +537,7 @@ async fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
         "expires_at": arkret_sdk::canonical::format_timestamp_canonical(
             chrono::Utc::now() + chrono::Duration::hours(1)
         ),
-        "content": serde_json::to_value(&add.welcome).unwrap(),
+        "content": serde_json::to_value(&pending_welcome).unwrap(),
         "unsigned": {
             "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000f1",
             "key_package_id": bob_key_package.keypackage_id.clone(),
