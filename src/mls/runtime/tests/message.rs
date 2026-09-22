@@ -1025,7 +1025,10 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
         DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();
-    let mut group = identity.create_group(realm.as_bytes()).unwrap();
+    let effective_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+    };
+    let mut group = identity.create_group(&effective_scope).unwrap();
     group
         .install_local_creator_binding(
             arkret_sdk::ActorId::account(fixture::authority(actor)),
