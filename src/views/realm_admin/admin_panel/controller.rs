@@ -420,38 +420,55 @@ impl RealmAdminController {
         });
     }
 
-    pub(super) fn revoke_realm_admin(
+    /// Read the target Grant and its exact revision from the governing
+    /// Station, then author one capability revoke from that same row. Missing,
+    /// duplicate or cross-Realm rows fail before Event construction.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn revoke_capability_from_effective_row(
         mut self,
         base_url: String,
         api_token: String,
         realm_id: String,
         actor_id: String,
+        subject: arkret_sdk::ActorId,
         grant_id: String,
+        reason: Option<String>,
+        status_label: &'static str,
     ) {
         spawn(async move {
             match crate::transport::auth::with_event_submitter(
                 &base_url,
                 api_token,
                 |sub| async move {
-                    crate::transport::realm_write::revoke_realm_admin(
-                        &sub,
-                        &realm_id,
-                        &actor_id,
-                        &grant_id,
-                        Some("admin_revoke"),
+                    let realm = arkret_sdk::RealmId::new(realm_id.clone())?;
+                    let grants = crate::transport::realm_read::effective_grants(
+                        sub.http(),
+                        &realm,
+                        &subject,
                     )
-                    .await
+                    .await?;
+                    let row = crate::operation::ak_ops::effective_grant_row_for_revoke(
+                        &grants, &grant_id,
+                    )?;
+                    let event = crate::operation::ak_ops::capability_revoke_from_effective_row(
+                        realm.as_str(),
+                        &actor_id,
+                        row,
+                        reason.as_deref(),
+                    )?
+                    .build_sdk_event("inkson")?;
+                    sub.submit_sdk_event(&event).await
                 },
             )
             .await
             {
                 Ok(resp) => self.status_msg.set(format!(
-                    "revoked ak.realm.admin: event_id={}",
+                    "{status_label}: event_id={}",
                     short_protocol_id(&resp.event_id)
                 )),
                 Err(err) => self
                     .status_msg
-                    .set(format!("revoke admin failed: {}", err.display())),
+                    .set(format!("{status_label} failed: {}", err.display())),
             }
         });
     }

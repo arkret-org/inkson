@@ -1182,15 +1182,17 @@ pub fn RealmAdminPanel(
                                 let realm = realm.clone();
                                 let api_token = token();
                                 let grant_val = cap_grant_id().trim().to_owned();
+                                let subject_val = cap_subject().trim().to_owned();
                                 let reason_val = cap_revoke_reason();
                                 let reason_opt = if reason_val.trim().is_empty() {
                                     None
                                 } else {
                                     Some(reason_val.clone())
                                 };
-                                if grant_val.is_empty() {
+                                if grant_val.is_empty() || subject_val.is_empty() {
                                     status_msg.set(
-                                        "fill grant_id before submitting capability revoke".to_owned(),
+                                        "fill grant_id + subject DID before reading the current Grant row"
+                                            .to_owned(),
                                     );
                                     return;
                                 }
@@ -1204,37 +1206,28 @@ pub fn RealmAdminPanel(
                                     );
                                     return;
                                 }
-                                let envelope = match crate::operation::ak_ops::capability_revoke(
+                                let subject = match resolve_realm_member_account(
+                                    &state_store.read(),
                                     &realm,
-                                    &actor_id,
-                                    &grant_val,
-                                    reason_opt.as_deref(),
+                                    &subject_val,
                                 ) {
-                                    Ok(builder) => match builder.build_sdk_event("inkson") {
-                                        Ok(envelope) => envelope,
-                                        Err(err) => {
-                                            status_msg.set(format!(
-                                                "capability.revoke build failed: {err}"
-                                            ));
-                                            return;
-                                        }
-                                    },
+                                    Ok(subject) => subject,
                                     Err(err) => {
                                         status_msg.set(format!(
-                                            "capability.revoke build failed: {err}"
+                                            "capability revoke blocked: {err}"
                                         ));
                                         return;
                                     }
                                 };
-                                let op_id = envelope.local_operation_id().to_string();
-                                controller.submit_capability_event(
+                                controller.revoke_capability_from_effective_row(
                                     base,
                                     api_token,
-                                    envelope,
-                                    op_id,
-                                    "ak.capability.revoke",
+                                    realm,
+                                    actor_id,
+                                    arkret_sdk::ActorId::account(subject),
+                                    grant_val,
+                                    reason_opt,
                                     "capability.revoke",
-                                    false,
                                 );
                             }
                         },
@@ -1332,16 +1325,40 @@ pub fn RealmAdminPanel(
                                 let realm = realm.clone();
                                 let api_token = token();
                                 let grant_id = admin_grant_id().trim().to_owned();
+                                let subject = admin_subject_id().trim().to_owned();
                                 let actor_id = actor_principal_id.trim().to_owned();
-                                if grant_id.is_empty() {
-                                    status_msg.set(crate::i18n::tr("realm_admin.admin_grant_id_required"));
+                                if grant_id.is_empty() || subject.is_empty() {
+                                    status_msg.set(
+                                        "revoke admin blocked: subject and grant id are required to read the current Grant row"
+                                            .to_owned(),
+                                    );
                                     return;
                                 }
                                 if actor_id.is_empty() {
                                     status_msg.set("revoke admin failed: account is not connected".to_owned());
                                     return;
                                 }
-                                controller.revoke_realm_admin(base, api_token, realm, actor_id, grant_id);
+                                let subject = match resolve_realm_member_account(
+                                    &state_store.read(),
+                                    &realm,
+                                    &subject,
+                                ) {
+                                    Ok(subject) => subject,
+                                    Err(err) => {
+                                        status_msg.set(format!("revoke admin blocked: {err}"));
+                                        return;
+                                    }
+                                };
+                                controller.revoke_capability_from_effective_row(
+                                    base,
+                                    api_token,
+                                    realm,
+                                    actor_id,
+                                    arkret_sdk::ActorId::account(subject),
+                                    grant_id,
+                                    Some("admin_revoke".to_owned()),
+                                    "revoked ak.realm.admin",
+                                );
                             }
                         },
                         {crate::i18n::tr("realm_admin.admin_revoke_button")}

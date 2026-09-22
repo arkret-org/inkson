@@ -190,7 +190,8 @@ pub async fn effective_grants(
     subject: &arkret_sdk::ActorId,
 ) -> anyhow::Result<GrantList> {
     // Deliberately no `at` parameter: historical evaluation is not an
-    // authoring basis. Settings relinquish only consumes this current read.
+    // authoring basis. Settings relinquish and manual admin revoke consume
+    // only the exact row revision from this current read.
     http.get(&effective_grants_path(realm_id, subject)?)
         .await
         .map_err(anyhow::Error::from)

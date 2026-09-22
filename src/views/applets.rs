@@ -1002,11 +1002,10 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                             );
                                                             for intent in &preview.revoke_plan.capability_revocations {
                                                                 revoke_events.push(
-                                                                    crate::operation::ak_ops::capability_revoke(
+                                                                    crate::operation::ak_ops::capability_revoke_from_applet_preview(
                                                                         &realm,
                                                                         principal_id.as_str(),
-                                                                        intent.grant_id.as_str(),
-                                                                        Some(intent.reason_code.as_str()),
+                                                                        intent,
                                                                     )?
                                                                     .build_sdk_event("inkson")?,
                                                                 );

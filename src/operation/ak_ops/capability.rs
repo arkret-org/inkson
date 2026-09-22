@@ -1,7 +1,10 @@
 //! Capability grant / revoke builders.
-//!
-//! Capability grants write the OrSet cell `ak.component.capability.grant.v1`.
 
+use arkret_models_collaboration::governance::authorization::{
+    EffectiveCapabilityGrantRow, GrantList,
+};
+use arkret_models_integration::AppletCapabilityRevokeIntent;
+use arkret_wire::{CurrentRevision, event_kind_str};
 use serde_json::Value;
 
 use super::{TypedOperationBuilder, trim_realm_id};
@@ -15,32 +18,112 @@ pub struct IssuerRealmAuthorityBasis {
     pub authority_event_ref: arkret_sdk::EventId,
 }
 
-/// `ak.capability.revoke` — drop a standing grant, addressed by `grant_id`.
-/// `reason` shows up in the audit trail and lets the UI explain why the
-/// capability was dropped.
-///
-/// Uses the SDK `CapabilityRevokePayload` strong type
-/// (`event-payload.schema.json#/$defs/capability_revoke_payload`,
-/// `deny_unknown_fields`) so the wire body cannot drift — the earlier hand
-/// -rolled body carried a `tag` field the schema forbids.
+/// Legacy no-current entry point retained only so forbidden callers fail
+/// closed before Event construction. New callers must use one of the two
+/// carrier-specific builders below.
 pub fn capability_revoke(
+    _realm_id: &str,
+    _actor: &str,
+    _grant_id: &str,
+    _reason: Option<&str>,
+) -> anyhow::Result<TypedOperationBuilder> {
+    anyhow::bail!(
+        "capability revoke blocked: exact accepted CurrentRevision is unavailable; read an \
+         EffectiveCapabilityGrantRow or use an Applet revoke preview intent"
+    )
+}
+
+fn capability_revoke_exact(
     realm_id: &str,
     actor: &str,
-    grant_id: &str,
+    grant_id: &arkret_sdk::GrantId,
+    expected_revision: &CurrentRevision,
     reason: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let grant_id_typed = arkret_sdk::GrantId::new(grant_id.to_owned())
-        .map_err(|err| anyhow::anyhow!("capability revoke grant_id {grant_id:?}: {err}"))?;
     let payload = arkret_sdk::CapabilityRevokePayload {
-        grant_ref: None,
-        grant_id: grant_id_typed,
+        grant_id: grant_id.clone(),
+        expected_revision: expected_revision.clone(),
         reason: reason.map(ToOwned::to_owned),
     };
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::CapabilityRevoke>(
             realm_id, actor, payload,
         )
-        .target_ref(grant_id),
+        .target_ref(grant_id.as_str()),
+    )
+}
+
+/// Select exactly one active Grant row returned by
+/// `ak.self.authz.grants.read.effective.v1`.
+///
+/// The surrounding list digest, local projection and historical Event ids are
+/// deliberately not accepted as authoring inputs.
+pub fn effective_grant_row_for_revoke<'a>(
+    list: &'a GrantList,
+    grant_id: &str,
+) -> anyhow::Result<&'a EffectiveCapabilityGrantRow> {
+    let grant_id = arkret_sdk::GrantId::new(grant_id.to_owned())
+        .map_err(|error| anyhow::anyhow!("capability revoke grant_id {grant_id:?}: {error}"))?;
+    let mut matches = list.grants.iter().filter(|row| row.grant.id == grant_id);
+    let row = matches.next().ok_or_else(|| {
+        anyhow::anyhow!(
+            "capability revoke blocked: governing Station returned no active effective row for {}",
+            grant_id.as_str()
+        )
+    })?;
+    if matches.next().is_some() {
+        anyhow::bail!(
+            "capability revoke blocked: governing Station returned duplicate effective rows for {}",
+            grant_id.as_str()
+        );
+    }
+    Ok(row)
+}
+
+/// Author a manual admin revoke only from the exact active Grant row returned
+/// by the governing Station.
+pub fn capability_revoke_from_effective_row(
+    realm_id: &str,
+    actor: &str,
+    row: &EffectiveCapabilityGrantRow,
+    reason: Option<&str>,
+) -> anyhow::Result<TypedOperationBuilder> {
+    let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    if row.grant.realm_id.as_ref() != Some(&realm_id) {
+        anyhow::bail!(
+            "capability revoke blocked: effective Grant row does not belong to Realm {}",
+            realm_id.as_str()
+        );
+    }
+    capability_revoke_exact(
+        realm_id.as_str(),
+        actor,
+        &row.grant.id,
+        &row.revision,
+        reason,
+    )
+}
+
+/// Author an Applet revoke Event by copying the exact revision and reason from
+/// the canonical preview intent. The caller must submit these unchanged with
+/// the preview plan digest so the Station can recompute and compare the plan.
+pub fn capability_revoke_from_applet_preview(
+    realm_id: &str,
+    actor: &str,
+    intent: &AppletCapabilityRevokeIntent,
+) -> anyhow::Result<TypedOperationBuilder> {
+    if intent.event_kind != event_kind_str::CAPABILITY_REVOKE {
+        anyhow::bail!(
+            "Applet revoke blocked: preview intent event_kind must be {}",
+            event_kind_str::CAPABILITY_REVOKE
+        );
+    }
+    capability_revoke_exact(
+        realm_id,
+        actor,
+        &intent.grant_id,
+        &intent.expected_revision,
+        Some(intent.reason_code.as_str()),
     )
 }
 
