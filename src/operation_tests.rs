@@ -334,37 +334,28 @@ fn kanban_card_strand_create_omits_position_metadata() {
 #[test]
 fn mls_commit_builder_matches_registered_payload_schema() {
     let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
-    let group_id = "mls-group-kanban-test";
+    let base_group_state_ref =
+        arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x22; 32]);
     let governance_binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
         arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
+        Some(base_group_state_ref.clone()),
         0,
         1,
-        arkret_sdk::Hash::new(
-            "sha256:2222222222222222222222222222222222222222222222222222222222222222".to_owned(),
-        )
-        .unwrap(),
-        arkret_sdk::ContentScheme::MlsRfc9420,
-        None,
-        arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
-        arkret_sdk::CORE_REDUCER_PROFILE,
+        0,
     )
     .unwrap();
     let commit_bytes = b"operation-test-commit";
     let commit = arkret_sdk::MlsCommitEnvelope {
-        group_id: group_id.to_owned(),
+        group_id: governance_binding.mls_group_id().unwrap(),
         epoch: 1,
         commit: arkret_sdk::base64url_encode(commit_bytes),
         commit_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(commit_bytes))
             .unwrap(),
         ratchet_tree: None,
     };
-    let payload = arkret_sdk::MlsCommitPayload::new(
-        "ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-        Vec::new(),
-        &commit,
-        governance_binding,
-    )
-    .unwrap();
+    let payload =
+        arkret_sdk::MlsCommitPayload::new(base_group_state_ref, 0, &commit, governance_binding)
+            .unwrap();
     let op = ak_ops::mls_commit_with_governance(realm_id, "did:web:alice.example", &payload)
         .unwrap()
         .build("node");
