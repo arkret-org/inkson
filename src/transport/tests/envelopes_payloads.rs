@@ -338,18 +338,6 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
         "ak:did_core:web:bob.example"
     );
     assert_eq!(event.payload()["membership"], "ban");
-    assert_eq!(event.intent().preconditions().len(), 1);
-    assert_eq!(
-        event.intent().preconditions()[0].cell_id.as_str(),
-        format!(
-            "ak:cell:ak.component.member.state.v1:{}",
-            arkret_sdk::composite_subject(&[member_id.canonical_key().unwrap().as_str()]).unwrap()
-        )
-    );
-    assert_eq!(
-        event.intent().preconditions()[0].predicate.value,
-        Some(json!("join"))
-    );
     // `ak.member.state` registers a `transition_to` projection: `to` comes from
     // the signed payload, `from` is resolved by the reducer against the frozen
     // pre-state rather than asserted by the producer.
