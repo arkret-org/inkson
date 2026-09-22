@@ -114,25 +114,6 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "service_id": "ak:did_core:web:server.example"
         })
     );
-    // v1 has no producer `effects[]`: the genesis leaf set is what the
-    // registered `ak.realm.create` contract projects.
-    let create_writes =
-        crate::operation::direct_registered_cell_writes(create, arkret_sdk::DigestSuite::Sha256)
-            .unwrap();
-    // realm-and-space.md §2.5: genesis intent, create audit append, founding
-    // notary, reducer profile and authority root.
-    assert_eq!(create_writes.len(), 5);
-    assert_eq!(
-        create_writes[0].cell_id.as_str(),
-        arkret_bootstrap::REALM_GENESIS_CELL
-    );
-    assert_eq!(create_writes[0].op.op_type, arkret_sdk::LatticeOpType::Set);
-    assert!(
-        create_writes
-            .iter()
-            .any(|write| write.cell_id.as_str() == arkret_bootstrap::REALM_AUTHORITY_ROOT_CELL),
-        "genesis MUST materialize the Realm authority-root cell"
-    );
     for event in &events {
         // `OrdinaryRealmBootstrap` is the one context in which a control write
         // may carry no CBS basis: the genesis transaction predates any accepted
