@@ -554,14 +554,15 @@ fn server_identity_creation_states_ignore_local_returning_candidates() {
     let device =
         arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
             .unwrap();
-    let active =
-        AccountHandoffDisposition::IdentityCreationActive(arkret_sdk::IdentityCreationLease {
+    let active = AccountHandoffDisposition::IdentityCreationActive(Box::new(
+        arkret_sdk::IdentityCreationLease {
             identity_creation_lease_id: "lease-fixture".to_owned(),
             fence: 1,
             state: arkret_sdk::IdentityCreationLeaseState::Active,
             expires_at: Utc::now() + chrono::Duration::minutes(15),
             reserved_identity: None,
-        });
+        },
+    ));
     let busy = AccountHandoffDisposition::IdentityCreationBusy {
         retry_after_ms: 1_000,
         expires_at: Utc::now() + chrono::Duration::minutes(15),
