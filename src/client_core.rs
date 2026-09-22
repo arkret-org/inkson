@@ -542,7 +542,7 @@ mod tests {
         );
         let account_scope = garth::CursorScope::Account {
             service_id: None,
-            actor_id: crate::mls_api_helpers::principal_core_id(
+            actor_id: crate::mls_api_helpers::local_account_actor_id(
                 "did:webvh:z6mkfixture:alice.example",
             )
             .unwrap(),
