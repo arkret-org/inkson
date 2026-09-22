@@ -564,6 +564,7 @@ mod tests {
             to_device: None,
             device_lists: None,
             account_data: None,
+            agent_draft_pending_intents: None,
             notifications: None,
             partial: None,
             priority: None,
@@ -617,7 +618,7 @@ mod tests {
         );
         assert!(service_supports_operation(
             &description,
-            arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_SCAN_V1,
+            arkret_sdk::ServiceOperationId::SELF_COMMITTED_EVENT_READ_SCAN_V1,
         ));
 
         let unrelated = arkret_sdk::ServiceDescribe::development(
@@ -635,7 +636,7 @@ mod tests {
         );
         assert!(!service_supports_operation(
             &unrelated,
-            arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_SCAN_V1,
+            arkret_sdk::ServiceOperationId::SELF_COMMITTED_EVENT_READ_SCAN_V1,
         ));
 
         assert!(!service_supports_operation(
