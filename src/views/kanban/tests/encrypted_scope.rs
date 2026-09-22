@@ -374,7 +374,10 @@ async fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
     )
     .unwrap();
     let bob_key_package = bob.key_package_record().unwrap();
-    let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+    };
+    let mut alice_group = alice.create_group(&scope).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
 
     let mut state = isolated_store_for_tests("pending-local-welcome");
@@ -458,7 +461,10 @@ async fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
     .unwrap();
     let bob_key_package = bob.key_package_record().unwrap();
     let bob_private_state = bob.export_private_state().unwrap();
-    let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+    };
+    let mut alice_group = alice.create_group(&scope).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
 
     let mut state = isolated_store_for_tests("pending-local-welcome-with-state");
@@ -723,8 +729,11 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
     .unwrap();
     let governance_binding =
         crate::mls::governance_proof::cached_frontier_binding(&state, &proof_request).unwrap();
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+    };
     let mut group = identity
-        .create_group_with_governance_binding(realm.as_bytes(), &governance_binding)
+        .create_group_with_governance_binding(&scope, &governance_binding)
         .unwrap();
     group
         .install_local_creator_binding(
