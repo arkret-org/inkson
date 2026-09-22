@@ -195,6 +195,26 @@ fn applet_install_resource(scope: &ScopeRef) -> anyhow::Result<arkret_sdk::WireR
     Ok(selector)
 }
 
+/// Convert only a previously verified governing-Station authority bundle into
+/// the semantic Realm-root lineage carried by Applet capability grants.
+/// Missing or cross-Realm cached state is not an authoring basis.
+fn applet_capability_issuer_basis(
+    basis: Option<crate::state::PersistedRealmAuthorityBasis>,
+    realm_id: &arkret_sdk::RealmId,
+) -> Option<crate::operation::ak_ops::IssuerRealmAuthorityBasis> {
+    let basis = basis.filter(|basis| &basis.realm_id == realm_id)?;
+    let authority_event_ref = basis
+        .last_authority_change_ref
+        .as_ref()
+        .unwrap_or(&basis.genesis_ref)
+        .event_id
+        .clone();
+    Some(crate::operation::ak_ops::IssuerRealmAuthorityBasis {
+        authority_generation: basis.current_generation,
+        authority_event_ref,
+    })
+}
+
 fn build_formal_applet_install_events(
     package: &AppletPackage,
     registration_epoch_evidence: &AppletRegistrationEpochEvidence,
@@ -202,6 +222,7 @@ fn build_formal_applet_install_events(
     approved_actions: &[String],
     actor_id: &str,
     target_station_id: &arkret_sdk::DidCoreId,
+    issuer_authority_basis: &crate::operation::ak_ops::IssuerRealmAuthorityBasis,
     created_at: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<(
     crate::operation::LocalOperation,
@@ -261,9 +282,8 @@ fn build_formal_applet_install_events(
             // root, which is what `issuer_authority_refs` now records.
             issuer_authority_refs: vec![arkret_sdk::IssuerAuthorityRef::RealmRoot {
                 realm_id: realm_id.clone(),
-                cell_ref: "ak:cell:ak.component.realm.authority_root.v1:null".to_owned(),
-                controller_epoch_at_issuance: 0,
-                authority_generation: 0,
+                authority_event_ref: issuer_authority_basis.authority_event_ref.clone(),
+                authority_generation: issuer_authority_basis.authority_generation,
             }],
             issued_at: created_at,
         };
@@ -617,6 +637,24 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                         let actor_id = account.principal_id().clone();
                                         let install_actor_id = arkret_sdk::ActorId::account(account.authority.clone());
                                         let target_station_id = account.authority.station_id.clone();
+                                        let realm_typed = match arkret_sdk::RealmId::new(realm.clone()) {
+                                            Ok(realm_id) => realm_id,
+                                            Err(error) => {
+                                                install_status.set(format!("cannot preview install: invalid Realm id: {error}"));
+                                                return;
+                                            }
+                                        };
+                                        let issuer_authority_basis = applet_capability_issuer_basis(
+                                            state_store.read().realm_authority_basis(realm_typed.as_str()),
+                                            &realm_typed,
+                                        );
+                                        let Some(issuer_authority_basis) = issuer_authority_basis else {
+                                            install_status.set(
+                                                "cannot preview install: verified governing Station authority lineage is unavailable"
+                                                    .to_owned(),
+                                            );
+                                            return;
+                                        };
                                         let circle = install_circle_id();
                                         let approve_actions = parse_applet_approval_actions(
                                             &install_approve_actions(),
@@ -666,6 +704,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                         &approve_actions,
                                                         actor_id.as_str(),
                                                         &target_station_id,
+                                                        &issuer_authority_basis,
                                                         requested_at,
                                                     )?;
                                                 let mut events = Vec::with_capacity(1 + grants.len());
@@ -1222,6 +1261,50 @@ mod tests {
                 "match_scope": "exact"
             })
         );
+    }
+
+    #[test]
+    fn applet_grant_basis_uses_verified_generation_anchor_and_rejects_other_realms() {
+        let realm_id = arkret_sdk::RealmId::new(
+            "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h".to_owned(),
+        )
+        .unwrap();
+        let other_realm = arkret_sdk::RealmId::new(
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
+        )
+        .unwrap();
+        let genesis =
+            arkret_sdk::EventId::new("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap();
+        let change =
+            arkret_sdk::EventId::new("ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1")
+                .unwrap();
+        let committed = |event_id, position| arkret_wire::CommittedEventRef {
+            event_id,
+            commit_id: arkret_wire::RealmCommitId::new(format!(
+                "ak:realm_commit:0196419b-0000-7000-8000-{position:012}"
+            ))
+            .unwrap(),
+            stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: realm_id.clone(),
+            },
+            stream_position: position,
+        };
+        let basis = crate::state::PersistedRealmAuthorityBasis {
+            realm_id: realm_id.clone(),
+            current_service_id: "ak:did_core:web:station.example".parse().unwrap(),
+            current_generation: 4,
+            genesis_ref: committed(genesis, 0),
+            last_authority_change_ref: Some(committed(change.clone(), 4)),
+            validated_at: chrono::Utc::now(),
+        };
+
+        let issuer = super::applet_capability_issuer_basis(Some(basis.clone()), &realm_id)
+            .expect("verified matching Realm authority is usable");
+        assert_eq!(issuer.authority_generation, 4);
+        assert_eq!(issuer.authority_event_ref, change);
+        assert!(super::applet_capability_issuer_basis(Some(basis), &other_realm).is_none());
+        assert!(super::applet_capability_issuer_basis(None, &realm_id).is_none());
     }
 
     #[test]
