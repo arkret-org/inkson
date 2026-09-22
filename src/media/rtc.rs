@@ -1434,9 +1434,10 @@ mod tests {
         let alice_endpoint = alice_identity.endpoint_identity();
         let bob_endpoint = bob_identity.endpoint_identity();
 
-        let mut alice_group = alice_identity
-            .create_group(INTEROP_REALM.as_bytes())
-            .unwrap();
+        let effective_scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: RealmId::new(INTEROP_REALM.to_owned()).unwrap(),
+        };
+        let mut alice_group = alice_identity.create_group(&effective_scope).unwrap();
         let add = alice_group.add_member(&bob_key_package).unwrap();
         let mut bob_group =
             arkret_sdk::ArkretMlsGroup::join_from_welcome(bob_identity, &add.welcome).unwrap();

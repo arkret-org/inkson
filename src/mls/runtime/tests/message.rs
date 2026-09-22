@@ -480,7 +480,10 @@ fn two_member_group_with_bob_snapshot(
     let alice_endpoint = alice.endpoint_identity();
     let bob_endpoint = bob.endpoint_identity();
     let endpoints = vec![alice_endpoint, bob_endpoint];
-    let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
+    let effective_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+    };
+    let mut alice_group = alice.create_group(&effective_scope).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
     let mut bob_group = arkret_sdk::ArkretMlsGroup::join_from_welcome(bob, &add.welcome).unwrap();
     bob_group
