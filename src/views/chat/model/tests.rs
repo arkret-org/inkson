@@ -75,13 +75,6 @@ mod device_identity_proof_tests {
             kind: "detached_jws".to_owned(),
             verification_method: verification_method.clone(),
             event_digest: arkret_sdk::Hash::new(event_digest).unwrap(),
-            signer_resolution_evidence_ref: Some(
-                arkret_sdk::SignerEvidenceRef::new(format!(
-                    "ak:signer_evidence:sha256:{}",
-                    "11".repeat(32)
-                ))
-                .unwrap(),
-            ),
             created_at: proof_created_at,
             domain: None,
             audience: None,
