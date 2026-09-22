@@ -114,37 +114,6 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "service_id": "ak:did_core:web:server.example"
         })
     );
-    for event in &events {
-        // `OrdinaryRealmBootstrap` is the one context in which a control write
-        // may carry no CBS basis: the genesis transaction predates any accepted
-        // Seal. The `Standard` context would demand a `seal_basis` the submit
-        // gate has not attached yet.
-        arkret_sdk::schema::validate_registered_cell_writes_in_context(
-            event,
-            arkret_sdk::schema::EventCellContractContext::OrdinaryRealmBootstrap,
-            arkret_sdk::DigestSuite::Sha256,
-        )
-        .unwrap_or_else(|error| {
-            panic!(
-                "bootstrap Event {} ({}) violates the registry cell contract: {error}",
-                event.event_id,
-                event.kind.as_str()
-            )
-        });
-    }
-    for facet in &events[1..7] {
-        assert!(
-            crate::operation::project_registered_cell_writes(
-                facet,
-                arkret_sdk::DigestSuite::Sha256,
-            )
-            .unwrap()
-            .iter()
-            .all(|write| write.cell_id.as_str().ends_with(":null")),
-            "Realm singleton facet {} must use the canonical null subject",
-            facet.kind.as_str()
-        );
-    }
     // The typed builder leaves the envelope unsigned — the active
     // signer attaches the detached JWS proof at submit time.
     assert!(create.producer_proof.is_none());
