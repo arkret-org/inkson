@@ -2,94 +2,123 @@
 
 use super::TypedOperationBuilder;
 
-/// Build the `ak.relation.create` payload.
-///
-/// `#/$defs/relation_create_object` is `allOf [relation.schema.json, not
-/// required id/type/effective_scope]`, so the payload carries the whole
-/// Relation object: the registered projection is `set value = payload.relation`
-/// and a partial object has no derivable cell value. The id stays unset — it is
-/// derived from the create Event — and `effective_scope` stays unset because it
-/// is reducer-managed.
-pub(crate) fn relation_create_payload(
-    realm_id: &str,
-    actor: &str,
-    kind: &str,
-    from_ref: &str,
-    to_ref: &str,
-) -> anyhow::Result<arkret_sdk::RelationCreatePayload> {
-    relation_create_payload_with_endpoints(realm_id, actor, kind, from_ref.into(), to_ref.into())
-}
-
-fn relation_create_payload_with_endpoints(
-    realm_id: &str,
-    actor: &str,
+fn relation_definition(
     kind: &str,
     from_ref: arkret_sdk::RelationEndpoint,
     to_ref: arkret_sdk::RelationEndpoint,
+) -> anyhow::Result<arkret_sdk::RelationDefinition> {
+    let definition = arkret_sdk::RelationDefinition {
+        scope_circle_id: None,
+        relation_kind: arkret_sdk::RelationKind::from_wire(kind),
+        from_ref,
+        to_ref,
+        rank: None,
+        fields: Default::default(),
+    };
+    definition.validate()?;
+    Ok(definition)
+}
+
+fn relation_domain(
+    domain_kind: arkret_sdk::RelationPrimaryConflictDomainKind,
+    definition: &arkret_sdk::RelationDefinition,
+) -> anyhow::Result<arkret_sdk::RelationPrimaryConflictDomain> {
+    arkret_sdk::RelationPrimaryConflictDomain::try_new(
+        domain_kind,
+        definition.relation_kind.clone(),
+        definition.from_ref.clone(),
+        matches!(
+            domain_kind,
+            arkret_sdk::RelationPrimaryConflictDomainKind::Tuple
+        )
+        .then(|| definition.to_ref.clone()),
+    )
+    .map_err(anyhow::Error::from)
+}
+
+pub(crate) fn relation_actor_domain(
+    kind: &str,
+    from_ref: &str,
+    target_actor: &arkret_sdk::ActorId,
+) -> anyhow::Result<arkret_sdk::RelationPrimaryConflictDomain> {
+    let definition = relation_definition(kind, from_ref.into(), target_actor.clone().into())?;
+    relation_domain(
+        arkret_sdk::RelationPrimaryConflictDomainKind::Tuple,
+        &definition,
+    )
+}
+
+/// Build an `ak.relation.create` payload only from a Station-verified exact
+/// current result. `None` is therefore reachable only through the formal
+/// Relation `never_written` outcome, never through a local default.
+pub(crate) fn relation_create_payload(
+    kind: &str,
+    from_ref: arkret_sdk::RelationEndpoint,
+    to_ref: arkret_sdk::RelationEndpoint,
+    domain_kind: arkret_sdk::RelationPrimaryConflictDomainKind,
+    current: &crate::event_submit::VerifiedRelationCurrent,
 ) -> anyhow::Result<arkret_sdk::RelationCreatePayload> {
-    Ok(arkret_sdk::RelationCreatePayload::new(
-        arkret_sdk::Relation {
-            schema: arkret_sdk::SchemaId::RELATION_V1.to_owned(),
-            id: None,
-            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
-                .map_err(|err| anyhow::anyhow!("invalid realm id {realm_id:?}: {err:?}"))?,
-            scope_circle_id: None,
-            effective_scope: None,
-            relation_kind: arkret_sdk::RelationKind::from_wire(kind),
-            from_ref,
-            to_ref,
-            rank: None,
-            fields: Default::default(),
-            state: None,
-            state_changed_at: None,
-            created_by: crate::mls_api_helpers::local_account_actor_id(actor)?,
-            created_at: chrono::Utc::now(),
-            updated_by: None,
-            updated_at: None,
-        },
-    ))
+    let definition = relation_definition(kind, from_ref, to_ref)?;
+    let domain = relation_domain(domain_kind, &definition)?;
+    arkret_sdk::RelationCreatePayload::try_new(
+        domain.clone(),
+        current.expected_revision_for_create(&domain)?,
+        definition,
+    )
+    .map_err(anyhow::Error::from)
 }
 
 /// Build a schema-legal `ak.relation.create` event whose `to_ref` is an actor.
-///
-/// No relation id is minted here: `TypedOperationBuilder` stamps the derived
-/// one as `unsigned.local_target_ref` once the envelope exists.
-pub fn relation_create_for_actor(
+pub(crate) fn relation_create_for_actor(
     realm_id: &str,
     actor: &str,
     kind: &str,
     from_ref: &str,
     target_actor: &arkret_sdk::ActorId,
+    current: &crate::event_submit::VerifiedRelationCurrent,
 ) -> anyhow::Result<TypedOperationBuilder> {
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::RelationCreate,
     >(
         realm_id,
         actor,
-        relation_create_payload_with_endpoints(
-            realm_id,
-            actor,
+        relation_create_payload(
             kind,
             from_ref.into(),
             target_actor.clone().into(),
+            arkret_sdk::RelationPrimaryConflictDomainKind::Tuple,
+            current,
         )?,
     ))
 }
 
-/// Build a `ak.relation.tombstone` event targeting an existing Relation.
-pub fn relation_tombstone(
+/// Build an `ak.relation.tombstone` from the exact present Relation returned
+/// for the assignment tuple. The local projection's RelationId is never used
+/// as authority.
+pub(crate) fn relation_tombstone_for_actor(
     realm_id: &str,
     actor: &str,
-    relation_id: &str,
+    kind: &str,
+    from_ref: &str,
+    target_actor: &arkret_sdk::ActorId,
+    current: &crate::event_submit::VerifiedRelationCurrent,
 ) -> anyhow::Result<TypedOperationBuilder> {
+    let domain = relation_actor_domain(kind, from_ref, target_actor)?;
+    let (revision, relation) = current.present(&domain)?;
+    let relation_id = relation.id.clone().ok_or_else(|| {
+        anyhow::anyhow!("exact present Relation current result lacks its materialized id")
+    })?;
     let payload = arkret_sdk::RelationTombstonePayload {
-        relation_id: arkret_sdk::RelationId::new(relation_id.to_owned())?,
+        primary_conflict_domain: domain,
+        expected_revision: revision.clone(),
+        relation_id: relation_id.clone(),
         reason: None,
     };
+    payload.validate()?;
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::RelationTombstone>(
             realm_id, actor, payload,
         )
-        .target_ref(relation_id),
+        .target_ref(relation_id.as_str()),
     )
 }

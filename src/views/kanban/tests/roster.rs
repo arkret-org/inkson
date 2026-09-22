@@ -19,12 +19,25 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
         "U",
     );
     let selected = std::collections::BTreeSet::from([first.clone(), second.clone()]);
+    let create_bases = selected
+        .iter()
+        .cloned()
+        .map(|assignee| {
+            let domain =
+                crate::operation::ak_ops::relation_actor_domain("assigned_to", &card.id, &assignee)
+                    .unwrap();
+            (
+                assignee,
+                crate::event_submit::VerifiedRelationCurrent::never_written_for_test(domain),
+            )
+        })
+        .collect();
     let creates = card_assignment_mutations(
         TEST_REALM_ID,
         "did:web:author.example",
         &card,
         &selected,
-        &std::collections::BTreeMap::new(),
+        &create_bases,
     )
     .unwrap();
     assert_eq!(creates.len(), 2);
@@ -33,6 +46,7 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
             mutation.operation().payload_for_schema()["relation"]["to_ref"],
             serde_json::to_value(mutation.actor_id()).unwrap()
         );
+        assert!(mutation.operation().payload_for_schema()["expected_revision"].is_null());
     }
     card.assigned_to_relations = vec![
         CardAssignedToRelation {
@@ -45,17 +59,41 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
         },
     ];
     let retained = std::collections::BTreeSet::from([second.clone()]);
-    let removed_head = arkret_sdk::Hash::new(format!("sha256:{}", "42".repeat(32))).unwrap();
-    let bases = std::collections::BTreeMap::from([
-        (
-            "ak:relation:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig".to_owned(),
-            vec![removed_head.clone()],
+    let removed_relation_id = "ak:relation:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig";
+    let removed_domain =
+        crate::operation::ak_ops::relation_actor_domain("assigned_to", &card.id, &first).unwrap();
+    let removed_revision = arkret_sdk::CurrentRevision {
+        commit_id: arkret_sdk::RealmCommitId::from_digest([42; 32]),
+        stream_position: 42,
+    };
+    let bases = std::collections::BTreeMap::from([(
+        first.clone(),
+        crate::event_submit::VerifiedRelationCurrent::present_for_test(
+            removed_domain,
+            removed_revision.clone(),
+            arkret_sdk::Relation {
+                schema: arkret_sdk::SchemaId::RELATION_V1.to_owned(),
+                id: Some(arkret_sdk::RelationId::new(removed_relation_id).unwrap()),
+                realm_id: arkret_sdk::RealmId::new(TEST_REALM_ID).unwrap(),
+                scope_circle_id: None,
+                effective_scope: None,
+                relation_kind: arkret_sdk::RelationKind::from_wire("assigned_to"),
+                from_ref: card.id.as_str().into(),
+                to_ref: first.clone().into(),
+                rank: None,
+                fields: Default::default(),
+                state: Some(arkret_sdk::RelationState::Active),
+                state_changed_at: None,
+                created_by: crate::mls_api_helpers::local_account_actor_id(
+                    "did:web:author.example",
+                )
+                .unwrap(),
+                created_at: chrono::Utc::now(),
+                updated_by: None,
+                updated_at: None,
+            },
         ),
-        (
-            "ak:relation:AFjQnGmj11wy2rA2YjgbfhdhIJlFu9cPeZN5Ld0XzQp4".to_owned(),
-            Vec::new(),
-        ),
-    ]);
+    )]);
     let removes = card_assignment_mutations(
         TEST_REALM_ID,
         "did:web:author.example",
@@ -66,14 +104,50 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
     .unwrap();
     assert_eq!(removes.len(), 1);
     assert_eq!(
-        removes[0].operation().intent().causal_refs(),
-        &[removed_head]
+        removes[0].operation().payload_for_schema()["expected_revision"],
+        serde_json::to_value(removed_revision).unwrap()
     );
     assert_eq!(removes[0].actor_id(), &first);
+    assert_eq!(removes[0].relation_id(), Some(removed_relation_id));
     assert_eq!(
         assignment_relations_after_mutations(&card, &retained, &removes)[0].actor_id,
         second
     );
+}
+
+#[test]
+fn assignment_tombstone_rejects_relation_never_written() {
+    use super::super::assignment::card_assignment_mutations;
+
+    let assignee = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:assignee.example").unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+    ));
+    let mut card = test_card(
+        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "U",
+    );
+    card.assigned_to_relations = vec![CardAssignedToRelation {
+        actor_id: assignee.clone(),
+        relation_id: "ak:relation:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig".to_owned(),
+    }];
+    let domain =
+        crate::operation::ak_ops::relation_actor_domain("assigned_to", &card.id, &assignee)
+            .unwrap();
+    let bases = std::collections::BTreeMap::from([(
+        assignee,
+        crate::event_submit::VerifiedRelationCurrent::never_written_for_test(domain),
+    )]);
+    let error = card_assignment_mutations(
+        TEST_REALM_ID,
+        "did:web:author.example",
+        &card,
+        &std::collections::BTreeSet::new(),
+        &bases,
+    )
+    .err()
+    .expect("never_written cannot authorize a tombstone");
+    assert!(error.contains("never_written is valid only for create"));
 }
 
 const ROSTER_ISSUER: &str = "ak:did_core:web:acme.example";

@@ -50,7 +50,7 @@ pub use moderation::*;
 #[cfg(test)]
 pub use morph::*;
 pub use realm::*;
-pub use relation::*;
+pub(crate) use relation::*;
 pub use space::*;
 pub use strand::*;
 

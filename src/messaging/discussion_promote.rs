@@ -82,11 +82,12 @@ pub fn build_discussion_strand_create_op(
 
 /// Build the `ak.relation.create` event that links the private Strand back
 /// to the source public Strand/message.
-pub fn build_confidential_discussion_relation_op(
+pub(crate) fn build_confidential_discussion_relation_op(
     realm_id: &str,
     actor: &str,
     source_id: &str,
     ids: &PromoteIds,
+    current: &crate::event_submit::VerifiedRelationCurrent,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     ak_ops::confidential_discussion_relation_create(
         realm_id,
@@ -94,6 +95,7 @@ pub fn build_confidential_discussion_relation_op(
         &ids.discussion_strand_id,
         source_id,
         &ids.circle_id,
+        current,
     )?
     .build_sdk_event("inkson")
 }
@@ -112,50 +114,14 @@ pub fn derived_id(event: &arkret_sdk::AuthoredEvent) -> anyhow::Result<String> {
 /// create, the Strand is scoped to that Circle and its id falls out of its own
 /// create, and only then can the Relation name both. Nothing here is chosen.
 pub fn build_promote_steps(
-    realm_id: &str,
-    actor: &str,
-    source_id: &str,
-    title: &str,
+    _realm_id: &str,
+    _actor: &str,
+    _source_id: &str,
+    _title: &str,
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
-    let (realm_id, actor, source_id, title) = (
-        realm_id.to_owned(),
-        actor.to_owned(),
-        source_id.to_owned(),
-        title.to_owned(),
-    );
-    let circle_realm = realm_id.clone();
-    let circle_actor = actor.clone();
-    let circle_title = title.clone();
-    let strand_realm = realm_id.clone();
-    let strand_actor = actor.clone();
-    let strand_title = title.clone();
-    Ok(vec![
-        Box::new(move |_| {
-            Ok(vec![
-                build_discussion_circle_create_op(&circle_realm, &circle_actor, &circle_title)?
-                    .into_intent(),
-            ])
-        }),
-        Box::new(move |authored| {
-            let circle_id = derived_id(&authored[0])?;
-            Ok(vec![
-                build_discussion_strand_create_op(
-                    &strand_realm,
-                    &strand_actor,
-                    &circle_id,
-                    &strand_title,
-                )?
-                .into_intent(),
-            ])
-        }),
-        Box::new(move |authored| {
-            let ids = promote_ids(authored)?;
-            Ok(vec![
-                build_confidential_discussion_relation_op(&realm_id, &actor, &source_id, &ids)?
-                    .into_intent(),
-            ])
-        }),
-    ])
+    anyhow::bail!(
+        "discussion promote is unavailable until its Relation create can read and confirm the governing Station's exact current result after the new Strand is accepted"
+    )
 }
 
 /// The Circle and Strand a promote unit created, read off the authored unit.
@@ -195,70 +161,15 @@ mod tests {
     }
 
     #[test]
-    fn promote_ops_emit_circle_strand_and_private_relation() {
-        let ops = crate::event_submit::author_event_unit_for_test(
-            build_promote_steps(
-                "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-                "did:web:alice.example",
-                "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2",
-                "Private discussion",
-            )
-            .expect("promote steps build"),
+    fn promote_fails_closed_without_post_accept_exact_relation_read() {
+        let error = build_promote_steps(
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+            "did:web:alice.example",
+            "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2",
+            "Private discussion",
         )
-        .expect("promote unit authors");
-        let ids = promote_ids(&ops).expect("the unit reports the ids it created");
-        // Both ids are derived from the creates that make them, so the bundle
-        // and the ids it reports can never disagree.
-        assert_eq!(
-            ids.circle_id,
-            arkret_sdk::CircleId::from_event_id(&ops[0].event_id).as_str()
-        );
-        assert_eq!(
-            ids.discussion_strand_id,
-            arkret_sdk::StrandId::from_event_id(&ops[1].event_id).as_str()
-        );
-        assert_eq!(ops.len(), 3);
-        assert_eq!(ops[0].kind.as_str(), "ak.circle.create");
-        assert_eq!(ops[1].kind.as_str(), "ak.strand.create");
-        assert_eq!(ops[2].kind.as_str(), "ak.relation.create");
-        assert_eq!(
-            ops[0].payload["object"]["realm_id"],
-            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
-        );
-        assert_eq!(ops[1].payload["object"]["scope_circle_id"], ids.circle_id);
-        // The relation travels on the object branch, the only one the
-        // registered `ak.relation.create` contract can project into a cell.
-        let relation = &ops[2].payload["relation"];
-        assert_eq!(relation["relation_kind"], "confidential_discussion_of");
-        // Relation scope belongs to the signed Event envelope, not the
-        // closed RelationSnapshot payload.
-        assert_eq!(
-            ops[2].scope_ref.circle_id().map(|id| id.as_str()),
-            Some(ids.circle_id.as_str())
-        );
-        assert!(
-            !ops[2].payload.contains_key("scope_circle_id"),
-            "the flat branch member must not appear beside the object branch"
-        );
-        assert_eq!(relation["from_ref"], ids.discussion_strand_id);
-        assert_eq!(
-            relation["to_ref"],
-            "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2"
-        );
-        for event in &ops {
-            arkret_schema_conformance::event_payload_validator_catalog()
-                .unwrap()
-                .validate_payload(
-                    event.kind.as_str(),
-                    &serde_json::to_value(&event.payload).unwrap(),
-                )
-                .unwrap_or_else(|err| {
-                    panic!(
-                        "discussion promote {} payload violates spec: {err}\npayload: {}",
-                        event.kind.as_str(),
-                        serde_json::to_string_pretty(&event.payload).unwrap()
-                    );
-                });
-        }
+        .err()
+        .expect("promote must fail closed without exact Relation current");
+        assert!(error.to_string().contains("exact current result"));
     }
 }

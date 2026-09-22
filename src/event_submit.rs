@@ -512,6 +512,122 @@ pub struct EventSubmitter {
     founding_realm: Option<arkret_sdk::RealmId>,
 }
 
+/// Exact Relation state returned by the governing Station and validated
+/// against the locally installed governance generation. Its fields stay
+/// private so callers cannot manufacture a CAS basis from a projection.
+#[derive(Clone, Debug)]
+pub(crate) struct VerifiedRelationCurrent {
+    primary_conflict_domain: arkret_sdk::RelationPrimaryConflictDomain,
+    revision: Option<arkret_wire::CurrentRevision>,
+    value: Option<arkret_sdk::Relation>,
+}
+
+impl VerifiedRelationCurrent {
+    #[cfg(test)]
+    pub(crate) fn never_written_for_test(
+        primary_conflict_domain: arkret_sdk::RelationPrimaryConflictDomain,
+    ) -> Self {
+        Self {
+            primary_conflict_domain,
+            revision: None,
+            value: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn present_for_test(
+        primary_conflict_domain: arkret_sdk::RelationPrimaryConflictDomain,
+        revision: arkret_wire::CurrentRevision,
+        value: arkret_sdk::Relation,
+    ) -> Self {
+        Self {
+            primary_conflict_domain,
+            revision: Some(revision),
+            value: Some(value),
+        }
+    }
+
+    pub(crate) fn expected_revision_for_create(
+        &self,
+        domain: &arkret_sdk::RelationPrimaryConflictDomain,
+    ) -> anyhow::Result<Option<arkret_wire::CurrentRevision>> {
+        anyhow::ensure!(
+            &self.primary_conflict_domain == domain,
+            "verified Relation current basis belongs to another primary conflict domain"
+        );
+        Ok(self.revision.clone())
+    }
+
+    pub(crate) fn present(
+        &self,
+        domain: &arkret_sdk::RelationPrimaryConflictDomain,
+    ) -> anyhow::Result<(&arkret_wire::CurrentRevision, &arkret_sdk::Relation)> {
+        anyhow::ensure!(
+            &self.primary_conflict_domain == domain,
+            "verified Relation current basis belongs to another primary conflict domain"
+        );
+        match (&self.revision, &self.value) {
+            (Some(revision), Some(value)) => Ok((revision, value)),
+            _ => anyhow::bail!(
+                "Relation tombstone requires an exact present current result; never_written is valid only for create"
+            ),
+        }
+    }
+}
+
+/// Exact moderation state returned by the governing Station and validated
+/// against the locally installed governance generation.
+#[derive(Clone, Debug)]
+pub(crate) struct VerifiedModerationCurrent {
+    target_ref: arkret_models_collaboration::exact_current_results::ExactModerationTargetRef,
+    revision: arkret_wire::CurrentRevision,
+    assertions: Vec<arkret_models_collaboration::exact_current_results::ModerationDecisionEntry>,
+}
+
+impl VerifiedModerationCurrent {
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        target_ref: &str,
+        revision: arkret_wire::CurrentRevision,
+        assertions: Vec<
+            arkret_models_collaboration::exact_current_results::ModerationDecisionEntry,
+        >,
+    ) -> Self {
+        Self {
+            target_ref:
+                arkret_models_collaboration::exact_current_results::ExactModerationTargetRef::new(
+                    target_ref.to_owned(),
+                )
+                .unwrap(),
+            revision,
+            assertions,
+        }
+    }
+
+    pub(crate) fn revision_for_decision(
+        &self,
+        target_ref: &str,
+        decision_ref: &arkret_sdk::EventId,
+    ) -> anyhow::Result<arkret_wire::CurrentRevision> {
+        anyhow::ensure!(
+            self.target_ref.as_str() == target_ref,
+            "verified moderation current basis belongs to another target"
+        );
+        let decision_is_current = self.assertions.iter().any(|assertion| {
+            assertion.tag_id.event_id() == decision_ref
+                && matches!(
+                    &assertion.value,
+                    arkret_models_collaboration::exact_current_results::ModerationAssertionValue::Decision(_)
+                )
+        });
+        anyhow::ensure!(
+            decision_is_current,
+            "moderation decision is not present in the governing Station's exact current result"
+        );
+        Ok(self.revision.clone())
+    }
+}
+
 impl EventSubmitter {
     pub fn new(http: arkret_sdk::http_client::Client) -> Self {
         Self {
@@ -574,6 +690,134 @@ impl EventSubmitter {
     /// The shared SDK http-client backing this submitter.
     pub(crate) fn http(&self) -> &arkret_sdk::http_client::Client {
         &self.http
+    }
+
+    async fn exact_current_result(
+        &self,
+        request: &arkret_models_collaboration::exact_current_results::ExactCurrentResultsReadRequestBody,
+    ) -> anyhow::Result<
+        arkret_models_collaboration::exact_current_results::ExactCurrentResultsReadOutcome,
+    > {
+        let authority = self.authority()?.clone();
+        let state_store = self.state_store.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("exact current read requires the active account state store")
+        })?;
+        let (active_authority, reset_required, committed_generation, location) =
+            state_store.read(|store| {
+                (
+                    store.active_authority(),
+                    store.current_reset_required(),
+                    store.current_generation(),
+                    store.current_index_location(),
+                )
+            });
+        anyhow::ensure!(
+            active_authority.as_ref() == Some(&authority),
+            "exact current read account changed before authorization"
+        );
+        anyhow::ensure!(
+            !reset_required,
+            "exact current read requires a fresh account current baseline"
+        );
+        let index =
+            crate::state::CurrentIndex::open(&authority, committed_generation, location).await?;
+        let progress = index.read_progress(request.realm_id.as_str()).await?;
+        anyhow::ensure!(
+            !progress.needs_refresh,
+            "exact current read requires a refreshed Realm current baseline"
+        );
+        let baseline = progress.baseline.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("exact current read requires an installed Realm current baseline")
+        })?;
+        anyhow::ensure!(
+            baseline.complete && baseline.coverage.complete_for_authorized_streams,
+            "exact current read requires complete authorized-stream coverage"
+        );
+        anyhow::ensure!(
+            baseline.coverage.realm_id == request.realm_id,
+            "exact current read baseline belongs to another Realm"
+        );
+        let governance_generation = progress.governance_generation.ok_or_else(|| {
+            anyhow::anyhow!("exact current read lacks a verified governance generation")
+        })?;
+        self.http
+            .exact_current_result(request, governance_generation)
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    pub(crate) async fn read_relation_current(
+        &self,
+        realm_id: arkret_sdk::RealmId,
+        primary_conflict_domain: arkret_sdk::RelationPrimaryConflictDomain,
+    ) -> anyhow::Result<VerifiedRelationCurrent> {
+        use arkret_models_collaboration::exact_current_results::{
+            ExactCurrentResultEntry, ExactCurrentResultSelector, ExactCurrentResultsReadOutcome,
+            ExactCurrentResultsReadRequestBody, RelationExactCurrentSelector,
+        };
+
+        let selector = RelationExactCurrentSelector::new(primary_conflict_domain.clone())?;
+        let request = ExactCurrentResultsReadRequestBody {
+            realm_id,
+            selector: ExactCurrentResultSelector::Relation(selector),
+        };
+        match self.exact_current_result(&request).await? {
+            ExactCurrentResultsReadOutcome::NeverWritten { .. } => Ok(VerifiedRelationCurrent {
+                primary_conflict_domain,
+                revision: None,
+                value: None,
+            }),
+            ExactCurrentResultsReadOutcome::Present {
+                entry: ExactCurrentResultEntry::Relation(entry),
+                ..
+            } => Ok(VerifiedRelationCurrent {
+                primary_conflict_domain,
+                revision: Some(entry.revision),
+                value: Some(entry.value),
+            }),
+            ExactCurrentResultsReadOutcome::Present { .. } => {
+                anyhow::bail!("exact Relation current read returned another result family")
+            }
+        }
+    }
+
+    pub(crate) async fn read_moderation_current(
+        &self,
+        realm_id: arkret_sdk::RealmId,
+        target_ref: &str,
+    ) -> anyhow::Result<VerifiedModerationCurrent> {
+        use arkret_models_collaboration::exact_current_results::{
+            ExactCurrentResultEntry, ExactCurrentResultSelector, ExactCurrentResultsReadOutcome,
+            ExactCurrentResultsReadRequestBody, ExactModerationTargetRef,
+            ModerationStateExactCurrentSelector, ModerationStateExactCurrentSelectorKind,
+        };
+
+        let target_ref = ExactModerationTargetRef::new(target_ref.to_owned())?;
+        let request = ExactCurrentResultsReadRequestBody {
+            realm_id,
+            selector: ExactCurrentResultSelector::ModerationState(
+                ModerationStateExactCurrentSelector {
+                    kind: ModerationStateExactCurrentSelectorKind::ModerationState,
+                    target_ref: target_ref.clone(),
+                },
+            ),
+        };
+        match self.exact_current_result(&request).await? {
+            ExactCurrentResultsReadOutcome::Present {
+                entry: ExactCurrentResultEntry::ModerationState(entry),
+                ..
+            } => Ok(VerifiedModerationCurrent {
+                target_ref,
+                revision: entry.revision,
+                assertions: entry.value.assertions,
+            }),
+            ExactCurrentResultsReadOutcome::Present { .. } => {
+                anyhow::bail!("exact moderation current read returned another result family")
+            }
+            ExactCurrentResultsReadOutcome::NeverWritten { .. } => anyhow::bail!(
+                "governing Station returned never_written for moderation current; that branch is Relation-only"
+            ),
+        }
     }
 
     fn authority_client(&self) -> InksonAuthorityClient {

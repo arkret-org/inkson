@@ -689,12 +689,15 @@ pub async fn moderation_lift(
     decision_ref: &str,
     reason_code: &str,
 ) -> anyhow::Result<SubmitEventResult> {
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
+    let current = submitter.read_moderation_current(realm, target_ref).await?;
     let event = ak_ops::moderation_decision_lift(
         realm_id,
         actor_id,
         target_ref,
         decision_ref,
         reason_code,
+        &current,
     )?
     .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await

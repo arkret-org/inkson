@@ -122,23 +122,20 @@ pub fn moderation_decision(
 /// `ak:event:` id of the decision Event whose sealed tag is removed.
 ///
 /// Uses the SDK `ModerationDecisionLiftPayload` strong type.
-pub fn moderation_decision_lift(
+pub(crate) fn moderation_decision_lift(
     realm_id: &str,
     actor: &str,
     target_ref: &str,
     decision_ref: &str,
-    observed_dot_ids: &[String],
     reason_code: &str,
+    current: &crate::event_submit::VerifiedModerationCurrent,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    anyhow::ensure!(
-        !observed_dot_ids.is_empty(),
-        "moderation lift requires observed add dots"
-    );
     let realm = trim_realm_id(realm_id);
+    let decision_ref = arkret_sdk::EventId::new(decision_ref.to_owned())?;
     let payload = arkret_sdk::ModerationDecisionLiftPayload {
         target_ref: target_ref.to_owned(),
-        decision_ref: arkret_sdk::EventId::new(decision_ref.to_owned())?,
-        observed_dot_ids: observed_dot_ids.to_vec(),
+        expected_revision: current.revision_for_decision(target_ref, &decision_ref)?,
+        decision_ref,
         reason_code: Some(reason_code.to_owned()),
         reason: None,
         effective_at: None,
@@ -149,4 +146,90 @@ pub fn moderation_decision_lift(
         )
         .target_ref(target_ref),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use arkret_models_collaboration::exact_current_results::{
+        CanonicalEventDot, ModerationAssertionValue, ModerationDecisionEntry,
+    };
+
+    use super::*;
+
+    const REALM: &str = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+    const TARGET: &str = "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
+    const DECISION: &str = "ak:event:A42FkwFdQPw7aC_yPcdlVU5ZjKLAnFCbmrXTVRJTNhRc";
+
+    fn revision() -> arkret_wire::CurrentRevision {
+        arkret_wire::CurrentRevision {
+            commit_id: arkret_wire::RealmCommitId::from_digest([7; 32]),
+            stream_position: 9,
+        }
+    }
+
+    fn decision_entry() -> ModerationDecisionEntry {
+        let decision_ref = arkret_sdk::EventId::new(DECISION).unwrap();
+        let value = arkret_sdk::ModerationDecisionPayload {
+            target_ref: TARGET.to_owned(),
+            decision: "quarantine".to_owned(),
+            issuer_id: arkret_sdk::DidCoreId::new("ak:did_core:web:moderator.example").unwrap(),
+            request_canonical_digest: arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32)))
+                .unwrap(),
+            action: None,
+            reason_code: Some("policy_violation".to_owned()),
+            reason: None,
+            effective_at: None,
+            expires_at: None,
+        };
+        ModerationDecisionEntry {
+            tag_id: CanonicalEventDot::new(decision_ref, 0).unwrap(),
+            value: ModerationAssertionValue::Decision(value),
+        }
+    }
+
+    #[test]
+    fn lift_uses_exact_present_revision_and_current_decision() {
+        let revision = revision();
+        let current = crate::event_submit::VerifiedModerationCurrent::for_test(
+            TARGET,
+            revision.clone(),
+            vec![decision_entry()],
+        );
+        let operation = moderation_decision_lift(
+            REALM,
+            "did:web:moderator.example",
+            TARGET,
+            DECISION,
+            "reviewer_lift",
+            &current,
+        )
+        .unwrap()
+        .build_sdk_event("inkson")
+        .unwrap();
+        let payload = operation
+            .typed_payload::<arkret_wire::event_spec::ModerationDecisionLift>()
+            .unwrap();
+        assert_eq!(payload.expected_revision, revision);
+        assert_eq!(payload.decision_ref.as_str(), DECISION);
+    }
+
+    #[test]
+    fn lift_rejects_decision_absent_from_exact_current_assertions() {
+        let current = crate::event_submit::VerifiedModerationCurrent::for_test(
+            TARGET,
+            revision(),
+            Vec::new(),
+        );
+        let error = moderation_decision_lift(
+            REALM,
+            "did:web:moderator.example",
+            TARGET,
+            DECISION,
+            "reviewer_lift",
+            &current,
+        )
+        .err()
+        .expect("an absent decision must fail closed");
+        assert!(error.to_string().contains("not present"));
+    }
 }

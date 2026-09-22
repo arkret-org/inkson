@@ -95,34 +95,30 @@ pub(super) fn card_assignment_mutations(
     actor_id: &str,
     current: &KanbanCard,
     selected_actor_ids: &BTreeSet<arkret_sdk::ActorId>,
+    current_by_actor: &BTreeMap<arkret_sdk::ActorId, crate::event_submit::VerifiedRelationCurrent>,
 ) -> Result<Vec<CardAssignmentMutation>, String> {
     let current_actor_ids = card_assigned_actor_ids(current)
         .into_iter()
         .collect::<BTreeSet<_>>();
-    let mut relation_ids_by_actor = BTreeMap::<arkret_sdk::ActorId, Vec<String>>::new();
-    for relation in &current.assigned_to_relations {
-        let relation_id = relation.relation_id.trim();
-        let actor_id = &relation.actor_id;
-        if relation_id.is_empty() {
-            continue;
-        }
-        relation_ids_by_actor
-            .entry(actor_id.to_owned())
-            .or_default()
-            .push(relation_id.to_owned());
-    }
 
     let mut mutations = Vec::new();
     // `actor_id` (the acting user / event author, an principal_id) signs the
     // assignment events; `assignee_id` is the person being assigned/unassigned
     // and only appears as the relation target.
     for assignee_id in selected_actor_ids.difference(&current_actor_ids) {
+        let current_basis = current_by_actor.get(assignee_id).ok_or_else(|| {
+            format!(
+                "assignment for {} lacks a verified exact current result",
+                short_protocol_id(assignee_id.signing_principal_id().as_str())
+            )
+        })?;
         let operation = crate::operation::ak_ops::relation_create_for_actor(
             realm_id,
             actor_id,
             "assigned_to",
             &current.id,
             assignee_id,
+            current_basis,
         )
         .map_err(|err| format!("cannot build assigned_to relation: {err:#}"))?
         .build_sdk_event("inkson")
@@ -137,30 +133,72 @@ pub(super) fn card_assignment_mutations(
     }
 
     for assignee_id in current_actor_ids.difference(selected_actor_ids) {
-        let Some(relation_ids) = relation_ids_by_actor.get(assignee_id) else {
-            return Err(format!(
-                "assignment for {} is missing its relation_id; refresh before removing it",
+        let current_basis = current_by_actor.get(assignee_id).ok_or_else(|| {
+            format!(
+                "assignment for {} lacks a verified exact current result",
                 short_protocol_id(assignee_id.signing_principal_id().as_str())
-            ));
-        };
-        for relation_id in relation_ids {
-            // The exact relation_id this card's current Strand result named is
-            // the whole basis: the governance Station evaluates the tombstone
-            // against the Relation's current state when it assigns the Commit,
-            // so there is nothing for the producer to pin here.
-            let operation =
-                crate::operation::ak_ops::relation_tombstone(realm_id, actor_id, relation_id)
-                    .map_err(|err| format!("cannot build assigned_to tombstone: {err:#}"))?
-                    .build_sdk_event("inkson")
-                    .map_err(|err| format!("cannot build assigned_to tombstone event: {err}"))?;
-            mutations.push(CardAssignmentMutation::Tombstone {
-                actor_id: assignee_id.clone(),
-                relation_id: relation_id.clone(),
-                operation,
-            });
-        }
+            )
+        })?;
+        let operation = crate::operation::ak_ops::relation_tombstone_for_actor(
+            realm_id,
+            actor_id,
+            "assigned_to",
+            &current.id,
+            assignee_id,
+            current_basis,
+        )
+        .map_err(|err| format!("cannot build assigned_to tombstone: {err:#}"))?
+        .build_sdk_event("inkson")
+        .map_err(|err| format!("cannot build assigned_to tombstone event: {err}"))?;
+        let relation_id = operation
+            .typed_payload::<arkret_wire::event_spec::RelationTombstone>()
+            .map_err(|err| format!("cannot read assigned_to tombstone payload: {err:#}"))?
+            .relation_id
+            .to_string();
+        mutations.push(CardAssignmentMutation::Tombstone {
+            actor_id: assignee_id.clone(),
+            relation_id,
+            operation,
+        });
     }
     Ok(mutations)
+}
+
+async fn read_card_assignment_mutations(
+    submitter: &crate::event_submit::EventSubmitter,
+    realm_id: &str,
+    actor_id: &str,
+    current: &KanbanCard,
+    selected_actor_ids: &BTreeSet<arkret_sdk::ActorId>,
+) -> anyhow::Result<Vec<CardAssignmentMutation>> {
+    let current_actor_ids = card_assigned_actor_ids(current)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let changed_actor_ids = selected_actor_ids
+        .symmetric_difference(&current_actor_ids)
+        .cloned()
+        .collect::<Vec<_>>();
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
+    let mut current_by_actor = BTreeMap::new();
+    for assignee_id in changed_actor_ids {
+        let domain = crate::operation::ak_ops::relation_actor_domain(
+            "assigned_to",
+            &current.id,
+            &assignee_id,
+        )?;
+        let exact = submitter
+            .read_relation_current(realm.clone(), domain)
+            .await?;
+        current_by_actor.insert(assignee_id, exact);
+    }
+    card_assignment_mutations(
+        realm_id,
+        actor_id,
+        current,
+        selected_actor_ids,
+        &current_by_actor,
+    )
+    .map_err(anyhow::Error::msg)
 }
 
 pub(super) fn assignment_relations_after_mutations(
@@ -241,87 +279,104 @@ pub(super) fn dispatch_card_assignees_update(
         return false;
     }
 
-    let mutations =
-        match card_assignment_mutations(&realm_id, &actor_id, &current, &selected_actor_ids) {
-            Ok(mutations) => mutations,
-            Err(msg) => {
-                assignee_edit_status.set(msg.clone());
-                board_status.set(msg);
-                return false;
-            }
-        };
-    if mutations.is_empty() {
+    let current_actor_ids = card_assigned_actor_ids(&current)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    if current_actor_ids == selected_actor_ids {
         board_status.set("No assignee changes to save".to_owned());
         assignee_edit_status.set(String::new());
         return true;
     }
-
-    let optimistic_relations =
-        assignment_relations_after_mutations(&current, &selected_actor_ids, &mutations);
-    // Optimistic detail-panel feedback: apply the assignment to the open card.
-    // The board re-renders from the appended `ak.relation.*` ops below —
-    // `columns` is a `use_memo` over `raw_operations`, folded by
-    // `overlay_local_card_assignment_records`, so there is no direct signal
-    // write.
-    let mut updated_card = current.clone();
-    apply_card_assignment_projection(
-        &mut updated_card,
-        &selected_actor_ids,
-        optimistic_relations.clone(),
-        CardState::Queued,
-    );
-    selected_card.set(Some(updated_card));
-
-    for mutation in &mutations {
-        let operation = mutation.operation();
-        let operation_id = operation.local_operation_id().to_string();
-        let body = match queued_assignment_body(mutation) {
-            Ok(body) => body,
-            Err(err) => {
-                let msg = format!("cannot queue assignee operation: {err:#}");
-                assignee_edit_status.set(msg.clone());
-                board_status.set(msg);
-                return false;
-            }
-        };
-        let record = match serde_json::to_value(QueuedAssignmentRecord {
-            kind: operation.kind().clone(),
-            operation_id: &operation_id,
-            actor_id: operation.actor_id().clone(),
-            created_at: arkret_sdk::canonical::format_timestamp_canonical(operation.created_at()),
-            write_state: "queued",
-            body,
-            assignment_strand_id: &current.id,
-            assignment_actor_id: mutation.actor_id(),
-            assignment_relation_id: mutation
-                .relation_id()
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| operation.local_operation_id().to_string()),
-        }) {
-            Ok(record) => record,
-            Err(err) => {
-                let msg = format!("cannot queue assignee operation: {err}");
-                assignee_edit_status.set(msg.clone());
-                board_status.set(msg);
-                return false;
-            }
-        };
-        state_store.write().enqueue_local_projection_command(
-            operation_id.clone(),
-            Some(realm_id.clone()),
-            record,
-        );
-    }
-
-    let operation_count = mutations.len();
-    board_status.set(format!(
-        "submitting {operation_count} assignee relation operation{}",
-        if operation_count == 1 { "" } else { "s" }
-    ));
     assignee_edit_status.set("Saving...".to_owned());
+    board_status.set("Reading exact assignee state...".to_owned());
     let api_token = token();
     let strand_id = current.id.clone();
     spawn(async move {
+        let read_realm_id = realm_id.clone();
+        let read_actor_id = actor_id.clone();
+        let read_current = current.clone();
+        let read_selected = selected_actor_ids.clone();
+        let mutations = match with_authed_api(&base_url, api_token.clone(), |api| async move {
+            let submitter = api.event_submitter()?;
+            read_card_assignment_mutations(
+                &submitter,
+                &read_realm_id,
+                &read_actor_id,
+                &read_current,
+                &read_selected,
+            )
+            .await
+        })
+        .await
+        {
+            Ok(mutations) => mutations,
+            Err(err) => {
+                let msg = format!("cannot verify exact assignee state: {}", err.display());
+                assignee_edit_status.set(msg.clone());
+                board_status.set(msg);
+                return;
+            }
+        };
+
+        let optimistic_relations =
+            assignment_relations_after_mutations(&current, &selected_actor_ids, &mutations);
+        let mut updated_card = current.clone();
+        apply_card_assignment_projection(
+            &mut updated_card,
+            &selected_actor_ids,
+            optimistic_relations,
+            CardState::Queued,
+        );
+        selected_card.set(Some(updated_card));
+
+        for mutation in &mutations {
+            let operation = mutation.operation();
+            let operation_id = operation.local_operation_id().to_string();
+            let body = match queued_assignment_body(mutation) {
+                Ok(body) => body,
+                Err(err) => {
+                    let msg = format!("cannot queue assignee operation: {err:#}");
+                    assignee_edit_status.set(msg.clone());
+                    board_status.set(msg);
+                    return;
+                }
+            };
+            let record = match serde_json::to_value(QueuedAssignmentRecord {
+                kind: operation.kind().clone(),
+                operation_id: &operation_id,
+                actor_id: operation.actor_id().clone(),
+                created_at: arkret_sdk::canonical::format_timestamp_canonical(
+                    operation.created_at(),
+                ),
+                write_state: "queued",
+                body,
+                assignment_strand_id: &current.id,
+                assignment_actor_id: mutation.actor_id(),
+                assignment_relation_id: mutation
+                    .relation_id()
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_else(|| operation.local_operation_id().to_string()),
+            }) {
+                Ok(record) => record,
+                Err(err) => {
+                    let msg = format!("cannot queue assignee operation: {err}");
+                    assignee_edit_status.set(msg.clone());
+                    board_status.set(msg);
+                    return;
+                }
+            };
+            state_store.write().enqueue_local_projection_command(
+                operation_id,
+                Some(realm_id.clone()),
+                record,
+            );
+        }
+
+        let operation_count = mutations.len();
+        board_status.set(format!(
+            "submitting {operation_count} assignee relation operation{}",
+            if operation_count == 1 { "" } else { "s" }
+        ));
         for mutation in mutations {
             let operation = mutation.operation().clone();
             let operation_id = operation.local_operation_id().to_string();
