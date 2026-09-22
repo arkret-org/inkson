@@ -42,19 +42,22 @@ impl crate::transport::TransportClient {
         // Station is the one endpoint the client already authenticated, so it
         // is the single hint offered; the returned bundle decides who the
         // current governance Station actually is.
-        let hint = arkret_sdk::AuthorityLocatorHint {
+        let hint = arkret_sdk::RealmJoinCandidate {
+            service_kind: arkret_sdk::RealmJoinCandidateServiceKind::Station,
             service_id: self.describe_cached().await?.service_id.clone(),
-            source: arkret_sdk::AuthorityLocatorSource::Invite,
             endpoint_url: Some(self.base_url().to_string()),
+            source: arkret_sdk::AuthorityLocatorSource::Invite,
         };
+        let target = arkret_sdk::RealmJoinTarget {
+            realm_id: realm.clone(),
+            invite_id: Some(arkret_sdk::InviteId::new(invite_id.to_owned())?),
+            invite_token: Some(invite_token.to_owned()),
+            authority_locator_hints: vec![hint],
+        };
+        target.validate()?;
         let request = arkret_sdk::SelfRealmJoinPrepareRequestBody {
             request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms() as u64),
-            target: arkret_sdk::RealmJoinTarget {
-                realm_id: realm.clone(),
-                invite_id: Some(arkret_sdk::InviteId::new(invite_id.to_owned())?),
-                invite_token: Some(invite_token.to_owned()),
-                authority_locator_hints: vec![hint],
-            },
+            target,
             intent: arkret_sdk::RealmJoinIntent::InviteAccept {
                 invite_id: arkret_sdk::InviteId::new(invite_id.to_owned())?,
                 invite_token: invite_token.to_owned(),
