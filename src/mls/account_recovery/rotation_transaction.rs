@@ -1,4 +1,3 @@
-use crate::mls::runtime::{active_secret_storage_series_id_for, iter_backup_bodies};
 use anyhow::{Context, Result, anyhow};
 pub(super) use arkret_models_collaboration::events_payloads::key_backup::ControllerBackupTrustAnchor;
 use arkret_models_collaboration::events_payloads::key_backup::resolve_controller_backup_trust_anchor;
@@ -16,6 +15,7 @@ use serde_json::Value;
 use zeroize::Zeroizing;
 
 use super::backup_body::build_mls_account_secret_backup_body_with_kek_and_version;
+use crate::mls::runtime::{active_secret_storage_series_id_for, iter_backup_bodies};
 use crate::recovery_crypto::derive_vault_kek;
 
 const PENDING_ROTATION_INDEX_KEY: &str = "security_rotation.pending.v1";
@@ -253,6 +253,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let create = crate::fresh_device_recovery::SecurityRotationDraft {
         transaction_id: transaction_id.clone(),
         account_id: authority.clone(),
+        authorizing_device_id: arkret_sdk::DeviceId::new(current_device_id.to_owned())?,
         expires_at: crate::clock::now_utc() + chrono::Duration::hours(1),
         revoke_submission,
         new_secret_commitment: prepared.new_secret_commitment.clone(),

@@ -116,6 +116,10 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
 fn add_generic_error_keys_zh(dict: &mut TranslationDict) {
     dict.set("error.generic", "与服务器通信时出现问题。请重试。");
     dict.set(
+        "error.realm_snapshot_capacity_exceeded",
+        "此更改会使 Realm 状态超过完整快照容量。请先缩减 Realm 状态再重试。",
+    );
+    dict.set(
         "error.network_unavailable",
         "无法连接服务器。请检查网络连接,然后重试。",
     );

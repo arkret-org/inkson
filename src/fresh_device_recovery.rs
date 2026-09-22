@@ -319,6 +319,9 @@ pub struct SecurityRotationDraft {
     /// the create request never reassembles it from a principal plus the
     /// ambient Station (account-lifecycle.md §156).
     pub account_id: arkret_sdk::AccountId,
+    /// The active device whose high-risk authorization created this rotation.
+    /// Soland rechecks this exact device before erasing the old series.
+    pub authorizing_device_id: arkret_sdk::DeviceId,
     pub expires_at: chrono::DateTime<chrono::Utc>,
     pub revoke_submission: EventsSubmitBatchRequestBody,
     pub new_secret_commitment: Hash,
@@ -366,6 +369,7 @@ impl SecurityRotationDraft {
         SecurityRotationTransactionCreateRequest::from_prepared_rotations(
             self.transaction_id,
             self.account_id,
+            self.authorizing_device_id,
             self.expires_at,
             revoke_unit,
             self.new_secret_commitment,

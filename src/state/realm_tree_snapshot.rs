@@ -88,7 +88,7 @@ impl LocalStateStore {
             .realm_tree_projections
             .entry(realm_id.to_owned())
             .or_insert_with(|| serde_json::json!({}));
-        crate::current_projection::install_bounded_view(projection, realm_id, entries)?;
+        crate::current_projection::install_complete_view(projection, realm_id, entries)?;
         projection["__current_required_ready"] = Value::Bool(ready);
         self.flush()
     }

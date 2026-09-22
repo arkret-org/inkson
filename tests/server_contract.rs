@@ -23,15 +23,6 @@ fn parse_server_description(
     Ok(serde_json::from_value(value)?)
 }
 
-fn snapshot_contract_event_id(suffix: &str) -> arkret_sdk::EventId {
-    let seed = u8::from_str_radix(&suffix[suffix.len() - 2..], 16).unwrap();
-    arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [seed; 32])
-}
-
-fn snapshot_contract_hash(seed: u8) -> arkret_sdk::Hash {
-    arkret_sdk::Hash::new(format!("sha256:{}", format!("{seed:02x}").repeat(32))).unwrap()
-}
-
 fn service_resolution(did: &str) -> serde_json::Value {
     json!({
         "did": did,
@@ -46,85 +37,6 @@ fn problem_bytes(status: StatusCode, code: &str, detail: &str) -> Vec<u8> {
             .with_instance("ak:request:server-contract"),
     )
     .unwrap()
-}
-
-fn snapshot_contract_manifest_payload() -> serde_json::Value {
-    let realm_state_snapshot_id = arkret_sdk::RealmStateSnapshotId::new(
-        "ak:realm_state_snapshot:01904100-0000-7000-8000-0000000000cc",
-    )
-    .unwrap();
-    let realm_id =
-        arkret_sdk::RealmId::new("ak:realm:AeI0Z4D734iPt9RpF51PAg0CRjLSQmxPqv9NgUmBJiQi").unwrap();
-    let service_id = arkret_sdk::DidCoreId::new("ak:did_core:web:server.local").unwrap();
-    // `realm-state-snapshot-schema.md` section 3: items are complete registered reducer states,
-    // never rendered objects. Realm create history is a security sequenced log.
-    let items = vec![
-        arkret_sdk::RealmStateSnapshotMaterializedItem::new(
-            arkret_sdk::CellRef::new("ak:cell:ak.component.realm.create.v1:null").unwrap(),
-            arkret_sdk::CanonicalCellState::SequencedState(arkret_sdk::CanonicalSequencedState {
-                revision_event_id: snapshot_contract_event_id("0000000000c1"),
-                value: json!([]),
-            }),
-        )
-        .unwrap(),
-    ];
-    let eligibility_context = arkret_sdk::SnapshotEligibilityContext {
-        authority_refs: Vec::new(),
-        closure_command_refs: Vec::new(),
-        reducer_contract_digest: snapshot_contract_hash(7),
-    };
-    let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
-    let built = arkret_sdk::build_realm_state_snapshot_chunks(
-        &realm_state_snapshot_id,
-        arkret_sdk::CORE_REDUCER_PROFILE,
-        items,
-        4096,
-        arkret_sdk::SnapshotReplayEvidence {
-            eligibility_context: eligibility_context.clone(),
-            replay_events: Vec::new(),
-            replay_authority_refs: Vec::new(),
-        },
-    )
-    .unwrap();
-    let created_at = Utc::now();
-    let mut manifest = arkret_sdk::RealmStateSnapshotManifest {
-        eligibility_context,
-        id: realm_state_snapshot_id,
-        realm_id,
-        reducer_profile: arkret_sdk::CORE_REDUCER_PROFILE.to_owned(),
-        schema_profile_refs: vec!["ak.profile.core_event_store.v1".to_owned()],
-        state_digest,
-        frontier: arkret_sdk::RealmStateSnapshotFrontier {
-            event_ids: vec![snapshot_contract_event_id("0000000000c1")],
-            timeline_hlc: arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
-        },
-        event_set_commitment: arkret_sdk::EventSetCommitment {
-            algorithm: arkret_sdk::EventSetCommitmentAlgorithm::MerkleEventSetV1,
-            root: snapshot_contract_hash(9),
-            covered_event_count: 1,
-            actor_seq_ranges: Vec::new(),
-        },
-        chunks: built.into_iter().map(|chunk| chunk.descriptor).collect(),
-        security_class: arkret_sdk::RealmStateSnapshotSecurityClass::Standard,
-        verification_hints: None,
-        created_by: arkret_sdk::ActorId::service(service_id.clone()),
-        created_at,
-        authority_binding: arkret_sdk::AuthorityBinding {
-            authority_kind: arkret_sdk::RealmStateSnapshotAuthorityKind::RealmPolicySnapshotIssuer,
-            auth_state_digest: snapshot_contract_hash(1),
-            auth_frontier: vec![snapshot_contract_event_id("0000000000c1")],
-            checked_at: created_at,
-            witness_attestations: Vec::new(),
-        },
-        signature: arkret_sdk::DetachedJwsProof::ed25519(
-            arkret_sdk::DidUrl::new("did:web:server.local#snapshot").unwrap(),
-            snapshot_contract_hash(2),
-            created_at,
-            "header..signature".to_owned(),
-        ),
-    };
-    manifest.signature.payload_digest = manifest.expected_signature_digest().unwrap();
-    serde_json::to_value(manifest).unwrap()
 }
 
 #[test]
@@ -327,36 +239,6 @@ fn inkson_accepts_server_contract_payloads() {
         "ak:event:AVH7487ydDzo_3WXy2IlHWvtBeElcucZHd5d5hYKcjZl"
     );
     assert_eq!(submit.cursor, "sx:1760000000000");
-
-    let realm_state_snapshot_head: arkret_sdk::RealmStateSnapshotManifest =
-        serde_json::from_value(snapshot_contract_manifest_payload()).unwrap();
-    assert_eq!(
-        realm_state_snapshot_head.reducer_profile,
-        arkret_sdk::CORE_REDUCER_PROFILE
-    );
-    assert_eq!(
-        realm_state_snapshot_head
-            .created_by
-            .signing_principal_id()
-            .as_str(),
-        "ak:did_core:web:server.local"
-    );
-    assert!(
-        realm_state_snapshot_head
-            .signature
-            .payload_digest
-            .as_str()
-            .starts_with("sha256:")
-    );
-    assert!(
-        serde_json::from_value::<arkret_sdk::RealmStateSnapshotManifest>(json!({
-            "seal": "ak:seal:sha256:00",
-            "chunk_count": 1,
-            "merkle_root": format!("sha256:{}", "00".repeat(32)),
-            "generator_proof": {}
-        }))
-        .is_err()
-    );
 
     let authz: inkson::models::AuthzCheckOutcome = serde_json::from_value(json!({
         "decision": "allow",

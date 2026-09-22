@@ -44,19 +44,14 @@ pub(crate) fn required_realm_values_ready(entries: &[TypedCurrentResult]) -> boo
 ///
 /// The Station already selected each value and signed the snapshot that carries
 /// it, so nothing here re-runs a reducer or reads Event order.
-pub(crate) fn install_bounded_view(
+pub(crate) fn install_complete_view(
     projection: &mut Value,
     realm_id: &str,
     entries: Vec<TypedCurrentResult>,
 ) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        entries.len() <= 512,
-        "current view exceeds its in-memory budget"
-    );
-    anyhow::ensure!(
-        arkret_sdk::canonical::canonical_json_bytes(&entries)?.len() <= 8 * 1024 * 1024,
-        "current view exceeds its byte budget"
-    );
+    // v1 carries one complete inline snapshot. Capacity is enforced atomically
+    // by RealmCommit admission; a client must not impose an item-count dialect,
+    // truncate entries, or invent a private paging protocol here.
     let realm = RealmId::new(realm_id.to_owned())?;
     for entry in &entries {
         // Only the scope-carrying selectors can name another Realm at all; the
@@ -141,7 +136,7 @@ pub(crate) fn scope_has_accepted_mls_genesis(
 ///
 /// Callers hand in the whole locally stored projection (`realm_tree_projection`
 /// output); the `current` member is the exact `Vec<TypedCurrentResult>` that
-/// [`install_bounded_view`] wrote, so nothing here re-derives state from Event
+/// [`install_complete_view`] wrote, so nothing here re-derives state from Event
 /// order or from a protocol-level component id.
 pub(crate) fn current_realm_policy_value(projection: &Value) -> Option<Value> {
     let entries: Vec<TypedCurrentResult> =
@@ -262,7 +257,7 @@ mod tests {
             mls_group_value(),
         )];
         let mut projection = serde_json::json!({});
-        let error = install_bounded_view(&mut projection, REALM, entries).unwrap_err();
+        let error = install_complete_view(&mut projection, REALM, entries).unwrap_err();
         assert!(
             error.to_string().contains("belongs to another Realm"),
             "unexpected error: {error}"
@@ -281,11 +276,32 @@ mod tests {
             }),
         )];
         let mut projection = serde_json::json!({});
-        install_bounded_view(&mut projection, REALM, entries).unwrap();
+        install_complete_view(&mut projection, REALM, entries).unwrap();
         assert_eq!(projection["summary"]["title"], "Launch planning");
         assert_eq!(projection["summary"]["summary"], "Q4");
         // The signed revision travels with the value, so a reader can tell which
         // commit it was computed at without consulting Event order.
         assert_eq!(projection["current"][0]["revision"]["stream_position"], 5);
+    }
+
+    #[test]
+    fn a_complete_inline_view_is_not_cut_off_at_a_private_item_limit() {
+        let entries = (0..513)
+            .map(|position| {
+                entry(
+                    CurrentSelector::RealmProfile,
+                    position,
+                    serde_json::json!({
+                        "schema": "ak.schema.realm_profile.v1",
+                        "title": format!("Realm {position}")
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut projection = serde_json::json!({});
+
+        install_complete_view(&mut projection, REALM, entries).unwrap();
+
+        assert_eq!(projection["current"].as_array().unwrap().len(), 513);
     }
 }

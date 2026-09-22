@@ -2214,6 +2214,10 @@ fn add_generic_error_keys(dict: &mut TranslationDict) {
         "Something went wrong while talking to the server. Try again.",
     );
     dict.set(
+        "error.realm_snapshot_capacity_exceeded",
+        "This change would make the Realm too large for a complete state snapshot. Reduce the Realm state before trying again.",
+    );
+    dict.set(
         "error.network_unavailable",
         "Can't reach the server. Check your connection, then try again.",
     );

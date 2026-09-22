@@ -798,7 +798,7 @@ mod tests {
 
     #[test]
     fn sync_projection_reads_the_title_the_current_profile_value_installed() {
-        // `install_bounded_view` writes `summary.title` / `summary.summary`
+        // `install_complete_view` writes `summary.title` / `summary.summary`
         // from the current `ak.component.realm.profile.v1` value. The retired
         // `state` / `state_after` Event containers are gone from the wire, so
         // there is no second place a title could come from.

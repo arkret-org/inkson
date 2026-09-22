@@ -422,7 +422,7 @@ mod tests {
 
 /// The authority-signed typed current results a Realm projection carries.
 ///
-/// `crate::current_projection::install_bounded_view` stores the snapshot's
+/// `crate::current_projection::install_complete_view` stores the snapshot's
 /// `current_state_entries` under `current`, so this is the one read path from
 /// a stored projection body to the Station's selected values.
 pub(crate) fn projection_current_state_entries(

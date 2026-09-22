@@ -158,6 +158,11 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
         .get("reason_code")
         .and_then(Value::as_str);
     if let Some(reason) = reason {
+        if envelope.code() == ErrorCode::FAILED_PRECONDITION
+            && reason == "snapshot_capacity_exceeded"
+        {
+            return Some("error.realm_snapshot_capacity_exceeded");
+        }
         if reason == ReasonCode::UNSUPPORTED_PROFILE {
             return Some("error.unsupported_profile");
         }
@@ -482,6 +487,31 @@ mod tests {
         assert_eq!(
             display_user_facing(&error),
             english("error.call.mls_governance_binding_stale")
+        );
+    }
+
+    #[test]
+    fn snapshot_capacity_rejection_has_explicit_non_retry_guidance() {
+        let envelope = Problem::from_code(
+            arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
+            "candidate RealmCommit would exceed the inline snapshot budget",
+        )
+        .with_extension(
+            "reason_code",
+            Value::String("snapshot_capacity_exceeded".to_owned()),
+        );
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 412,
+            error: Box::new(envelope),
+        });
+
+        assert_eq!(
+            user_facing_error_key(&error),
+            Some("error.realm_snapshot_capacity_exceeded")
+        );
+        assert_eq!(
+            display_user_facing(&error),
+            english("error.realm_snapshot_capacity_exceeded")
         );
     }
 

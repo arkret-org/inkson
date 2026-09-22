@@ -1136,9 +1136,6 @@ async fn refresh_current_product_view(
     };
     let entries: Vec<arkret_wire::TypedCurrentResult> = serde_json::from_value(entries)
         .context("Realm entry carried a non-canonical current result array")?;
-    if entries.len() > MAX_CURRENT_VIEW_ENTRIES {
-        anyhow::bail!("Realm current view exceeds its bounded entry budget");
-    }
     if ctx.effect.is_cancelled()
         || ctx.session.generation() != session_generation
         || ctx.selected_realm_id.get() != realm_id
@@ -1155,9 +1152,6 @@ async fn refresh_current_product_view(
         .update(|epoch| *epoch = epoch.wrapping_add(1));
     Ok(())
 }
-
-/// Ceiling on the typed current results one Realm view keeps in memory.
-const MAX_CURRENT_VIEW_ENTRIES: usize = 512;
 
 fn scope_rotate_realm_ids(
     response: &AccountFrameStep,
