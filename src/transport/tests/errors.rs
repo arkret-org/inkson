@@ -1,8 +1,8 @@
 use reqwest::StatusCode;
 
 use crate::api_error::{
-    TransportClientError, decode_arkret_error, is_actor_seq_cas_conflict_error,
-    is_auth_expired_error, is_device_not_authorized_error, is_space_membership_denied_error,
+    TransportClientError, decode_arkret_error, is_auth_expired_error,
+    is_device_not_authorized_error, is_space_membership_denied_error,
     is_terminal_session_grant_error, is_terminal_session_grant_refresh_error,
     rate_limited_retry_after,
 };
@@ -105,13 +105,6 @@ fn sdk_api_errors_use_same_classifiers() {
         "session grant is not active: revoked",
     );
     assert!(is_terminal_session_grant_error(&revoked_session_grant));
-
-    let actor_seq_cas = sdk_api_error(
-        StatusCode::CONFLICT,
-        "cas_conflict",
-        "actor_seq is behind the accepted frontier",
-    );
-    assert!(!is_actor_seq_cas_conflict_error(&actor_seq_cas));
 
     let consumed_refresh_grant = sdk_api_error(
         StatusCode::BAD_REQUEST,
