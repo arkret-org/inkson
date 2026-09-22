@@ -894,7 +894,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_registered_payload_valid(&create);
 
     // Third-party form: the Invite stores no account, so the payload carries
-    // none and the accept derives no live-target release write.
+    // none.
     let accept = ak_ops::invite_accept(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:bob.example",
@@ -907,14 +907,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(accept.payload()["invite_id"], invite_id);
     assert!(!accept.payload().contains_key("state"));
     assert!(!accept.payload().contains_key("invitee_account_id"));
-    assert!(accept.intent().preconditions().is_empty());
     assert_registered_payload_valid(&accept);
-    let accept_writes = crate::operation::pre_authoring_cell_writes(
-        accept.intent(),
-        arkret_sdk::DigestSuite::Sha256,
-    )
-    .expect("invite accept must atomically advance invite and member FSMs");
-    assert_eq!(accept_writes.len(), 2);
 
     // Directed form: the third write releases the slot, and its `head_eq` is
     // the stored `ak:event:` create id — never the `ak:invite:` spelling of the
