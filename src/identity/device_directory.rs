@@ -1292,11 +1292,8 @@ mod verification_method_controller_tests {
             "did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5",
         )
         .unwrap();
-        let data_evidence = arkret_sdk::SignerEvidenceRef::new(
+        let signer_evidence = arkret_sdk::SignerEvidenceRef::new(
             "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        ).unwrap();
-        let control_evidence = arkret_sdk::SignerEvidenceRef::new(
-            "ak:signer_evidence:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         ).unwrap();
         let now = chrono::Utc::now();
         let version = super::VerifiedProjectionVersion {
@@ -1313,8 +1310,7 @@ mod verification_method_controller_tests {
                 arkret_sdk::DigestSuite::Sha256,
                 [81; 32]
             )),
-            Some(data_evidence.clone()),
-            Some(control_evidence.clone()),
+            Some(signer_evidence.clone()),
             Some(crate::clock::now_unix_ms() + 60_000),
             Some(version.clone()),
         ));
@@ -1330,20 +1326,8 @@ mod verification_method_controller_tests {
             super::CacheLookup::Miss
         ));
         assert_eq!(
-            super::retained_device_authoring_evidence(
-                &account,
-                device,
-                arkret_sdk::CbsEffectPlane::Data,
-            ),
-            Some((key.clone(), data_evidence))
-        );
-        assert_eq!(
-            super::retained_device_authoring_evidence(
-                &account,
-                device,
-                arkret_sdk::CbsEffectPlane::Control,
-            ),
-            Some((key, control_evidence))
+            super::retained_device_authoring_evidence(&account, device),
+            Some((key, signer_evidence))
         );
         let revoked = super::VerifiedProjectionVersion {
             attested_at: now + chrono::Duration::seconds(1),
@@ -1358,26 +1342,10 @@ mod verification_method_controller_tests {
             None,
             None,
             None,
-            None,
             Some(revoked),
         ));
         assert!(super::known_device_revoked(&account, device));
-        assert!(
-            super::retained_device_authoring_evidence(
-                &account,
-                device,
-                arkret_sdk::CbsEffectPlane::Data,
-            )
-            .is_none()
-        );
-        assert!(
-            super::retained_device_authoring_evidence(
-                &account,
-                device,
-                arkret_sdk::CbsEffectPlane::Control,
-            )
-            .is_none()
-        );
+        assert!(super::retained_device_authoring_evidence(&account, device).is_none());
     }
 
     #[test]
