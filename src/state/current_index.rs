@@ -4,8 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use arkret_sdk::AccountId;
-use arkret_sdk::sync::AccountSubscribeFrame;
-use arkret_sdk::sync::RealmDetailBaseline;
+use arkret_sdk::sync::{AccountSubscribeFrame, RealmDetailBaseline};
 use arkret_wire::{CurrentRevision, CurrentSelector, TypedCurrentResult};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, OwnedMutexGuard};

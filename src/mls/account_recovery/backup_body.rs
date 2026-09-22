@@ -1,6 +1,5 @@
 //! Build, decrypt, and classify the on-wire account-recovery backup envelopes.
 
-use crate::mls::runtime::mls_account_secret_backup_version;
 use anyhow::{Result, anyhow};
 use arkret_models_crypto::{KeyBackup, SecretStorageContentIndex, SecretStorageItemKind};
 use base64::Engine as _;
@@ -10,6 +9,7 @@ use serde_json::Value;
 use crate::key_backup::{
     BackupKind, build_passphrase_kdf_backup_body, open_passphrase_kdf_backup_body,
 };
+use crate::mls::runtime::mls_account_secret_backup_version;
 use crate::recovery_crypto::VaultKek;
 
 /// `item_kind` carried by the account MLS snapshot secret backup.

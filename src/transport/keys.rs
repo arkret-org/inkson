@@ -159,10 +159,11 @@ pub async fn send_device_message_with_id(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use arkret_sdk::{
         DeviceSummaryStatus, DeviceSummaryVerificationSource, DeviceSummaryVerificationState,
     };
+
+    use super::*;
 
     fn device(
         status: DeviceSummaryStatus,

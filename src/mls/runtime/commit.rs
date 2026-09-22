@@ -308,10 +308,10 @@ pub(crate) fn build_add_member_commit_for_scope(
 ///
 /// Gated by the same two conditions the send path uses:
 ///
-/// 1. [`should_force_epoch_advance`] — the epoch is over the floor, with the
-///    normative pending-commit suppression already folded in;
-/// 2. [`idle_self_update_jitter_passed`] — this member's deterministic
-///    member-order jitter slot has opened.
+/// 1. [`should_force_epoch_advance`] — the epoch is over the floor, with the normative
+///    pending-commit suppression already folded in;
+/// 2. [`idle_self_update_jitter_passed`] — this member's deterministic member-order jitter slot has
+///    opened.
 ///
 /// Returns `Ok(None)` when not yet due, which is the common case.
 pub fn build_idle_self_update_commit(

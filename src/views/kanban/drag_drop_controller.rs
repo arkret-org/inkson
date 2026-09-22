@@ -4,7 +4,6 @@ use arkret_wire::event_kind_str;
 use serde::Serialize;
 
 use super::*;
-
 // Imports the drag-and-drop helpers relied on while they lived in the
 // monolithic `kanban/mod.rs`; re-added here after the structural split since
 // the component-only parent no longer brings them into scope.

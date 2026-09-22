@@ -3,11 +3,11 @@
 //! Two unrelated host concerns share this module because both answer "which
 //! stored artifact may this device open right now":
 //!
-//!   * the epoch floor a local MLS checkpoint must clear before it is restored,
-//!     so a device that already knows of a newer accepted epoch never binds to
-//!     a stale snapshot and forks the group; and
-//!   * which envelope of the active key-backup series carries the account MLS
-//!     secret or the private-plaintext sidecar.
+//!   * the epoch floor a local MLS checkpoint must clear before it is restored, so a device that
+//!     already knows of a newer accepted epoch never binds to a stale snapshot and forks the group;
+//!     and
+//!   * which envelope of the active key-backup series carries the account MLS secret or the
+//!     private-plaintext sidecar.
 //!
 //! The selection half is host runtime logic rather than protocol judgement:
 //! `garth::mls::backup_selection` owns the shared rule (the Station's

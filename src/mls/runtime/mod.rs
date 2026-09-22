@@ -5,17 +5,15 @@
 //! device has not yet received a Welcome delivery for a scope.
 //!
 //! This module is split by responsibility into:
-//!   - [`secret`]: account- and device-scoped MLS secret management, the
-//!     KeyPackage identity / inventory slots, and the device HPKE keypair;
+//!   - [`secret`]: account- and device-scoped MLS secret management, the KeyPackage identity /
+//!     inventory slots, and the device HPKE keypair;
 //!   - [`backup`]: MLS epoch floors and key-backup envelope selection;
-//!   - [`artifact_consumer`]: installing accepted MLS transitions and Welcome
-//!     deliveries into this device's provider state;
+//!   - [`artifact_consumer`]: installing accepted MLS transitions and Welcome deliveries into this
+//!     device's provider state;
 //!   - [`genesis`]: creator initial-group setup and the `ak.mls.genesis` payload;
-//!   - [`commit`]: the group-bound half of the self-preservation /
-//!     forced-epoch-advance commits (the policy decision itself is
-//!     `garth::mls::self_preservation`);
-//!   - [`message`]: application-payload encrypt / decrypt, AAD, and mention
-//!     routing-key derivation;
+//!   - [`commit`]: the group-bound half of the self-preservation / forced-epoch-advance commits
+//!     (the policy decision itself is `garth::mls::self_preservation`);
+//!   - [`message`]: application-payload encrypt / decrypt, AAD, and mention routing-key derivation;
 //!   - [`reaction`]: E2EE reaction sealing and routing-tag derivation.
 //!
 //! Every previously-public item is re-exported here so external paths such as

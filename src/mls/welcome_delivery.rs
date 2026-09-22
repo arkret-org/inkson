@@ -8,11 +8,10 @@
 //! crate owns the crossing, because closing it needs two facts only the host
 //! holds:
 //!
-//!   * the epoch the Welcome joins at, which lives in the accepted
-//!     `ak.mls.commit` payload rather than on the delivery, and
-//!   * for an Agent runtime recipient, the accepted `ak.agent.key.authorize`
-//!     Event that binds its verification method — the delivery carries the
-//!     method alone.
+//!   * the epoch the Welcome joins at, which lives in the accepted `ak.mls.commit` payload rather
+//!     than on the delivery, and
+//!   * for an Agent runtime recipient, the accepted `ak.agent.key.authorize` Event that binds its
+//!     verification method — the delivery carries the method alone.
 //!
 //! Both inputs are supplied by the caller and checked against the delivery, so
 //! this never invents an endpoint identity or an epoch.

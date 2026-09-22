@@ -4,8 +4,8 @@
 //! inkson-side glue on top of the SDK's client-agnostic addressing grammar
 //! ([`arkret_wire::parse_address`] / [`build_address`]):
 //!
-//! * [`OpenedLink`] — the result of parsing a pasted link and routing its
-//!   canonical hierarchy locally.
+//! * [`OpenedLink`] — the result of parsing a pasted link and routing its canonical hierarchy
+//!   locally.
 //!
 //! ## Privacy / fail-closed posture
 //! * The HTTPS landing form puts the target + token in the URL FRAGMENT (everything after `#`). The

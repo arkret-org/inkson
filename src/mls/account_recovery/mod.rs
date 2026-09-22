@@ -25,6 +25,9 @@ mod upload;
 
 // Which stored envelope a restoring client may open is host runtime logic on
 // top of the shared active-series rule in `garth::mls::backup_selection`.
+// The series chain itself is a wire-shape decision, owned by garth.
+pub(crate) use garth::mls::backup_series::series_supersedes_digest;
+
 pub(crate) use crate::mls::runtime::{
     is_mls_account_secret_backup, is_mls_private_plaintext_backup,
     is_passphrase_account_secret_backup, is_recovery_public_key_account_secret_backup,
@@ -32,8 +35,6 @@ pub(crate) use crate::mls::runtime::{
     select_mls_account_secret_recovery_public_key_backup, select_mls_private_plaintext_backup,
     select_preferred_mls_account_secret_backup,
 };
-// The series chain itself is a wire-shape decision, owned by garth.
-pub(crate) use garth::mls::backup_series::series_supersedes_digest;
 
 #[cfg(test)]
 mod tests;

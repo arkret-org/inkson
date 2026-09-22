@@ -1,12 +1,6 @@
 //! Fetch + restore flow: the account MLS secret and the private-plaintext
 //! sidecar.
 
-use crate::mls::runtime::{
-    active_secret_storage_series_id_for, all_secret_storage_backups, backup_series_seq_of,
-    mls_account_secret_backup_version, select_mls_account_secret_backup,
-    select_mls_account_secret_recovery_public_key_backup, select_mls_private_plaintext_backup,
-    select_preferred_mls_account_secret_backup,
-};
 use anyhow::{Result, anyhow};
 use garth::mls::backup_series::verify_series_chain;
 use serde_json::{Value, json};
@@ -14,6 +8,12 @@ use serde_json::{Value, json};
 use super::backup_body::{
     decrypt_mls_account_secret_backup, decrypt_mls_private_plaintext_backup,
     open_mls_account_secret_recovery_public_key_backup,
+};
+use crate::mls::runtime::{
+    active_secret_storage_series_id_for, all_secret_storage_backups, backup_series_seq_of,
+    mls_account_secret_backup_version, select_mls_account_secret_backup,
+    select_mls_account_secret_recovery_public_key_backup, select_mls_private_plaintext_backup,
+    select_preferred_mls_account_secret_backup,
 };
 
 /// Decide whether the app should ask the user for their Recovery Key to unlock

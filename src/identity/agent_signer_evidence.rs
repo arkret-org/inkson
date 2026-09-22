@@ -618,7 +618,7 @@ mod historical_result_tests {
 
     #[test]
     fn a_bare_event_from_a_current_projection_stays_unresolved() {
-        let (selector, _, _) = fixture();
+        let (selector, ..) = fixture();
         let mut store = crate::state::isolated_store_for_tests("historical-bare-projection");
         store.switch_test_account("did:web:reader.example");
         let envelope = serde_json::to_value(selector.accepted_event).unwrap();
@@ -678,7 +678,7 @@ mod historical_result_tests {
 
     #[test]
     fn mismatched_commit_event_reference_is_never_indexed() {
-        let (selector, _, _) = fixture();
+        let (selector, ..) = fixture();
         let mut view = committed_view(&selector);
         if let arkret_wire::CommittedEventView::Full(full) = &mut view {
             full.commit.event_ref =

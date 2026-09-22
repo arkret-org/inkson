@@ -10,7 +10,8 @@
 //! message-write path —
 //!   1. MLS encrypt of the canonical Content Block bytes (`run_local_mls_encrypt` →
 //!      `mls::runtime::encrypt_message_with_device_snapshot`),
-//!   2. spec-canonical `ak.schema.encrypted_envelope.v1` wrap bound to the accepted group-state ref,
+//!   2. spec-canonical `ak.schema.encrypted_envelope.v1` wrap bound to the accepted group-state
+//!      ref,
 //!   3. `ak.message.create` payload build (with reply-to + message id),
 //!   4. durable sender-ratchet persistence before submission.
 //!

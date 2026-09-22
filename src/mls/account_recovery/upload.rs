@@ -1,8 +1,5 @@
 //! Backup / rotation upload flow and superseded-backup cleanup.
 
-use crate::mls::runtime::{
-    active_secret_storage_series_id_for, backup_series_seq_of, select_mls_private_plaintext_backup,
-};
 use anyhow::{Result, anyhow};
 use arkret_sdk::BackupRotationKind;
 use garth::mls::backup_series::fresh_backup_id;
@@ -16,6 +13,9 @@ use super::backup_body::{
     build_mls_private_plaintext_backup_successor_body_with_kek,
 };
 use super::restore::fetch_mls_restore_payload;
+use crate::mls::runtime::{
+    active_secret_storage_series_id_for, backup_series_seq_of, select_mls_private_plaintext_backup,
+};
 use crate::recovery_crypto::derive_vault_kek;
 
 fn passphrase_is_blank(passphrase: &[u8]) -> bool {

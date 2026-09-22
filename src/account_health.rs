@@ -30,9 +30,8 @@ pub enum AccountHealthPrompt {
     /// 4. Encrypted history exists but there is nothing this browser can decrypt and no recovery
     ///    path is configured (S5 dead-end diagnostic). (`needs_mls_recovery_setup`)
     RecoverySetupMissing,
-    /// 5. Everything functional is fine, but no Recovery Key / backup is configured — set up
-    ///    the display-once recovery root.
-    ///    (`recovery_unconfigured`)
+    /// 5. Everything functional is fine, but no Recovery Key / backup is configured — set up the
+    ///    display-once recovery root. (`recovery_unconfigured`)
     RecoverySetupReminder,
     /// Nothing to prompt.
     None,
