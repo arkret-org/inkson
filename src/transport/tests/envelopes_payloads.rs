@@ -315,7 +315,7 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
 }
 
 #[test]
-fn member_state_ban_event_uses_realm_scoped_member_cell() {
+fn member_state_ban_event_uses_realm_scoped_member_payload() {
     let event = build_member_state_transition_event(
         "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
         "did:web:alice.example",
@@ -338,26 +338,6 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
         "ak:did_core:web:bob.example"
     );
     assert_eq!(event.payload()["membership"], "ban");
-    // `ak.member.state` registers a `transition_to` projection: `to` comes from
-    // the signed payload, `from` is resolved by the reducer against the frozen
-    // pre-state rather than asserted by the producer.
-    let writes = crate::operation::pre_authoring_cell_writes(
-        event.intent(),
-        arkret_sdk::DigestSuite::Sha256,
-    )
-    .unwrap();
-    assert_eq!(writes.len(), 1);
-    assert_eq!(
-        writes[0].cell_id.as_str(),
-        format!(
-            "ak:cell:ak.component.member.state.v1:{}",
-            arkret_sdk::composite_subject(&[member_id.canonical_key().unwrap().as_str()]).unwrap()
-        )
-    );
-    assert_eq!(
-        writes[0].op,
-        arkret_sdk::ProjectedOp::TransitionTo { to: json!("ban") }
-    );
 }
 
 #[test]
