@@ -3222,7 +3222,6 @@ fn apply_account_frame_payload(
             store
                 .save_realm_collaboration_role(id.to_owned(), response.step.collaboration_role(id));
         }
-        store.ingest_move_event_states(id, &projection);
         let _ = ingest_message_events_from_projection(store, id, &projection);
         // Fold the discussion timeline into `raw_operations` too so the
         // card-detail Discussion tab renders local-first instead of
