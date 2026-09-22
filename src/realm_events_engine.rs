@@ -479,13 +479,6 @@ mod tests {
             verification_method: arkret_sdk::DidUrl::new(format!("{ACTOR_CONTROLLER}#{DEVICE_ID}"))
                 .unwrap(),
             event_digest,
-            signer_resolution_evidence_ref: Some(
-                arkret_sdk::SignerEvidenceRef::new(format!(
-                    "ak:signer_evidence:sha256:{}",
-                    "11".repeat(32)
-                ))
-                .unwrap(),
-            ),
             created_at: event.created_at,
             domain: None,
             audience: None,
@@ -496,7 +489,7 @@ mod tests {
             .try_decode_event(event)
             .unwrap()
         {
-            garth::DecodedInbound::Message(message) => ClientEvent::Message(*message),
+            garth::DecodedInbound::Message(message) => ClientEvent::Message(message),
             garth::DecodedInbound::Event(_) => panic!("message.create must decode as a message"),
         }
     }
