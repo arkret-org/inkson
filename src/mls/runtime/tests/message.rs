@@ -9,6 +9,25 @@ use crate::state::isolated_store_for_tests as temp_state_store;
 use crate::test_support as fixture;
 
 #[cfg(not(target_arch = "wasm32"))]
+fn accepted_mls_base_current(
+    effective_scope: &arkret_sdk::ScopeRef,
+    genesis_event_ref: arkret_sdk::EventId,
+    current_event_ref: arkret_sdk::EventId,
+    epoch: u64,
+) -> arkret_wire::MlsGroupCurrent {
+    arkret_wire::MlsGroupCurrent {
+        effective_scope: effective_scope.clone(),
+        genesis_event_ref,
+        current_mls_commit_event_ref: current_event_ref,
+        epoch,
+        current_key_access_revision: 0,
+        covered_key_access_revision: 0,
+        public_tree_ref: arkret_sdk::BlobRef::new(format!("ak:blob:sha256:{}", "33".repeat(32)))
+            .unwrap(),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn seed_complete_rfc9420_projection(
     state: &mut crate::state::LocalStateStore,
     realm: &str,
@@ -488,12 +507,24 @@ fn two_member_group_with_bob_snapshot(
         realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
     };
     let mut alice_group = alice.create_group(&effective_scope).unwrap();
-    let add = alice_group.add_member(&bob_key_package).unwrap();
+    let base_event_ref =
+        arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x51; 32]);
+    let transition_binding = arkret_sdk::MlsGovernanceBindingPayload::new(
+        effective_scope.clone(),
+        Some(base_event_ref.clone()),
+        0,
+        1,
+        0,
+    )
+    .unwrap();
+    let add = alice_group
+        .add_member_with_governance_binding(&bob_key_package, &transition_binding)
+        .unwrap();
     let accepted_commit = crate::test_support::accepted_mls_commit(
         &effective_scope,
         alice_actor,
         &add.commit,
-        arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x51; 32]),
+        base_event_ref.clone(),
         0x52,
     );
     let delivery = crate::test_support::accepted_mls_welcome(
@@ -502,8 +533,10 @@ fn two_member_group_with_bob_snapshot(
         &accepted_commit,
         1_760_000_000_012,
     );
+    let base_current =
+        accepted_mls_base_current(&effective_scope, base_event_ref.clone(), base_event_ref, 0);
     alice_group
-        .install_accepted_commit(&accepted_commit)
+        .install_accepted_commit(&accepted_commit, &base_current)
         .unwrap();
     let mut bob_group = arkret_sdk::ArkretMlsGroup::join_from_verified_welcome_delivery(
         bob,
@@ -542,7 +575,7 @@ fn historical_author_view_survives_epoch_rotation() {
     let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
-    let (mut alice_group, leaf_endpoints) =
+    let (mut alice_group, mut leaf_endpoints) =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
     let epoch_one_snapshot = state.mls_checkpoint_for(realm).unwrap();
     let epoch_one_ref =
@@ -576,21 +609,51 @@ fn historical_author_view_survives_epoch_rotation() {
     .unwrap();
     let mut bob_group =
         crate::mls::persistence::restore_envelope(&epoch_one_snapshot, &secret, 0).unwrap();
-    let commit = alice_group.self_update_commit().unwrap();
     let effective_scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
     };
+    let charlie = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
+        crate::test_support::account_actor("did:web:charlie.example"),
+        arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000c3".to_owned())
+            .unwrap(),
+    )
+    .unwrap();
+    let charlie_endpoint = charlie.endpoint_identity();
+    let charlie_key_package = crate::test_support::claimed_mls_key_package(
+        charlie.key_package_record().unwrap(),
+        1_760_000_000_013,
+    );
+    let transition_binding = arkret_sdk::MlsGovernanceBindingPayload::new(
+        effective_scope.clone(),
+        Some(epoch_one_ref.clone()),
+        epoch_one_snapshot.epoch,
+        epoch_one_snapshot.epoch.checked_add(1).unwrap(),
+        0,
+    )
+    .unwrap();
+    let add = alice_group
+        .add_member_with_governance_binding(&charlie_key_package, &transition_binding)
+        .unwrap();
     let accepted_commit = crate::test_support::accepted_mls_commit(
         &effective_scope,
         crate::test_support::account_actor("did:web:alice.example"),
-        &commit,
+        &add.commit,
         epoch_one_ref.clone(),
         0x53,
     );
+    let base_current = accepted_mls_base_current(
+        &effective_scope,
+        arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x51; 32]),
+        epoch_one_ref.clone(),
+        epoch_one_snapshot.epoch,
+    );
     alice_group
-        .install_accepted_commit(&accepted_commit)
+        .install_accepted_commit(&accepted_commit, &base_current)
         .unwrap();
-    bob_group.install_accepted_commit(&accepted_commit).unwrap();
+    bob_group
+        .install_accepted_commit(&accepted_commit, &base_current)
+        .unwrap();
+    leaf_endpoints.push(charlie_endpoint);
     bob_group
         .install_test_leaf_bindings(leaf_endpoints)
         .unwrap();

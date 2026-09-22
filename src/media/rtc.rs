@@ -1443,12 +1443,24 @@ mod tests {
             realm_id: RealmId::new(INTEROP_REALM.to_owned()).unwrap(),
         };
         let mut alice_group = alice_identity.create_group(&effective_scope).unwrap();
-        let add = alice_group.add_member(&bob_key_package).unwrap();
+        let base_event_ref =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x41; 32]);
+        let transition_binding = arkret_sdk::MlsGovernanceBindingPayload::new(
+            effective_scope.clone(),
+            Some(base_event_ref.clone()),
+            0,
+            1,
+            0,
+        )
+        .unwrap();
+        let add = alice_group
+            .add_member_with_governance_binding(&bob_key_package, &transition_binding)
+            .unwrap();
         let accepted_commit = crate::test_support::accepted_mls_commit(
             &effective_scope,
             alice_actor,
             &add.commit,
-            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x41; 32]),
+            base_event_ref.clone(),
             0x42,
         );
         let delivery = crate::test_support::accepted_mls_welcome(
@@ -1457,8 +1469,21 @@ mod tests {
             &accepted_commit,
             1_760_000_000_002,
         );
+        let base_current = arkret_wire::MlsGroupCurrent {
+            effective_scope: effective_scope.clone(),
+            genesis_event_ref: base_event_ref.clone(),
+            current_mls_commit_event_ref: base_event_ref,
+            epoch: 0,
+            current_key_access_revision: 0,
+            covered_key_access_revision: 0,
+            public_tree_ref: arkret_sdk::BlobRef::new(format!(
+                "ak:blob:sha256:{}",
+                "44".repeat(32)
+            ))
+            .unwrap(),
+        };
         alice_group
-            .install_accepted_commit(&accepted_commit)
+            .install_accepted_commit(&accepted_commit, &base_current)
             .unwrap();
         let mut bob_group = arkret_sdk::ArkretMlsGroup::join_from_verified_welcome_delivery(
             bob_identity,
