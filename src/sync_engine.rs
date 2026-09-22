@@ -2969,13 +2969,6 @@ mod tests {
                 ))
                 .unwrap(),
                 event_digest,
-                signer_resolution_evidence_ref: Some(
-                    arkret_sdk::SignerEvidenceRef::new(format!(
-                        "ak:signer_evidence:sha256:{}",
-                        "11".repeat(32)
-                    ))
-                    .unwrap(),
-                ),
                 created_at: event.created_at,
                 domain: None,
                 audience: None,
