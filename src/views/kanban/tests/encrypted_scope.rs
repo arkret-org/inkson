@@ -1032,13 +1032,7 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();
-    let group = identity
-        .create_group(
-            effective_scope
-                .canonical_effective_scope_key_bytes()
-                .unwrap(),
-        )
-        .unwrap();
+    let group = identity.create_group(&effective_scope).unwrap();
     let post_state = group.export_state_record().unwrap();
     let serialized = serde_json::to_vec(&post_state).unwrap();
     let secret =
@@ -1059,7 +1053,10 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();
-    let realm_group = realm_identity.create_group(realm.as_bytes()).unwrap();
+    let realm_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+    };
+    let realm_group = realm_identity.create_group(&realm_scope).unwrap();
     let realm_state = realm_group.export_state_record().unwrap();
     let realm_serialized = serde_json::to_vec(&realm_state).unwrap();
     let mut realm_salt = [0_u8; 16];
