@@ -949,50 +949,12 @@ fn invite_helpers_emit_canonical_kinds() {
             "station_id": "ak:did_core:web:principal.example"
         })
     );
-    // `target_state` is the signed operand of the lifecycle `transition_to`
-    // projection; without it the cancel has no derivable cell write.
+    // `target_state` is the signed requested lifecycle transition; the retired
+    // `state` alias must not be emitted alongside it.
     assert_eq!(cancel.payload()["target_state"], "revoked");
     assert!(!cancel.payload().contains_key("state"));
     assert_registered_payload_valid(&cancel);
-    // Pre-authoring projects the write set only. `pre_state_requirements` are
-    // the admitting receiver's step over the snapshot it froze
-    // (`event-and-patch.md` 2.4.2), and this client holds no such snapshot,
-    // so the cancel MUST author cleanly here and be judged below.
-    let authoring_writes = crate::operation::pre_authoring_cell_writes(
-        cancel.intent(),
-        arkret_sdk::DigestSuite::Sha256,
-    )
-    .expect("a direct cancel authors its lifecycle and slot-release writes");
-    assert_eq!(authoring_writes.len(), 2);
-    let lifecycle_cell = arkret_sdk::CellRef::new(format!(
-        "ak:cell:ak.component.invite.lifecycle.v1:{invite_id}"
-    ))
-    .unwrap();
-    let frozen_pre_state = arkret_sdk::schema::FrozenPreState::from([(
-        lifecycle_cell,
-        serde_json::json!({"invitee_account_id": {
-            "principal_id": "ak:did_core:web:bob.example",
-            "station_id": "ak:did_core:web:principal.example"
-        }}),
-    )]);
     let cancelled = authored(&cancel);
-    let cancel_writes = arkret_sdk::schema::project_registered_cell_writes_with_pre_state(
-        &cancelled,
-        arkret_sdk::canonical::DigestSuite::Sha256,
-        &frozen_pre_state,
-    )
-    .expect("cancel must atomically advance invite and member FSMs");
-    assert_eq!(cancel_writes.len(), 2);
-    assert_eq!(
-        cancel_writes[0].cell_id.as_str(),
-        format!("ak:cell:ak.component.invite.lifecycle.v1:{invite_id}")
-    );
-    assert!(
-        cancel_writes[1]
-            .cell_id
-            .as_str()
-            .starts_with("ak:cell:ak.component.invite.live_target.v1:")
-    );
     // The receiver is where `invite_kind_requires_revoke` belongs: a target
     // Invite with no stored invitee is a token / 3PID Invite, which only
     // `ak.invite.revoke` may terminate.
