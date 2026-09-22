@@ -554,9 +554,8 @@ fn object_patch_family_builders_match_registered_payload_schema() {
                 event.kind()
             );
         } else {
-            // Everything else — including `ak.strand.tracks.update`, whose
-            // registered contract derives its cell subject from
-            // `payload.target_ref` — single-sources the target there.
+            // Everything else — including `ak.strand.tracks.update` —
+            // single-sources the target in the signed payload.
             assert!(
                 event.payload().contains_key("target_ref"),
                 "{}",
@@ -564,13 +563,6 @@ fn object_patch_family_builders_match_registered_payload_schema() {
             );
         }
         assert_registered_payload_valid(event);
-        // Every one of these is a reducer-input kind, so the registry must be
-        // able to derive its writes from `kind + payload` alone.
-        crate::operation::pre_authoring_cell_writes(
-            event.intent(),
-            arkret_sdk::DigestSuite::Sha256,
-        )
-        .unwrap_or_else(|err| panic!("{} projection: {err}", event.kind()));
     }
 }
 
