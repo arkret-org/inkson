@@ -909,9 +909,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert!(!accept.payload().contains_key("invitee_account_id"));
     assert_registered_payload_valid(&accept);
 
-    // Directed form: the third write releases the slot, and its `head_eq` is
-    // the stored `ak:event:` create id — never the `ak:invite:` spelling of the
-    // same 33-octet token, which would never compare equal.
+    // Directed form carries the complete invitee account in the signed payload.
     let directed_accept = ak_ops::invite_accept(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:bob.example",
@@ -920,30 +918,15 @@ fn invite_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_registered_payload_valid(&directed_accept);
-    let directed_accept_writes = crate::operation::pre_authoring_cell_writes(
-        directed_accept.intent(),
-        arkret_sdk::DigestSuite::Sha256,
-    )
-    .expect("a directed accept also releases the live-target slot");
-    assert_eq!(directed_accept_writes.len(), 3);
-    let expected_head_eq = arkret_sdk::InviteLiveTargetSlot::held_by_invite(
-        &arkret_sdk::InviteId::new(invite_id.to_owned()).unwrap(),
-    )
-    .head_eq_value()
-    .expect("registered contract");
-    assert!(
-        expected_head_eq
-            .as_str()
-            .is_some_and(|value| value.starts_with("ak:event:"))
-    );
+    assert_eq!(directed_accept.payload()["invite_id"], invite_id);
     assert_eq!(
-        directed_accept.intent().preconditions()[0]
-            .predicate
-            .value
-            .as_ref(),
-        Some(&expected_head_eq)
+        directed_accept.payload()["invitee_account_id"],
+        json!({
+            "principal_id": "ak:did_core:web:bob.example",
+            "station_id": "ak:did_core:web:server.example"
+        })
     );
+    assert_registered_payload_valid(&directed_accept);
 
     let bob = crate::test_support::authority("ak:did_core:web:bob.example");
     let cancel = ak_ops::invite_cancel(
