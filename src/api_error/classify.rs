@@ -1,5 +1,5 @@
 //! Server error-envelope classification for the self-API client:
-//! session-loss / device-authorization / cursor / frontier / rate-limit /
+//! session-loss / device-authorization / cursor / rate-limit /
 //! visibility-policy predicates, and the `wait_for` sync-token normalizer.
 
 use arkret_sdk::Problem;
@@ -25,21 +25,6 @@ pub(crate) fn is_realm_bootstrap_temporarily_unavailable_detail(detail: Option<&
         detail
             .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
             .any(|token| token == arkret_sdk::error_codes::ErrorCode::TEMPORARILY_UNAVAILABLE)
-    })
-}
-
-/// True only while the authoritative Realm Seal frontier is not readable yet.
-///
-/// The frontier binding uses 404 before any accepted Seal exists and the
-/// registered `frontier_unavailable` code while already-accepted Control
-/// Events are waiting for durable Seal materialization. Callers may retry this
-/// predicate only in a bounded workflow that is already entitled to wait for
-/// that Seal; all other errors remain terminal.
-pub(crate) fn is_realm_seal_frontier_pending_error(error: &anyhow::Error) -> bool {
-    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
-        status == StatusCode::NOT_FOUND
-            || (status == StatusCode::SERVICE_UNAVAILABLE
-                && envelope.code() == arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE)
     })
 }
 

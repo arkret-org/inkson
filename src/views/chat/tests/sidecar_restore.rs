@@ -307,8 +307,8 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
 }
 
 #[test]
-fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
-    let temp = std::env::temp_dir().join(format!("inkson-late-recovery-{}", uuid_v7()));
+fn legacy_late_recovery_marker_does_not_override_verified_sidecar_path() {
+    let temp = std::env::temp_dir().join(format!("inkson-sidecar-legacy-marker-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     let realm = "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q";
     let strand = "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
@@ -319,7 +319,7 @@ fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
         &format!("message:{message_id}"),
         "late plaintext",
     );
-    let mut rejected = json!({
+    let mut event = json!({
         "event_id": "ak:event:A4BWEYesKK6NG4kEzOZXc7FlBfXuJdaVxsjAp4V6hygg",
         "kind": "ak.message.create",
         "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
@@ -334,54 +334,10 @@ fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
             "encrypted_content": true
         }
     });
-    sign_chat_fixture(&mut rejected);
+    sign_chat_fixture(&mut event);
 
-    let message = chat_message_from_event_with_sidecar(realm, &rejected, Some(&store), None)
-        .expect("message");
-
-    assert_eq!(message.body, "");
-    assert_eq!(
-        message.crypto_state,
-        MessageCryptoState::LateRecoveryRejected
-    );
-    assert_eq!(
-        message.error.as_deref(),
-        Some(arkret_sdk::ReasonCode::LATE_RECOVERY_REJECTED_MEMBERSHIP)
-    );
-}
-
-#[test]
-fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
-    let temp = std::env::temp_dir().join(format!("inkson-late-recovery-ok-{}", uuid_v7()));
-    let mut store = LocalStateStore::with_path(temp);
-    let realm = "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q";
-    let strand = "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
-    let message_id = "ak:message:AS_yTKQy1F_tu5CuneCbCvtUhx-TRFeH5RVSYYeWMGeA";
-    store.save_private_plaintext(
-        realm,
-        strand,
-        &format!("message:{message_id}"),
-        "late plaintext",
-    );
-    let mut accepted = json!({
-        "event_id": "ak:event:AxgU4syRvuaha7eYDoK-By_Sl3Ngv-6Q0_WiiElGwB24",
-        "kind": "ak.message.create",
-        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-        "realm_id": realm,
-        "strand_id": strand,
-        "message_id": message_id,
-        "decryption_state": "decryption_failed",
-        "late_recovery": {
-            "receiver_visible_at_t0": true
-        },
-        "content": {
-            "encrypted_content": true
-        }
-    });
-    sign_chat_fixture(&mut accepted);
-
-    let message = chat_message_from_event_with_sidecar(realm, &accepted, Some(&store), None)
-        .expect("message");
+    let message =
+        chat_message_from_event_with_sidecar(realm, &event, Some(&store), None).expect("message");
 
     assert_eq!(message.body, "late plaintext");
     assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);

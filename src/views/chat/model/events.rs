@@ -1434,16 +1434,11 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     // form (same event_id, body stripped). Render the tombstone marker rather
     // than the original body, even on a fresh reload where this is the only
     // copy of the message the receiver ever sees.
-    let late_recovery_transition =
-        crate::late_recovery::evaluate_late_recovery_transition_event(event);
-    let late_recovery_rejection = late_recovery_transition
-        .rejection_reason_code()
-        .map(ToOwned::to_owned);
     // Author-owned plaintext sidecar: look up the body the author stored on
     // encrypted send, keyed by `message:{message_id}` under the discussion
     // strand. Falls back to the decoded payload body (another member's message
     // we CAN decrypt, or a plaintext message).
-    let sidecar_body = if is_redaction_tombstone || !late_recovery_transition.allows_plaintext() {
+    let sidecar_body = if is_redaction_tombstone {
         None
     } else {
         state_store.and_then(|store| {
@@ -1458,10 +1453,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     // author sidecar. Parse the canonical envelope, decrypt with this device's
     // MLS snapshot secret, and extract the Content Block text. Soft-fails to
     // `None` (→ Decrypting/KeyMissing) when the snapshot/secret is unavailable.
-    let decrypt_context = if !is_redaction_tombstone
-        && !body_from_sidecar
-        && late_recovery_transition.allows_plaintext()
-    {
+    let decrypt_context = if !is_redaction_tombstone && !body_from_sidecar {
         match (
             decrypt_identity,
             state_store,
@@ -1493,7 +1485,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
             })
         });
     let body_was_decrypted = decrypted_content.is_some();
-    let (body, content_format) = if is_redaction_tombstone || late_recovery_rejection.is_some() {
+    let (body, content_format) = if is_redaction_tombstone {
         (String::new(), None)
     } else {
         match sidecar_content.or(decrypted_content) {
@@ -1534,9 +1526,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     // The reducer stamps the immutable Event `effective_scope`; selecting the
     // matching Circle snapshot above binds decryption to that scope without
     // inventing a payload field that v1 forbids.
-    let crypto_state = if late_recovery_rejection.is_some() {
-        MessageCryptoState::LateRecoveryRejected
-    } else if proof_verdict == ChatProofVerdict::Unresolved {
+    let crypto_state = if proof_verdict == ChatProofVerdict::Unresolved {
         // A present sender proof whose verify key is not yet resolvable from
         // the directory cache is flagged rather than presented as trusted.
         MessageCryptoState::NeedsVerification
@@ -1595,7 +1585,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         revision_source: None,
         pending: false,
         failed: false,
-        error: late_recovery_rejection,
+        error: None,
         mentions: mentions_from_candidates(&candidates),
         crypto_state,
     })

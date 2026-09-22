@@ -321,7 +321,6 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 MessageCryptoState::Decrypting => "decrypting",
                                 MessageCryptoState::KeyMissing => "key_missing",
                                 MessageCryptoState::NeedsVerification => "needs_verification",
-                                MessageCryptoState::LateRecoveryRejected => "late_recovery_rejected",
                             },
                             // Right-click toggles a context menu with separate
                             // shared pin and holder-private saved actions.
@@ -714,34 +713,6 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                 "data-testid": "crypto-status-needs-verification",
                                                 span { class: "crypto-status-icon", "\u{26a0}" }
                                                 span { {crate::i18n::tr("chat.crypto.needs_verification")} }
-                                            }
-                                        },
-                                        MessageCryptoState::LateRecoveryRejected => {
-                                            // T6: map the raw protocol reason code to a
-                                            // human-readable explanation. All known
-                                            // `late_recovery_*` reason codes share the
-                                            // late-recovery copy; anything else falls back
-                                            // to a generic undecryptable message. The raw
-                                            // code stays available in the tooltip for
-                                            // debugging/support.
-                                            let raw_code = msg
-                                                .error
-                                                .as_deref()
-                                                .unwrap_or("late_recovery_rejected")
-                                                .to_owned();
-                                            let friendly = if raw_code.starts_with("late_recovery") {
-                                                crate::i18n::tr("chat.crypto.late_recovery_rejected")
-                                            } else {
-                                                crate::i18n::tr("chat.crypto.undecryptable_generic")
-                                            };
-                                            rsx! {
-                                                div {
-                                                    class: "crypto-status-row crypto-status-late-recovery-rejected",
-                                                    "data-testid": "crypto-status-late-recovery-rejected",
-                                                    title: "{raw_code}",
-                                                    span { class: "crypto-status-icon", "\u{26a0}" }
-                                                    span { {friendly} }
-                                                }
                                             }
                                         },
                                     }

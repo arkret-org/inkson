@@ -53,8 +53,6 @@ pub(crate) mod identity;
 pub mod key_backup;
 pub mod keyed_cooldown;
 pub(crate) mod keypackage_maintenance;
-/// Late key recovery UX helpers.
-pub mod late_recovery;
 pub mod media;
 /// Per arkret-spec @ 7157ee8 — Realm-scoped
 /// `ak.member.identity.update` event store. Sync ingests inlined

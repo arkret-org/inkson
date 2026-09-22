@@ -84,46 +84,6 @@ pub fn projection_events_from_sync_realms(
         };
 
         for event in wire_events {
-            if event.get("kind").and_then(Value::as_str)
-                == Some(arkret_wire::event_kind_str::AUDIT_ACCESSED)
-            {
-                match crate::late_recovery::late_recovered_event_from_audit_policy_access_event(
-                    event, false,
-                ) {
-                    crate::late_recovery::LateRecoveryAuditAccessConversion::LateRecovered(
-                        recovered,
-                    ) => {
-                        let mut marker = ProjectionEvent::system_notice(
-                            format!("late-recovery-{}", recovered.event_id),
-                            "audit",
-                            recovered.banner_text(),
-                        );
-                        marker.realm_id = Some(realm_id.clone());
-                        marker.event_id = Some(recovered.event_id);
-                        events.push(marker);
-                        continue;
-                    }
-                    crate::late_recovery::LateRecoveryAuditAccessConversion::Reject(reason) => {
-                        let mut rejected = ProjectionEvent::system_notice(
-                            format!(
-                                "late-recovery-rejected-{}",
-                                event
-                                    .get("event_id")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("event:unknown")
-                            ),
-                            "audit",
-                            reason.reason_code(),
-                        );
-                        rejected.realm_id = Some(realm_id.clone());
-                        rejected.failed = true;
-                        rejected.error = Some(reason.reason_code().to_owned());
-                        events.push(rejected);
-                        continue;
-                    }
-                    crate::late_recovery::LateRecoveryAuditAccessConversion::NotLateRecovery => {}
-                }
-            }
             if event.get("kind").and_then(Value::as_str) != Some(event_kind_str::MESSAGE_CREATE) {
                 continue;
             }
@@ -144,11 +104,6 @@ pub fn projection_events_from_sync_realms(
                 .or_else(|| projection_text_from_content_value(content))
                 .unwrap_or("[message]")
                 .to_owned();
-            let late_recovery_transition =
-                crate::late_recovery::evaluate_late_recovery_transition_event(event);
-            let late_recovery_rejection = late_recovery_transition
-                .rejection_reason_code()
-                .map(ToOwned::to_owned);
             // B7: carry the raw `encrypted_content` block forward so local
             // consumers can try an MLS decrypt against it.
             let encrypted_payload = content.get("encrypted_content").cloned();
@@ -158,9 +113,7 @@ pub fn projection_events_from_sync_realms(
             // decrypting their OWN ciphertext) and otherwise a remote-member
             // decrypt-on-read. Leave the `[message]` fallback untouched when
             // neither store nor identity is available, or recovery soft-fails.
-            if late_recovery_transition.allows_plaintext()
-                && let Some(encrypted_content) = encrypted_payload.as_ref()
-            {
+            if let Some(encrypted_content) = encrypted_payload.as_ref() {
                 let message_realm = content
                     .get("realm_id")
                     .and_then(Value::as_str)
@@ -223,9 +176,6 @@ pub fn projection_events_from_sync_realms(
                     body = projection_text_from_private_sidecar(plaintext);
                 }
             }
-            if late_recovery_rejection.is_some() {
-                body.clear();
-            }
             let Some(sender) = projection_actor_id(event) else {
                 // A projected message without its stable accountable actor is
                 // not renderable identity state. Drop it instead of inventing
@@ -257,8 +207,6 @@ pub fn projection_events_from_sync_realms(
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned),
                 event_id: Some(event_id),
-                failed: late_recovery_rejection.is_some(),
-                error: late_recovery_rejection,
                 encrypted_payload,
                 ..ProjectionEvent::default()
             });

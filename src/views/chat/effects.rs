@@ -634,38 +634,6 @@ pub(super) fn ChatEffects(
                     });
                     return;
                 };
-                if !selected_realm_for_load.trim().is_empty() {
-                    tracing::debug!(
-                        realm_id = %selected_realm_for_load,
-                        phase = "realm_current_result",
-                        "chat initial sync phase started"
-                    );
-                    if let Err(error) =
-                        crate::mls::creator_bootstrap::refresh_realm_governance_frontier(
-                            &api,
-                            crate::app::runtime_adapter::state_store_handle(state_store),
-                            &selected_realm_for_load,
-                        )
-                        .await
-                    {
-                        // A removed member may still enter this shell. Failure to
-                        // obtain the Station's current result leaves authoring
-                        // readiness unresolved; finishing this view load does not
-                        // make the selected Realm's detail complete.
-                        tracing::warn!(
-                            realm_id = %selected_realm_for_load,
-                            phase = "realm_current_result",
-                            %error,
-                            "chat initial sync could not refresh the Realm current result"
-                        );
-                    } else {
-                        tracing::debug!(
-                            realm_id = %selected_realm_for_load,
-                            phase = "realm_current_result",
-                            "chat initial sync phase completed"
-                        );
-                    }
-                }
                 let mut loaded_messages = Vec::new();
                 if let Ok(account) =
                     async { crate::transport::account::account_me(&api.sdk_http_client()?).await }

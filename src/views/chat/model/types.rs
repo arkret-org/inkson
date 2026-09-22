@@ -104,9 +104,6 @@ pub(crate) enum MessageCryptoState {
     /// Sender device hasn't been verified (no accepted device-directory
     /// record for the sender, or a fingerprint mismatch). The body still decrypted, but we flag it.
     NeedsVerification,
-    /// A late-recovery transition was attempted, but the required membership,
-    /// key-share-source, or expiry/retention guard rejected it.
-    LateRecoveryRejected,
 }
 
 impl MessageCryptoState {

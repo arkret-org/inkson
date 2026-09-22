@@ -109,7 +109,7 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
 }
 
 #[test]
-fn projection_audit_policy_access_late_recovery_marker_is_guarded() {
+fn projection_does_not_turn_audit_policy_access_into_chat_authority() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let realms = std::collections::BTreeMap::from([(
         realm.to_owned(),
@@ -136,17 +136,9 @@ fn projection_audit_policy_access_late_recovery_marker_is_guarded() {
     )]);
 
     let events = projection_events_from_sync_realms(&realms, None, None);
-    let marker = events
-        .iter()
-        .find(|event| {
-            event.id == "late-recovery-ak:event:ATFrN4sYtiDvJD5G4wKxYY3xMKfo-Xqa_o9Xkb-XnzFN"
-        })
-        .expect("late recovery audit marker");
-
-    assert!(marker.body.contains("30"));
-    assert!(!marker.failed);
-    assert_eq!(
-        marker.event_id.as_deref(),
-        Some("ak:event:ATFrN4sYtiDvJD5G4wKxYY3xMKfo-Xqa_o9Xkb-XnzFN")
+    assert!(
+        events
+            .iter()
+            .all(|event| !event.id.starts_with("late-recovery-"))
     );
 }

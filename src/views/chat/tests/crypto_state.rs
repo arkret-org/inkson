@@ -8,7 +8,6 @@ fn message_crypto_state_pending_detects_grey_states() {
     assert!(MessageCryptoState::Decrypting.is_pending());
     assert!(MessageCryptoState::KeyMissing.is_pending());
     assert!(!MessageCryptoState::NeedsVerification.is_pending());
-    assert!(!MessageCryptoState::LateRecoveryRejected.is_pending());
 }
 
 #[test]
