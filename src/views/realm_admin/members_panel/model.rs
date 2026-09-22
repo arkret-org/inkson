@@ -484,18 +484,10 @@ pub(super) fn projected_member_profiles_for_realm(
             upsert_member_profile(&mut rows, profile);
         }
     }
-    // Ownership is not a roster decoration. The only authorization-grade
-    // source is the Realm authority-root cell derived from the accepted
-    // `ak.realm.create` Event, so classify the owner from that projected Event
-    // rather than the discarded `owners` / `admins` presentation mirrors.
-    if let Some(root) =
-        garth::realm_authority_root_value_for_realm(&state.realm_tree_projections, realm_id)
-    {
-        let mut owner = MemberProfile::bare(root.controller_actor_id.to_string());
-        owner.membership = Some("join".to_owned());
-        owner.is_owner = true;
-        upsert_member_profile(&mut rows, owner);
-    }
+    // Do not infer ownership from the retired authority-root Cell embedded in
+    // a local Realm tree projection. Ownership is governance authority, not a
+    // roster decoration; until the panel receives a verified governing
+    // Station typed-current authority root it must leave `is_owner` false.
     let invitee_by_invite_id =
         local_invitee_by_invite_id_for_realm(&state.raw_operations, realm_id);
     for record in &state.raw_operations {

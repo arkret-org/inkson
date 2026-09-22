@@ -455,7 +455,7 @@ fn projected_member_profiles_drop_handle_from_untrusted_issuer() {
 }
 
 #[test]
-fn projected_member_profiles_classify_authority_root_controller_as_owner() {
+fn projected_member_profiles_do_not_promote_retired_local_authority_root() {
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let mut store = temp_store("authority-root-owner");
     store.save_realm_tree_projection(
@@ -483,8 +483,8 @@ fn projected_member_profiles_classify_authority_root_controller_as_owner() {
     let alice = profiles
         .iter()
         .find(|profile| profile.actor_id == actor_key("ak:did_core:web:alice.example"))
-        .expect("authority-root controller is present");
-    assert!(alice.is_owner);
+        .expect("roster member is present");
+    assert!(!alice.is_owner);
     assert_eq!(alice.membership.as_deref(), Some("join"));
     assert_eq!(profiles.len(), 1);
 }
