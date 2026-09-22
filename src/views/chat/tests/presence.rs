@@ -186,14 +186,19 @@ fn presence_retries_once_after_mount_then_uses_the_normal_refresh_cadence() {
 }
 
 #[test]
-fn watch_level_wire_round_trip() {
-    for level in [
-        WatchLevel::MentionsOnly,
-        WatchLevel::Participating,
-        WatchLevel::All,
-        WatchLevel::Muted,
+fn typed_watch_levels_map_to_the_same_ui_level() {
+    for (wire, expected) in [
+        (
+            arkret_sdk::StrandWatchLevel::MentionsOnly,
+            WatchLevel::MentionsOnly,
+        ),
+        (
+            arkret_sdk::StrandWatchLevel::Participating,
+            WatchLevel::Participating,
+        ),
+        (arkret_sdk::StrandWatchLevel::All, WatchLevel::All),
+        (arkret_sdk::StrandWatchLevel::Muted, WatchLevel::Muted),
     ] {
-        assert_eq!(watch_level_from_wire(watch_level_wire_value(level)), level);
+        assert_eq!(watch_level_from_wire(wire), expected);
     }
-    assert_eq!(watch_level_from_wire("none"), WatchLevel::Muted);
 }
