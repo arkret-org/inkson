@@ -112,7 +112,7 @@ fn commit_for(event: &arkret_sdk::Event, position: u64) -> arkret_wire::RealmCom
         previous_commit_ref: (position > 0)
             .then(|| arkret_wire::RealmCommitId::from_digest([position as u8; 32])),
         event_ref: event.event_id.clone(),
-        authority_generation: 0,
+        governance_generation: 0,
         authority_ref: arkret_wire::RealmCommitAuthorityRef::GenesisOrChangeEvent(
             arkret_wire::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [9; 32]),
         ),
@@ -565,13 +565,6 @@ impl garth::AuthorityTransport for ScriptedAuthority {
         _request: &arkret_wire::StreamScanRequest,
     ) -> garth::Result<arkret_wire::StreamScanOutcome> {
         Err(garth::Error::Protocol("scan is not scripted".to_owned()))
-    }
-
-    async fn resolve(
-        &self,
-        _request: &arkret_wire::CommittedEventResolveRequest,
-    ) -> garth::Result<arkret_wire::CommittedEventResolveOutcome> {
-        Err(garth::Error::Protocol("resolve is not scripted".to_owned()))
     }
 
     async fn authority_bundle(
