@@ -13,18 +13,21 @@ fn directory_refresh_updates_status_without_dropping_loaded_details() {
             AgentLifecycleState::Active,
             AgentRuntimeState::PendingRuntimeKey,
         ),
-        grants: vec![arkret_sdk::GrantSnapshot {
-            grant_id: arkret_sdk::GrantId::new(
-                "ak:grant:AdIokNbDGo5OV8uIK_7oyEOrSIU423PwmxNVThDeiPwQ",
-            )
+        grants: vec![
+            serde_json::to_value(arkret_sdk::GrantSnapshot {
+                grant_id: arkret_sdk::GrantId::new(
+                    "ak:grant:AdIokNbDGo5OV8uIK_7oyEOrSIU423PwmxNVThDeiPwQ",
+                )
+                .unwrap(),
+                realm_id: arkret_sdk::RealmId::new(
+                    "ak:realm:AYzH43fmsgS6dn7noiHeYxAKUUdkhaJBnOGaWvu3MlBC",
+                )
+                .unwrap(),
+                grant_digest: None,
+                expires_at: None,
+            })
             .unwrap(),
-            realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:AYzH43fmsgS6dn7noiHeYxAKUUdkhaJBnOGaWvu3MlBC",
-            )
-            .unwrap(),
-            grant_digest: None,
-            expires_at: None,
-        }],
+        ],
         key_state: None,
     }];
     let directory_rows = vec![AgentView {
@@ -40,8 +43,10 @@ fn directory_refresh_updates_status_without_dropping_loaded_details() {
         crate::views::agents::model::agent_projection_runtime_state(&rows[0].agent),
         AgentRuntimeState::Ready
     );
+    let grant: arkret_sdk::GrantSnapshot =
+        serde_json::from_value(rows[0].grants[0].clone()).unwrap();
     assert_eq!(
-        rows[0].grants[0].grant_id.as_str(),
+        grant.grant_id.as_str(),
         "ak:grant:AdIokNbDGo5OV8uIK_7oyEOrSIU423PwmxNVThDeiPwQ"
     );
 }
@@ -222,6 +227,8 @@ fn test_pairing_view(status: AgentLifecycleState, runtime_state: AgentRuntimeSta
             pending_runtime_key_request: None,
             approval_requested_at: None,
             authorized_event_ref: None,
+            authorized_verification_method: None,
+            authorized_public_key_digest: None,
             active_authorizations,
             signer_resolution_evidence_ref: None,
             current_signer_evidence: None,
