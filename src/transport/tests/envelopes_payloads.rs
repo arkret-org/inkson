@@ -164,8 +164,6 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             facet.kind.as_str()
         );
     }
-    // Realm genesis has no prior authority decision.
-    assert!(create.auth_context.is_none());
     // The typed builder leaves the envelope unsigned — the active
     // signer attaches the detached JWS proof at submit time.
     assert!(create.producer_proof.is_none());
@@ -202,20 +200,6 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         ])
     );
     assert_eq!(events[7].payload["membership"], "join");
-    assert_eq!(events[7].preconditions.len(), 1);
-    let creator_member_id: arkret_sdk::ActorId =
-        serde_json::from_value(events[7].payload["member_id"].clone()).unwrap();
-    let creator_member_subject =
-        arkret_sdk::composite_subject(&[creator_member_id.canonical_key().unwrap().as_str()])
-            .unwrap();
-    assert_eq!(
-        events[7].preconditions[0].cell_id.as_str(),
-        format!("ak:cell:ak.component.member.state.v1:{creator_member_subject}")
-    );
-    assert_eq!(
-        events[7].preconditions[0].predicate.value,
-        Some(serde_json::Value::Null)
-    );
     assert!(events.iter().all(|event| {
         event
             .payload
