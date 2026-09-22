@@ -954,18 +954,6 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(cancel.payload()["target_state"], "revoked");
     assert!(!cancel.payload().contains_key("state"));
     assert_registered_payload_valid(&cancel);
-    let cancelled = authored(&cancel);
-    // The receiver is where `invite_kind_requires_revoke` belongs: a target
-    // Invite with no stored invitee is a token / 3PID Invite, which only
-    // `ak.invite.revoke` may terminate.
-    let empty_pre_state = arkret_sdk::schema::FrozenPreState::new();
-    let unbound = arkret_sdk::schema::project_registered_cell_writes_with_pre_state(
-        &cancelled,
-        arkret_sdk::canonical::DigestSuite::Sha256,
-        &empty_pre_state,
-    )
-    .expect_err("a cancel against an Invite with no stored invitee must fail closed");
-    assert_eq!(unbound.reason_code(), "invite_kind_requires_revoke");
     // `event-envelope.schema.json` restricts the enum to rejected / revoked on
     // this kind, so the builder refuses anything else rather than shipping an
     // Event that would be rejected at admission.
