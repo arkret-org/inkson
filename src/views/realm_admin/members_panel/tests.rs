@@ -586,8 +586,6 @@ fn accepted_invite_route_recovers_from_canonical_history_after_restart() {
             },
             fixture::core_id(principal),
             invitee.station_id.clone(),
-            1,
-            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             payload,
         )
         .unwrap()
@@ -623,13 +621,6 @@ fn accepted_invite_route_recovers_from_canonical_history_after_restart() {
                     .unwrap(),
             )
             .unwrap(),
-            signer_resolution_evidence_ref: Some(
-                arkret_sdk::SignerEvidenceRef::new(format!(
-                    "ak:signer_evidence:sha256:{}",
-                    "11".repeat(32)
-                ))
-                .unwrap(),
-            ),
             created_at: accept.created_at,
             domain: None,
             audience: None,
@@ -650,7 +641,7 @@ fn accepted_invite_route_recovers_from_canonical_history_after_restart() {
                 realm_id,
                 &events
                     .into_iter()
-                    .map(garth::ClientEvent::Event)
+                    .map(|event| garth::ClientEvent::Event(Box::new(event)))
                     .collect::<Vec<_>>(),
             )
         } else {
