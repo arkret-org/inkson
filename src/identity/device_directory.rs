@@ -767,7 +767,6 @@ fn store_entry(
         key,
         authorize_event_id,
         None,
-        None,
         expires_at,
         version,
     )
