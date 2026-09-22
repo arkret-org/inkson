@@ -95,6 +95,20 @@ pub(crate) async fn install_accepted_transition(
                 // order.
                 return Ok(MlsInstallOutcome::BaseEpochMissing);
             }
+            let base_event_id = base.group_state_event_id.as_ref().ok_or_else(|| {
+                "accepted MLS Commit base checkpoint has no accepted Event".to_owned()
+            })?;
+            let station_base = state
+                .read(|store| store.current_mls_group_for_scope(&transition.effective_scope))
+                .ok_or_else(|| {
+                    "accepted MLS Commit has no pinned Station base current result".to_owned()
+                })?;
+            validate_station_base_current(
+                &station_base,
+                &transition.effective_scope,
+                base_event_id,
+                transition.previous_epoch,
+            )?;
             let mut group =
                 crate::mls::persistence::restore_envelope(&base, &snapshot_secret, base.epoch)
                     .map_err(describe)?;
@@ -103,7 +117,9 @@ pub(crate) async fn install_accepted_transition(
             // one: the staged pending commit travels inside the durable group
             // state, so an author that restarted between submission and
             // acceptance still installs exactly the epoch it authored.
-            group.install_accepted_commit(item).map_err(describe)?;
+            group
+                .install_accepted_commit(item, &station_base)
+                .map_err(describe)?;
             crate::mls::governance_proof::install_post_transition_leaf_bindings(
                 &mut group,
                 &previous,
@@ -416,6 +432,23 @@ fn validate_installed_coordinate(
     Ok(())
 }
 
+fn validate_station_base_current(
+    current: &arkret_wire::MlsGroupCurrent,
+    effective_scope: &arkret_sdk::ScopeRef,
+    base_event_id: &arkret_sdk::EventId,
+    previous_epoch: u64,
+) -> Result<(), String> {
+    if &current.effective_scope != effective_scope
+        || &current.current_mls_commit_event_ref != base_event_id
+        || current.epoch != previous_epoch
+    {
+        return Err(
+            "pinned Station MLS current result is not the exact transition base".to_owned(),
+        );
+    }
+    Ok(())
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
@@ -532,5 +565,54 @@ mod tests {
             validate_installed_coordinate(&accepted_group, 6, &accepted_group, 7).unwrap_err(),
             "installed MLS state differs from the accepted transition group or epoch"
         );
+    }
+
+    #[test]
+    fn station_current_must_be_the_exact_pre_transition_base() {
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id(),
+        };
+        let genesis = arkret_sdk::EventId::new(
+            "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk".to_owned(),
+        )
+        .unwrap();
+        let base = arkret_sdk::EventId::new(
+            "ak:event:AbhX3-n_FG8scl_4zkFai8VRhqvIwjOeWHvA8D3mQ9V7".to_owned(),
+        )
+        .unwrap();
+        let current = arkret_wire::MlsGroupCurrent {
+            effective_scope: scope.clone(),
+            genesis_event_ref: genesis,
+            current_mls_commit_event_ref: base.clone(),
+            epoch: 7,
+            current_key_access_revision: 11,
+            covered_key_access_revision: 11,
+            public_tree_ref: arkret_sdk::BlobRef::new(format!(
+                "ak:blob:sha256:{}",
+                "22".repeat(32)
+            ))
+            .unwrap(),
+        };
+
+        assert!(validate_station_base_current(&current, &scope, &base, 7).is_ok());
+
+        let mut post_state = current.clone();
+        post_state.epoch = 8;
+        assert!(validate_station_base_current(&post_state, &scope, &base, 7).is_err());
+
+        let another_event = arkret_sdk::EventId::new(
+            "ak:event:AZk4PXzJ6MpkxXnYTUmgXzeIYNd0Wfnz3N0hwLHNV6Xq".to_owned(),
+        )
+        .unwrap();
+        assert!(validate_station_base_current(&current, &scope, &another_event, 7).is_err());
+
+        let another_scope = arkret_sdk::ScopeRef::Circle {
+            realm_id: realm_id(),
+            circle_id: arkret_sdk::CircleId::new(
+                "ak:circle:AcQajqaKFvyDoMpqpSlBvMh0d4gheZsVPhbHaTlqXtkV".to_owned(),
+            )
+            .unwrap(),
+        };
+        assert!(validate_station_base_current(&current, &another_scope, &base, 7).is_err());
     }
 }
