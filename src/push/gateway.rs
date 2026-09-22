@@ -1,18 +1,15 @@
-//! Push gateway configuration, describe helpers, and payload validation.
+//! Push gateway configuration and payload validation.
 //!
 //! This module owns the runtime resolution of the floria push gateway
 //! URL, the development placeholder-token guards, the blind-wakeup
-//! payload lint, and the bridge / integration describe fetchers and
-//! their human-readable summaries. The contents are a pure structural
-//! split out of `push::mod`; behaviour, visibility, and serialization
-//! are unchanged.
+//! payload lint, and the human-readable describe summary used by tests.
+//! Network calls belong to the Station-facing registration client; Inkson
+//! never connects to the configured gateway directly.
 
-use chime::{
-    ArkretPushClient, ChimePushRegisterDeviceRequest, PushRegistrationState, ServiceDescribe,
-};
+#[cfg(test)]
+use chime::ServiceDescribe;
+use chime::{ChimePushRegisterDeviceRequest, PushRegistrationState};
 use serde_json::Value;
-
-use super::token_provider::vapid_public_key_from_service_describe;
 
 /// The previous hard-coded
 /// `https://push.example/_arkret/edge/push/notify` placeholder is gone.
@@ -162,25 +159,6 @@ pub fn push_status_label(state: Option<&PushRegistrationState>) -> String {
     }
 }
 
-/// COR-05: read/connect timeout for the (untrusted) push-gateway describe
-/// fetchers. A 10s cap so a slow / half-open / stalled gateway can't hang
-/// push registration indefinitely.
-#[cfg(not(target_arch = "wasm32"))]
-const PUSH_DESCRIBE_TIMEOUT_SECS: u64 = 10;
-
-fn push_describe_client(push_gateway_url: &str) -> ArkretPushClient {
-    let client = ArkretPushClient::new(push_gateway_url).without_retries();
-    #[cfg(not(target_arch = "wasm32"))]
-    let client = client.with_timeout(std::time::Duration::from_secs(PUSH_DESCRIBE_TIMEOUT_SECS));
-    client
-}
-
-pub async fn describe_push_gateway(push_gateway_url: &str) -> anyhow::Result<ServiceDescribe> {
-    Ok(push_describe_client(push_gateway_url)
-        .service_describe()
-        .await?)
-}
-
 #[cfg(test)]
 pub fn summarize_push_gateway(describe: &ServiceDescribe) -> String {
     let providers = describe
@@ -220,15 +198,4 @@ pub fn summarize_push_gateway(describe: &ServiceDescribe) -> String {
         providers,
         auth_modes,
     )
-}
-
-/// Fetch soland's push-bridge describe + extract the
-/// VAPID public key. Returned `None` means the deploy hasn't published a
-/// VAPID key yet (older soland scaffold) — callers should treat that as
-/// "subscribe without applicationServerKey".
-pub async fn fetch_vapid_application_server_key(
-    push_gateway_url: &str,
-) -> anyhow::Result<Option<String>> {
-    let describe = describe_push_gateway(push_gateway_url).await?;
-    Ok(vapid_public_key_from_service_describe(&describe))
 }

@@ -1,13 +1,15 @@
 //! Chime-driven push registration orchestrator.
 //!
 //! `crate::push` has long shipped the building blocks (token source, register
-//! request builder, registration-state persistence helper, VAPID describe
-//! fetch). What was missing was a *single* end-to-end orchestrator that
+//! request builder, registration-state persistence helper). What was missing
+//! was a *single* end-to-end orchestrator that
 //! resolves a real platform token via the active [`PushTokenProvider`],
 //! posts the register-device request through the chime [`ArkretPushClient`]
-//! pointed at the floria notify gateway, and returns the resulting
+//! pointed at the authenticated Station, and returns the resulting
 //! [`PushRegistrationState`] for the caller to persist through its live store
 //! handle.
+//! The Floria gateway URL is request data only; Inkson never contacts that
+//! gateway directly.
 //!
 //! The orchestrator deliberately does **not** silently fall back to a
 //! placeholder push key. If the active provider declines (or none is
@@ -303,10 +305,8 @@ async fn resolve_real_token(_ctx: &RegisterContext) -> Result<String, PushRegist
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn resolve_real_token(ctx: &RegisterContext) -> Result<String, PushRegistrationError> {
-    use crate::push::{
-        fetch_vapid_application_server_key, push_token_provider, resolve_provider_push_token,
-    };
+async fn resolve_real_token(_ctx: &RegisterContext) -> Result<String, PushRegistrationError> {
+    use crate::push::{push_token_provider, resolve_provider_push_token};
 
     let Some(provider) = push_token_provider() else {
         return Err(PushRegistrationError::NoRealToken {
@@ -316,12 +316,7 @@ async fn resolve_real_token(ctx: &RegisterContext) -> Result<String, PushRegistr
     };
     let platform = provider.platform();
 
-    let vapid = fetch_vapid_application_server_key(&ctx.floria_gateway_url)
-        .await
-        .ok()
-        .flatten();
-
-    match resolve_provider_push_token(vapid.as_deref()).await {
+    match resolve_provider_push_token(None).await {
         Ok(Some(token)) if !token.is_empty() => Ok(token),
         Ok(_) => Err(PushRegistrationError::NoRealToken {
             platform,
