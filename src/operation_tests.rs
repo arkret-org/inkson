@@ -109,17 +109,10 @@ fn operation_builder_generates_valid_envelope() {
     );
     assert_eq!(op.kind().as_str(), "ak.message.create");
 
-    // The authoring position and the signing stamp arrive at the finalize
-    // boundary, and nothing carries a proof before an identity exists.
+    // The content-bound identity arrives at the finalize boundary, and
+    // nothing carries a proof before a producer identity exists.
     let event = authored(&op);
-    assert!(
-        !event
-            .hlc
-            .as_ref()
-            .expect("an authored Event carries its signing stamp")
-            .as_str()
-            .is_empty()
-    );
+    assert!(!event.event_id().as_str().is_empty());
     assert!(event.producer_proof.is_none());
     event.verify_identity().unwrap();
 }
@@ -183,11 +176,10 @@ fn operation_builder_can_emit_signed_authorization_binding() {
     );
 
     let event = authored(&op);
-    assert!(!event.unsigned.contains_key("local_authz_ref"));
     let mut canonical = serde_json::to_value(event.event()).unwrap();
+    assert!(canonical.get("unsigned").is_none());
     if let serde_json::Value::Object(object) = &mut canonical {
         object.remove("producer_proof");
-        object.remove("unsigned");
     }
     assert_eq!(
         canonical["executed_by"],
