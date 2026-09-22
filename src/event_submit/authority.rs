@@ -106,7 +106,7 @@ mod tests {
             applet_id: None,
             external_ref: None,
             created_at: chrono::Utc::now(),
-            refs: Vec::new(),
+            semantic_refs: Vec::new(),
             payload: BTreeMap::from([("object".to_owned(), json!({}))]),
             producer_proof: None,
         }
