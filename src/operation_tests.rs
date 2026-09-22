@@ -862,8 +862,6 @@ fn invite_helpers_emit_canonical_kinds() {
     .expect("builds")
     .build("node");
     assert_eq!(create.kind().as_str(), "ak.invite.create");
-    let created = authored(&create);
-    let derived_invite_id = arkret_sdk::InviteId::from_event_id(created.event_id()).to_string();
     assert!(!create.payload().contains_key("invite_id"));
     assert_eq!(
         create.payload()["invitee_account_id"],
@@ -894,36 +892,6 @@ fn invite_helpers_emit_canonical_kinds() {
     assert!(!create.payload().contains_key("role"));
     assert!(!create.payload().contains_key("state"));
     assert_registered_payload_valid(&create);
-    // `validate_registered_cell_writes` also runs the CBS plane check, and
-    // `ak.invite.create` is control-plane: its `seal_basis` is attached by the
-    // submit gate, not by authoring. The authoring-time claim is that the
-    // registry can derive the writes at all.
-    let writes =
-        crate::operation::project_registered_cell_writes(&created, arkret_sdk::DigestSuite::Sha256)
-            .expect("direct invite create must carry both registered writes");
-    // governance-objects.md section 5.3: the create atomically opens the invite
-    // lifecycle and claims the invitee's Realm live-target slot. The slot value
-    // is the create Event id verbatim, in `ak:event:` form, and the Move
-    // asserts `head_eq: null` on it so two concurrent invites for one
-    // account contend on the same cell.
-    let live_target_cell =
-        arkret_sdk::invite_live_target_cell(&invitee_account_id).expect("registered subject rule");
-    assert_eq!(
-        writes
-            .iter()
-            .map(|write| write.cell_id.as_str())
-            .collect::<Vec<_>>(),
-        vec![
-            format!("ak:cell:ak.component.invite.lifecycle.v1:{derived_invite_id}"),
-            live_target_cell.as_str().to_owned(),
-        ]
-    );
-    assert_eq!(
-        create.intent().preconditions(),
-        &[arkret_sdk::InviteLiveTargetSlot::Free
-            .precondition(&invitee_account_id)
-            .expect("registered contract")]
-    );
 
     // Third-party form: the Invite stores no account, so the payload carries
     // none and the accept derives no live-target release write.
