@@ -241,40 +241,37 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
     let group_state_ref = state
         .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)
         .unwrap();
-    let (_, _, content_payload, metadata_payload, commit, snapshot, _) =
-        encrypt_message_with_device_snapshot(
-            &mut state,
-            &secure,
-            realm,
-            &fixture::authority(actor),
-            &fixture::device_id(device),
-            "application/vnd.arkret.message+json",
-            arkret_wire::event_kind_str::MESSAGE_CREATE,
-            group_state_ref,
-            br#"{"kind":"ak.content.text","body":"routed"}"#,
-            Some(arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE),
-            Some(br#"{"sidecar_exchange_binding":{}}"#.as_slice()),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-    let metadata_payload = metadata_payload.expect("metadata ciphertext");
+    let encrypted = encrypt_message_with_device_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &fixture::authority(actor),
+        &fixture::device_id(device),
+        "application/vnd.arkret.message+json",
+        arkret_wire::event_kind_str::MESSAGE_CREATE,
+        group_state_ref,
+        br#"{"kind":"ak.content.text","body":"routed"}"#,
+        Some(arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE),
+        Some(br#"{"sidecar_exchange_binding":{}}"#.as_slice()),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    let metadata_payload = encrypted.metadata.expect("metadata ciphertext");
     assert_eq!(
-        content_payload.content_type,
+        encrypted.content.content_type,
         arkret_sdk::MESSAGE_CONTENT_BLOCK_MLS_CONTENT_TYPE
     );
     assert_eq!(
         metadata_payload.content_type,
         arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE
     );
-    assert_eq!(metadata_payload.epoch, content_payload.epoch);
+    assert_eq!(metadata_payload.epoch, encrypted.content.epoch);
     assert_ne!(
         metadata_payload.payload_digest,
-        content_payload.payload_digest
+        encrypted.content.payload_digest
     );
-    assert!(commit.is_none());
-    assert!(snapshot.is_none());
     // Both application messages advanced the §5.6 observed counter.
     assert_eq!(
         state
@@ -330,7 +327,8 @@ fn replacement_sender_domain_blocks_before_counter_advance() {
         None,
         None,
     )
-    .unwrap_err();
+    .err()
+    .expect("a replacement sender domain must pause encryption");
     assert!(matches!(
         error,
         MlsRuntimeError::EncryptionTransitionPending
@@ -443,7 +441,10 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
     )
     .unwrap_err();
 
-    assert!(matches!(error, MlsRuntimeError::EncryptionPolicyPending));
+    assert!(matches!(
+        error,
+        MlsRuntimeError::EncryptionTransitionPending
+    ));
     assert_eq!(state.mls_checkpoint_for(realm).unwrap().epoch, 0);
 }
 
