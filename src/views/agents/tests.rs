@@ -18,10 +18,9 @@ mod agent_tests {
             did: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             initial_resolution: arkret_sdk::ResolutionCommitment {
                 did: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
-                method_history_head: arkret_sdk::Hash::new(
-                    "sha256:0707070707070707070707070707070707070707070707070707070707070707",
-                )
-                .unwrap(),
+                method_history_head:
+                    "sha256:0707070707070707070707070707070707070707070707070707070707070707"
+                        .to_owned(),
                 version_id: "1-fixture".to_owned(),
             },
             principal_control_realm_id: arkret_sdk::RealmId::new(
