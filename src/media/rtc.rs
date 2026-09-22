@@ -1139,7 +1139,10 @@ mod tests {
         let governance_binding = MlsGovernanceBindingPayload::realm(
             RealmId::new("ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned())
                 .unwrap(),
-            Some(arkret_sdk::EventId::from_digest([0x42; 32])),
+            Some(arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [0x42; 32],
+            )),
             6,
             7,
             3,
@@ -1259,7 +1262,10 @@ mod tests {
             DeviceId::new(EXPORTER_DEVICE.to_owned()).unwrap(),
         )
         .unwrap();
-        let group = identity.create_group(EXPORTER_REALM.as_bytes()).unwrap();
+        let effective_scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(EXPORTER_REALM).unwrap(),
+        };
+        let group = identity.create_group(&effective_scope).unwrap();
         let record = group.export_state_record().unwrap();
         let bytes = serde_json::to_vec(&record).unwrap();
         crate::mls::persistence::encrypt_state(
