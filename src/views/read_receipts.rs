@@ -322,11 +322,9 @@ mod tests {
 
     /// The closed receipt a body stands for. `read_scope` comes from the body
     /// so a scope-varying test exercises the real routing input.
-    fn receipt_of(plaintext: &garth::SignalPlaintext) -> &arkret_sdk::ReadReceipt {
-        match &plaintext.payload {
-            arkret_models_collaboration::signal_plaintext::SignalPlaintext::ReadReceipt(
-                receipt,
-            ) => receipt,
+    fn receipt_of(signal: &crate::runtime::projection::AdmittedSignal) -> &arkret_sdk::ReadReceipt {
+        match &signal.payload {
+            arkret_sdk::SignalPlaintext::ReadReceipt(receipt) => receipt,
             other => unreachable!("the fixture builds a read receipt, not {other:?}"),
         }
     }
