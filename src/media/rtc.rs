@@ -1420,17 +1420,22 @@ mod tests {
         use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
         // Build a REAL two-member MLS group: Alice creates, Bob joins via Welcome.
+        let alice_actor = crate::test_support::account_actor(ALICE_ACTOR);
+        let bob_actor = crate::test_support::account_actor(BOB_ACTOR);
         let alice_identity = ArkretMlsIdentity::new_test_human_device(
-            crate::test_support::account_actor(ALICE_ACTOR),
+            alice_actor.clone(),
             DeviceId::new(ALICE_DEVICE.to_owned()).unwrap(),
         )
         .unwrap();
         let bob_identity = ArkretMlsIdentity::new_test_human_device(
-            crate::test_support::account_actor(BOB_ACTOR),
+            bob_actor.clone(),
             DeviceId::new(BOB_DEVICE.to_owned()).unwrap(),
         )
         .unwrap();
-        let bob_key_package = bob_identity.key_package_record().unwrap();
+        let bob_key_package = crate::test_support::claimed_mls_key_package(
+            bob_identity.key_package_record().unwrap(),
+            1_760_000_000_001,
+        );
         let alice_endpoint = alice_identity.endpoint_identity();
         let bob_endpoint = bob_identity.endpoint_identity();
 
@@ -1439,8 +1444,28 @@ mod tests {
         };
         let mut alice_group = alice_identity.create_group(&effective_scope).unwrap();
         let add = alice_group.add_member(&bob_key_package).unwrap();
-        let mut bob_group =
-            arkret_sdk::ArkretMlsGroup::join_from_welcome(bob_identity, &add.welcome).unwrap();
+        let accepted_commit = crate::test_support::accepted_mls_commit(
+            &effective_scope,
+            alice_actor,
+            &add.commit,
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x41; 32]),
+            0x42,
+        );
+        let delivery = crate::test_support::accepted_mls_welcome(
+            &add.welcome,
+            bob_actor,
+            &accepted_commit,
+            1_760_000_000_002,
+        );
+        alice_group
+            .install_accepted_commit(&accepted_commit)
+            .unwrap();
+        let mut bob_group = arkret_sdk::ArkretMlsGroup::join_from_verified_welcome_delivery(
+            bob_identity,
+            &delivery,
+            &accepted_commit,
+        )
+        .unwrap();
         bob_group
             .install_test_leaf_bindings(vec![alice_endpoint, bob_endpoint])
             .unwrap();

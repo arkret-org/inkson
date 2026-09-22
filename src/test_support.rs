@@ -54,6 +54,140 @@ pub(crate) fn device_id(value: &str) -> arkret_sdk::DeviceId {
         .unwrap_or_else(|error| panic!("fixture device `{value}` is invalid: {error}"))
 }
 
+/// Mark a locally generated KeyPackage as the exact authority-claimed record
+/// consumed by an MLS Add. The MLS runtime intentionally refuses published
+/// packages because only a claim gives the Welcome a durable recipient key.
+pub(crate) fn claimed_mls_key_package(
+    mut record: arkret_sdk::MlsKeyPackageRecord,
+    issued_at_ms: u64,
+) -> arkret_sdk::MlsKeyPackageRecord {
+    record.state = arkret_sdk::MlsKeyPackageState::Claimed;
+    record.claim_id = Some(arkret_wire::KeypackageClaimId::new_v7_at(issued_at_ms).to_string());
+    record
+}
+
+fn detached_signature(
+    context: arkret_sdk::DetachedSignatureContext,
+    seed: u8,
+) -> arkret_sdk::DetachedObjectSignature {
+    arkret_sdk::DetachedObjectSignature {
+        context,
+        signature_algorithm: arkret_sdk::DetachedSignatureAlgorithm::Ed25519,
+        verification_method: arkret_sdk::DidUrl::new("did:web:authority.example#key-1").unwrap(),
+        signed_digest: arkret_sdk::Hash::new(format!(
+            "sha256:{}",
+            format!("{seed:02x}").repeat(32)
+        ))
+        .unwrap(),
+        created_at: "2026-09-22T00:00:00.000Z".parse().unwrap(),
+        sig: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode([seed; 64])).unwrap(),
+    }
+}
+
+/// Wrap an SDK-produced Commit envelope in the two formal accepted carriers
+/// consumed by MLS clients: the typed Event and its Station RealmCommit.
+/// Signature verification is deliberately outside this fixture's scope; the
+/// consumer APIs take an already verified `CommittedEventFullView`.
+pub(crate) fn accepted_mls_commit(
+    effective_scope: &arkret_sdk::ScopeRef,
+    actor_id: arkret_sdk::ActorId,
+    envelope: &arkret_sdk::MlsCommitEnvelope,
+    base_group_state_ref: arkret_sdk::EventId,
+    commit_seed: u8,
+) -> arkret_sdk::CommittedEventFullView {
+    let binding = arkret_sdk::MlsGovernanceBindingPayload::new(
+        effective_scope.clone(),
+        Some(base_group_state_ref.clone()),
+        envelope.epoch.checked_sub(1).unwrap(),
+        envelope.epoch,
+        0,
+    )
+    .unwrap();
+    let payload =
+        arkret_sdk::MlsCommitPayload::new(base_group_state_ref.clone(), 0, envelope, binding)
+            .unwrap();
+    let event = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MlsCommit>::new(
+        effective_scope.clone(),
+        actor_id,
+        payload,
+    )
+    .unwrap()
+    .author_with_digest_suite(
+        "2026-09-22T00:00:00.000Z".parse().unwrap(),
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap()
+    .into_event();
+    let realm_id = effective_scope.realm_id_opt().unwrap().clone();
+    let stream_position = envelope.epoch;
+    let commit = arkret_sdk::RealmCommit {
+        commit_id: arkret_sdk::RealmCommitId::from_digest([commit_seed; 32]),
+        realm_id: realm_id.clone(),
+        stream_ref: arkret_sdk::CommitStreamRef::from_scope(effective_scope, Some(realm_id))
+            .unwrap(),
+        stream_position,
+        previous_commit_ref: Some(arkret_sdk::RealmCommitId::from_digest(
+            [commit_seed.wrapping_sub(1); 32],
+        )),
+        event_ref: event.event_id.clone(),
+        governance_generation: 0,
+        authority_ref: arkret_sdk::RealmCommitAuthorityRef::GenesisOrChangeEvent(
+            base_group_state_ref,
+        ),
+        committed_at: "2026-09-22T00:00:01.000Z".parse().unwrap(),
+        signature: detached_signature(
+            arkret_sdk::DetachedSignatureContext::RealmCommit,
+            commit_seed,
+        ),
+    };
+    let accepted = arkret_sdk::CommittedEventFullView { commit, event };
+    accepted.validate_shape().unwrap();
+    accepted
+}
+
+/// Bind an SDK Welcome draft to the exact accepted Commit it accompanies.
+/// The caller supplies the already authenticated recipient Actor because a
+/// human MLS endpoint intentionally contains only the principal and device.
+pub(crate) fn accepted_mls_welcome(
+    draft: &arkret_sdk::MlsWelcomeDraft,
+    recipient_actor_id: arkret_sdk::ActorId,
+    accepted_commit: &arkret_sdk::CommittedEventFullView,
+    delivery_time_ms: u64,
+) -> arkret_sdk::MlsWelcomeDelivery {
+    let recipient_endpoint = match &draft.recipient {
+        arkret_sdk::MlsEndpointIdentity::HumanDevice { device_id, .. } => {
+            arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+                device_id: device_id.clone(),
+            }
+        }
+        arkret_sdk::MlsEndpointIdentity::AgentRuntime {
+            verification_method,
+            ..
+        } => arkret_sdk::MlsWelcomeRecipientEndpoint::AgentRuntime {
+            verification_method: verification_method.clone(),
+        },
+        arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
+            panic!("accepted Welcome fixture requires an authority-addressable endpoint")
+        }
+    };
+    let delivery = arkret_sdk::MlsWelcomeDelivery {
+        welcome_id: arkret_wire::MlsWelcomeDeliveryId::new_v7_at(delivery_time_ms),
+        realm_id: accepted_commit.event.realm_id.clone(),
+        effective_scope: accepted_commit.event.scope_ref.clone(),
+        commit_event_ref: accepted_commit.event.event_id.clone(),
+        recipient_actor_id,
+        recipient_endpoint,
+        keypackage_claim_ref: draft.keypackage_claim_ref.clone(),
+        ciphertext_b64: draft.ciphertext_b64.clone(),
+        producer_proof: detached_signature(
+            arkret_sdk::DetachedSignatureContext::MlsWelcomeDelivery,
+            0x77,
+        ),
+    };
+    delivery.validate_shape().unwrap();
+    delivery
+}
+
 pub(crate) fn realm_id(value: &str) -> arkret_sdk::RealmId {
     arkret_sdk::RealmId::new(value.to_owned())
         .unwrap_or_else(|error| panic!("fixture realm `{value}` is invalid: {error}"))

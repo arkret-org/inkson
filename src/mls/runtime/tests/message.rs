@@ -1,7 +1,6 @@
 //! Tests for welcome application, application-payload encrypt / decrypt, and
 //! §5.6 receive-chain persistence.
 
-use garth::mls::welcome_admission::mls_group_id_for_realm;
 use serde_json::json;
 
 use crate::mls::runtime::*;
@@ -465,18 +464,23 @@ fn two_member_group_with_bob_snapshot(
     arkret_sdk::ArkretMlsGroup,
     Vec<arkret_sdk::MlsEndpointIdentity>,
 ) {
+    let alice_actor = crate::test_support::account_actor("did:web:alice.example");
+    let bob_actor_id = crate::test_support::account_actor(bob_actor);
     let alice = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
-        crate::test_support::account_actor("did:web:alice.example"),
+        alice_actor.clone(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
     let bob = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
-        crate::test_support::account_actor(bob_actor),
+        bob_actor_id.clone(),
         arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
     )
     .unwrap();
-    let bob_key_package = bob.key_package_record().unwrap();
+    let bob_key_package = crate::test_support::claimed_mls_key_package(
+        bob.key_package_record().unwrap(),
+        1_760_000_000_011,
+    );
     let alice_endpoint = alice.endpoint_identity();
     let bob_endpoint = bob.endpoint_identity();
     let endpoints = vec![alice_endpoint, bob_endpoint];
@@ -485,7 +489,28 @@ fn two_member_group_with_bob_snapshot(
     };
     let mut alice_group = alice.create_group(&effective_scope).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
-    let mut bob_group = arkret_sdk::ArkretMlsGroup::join_from_welcome(bob, &add.welcome).unwrap();
+    let accepted_commit = crate::test_support::accepted_mls_commit(
+        &effective_scope,
+        alice_actor,
+        &add.commit,
+        arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x51; 32]),
+        0x52,
+    );
+    let delivery = crate::test_support::accepted_mls_welcome(
+        &add.welcome,
+        bob_actor_id,
+        &accepted_commit,
+        1_760_000_000_012,
+    );
+    alice_group
+        .install_accepted_commit(&accepted_commit)
+        .unwrap();
+    let mut bob_group = arkret_sdk::ArkretMlsGroup::join_from_verified_welcome_delivery(
+        bob,
+        &delivery,
+        &accepted_commit,
+    )
+    .unwrap();
     bob_group
         .install_test_leaf_bindings(endpoints.clone())
         .unwrap();
@@ -552,7 +577,20 @@ fn historical_author_view_survives_epoch_rotation() {
     let mut bob_group =
         crate::mls::persistence::restore_envelope(&epoch_one_snapshot, &secret, 0).unwrap();
     let commit = alice_group.self_update_commit().unwrap();
-    bob_group.apply_commit(&commit).unwrap();
+    let effective_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+    };
+    let accepted_commit = crate::test_support::accepted_mls_commit(
+        &effective_scope,
+        crate::test_support::account_actor("did:web:alice.example"),
+        &commit,
+        epoch_one_ref.clone(),
+        0x53,
+    );
+    alice_group
+        .install_accepted_commit(&accepted_commit)
+        .unwrap();
+    bob_group.install_accepted_commit(&accepted_commit).unwrap();
     bob_group
         .install_test_leaf_bindings(leaf_endpoints)
         .unwrap();
