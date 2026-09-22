@@ -192,14 +192,6 @@ async fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
             realm_id: arkret_sdk::RealmId::new(TEST_REALM_ID.to_owned()).unwrap(),
         },
     );
-    crate::mls::governance_proof::seed_test_governance_result(
-        &mut state,
-        TEST_REALM_ID,
-        None,
-        arkret_sdk::base64url_encode(TEST_REALM_ID.as_bytes()),
-        0,
-        0,
-    );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     seed_ready_creator_snapshot(&mut state, &secure, TEST_REALM_ID, actor, device);
     let (patched, _mls_events) = encrypt_private_card_detail_patch_values_with_store(
@@ -562,14 +554,6 @@ async fn encrypted_private_patch_uses_checkpoint_proven_creator_snapshot() {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         },
     );
-    crate::mls::governance_proof::seed_test_governance_result(
-        &mut state,
-        realm,
-        None,
-        arkret_sdk::base64url_encode(realm.as_bytes()),
-        0,
-        0,
-    );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let accepted_ref = seed_ready_creator_snapshot(&mut state, &secure, realm, actor, device);
     let patch = json!({
@@ -621,14 +605,6 @@ async fn encrypted_private_patch_rejects_epoch_zero_without_accepted_genesis_ref
         &arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         },
-    );
-    crate::mls::governance_proof::seed_test_governance_result(
-        &mut state,
-        realm,
-        None,
-        arkret_sdk::base64url_encode(realm.as_bytes()),
-        0,
-        0,
     );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     seed_device_authorization(actor, device);
@@ -690,7 +666,9 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
         DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();
-    let group_id = arkret_sdk::base64url_encode(realm.as_bytes());
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+    };
     state.save_realm_tree_projection(
         realm,
         json!({
@@ -703,35 +681,8 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
             }]
         }),
     );
-    fixture::install_accepted_mls_group(
-        &mut state,
-        &arkret_sdk::ScopeRef::Realm {
-            realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
-        },
-    );
-    crate::mls::governance_proof::seed_test_governance_result(
-        &mut state,
-        realm,
-        None,
-        group_id.clone(),
-        0,
-        0,
-    );
-    let proof_request = crate::mls::governance_proof::frontier_request(
-        &state,
-        realm,
-        None,
-        group_id,
-        0,
-        0,
-        crate::mls::governance_proof::seed_test_security_frontier_leaves(),
-    )
-    .unwrap();
-    let governance_binding =
-        crate::mls::governance_proof::cached_frontier_binding(&state, &proof_request).unwrap();
-    let scope = arkret_sdk::ScopeRef::Realm {
-        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
-    };
+    fixture::install_accepted_mls_group(&mut state, &scope);
+    let governance_binding = crate::mls::governance_proof::genesis_binding(&scope).unwrap();
     let mut group = identity
         .create_group_with_governance_binding(&scope, &governance_binding)
         .unwrap();
@@ -753,17 +704,10 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
         &secret,
         b"deterministic-salt",
     );
-    // Match the accepted-Seal frontier installed by
-    // `seed_test_governance_proof`; the emitted binding must carry that exact
-    // verified frontier.
+    // Current MLS state comes from the authority-signed Realm projection. The
+    // exact accepted Event below is the durable group-state basis; no local
+    // Seal/frontier surrogate participates in authoring readiness.
     let base_group_state_ref = "ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml";
-    state.set_realm_seal_view(
-        realm,
-        crate::state::LocalSealView {
-            frontier: vec![base_group_state_ref.to_owned()],
-            ..crate::state::LocalSealView::default()
-        },
-    );
     envelope.epoch_started_at = chrono::Utc::now();
     state.save_mls_checkpoint(realm, envelope).unwrap();
     state
