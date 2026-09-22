@@ -35,8 +35,11 @@ fn build_mls_genesis_payload_has_required_fields() {
     let typed_payload = build_mls_genesis_payload(&summary, &binding).unwrap();
     let payload = serde_json::to_value(&typed_payload).unwrap();
 
-    assert_eq!(typed_payload.epoch(), 0);
-    assert_eq!(typed_payload.mls_group_id(), summary.group_id);
+    typed_payload.validate().unwrap();
+    assert_eq!(
+        typed_payload.mls_group_id().unwrap().as_str(),
+        summary.group_id
+    );
     assert!(payload.get("epoch").is_none());
     assert!(payload.get("mls_group_id").is_none());
     // cipher_suite is the SDK ciphersuite string form — non-empty.
