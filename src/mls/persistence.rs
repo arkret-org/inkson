@@ -414,16 +414,20 @@ mod tests {
             DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
         )
         .unwrap();
-        let group = identity
-            .create_group(b"ak:realm:Afa-XWDzmMaAI5o0i4JEB845_F-vdio4zG-xF_FzJHK1")
-            .unwrap();
+        let realm_id =
+            arkret_sdk::RealmId::new("ak:realm:Afa-XWDzmMaAI5o0i4JEB845_F-vdio4zG-xF_FzJHK1")
+                .unwrap();
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id.clone(),
+        };
+        let group = identity.create_group(&scope).unwrap();
         let record = group.export_state_record().unwrap();
         let original_group_id = record.group_id.clone();
         let original_epoch = record.epoch;
 
         let bytes = serde_json::to_vec(&record).unwrap();
         let envelope = encrypt_state(
-            "ak:realm:Afa-XWDzmMaAI5o0i4JEB845_F-vdio4zG-xF_FzJHK1",
+            realm_id.as_str(),
             &original_group_id,
             original_epoch,
             &bytes,
