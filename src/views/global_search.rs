@@ -613,22 +613,21 @@ mod tests {
             )
             .unwrap(),
             source_strand_id: source_strand_id.clone(),
-            exchange_id: arkret_sdk::AgentSidecarExchangeId::new("SearchPrivateStrand001").unwrap(),
+            exchange_id: "SearchPrivateStrand001".to_owned(),
             request_context: arkret_sdk::AgentSidecarExchangeRequestContext {
-                source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
+                source_track_ref: arkret_sdk::SidecarSourceTrackRef {
                     realm_id: arkret_sdk::RealmId::new(realm_id.clone()).unwrap(),
                     strand_id: arkret_sdk::StrandId::new(source_strand_id.clone()).unwrap(),
                     track_name: "discussion".to_owned(),
                 },
                 source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
-                client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
+                client_order_key: "device-1-1".to_owned(),
                 addressed_agent_ids: vec![
                     crate::mls_api_helpers::principal_core_id("did:web:assistant.agents.example")
                         .unwrap(),
                 ],
-                completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
                 coordinator_agent_id: None,
-                source_event_id: None,
+                source_checkpoint_anchor_id: None,
             },
             message_id: "ak:message:ASiSP84x2Juep0Q8j2fao1vAfdzqs8Y728RHY5FFyKDb".to_owned(),
             local_operation_id: "local-sidecar-search-test".to_owned(),
