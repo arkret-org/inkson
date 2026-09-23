@@ -1248,6 +1248,86 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
 }
 
 #[test]
+fn committed_create_revision_redaction_folds_in_any_arrival_order() {
+    let realm =
+        arkret_sdk::RealmId::new("ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI").unwrap();
+    let create_payload = json!({
+        "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+        "track_name": "discussion",
+        "content": {"kind": "ak.content.text", "body": "original"}
+    });
+    let create_id = fixture::committed_event::verified_realm_item(
+        realm.clone(),
+        arkret_sdk::EventKind::MessageCreate.as_str(),
+        create_payload.clone(),
+    )
+    .event
+    .event_id;
+    let message_id = arkret_sdk::MessageId::from_event_id(&create_id);
+    let committed = fixture::committed_event::verified_realm_items(
+        realm.clone(),
+        vec![
+            (
+                arkret_sdk::EventKind::MessageCreate.as_str().to_owned(),
+                create_payload,
+            ),
+            (
+                arkret_sdk::EventKind::MessageRevise.as_str().to_owned(),
+                json!({
+                    "message_id": message_id,
+                    "track_name": "discussion",
+                    "content": {"kind": "ak.content.text", "body": "edited"}
+                }),
+            ),
+            (
+                arkret_sdk::EventKind::MessageRedact.as_str().to_owned(),
+                json!({"message_id": message_id, "reason": "withdrawn"}),
+            ),
+        ],
+    );
+    assert_eq!(committed[0].event.event_id, create_id);
+    assert_eq!(
+        committed
+            .iter()
+            .map(|item| item.commit.stream_position)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    let signer = arkret_test_kit::keys::seeded_signer(
+        arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+        arkret_sdk::DidUrl::new(
+            "did:web:alice.example#ak:device:0196419b-0000-7000-8000-000000000001",
+        )
+        .unwrap(),
+    );
+    let key = arkret_sdk::canonical::ed25519_pubkey_to_did_key_multibase(
+        signer.verifying_key().as_bytes(),
+    );
+    crate::identity::device_directory::seed_positive_for_test(
+        &committed[0].event.actor_id.to_string(),
+        "ak:device:0196419b-0000-7000-8000-000000000001",
+        crate::identity::device_directory::public_key_from_directory_value(&key).unwrap(),
+    );
+    let events = committed
+        .iter()
+        .map(|item| serde_json::to_value(&item.event).unwrap())
+        .collect::<Vec<_>>();
+    let before_redaction =
+        chat_messages_from_events_with_sidecar(realm.as_str(), &events[..2], None, None);
+    assert_eq!(before_redaction.len(), 1);
+    assert_eq!(before_redaction[0].body, "edited");
+    assert_eq!(before_redaction[0].revisions, vec!["original".to_owned()]);
+    assert!(before_redaction[0].edited);
+
+    for ordered in [events.clone(), events.into_iter().rev().collect()] {
+        let messages = chat_messages_from_events_with_sidecar(realm.as_str(), &ordered, None, None);
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].redacted);
+        assert!(messages[0].body.is_empty());
+    }
+}
+
+#[test]
 fn message_operations_from_events_folds_shared_pin_control_events() {
     let strand_id = "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE";
     let pin_scope = SharedPinScope::strand(strand_id);
