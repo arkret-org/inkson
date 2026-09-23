@@ -42,7 +42,12 @@ fn account_realm_state_snapshot_refresh_preserves_local_realm_profile_overlay() 
             "_inkson_realm_profile_payload": {"title": "current"}
         }),
     );
-    store.save_realm_tree_projection(realm_id, json!({"summary": {"title": "stale"}}));
+    let existing = store.realm_tree_projection(realm_id).unwrap();
+    let refreshed = garth::reconcile_realm_projection(
+        Some(&existing),
+        garth::RealmProjectionFrame::Incremental(&json!({"summary": {"title": "stale"}})),
+    );
+    store.save_realm_tree_projection(realm_id, refreshed);
 
     assert_eq!(
         store.load().realm_tree_projections[realm_id]["_inkson_realm_profile_payload"]["title"],
@@ -151,20 +156,27 @@ fn mls_encrypted_projection_reads_the_installed_realm_genesis_value() {
     let path = temp_state_path("mls-encrypted-genesis-current-projection");
     let mut store = LocalStateStore::with_path(path);
     let realm = "ak:realm:AbL5fawW_ixBPm33UQ3u2DB4FgKEE52qRcPacwGPz9Hh";
+    assert!(!store.realm_projection_is_mls_encrypted(realm));
     store.save_realm_tree_projection(
         realm,
         json!({
             "summary": {"joined_member_count": 2},
-            "current": {"entries": [{
-                "selector": {
-                    "scope_ref": {"kind": "realm", "realm_id": realm},
-                    "cell_id": "ak:cell:ak.component.realm.genesis.v1:null"
+            "current": [{
+                "selector": {"kind": "mls_group", "scope_ref": {"kind": "realm", "realm_id": realm}},
+                "revision": {
+                    "commit_id": arkret_wire::RealmCommitId::from_digest([0x31; 32]),
+                    "stream_position": 1
                 },
-                "result": {"status": "value", "value": {
-                    "encryption_profile": "mls_rfc9420",
-                    "history_access": "all_history_for_current_members"
-                }}
-            }]}
+                "value": {
+                    "effective_scope": {"kind": "realm", "realm_id": realm},
+                    "genesis_event_ref": arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x32; 32]),
+                    "current_mls_commit_event_ref": arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x32; 32]),
+                    "epoch": 0,
+                    "current_key_access_revision": 0,
+                    "covered_key_access_revision": 0,
+                    "public_tree_ref": format!("ak:blob:sha256:{}", "3".repeat(64))
+                }
+            }]
         }),
     );
 
