@@ -2900,73 +2900,69 @@ mod tests {
         );
     }
 
-    /// The per-realm `events/subscribe` engine ingest contract: a realistic
-    /// NDJSON stream (history Event frames + `catchup_complete` + `heartbeat`)
-    /// parses into typed frames, whose Event payloads fold through the SHARED
-    /// [`ingest_kanban_events`] into `raw_operations` — and re-folding the same
-    /// frames is idempotent (operation_id dedupe), so a buffered long-poll that
-    /// re-delivers history never double-inserts.
+    /// A signed committed Event from the formal subscription frame folds once
+    /// into product operations, even if catch-up replays the same frame.
     #[test]
     fn realm_subscribe_frames_ingest_into_raw_operations_and_dedupe() {
-        let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
+        use arkret_models_collaboration::sync_frames::committed_event_subscribe::{
+            CommittedEventSubscribeFrame, CommittedEventSubscribeFramePayload,
+        };
+        let realm_id = sdk_realm_id();
         let object = arkret_sdk::Space::create_object(
-            arkret_sdk::RealmId::new(realm_id).unwrap(),
+            realm_id.clone(),
             "board",
             "Cross-member board",
             arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
                 sdk_actor_id(),
-                arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             )),
         );
-        let space_create = sdk_event(
+        let accepted = crate::test_support::committed_event::verified_realm_item(
+            realm_id.clone(),
             arkret_sdk::EventKind::SpaceCreate.as_str(),
             serde_json::to_value(arkret_sdk::SpaceCreatePayload::new(object)).unwrap(),
         );
-        // Mirrors the server's `events/subscribe` framing: one `event` frame
-        // carrying the projection-event JSON, a `catchup_complete`, a heartbeat.
         let ndjson = format!(
             "{}\n{}\n{}\n",
             json!({
-                "kind": "event",
+                "kind": "committed_event",
                 "realm_id": realm_id,
                 "cursor": "ak:cursor:realmframe1",
-                "payload": space_create
+                "payload": {"commit": accepted.commit, "event": accepted.event}
             }),
-            json!({ "kind": "catchup_complete", "cursor": "ak:cursor:realmframe1" }),
+            json!({ "kind": "catchup_complete", "realm_id": realm_id,
+                "cursor": "ak:cursor:realmframe1" }),
             json!({ "kind": "heartbeat" }),
         );
-
         let frames = ndjson
             .lines()
             .map(|line| {
-                arkret_sdk::EventsSubscribeFrame::from_ndjson_line(line)
-                    .expect("events/subscribe NDJSON parses")
+                CommittedEventSubscribeFrame::from_ndjson_line(line)
+                    .expect("formal committed-event NDJSON parses")
                     .expect("fixture lines are non-empty")
             })
             .collect::<Vec<_>>();
-        // event + catchup_complete + heartbeat.
         assert_eq!(frames.len(), 3);
-
-        let event_payloads: Vec<arkret_sdk::Event> = frames
+        let event_payloads = frames
             .iter()
-            .filter_map(|frame| {
-                if let arkret_sdk::EventsSubscribeFrame::Event { payload, .. } = frame {
-                    Some(payload.as_ref().clone())
-                } else {
-                    None
+            .filter_map(|frame| match &frame.payload {
+                Some(CommittedEventSubscribeFramePayload::CommittedEvent(view)) => {
+                    match view.as_ref() {
+                        arkret_sdk::CommittedEventView::Full(item) => Some(item.event.clone()),
+                        _ => None,
+                    }
                 }
+                _ => None,
             })
-            .collect();
+            .collect::<Vec<_>>();
         assert_eq!(event_payloads.len(), 1);
-
         let mut store = temp_store("realm-subscribe-ingest");
-        let changed = ingest_kanban_projection_events(&mut store, realm_id, &event_payloads);
+        let changed =
+            ingest_kanban_projection_events(&mut store, realm_id.as_str(), &event_payloads);
         assert_eq!(changed, 1, "the remote space-create folds in once");
         assert_eq!(store.load().raw_operations.len(), 1);
-
-        // Re-folding the same frames (buffered long-poll re-delivers history) is
-        // idempotent: operation_id dedupe means zero new inserts.
-        let changed_again = ingest_kanban_projection_events(&mut store, realm_id, &event_payloads);
+        let changed_again =
+            ingest_kanban_projection_events(&mut store, realm_id.as_str(), &event_payloads);
         assert_eq!(changed_again, 0, "re-ingest is deduped by operation_id");
         assert_eq!(store.load().raw_operations.len(), 1);
     }
