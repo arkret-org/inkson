@@ -30,7 +30,7 @@ pub async fn report(
     // submission DTO rather than a report-specific envelope.
     let signed = submitter.author_for_direct_submission(&event).await?;
     let body = arkret_sdk::ModerationReportRequestBody {
-        report_event: arkret_wire::EventCommitSubmission {
+        report_event: arkret_wire::EventAdmissionSubmission {
             event: signed.into_event(),
             approval_signatures: None,
         },

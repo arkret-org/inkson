@@ -171,16 +171,25 @@ pub(crate) fn enqueue_admissible_welcomes(
 /// `MlsWelcomeDelivery` and passes the delivery's own shape validation. A
 /// Welcome is not an Event and carries no Event kind, so there is nothing else
 /// to match on.
+pub(crate) fn welcome_from_inbox_row(message: &serde_json::Value) -> Option<MlsWelcomeDelivery> {
+    let value = if message
+        .get("delivery_kind")
+        .and_then(serde_json::Value::as_str)
+        == Some("mls_welcome")
+    {
+        message.get("mls_welcome")?
+    } else {
+        message.get("content")?
+    };
+    serde_json::from_value::<MlsWelcomeDelivery>(value.clone())
+        .ok()
+        .filter(|delivery| delivery.validate_shape().is_ok())
+}
+
 pub(crate) fn pending_welcome_deliveries(
     messages: &[serde_json::Value],
 ) -> Vec<MlsWelcomeDelivery> {
-    messages
-        .iter()
-        .filter_map(|message| {
-            serde_json::from_value::<MlsWelcomeDelivery>(message.get("content")?.clone()).ok()
-        })
-        .filter(|delivery| delivery.validate_shape().is_ok())
-        .collect()
+    messages.iter().filter_map(welcome_from_inbox_row).collect()
 }
 
 /// The pending Welcome deliveries that belong to one Realm.
@@ -446,6 +455,33 @@ mod tests {
         let pending = pending_welcome_deliveries(&messages);
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].welcome_id, delivery.welcome_id);
+    }
+
+    #[test]
+    fn signed_welcome_branch_is_journalled_without_device_message_wrapping() {
+        let delivery = delivery(&commit_event());
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("welcome-journal.json");
+        let mut writer = crate::state::LocalStateStore::with_path(path.clone());
+        let branch = arkret_models_collaboration::device_messages::RecipientDelivery::MlsWelcome {
+            mls_welcome: delivery.clone(),
+        };
+        assert_eq!(
+            writer
+                .ingest_recipient_deliveries(&[branch.clone()])
+                .unwrap(),
+            1
+        );
+        assert_eq!(writer.ingest_recipient_deliveries(&[branch]).unwrap(), 0);
+        let reopened = crate::state::LocalStateStore::with_path(path);
+        let inbox = reopened.to_device_inbox();
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0]["delivery_kind"], "mls_welcome");
+        assert!(inbox[0].get("content").is_none());
+        assert_eq!(
+            pending_welcome_deliveries(&inbox)[0].welcome_id,
+            delivery.welcome_id
+        );
     }
 
     #[test]

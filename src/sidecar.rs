@@ -1067,7 +1067,10 @@ mod tests {
                 ))
                 .unwrap(),
                 authority_stream_head: vec![
-                    "ak:event:AVeCvdcuh1hDJWwYlZJb_1yRzWQwN1-pXxgZYTyd7BGT".to_owned(),
+                    arkret_sdk::EventId::new(
+                        "ak:event:AVeCvdcuh1hDJWwYlZJb_1yRzWQwN1-pXxgZYTyd7BGT",
+                    )
+                    .unwrap(),
                 ],
                 mls_group_id: None,
                 epoch: None,

@@ -804,14 +804,14 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
     .await
     .map_err(|error| error.display())?;
     let ack_token = messages.ack_token.clone();
-    let delivered = messages.messages.len();
+    let delivered = messages.deliveries.len();
 
     // The durable inbox is the only source the Welcome installer reads, so the
     // batch is journalled before anything is installed or acknowledged.
-    let journalled = if messages.messages.is_empty() {
+    let journalled = if messages.deliveries.is_empty() {
         0
     } else {
-        state_store.write(|store| store.ingest_to_device_messages(&messages.messages))
+        state_store.write(|store| store.ingest_recipient_deliveries(&messages.deliveries))?
     };
     if journalled > 0 {
         let barrier = state_store

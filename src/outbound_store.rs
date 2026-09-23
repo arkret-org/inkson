@@ -386,7 +386,7 @@ mod tests {
             .expect("fixture Event has a real producer proof");
         let event = event.into_event();
         garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
-            arkret_wire::EventCommitSubmission {
+            arkret_wire::EventAdmissionSubmission {
                 event,
                 approval_signatures: None,
             },

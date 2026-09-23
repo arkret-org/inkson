@@ -254,7 +254,7 @@ pub async fn update_profile(
     };
     let signed = submitter.author_for_direct_submission(&event).await?;
     let body = arkret_models_collaboration::account_operations::AccountUpdateProfileRequestBody {
-        profile_event: arkret_wire::EventCommitSubmission {
+        profile_event: arkret_wire::EventAdmissionSubmission {
             event: signed.into_event(),
             approval_signatures: None,
         },
@@ -631,7 +631,7 @@ pub async fn direct_conversation_found(
     for event in authored {
         let event = event.into_event();
         let mut queued = garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
-            arkret_wire::EventCommitSubmission {
+            arkret_wire::EventAdmissionSubmission {
                 event,
                 approval_signatures: None,
             },
@@ -1271,7 +1271,7 @@ pub async fn grant_consent(
     .build_sdk_event("inkson")?;
     let signed_event = submitter.author_for_direct_submission(&event).await?;
     let body = arkret_sdk::ConsentGrantRequestBody {
-        grant_event: arkret_wire::EventCommitSubmission {
+        grant_event: arkret_wire::EventAdmissionSubmission {
             event: signed_event.into_event(),
             approval_signatures: None,
         },
@@ -1313,7 +1313,7 @@ pub async fn revoke_consent(
     .build_sdk_event("inkson")?;
     let signed_event = submitter.author_for_direct_submission(&event).await?;
     let body = arkret_sdk::ConsentRevokeRequestBody {
-        revoke_event: arkret_wire::EventCommitSubmission {
+        revoke_event: arkret_wire::EventAdmissionSubmission {
             event: signed_event.into_event(),
             approval_signatures: None,
         },

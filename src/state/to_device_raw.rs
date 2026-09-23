@@ -484,11 +484,9 @@ impl LocalStateStore {
         }
         self.ensure_cached_loaded();
         let now = Utc::now();
-        let before_retain = self.cached.to_device_inbox.len();
-        self.cached
-            .to_device_inbox
-            .retain(|message| !to_device_message_expired(message, now));
-        let pruned_expired = before_retain != self.cached.to_device_inbox.len();
+        // An expired DeviceMessage is still a queued delivery until ACK. Keep
+        // the exact envelope in the durable journal even if product effects
+        // later decide its payload is too old to apply.
         let receipts_before_retain = self.cached.to_device_receipts.len();
         self.cached
             .to_device_receipts
@@ -518,9 +516,6 @@ impl LocalStateStore {
             let Ok(message) = serde_json::to_value(message) else {
                 continue;
             };
-            if to_device_message_expired(&message, now) {
-                continue;
-            }
             let Some(expires_at) = to_device_message_expiry(&message) else {
                 conflict = Some(format!("device_message_conflict: invalid expiry for {key}"));
                 break;
@@ -556,8 +551,10 @@ impl LocalStateStore {
                     );
                 }
             }
-            read_cursor_updated |= self.ingest_read_cursor_update_message(&message);
-            invite_delivery_updated |= self.ingest_invite_delivery_update_message(&message);
+            if !to_device_message_expired(&message, now) {
+                read_cursor_updated |= self.ingest_read_cursor_update_message(&message);
+                invite_delivery_updated |= self.ingest_invite_delivery_update_message(&message);
+            }
             self.cached.to_device_inbox.push(message);
             inserted += 1;
         }
@@ -569,7 +566,7 @@ impl LocalStateStore {
         if overflow > 0 {
             self.cached.to_device_inbox.drain(0..overflow);
         }
-        if inserted > 0 || pruned_expired || overflow > 0 {
+        if inserted > 0 || overflow > 0 {
             // Rebuild only during bounded inbox maintenance, never per Realm read.
             let mut index: BTreeMap<String, Vec<usize>> = BTreeMap::new();
             for (position, message) in self.cached.to_device_inbox.iter().enumerate() {
@@ -577,13 +574,7 @@ impl LocalStateStore {
                 // producer-signed `MlsWelcomeDelivery` recipient object. The
                 // only sound test is whether the delivery parses closed and
                 // passes its own shape validation.
-                let Some(delivery) = message
-                    .get("content")
-                    .and_then(|content| {
-                        serde_json::from_value::<arkret_wire::MlsWelcomeDelivery>(content.clone())
-                            .ok()
-                    })
-                    .filter(|delivery| delivery.validate_shape().is_ok())
+                let Some(delivery) = crate::mls::welcome_delivery::welcome_from_inbox_row(message)
                 else {
                     continue;
                 };
@@ -594,7 +585,6 @@ impl LocalStateStore {
             self.cached.mls_welcome_inbox_index = index;
         }
         if inserted > 0
-            || pruned_expired
             || pruned_receipts
             || overflow > 0
             || read_cursor_updated
@@ -606,6 +596,93 @@ impl LocalStateStore {
             *self.lock_persist_health() = Some(conflict);
         }
         inserted
+    }
+
+    /// Journal both closed recipient queue branches before the caller ACKs a
+    /// page. A Welcome keeps its own wire identity and is never encoded as a
+    /// DeviceMessageEnvelope. If the local journal is full, leave the server
+    /// queue unacknowledged so the page can be retried after local recovery.
+    pub fn ingest_recipient_deliveries(
+        &mut self,
+        deliveries: &[arkret_models_collaboration::device_messages::RecipientDelivery],
+    ) -> Result<usize, String> {
+        use arkret_models_collaboration::device_messages::RecipientDelivery;
+
+        self.ensure_cached_loaded();
+        let mut messages = Vec::new();
+        let mut new_welcomes = Vec::new();
+        let mut known_welcomes: BTreeMap<String, Value> = self
+            .cached
+            .to_device_inbox
+            .iter()
+            .filter_map(crate::mls::welcome_delivery::welcome_from_inbox_row)
+            .filter_map(|welcome| {
+                serde_json::to_value(&welcome)
+                    .ok()
+                    .map(|value| (welcome.welcome_id.to_string(), value))
+            })
+            .collect();
+        for delivery in deliveries {
+            match delivery {
+                RecipientDelivery::DeviceMessage { device_message } => {
+                    messages.push(device_message.clone());
+                }
+                RecipientDelivery::MlsWelcome { mls_welcome } => {
+                    mls_welcome
+                        .validate_shape()
+                        .map_err(|error| format!("invalid MLS Welcome delivery: {error}"))?;
+                    let value = serde_json::to_value(mls_welcome)
+                        .map_err(|error| format!("serialize MLS Welcome delivery: {error}"))?;
+                    let key = mls_welcome.welcome_id.to_string();
+                    match known_welcomes.get(&key) {
+                        Some(existing) if existing == &value => continue,
+                        Some(_) => {
+                            return Err(format!("MLS Welcome id {key} changed signed bytes"));
+                        }
+                        None => {
+                            known_welcomes.insert(key, value.clone());
+                            new_welcomes.push((mls_welcome.effective_scope.clone(), value));
+                        }
+                    }
+                }
+            }
+        }
+        let mut new_message_keys = BTreeSet::new();
+        for message in &messages {
+            let key = to_device_envelope_dedup_key(message);
+            if !self.cached.to_device_receipts.contains_key(&key) {
+                new_message_keys.insert(key);
+            }
+        }
+        if self.cached.to_device_inbox.len() + new_message_keys.len() + new_welcomes.len()
+            > TO_DEVICE_INBOX_MAX
+        {
+            return Err("recipient delivery journal is full; page remains unacknowledged".into());
+        }
+        let mut inserted = self.ingest_to_device_messages(&messages);
+        if let Some(error) = self.persist_error() {
+            return Err(error);
+        }
+        for (scope, value) in new_welcomes {
+            let position = self.cached.to_device_inbox.len();
+            self.cached.to_device_inbox.push(serde_json::json!({
+                "delivery_kind": "mls_welcome",
+                "mls_welcome": value,
+            }));
+            let key = serde_json::to_string(&scope)
+                .map_err(|error| format!("serialize MLS Welcome scope: {error}"))?;
+            self.cached
+                .mls_welcome_inbox_index
+                .entry(key)
+                .or_default()
+                .push(position);
+            inserted += 1;
+        }
+        if inserted > 0 {
+            self.flush()
+                .map_err(|error| format!("persist recipient delivery journal: {error}"))?;
+        }
+        Ok(inserted)
     }
 
     pub fn to_device_inbox(&self) -> Vec<Value> {

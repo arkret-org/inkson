@@ -128,17 +128,7 @@ pub async fn send_device_message_with_id(
     }
     let target_device_id = arkret_sdk::DeviceId::new(target_device_id.to_owned())?;
     if is_secret_sharing_kind(&kind) {
-        let viewer = http
-            .account_viewer()
-            .await
-            .map_err(|error| anyhow::anyhow!("verify secret-sharing checkpoint: {error}"))?;
-        if viewer.principal_id != account_id.principal_id
-            || !has_current_verification_checkpoint(&viewer.devices, &target_device_id)
-        {
-            anyhow::bail!(
-                "secret sharing requires a current verification checkpoint for the exact target device"
-            );
-        }
+        anyhow::bail!("ak.secret.request and ak.secret.send are not admitted in v1");
     }
     let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)?.with_timezone(&chrono::Utc);
     let target = arkret_sdk::DeviceMessageTarget {

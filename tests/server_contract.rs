@@ -397,7 +397,7 @@ fn current_submit_outcome_binds_a_verified_event_and_commit() {
         }),
     );
     let request = arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(
-        arkret_wire::EventCommitSubmission::new(accepted.event.clone()),
+        arkret_wire::EventAdmissionSubmission::new(accepted.event.clone()),
     );
     let response =
         arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome::Ordinary(
@@ -459,7 +459,7 @@ fn current_to_device_outcome_retains_exact_delivery_coordinates() {
     assert!(device_send.unknown_devices.is_empty());
 
     let received = inkson::models::DeviceMessagesGetOutcome {
-        messages: vec![],
+        deliveries: vec![],
         ack_token: None,
         next_cursor: Some("ak:cursor:device-messages".to_owned()),
         has_more: false,
@@ -468,7 +468,7 @@ fn current_to_device_outcome_retains_exact_delivery_coordinates() {
     };
     let device_receive: inkson::models::DeviceMessagesGetOutcome =
         serde_json::from_value(serde_json::to_value(received).unwrap()).unwrap();
-    assert!(device_receive.messages.is_empty());
+    assert!(device_receive.deliveries.is_empty());
     assert_eq!(device_receive.limited, Some(false));
     assert!(!device_receive.has_more);
 }
@@ -822,6 +822,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
         next_cursor: None,
         has_more: false,
     };
+    directory.validate().unwrap();
     assert_no_secret("directory", &directory, secret);
 }
 
@@ -917,13 +918,12 @@ fn decoder_handles_problem_and_non_problem() {
 }
 
 #[test]
-fn authoring_fixture_hlc_keeps_the_numeric_sequence_past_nine() {
+fn authoring_fixture_uses_distinct_canonical_creation_times() {
+    let first = common::pinned_created_at(1);
+    let later = common::pinned_created_at(16);
+    assert_eq!((later - first).num_milliseconds(), 15);
     assert_eq!(
-        common::pinned_hlc(10).as_str(),
-        "01970e589d21-000a-a13f9c2e"
-    );
-    assert_eq!(
-        common::pinned_hlc(16).as_str(),
-        "01970e589d21-0010-a13f9c2e"
+        arkret_sdk::canonical::format_timestamp_canonical(first),
+        "2026-09-19T00:00:00.001Z"
     );
 }

@@ -136,6 +136,7 @@ struct AccountClientEventReport {
     decoded_events: usize,
     committed_event_kinds: Vec<String>,
     to_device: usize,
+    mls_welcomes: usize,
     notifications: usize,
     unavailable_realm_ids: Vec<String>,
 }
@@ -192,6 +193,9 @@ impl AccountClientEventProjector {
             }
             ClientEvent::ToDevice(_) => {
                 report.to_device += 1;
+            }
+            ClientEvent::MlsWelcome(_) => {
+                report.mls_welcomes += 1;
             }
         }
     }
@@ -361,11 +365,11 @@ impl AccountFrameStep {
         self.frame.device_lists.clone().unwrap_or_default()
     }
 
-    fn to_device(&self) -> &[arkret_sdk::DeviceMessageEnvelope] {
+    fn to_device(&self) -> &[arkret_models_collaboration::device_messages::RecipientDelivery] {
         self.frame
             .to_device
             .as_ref()
-            .map_or(&[][..], |container| container.messages.as_slice())
+            .map_or(&[][..], |container| container.deliveries.as_slice())
     }
 
     /// `(lost, limited)` of the delivered to-device window, when there was one.
@@ -1995,16 +1999,16 @@ async fn process_to_device_delivery(
         let page = keys
             .receive_device_messages_page(cursor.as_deref(), Some(TO_DEVICE_PAGE_LIMIT))
             .await?;
-        let messages = page.messages.clone();
+        let deliveries = page.deliveries.clone();
         let persisted = ctx.state_store.write(|store| {
-            store.ingest_to_device_messages(&messages);
-            store.persist_error().is_none()
+            store.ingest_recipient_deliveries(&deliveries).is_ok()
+                && store.persist_error().is_none()
         });
         if !persisted {
             durable_prefix = false;
         }
         if durable_prefix
-            && !messages.is_empty()
+            && !deliveries.is_empty()
             && to_device_window_safe_for_ingest_ack(Some((
                 page.lost.unwrap_or(false),
                 page.limited.unwrap_or(false),
@@ -3280,7 +3284,9 @@ fn apply_account_frame_payload(
     // invite-delivery cell and membership=`join`, the joined roster
     // is authoritative for the final notification projection and
     // must not let the stale delivery re-add the invite afterward.
-    store.ingest_to_device_messages(response.to_device());
+    store
+        .ingest_recipient_deliveries(response.to_device())
+        .map_err(anyhow::Error::msg)?;
     apply_notification_projection(
         store,
         response,

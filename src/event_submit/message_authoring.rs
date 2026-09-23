@@ -124,7 +124,7 @@ impl EventSubmitter {
             .await
             .map_err(|error| classify_submit_failure(&error))?;
         let request = MessageSubmitRequestBody {
-            submission: arkret_wire::EventCommitSubmission {
+            submission: arkret_wire::EventAdmissionSubmission {
                 event: event.event().clone(),
                 approval_signatures: None,
             },

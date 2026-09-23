@@ -1,5 +1,6 @@
 import { expect, type Page, type Route } from "@playwright/test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +17,7 @@ import {
 // bytes moves it. The guard below refuses to run on a stale value rather
 // than serving a Realm the client cannot address.
 export const DEMO_REALM =
-  "ak:realm:AfZipd5actne33fQKtrLCK5Q658LZby1JgRICH16UNjo";
+  "ak:realm:AZi4qfYh-BjEbd_wdqq1Z8srSeqAzJwsU4wDNH-XJD3D";
 export const PRINCIPAL_CONTROL_REALM =
   "ak:realm:Ac9iLS6pVSDjqFeDeJjvUhbtREpxQ8IWem2mi64wrqDq";
 const STRAND_POSITION_CELL_FAMILY = "ak.component.strand.position.v1";
@@ -63,6 +64,12 @@ const eventIdForDerivedId = (id: string, prefix: string): string => {
   }
   return `ak:event:${id.slice(prefix.length)}`;
 };
+const mockCommitId = (value: unknown): string => {
+  const digest = createHash("sha256").update(JSON.stringify(value)).digest();
+  return `ak:realm_commit:A${digest.toString("base64url")}`;
+};
+const mockMlsGroupId = (scope: string): string =>
+  createHash("sha256").update(`ak.mls.group_id.v1\0${scope}`).digest("base64url");
 const DEMO_BLOB_REF =
   "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460";
 const DEMO_AVATAR_PNG_BASE64 =
@@ -128,13 +135,8 @@ type InksonWireCommand =
   | "canonical-json"
   | "did-key-from-seed"
   | "sha256-canonical-json"
-  | "mls-governance-proof"
-  | "control-proposal-ack"
-  | "ingress-receipts"
-  | "realm-actor-frontier"
   | "service-resolution"
   | "principal-locator"
-  | "realm-genesis-seal"
   | "validate-mock-response";
 type InksonWireCanonicalJson = { canonical: string };
 type InksonWireDigest = { digest: string };
@@ -152,16 +154,9 @@ type StaticMockResponseFixture = {
   value: unknown;
 };
 
-type RealmGenesisSealFixture = {
-  realm_id?: string;
-  seal: Record<string, unknown> & { id: string; realm_id: string };
-  event_digests: Array<{ event_id: string; digest: string }>;
+type RealmGenesisFixture = {
+  realm_id: string;
   accepted_events: Array<Record<string, unknown>>;
-  governance_dependencies: Array<
-    Record<string, unknown> & {
-      selector: { kind: string; content_digest: string };
-    }
-  >;
 };
 
 const inksonRepoRoot = resolve(
@@ -210,22 +205,6 @@ function canonicalSha256(value: unknown) {
   assertJsonTransportable(value, "$");
   return inksonWire<InksonWireDigest>("sha256-canonical-json", { value })
     .digest;
-}
-
-function realmActorFrontier(
-  realmId: string,
-  actorId: Record<string, unknown>,
-  nextActorSeq: number,
-  frontierEventIds: string[],
-  digestSuite: "sha256" | "blake3",
-) {
-  return inksonWire("realm-actor-frontier", {
-    realm_id: realmId,
-    actor_id: actorId,
-    next_actor_seq: nextActorSeq,
-    frontier_event_ids: frontierEventIds,
-    digest_suite: digestSuite,
-  });
 }
 
 function inksonWire<T>(command: InksonWireCommand, input: unknown): T {
@@ -631,9 +610,8 @@ export async function mockArkretApi(
     encryption_profile: string;
   }> = [];
   const projectionEvents: Array<Record<string, unknown>> = [];
-  const realmGenesisSeals = new Map<string, RealmGenesisSealFixture>();
   if (includeDemoRealms) {
-    const fixture = inksonWire<RealmGenesisSealFixture>(
+    const fixture = inksonWire<RealmGenesisFixture>(
       "demo-realm-genesis",
       {},
     );
@@ -642,8 +620,16 @@ export async function mockArkretApi(
         `Demo Realm constant ${DEMO_REALM} differs from SDK fixture ${fixture.realm_id}`,
       );
     }
-    realmGenesisSeals.set(DEMO_REALM, fixture);
-    projectionEvents.push(...fixture.accepted_events);
+    projectionEvents.push(...fixture.accepted_events.map((event) => ({
+      ...event,
+      producer_proof: {
+        kind: "detached_jws",
+        verification_method: `${CURRENT_STATION_DID}#mock-producer`,
+        event_digest: canonicalSha256(event),
+        created_at: event.created_at,
+        jws: "e30..c2ln",
+      },
+    })));
   }
   let serverDidDocument: Record<string, unknown> =
     currentPrincipalServiceResolution.normalized_did_document;
@@ -690,12 +676,7 @@ export async function mockArkretApi(
     directory_visibility: "realm_members",
     join_rule: circleMetadata.get(circleId)?.join_rule ?? "invite",
     history_access: "since_join",
-    content_encryption_floor: "e2ee_required",
-    metadata_encryption_floor: "e2ee_required",
-    encryption_profile:
-      circleMetadata.get(circleId)?.encryption_profile ?? "mls_rfc9420",
-    content_scheme: "mls_rfc9420",
-    mls_group_id: "demo-circle",
+    mls_group_id: mockMlsGroupId(circleId),
     state: circleStates.get(circleId) ?? "active",
     viewer_membership: circleMembers
       .get(circleId)
@@ -728,7 +709,7 @@ export async function mockArkretApi(
           policy_id: seededRecoveryPolicyId,
           account_id: accountId,
           version: 1,
-          acceptance_basis_ref: `ak:seal:sha256:${"a".repeat(64)}`,
+           acceptance_basis_ref: mockCommitId(seededRecoveryPolicyId),
           trust_domain: "ak:trust_domain:soland.local",
           methods: [{ kind: "did_root" }],
           supersedes_id: null,
@@ -764,8 +745,6 @@ export async function mockArkretApi(
   const personalAgentKeyStates = new Map<string, Record<string, unknown>>();
   const personalAgentGrants = new Map<string, Array<Record<string, unknown>>>();
   const managedPcrRealmIds = new Set<string>();
-  const managedPcrSealHeads = new Map<string, Record<string, unknown>>();
-  const managedPcrSealPaths = new Map<string, Array<Record<string, unknown>>>();
   let personalAgentCounter = 0;
   // Two orthogonal axes (key-management.md §3.6.1). Store lifecycle intent on
   // the Agent projection and derive runtime readiness only from key/pairing
@@ -911,14 +890,19 @@ export async function mockArkretApi(
     personalAgentGrants.set(expiredAgentId, []);
   }
   const eventRealmId = (event: Record<string, unknown>) =>
-    String(event.realm_id ?? "");
+    String(event.realm_id ?? (event.scope_ref as Record<string, unknown> | undefined)?.realm_id ?? DEMO_REALM);
   const committedEventView = (
     event: Record<string, unknown>,
     streamPosition: number,
   ) => {
+    try {
+      validateMockSchema("schemas/event-envelope.schema.json#/$defs/shared_event_envelope", event);
+    } catch (error) {
+      throw new Error(`invalid projected Event ${String(event.kind)} ${String(event.event_id)}: ${String(error)}`);
+    }
     const realmId = eventRealmId(event);
     const eventId = String(event.event_id ?? "");
-    const commitId = `ak:realm_commit:${canonicalSha256({ event_id: eventId }).slice("sha256:".length)}`;
+    const commitId = mockCommitId({ event_id: eventId });
     return {
       commit: {
         commit_id: commitId,
@@ -928,7 +912,7 @@ export async function mockArkretApi(
         previous_commit_ref:
           streamPosition === 0
             ? null
-            : `ak:realm_commit:${canonicalSha256({ event_id: eventId, stream_position: streamPosition - 1 }).slice("sha256:".length)}`,
+             : mockCommitId({ event_id: eventId, stream_position: streamPosition - 1 }),
         event_ref: eventId,
         governance_generation: 0,
         authority_ref: eventId,
@@ -936,10 +920,10 @@ export async function mockArkretApi(
         signature: {
           context: "ak.realm_commit_signature.v1",
           signature_algorithm: "Ed25519",
-          verification_method: `${CURRENT_STATION_ID}#realm-commit`,
+           verification_method: `${CURRENT_STATION_DID}#realm-commit`,
           signed_digest: canonicalSha256({ event_id: eventId, stream_position: streamPosition }),
           created_at: "2026-09-20T00:00:00.000Z",
-          sig: "c2ln",
+           sig: "A".repeat(86),
         },
       },
       event,
@@ -950,8 +934,13 @@ export async function mockArkretApi(
       const summary: Record<string, unknown> = {
         device_id: device.device_id,
         status: device.status ?? "active",
-        verification_state: device.verification_state ?? "verified",
+         verification_state: device.verification_state ?? "unresolved",
       };
+      if (summary.verification_state === "verified") {
+        summary.verification_source = "genesis";
+        summary.authorized_event_ref = DEMO_FRONTIER_EVENT;
+        summary.signer_resolution_evidence_ref = `ak:signer_evidence:sha256:${"a".repeat(64)}`;
+      }
       if (device.display_name !== undefined) {
         summary.display_name = device.display_name;
       }
@@ -1130,21 +1119,15 @@ export async function mockArkretApi(
       realm_id: DEMO_REALM,
       scope_ref: { kind: "realm", realm_id: DEMO_REALM },
       actor_id: accountActorId,
-      actor_seq: actorSeq,
       created_at: createdAt,
-      hlc: `01964137${String(actorSeq).padStart(4, "0")}-0000-12345678`,
-      prev_refs: [],
-      refs: [],
       payload,
-      proofs: [
-        {
-          kind: "detached_jws",
-          verification_method: `${didFromCoreId(accountPrincipalCoreId)}#${currentDeviceId}`,
-          event_digest: `sha256:${"0".repeat(64)}`,
-          created_at: createdAt,
-          jws: "e30..c2ln",
-        },
-      ],
+      producer_proof: {
+        kind: "detached_jws",
+        verification_method: `${didFromCoreId(accountPrincipalCoreId)}#${currentDeviceId}`,
+        event_digest: `sha256:${"0".repeat(64)}`,
+        created_at: createdAt,
+        jws: "e30..c2ln",
+      },
     };
   };
   projectionEvents.push(
@@ -1380,223 +1363,6 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname === "/_arkret/self/seals" &&
-      route.request().method() === "POST"
-    ) {
-      const seal = (await route.request().postDataJSON()) as Record<
-        string,
-        unknown
-      >;
-      const realmId = typeof seal.realm_id === "string" ? seal.realm_id : "";
-      if (
-        !managedPcrRealmIds.has(realmId) ||
-        typeof seal.id !== "string" ||
-        !Array.isArray(seal.delta) ||
-        typeof seal.state_root !== "string"
-      ) {
-        return json(
-          route,
-          {
-            ok: false,
-            error: {
-              code: "schema_violation",
-              message: "invalid Agent PCR Seal",
-            },
-          },
-          400,
-        );
-      }
-      managedPcrSealHeads.set(realmId, seal);
-      managedPcrSealPaths.set(realmId, [
-        ...(managedPcrSealPaths.get(realmId) ?? []),
-        seal,
-      ]);
-      return json(route, {
-        seal_id: seal.id,
-        accepted_event_digests: seal.delta,
-        post_state_root: seal.state_root,
-      });
-    }
-
-    if (
-      url.pathname === "/_arkret/self/seals/mls-governance-proof" &&
-      route.request().method() === "POST"
-    ) {
-      const request = (await route.request().postDataJSON()) as Record<
-        string,
-        unknown
-      >;
-      const effectiveScope = request.effective_scope as
-        Record<string, unknown> | undefined;
-      const realmId =
-        typeof effectiveScope?.realm_id === "string"
-          ? effectiveScope.realm_id
-          : "";
-      const seal = managedPcrSealHeads.get(realmId);
-      if (!seal) {
-        return json(
-          route,
-          {
-            ok: false,
-            error: {
-              code: "frontier_unavailable",
-              message: "Agent PCR Seal is unavailable",
-            },
-          },
-          503,
-        );
-      }
-      const events = projectionEvents.filter(
-        (event) => eventRealmId(event) === realmId,
-      );
-      const governanceDependencies =
-        realmGenesisSeals.get(realmId)?.governance_dependencies ?? [];
-      const bundle = inksonWire<Record<string, unknown>>(
-        "mls-governance-proof",
-        {
-          request,
-          target_checkpoint: {
-            realm_id: realmId,
-            basis: request.proof_target_basis,
-            accepted_seals: managedPcrSealPaths.get(realmId) ?? [seal],
-            accepted_events: events,
-            governance_dependencies: governanceDependencies,
-          },
-          content_scheme: "mls_rfc9420",
-          durability_policy: null,
-          local_mls_leaves: [
-            {
-              leaf_index: 0,
-              principal_id: accountPrincipalCoreId,
-              actor_id: accountActorId,
-            },
-          ],
-        },
-      );
-      return json(route, bundle);
-    }
-
-    if (
-      url.pathname === "/_arkret/self/control-proposal-acks" &&
-      route.request().method() === "POST"
-    ) {
-      const request = await route.request().postDataJSON();
-      const outcome = inksonWire<Record<string, unknown>>(
-        "control-proposal-ack",
-        {
-          request,
-          digest_suite: "sha256",
-        },
-      );
-      return json(route, outcome);
-    }
-
-    if (
-      url.pathname === "/_arkret/self/authorization-leases" &&
-      route.request().method() === "POST"
-    ) {
-      const body = ((await contractRequestBody(route)) ?? {}) as Record<
-        string,
-        unknown
-      >;
-      const events = Array.isArray(body.events)
-        ? (body.events as Array<Record<string, any>>)
-        : [];
-      const issuedAt = new Date().toISOString();
-      const expiresAt = new Date(
-        Date.parse(issuedAt) + 30 * 60 * 1_000,
-      ).toISOString();
-      const isAnchorUnit =
-        events.length > 0 &&
-        events.every(
-          (event) =>
-            event.auth_context === undefined && event.seal_basis === undefined,
-        );
-      const anchorEventDigests = isAnchorUnit
-        ? events.map((event) => String(event.proofs?.[0]?.event_digest ?? ""))
-        : [];
-      const anchorRealmId = isAnchorUnit
-        ? String(events[0]?.realm_id ?? "")
-        : "";
-      const anchorUnitBasis = isAnchorUnit
-        ? {
-            anchor_unit: {
-              realm_id: anchorRealmId,
-              event_digests: anchorEventDigests,
-              unit_digest: canonicalSha256({
-                realm_id: anchorRealmId,
-                event_digests: anchorEventDigests,
-              }),
-            },
-          }
-        : undefined;
-      const authorizationLeases = events.map((event, index) => {
-        const authorityRef = event.auth_context?.authority_refs?.[0];
-        const basisRef = anchorUnitBasis ?? (authorityRef ? { seal: authorityRef } : event.seal_basis);
-        const sourceRef = isAnchorUnit
-          ? `anchor-unit:${anchorUnitBasis!.anchor_unit.unit_digest}`
-          : typeof authorityRef === "string"
-            ? authorityRef
-            : String(event.seal_basis?.leaves?.[0] ?? "principal-control");
-        const verificationMethod = `${event.actor_id}#e2e-device-key`;
-        const authoritySetPolicy = {
-          schema: "ak.schema.authority_set_policy.v1",
-          authority_set_id: "ak.authority_set.principal_control.e2e",
-          policy_kind: "principal_control",
-          scope_ref: event.scope_ref,
-          source: {
-            source_kind: "realm_control",
-            source_ref: sourceRef,
-            source_digest: canonicalSha256({ source_ref: sourceRef }),
-            generation_ref: "1",
-          },
-          authorization_rules: [
-            {
-              rule_id: "principal_control",
-              issuer_role: "accepted_device",
-              allowed_actions: [event.kind],
-              issuers: [{ verification_method: verificationMethod }],
-              threshold: 1,
-            },
-          ],
-        };
-        const leaseWithoutProofs = {
-          authorization_lease_id: `ak:authorization_lease:01964137-0000-7000-8000-${String(
-            index + 1,
-          ).padStart(12, "0")}`,
-          basis_ref: basisRef,
-          actor_id: event.actor_id,
-          device_id: currentDeviceId,
-          scope_ref: event.scope_ref,
-          action: event.kind,
-          authorization_rule_id: "principal_control",
-          risk_tier: "high",
-          issued_at: issuedAt,
-          expires_at: expiresAt,
-          authority_set_ref: {
-            authority_set_id: authoritySetPolicy.authority_set_id,
-            authority_set_digest: canonicalSha256(authoritySetPolicy),
-          },
-          authority_set_policy: authoritySetPolicy,
-        };
-        return {
-          ...leaseWithoutProofs,
-          proofs: [
-            {
-              kind: "detached_jws",
-              alg: "Ed25519",
-              verification_method: verificationMethod,
-              payload_digest: canonicalSha256(leaseWithoutProofs),
-              created_at: issuedAt,
-              jws: "e2e..signature",
-            },
-          ],
-        };
-      });
-      return json(route, { authorization_leases: authorizationLeases });
-    }
-
-    if (
       url.pathname === "/_arkret/self/events" &&
       route.request().method() === "POST"
     ) {
@@ -1621,17 +1387,6 @@ export async function mockArkretApi(
       const submittedEvents = submittedEntries.map(
         (entry: Record<string, any>) => entry.event ?? entry,
       );
-      const receiptableSubmissions = submittedEntries.filter(
-        (entry: Record<string, any>) =>
-          entry.event !== undefined && entry.authorization_lease !== undefined,
-      );
-      const ingressReceipts =
-        receiptableSubmissions.length > 0
-          ? inksonWire<Array<Record<string, unknown>>>("ingress-receipts", {
-              submissions: receiptableSubmissions,
-              digest_suite: "sha256",
-            })
-          : [];
       for (const event of submittedEvents) {
         if (
           event.kind === "ak.circle.archive" ||
@@ -1751,22 +1506,10 @@ export async function mockArkretApi(
           });
         }
         if (event.kind === "ak.realm.create") {
-          const fixture = inksonWire<RealmGenesisSealFixture>(
-            "realm-genesis-seal",
-            {
-              realm_id: id,
-              events: submittedEvents,
-              producer_signing_keys: producerSigningKeys(submittedEvents),
-            },
-          );
-          realmGenesisSeals.set(id, fixture);
-          for (const accepted of fixture.accepted_events) {
-            const eventId = accepted.event_id;
+          for (const accepted of submittedEvents) {
             if (
-              typeof eventId === "string" &&
-              !projectionEvents.some(
-                (projected) => projected.event_id === eventId,
-              )
+              typeof accepted.event_id === "string" &&
+              !projectionEvents.some((projected) => projected.event_id === accepted.event_id)
             ) {
               projectionEvents.push(accepted);
             }
@@ -1851,12 +1594,9 @@ export async function mockArkretApi(
               typeof eventId === "string",
           ),
         pending_delivery_count: 0,
-        ingress_receipts: ingressReceipts,
-        control_proposal_acks: [],
         duplicate: [],
         rejected: [],
         quarantine: [],
-        realm_actor_frontiers: [],
         cursor: syncToken,
       });
     }
@@ -2176,6 +1916,10 @@ export async function mockArkretApi(
           created_at: "2026-04-28T12:00:00.000Z",
           updated_at: "2026-04-28T12:10:00.000Z",
         },
+        commit: committedEventView(
+          (body.profile_event?.event ?? body.profile_event ?? projectionEvents[0]) as Record<string, unknown>,
+          0,
+        ).commit,
       });
     }
 
@@ -2225,7 +1969,7 @@ export async function mockArkretApi(
               prev_refs: [],
               payload: {
                 key: "ak.notifications.projection.v1",
-                expected_revision: 0,
+                 expected_server_revision: 0,
                 body: {
                   id: "ak:notification:01964137-0000-7000-8000-000000000001",
                   schema: "ak.schema.notification.v1",
@@ -2267,7 +2011,7 @@ export async function mockArkretApi(
               prev_refs: [],
               payload: {
                 key: "ak.notifications.projection.v1",
-                expected_revision: 0,
+                 expected_server_revision: 0,
                 body: {
                   id: "ak:notification:01964137-0000-7000-8000-000000000002",
                   schema: "ak.schema.notification.v1",
@@ -2313,18 +2057,11 @@ export async function mockArkretApi(
                     title: realm.title,
                     summary: realm.summary,
                   },
-                  e2ee_epoch:
-                    realm.encryption_profile === "mls_rfc9420"
-                      ? { epoch: 0, key_ref: `mock-key:${realm.id}` }
-                      : null,
                 },
                 summary: { joined_member_count: 1 },
-                timeline: {
-                  events: projectionEvents.filter(
-                    (event) => eventRealmId(event) === realm.id,
-                  ),
-                  limited: false,
-                },
+                committed_events: projectionEvents
+                  .filter((event) => eventRealmId(event) === realm.id)
+                  .map(committedEventView),
                 unread_notifications: {
                   notification_count: 0,
                   highlight_count: 0,
@@ -2338,13 +2075,9 @@ export async function mockArkretApi(
                   state_at_window_start: {
                     actor_profiles: [],
                     realm_metadata: {},
-                    e2ee_epoch: {
-                      epoch: 0,
-                      key_ref: `mock-key:${PRINCIPAL_CONTROL_REALM}`,
-                    },
                   },
                   summary: { joined_member_count: 1 },
-                  timeline: { events: [], limited: false },
+                  committed_events: [],
                   unread_notifications: {
                     notification_count: 0,
                     highlight_count: 0,
@@ -2360,10 +2093,6 @@ export async function mockArkretApi(
                     realm_metadata: {
                       title: "Arkret Demo Realm",
                       summary: "Shared demo Realm served by mocked server",
-                    },
-                    e2ee_epoch: {
-                      epoch: 0,
-                      key_ref: `mock-key:${DEMO_REALM}`,
                     },
                   },
                   summary: { joined_member_count: 2 },
@@ -2387,7 +2116,7 @@ export async function mockArkretApi(
                     ],
                     limited: false,
                   },
-                  timeline: { events: demoProjectionEvents, limited: false },
+                  committed_events: demoProjectionEvents.map(committedEventView),
                   unread_notifications: {
                     notification_count: 0,
                     highlight_count: 0,
@@ -2400,10 +2129,9 @@ export async function mockArkretApi(
                       title: "Launch Realm",
                       summary: "Board and discussion scope",
                     },
-                    e2ee_epoch: null,
                   },
                   summary: { joined_member_count: 1 },
-                  timeline: { events: [], limited: false },
+                  committed_events: [],
                   unread_notifications: {
                     notification_count: 0,
                     highlight_count: 0,
@@ -2416,10 +2144,9 @@ export async function mockArkretApi(
                       title: "Launch Deep Realm",
                       summary: "Related scope fixture",
                     },
-                    e2ee_epoch: null,
                   },
                   summary: { joined_member_count: 1 },
-                  timeline: { events: [], limited: false },
+                  committed_events: [],
                   unread_notifications: {
                     notification_count: 0,
                     highlight_count: 0,
@@ -2437,10 +2164,9 @@ export async function mockArkretApi(
                       summary:
                         "Mocks the live first-account PCR floor advisory condition",
                     },
-                    e2ee_epoch: null,
                   },
                   summary: { joined_member_count: 1 },
-                  timeline: { events: [], limited: false },
+                  committed_events: [],
                   unread_notifications: {
                     notification_count: 0,
                     highlight_count: 0,
@@ -2452,7 +2178,18 @@ export async function mockArkretApi(
         to_device: {
           messages: [],
         },
-        account_data: { events: notificationEvents },
+        account_data: {
+          events: notificationEvents.map((event) => ({
+            event_id: event.event_id,
+            kind: event.kind,
+            realm_id: event.realm_id,
+            scope_ref: event.scope_ref,
+            actor_id: event.actor_id,
+            created_at: event.created_at,
+            payload: event.payload,
+            producer_proof: (event.proofs as Array<Record<string, unknown>>)[0],
+          })),
+        },
         device_lists: { changed_ids: [], left_ids: [] },
         notifications: { items: [] },
       };
@@ -2550,12 +2287,13 @@ export async function mockArkretApi(
           payload: committedEventView(payload, index),
         }));
       frames.push({ kind: "catchup_complete", cursor });
-      frames.forEach((frame) =>
-        validateMockSchema(
-          "schemas/committed-event-subscribe-frame.schema.json",
-          frame,
-        ),
-      );
+      frames.forEach((frame, index) => {
+        try {
+          validateMockSchema("schemas/committed-event-subscribe-frame.schema.json", frame);
+        } catch (error) {
+          throw new Error(`committed event frame ${index} (${String((frame.payload as Record<string, unknown> | undefined)?.event && ((frame.payload as Record<string, unknown>).event as Record<string, unknown>).kind)}): ${String(error)}`);
+        }
+      });
       return route.fulfill({
         status: 200,
         contentType: "application/x-ndjson",
@@ -3137,10 +2875,10 @@ export async function mockArkretApi(
                 controller_account_id: accountId,
                 desired_agent_ids: desiredAgentIds,
               }),
-              control_frontier: [
+              authority_stream_head: [
                 "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh",
               ],
-              mls_group_id: "e2e-sidecar-group",
+              mls_group_id: mockMlsGroupId(sidecarId),
               epoch: 1,
               genesis_event_ref:
                 "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh",
@@ -3179,10 +2917,10 @@ export async function mockArkretApi(
             controller_account_id: accountId,
             desired_agent_ids: desiredAgentIds,
           }),
-          control_frontier: [
+          authority_stream_head: [
             "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh",
           ],
-          mls_group_id: "e2e-sidecar-group",
+          mls_group_id: mockMlsGroupId(sidecarId),
           epoch: 1,
           genesis_event_ref:
             "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh",
@@ -3731,109 +3469,12 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname === "/_arkret/self/seals/frontier" &&
-      route.request().method() === "QUERY"
-    ) {
-      const body = ((await contractRequestBody(route)) ?? {}) as {
-        realm_id?: unknown;
-      };
-      if (typeof body.realm_id !== "string") {
-        throw new Error("Seal frontier mock requires the request realm_id");
-      }
-      const genesis = realmGenesisSeals.get(body.realm_id);
-      return json(route, {
-        frontier: {
-          kind: "realm_seal",
-          realm_id: body.realm_id,
-          seal_basis: {
-            leaves: [genesis?.seal.id ?? `ak:seal:sha256:${"1".repeat(64)}`],
-          },
-          governance_health: {
-            status: "healthy",
-            pending_proposals: [],
-            pending_proposals_complete: true,
-          },
-          observation_coordinate: {
-            service_id: CURRENT_STATION_ID,
-            sequence: 1,
-            observed_at: "2026-04-28T12:00:00.000Z",
-          },
-        },
-        receipts: [],
-      });
-    }
-
-    if (
-      url.pathname === "/_arkret/self/seals/resolve" &&
-      route.request().method() === "QUERY"
-    ) {
-      const body = ((await contractRequestBody(route)) ?? {}) as {
-        realm_id?: unknown;
-        seal_refs?: unknown;
-      };
-      const sealRefs = Array.isArray(body.seal_refs)
-        ? body.seal_refs.filter(
-            (value): value is string => typeof value === "string",
-          )
-        : [];
-      const genesis =
-        typeof body.realm_id === "string"
-          ? realmGenesisSeals.get(body.realm_id)
-          : undefined;
-      const seals =
-        genesis && sealRefs.includes(genesis.seal.id) ? [genesis.seal] : [];
-      const found = new Set(seals.map((seal) => seal.id));
-      return json(route, {
-        seals,
-        missing_seal_refs: sealRefs.filter((sealRef) => !found.has(sealRef)),
-      });
-    }
-
-    if (
-      url.pathname === "/_arkret/self/seals/governance-dependencies" &&
-      route.request().method() === "POST"
-    ) {
-      const body = ((await contractRequestBody(route)) ?? {}) as {
-        realm_id?: unknown;
-        selectors?: unknown;
-      };
-      const fixture =
-        typeof body.realm_id === "string"
-          ? realmGenesisSeals.get(body.realm_id)
-          : undefined;
-      const selectors = Array.isArray(body.selectors)
-        ? (body.selectors as Array<Record<string, unknown>>)
-        : [];
-      const dependencies = fixture?.governance_dependencies ?? [];
-      const items = dependencies.filter((dependency) =>
-        selectors.some(
-          (selector) =>
-            selector.kind === dependency.selector.kind &&
-            selector.content_digest === dependency.selector.content_digest,
-        ),
-      );
-      const found = new Set(
-        items.map(
-          (dependency) =>
-            `${dependency.selector.kind}:${dependency.selector.content_digest}`,
-        ),
-      );
-      return json(route, {
-        items,
-        missing_selectors: selectors.filter(
-          (selector) =>
-            !found.has(`${selector.kind}:${selector.content_digest}`),
-        ),
-      });
-    }
-
-    if (
       url.pathname === "/_arkret/edge/push/register-device" &&
       route.request().method() === "POST"
     ) {
       return json(route, {
         push_target_id: "ak:pseudonym:push:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        registration_id: "push:e2e",
+        registration_id: "push_e2e_registration_0001",
         expires_at: "2099-01-01T00:00:00.000Z",
       });
     }
@@ -3935,7 +3576,7 @@ export async function mockArkretApi(
             : {};
         const acceptedAt = new Date().toISOString();
         const policyId = policy.policy_id ?? seededRecoveryPolicyId;
-        const acceptanceBasisRef = `ak:seal:sha256:${"a".repeat(64)}`;
+        const acceptanceBasisRef = mockCommitId({ policy_id: policyId, version: policy.version ?? 1 });
         recoveryPolicy = {
           policy_id: policyId,
           account_id: accountId,
@@ -4010,9 +3651,7 @@ export async function mockArkretApi(
         active_series: {
           account_id: accountId,
           control_realm_id: PRINCIPAL_CONTROL_REALM,
-          seal_basis: {
-            leaves: [`ak:seal:sha256:${"1".repeat(64)}`],
-          },
+          authority_commit_id: mockCommitId({ account_id: accountId, backup_kind: "secret_storage" }),
           // This fixture's accepted pointer is independent of object uploads,
           // deletions and the list filter; only preseeded recovery activates it.
           secret_storage: options.preseedRecoveryMaterial === true
@@ -4022,7 +3661,6 @@ export async function mockArkretApi(
                 series_pointer_version: 1,
               }
             : { state: "absent" },
-          mls_history: { state: "absent" },
         },
         has_more: false,
       });
@@ -4055,25 +3693,15 @@ async function contractRequestBody(route: Route) {
   }
 }
 
-function realmPreview() {
-  return {
-    realm_id: DEMO_REALM,
-    title: "Arkret Demo Realm",
-    summary: "Shared demo Realm served by mocked server",
-    discoverability: "public",
-    join_rule: "public",
-    member_count_bucket: "1-10",
-    as_of: "2026-06-13T00:00:00.000Z",
-    // No `source_refs`: a mocked entry has no Event provenance.
-    policy_revision: "mock-policy-rev",
-  };
-}
-
 function directoryRealmResolution() {
   return {
-    realm_preview: realmPreview(),
-    join_rule: "public",
-    join_candidates: [joinCandidate()],
+    realm_id: DEMO_REALM,
+    public_metadata: {
+      display_name: "Arkret Demo Realm",
+      summary: "Shared demo Realm served by mocked server",
+    },
+    indexed_at: "2026-06-13T00:00:00.000Z",
+    expires_at: "2099-01-01T00:00:00.000Z",
   };
 }
 
@@ -4098,20 +3726,10 @@ function directoryServiceDescribe() {
     limits: {},
     plaintext_visibility: {},
     rate_limit_policy: {},
-    claimed_profiles: [],
     verified_profiles: [],
     interop_surfaces: [],
     development_mode: false,
-    resource_kinds: ["realm", "organization", "actor"],
-    restricted_query_proof: false,
-    ingest_modes: ["push"],
-    accept_policy_kind: "open",
-    default_ttl_seconds: 86400,
-    max_ttl_seconds: 604800,
-    revalidation_grace_seconds: 3600,
-    accepted_resource_kinds: ["realm", "organization", "actor"],
-    accepted_did_methods: ["did:web"],
-    rate_limits: {},
+    resource_kinds: ["realm"],
   };
 }
 
@@ -4142,7 +3760,6 @@ function principalServiceDescribe() {
       PRINCIPAL_DESCRIBE_BUNDLE,
       PRINCIPAL_HTTP_CORE_BUNDLE,
     ]),
-    supported_reducer_profiles: ["ak.reducer.core.v1"],
     auth_metadata: {
       account_authority: {
         origin: "https://auth.local.host",
@@ -4162,7 +3779,6 @@ function principalServiceDescribe() {
     },
     limits: {
       x_storage: "memory",
-      mls_governance_proof: { max_exact_response_bytes: 1048576 },
     },
     rate_limit_policy: {
       policy_version: "1",
@@ -4179,7 +3795,6 @@ function principalServiceDescribe() {
       max_visibility: "none",
       notes: "E2EE-only mock: no plaintext-visible service surface.",
     },
-    claimed_profiles: [],
     verified_profiles: [],
     interop_surfaces: [],
     development_mode: true,
@@ -4211,7 +3826,6 @@ function identityRegistryServiceDescribe() {
       },
     ],
     supported_features: [],
-    claimed_profiles: [],
     verified_profiles: [],
     interop_surfaces: [],
   };
@@ -4274,31 +3888,6 @@ function staticMockResponseFixtures(
       value: principalServiceDescribe(),
     },
   ];
-}
-
-function joinCandidate() {
-  return {
-    realm_id: DEMO_REALM,
-    service_id: CURRENT_STATION_ID,
-    service_resolution: {
-      resolution_url: `https://server.local/_arkret/open/services/${encodeURIComponent(CURRENT_STATION_ID)}/resolution`,
-    },
-    service_kind: "station",
-    role: "joined_member_station",
-    operations: ["ak.peer.events.command.submit.v1"],
-    join_methods: ["invite_accept", "member_join"],
-    encryption_profile: "mls_rfc9420",
-    digest_algorithm: "sha256",
-    priority: 0,
-    source: "joined_member_account",
-    seal_basis: {
-      leaves: [
-        "ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111",
-      ],
-    },
-    as_of: "2026-05-30T00:00:00.000Z",
-    expires_at: "2099-01-01T00:00:00.000Z",
-  };
 }
 
 function mimiProviderDirectory() {

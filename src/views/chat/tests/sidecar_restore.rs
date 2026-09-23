@@ -15,6 +15,10 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     // restore the author's own (otherwise undecryptable) message body.
     let temp = std::env::temp_dir().join(format!("inkson-x10_6-rebuild-sidecar-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
+    let event_id = "ak:event:AQF-oOhhx26_6pizrJdZKnGd4znSSuoeNZmFDAJWlc70";
+    let message_id = arkret_sdk::MessageId::from_event_id(
+        &arkret_sdk::EventId::new(event_id.to_owned()).expect("fixture event id"),
+    );
     let sidecar_content = serde_json::to_string(
         &arkret_sdk::ContentBlock::markdown_text("secret discussion body")
             .to_value()
@@ -22,25 +26,26 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     )
     .unwrap();
     store.save_private_plaintext(
-        "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
-        "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
-        "message:chat-msg-enc",
+        "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+        "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
+        &format!("message:{message_id}"),
         &sidecar_content,
     );
 
     let mut state = ClientLocalState {
         raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:enc".to_owned(),
-            realm_id: Some("ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
+            realm_id: Some("ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
             received_at: chrono::Utc::now(),
             // Encrypted stub: identity only, NO plaintext body.
             payload: json!({
-                "event_id": "ak:event:AwF-oOhhx26_6pizrJdZKnGd4znSSuoeNZmFDAJWlc70",
+                "event_id": event_id,
                 "kind": "ak.message.create",
                 "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-                "realm_id": "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
-                "strand_id": "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
-                "message_id": "chat-msg-enc",
+                "realm_id": "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+                "scope_ref": {"kind": "realm", "realm_id": "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q"},
+                "strand_id": "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
+                "message_id": message_id,
                 "encrypted_content": true,
                 "status": "accepted"
             }),
@@ -56,7 +61,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     assert_eq!(without_sidecar.len(), 1);
     assert_eq!(
         without_sidecar[0].strand_id,
-        "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c"
+        "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c"
     );
     assert_eq!(without_sidecar[0].sender, "ak:did_core:web:alice.example");
     assert_eq!(without_sidecar[0].body, "");
@@ -71,7 +76,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     assert_eq!(restored.len(), 1);
     assert_eq!(
         restored[0].strand_id,
-        "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c"
+        "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c"
     );
     assert_eq!(restored[0].sender, "ak:did_core:web:alice.example");
     assert_eq!(restored[0].body, "secret discussion body");
@@ -102,8 +107,8 @@ fn rebuild_restores_author_body_from_event_derived_sidecar_key() {
     .as_str()
     .to_owned();
     store.save_private_plaintext(
-        "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
-        "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
+        "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+        "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
         &format!("message:{protocol_message_id}"),
         "secret discussion body",
     );
@@ -111,14 +116,15 @@ fn rebuild_restores_author_body_from_event_derived_sidecar_key() {
     let mut state = ClientLocalState {
         raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:enc-derived".to_owned(),
-            realm_id: Some("ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
+            realm_id: Some("ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
                 "event_id": event_id,
                 "kind": "ak.message.create",
                 "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-                "realm_id": "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
-                "strand_id": "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
+                "realm_id": "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+                "scope_ref": {"kind": "realm", "realm_id": "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q"},
+                "strand_id": "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
                 "message_id": protocol_message_id,
                 "encrypted_content": true,
                 "status": "accepted"
@@ -185,6 +191,7 @@ fn rebuild_restores_authors_own_encrypted_poll_from_content_sidecar() {
         "kind": "ak.message.create",
         "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
         "realm_id": realm,
+        "scope_ref": {"kind": "realm", "realm_id": realm},
         "strand_id": strand,
         "encrypted_content": true,
         "status": "accepted"
@@ -211,7 +218,7 @@ fn poll_projection_merge_preserves_optimistic_message_render_id() {
         crate::messaging::polls::PollCard::from_draft("poll-local".to_owned(), &draft);
     optimistic.poll_ref = Some(arkret_sdk::MessageId::new(wire_poll_id).unwrap());
     let mut projected = crate::messaging::polls::PollCard::from_draft(
-        "ak:event:ApfLd21JpG9eFxiZSOjnlVNQnQV8Bu7OP_TAtMdAAa30".to_owned(),
+        "ak:event:AZfLd21JpG9eFxiZSOjnlVNQnQV8Bu7OP_TAtMdAAa30".to_owned(),
         &draft,
     );
     projected.poll_ref = Some(arkret_sdk::MessageId::new(wire_poll_id).unwrap());
@@ -235,12 +242,12 @@ fn poll_projection_merge_preserves_optimistic_message_render_id() {
 fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
     let temp = std::env::temp_dir().join(format!("inkson-pending-sidecar-refresh-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
-    let realm = "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q";
-    let strand = "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
-    let message_id = "ak:message:A2YcbgQPjPWiFZOW87QxvndGtWcImO9Xf2-TcOjH1pXs";
+    let realm = "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q";
+    let strand = "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
+    let message_id = "ak:message:AWYcbgQPjPWiFZOW87QxvndGtWcImO9Xf2-TcOjH1pXs";
     let mut messages = vec![ChatMessage {
         realm_id: realm.to_owned(),
-        id: "ak:event:AJhsY0DZJGk1qN28pQapwgLRRgx7kyis3JdX2xGL1Cj8".to_owned(),
+        id: "ak:event:AZhsY0DZJGk1qN28pQapwgLRRgx7kyis3JdX2xGL1Cj8".to_owned(),
         protocol_message_id: Some(message_id.to_owned()),
         actor_id: None,
         sender: "ak:did_core:web:alice.example".to_owned(),
@@ -310,9 +317,12 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
 fn legacy_late_recovery_marker_does_not_override_verified_sidecar_path() {
     let temp = std::env::temp_dir().join(format!("inkson-sidecar-legacy-marker-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
-    let realm = "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q";
-    let strand = "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
-    let message_id = "ak:message:A2bMpjWQ3C_PCkkoYC30GDh4ogDBgC5-GGJ1v0zt9VKa";
+    let realm = "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q";
+    let strand = "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
+    let event_id = "ak:event:AYBWEYesKK6NG4kEzOZXc7FlBfXuJdaVxsjAp4V6hygg";
+    let message_id = arkret_sdk::MessageId::from_event_id(
+        &arkret_sdk::EventId::new(event_id.to_owned()).expect("fixture event id"),
+    );
     store.save_private_plaintext(
         realm,
         strand,
@@ -320,10 +330,11 @@ fn legacy_late_recovery_marker_does_not_override_verified_sidecar_path() {
         "late plaintext",
     );
     let mut event = json!({
-        "event_id": "ak:event:A4BWEYesKK6NG4kEzOZXc7FlBfXuJdaVxsjAp4V6hygg",
+        "event_id": event_id,
         "kind": "ak.message.create",
         "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
         "realm_id": realm,
+        "scope_ref": {"kind": "realm", "realm_id": realm},
         "strand_id": strand,
         "message_id": message_id,
         "decryption_state": "decryption_failed",

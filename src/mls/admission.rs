@@ -498,7 +498,7 @@ mod tests {
             _ => panic!("test fixture requires a human-device record"),
         };
         arkret_sdk::KeyPackageClaimRecord {
-            claim_id: "keypackage-test:Y2xhaW0tbm9uY2U".to_owned(),
+            claim_id: "ak:keypackage_claim:01904100-0000-7000-8000-00000000000a".to_owned(),
             keypackage_ref: record.keypackage_ref.as_str().to_owned(),
             actor_id: record.actor_id.clone(),
             principal_id,

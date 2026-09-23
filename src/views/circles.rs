@@ -442,7 +442,7 @@ pub fn CirclesPanel(
                                             let outcome = with_authed_api(&base, credential, |api| async move {
                                                 let submitter = api.event_submitter()?;
                                                 let request = arkret_sdk::CircleCreateRequestBody {
-                                                    create_event: arkret_wire::EventCommitSubmission::new(
+                                                    create_event: arkret_wire::EventAdmissionSubmission::new(
                                                         submitter
                                                             .author_for_direct_submission(&create_operation)
                                                             .await?

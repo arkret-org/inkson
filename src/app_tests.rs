@@ -1,5 +1,9 @@
 use super::*;
 
+const VERIFIED_DEVICE_EVENT: &str = "ak:event:Ad0EZUHcfLJv92Of4w-RJec6fkNlWP11fsQAQ4dqUOHS";
+const VERIFIED_SIGNER_EVIDENCE: &str =
+    "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
 fn test_client_config(
     server_url: &str,
     principal: impl AsRef<str>,
@@ -310,7 +314,10 @@ fn current_device_authorization_treats_missing_current_device_as_unauthorized() 
         "devices": [{
             "device_id": "ak:device:01964137-0000-7000-8000-000000000001",
             "status": "active",
-            "verification_state": "verified"
+            "verification_state": "verified",
+            "verification_source": "genesis",
+            "authorized_event_ref": VERIFIED_DEVICE_EVENT,
+            "signer_resolution_evidence_ref": VERIFIED_SIGNER_EVIDENCE
         }]
     });
 
@@ -391,7 +398,10 @@ fn account_has_other_active_devices_detects_prior_device() {
             {
                 "device_id": prior,
                 "status": "active",
-                "verification_state": "verified"
+                "verification_state": "verified",
+            "verification_source": "genesis",
+            "authorized_event_ref": VERIFIED_DEVICE_EVENT,
+            "signer_resolution_evidence_ref": VERIFIED_SIGNER_EVIDENCE
             },
             {
                 "device_id": current,
@@ -416,12 +426,18 @@ fn account_has_other_active_devices_ignores_revoked_prior_device() {
                 "device_id": prior,
                 "status": "revoked",
                 "verification_state": "verified",
+            "verification_source": "genesis",
+            "authorized_event_ref": VERIFIED_DEVICE_EVENT,
+            "signer_resolution_evidence_ref": VERIFIED_SIGNER_EVIDENCE,
                 "revoked_at": "2026-06-14T00:00:00.000Z"
             },
             {
                 "device_id": current,
                 "status": "active",
-                "verification_state": "verified"
+                "verification_state": "verified",
+            "verification_source": "genesis",
+            "authorized_event_ref": VERIFIED_DEVICE_EVENT,
+            "signer_resolution_evidence_ref": VERIFIED_SIGNER_EVIDENCE
             }
         ]
     });

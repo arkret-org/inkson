@@ -35,11 +35,27 @@ const PAGE_LIMIT: usize = 100;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum CurrentTarget {
     Realm,
+    Policy {
+        policy_id: arkret_sdk::PolicyId,
+    },
+    PolicyAction {
+        subject: arkret_wire::PolicyActionSelector,
+    },
+    Device {
+        device_id: arkret_sdk::DeviceId,
+    },
     Strand {
         strand_id: arkret_sdk::StrandId,
     },
     Member {
         actor_id: arkret_sdk::ActorId,
+    },
+    AgentKey {
+        agent_id: arkret_sdk::DidCoreId,
+        agent_key_id: arkret_wire::AgentKeyId,
+    },
+    AgentStatus {
+        agent_id: arkret_sdk::DidCoreId,
     },
     Event {
         event_id: arkret_sdk::EventId,
@@ -56,9 +72,31 @@ pub(crate) enum CurrentTarget {
 
 fn target_of(selector: &CurrentSelector) -> CurrentTarget {
     match selector {
-        CurrentSelector::RealmProfile | CurrentSelector::RealmPolicy => CurrentTarget::Realm,
+        CurrentSelector::RealmProfile
+        | CurrentSelector::RealmPolicy
+        | CurrentSelector::DeviceGeneration => CurrentTarget::Realm,
+        CurrentSelector::Policy { policy_id } => CurrentTarget::Policy {
+            policy_id: policy_id.clone(),
+        },
+        CurrentSelector::PolicyAction { subject } => CurrentTarget::PolicyAction {
+            subject: subject.clone(),
+        },
+        CurrentSelector::DeviceAuthorization { device_id }
+        | CurrentSelector::DeviceRevocationProposals { device_id } => CurrentTarget::Device {
+            device_id: device_id.clone(),
+        },
         CurrentSelector::MemberState { actor_id } => CurrentTarget::Member {
             actor_id: actor_id.clone(),
+        },
+        CurrentSelector::AgentKey {
+            agent_id,
+            agent_key_id,
+        } => CurrentTarget::AgentKey {
+            agent_id: agent_id.clone(),
+            agent_key_id: agent_key_id.clone(),
+        },
+        CurrentSelector::AgentStatus { agent_id } => CurrentTarget::AgentStatus {
+            agent_id: agent_id.clone(),
         },
         CurrentSelector::Strand { strand_id } => CurrentTarget::Strand {
             strand_id: strand_id.clone(),
@@ -1670,6 +1708,26 @@ mod tests {
     static NEXT_TEST_PATH: AtomicU64 = AtomicU64::new(0);
     const REALM: &str = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
     const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq";
+    #[test]
+    fn device_current_families_share_device_page_without_merging_selectors() {
+        let device_id =
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000002").unwrap();
+        let authorization = CurrentSelector::DeviceAuthorization {
+            device_id: device_id.clone(),
+        };
+        let proposals = CurrentSelector::DeviceRevocationProposals {
+            device_id: device_id.clone(),
+        };
+        assert_eq!(target_of(&authorization), target_of(&proposals));
+        assert_ne!(
+            selector_key(&authorization).unwrap(),
+            selector_key(&proposals).unwrap()
+        );
+        assert_eq!(
+            target_of(&CurrentSelector::DeviceGeneration),
+            CurrentTarget::Realm
+        );
+    }
     fn row(revision: u64, removed: bool) -> TypedCurrentResult {
         serde_json::from_value(json!({
             "selector":{"kind":"realm_profile"},
@@ -1877,7 +1935,19 @@ mod tests {
     async fn closed_selector_without_product_region_has_exact_durable_target() {
         let path = path();
         let index = index(&path, 0).await;
-        let entry = device_generation_row(1);
+        let entry = TypedCurrentResult::Value {
+            selector: CurrentSelector::MimiRoomBinding {
+                mimi_room_uri: arkret_wire::MimiRoomUri::new(
+                    "mimi://mimi.example.com/rooms/01JSMIMI",
+                )
+                .unwrap(),
+            },
+            revision: CurrentRevision {
+                commit_id: arkret_sdk::RealmCommitId::from_digest([1; 32]),
+                stream_position: 1,
+            },
+            value: json!({"status":"value","value":null}),
+        };
         let selector = selector_of(&entry).clone();
         let target = target_of(&selector);
         assert!(matches!(&target, CurrentTarget::Selector { .. }));

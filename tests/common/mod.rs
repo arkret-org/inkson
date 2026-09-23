@@ -29,6 +29,14 @@ pub fn pinned_hlc(counter: u64) -> arkret_sdk::Hlc {
     arkret_test_kit::pinned_hlc(u16::try_from(counter).expect("fixture HLC counter"))
 }
 
+/// A distinct, canonical timestamp for each Event in a test unit.
+pub fn pinned_created_at(nth: u64) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::parse_from_rfc3339("2026-09-19T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc)
+        + chrono::Duration::milliseconds(i64::try_from(nth).unwrap())
+}
+
 /// Finalize `operation` at the first deterministic test instant.
 pub fn author(operation: LocalOperation) -> arkret_sdk::AuthoredEvent {
     author_at_index(operation, 1)

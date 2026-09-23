@@ -470,14 +470,14 @@ fn bucket_presence_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
 /// Immutable server-visible header of a Signal, assembled before encryption.
 ///
 /// `scope_ref` comes from the target's accepted projection, never from
-/// user-supplied payload text, and `stream_head_ref` is the accepted head of the
+/// user-supplied payload text, and `authority_commit_id` is the accepted head of the
 /// scope's independent commit stream under which live-send eligibility is checked.
 #[derive(Clone, Debug)]
 pub struct SignalHeader {
     pub scope_ref: arkret_sdk::ScopeRef,
     pub sender_actor_id: arkret_sdk::ActorId,
     pub sender_device_id: arkret_sdk::DeviceId,
-    pub stream_head_ref: arkret_sdk::RealmCommitId,
+    pub authority_commit_id: arkret_sdk::RealmCommitId,
     pub signal_class: arkret_wire::SignalClass,
     pub sent_at: chrono::DateTime<chrono::Utc>,
     pub expires_at: chrono::DateTime<chrono::Utc>,
@@ -489,7 +489,7 @@ impl SignalHeader {
         scope_ref: arkret_sdk::ScopeRef,
         sender_actor_id: arkret_sdk::ActorId,
         sender_device_id: arkret_sdk::DeviceId,
-        stream_head_ref: arkret_sdk::RealmCommitId,
+        authority_commit_id: arkret_sdk::RealmCommitId,
         signal_class: arkret_wire::SignalClass,
         sent_at: chrono::DateTime<chrono::Utc>,
     ) -> Self {
@@ -497,7 +497,7 @@ impl SignalHeader {
             scope_ref,
             sender_actor_id,
             sender_device_id,
-            stream_head_ref,
+            authority_commit_id,
             signal_class,
             sent_at,
             expires_at: sent_at + signal_class.max_ttl(),
@@ -698,7 +698,7 @@ pub fn encrypt_signal_payload_with_store(
         scope_ref: &header.scope_ref,
         sender_actor_id: &header.sender_actor_id,
         sender_device_id: Some(&header.sender_device_id),
-        stream_head_ref: &header.stream_head_ref,
+        authority_commit_id: &header.authority_commit_id,
         signal_class: header.signal_class,
         sent_at: header.sent_at,
         expires_at: header.expires_at,
@@ -777,7 +777,7 @@ fn seal_signal_envelope_with_signer(
         scope_ref: header.scope_ref,
         sender_actor_id: header.sender_actor_id,
         sender_device_id: Some(header.sender_device_id),
-        stream_head_ref: header.stream_head_ref,
+        authority_commit_id: header.authority_commit_id,
         signal_class: header.signal_class,
         sent_at: header.sent_at,
         expires_at: header.expires_at,
