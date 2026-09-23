@@ -1140,6 +1140,22 @@ mod tests {
     fn frame(value: Value) -> AccountSubscribeFrame {
         serde_json::from_value(value).unwrap()
     }
+    fn detail_baseline(snapshot: &str, cut: u64, complete: bool) -> Value {
+        json!({
+            "snapshot_cursor": snapshot,
+            "cut_revision": cut,
+            "coverage": {
+                "realm_id": REALM,
+                "stream_heads": [{
+                    "stream_ref": {"kind": "realm", "realm_id": REALM},
+                    "stream_position": cut,
+                    "commit_id": arkret_wire::RealmCommitId::from_digest([0x31; 32])
+                }],
+                "complete_for_authorized_streams": complete
+            },
+            "complete": complete
+        })
+    }
     fn store() -> LocalStateStore {
         LocalStateStore::with_path(std::env::temp_dir().join(format!(
                 "inkson-demand-{}.json",
@@ -1501,10 +1517,11 @@ mod tests {
     #[test]
     fn invalidation_rejects_old_detail_completion() {
         let mut store = store();
+        store.save_realm_tree_projection(REALM, json!({"__current_required_ready": true}));
         apply(
             &mut store,
             &frame(
-                json!({"kind":"delta","cursor":"ak:cursor:YQ","realms":{REALM:{"baseline":{"snapshot_cursor":"ak:cursor:cw","cut_revision":2,"coverage":{"realm":true,"strand_ids":[],"members":{"mode":"selected","actor_ids":[]},"event_ids":[]},"complete":false}}}}),
+                json!({"kind":"delta","cursor":"ak:cursor:YQ","realms":{REALM:{"baseline":detail_baseline("ak:cursor:cw", 2, false)}}}),
             ),
         );
         apply(
@@ -1516,11 +1533,15 @@ mod tests {
         let accepted = apply(
             &mut store,
             &frame(
-                json!({"kind":"delta","cursor":"ak:cursor:Yw","realms":{REALM:{"baseline":{"snapshot_cursor":"ak:cursor:cw","cut_revision":2,"coverage":{"realm":true,"strand_ids":[],"members":{"mode":"selected","actor_ids":[]},"event_ids":[]},"complete":true}}}}),
+                json!({"kind":"delta","cursor":"ak:cursor:Yw","realms":{REALM:{"baseline":detail_baseline("ak:cursor:cw", 2, true)}}}),
             ),
         );
         assert!(accepted.realms.unwrap().entries.is_empty());
         assert!(store.realm_detail_invalidated(REALM));
+        assert_eq!(
+            store.load().realm_tree_projections[REALM]["__current_required_ready"],
+            false
+        );
     }
 
     #[test]
@@ -1529,11 +1550,23 @@ mod tests {
         apply(
             &mut store,
             &frame(
-                json!({"kind":"delta","cursor":"ak:cursor:YQ","realms":{REALM:{"baseline":{"snapshot_cursor":"ak:cursor:cw","cut_revision":2,"coverage":{"realm":true,"strand_ids":[],"members":{"mode":"selected","actor_ids":[]},"event_ids":[]},"complete":true}}}}),
+                json!({"kind":"delta","cursor":"ak:cursor:YQ","realms":{REALM:{"baseline":detail_baseline("ak:cursor:cw", 2, true)}}}),
             ),
         );
 
         assert!(!store.realm_detail_invalidated(REALM));
+        // Baseline completion is delivery progress, not a verified current
+        // value or an authoring decision by the governing Station.
+        assert!(store.cached_current_entries(REALM).is_empty());
+        assert!(
+            store
+                .load()
+                .realm_tree_projections
+                .get(REALM)
+                .is_none_or(|projection| {
+                    projection.get("__current_required_ready") != Some(&Value::Bool(true))
+                })
+        );
     }
 
     #[test]
