@@ -129,8 +129,10 @@ fn operation_builder_delegates_event_time_normalization_to_the_sdk() {
     .unwrap();
 
     assert_eq!(
-        serde_json::to_value(authored(&op).event()).unwrap()["created_at"],
-        json!("2026-07-18T10:20:30.987Z")
+        op.intent()
+            .created_at()
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "2026-07-18T10:20:30.987Z"
     );
 }
 
@@ -303,6 +305,7 @@ fn kanban_card_strand_create_omits_position_metadata() {
         op.payload()["object"]["tracks"]["discussion"]["profile"],
         "discussion"
     );
+    assert!(op.payload()["object"].get("stage").is_none());
     assert!(
         op.payload()["object"]["metadata"]["fields"]
             .get("board_space_id")
@@ -403,6 +406,7 @@ fn discussion_strand_create_emits_discussion_track() {
     );
     assert_eq!(op.payload()["object"]["metadata"]["title"], "Ops");
     assert!(op.payload()["object"].get("title").is_none());
+    assert!(op.payload()["object"].get("stage").is_none());
     // `metadata.fields.rank` is a forbidden Strand member; placement lives in
     // the position component written by move / reorder.
     assert!(

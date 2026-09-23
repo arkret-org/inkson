@@ -103,7 +103,9 @@ pub(crate) fn strand_create_payload(
             tracks: object.tracks,
             state: object.state,
             state_changed_at: None,
-            stage: Some(object.stage),
+            // The create schema forbids stage; only ak.strand.stage.set may
+            // initialize the optional business progression axis.
+            stage: None,
             stage_changed_at: None,
             created_by: object.created_by,
             created_at: object.created_at,

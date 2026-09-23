@@ -158,7 +158,7 @@ mod tests {
 
     const REALM: &str = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     const TARGET: &str = "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
-    const DECISION: &str = "ak:event:A42FkwFdQPw7aC_yPcdlVU5ZjKLAnFCbmrXTVRJTNhRc";
+    const DECISION: &str = "ak:event:ARn9Y97Ha81FH12YY8HLiDixId_wA5Wx2c25p82mJcJ5";
 
     fn revision() -> arkret_wire::CurrentRevision {
         arkret_wire::CurrentRevision {
