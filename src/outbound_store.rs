@@ -323,6 +323,7 @@ mod tests {
     use garth::SecureKeyStore as _;
 
     use super::*;
+    use crate::operation::AuthoredEventExt as _;
     use crate::test_support as fixture;
 
     #[test]
@@ -357,7 +358,7 @@ mod tests {
             "discussion",
             arkret_sdk::ContentBlock::text(format!("queued fixture {nth}")),
         );
-        let event = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MessageCreate>::new(
+        let mut event = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MessageCreate>::new(
             arkret_sdk::ScopeRef::Realm {
                 realm_id: fixture::realm_id(FIXTURE_REALM),
             },
@@ -372,8 +373,18 @@ mod tests {
             .unwrap(),
             arkret_sdk::DigestSuite::Sha256,
         )
-        .unwrap()
-        .into_event();
+        .unwrap();
+        event
+            .sign_ed25519(
+                "did:web:alice.example",
+                "did:web:alice.example#key-1",
+                &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
+                crate::event_signer::test_producer_proof_context(arkret_sdk::DigestSuite::Sha256)
+                    .signer_resolution_evidence_ref
+                    .expect("test signer evidence ref"),
+            )
+            .expect("fixture Event has a real producer proof");
+        let event = event.into_event();
         garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
             arkret_wire::EventCommitSubmission {
                 event,
@@ -511,7 +522,7 @@ mod tests {
         let key = "inkson.outbound.v1::nsA.standard";
 
         mutate_queue_in_store(&store, key, |queue| {
-            enqueue_items(queue, 2048);
+            enqueue_items(queue, 4608);
             Ok(())
         })
         .await
@@ -534,7 +545,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(items, 2048);
+        assert_eq!(items, 4608);
         assert_ne!(
             first, last,
             "every queued item keeps its own Event identity"
