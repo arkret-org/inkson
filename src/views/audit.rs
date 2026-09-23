@@ -1,9 +1,8 @@
 //! Audit view — read-only inspector for audited E2EE events.
 //!
-//! Surfaces `ak.audit.accessed` (attested-audit reads) and
-//! `ak.audit.ryw_receipt` (disclosed-audit write receipts) from the local
-//! raw-operation log, so administrators / users can verify the audit
-//! channel is firing under the active policy.
+//! Surfaces `ak.audit.accessed` from the local raw-operation log, so
+//! administrators / users can verify the audit channel is firing under the
+//! active policy.
 //!
 //! Writing new audit events is owned by the SDK / reducer path; this view
 //! does not emit anything.
@@ -157,23 +156,6 @@ mod tests {
         assert_eq!(
             row.target_event_id.as_deref(),
             Some("ak:event:ANOufzo30HjlW4S8eBowzzay9mI2anxKRM5l1AUQ1pDE")
-        );
-    }
-
-    #[test]
-    fn classifies_ryw_receipt_with_source_event_id() {
-        let row = classify_audit_row(
-            "op-2",
-            &json!({
-                "kind": "ak.audit.ryw_receipt",
-                "source_event_id": "ak:event:AT0vreMDT0LOX4VqBw6oTfJXIygWfJREjoMZQIWL7Wm0",
-            }),
-        )
-        .expect("should classify");
-        assert_eq!(row.kind, "ak.audit.ryw_receipt");
-        assert_eq!(
-            row.target_event_id.as_deref(),
-            Some("ak:event:AT0vreMDT0LOX4VqBw6oTfJXIygWfJREjoMZQIWL7Wm0")
         );
     }
 
