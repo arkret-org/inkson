@@ -530,10 +530,7 @@ mod tests {
         let request = arkret_sdk::PeerKeyPackagesClaimUnsignedRequest {
             claim_request_id: arkret_sdk::Base64UrlString::new(claim_request_id.to_owned())
                 .unwrap(),
-            target_account_id: Some(arkret_sdk::AccountId::new(
-                claim.principal_id.clone(),
-                arkret_sdk::DidCoreId::new("ak:did_core:web:ps.example").unwrap(),
-            )),
+            target_account_id: Some(claim.actor_id.as_account_id().unwrap().clone()),
             intended_realm_id,
             requester_account_id: Some(arkret_sdk::AccountId::new(
                 crate::mls_api_helpers::principal_core_id(requester).unwrap(),
@@ -571,7 +568,7 @@ mod tests {
             request_digest,
             claims_digest,
             source_id: authority.clone(),
-            destination_id: authority,
+            destination_id: claim.actor_id.as_account_id().unwrap().station_id.clone(),
             request,
             claimed_at: crate::clock::now_utc(),
             expires_at: claim.expires_at,
@@ -584,7 +581,7 @@ mod tests {
     }
 
     #[test]
-    fn claimed_actor_uses_receipt_station_not_inviter_station() {
+    fn claimed_actor_must_match_receipt_destination_station() {
         let bob = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
             crate::test_support::account_actor("did:web:bob.example"),
             arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000b1").unwrap(),
@@ -596,12 +593,13 @@ mod tests {
         );
         let mut receipt = self_claim_receipt(&claim, REALM, "did:web:alice.example", "Y2xhaW0");
         let alpha = crate::mls::governance_proof::claimed_actor_id(&claim, &receipt).unwrap();
+        assert_eq!(alpha, claim.actor_id);
         receipt.destination_id =
             arkret_sdk::DidCoreId::new("ak:did_core:web:beta.example").unwrap();
-        let beta = crate::mls::governance_proof::claimed_actor_id(&claim, &receipt).unwrap();
-        assert_eq!(alpha.signing_principal_id(), beta.signing_principal_id());
-        assert_ne!(alpha, beta);
-        assert_eq!(beta.route_service_id(), &receipt.destination_id);
+        assert_eq!(
+            crate::mls::governance_proof::claimed_actor_id(&claim, &receipt).unwrap_err(),
+            "claimed KeyPackage actor_id differs from receipt destination"
+        );
     }
 
     #[test]

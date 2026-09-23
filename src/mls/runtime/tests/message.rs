@@ -414,11 +414,11 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
     assert_eq!(state.mls_checkpoint_for(realm).unwrap().epoch, 0);
 }
 
-/// A roster-only account-sync frame can arrive before the Realm's create /
-/// policy-components state. It must not make the wire scheme depend on timing.
+/// An accepted MLS group is the content-scheme authority. A legacy projection
+/// field must not be required once that typed current result is installed.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
+fn encrypted_write_uses_accepted_mls_group_without_legacy_scheme_projection() {
     let mut state = temp_state_store("send-pause-policy-pending");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -439,7 +439,6 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
     state.save_realm_tree_projection(
         realm,
         json!({
-            "encrypted": true,
             "member_roster_entries_limited": false,
             "member_roster_entries": [{
                 "actor_id": arkret_sdk::ActorId::account(fixture::authority(actor)),
@@ -448,7 +447,7 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
         }),
     );
 
-    let error = encrypt_values_with_device_snapshot(
+    let (_, encrypted_values) = encrypt_values_with_device_snapshot(
         &mut state,
         &secure,
         realm,
@@ -457,12 +456,10 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
         "application/vnd.arkret.test+json",
         &[br#""must-wait-for-policy""#.to_vec()],
     )
-    .unwrap_err();
+    .expect("accepted MLS current permits encrypted content without a legacy scheme field");
 
-    assert!(matches!(
-        error,
-        MlsRuntimeError::EncryptionTransitionPending
-    ));
+    assert_eq!(encrypted_values.len(), 1);
+    assert_eq!(encrypted_values[0]["scheme"], "mls_rfc9420");
     assert_eq!(state.mls_checkpoint_for(realm).unwrap().epoch, 0);
 }
 
@@ -650,6 +647,9 @@ fn historical_author_view_survives_epoch_rotation() {
     alice_group
         .install_accepted_commit(&accepted_commit, &base_current)
         .unwrap();
+    for proposal in &add.proposals {
+        bob_group.apply_proposal(proposal).unwrap();
+    }
     bob_group
         .install_accepted_commit(&accepted_commit, &base_current)
         .unwrap();

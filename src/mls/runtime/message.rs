@@ -710,6 +710,7 @@ pub(crate) fn encrypt_values_with_device_snapshot(
     content_type: &str,
     plaintext_values: &[Vec<u8>],
 ) -> Result<(Vec<arkret_sdk::DidCoreId>, Vec<serde_json::Value>), MlsRuntimeError> {
+    super::reject_retired_minimal_metadata_realm(state_store, realm_id)?;
     let effective_scope = runtime_effective_scope(realm_id, None, None)?;
     let snapshot = state_store
         .mls_checkpoint_for_scope(&effective_scope)
