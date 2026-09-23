@@ -35,10 +35,23 @@ const PAGE_LIMIT: usize = 100;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum CurrentTarget {
     Realm,
-    Strand { strand_id: arkret_sdk::StrandId },
-    Member { actor_id: arkret_sdk::ActorId },
-    Event { event_id: arkret_sdk::EventId },
-    MlsGroup { scope_ref: arkret_sdk::ScopeRef },
+    Strand {
+        strand_id: arkret_sdk::StrandId,
+    },
+    Member {
+        actor_id: arkret_sdk::ActorId,
+    },
+    Event {
+        event_id: arkret_sdk::EventId,
+    },
+    MlsGroup {
+        scope_ref: arkret_sdk::ScopeRef,
+    },
+    /// Closed selectors without a dedicated product paging region still get
+    /// an exact, bounded local region keyed by their SDK wire selector.
+    Selector {
+        selector: CurrentSelector,
+    },
 }
 
 fn target_of(selector: &CurrentSelector) -> CurrentTarget {
@@ -55,6 +68,9 @@ fn target_of(selector: &CurrentSelector) -> CurrentTarget {
         },
         CurrentSelector::MlsGroup { scope_ref } => CurrentTarget::MlsGroup {
             scope_ref: scope_ref.clone(),
+        },
+        selector => CurrentTarget::Selector {
+            selector: selector.clone(),
         },
     }
 }
@@ -1612,6 +1628,14 @@ mod tests {
             "value":if removed{json!({"status":"removed"})}else{json!({"status":"value","value":null})}
         })).unwrap()
     }
+    fn device_generation_row(revision: u64) -> TypedCurrentResult {
+        serde_json::from_value(json!({
+            "selector":{"kind":"device_generation"},
+            "revision":{"commit_id":COMMIT,"stream_position":revision},
+            "value":{"generation":revision}
+        }))
+        .unwrap()
+    }
     fn frame(
         entries: Vec<TypedCurrentResult>,
         baseline: Option<serde_json::Value>,
@@ -1782,6 +1806,40 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ))
+    }
+    #[tokio::test]
+    async fn closed_selector_without_product_region_has_exact_durable_target() {
+        let path = path();
+        let index = index(&path, 0).await;
+        let entry = device_generation_row(1);
+        let selector = selector_of(&entry).clone();
+        let target = target_of(&selector);
+        assert!(matches!(&target, CurrentTarget::Selector { .. }));
+        index
+            .stage_frame(0, &frame(vec![entry.clone(), row(1, false)], None))
+            .await
+            .unwrap()
+            .finish();
+        assert_eq!(
+            index.read_selector(REALM, &selector).await.unwrap(),
+            Some(entry.clone())
+        );
+        assert_eq!(
+            index
+                .read_target_page(REALM, &target, None, PAGE_LIMIT)
+                .await
+                .unwrap()
+                .entries,
+            vec![entry]
+        );
+        assert_eq!(
+            index
+                .read_target_page(REALM, &CurrentTarget::Realm, None, PAGE_LIMIT)
+                .await
+                .unwrap()
+                .entries,
+            vec![row(1, false)]
+        );
     }
     #[tokio::test]
     async fn cancelled_caller_cannot_release_an_inflight_transaction_lease() {
