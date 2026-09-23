@@ -578,7 +578,7 @@ mod tests {
                 }]
             },
             "revision": {
-                "commit_id": "ak:realm_commit:0196419b-0000-7000-8000-000000000002",
+                "commit_id": arkret_sdk::RealmCommitId::from_digest([2; 32]).to_string(),
                 "stream_position": 2
             }
         });

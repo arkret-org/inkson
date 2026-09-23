@@ -890,10 +890,8 @@ pub(super) fn RealmsSection(
                                                         if realm.first_commit.realm_id.as_str() != realm_id
                                                             || realm.first_commit.stream_position != 0
                                                         {
-                                                            let error = format!(
-                                                                "Realm founding returned a non-genesis RealmCommit {}",
-                                                                realm.first_commit.commit_id
-                                                            );
+                                                            let error = tr("setup.error.non_genesis_commit")
+                                                                .replace("{commit}", &realm.first_commit.commit_id.to_string());
                                                             let message = BootstrapProgressStrings::fill(
                                                                 &strings.created_then_failed,
                                                                 &[("id", realm_id.clone()), ("error", error)],

@@ -20,9 +20,10 @@ fn realm_runner_keeps_session_recovery_inside_transport_provider() {
     let source = fs::read_to_string(&source_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", source_path.display()));
     assert!(
-        source.contains("async fn recover_unauthorized(&self)")
-            && source.contains("provide_authenticated_sdk_client")
+        source.contains("provide_authenticated_sdk_client")
             && source.contains("refresh_authenticated_session_after_unauthorized")
+            && source
+                .contains("garth::classify_error(&error) == garth::RunErrorClass::Unauthorized")
             && !source.contains("prepare_refresh_for_server_after_unauthorized")
             && !source.contains("exchange_refresh(&grant, &device_handle)")
             && !source.contains("self.ctx.token.set(session_credential)"),
@@ -45,30 +46,24 @@ fn ordinary_event_submit_uses_garth_durable_outbound() {
     let submit = fs::read_to_string(&submit_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", submit_path.display()));
     assert!(
-        submit.contains("OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open")
-            && submit.contains(".enqueue_scoped(")
+        submit.contains("OutboundEngine::new(")
+            && submit.contains("InksonOutboundStore::open(")
+            && submit.contains(".enqueue(submission)")
             && submit.contains("drain_outbound"),
         "ordinary Inkson SDK events must enter Garth's durable queue and resume after restart"
     );
     assert!(
-        submit.contains("async fn submit_sdk_event_direct")
-            && submit.contains(".submit_sdk_event_direct(")
-            // The exact bytes come off the immutable authored attempt that the
-            // queue persisted, never off a freshly re-serialized envelope.
-            && submit.contains("&attempt.transport_idempotency_key")
-            && submit.contains("&attempt.canonical_body_bytes")
-            && submit.contains(
-                "self.post_persisted_signed_sdk_event(event, idempotency_key, canonical_body_bytes)"
-            ),
-        "the exact-byte direct HTTP tail must remain private to the Garth queue submitter"
+        submit.contains("QueuedSubmission::new(")
+            && submit.contains(".submit_next(&authority_client, &options)")
+            && !submit.contains("submit_sdk_event_direct"),
+        "the durable Garth queue must own the frozen submission's HTTP tail"
     );
     let outbound_store_path = manifest.join("src/outbound_store.rs");
     let outbound_store = fs::read_to_string(&outbound_store_path).unwrap_or_else(|error| {
         panic!("failed to read {}: {error}", outbound_store_path.display())
     });
     assert!(
-        outbound_store.contains("MlsDurablePostAccept")
-            && outbound_store.contains("\"mls-durable-post-accept\""),
+        outbound_store.contains("MlsCommit") && outbound_store.contains("\"mls-commit\""),
         "the durable MLS admission lane must remain distinct from ordinary outbound delivery"
     );
 
@@ -82,17 +77,16 @@ fn ordinary_event_submit_uses_garth_durable_outbound() {
 }
 
 #[test]
-fn mls_readiness_remains_checkpoint_proven() {
+fn mls_readiness_remains_commit_proven() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let submit_path = manifest.join("src/event_submit.rs");
     let submit = fs::read_to_string(&submit_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", submit_path.display()));
     assert!(
-        submit.contains("PostAcceptAction::MlsAdmission")
-            && submit.contains("submit_next_with_fence_and_hook")
+        submit.contains("PostAccept::InstallMlsCommit")
+            && submit.contains("AuthoritySubmitRequest::MlsCommit")
             && submit.contains("drain_mls_outbound")
-            && submit.contains("accepted-artifact consumer has independently proven")
-            && submit.contains("staged snapshot is never trusted as group readiness by itself"),
+            && submit.contains("install_accepted_transition("),
         "MLS admission must remain durable without treating ingress acceptance as group readiness"
     );
 
@@ -100,11 +94,11 @@ fn mls_readiness_remains_checkpoint_proven() {
     let consumer = fs::read_to_string(&consumer_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", consumer_path.display()));
     assert!(
-        consumer.contains("garth::AcceptedMlsArtifactConsumer::new")
-            && consumer.contains("frontier.target_checkpoint.accepted_events")
-            && consumer.contains("compare_and_swap_accepted_mls_artifacts")
+        consumer.contains("accepted_commit_for_welcome(api, &delivery)")
+            && consumer.contains("scan_stream(&stream_ref")
+            && consumer.contains("install_accepted_welcome(")
             && consumer.contains("converge_accepted_mls_artifacts"),
-        "only the checkpoint-proven accepted-artifact consumer may publish ready MLS state"
+        "only an authority-committed MLS transition may publish ready MLS state"
     );
 
     let kanban_path = manifest.join("src/views/kanban/mls_encrypt.rs");

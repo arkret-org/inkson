@@ -94,6 +94,12 @@ pub use signing_seed::{
 static WASM_INDEXEDDB_SECURE_KEY_STORE: OnceLock<Arc<dyn SecureKeyStore + Send + Sync>> =
     OnceLock::new();
 
+/// The seed-grade IndexedDB/SubtleCrypto tier has completed initialization.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn wasm_secure_store_ready() -> bool {
+    WASM_INDEXEDDB_SECURE_KEY_STORE.get().is_some()
+}
+
 #[cfg(target_arch = "wasm32")]
 pub(crate) const WASM_INDEXEDDB_SECURE_KEY_STORE_BACKEND: &str = "indexed_db_subtle_aes_gcm";
 

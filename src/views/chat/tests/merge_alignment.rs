@@ -19,7 +19,7 @@ mod merge_duplicate_create_message_alignment_tests {
 
     fn msg(id: &str, body: &str, created_at: Option<chrono::DateTime<chrono::Utc>>) -> ChatMessage {
         ChatMessage {
-            realm_id: "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
+            realm_id: "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
             id: id.to_owned(),
             protocol_message_id: Some(
                 "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c".to_owned(),
@@ -134,7 +134,7 @@ mod merge_duplicate_create_message_alignment_tests {
     #[test]
     fn merge_newer_incoming_preserves_local_edit_metadata_and_appends_old_body() {
         let mut existing = msg(
-            "ak:event:Az44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck",
+            "ak:event:AT44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck",
             "edited body",
             at("2026-07-07T06:19:22.000Z"),
         );
@@ -165,7 +165,7 @@ mod merge_duplicate_create_message_alignment_tests {
     #[test]
     fn merge_older_incoming_keeps_existing_and_folds_body_into_revisions() {
         let mut existing = msg(
-            "ak:event:Az44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck",
+            "ak:event:AT44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck",
             "current body",
             at("2026-07-07T06:19:30.000Z"),
         );
@@ -184,7 +184,7 @@ mod merge_duplicate_create_message_alignment_tests {
 
         assert_eq!(
             existing.id,
-            "ak:event:Az44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck"
+            "ak:event:AT44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck"
         );
         assert_eq!(existing.body, "current body");
         assert_eq!(existing.revisions, vec!["original body".to_owned()]);
@@ -211,7 +211,7 @@ mod merge_duplicate_create_message_alignment_tests {
             vec!["ak:did_core:web:bob.example".to_owned()],
         )];
         let mut incoming = msg(
-            "ak:event:AIS3CfzQ4_aXiTARf8qv5G4C8b5BRZ7VN-tyB7K8oZmA",
+            "ak:event:AYS3CfzQ4_aXiTARf8qv5G4C8b5BRZ7VN-tyB7K8oZmA",
             "body",
             at("2026-07-07T06:19:30.000Z"),
         );
@@ -255,20 +255,21 @@ mod merge_duplicate_create_message_alignment_tests {
     #[test]
     fn reactions_from_summary_trim_whitespace_in_key_and_actor() {
         let mut events = vec![json!({
-            "event_id": "ak:event:AzlDwYnXxsrAJPnV18jXnpRSyNg1pwLq9kdhlLSr3PlI",
+            "event_id": "ak:event:ATlDwYnXxsrAJPnV18jXnpRSyNg1pwLq9kdhlLSr3PlI",
             "kind": "ak.message.create",
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "realm_id": "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0"},
             "created_at": "2026-07-07T06:19:20.000Z",
             "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
-            "message_id": "ak:message:AiMtOq_gs6Il6jSfTW_-c3OYzV-X5k9afNn8RSyisj38",
+            "message_id": "ak:message:ASMtOq_gs6Il6jSfTW_-c3OYzV-X5k9afNn8RSyisj38",
             "body": "hi",
             "reaction_summary": { " +1 ": { "members": [" ak:did_core:web:carol.example "] } },
             "producer_proof": null
         })];
         sign_chat_fixtures(&mut events);
         let messages = chat_messages_from_events_with_sidecar(
-            "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             &events,
             None,
             None,
@@ -313,12 +314,12 @@ mod merge_duplicate_create_message_alignment_tests {
     #[test]
     fn merge_newer_incoming_with_empty_body_preserves_rendered_body() {
         let mut existing = msg(
-            "ak:event:Az44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck",
+            "ak:event:AT44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck",
             "rendered body",
             at("2026-07-07T06:19:20.000Z"),
         );
         let incoming = msg(
-            "ak:event:Az44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck",
+            "ak:event:AT44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck",
             "",
             at("2026-07-07T06:19:30.000Z"),
         );

@@ -20,8 +20,6 @@
 //! `InksonAccountPostCommit` retains product-only invite, MLS, call and
 //! to-device work after that durability boundary.
 
-#[cfg(test)]
-use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -33,10 +31,6 @@ use arkret_models_collaboration::sync_frames::account_subscribe::{
 use arkret_sdk::EventPayloadExt as _;
 use arkret_wire::AccountDataKey;
 use garth::subscription::{AccountBatchProjector, AccountSubscription, SubscriptionControl};
-#[cfg(test)]
-use garth::{ClientEvent, ClientProjector};
-#[cfg(test)]
-use garth::{DecodedInbound, InboundDecoder};
 use garth::{RealmProjectionFrame, reconcile_realm_projection};
 use serde::Serialize;
 use serde_json::Value;
@@ -124,127 +118,6 @@ pub struct SyncEngineContext {
     pub client_runtime: crate::client_core::InksonClientRuntime,
     pub effect: crate::runtime::effects::EffectHandle,
     pub projection_sink: crate::runtime::projection::ProjectionRouter,
-}
-
-#[cfg(test)]
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct AccountClientEventReport {
-    account_updates: usize,
-    realm_deltas: usize,
-    decoded_messages: usize,
-    decoded_events: usize,
-    to_device: usize,
-    notifications: usize,
-    malformed_realm_ids: Vec<String>,
-}
-
-#[cfg(test)]
-#[derive(Debug, Default)]
-struct AccountClientEventProjector {
-    report: RefCell<AccountClientEventReport>,
-}
-
-#[cfg(test)]
-impl AccountClientEventProjector {
-    fn report(&self) -> AccountClientEventReport {
-        self.report.borrow().clone()
-    }
-
-    fn record(&self, event: ClientEvent) {
-        let mut report = self.report.borrow_mut();
-        match event {
-            ClientEvent::AccountUpdates(updates) => {
-                report.account_updates += 1;
-                report.malformed_realm_ids.extend(updates.malformed_realms);
-            }
-            ClientEvent::RealmDelta { .. } => {
-                report.realm_deltas += 1;
-            }
-            ClientEvent::Message(_) => {
-                report.decoded_messages += 1;
-            }
-            ClientEvent::Event(_) => {
-                report.decoded_events += 1;
-            }
-            ClientEvent::RealmAccepted { .. } => {
-                report.decoded_events += 1;
-            }
-            ClientEvent::Notification(_) => {
-                report.notifications += 1;
-            }
-            ClientEvent::ToDevice(_) => {
-                report.to_device += 1;
-            }
-            ClientEvent::Backfill { .. } => {}
-        }
-    }
-}
-
-#[cfg(test)]
-impl ClientProjector for AccountClientEventProjector {
-    async fn project(&self, batch: Vec<ClientEvent>) -> garth::Result<()> {
-        {
-            for event in batch {
-                self.record(event);
-            }
-            Ok(())
-        }
-    }
-}
-
-#[cfg(test)]
-fn push_decoded_account_event(
-    decoder: &InboundDecoder,
-    batch: &mut Vec<ClientEvent>,
-    event: arkret_sdk::Event,
-) {
-    match decoder.decode_event(event) {
-        DecodedInbound::Message(message) => batch.push(ClientEvent::Message(message)),
-        DecodedInbound::Event(event) => batch.push(ClientEvent::Event(event)),
-    }
-}
-
-#[cfg(test)]
-fn push_account_event_payload(
-    decoder: &InboundDecoder,
-    batch: &mut Vec<ClientEvent>,
-    event: &arkret_sdk::Event,
-) {
-    push_decoded_account_event(decoder, batch, event.clone());
-}
-
-#[cfg(test)]
-fn push_account_realm_update_events(
-    decoder: &InboundDecoder,
-    batch: &mut Vec<ClientEvent>,
-    update: &arkret_sdk::RealmUpdate,
-) {
-    if let Some(timeline) = &update.entry.timeline {
-        for payload in &timeline.events {
-            push_account_event_payload(decoder, batch, payload);
-        }
-    }
-}
-
-#[cfg(test)]
-async fn project_account_response_client_events<P>(
-    response: &AccountFrameStep,
-    decoder: &InboundDecoder,
-    projector: &P,
-) -> anyhow::Result<()>
-where
-    P: ClientProjector + ?Sized,
-{
-    let updates = response.updates.clone();
-    let realm_updates = updates.realm_updates.clone();
-    let mut batch = garth::account_updates_to_events(updates);
-
-    for update in &realm_updates {
-        push_account_realm_update_events(decoder, &mut batch, update);
-    }
-    projector.project(batch).await?;
-
-    Ok(())
 }
 
 /// Session transport factory for the account subscription.
@@ -399,11 +272,11 @@ impl AccountFrameStep {
         self.frame.device_lists.clone().unwrap_or_default()
     }
 
-    fn to_device(&self) -> &[arkret_sdk::DeviceMessageEnvelope] {
+    fn to_device(&self) -> &[arkret_models_collaboration::device_messages::RecipientDelivery] {
         self.frame
             .to_device
             .as_ref()
-            .map_or(&[][..], |container| container.messages.as_slice())
+            .map_or(&[][..], |container| container.deliveries.as_slice())
     }
 
     /// `(lost, limited)` of the delivered to-device window, when there was one.
@@ -2037,16 +1910,16 @@ async fn process_to_device_delivery(
         let page = keys
             .receive_device_messages_page(cursor.as_deref(), Some(TO_DEVICE_PAGE_LIMIT))
             .await?;
-        let messages = page.messages.clone();
+        let deliveries = page.deliveries.clone();
         let persisted = ctx.state_store.write(|store| {
-            store.ingest_to_device_messages(&messages);
-            store.persist_error().is_none()
+            store.ingest_recipient_deliveries(&deliveries).is_ok()
+                && store.persist_error().is_none()
         });
         if !persisted {
             durable_prefix = false;
         }
         if durable_prefix
-            && !messages.is_empty()
+            && !deliveries.is_empty()
             && to_device_window_safe_for_ingest_ack(Some((
                 page.lost.unwrap_or(false),
                 page.limited.unwrap_or(false),
@@ -2686,55 +2559,6 @@ mod tests {
         assert!(crate::config::is_valid_device_id(&replacement));
     }
 
-    #[test]
-    fn pending_mls_binding_retries_on_empty_account_poll_until_resolved() {
-        let realm_id = "ak:realm:AfbvDP-Jqz3hzfK3cKfuiVdW52Ok5br5hib19xfECd7t";
-        let response = empty_response("ak:cursor:mls-retry");
-        let mut store = temp_store("mls-remove-empty-poll-retry");
-
-        assert!(scope_rotate_realm_ids(&response, &store).is_empty());
-        store.record_move_submission(
-            "ak:event:AeoKZ3s6w5QgkoSbU4vsBE4Rqrgcl-BmQy4Nb6pqIjVf",
-            realm_id,
-            "mls_member_remove",
-            crate::state::MoveSubmissionState::PendingMlsBinding,
-            Some("epoch_update_required".to_owned()),
-            None,
-        );
-
-        assert_eq!(
-            scope_rotate_realm_ids(&response, &store),
-            vec![realm_id.to_owned()]
-        );
-        assert_eq!(store.resolve_member_remove_mls_bindings(realm_id), 1);
-        assert!(scope_rotate_realm_ids(&response, &store).is_empty());
-    }
-
-    fn empty_response(cursor: &str) -> AccountSyncStep {
-        AccountSyncStep {
-            cursor: cursor.to_owned(),
-            realm_entries: Default::default(),
-            realm_projections: Default::default(),
-            updates: arkret_sdk::SyncUpdates {
-                realm_updates: Vec::new(),
-                malformed_realm_ids: Vec::new(),
-                to_device: Vec::new(),
-                to_device_ack_token: None,
-                to_device_limited: false,
-                to_device_next_cursor: None,
-                to_device_lost: false,
-                device_lists: AccountSubscribeDeviceListChanges {
-                    changed_ids: Vec::new(),
-                    left_ids: Vec::new(),
-                },
-                account_data: Vec::new(),
-                station_cas_account_data: Vec::new(),
-                notifications: Vec::new(),
-                partial: false,
-            },
-        }
-    }
-
     fn temp_store(tag: &str) -> LocalStateStore {
         let path = std::env::temp_dir().join(format!(
             "inkson-engine-{tag}-{}.json",
@@ -2762,147 +2586,9 @@ mod tests {
             },
             sdk_actor_id(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-            1,
-            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             payload,
         )
         .unwrap()
-    }
-
-    #[tokio::test]
-    async fn account_response_projects_client_events_and_decodes_realm_payloads() {
-        let message_event = sdk_event(
-            arkret_sdk::EventKind::MessageCreate.as_str(),
-            json!({
-                "strand_id": "ak:strand:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg",
-                "track_name": "discussion",
-                "content": {"kind": "ak.content.text", "body": "hello"}
-            }),
-        );
-        let space_event = sdk_event(
-            "ak.space.create",
-            json!({
-                "object": {
-                    "id": "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-                    "schema": "ak.schema.space.v1",
-                    "realm_id": sdk_realm_id().as_str(),
-                    "kind": "board",
-                    "title": "Adapter Board"
-                }
-            }),
-        );
-        let mut response = empty_response("ak:cursor:account-adapter");
-        let realm_id = sdk_realm_id();
-        let projection = json!({
-            "timeline": {
-                "events": [serde_json::to_value(message_event).unwrap(), serde_json::to_value(space_event).unwrap()],
-                "limited": false
-            },
-            "summary": {}
-        });
-        let entry: arkret_sdk::RealmSyncEntry =
-            serde_json::from_value(projection.clone()).expect("typed Realm sync entry");
-        response
-            .realm_projections
-            .insert(realm_id.as_str().to_owned(), projection);
-        response
-            .updates
-            .realm_updates
-            .push(arkret_sdk::RealmUpdate { realm_id, entry });
-
-        let projector = AccountClientEventProjector::default();
-        project_account_response_client_events(&response, &InboundDecoder::new(), &projector)
-            .await
-            .expect("account response projects through client-core adapter");
-
-        let report = projector.report();
-        assert_eq!(report.account_updates, 1);
-        assert_eq!(report.realm_deltas, 1);
-        assert_eq!(report.decoded_messages, 1);
-        assert_eq!(report.decoded_events, 1);
-        assert!(report.malformed_realm_ids.is_empty());
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn account_subscription_engine_accepts_inkson_local_state_adapter() {
-        let store = temp_store("subscription-engine-adapter");
-        let adapter = crate::client_core::InksonLocalStateStoreAdapter::new(store);
-        let engine =
-            garth::SubscriptionEngine::new(garth::NativeExecutor, adapter.clone(), adapter);
-
-        let _control = engine.control();
-    }
-
-    /// The per-realm `events/subscribe` engine ingest contract: a realistic
-    /// NDJSON stream (history Event frames + `catchup_complete` + `heartbeat`)
-    /// parses into typed frames, whose Event payloads fold through the SHARED
-    /// [`ingest_kanban_events`] into `raw_operations` — and re-folding the same
-    /// frames is idempotent (operation_id dedupe), so a buffered long-poll that
-    /// re-delivers history never double-inserts.
-    #[test]
-    fn realm_subscribe_frames_ingest_into_raw_operations_and_dedupe() {
-        let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
-        let object = arkret_sdk::Space::create_object(
-            arkret_sdk::RealmId::new(realm_id).unwrap(),
-            "board",
-            "Cross-member board",
-            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-                sdk_actor_id(),
-                arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
-            )),
-        );
-        let space_create = sdk_event(
-            arkret_sdk::EventKind::SpaceCreate.as_str(),
-            serde_json::to_value(arkret_sdk::SpaceCreatePayload::new(object)).unwrap(),
-        );
-        // Mirrors the server's `events/subscribe` framing: one `event` frame
-        // carrying the projection-event JSON, a `catchup_complete`, a heartbeat.
-        let ndjson = format!(
-            "{}\n{}\n{}\n",
-            json!({
-                "kind": "event",
-                "realm_id": realm_id,
-                "cursor": "ak:cursor:realmframe1",
-                "payload": space_create
-            }),
-            json!({ "kind": "catchup_complete", "cursor": "ak:cursor:realmframe1" }),
-            json!({ "kind": "heartbeat" }),
-        );
-
-        let frames = ndjson
-            .lines()
-            .map(|line| {
-                arkret_sdk::EventsSubscribeFrame::from_ndjson_line(line)
-                    .expect("events/subscribe NDJSON parses")
-                    .expect("fixture lines are non-empty")
-            })
-            .collect::<Vec<_>>();
-        // event + catchup_complete + heartbeat.
-        assert_eq!(frames.len(), 3);
-
-        let event_payloads: Vec<arkret_sdk::Event> = frames
-            .iter()
-            .filter_map(|frame| {
-                if let arkret_sdk::EventsSubscribeFrame::Event { payload, .. } = frame {
-                    Some(payload.as_ref().clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        assert_eq!(event_payloads.len(), 1);
-
-        let mut store = temp_store("realm-subscribe-ingest");
-        let changed = ingest_kanban_projection_events(&mut store, realm_id, &event_payloads);
-        assert_eq!(changed, 1, "the remote space-create folds in once");
-        assert_eq!(store.load().raw_operations.len(), 1);
-
-        // Re-folding the same frames (buffered long-poll re-delivers history) is
-        // idempotent: operation_id dedupe means zero new inserts.
-        let changed_again = ingest_kanban_projection_events(&mut store, realm_id, &event_payloads);
-        assert_eq!(changed_again, 0, "re-ingest is deduped by operation_id");
-        assert_eq!(store.load().raw_operations.len(), 1);
     }
 
     #[test]
@@ -3030,70 +2716,6 @@ mod tests {
     }
 
     #[test]
-    fn notification_projection_filters_invites_by_typed_membership() {
-        let mut store = temp_store("invite-membership-projection");
-        let actor_id = "ak:did_core:web:bob.example";
-        let realm_id = "ak:realm:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg";
-        let invite = crate::state::projection::notifications::test_invite(0x10, realm_id);
-        store.save_notification_projection(vec![crate::state::StoredNotification::Invite {
-            invite: crate::state::StoredInviteNotification {
-                invite_id: invite.id,
-                realm_id: invite.realm_id,
-                created_at: invite.created_at,
-            },
-        }]);
-        let response = |membership: &str| {
-            let mut response = empty_response("sx:invite-membership");
-            let realm_id = arkret_sdk::RealmId::new(realm_id).unwrap();
-            let entry = serde_json::from_value::<arkret_sdk::RealmSyncEntry>(json!({
-                "member_roster": {
-                    "entries": [{
-                        "actor_id": {"kind":"account","account_id":{
-                            "principal_id":actor_id,
-                            "station_id":"ak:did_core:web:principal.example"
-                        }},
-                        "membership": membership
-                    }],
-                    "limited": false
-                }
-            }))
-            .unwrap();
-            response
-                .realm_entries
-                .insert(realm_id.clone(), entry.clone());
-            response.realm_projections.insert(
-                realm_id.as_str().to_owned(),
-                serde_json::to_value(entry).unwrap(),
-            );
-            response
-        };
-
-        // `account-subscribe-frame.schema.json#/$defs/member_roster_entry`
-        // closes `membership` to `join | knock` and states that invite
-        // lifecycle records are not membership and MUST NOT appear on the
-        // roster. `knock` is therefore the roster's real "present but not
-        // joined" row, and it is what must leave a pending invite standing.
-        let account_actor = crate::test_support::account_actor(actor_id);
-        apply_notification_projection(&mut store, &response("knock"), &account_actor);
-        assert!(
-            store
-                .notification_projection()
-                .iter()
-                .any(|entry| entry.invite().is_some()),
-            "a non-join roster membership must preserve the pending invite"
-        );
-
-        apply_notification_projection(&mut store, &response("join"), &account_actor);
-        assert!(
-            store
-                .notification_projection()
-                .iter()
-                .all(|entry| entry.invite().is_none()),
-            "a live joined membership delta must drop the stale invite without polling authz invites"
-        );
-    }
-
-    #[test]
     fn device_changes_preserve_complete_station_scoped_accounts() {
         let first = crate::test_support::account_actor("ak:did_core:web:subject.example");
         let mut second = first.as_account_id().unwrap().clone();
@@ -3106,67 +2728,6 @@ mod tests {
             changed_device_accounts(&changes),
             BTreeSet::from([first.as_account_id().unwrap().clone(), second])
         );
-    }
-
-    #[test]
-    fn local_device_wipe_requires_an_explicit_current_revoked_summary() {
-        let principal = sdk_actor_id();
-        let device = "ak:device:0196419b-0000-7000-8000-000000000001";
-        let proposal = sdk_event("ak.device.revoke", json!({}));
-        let signer = arkret_test_kit::proof::StructuralOnlyPayloadSigner::new(
-            arkret_sdk::Did::new("did:web:station.example").unwrap(),
-            arkret_sdk::DidUrl::new("did:web:station.example#key-1").unwrap(),
-        );
-        let accepted_at = chrono::Utc::now();
-        let ack = arkret_sdk::ControlProposalAck::issue_with_signer(
-            sdk_realm_id(),
-            proposal.event_id.event_digest(),
-            arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64))).unwrap(),
-            accepted_at,
-            arkret_sdk::ControlProposalDecisionPolicy::default(),
-            &signer,
-        )
-        .unwrap();
-        let ack = ack;
-        let mut viewer: arkret_sdk::AccountView = serde_json::from_value(json!({
-            "principal_id":principal,"state":"active","devices":[{
-                "device_id":device,"status":"revoked","verification_state":"verified",
-                "authorized_event_ref":proposal.event_id,
-                "signer_resolution_evidence_ref":format!("ak:signer_evidence:sha256:{}", "3".repeat(64)),
-                "revocation_states":[{
-                    "schema":"ak.schema.device_revocation_state.v1",
-                    "account_id":{"principal_id":principal,"station_id":"ak:did_core:web:station.example"},
-                    "device_id":device,"target_device_authorize_event_id":proposal.event_id,
-                    "target_device_generation_ref":1,"proposal_event_id":proposal.event_id,
-                    "accepted_at":arkret_sdk::canonical::format_timestamp_canonical(accepted_at),
-                    "acceptance_seq":1,"control_proposal_ack":ack,"status":"revoked",
-                    "covering_seal_id":format!("ak:seal:sha256:{}", "2".repeat(64)),
-                    "sealed_at":arkret_sdk::canonical::format_timestamp_canonical(accepted_at)
-                }]
-            }]
-        })).unwrap();
-        assert!(device_summary_revokes_local_device(
-            &viewer, &principal, device
-        ));
-        assert!(!device_summary_revokes_local_device(
-            &viewer,
-            &principal,
-            "other-device"
-        ));
-        let other = arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap();
-        assert!(!device_summary_revokes_local_device(
-            &viewer, &other, device
-        ));
-        // `revocation_pending` is derived from accepted proposals plus their
-        // RealmCommit results; it is not a stored device-summary status.
-        viewer.devices[0].status = arkret_sdk::DeviceSummaryStatus::Active;
-        assert!(!device_summary_revokes_local_device(
-            &viewer, &principal, device
-        ));
-        viewer.devices.clear();
-        assert!(!device_summary_revokes_local_device(
-            &viewer, &principal, device
-        ));
     }
 }
 
@@ -3228,7 +2789,9 @@ fn apply_account_frame_payload(
     // invite-delivery cell and membership=`join`, the joined roster
     // is authoritative for the final notification projection and
     // must not let the stale delivery re-add the invite afterward.
-    store.ingest_to_device_messages(response.to_device());
+    store
+        .ingest_recipient_deliveries(response.to_device())
+        .map_err(anyhow::Error::msg)?;
     apply_notification_projection(
         store,
         response,

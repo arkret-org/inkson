@@ -24,7 +24,7 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use chime::ServiceDescribe;
+use arkret_sdk::ServiceDescribe;
 
 /// Production push-token provider trait. One implementation
 /// is installed at boot (`set_push_token_provider`); push-registration

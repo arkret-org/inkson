@@ -447,7 +447,7 @@ fn json_invalid_input(error: impl std::fmt::Display) -> serde_json::Error {
 pub fn into_agent_key_pair_request(
     request: AgentRuntimeApprovalControllerProjection,
     requested_scope_disclosure: AgentRequestedScopeDisclosure,
-    authorize_event: arkret_wire::Event,
+    authorize_event: arkret_wire::EventAdmissionSubmission,
 ) -> AgentKeyPairRequestBody {
     AgentKeyPairRequestBody {
         pairing_request_id: request.pairing_request_id,

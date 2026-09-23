@@ -151,7 +151,7 @@ impl crate::transport::TransportClient {
     /// (`recovery-policy.schema.json#/$defs/recovery_policy_publish_request`).
     pub async fn put_recovery_policy(
         &self,
-        body: &arkret_wire::EventCommitSubmission,
+        body: &arkret_wire::EventAdmissionSubmission,
     ) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
         self.sdk_http_client()?
             .post("/_arkret/root/identity/recovery-policy", body)

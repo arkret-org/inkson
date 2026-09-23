@@ -241,7 +241,7 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
         arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example".to_owned()).unwrap(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
     );
-    let projection = json!({
+    let mut projection = json!({
         "member_roster_entries": [
             {
                 "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
@@ -254,22 +254,23 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
                     arkret_models_identity::HandleClaimStatus::Verified,
                 )]
             }
-        ],
-        "current": {"entries": [{
-            "selector": {
-                "scope_ref": {"kind": "realm", "realm_id": "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE"},
-                "cell_id": "ak:cell:ak.component.realm.policy_bundle.v1:null"
-            },
-            "result": {"status": "value", "value": {
-                "policy_revision": 1,
-                "handle_issuer_policies": [{
-                    "issuer_id": "ak:did_core:web:local.host",
-                    "authorized_handle_domains": ["local.host"],
-                    "issuer_class": "domain_authority"
-                }]
-            }}
-        }]}
+        ]
     });
+    projection["current"] = json!([arkret_wire::TypedCurrentResult::Value {
+        selector: arkret_wire::CurrentSelector::RealmPolicy,
+        revision: arkret_wire::CurrentRevision {
+            commit_id: arkret_sdk::RealmCommitId::from_digest([0x41; 32]),
+            stream_position: 1,
+        },
+        value: json!({
+            "policy_revision": 1,
+            "handle_issuer_policies": [{
+                "issuer_id": "ak:did_core:web:local.host",
+                "authorized_handle_domains": ["local.host"],
+                "issuer_class": "domain_authority"
+            }]
+        }),
+    }]);
 
     let temp = std::env::temp_dir().join(format!("inkson-chat-roster-{}", uuid_v7()));
     let store = LocalStateStore::with_path(temp);

@@ -1558,7 +1558,10 @@ mod tests {
             "devices": [{
                 "device_id": "ak:device:current",
                 "status": "active",
-                "verification_state": "verified"
+                "verification_state": "verified",
+                "verification_source": "genesis",
+                "authorized_event_ref": "ak:event:Ad0EZUHcfLJv92Of4w-RJec6fkNlWP11fsQAQ4dqUOHS",
+                "signer_resolution_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             }]
         });
 

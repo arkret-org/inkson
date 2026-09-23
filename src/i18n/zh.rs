@@ -2022,6 +2022,10 @@ fn setup_strings(dict: &mut TranslationDict) {
         "签名密钥尚未就绪,无法创建 Realm。请稍后重试。详情:{error}",
     );
     dict.set("setup.error.create_failed", "创建失败:{error}");
+    dict.set(
+        "setup.error.non_genesis_commit",
+        "Realm 创建返回了非创世 RealmCommit {commit}",
+    );
     dict.set("setup.error.created_then_failed", "已创建 {id};{error}");
     dict.set(
         "setup.error.mls_activation_failed",

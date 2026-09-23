@@ -439,17 +439,17 @@ pub fn AgentRuntimeApprovalPrompt(
                                         let pair_request = into_agent_key_pair_request(
                                             body,
                                             requested_scope_disclosure,
-                                            authorize_submission.event,
+                                            authorize_submission,
                                         );
                                         let outcome = submitter.agent_key_pair(&pair_request).await?;
-                                        if matches!(
-                                            outcome.status,
-                                            arkret_sdk::AgentLifecycleState::Deactivated
+                                        if !matches!(
+                                            outcome.activation_state,
+                                            arkret_models_collaboration::agent_operations::AgentKeyPairActivationState::Active
                                         ) {
-                                            anyhow::bail!("agent authorization was cancelled");
+                                            anyhow::bail!("agent authorization is not yet active");
                                         }
-                                        if outcome.authorize_ref.event_id
-                                            != pair_request.authorize_event.event_id
+                                        if outcome.authorize_event_ref
+                                            != pair_request.authorize_event.event.event_id
                                         {
                                             anyhow::bail!(
                                                 "agent key pairing returned a commit for a different authorization Event"
@@ -457,11 +457,12 @@ pub fn AgentRuntimeApprovalPrompt(
                                         }
                                         let committed = submitter
                                             .http()
-                                            .committed_event_get(&outcome.authorize_ref.event_id)
+                                            .committed_event_get(&outcome.authorize_event_ref)
                                             .await?;
-                                        if !outcome.authorize_ref.matches(&committed)
+                                        committed.validate_shape()?;
+                                        if committed.commit().event_ref != outcome.authorize_event_ref
                                             || committed.reducer_input()
-                                                != Some(&pair_request.authorize_event)
+                                                != Some(&pair_request.authorize_event.event)
                                         {
                                             anyhow::bail!(
                                                 "agent key pairing authorization commit could not be verified"
@@ -483,7 +484,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                             &[(
                                                 "id",
                                                 short_protocol_id(
-                                                    outcome.authorize_ref.event_id.as_str(),
+                                                    outcome.authorize_event_ref.as_str(),
                                                 ),
                                             )],
                                         ));

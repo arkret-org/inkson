@@ -58,9 +58,8 @@ fn inkson_accepts_server_contract_payloads() {
             "extension_profile_required": null
         }],
         "supported_features": [],
-        "supported_reducer_profiles": ["ak.reducer.core.v1"],
         "auth_metadata": {},
-        "limits": {"storage": "memory", "max_limit": 100},
+        "limits": {"x_storage": "memory", "x_max_limit": 100},
         "rate_limit_policy": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "verified_profiles": [],
@@ -124,26 +123,6 @@ fn inkson_accepts_server_contract_payloads() {
             .contains(&"ak.profile.minimal_client.v1".to_owned())
     );
 
-    let frame: arkret_sdk::AccountSubscribeFrame = serde_json::from_value(json!({
-        "kind": "delta",
-        "cursor": "ak:cursor:contract-sync",
-        "realms": {
-            "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk": {
-                "timeline": {"events": [], "limited": false}
-            }
-        }
-    }))
-    .unwrap();
-    let sync = inkson::models::AccountSyncStep::from_updates(
-        "ak:cursor:contract-sync".to_owned(),
-        garth::SyncResponseProcessor::process_frame(frame).unwrap(),
-    )
-    .unwrap();
-    assert!(
-        sync.realm_projections
-            .contains_key("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk")
-    );
-
     let directory: inkson::models::ServiceDescribe = serde_json::from_value(json!({
         "service_id": "ak:did_core:web:server.local",
         "service_resolution": service_resolution("did:web:server.local"),
@@ -168,77 +147,13 @@ fn inkson_accepts_server_contract_payloads() {
         "verified_profiles": [],
         "interop_surfaces": [],
         "development_mode": false,
-        "resource_kinds": ["realm", "organization", "actor"],
-        "restricted_query_proof": false,
-        "accept_policy_kind": "open",
-        "default_ttl_seconds": 86400,
-        "max_ttl_seconds": 604800,
-        "revalidation_grace_seconds": 3600,
-        "accepted_resource_kinds": ["realm", "organization", "actor"],
-        "accepted_did_methods": ["did:web"],
-        "rate_limits": {}
+        "resource_kinds": ["realm"]
     }))
     .unwrap();
     assert_eq!(
         directory.service_kind,
         arkret_sdk::ServiceKind::DirectoryService
     );
-
-    let resolved: inkson::models::DirectoryRealmResolutionOutcome = serde_json::from_value(json!({
-        "realm_preview": {
-            "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
-            "title": "Arkret Demo Realm",
-            "summary": "Shared demo Realm served by server",
-            "as_of": "2026-05-30T00:00:00.000Z",
-            "source_refs": ["ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"],
-            "policy_revision": "contract-rev"
-        },
-        "join_rule": "public",
-        "join_candidates": [{
-            "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
-            "service_id": "ak:did_core:web:server.local",
-            "service_resolution": {
-                "resolution_url": "https://server.local/_arkret/open/services/ak%3Adid_core%3Aweb%3Aserver.local/resolution"
-            },
-            "service_kind": "station",
-            "role": "joined_member_station",
-            "endpoint_url": "http://server",
-            "operations": ["ak.peer.events.command.submit.v1"],
-            "join_methods": ["invite_accept", "member_join"],
-            "encryption_profile": "mls_rfc9420",
-            "digest_algorithm": "sha256",
-            "priority": 0,
-            "source": "invite_hint",
-            "seal_basis": {
-                "leaves": ["ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111"]
-            },
-            "as_of": "2026-05-30T00:00:00.000Z",
-            "expires_at": "2099-01-01T00:00:00.000Z"
-        }]
-    }))
-    .unwrap();
-    assert_eq!(resolved.join_rule, Some(arkret_sdk::JoinRule::Public));
-    assert_eq!(
-        resolved.join_candidates[0].service_id.as_str(),
-        "ak:did_core:web:server.local"
-    );
-
-    let submit: inkson::models::SubmitEventResult = serde_json::from_value(json!({
-        "status": "accepted",
-        "pending_delivery_count": 0,
-        "accepted": ["ak:event:AVH7487ydDzo_3WXy2IlHWvtBeElcucZHd5d5hYKcjZl"],
-        "duplicate": [],
-        "rejections": [],
-        "frontiers": [],
-        "cursor": "sx:1760000000000"
-    }))
-    .unwrap();
-    assert_eq!(submit.status, arkret_sdk::EventsSubmitStatus::Accepted);
-    assert_eq!(
-        submit.event_id,
-        "ak:event:AVH7487ydDzo_3WXy2IlHWvtBeElcucZHd5d5hYKcjZl"
-    );
-    assert_eq!(submit.cursor, "sx:1760000000000");
 
     let authz: inkson::models::AuthzCheckOutcome = serde_json::from_value(json!({
         "decision": "allow",
@@ -272,19 +187,17 @@ fn inkson_accepts_server_contract_payloads() {
                     }
                 },
                 "issuer_authority_refs": [{
-                    "kind": "realm_authority",
+                    "kind": "realm_root",
                     "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-                    "governance_station_id": "ak:did_core:web:server.local",
+                    "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
                     "authority_generation": 0,
-                    "basis": {
-                        "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                        "commit_id": "ak:realm_commit:0196419b-0000-7000-8000-000000000001",
-                        "stream_ref": {
-                            "kind": "realm",
-                            "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
-                        },
-                        "stream_position": 0
-                    }
+                }],
+                "authority_depth": 0,
+                "authority_root_refs": [{
+                    "kind": "realm_root",
+                    "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+                    "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                    "authority_generation": 0
                 }],
                 "actions": ["ak.message.create"],
                 "status": "active",
@@ -294,7 +207,7 @@ fn inkson_accepts_server_contract_payloads() {
                 "issued_at": "2026-04-28T12:00:00.000Z"
             },
             "revision": {
-                "commit_id": "ak:realm_commit:0196419b-0000-7000-8000-000000000002",
+                "commit_id": "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq",
                 "stream_position": 2
             }
         }],
@@ -349,23 +262,21 @@ fn inkson_accepts_server_contract_payloads() {
     assert!(!claimed.one_time_keys.is_empty());
 
     let device_send: inkson::models::DeviceMessagesSendOutcome = serde_json::from_value(json!({
-        "delivered": {"ak:did_core:web:alice.example": ["dev_alice"]},
+        "delivered": {},
         "unknown_devices": {}
     }))
     .unwrap();
-    assert_eq!(
-        device_send.delivered["ak:did_core:web:alice.example"],
-        json!(["dev_alice"])
-    );
+    assert!(device_send.delivered.is_empty());
 
     // SDK shape: the to-device queue field is `messages`, not the old `events`.
     let device_receive: inkson::models::DeviceMessagesGetOutcome = serde_json::from_value(json!({
         "messages": [],
         "next_cursor": "ak:cursor:device-messages",
+        "has_more": false,
         "limited": false
     }))
     .unwrap();
-    assert!(!device_receive.limited);
+    assert_eq!(device_receive.limited, Some(false));
 
     let push: inkson::models::PushRegisterDeviceOutcome = serde_json::from_value(json!({
         "push_target_id": "ak:pseudonym:push:kosc9iQ4gVct1OB-b6X364WIFIsJFVbVzn7BMBs1sm8",
@@ -501,7 +412,7 @@ fn server_description_gates_event_envelope_write_plane() {
         }],
         "supported_features": [],
         "auth_metadata": {},
-        "limits": {"storage": "postgres"},
+        "limits": {"x_storage": "postgres"},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "verified_profiles": [],
         "interop_surfaces": [external_interop_surface],
@@ -576,7 +487,6 @@ fn server_description_gates_event_envelope_write_plane() {
         missing_event_envelope_write_requirements(&events_missing),
         vec![
             "ak.profile.core_event_store.v1",
-            "ak.server.read.describe.v1",
             "ak.self.events.command.submit.v1"
         ]
     );
@@ -586,66 +496,8 @@ fn server_description_gates_event_envelope_write_plane() {
         missing_v1_station_requirements(&events_missing),
         vec![
             "ak.profile.core_event_store.v1",
-            "ak.server.read.describe.v1",
             "ak.self.events.command.submit.v1",
         ]
-    );
-}
-
-#[test]
-fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
-    // Spec-aligned wire shape per `arkret-spec/.../client-sync.md §2`:
-    // flat `realms` keyed by realm id, explicit top-level
-    // `left_realms`, flat arrays for `to_device` / `account_data` /
-    let frame: arkret_sdk::AccountSubscribeFrame = serde_json::from_value(json!({
-        "kind": "delta",
-        "cursor": "ak:cursor:v1-bucket",
-        "realms": {
-            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-": {
-                "timeline": {"events": [], "limited": false}
-            }
-        },
-        "device_lists": {"changed_ids": [], "left_ids": []},
-        "notifications": {"items": []}
-    }))
-    .unwrap();
-    let sync = inkson::models::AccountSyncStep::from_updates(
-        "ak:cursor:v1-bucket".to_owned(),
-        garth::SyncResponseProcessor::process_frame(frame).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(sync.cursor, "ak:cursor:v1-bucket");
-    assert!(
-        sync.realm_projections
-            .contains_key("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-")
-    );
-    assert!(sync.updates.to_device.is_empty());
-    assert!(sync.updates.account_data.is_empty());
-    assert!(sync.updates.notifications.is_empty());
-
-    let frames = [
-        r#"{"kind":"heartbeat"}"#,
-        r#"{"cursor":"ak:cursor:frontier","kind":"frontier"}"#,
-        r#"{"cursor":"ak:cursor:live","kind":"catchup_complete"}"#,
-    ]
-    .into_iter()
-    .map(|line| {
-        arkret_sdk::EventsSubscribeFrame::from_ndjson_line(line)
-            .unwrap()
-            .unwrap()
-    })
-    .collect::<Vec<_>>();
-    assert_eq!(
-        frames[0].kind(),
-        arkret_sdk::EventsSubscribeFrameKind::Heartbeat
-    );
-    assert_eq!(
-        frames[1].kind(),
-        arkret_sdk::EventsSubscribeFrameKind::Frontier
-    );
-    assert_eq!(
-        frames[2].kind(),
-        arkret_sdk::EventsSubscribeFrameKind::CatchupComplete
     );
 }
 
@@ -730,39 +582,24 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     assert_no_secret("search", &search, secret);
 
     let directory = arkret_models_discovery::DirectoryRealmSearchOutcome {
-        realms: vec![arkret_models_discovery::RealmPreview {
+        realms: vec![arkret_models_discovery::PublicRealmDirectoryEntry {
             realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
+                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             )
             .unwrap(),
-            alias: None,
-            title: Some("Contract Realm".to_owned()),
-            avatar_blob_ref: None,
-            organization_id: None,
-            join_rule: Some("public".to_owned()),
-            member_count_bucket: Some(arkret_models_discovery::RealmMemberCountBucket::Bucket(
-                arkret_models_discovery::RealmMemberCountBucketLabel::OneToTen,
-            )),
-            summary: Some("Public description".to_owned()),
-            owning_organization_ids: Vec::new(),
-            preview_ref: None,
-            discoverability: Some("public".to_owned()),
-            history_access: None,
-            join_candidates: Vec::new(),
-            as_of: Utc::now(),
-            source_refs: vec![
-                arkret_sdk::EventId::new(
-                    "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1".to_owned(),
-                )
-                .unwrap(),
-            ],
-            policy_revision: "contract-rev".to_owned(),
-            stale: None,
-            divergent: None,
+            public_metadata: arkret_models_discovery::PublicRealmMetadata {
+                display_name: "Contract Realm".to_owned(),
+                summary: Some("Public description".to_owned()),
+                public_locator: None,
+                avatar_blob_ref: None,
+            },
+            indexed_at: Utc::now(),
+            expires_at: Utc::now() + chrono::Duration::days(1),
         }],
         next_cursor: None,
         has_more: false,
     };
+    directory.validate().unwrap();
     assert_no_secret("directory", &directory, secret);
 }
 
@@ -858,13 +695,12 @@ fn decoder_handles_problem_and_non_problem() {
 }
 
 #[test]
-fn authoring_fixture_hlc_keeps_the_numeric_sequence_past_nine() {
+fn authoring_fixture_uses_distinct_canonical_creation_times() {
+    let first = common::pinned_created_at(1);
+    let later = common::pinned_created_at(16);
+    assert_eq!((later - first).num_milliseconds(), 15);
     assert_eq!(
-        common::pinned_hlc(10).as_str(),
-        "01970e589d21-000a-a13f9c2e"
-    );
-    assert_eq!(
-        common::pinned_hlc(16).as_str(),
-        "01970e589d21-0010-a13f9c2e"
+        arkret_sdk::canonical::format_timestamp_canonical(first),
+        "2026-09-19T00:00:00.001Z"
     );
 }

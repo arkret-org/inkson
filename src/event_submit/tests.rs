@@ -33,7 +33,7 @@ fn account_actor() -> arkret_sdk::ActorId {
 /// A producer Event carries no chain position, predecessor or logical clock,
 /// so the fixture has nothing to invent beyond the content itself.
 fn event_with_kind(event_id: &str, realm: &str, kind: &str, payload: Value) -> arkret_sdk::Event {
-    serde_json::from_value(json!({
+    let mut value = json!({
         "event_id": event_id,
         "kind": kind,
         "realm_id": realm,
@@ -41,8 +41,12 @@ fn event_with_kind(event_id: &str, realm: &str, kind: &str, payload: Value) -> a
         "actor_id": account_actor(),
         "created_at": "2026-05-19T00:00:00.000Z",
         "payload": payload
-    }))
-    .unwrap()
+    });
+    if kind == "ak.realm.create" {
+        value.as_object_mut().unwrap().remove("realm_id");
+        value["scope_ref"] = json!({ "kind": "realm_genesis" });
+    }
+    serde_json::from_value(value).unwrap()
 }
 
 fn message_intent(realm: &str, strand_id: &str) -> EventIntent {
@@ -323,7 +327,19 @@ fn the_genesis_lane_projection_counts_committed_and_unsettled_attempts() {
         "scope_ref": {"kind": "realm", "realm_id": REALM},
         "actor_id": account_actor(),
         "created_at": "2026-05-19T00:00:00.000Z",
-        "payload": {}
+        "payload": {
+            "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+            "group_info_ref": format!("ak:blob:sha256:{}", "a".repeat(64)),
+            "ratchet_tree_ref": format!("ak:blob:sha256:{}", "b".repeat(64)),
+            "governance_binding": {
+                "effective_scope": {"kind": "realm", "realm_id": REALM},
+                "base_group_state_ref": null,
+                "previous_epoch": 0,
+                "next_epoch": 0,
+                "key_access_revision": 0
+            },
+            "created_at": "2026-05-19T00:00:00.000Z"
+        }
     }))
     .unwrap();
     let genesis = author_and_sign(genesis_intent, &signer);

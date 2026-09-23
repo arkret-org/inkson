@@ -357,7 +357,7 @@ mod tests {
             "discussion",
             arkret_sdk::ContentBlock::text(format!("queued fixture {nth}")),
         );
-        let event = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MessageCreate>::new(
+        let mut event = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MessageCreate>::new(
             arkret_sdk::ScopeRef::Realm {
                 realm_id: fixture::realm_id(FIXTURE_REALM),
             },
@@ -372,10 +372,22 @@ mod tests {
             .unwrap(),
             arkret_sdk::DigestSuite::Sha256,
         )
-        .unwrap()
-        .into_event();
+        .unwrap();
+        crate::event_signer::build_ed25519_device_signer(
+            [17; 32],
+            "did:web:alice.example",
+            "ak:device:01964137-0000-7000-8000-0000000000a1",
+        )
+        .sign_sdk_event_with_context(
+            &mut event,
+            crate::event_signer::ProducerProofContext::for_native_unit(
+                arkret_sdk::DigestSuite::Sha256,
+            ),
+        )
+        .unwrap();
+        let event = event.into_event();
         garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
-            arkret_wire::EventCommitSubmission {
+            arkret_wire::EventAdmissionSubmission {
                 event,
                 approval_signatures: None,
             },
@@ -511,7 +523,7 @@ mod tests {
         let key = "inkson.outbound.v1::nsA.standard";
 
         mutate_queue_in_store(&store, key, |queue| {
-            enqueue_items(queue, 2048);
+            enqueue_items(queue, 4500);
             Ok(())
         })
         .await
@@ -534,7 +546,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(items, 2048);
+        assert_eq!(items, 4500);
         assert_ne!(
             first, last,
             "every queued item keeps its own Event identity"

@@ -756,7 +756,9 @@ mod tests {
             device_signing_key.verifying_key().as_bytes(),
         );
         let created_at = policy.issued_at + chrono::Duration::seconds(1);
-        let expires_at = chrono::Utc::now() + chrono::Duration::minutes(15);
+        let expires_at =
+            chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis()).unwrap()
+                + chrono::Duration::minutes(15);
         let session: arkret_sdk::RecoverySession = serde_json::from_value(serde_json::json!({
             "schema": "ak.schema.recovery_session.v1",
             "request_id": "ak:request:0198ff00-0000-7000-8000-00000000000b",
@@ -888,13 +890,13 @@ mod tests {
         let commits = [
             committed_ref(
                 create_id.as_str(),
-                "ak:realm_commit:0196419b-0000-7000-8000-000000000001",
+                arkret_sdk::RealmCommitId::from_digest([1; 32]).as_str(),
                 &realm_id,
                 0,
             ),
             committed_ref(
                 authorize_id.as_str(),
-                "ak:realm_commit:0196419b-0000-7000-8000-000000000002",
+                arkret_sdk::RealmCommitId::from_digest([2; 32]).as_str(),
                 &realm_id,
                 1,
             ),

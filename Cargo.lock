@@ -216,6 +216,7 @@ dependencies = [
  "arkret-state",
  "arkret-wire",
  "chrono",
+ "ed25519-dalek 3.0.0",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -1333,7 +1334,6 @@ name = "chime"
 version = "0.3.0"
 dependencies = [
  "arkret-canonical",
- "arkret-models-discovery",
  "arkret-models-integration",
  "arkret-push-policy",
  "arkret-retry",

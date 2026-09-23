@@ -1280,10 +1280,7 @@ mod tests {
                 .unwrap();
         let committed = |event_id, position| arkret_wire::CommittedEventRef {
             event_id,
-            commit_id: arkret_wire::RealmCommitId::new(format!(
-                "ak:realm_commit:0196419b-0000-7000-8000-{position:012}"
-            ))
-            .unwrap(),
+            commit_id: arkret_wire::RealmCommitId::from_digest([position as u8 + 1; 32]),
             stream_ref: arkret_wire::CommitStreamRef::Realm {
                 realm_id: realm_id.clone(),
             },

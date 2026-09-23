@@ -1,9 +1,8 @@
 //! Authoring inputs an integration test has to supply for itself.
 //!
-//! A write finishes at one boundary: the actor chain position and the signing
-//! stamp go in, one `event_id` comes out. Production reads both from the accepted
-//! realm actor frontier and the durable stamp allocator; a test has neither, so it
-//! pins them and authors through the same public API a real submitter uses.
+//! A write finishes at one boundary: a frozen producer timestamp goes in and
+//! one `event_id` comes out. Stream position belongs to the Station-authored
+//! RealmCommit and is never an input to producer Event authoring.
 //!
 //! Deliberately built only from `inkson`'s public surface: the crate's own
 //! `cfg(test)` helpers are unreachable here, and a test-only escape hatch in the
@@ -25,9 +24,12 @@ pub fn test_inception_root_key_multibase(principal_did: &str) -> String {
     )
 }
 
-/// The pinned signing stamp for position `actor_seq`.
-pub fn pinned_hlc(actor_seq: u64) -> arkret_sdk::Hlc {
-    arkret_test_kit::pinned_hlc(u16::try_from(actor_seq).expect("fixture HLC counter"))
+/// A distinct, canonical timestamp for each Event in a test unit.
+pub fn pinned_created_at(nth: u64) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::parse_from_rfc3339("2026-09-19T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc)
+        + chrono::Duration::milliseconds(i64::try_from(nth).unwrap())
 }
 
 /// Finalize `operation` at the first position of its actor chain.
@@ -39,11 +41,8 @@ pub fn author(operation: LocalOperation) -> arkret_sdk::AuthoredEvent {
 pub fn author_at_seq(operation: LocalOperation, actor_seq: u64) -> arkret_sdk::AuthoredEvent {
     operation
         .into_intent()
-        .author_with_digest_suite(
-            actor_seq,
-            pinned_hlc(actor_seq),
-            arkret_sdk::DigestSuite::Sha256,
-        )
+        .with_created_at(pinned_created_at(actor_seq))
+        .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
         .expect("a built write finalizes")
 }
 
@@ -63,14 +62,7 @@ pub fn author_unit(steps: Vec<UnitStep>) -> Vec<arkret_sdk::AuthoredEvent> {
     for step in steps {
         for intent in step(&authored).expect("a unit stage builds its intents") {
             let actor_seq = authored.len() as u64;
-            let prev_refs = authored
-                .last()
-                .map(|event| vec![event.event_id().clone()])
-                .unwrap_or_default();
-            authored.push(author_intent_at_seq(
-                intent.with_prev_refs(prev_refs),
-                actor_seq,
-            ));
+            authored.push(author_intent_at_seq(intent, actor_seq));
         }
     }
     authored
@@ -82,10 +74,7 @@ pub fn author_intent_at_seq(
     actor_seq: u64,
 ) -> arkret_sdk::AuthoredEvent {
     intent
-        .author_with_digest_suite(
-            actor_seq,
-            pinned_hlc(actor_seq),
-            arkret_sdk::DigestSuite::Sha256,
-        )
+        .with_created_at(pinned_created_at(actor_seq))
+        .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
         .expect("an intent finalizes")
 }

@@ -9,7 +9,8 @@
 //! native regressions drive; the harness adds no behaviour of its own and takes
 //! JSON at its boundary so it never grows a second model of the wire types.
 
-use arkret_sdk::{AccountSubscribeFrame, CurrentSelector};
+use arkret_sdk::CurrentSelector;
+use arkret_sdk::sync::AccountSubscribeFrame;
 
 use super::{CurrentIndex, CurrentIndexLocation};
 

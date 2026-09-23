@@ -14,9 +14,9 @@ use std::sync::Arc;
 
 #[cfg(test)]
 use arkret_models_integration::PushRegisterDeviceOutcome;
-pub use binding::*;
 #[cfg(test)]
-use chime::ServiceDescribe;
+use arkret_sdk::ServiceDescribe;
+pub use binding::*;
 pub use gateway::*;
 pub use request::*;
 pub use token_provider::*;

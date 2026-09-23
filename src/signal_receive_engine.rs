@@ -211,7 +211,7 @@ impl garth::signal::SignalDecryptor for MlsSignalDecryptor {
         // `SignalReceiver` has already checked this frame's exact Station
         // delivery authority and producer proof. Verify the same proof under
         // the active MLS leaf key as well, then rebuild AAD from the immutable
-        // envelope header. The governing Station fresh-gated stream_head_ref
+        // envelope header. The governing Station fresh-gated authority_commit_id
         // for this exact delivery; signal.md forbids replaying governance
         // history locally per frame, so that authenticated value is the
         // accepted head passed into the MLS opener.
@@ -220,7 +220,7 @@ impl garth::signal::SignalDecryptor for MlsSignalDecryptor {
                 envelope,
                 sender_authority,
                 accepted_group_state_ref.as_str(),
-                &envelope.stream_head_ref,
+                &envelope.authority_commit_id,
                 &mut replay,
             )
             .map_err(|error| garth::Error::Protocol(error.to_string()))

@@ -1172,11 +1172,11 @@ impl EventSubmitter {
     pub(crate) async fn prepare_initial_submissions(
         &self,
         events: &[arkret_sdk::AuthoredEvent],
-    ) -> anyhow::Result<Vec<arkret_wire::EventCommitSubmission>> {
+    ) -> anyhow::Result<Vec<arkret_wire::EventAdmissionSubmission>> {
         let mut submissions = Vec::with_capacity(events.len());
         for event in events {
             validate_signed_sdk_event_for_submit(event.event(), event.digest_suite())?;
-            submissions.push(arkret_wire::EventCommitSubmission {
+            submissions.push(arkret_wire::EventAdmissionSubmission {
                 event: event.event().clone(),
                 approval_signatures: None,
             });
@@ -1194,7 +1194,7 @@ impl EventSubmitter {
         &self,
         event: &arkret_sdk::AuthoredEvent,
         accepted_create: &arkret_sdk::Event,
-    ) -> anyhow::Result<arkret_wire::EventCommitSubmission> {
+    ) -> anyhow::Result<arkret_wire::EventAdmissionSubmission> {
         arkret_bootstrap::validate_self_principal_pcr_create(accepted_create, true)
             .map_err(|error| anyhow::anyhow!("accepted self-principal PCR create: {error}"))?;
         anyhow::ensure!(
@@ -1202,7 +1202,7 @@ impl EventSubmitter {
             "authority-authored self-principal Event is scoped to another Realm"
         );
         validate_signed_sdk_event_for_submit(event.event(), event.digest_suite())?;
-        Ok(arkret_wire::EventCommitSubmission {
+        Ok(arkret_wire::EventAdmissionSubmission {
             event: event.event().clone(),
             approval_signatures: None,
         })
@@ -2166,7 +2166,7 @@ fn local_detail_blocks_authoring(
 fn event_submission(event: &arkret_sdk::AuthoredEvent) -> anyhow::Result<QueuedSubmission> {
     validate_signed_sdk_event_for_submit(event.event(), event.digest_suite())?;
     QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
-        arkret_wire::EventCommitSubmission {
+        arkret_wire::EventAdmissionSubmission {
             event: event.event().clone(),
             approval_signatures: None,
         },

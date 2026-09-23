@@ -171,11 +171,10 @@ mod tests {
     const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     fn revision(position: u64) -> CurrentRevision {
+        let mut digest = [0_u8; 32];
+        digest[..8].copy_from_slice(&position.to_be_bytes());
         CurrentRevision {
-            commit_id: RealmCommitId::new(format!(
-                "ak:realm_commit:0196419b-0000-7000-8000-{position:012}"
-            ))
-            .unwrap(),
+            commit_id: RealmCommitId::from_digest(digest),
             stream_position: position,
         }
     }

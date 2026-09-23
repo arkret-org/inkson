@@ -352,7 +352,7 @@ pub(crate) fn install_accepted_mls_group_at_epoch(
     let entry = serde_json::json!({
         "selector": {"kind": "mls_group", "scope_ref": effective_scope},
         "revision": {
-            "commit_id": "ak:realm_commit:0196419b-0000-7000-8000-000000000002",
+            "commit_id": arkret_sdk::RealmCommitId::from_digest([2; 32]).to_string(),
             "stream_position": 1,
         },
         "value": {

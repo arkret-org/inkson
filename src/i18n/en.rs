@@ -2478,6 +2478,10 @@ fn setup_strings(dict: &mut TranslationDict) {
         "Your signing key is not ready yet, so the Realm could not be created. Try again in a moment. Details: {error}",
     );
     dict.set("setup.error.create_failed", "create failed: {error}");
+    dict.set(
+        "setup.error.non_genesis_commit",
+        "Realm founding returned a non-genesis RealmCommit {commit}",
+    );
     dict.set("setup.error.created_then_failed", "created {id}; {error}");
     dict.set(
         "setup.error.mls_activation_failed",

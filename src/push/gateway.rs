@@ -7,7 +7,7 @@
 //! never connects to the configured gateway directly.
 
 #[cfg(test)]
-use chime::ServiceDescribe;
+use arkret_sdk::ServiceDescribe;
 use chime::{ChimePushRegisterDeviceRequest, PushRegistrationState};
 use serde_json::Value;
 

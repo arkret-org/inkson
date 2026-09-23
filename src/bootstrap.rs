@@ -127,31 +127,39 @@ pub(crate) fn recovery_auto_prompt_already_prompted(
 
 /// Whether one account-viewer device row reports an accepted authorization.
 ///
-/// `None` means the row does not carry the fact at all, which is not the same
-/// answer as "not authorized" and must keep the caller waiting rather than
-/// prompting for a fresh authorization.
+/// The account viewer exposes lifecycle and verification separately. A device
+/// is usable only with an active lifecycle and the exact verified checkpoint
+/// provenance required by the current device summary schema.
 fn device_authorization_from_record(device: &Value) -> Option<bool> {
-    if device_revoked(device) {
-        return Some(false);
-    }
-    device
-        .get("authorized")
-        .and_then(Value::as_bool)
-        .or_else(|| {
-            device
-                .get("device_authorize_event_id")
-                .and_then(Value::as_str)
-                .map(|event_id| !event_id.trim().is_empty())
-        })
+    let active = !device_revoked(device);
+    let verified = device.get("verification_state").and_then(Value::as_str) == Some("verified");
+    let source = matches!(
+        device.get("verification_source").and_then(Value::as_str),
+        Some("genesis" | "pairing_code" | "recovery")
+    );
+    let authorized_event = device
+        .get("authorized_event_ref")
+        .and_then(Value::as_str)
+        .is_some_and(|value| arkret_sdk::EventId::new(value.to_owned()).is_ok());
+    let signer_evidence = device
+        .get("signer_resolution_evidence_ref")
+        .and_then(Value::as_str)
+        .is_some_and(|value| {
+            value
+                .strip_prefix("ak:signer_evidence:sha256:")
+                .is_some_and(|hex| {
+                    hex.len() == 64
+                        && hex
+                            .bytes()
+                            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+                })
+        });
+    Some(active && verified && source && authorized_event && signer_evidence)
 }
 
 /// Whether one account-viewer device row reports a revoked device.
 fn device_revoked(device: &Value) -> bool {
-    device
-        .get("revoked_at")
-        .is_some_and(|value| !value.is_null())
-        || device.get("revoked").and_then(Value::as_bool) == Some(true)
-        || device.get("state").and_then(Value::as_str) == Some("revoked")
+    device.get("status").and_then(Value::as_str) != Some("active")
 }
 
 /// Whether the account has any `recovery_public_key` secret-storage backup at
@@ -203,7 +211,7 @@ pub(crate) fn account_has_other_active_devices_from_account_viewer(
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .is_some_and(|device_id| !device_id.is_empty() && device_id != current_device)
-                && !device_revoked(device)
+                && device_authorization_from_record(device) == Some(true)
         })
 }
 
@@ -821,14 +829,14 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
     .await
     .map_err(|error| error.display())?;
     let ack_token = messages.ack_token.clone();
-    let delivered = messages.messages.len();
+    let delivered = messages.deliveries.len();
 
     // The durable inbox is the only source the Welcome installer reads, so the
     // batch is journalled before anything is installed or acknowledged.
-    let journalled = if messages.messages.is_empty() {
+    let journalled = if messages.deliveries.is_empty() {
         0
     } else {
-        state_store.write(|store| store.ingest_to_device_messages(&messages.messages))
+        state_store.write(|store| store.ingest_recipient_deliveries(&messages.deliveries))?
     };
     if journalled > 0 {
         let barrier = state_store
