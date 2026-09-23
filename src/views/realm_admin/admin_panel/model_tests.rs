@@ -17,14 +17,11 @@ fn capability_basis_uses_the_verified_generation_anchor() {
         arkret_sdk::EventId::new("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19").unwrap();
     let basis = crate::state::PersistedRealmAuthorityBasis {
         realm_id: realm_id.clone(),
-        current_service_id: "did:web:station.example".parse().unwrap(),
+        current_service_id: "ak:did_core:web:station.example".parse().unwrap(),
         current_generation: 4,
         genesis_ref: arkret_wire::CommittedEventRef {
             event_id: event_id.clone(),
-            commit_id: arkret_wire::RealmCommitId::new(
-                "ak:realm_commit:0196419b-0000-7000-8000-000000000001",
-            )
-            .unwrap(),
+            commit_id: arkret_wire::RealmCommitId::from_digest([1; 32]),
             stream_ref: arkret_wire::CommitStreamRef::Realm { realm_id },
             stream_position: 0,
         },
