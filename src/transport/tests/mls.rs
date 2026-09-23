@@ -64,9 +64,16 @@ fn keypackage_claim_request_carries_required_capabilities() {
     let requester_device_id = "ak:device:0196419b-0000-7000-8000-000000000002";
     let requester_device_authorize_event_id =
         arkret_sdk::EventId::new("ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc").unwrap();
+    let realm_id =
+        arkret_sdk::RealmId::new("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk").unwrap();
+    let group_id = arkret_sdk::ScopeRef::Realm {
+        realm_id: realm_id.clone(),
+    }
+    .canonical_mls_group_id()
+    .unwrap();
     let body = mls_api_helpers::build_mls_keypackage_claim_request(
         "did:web:alice.example",
-        "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
+        realm_id.as_str(),
         "ak:did_core:web:bob.example",
         requester_device_id,
         &requester_device_authorize_event_id,
@@ -74,7 +81,7 @@ fn keypackage_claim_request_carries_required_capabilities() {
         "ak:did_core:web:destination.example",
         "AAAAAAAAAAAAAAAAAAAAAA",
         Some("ak:device:0196419b-0000-7000-8000-000000000001"),
-        "mls-group-1",
+        group_id.as_str(),
         None,
     )
     .expect("claim request builds");
@@ -129,7 +136,7 @@ fn keypackage_claim_request_carries_required_capabilities() {
     .unwrap();
     let agent_body = mls_api_helpers::build_mls_keypackage_claim_request(
         "ak:did_core:web:agent.example",
-        "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
+        realm_id.as_str(),
         "ak:did_core:web:bob.example",
         requester_device_id,
         &requester_device_authorize_event_id,
@@ -137,7 +144,7 @@ fn keypackage_claim_request_carries_required_capabilities() {
         "ak:did_core:web:destination.example",
         "AAAAAAAAAAAAAAAAAAAAAA",
         None,
-        "mls-group-1",
+        group_id.as_str(),
         Some(&endpoint),
     )
     .unwrap();
