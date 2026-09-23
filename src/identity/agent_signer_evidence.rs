@@ -630,7 +630,7 @@ mod historical_result_tests {
 
     #[test]
     fn verified_stream_row_builds_and_persists_the_exact_candidate() {
-        let (selector, entry, _) = fixture();
+        let (selector, mut entry, _) = fixture();
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -641,6 +641,8 @@ mod historical_result_tests {
             let mut store = LocalStateStore::with_path(path.clone());
             store.switch_test_account("did:web:reader.example");
             expected_recipient = store.active_authority().unwrap();
+            entry.recipient_account_id = expected_recipient.clone();
+            entry.receiver_id = expected_recipient.station_id.clone();
             assert!(
                 index_verified_committed_event(
                     &mut store,

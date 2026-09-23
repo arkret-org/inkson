@@ -1163,11 +1163,15 @@ mod verification_method_controller_tests {
                 .is_err()
         );
 
-        let revoked_projection = arkret_models_crypto::VerifiedDeviceProjection {
-            device_status: arkret_models_crypto::DeviceStatus::Revoked,
-            ..projection
-        };
-        let revoked = self_outcome_fixture(&account, &device, &revoked_projection);
+        let mut revoked_wire = serde_json::to_value(&outcome).unwrap();
+        revoked_wire["device_keys"][0]["device_keys"][device.as_str()]["device_projection"]["device_status"] =
+            serde_json::json!("revoked");
+        assert!(
+            serde_json::from_value::<arkret_models_crypto::KeysQueryOutcome>(revoked_wire).is_err(),
+            "self keys/query cannot carry a revoked device projection"
+        );
+        let mut revoked = outcome;
+        revoked.device_keys[0].device_keys.remove(&device);
         assert!(super::accepted_device_evidence(&revoked, &account, device.as_str()).is_none());
         let generation = crate::identity::authoring_generation::AuthoringGeneration {
             authority_model:
