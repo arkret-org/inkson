@@ -706,6 +706,9 @@ fn every_send_failure_has_its_own_message() {
         garth::MessageAuthoringFailure::EncryptionContextChanged {
             detail: String::new(),
         },
+        garth::MessageAuthoringFailure::EpochCommitPending {
+            detail: String::new(),
+        },
         garth::MessageAuthoringFailure::DuplicateConflict {
             detail: String::new(),
         },

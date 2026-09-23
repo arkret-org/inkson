@@ -543,6 +543,9 @@ pub(crate) fn chat_authoring_failure_message(
         garth::MessageAuthoringFailure::EncryptionContextChanged { .. } => {
             "chat.send.failed.encryption_context"
         }
+        garth::MessageAuthoringFailure::EpochCommitPending { .. } => {
+            "chat.send.not_ready.epoch_commit"
+        }
         garth::MessageAuthoringFailure::DuplicateConflict { .. } => "chat.send.failed.duplicate",
         garth::MessageAuthoringFailure::SubmissionOutcomeUnknown { .. } => {
             "chat.send.pending.unknown"

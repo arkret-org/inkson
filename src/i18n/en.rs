@@ -1267,6 +1267,10 @@ pub fn english_translations() -> TranslationDict {
         "Encryption state moved while sending. The message was not sent; send it again to encrypt under the current group state.",
     );
     dict.set(
+        "chat.send.not_ready.epoch_commit",
+        "A group key change still needs an MLS Commit. Wait for or complete the Commit, then send again.",
+    );
+    dict.set(
         "chat.send.failed.duplicate",
         "This send already exists with different content. Send the message again as a new one.",
     );

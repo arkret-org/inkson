@@ -1277,6 +1277,10 @@ pub fn chinese_translations() -> TranslationDict {
         "发送过程中加密状态已变更，消息未发出。再发一次将按当前群状态重新加密。",
     );
     dict.set(
+        "chat.send.not_ready.epoch_commit",
+        "群组密钥变更仍待确认，消息未发出。请等待或促成 MLS Commit 完成后重新发送。",
+    );
+    dict.set(
         "chat.send.failed.duplicate",
         "该发送身份已对应另一份内容。请作为新消息重新发送。",
     );

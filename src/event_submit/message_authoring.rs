@@ -166,7 +166,9 @@ pub(crate) fn message_attempt_may_retry(failure: &MessageAuthoringFailure) -> bo
     match failure.recovery() {
         MessageAuthoringRecovery::RetrySameRequest
         | MessageAuthoringRecovery::ReplayExactSubmission => true,
-        MessageAuthoringRecovery::ReEncrypt | MessageAuthoringRecovery::FailClosed => false,
+        MessageAuthoringRecovery::ReEncrypt
+        | MessageAuthoringRecovery::WaitForEpochCommit
+        | MessageAuthoringRecovery::FailClosed => false,
     }
 }
 

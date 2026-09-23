@@ -527,7 +527,7 @@ pub(crate) async fn submit_secure_send(
                     if !sidecar_scope
                         && matches!(
                             failure,
-                            garth::MessageAuthoringFailure::EncryptionContextChanged { .. }
+                            garth::MessageAuthoringFailure::EpochCommitPending { .. }
                         )
                     {
                         crate::mls::coverage_liveness::note_e2ee_epoch_update_required(
