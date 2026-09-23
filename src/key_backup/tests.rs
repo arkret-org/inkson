@@ -159,7 +159,8 @@ fn build_recovery_vault_backup_body_seals_per_spec() {
 fn successor_binds_the_current_device_without_breaking_the_series() {
     let root = test_root();
     let signing_key = SigningKey::from_bytes(&[42u8; 32]);
-    let auth = test_auth("did:web:alice.example#device");
+    let mut auth = test_auth("did:web:alice.example#device");
+    auth.device_id = arkret_sdk::DeviceId::new(SECOND_DEVICE).unwrap();
     let sign = |payload: &[u8]| Ok(signing_key.sign(payload).to_bytes().to_vec());
     let predecessor =
         build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"first").unwrap();

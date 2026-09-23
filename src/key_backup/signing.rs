@@ -459,7 +459,7 @@ mod tests {
         };
 
         let account = backup.actor_id.as_account_id().unwrap().clone();
-        let now = crate::clock::now_utc();
+        let now = crate::clock::now_utc_canonical();
         let challenge = arkret_sdk::KeysBackupsUnlockChallenge {
             challenge_id: arkret_sdk::Base64UrlString::new("A".repeat(22)).unwrap(),
             challenge: arkret_sdk::Base64UrlString::new("A".repeat(43)).unwrap(),
@@ -567,7 +567,7 @@ mod tests {
             arkret_sdk::RealmId::new("ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5")
                 .unwrap();
         let commit_id = arkret_sdk::RealmCommitId::from_digest([9; 32]);
-        let now = crate::clock::now_utc();
+        let now = crate::clock::now_utc_canonical();
         let mut session_value = json!({
             "schema": "ak.schema.recovery_session.v1",
             "request_id": "ak:request:0198ff00-0000-7000-8000-00000000000b",
