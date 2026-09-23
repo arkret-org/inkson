@@ -11,6 +11,8 @@ use inkson::models::{
 };
 use inkson::operation::TypedOperationBuilder;
 
+#[path = "../src/test_support/committed_event.rs"]
+mod committed_event;
 mod common;
 use inkson::push::validate_blind_wakeup_payload;
 use reqwest::StatusCode;
@@ -203,23 +205,6 @@ fn inkson_accepts_server_contract_payloads() {
         arkret_sdk::ServiceKind::DirectoryService
     );
 
-    let submit: inkson::models::SubmitEventResult = serde_json::from_value(json!({
-        "status": "accepted",
-        "pending_delivery_count": 0,
-        "accepted": ["ak:event:AVH7487ydDzo_3WXy2IlHWvtBeElcucZHd5d5hYKcjZl"],
-        "duplicate": [],
-        "rejections": [],
-        "frontiers": [],
-        "cursor": "sx:1760000000000"
-    }))
-    .unwrap();
-    assert_eq!(submit.status, arkret_sdk::EventsSubmitStatus::Accepted);
-    assert_eq!(
-        submit.event_id,
-        "ak:event:AVH7487ydDzo_3WXy2IlHWvtBeElcucZHd5d5hYKcjZl"
-    );
-    assert_eq!(submit.cursor, "sx:1760000000000");
-
     let authz: inkson::models::AuthzCheckOutcome = serde_json::from_value(json!({
         "decision": "allow",
         "reason_code": null,
@@ -328,25 +313,6 @@ fn inkson_accepts_server_contract_payloads() {
     .unwrap();
     assert!(!claimed.one_time_keys.is_empty());
 
-    let device_send: inkson::models::DeviceMessagesSendOutcome = serde_json::from_value(json!({
-        "delivered": {"ak:did_core:web:alice.example": ["dev_alice"]},
-        "unknown_devices": {}
-    }))
-    .unwrap();
-    assert_eq!(
-        device_send.delivered["ak:did_core:web:alice.example"],
-        json!(["dev_alice"])
-    );
-
-    // SDK shape: the to-device queue field is `messages`, not the old `events`.
-    let device_receive: inkson::models::DeviceMessagesGetOutcome = serde_json::from_value(json!({
-        "messages": [],
-        "next_cursor": "ak:cursor:device-messages",
-        "limited": false
-    }))
-    .unwrap();
-    assert!(!device_receive.limited);
-
     let push: inkson::models::PushRegisterDeviceOutcome = serde_json::from_value(json!({
         "push_target_id": "ak:pseudonym:push:kosc9iQ4gVct1OB-b6X364WIFIsJFVbVzn7BMBs1sm8",
         "registration_id": "push:dev_alice",
@@ -414,6 +380,94 @@ fn inkson_accepts_server_contract_payloads() {
     );
     assert_eq!(error.code(), "expected_head_mismatch");
     assert_eq!(error.detail, "expected_head mismatch");
+}
+
+#[test]
+fn current_submit_outcome_binds_a_verified_event_and_commit() {
+    let accepted = committed_event::verified_realm_item(
+        arkret_sdk::RealmId::new("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk").unwrap(),
+        arkret_sdk::EventKind::MessageCreate.as_str(),
+        json!({
+            "strand_id": "ak:strand:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg",
+            "track_name": "discussion",
+            "content": {"kind": "ak.content.text", "body": "accepted message"}
+        }),
+    );
+    let request = arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(
+        arkret_wire::EventCommitSubmission::new(accepted.event.clone()),
+    );
+    let response =
+        arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome::Ordinary(
+            arkret_wire::AuthoritySubmitOutcome::Accepted {
+                status: arkret_wire::AuthorityCommitStatus::Committed,
+                commit: accepted.commit.clone(),
+            },
+        );
+    response
+        .validate_for_request(&request)
+        .expect("formal accepted outcome binds submitted Event");
+    let decoded: arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome =
+        serde_json::from_value(serde_json::to_value(response).unwrap()).unwrap();
+    let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome::Ordinary(
+        arkret_wire::AuthoritySubmitOutcome::Accepted { status, commit },
+    ) = decoded
+    else {
+        panic!("ordinary Event must have a single accepted commit")
+    };
+    assert_eq!(status, arkret_wire::AuthorityCommitStatus::Committed);
+    assert_eq!(commit.event_ref, accepted.event.event_id);
+    assert_eq!(commit.stream_position, 1);
+    let submit = inkson::models::SubmitEventResult::committed(
+        accepted.event.event_id.to_string(),
+        commit.clone(),
+    );
+    assert_eq!(submit.status, garth::SendQueueStatus::Committed);
+    assert_eq!(submit.event_id, accepted.event.event_id.to_string());
+    assert_eq!(submit.commit.as_ref(), Some(&commit));
+}
+
+#[test]
+fn current_to_device_outcome_retains_exact_delivery_coordinates() {
+    let principal_id = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
+    let device_id =
+        arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000000".to_owned())
+            .unwrap();
+    let device_message_id = arkret_sdk::DeviceMessageId::new_v7_at(1_760_000_000_000);
+    let delivered_row = arkret_models_collaboration::device_messages::DeviceMessageDeliveredRow {
+        device_message_id: device_message_id.clone(),
+        status:
+            arkret_models_collaboration::device_messages::DeviceMessageDeliveredStatus::Delivered,
+    };
+    let sent = inkson::models::DeviceMessagesSendOutcome {
+        delivered: std::collections::BTreeMap::from([(
+            principal_id.clone(),
+            std::collections::BTreeMap::from([(device_id.clone(), delivered_row)]),
+        )]),
+        unknown_devices: std::collections::BTreeMap::new(),
+    };
+    let device_send: inkson::models::DeviceMessagesSendOutcome =
+        serde_json::from_value(serde_json::to_value(sent).unwrap()).unwrap();
+    let delivered = &device_send.delivered[&principal_id][&device_id];
+    assert_eq!(delivered.device_message_id, device_message_id);
+    assert_eq!(
+        delivered.status,
+        arkret_models_collaboration::device_messages::DeviceMessageDeliveredStatus::Delivered
+    );
+    assert!(device_send.unknown_devices.is_empty());
+
+    let received = inkson::models::DeviceMessagesGetOutcome {
+        messages: vec![],
+        ack_token: None,
+        next_cursor: Some("ak:cursor:device-messages".to_owned()),
+        has_more: false,
+        limited: Some(false),
+        lost: None,
+    };
+    let device_receive: inkson::models::DeviceMessagesGetOutcome =
+        serde_json::from_value(serde_json::to_value(received).unwrap()).unwrap();
+    assert!(device_receive.messages.is_empty());
+    assert_eq!(device_receive.limited, Some(false));
+    assert!(!device_receive.has_more);
 }
 
 #[test]
