@@ -755,6 +755,54 @@ impl CurrentIndex {
         let generation = self.generation.load(Ordering::Acquire);
         self.ready_selector(realm, selector, generation).await
     }
+
+    /// Read the exact MLS group at the installed baseline cut after all
+    /// authorized streams are covered. Absence describes that cut only; this
+    /// reader cannot decide whether a new write may use plaintext.
+    pub(crate) async fn read_mls_group_ready(
+        &self,
+        scope_ref: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<Option<arkret_wire::MlsGroupCurrent>> {
+        let realm_id = scope_ref
+            .realm_id_opt()
+            .ok_or_else(|| anyhow::anyhow!("MLS current scope has no Realm"))?;
+        let _lease = self.lease.lock().await;
+        let generation = self.generation.load(Ordering::Acquire);
+        let progress = self.progress_at(realm_id.as_str(), generation).await?;
+        let baseline = progress.baseline.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("MLS current read requires an installed Realm baseline")
+        })?;
+        anyhow::ensure!(
+            !progress.needs_refresh
+                && baseline.complete
+                && baseline.coverage.complete_for_authorized_streams
+                && baseline.coverage.realm_id == *realm_id
+                && progress.governance_generation.is_some(),
+            "MLS current read requires complete authorized-stream coverage"
+        );
+        let selector = CurrentSelector::MlsGroup {
+            scope_ref: scope_ref.clone(),
+        };
+        let entry = self
+            .ready_selector(realm_id.as_str(), &selector, generation)
+            .await?;
+        match entry {
+            None => Ok(None),
+            Some(TypedCurrentResult::Value {
+                selector: found,
+                value,
+                ..
+            }) if found == selector => {
+                let current: arkret_wire::MlsGroupCurrent = serde_json::from_value(value)?;
+                anyhow::ensure!(
+                    current.effective_scope == *scope_ref,
+                    "MLS current result belongs to another scope"
+                );
+                Ok(Some(current))
+            }
+            Some(_) => anyhow::bail!("MLS current selector returned a mismatched result"),
+        }
+    }
     async fn ready_selector(
         &self,
         realm: &str,
@@ -1636,6 +1684,22 @@ mod tests {
         }))
         .unwrap()
     }
+    fn mls_group_row(realm: &str, revision: u64) -> TypedCurrentResult {
+        serde_json::from_value(json!({
+            "selector":{"kind":"mls_group","scope_ref":{"kind":"realm","realm_id":realm}},
+            "revision":{"commit_id":COMMIT,"stream_position":revision},
+            "value":{
+                "effective_scope":{"kind":"realm","realm_id":realm},
+                "genesis_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [1; 32]),
+                "current_mls_commit_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [2; 32]),
+                "epoch":1,
+                "current_key_access_revision":1,
+                "covered_key_access_revision":1,
+                "public_tree_ref":format!("ak:blob:sha256:{}", "3".repeat(64))
+            }
+        }))
+        .unwrap()
+    }
     fn frame(
         entries: Vec<TypedCurrentResult>,
         baseline: Option<serde_json::Value>,
@@ -1840,6 +1904,113 @@ mod tests {
                 .entries,
             vec![row(1, false)]
         );
+    }
+
+    #[tokio::test]
+    async fn mls_group_reader_requires_complete_coverage_and_exact_scope() {
+        let path = path();
+        let index = index(&path, 0).await;
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+        };
+        assert!(index.read_mls_group_ready(&scope).await.is_err());
+        index
+            .stage_frame(
+                0,
+                &frame(
+                    vec![mls_group_row(REALM, 1)],
+                    Some(baseline(CURSORS[0], 1, true)),
+                ),
+            )
+            .await
+            .unwrap()
+            .finish();
+        let current = index.read_mls_group_ready(&scope).await.unwrap().unwrap();
+        assert_eq!(current.effective_scope, scope);
+        assert_eq!(current.epoch, 1);
+        let circle_scope = arkret_sdk::ScopeRef::Circle {
+            realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+            circle_id: arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [9; 32],
+            )),
+        };
+        assert!(
+            index
+                .read_mls_group_ready(&circle_scope)
+                .await
+                .unwrap()
+                .is_none(),
+            "a Realm group cannot activate its sibling Circle"
+        );
+
+        let other_scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(OTHER_REALM).unwrap(),
+        };
+        assert!(index.read_mls_group_ready(&other_scope).await.is_err());
+        index
+            .stage_frame(
+                1,
+                &realm_frame(OTHER_REALM, vec![], Some(baseline(CURSORS[1], 1, true))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        assert!(
+            index
+                .read_mls_group_ready(&other_scope)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn mls_group_reader_rejects_incomplete_and_invalidated_baselines() {
+        let path = path();
+        let index = index(&path, 0).await;
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+        };
+        index
+            .stage_frame(
+                0,
+                &frame(
+                    vec![mls_group_row(REALM, 1)],
+                    Some(baseline(CURSORS[0], 1, false)),
+                ),
+            )
+            .await
+            .unwrap()
+            .finish();
+        assert!(index.read_mls_group_ready(&scope).await.is_err());
+        index
+            .stage_frame(1, &frame(vec![], Some(baseline(CURSORS[0], 1, true))))
+            .await
+            .unwrap()
+            .finish();
+        assert!(index.read_mls_group_ready(&scope).await.unwrap().is_some());
+        let reset = serde_json::from_value(json!({"kind":"resync_required"})).unwrap();
+        index.stage_frame(2, &reset).await.unwrap().finish();
+        assert!(index.read_mls_group_ready(&scope).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn mls_group_reader_rejects_a_value_for_another_scope() {
+        let path = path();
+        let index = index(&path, 0).await;
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+        };
+        let mut wrong = serde_json::to_value(mls_group_row(REALM, 1)).unwrap();
+        wrong["value"]["effective_scope"]["realm_id"] = json!(OTHER_REALM);
+        let wrong = serde_json::from_value(wrong).unwrap();
+        index
+            .stage_frame(0, &frame(vec![wrong], Some(baseline(CURSORS[0], 1, true))))
+            .await
+            .unwrap()
+            .finish();
+        assert!(index.read_mls_group_ready(&scope).await.is_err());
     }
     #[tokio::test]
     async fn cancelled_caller_cannot_release_an_inflight_transaction_lease() {
