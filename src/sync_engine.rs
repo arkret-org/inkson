@@ -883,8 +883,11 @@ impl InksonAccountProjector {
         for device in &viewer.devices {
             device.validate()?;
         }
-        if device_summary_revokes_local_device(&viewer, &self.ctx.principal_id, &self.ctx.device_id)
-        {
+        if device_summary_revokes_local_device(
+            &viewer,
+            &self.ctx.account.authority,
+            &self.ctx.device_id,
+        ) {
             self.ctx
                 .state_store
                 .write(LocalStateStore::clear_device_scoped);
@@ -2397,10 +2400,10 @@ fn changed_device_accounts(
 
 fn device_summary_revokes_local_device(
     viewer: &arkret_sdk::AccountView,
-    principal: &arkret_sdk::DidCoreId,
+    account_id: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> bool {
-    if &viewer.principal_id != principal {
+    if viewer.principal_id != account_id.principal_id {
         return false;
     }
     let mut matches = viewer
@@ -2410,9 +2413,21 @@ fn device_summary_revokes_local_device(
     let Some(device) = matches.next() else {
         return false;
     };
+    let exact_committed_revocation = device.revocation_states.as_ref().is_some_and(|states| {
+        states.iter().any(|state| {
+            let arkret_wire::DeviceRevocationGateRecord::Revoked(revoked) = state else {
+                return false;
+            };
+            revoked.account_id == *account_id
+                && revoked.device_id == device.device_id
+                && device.authorized_event_ref.as_ref()
+                    == Some(&revoked.target_device_authorize_event_id)
+        })
+    });
     matches.next().is_none()
         && device.validate().is_ok()
         && device.status == arkret_sdk::DeviceSummaryStatus::Revoked
+        && exact_committed_revocation
 }
 
 fn apply_notification_projection(
@@ -3169,61 +3184,112 @@ mod tests {
     #[test]
     fn local_device_wipe_requires_an_explicit_current_revoked_summary() {
         let principal = sdk_actor_id();
-        let device = "ak:device:0196419b-0000-7000-8000-000000000001";
-        let proposal = sdk_event("ak.device.revoke", json!({}));
-        let signer = arkret_test_kit::proof::StructuralOnlyPayloadSigner::new(
-            arkret_sdk::Did::new("did:web:station.example").unwrap(),
-            arkret_sdk::DidUrl::new("did:web:station.example#key-1").unwrap(),
+        let account = arkret_sdk::AccountId::new(
+            principal.clone(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
         );
-        let accepted_at = chrono::Utc::now();
-        let ack = arkret_sdk::ControlProposalAck::issue_with_signer(
-            sdk_realm_id(),
-            proposal.event_id.event_digest(),
-            arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64))).unwrap(),
-            accepted_at,
-            arkret_sdk::ControlProposalDecisionPolicy::default(),
-            &signer,
-        )
-        .unwrap();
-        let ack = ack;
+        let device = "ak:device:0196419b-0000-7000-8000-000000000001";
+        // The viewer is a read-side fold fixture. No accepted revoke Event or
+        // authority acknowledgment is manufactured by this client test.
+        let authorization_event =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [2; 32]);
+        let proposal_event =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [3; 32]);
         let mut viewer: arkret_sdk::AccountView = serde_json::from_value(json!({
             "principal_id":principal,"state":"active","devices":[{
                 "device_id":device,"status":"revoked","verification_state":"verified",
-                "authorized_event_ref":proposal.event_id,
+                "verification_source":"pairing_code",
+                "authorized_event_ref":authorization_event,
                 "signer_resolution_evidence_ref":format!("ak:signer_evidence:sha256:{}", "3".repeat(64)),
                 "revocation_states":[{
                     "schema":"ak.schema.device_revocation_state.v1",
-                    "account_id":{"principal_id":principal,"station_id":"ak:did_core:web:station.example"},
-                    "device_id":device,"target_device_authorize_event_id":proposal.event_id,
-                    "target_device_generation_ref":1,"proposal_event_id":proposal.event_id,
-                    "accepted_at":arkret_sdk::canonical::format_timestamp_canonical(accepted_at),
-                    "acceptance_seq":1,"control_proposal_ack":ack,"status":"revoked",
-                    "covering_seal_id":format!("ak:seal:sha256:{}", "2".repeat(64)),
-                    "sealed_at":arkret_sdk::canonical::format_timestamp_canonical(accepted_at)
+                    "account_id":account,
+                    "device_id":device,"target_device_authorize_event_id":authorization_event,
+                    "target_device_generation_ref":1,"proposal_event_id":proposal_event,
+                    "accepted_at":"2026-09-22T00:00:00.000Z",
+                    "acceptance_seq":1,"status":"revoked",
+                    "committed_at":"2026-09-22T00:00:01.000Z"
                 }]
             }]
         })).unwrap();
+        assert!(viewer.devices[0].validate().is_ok());
         assert!(device_summary_revokes_local_device(
-            &viewer, &principal, device
+            &viewer, &account, device
         ));
         assert!(!device_summary_revokes_local_device(
             &viewer,
-            &principal,
+            &account,
             "other-device"
         ));
         let other = arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap();
+        let wrong_station = arkret_sdk::AccountId::new(principal.clone(), other.clone());
         assert!(!device_summary_revokes_local_device(
-            &viewer, &other, device
+            &viewer,
+            &wrong_station,
+            device
         ));
-        // `revocation_pending` is derived from accepted proposals plus their
-        // RealmCommit results; it is not a stored device-summary status.
-        viewer.devices[0].status = arkret_sdk::DeviceSummaryStatus::Active;
+        let wrong_principal = arkret_sdk::AccountId::new(other, account.station_id.clone());
         assert!(!device_summary_revokes_local_device(
-            &viewer, &principal, device
+            &viewer,
+            &wrong_principal,
+            device
+        ));
+        let mut wrong_binding = viewer.clone();
+        let arkret_wire::DeviceRevocationGateRecord::Revoked(state) =
+            &mut wrong_binding.devices[0].revocation_states.as_mut().unwrap()[0]
+        else {
+            panic!("fixture must contain a committed revoked record");
+        };
+        state.target_device_authorize_event_id = proposal_event;
+        assert!(!device_summary_revokes_local_device(
+            &wrong_binding,
+            &account,
+            device
+        ));
+        let mut wrong_record_station = viewer.clone();
+        let arkret_wire::DeviceRevocationGateRecord::Revoked(state) = &mut wrong_record_station
+            .devices[0]
+            .revocation_states
+            .as_mut()
+            .unwrap()[0]
+        else {
+            panic!("fixture must contain a committed revoked record");
+        };
+        state.account_id.station_id = wrong_station.station_id;
+        assert!(!device_summary_revokes_local_device(
+            &wrong_record_station,
+            &account,
+            device
+        ));
+        let mut wrong_record_device = viewer.clone();
+        let arkret_wire::DeviceRevocationGateRecord::Revoked(state) = &mut wrong_record_device
+            .devices[0]
+            .revocation_states
+            .as_mut()
+            .unwrap()[0]
+        else {
+            panic!("fixture must contain a committed revoked record");
+        };
+        state.device_id =
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000002").unwrap();
+        assert!(!device_summary_revokes_local_device(
+            &wrong_record_device,
+            &account,
+            device
+        ));
+        viewer.devices[0].revocation_states = None;
+        assert!(!device_summary_revokes_local_device(
+            &viewer, &account, device
+        ));
+        // An active summary with no revocation record must never wipe the device.
+        viewer.devices[0].status = arkret_sdk::DeviceSummaryStatus::Active;
+        assert!(viewer.devices[0].validate().is_ok());
+        assert!(!device_summary_revokes_local_device(
+            &viewer, &account, device
         ));
         viewer.devices.clear();
         assert!(!device_summary_revokes_local_device(
-            &viewer, &principal, device
+            &viewer, &account, device
         ));
     }
 }
