@@ -1173,39 +1173,68 @@ fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
 
 #[test]
 fn message_operations_fold_independent_redaction_event_by_message_id() {
-    let mut create = json!({
-        "event_id": "ak:event:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
-        "kind": "ak.message.create",
-        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-        "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
-        "created_at": "2026-05-22T10:00:00.000Z",
+    let realm =
+        arkret_sdk::RealmId::new("ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI").unwrap();
+    let create_payload = json!({
         "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
-        "message_id": "ak:message:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
-        "body": "secret"
+        "track_name": "discussion",
+        "content": {"kind": "ak.content.text", "body": "secret"}
     });
-    sign_chat_fixture(&mut create);
-    let mut redaction = json!({
-        "event_id": "ak:event:AtY-hYO7pukUvpVZYBYuADSkUgaU1o6T5TbYmPtzUnco",
-        "kind": "ak.message.redact",
-        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-        "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
-        "created_at": "2026-05-22T10:05:00.000Z",
-        "payload": {
-            "event_id": "ak:event:AtY-hYO7pukUvpVZYBYuADSkUgaU1o6T5TbYmPtzUnco",
-            "message_id": "ak:message:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
-            "reason": "user requested tombstone"
-        }
-    });
-    sign_chat_fixture(&mut redaction);
+    // The helper signs and verifies a real Event and its covering RealmCommit.
+    // Derive the redact target from the same deterministic create bytes that
+    // the contiguous stream below will commit.
+    let create_id = fixture::committed_event::verified_realm_item(
+        realm.clone(),
+        arkret_sdk::EventKind::MessageCreate.as_str(),
+        create_payload.clone(),
+    )
+    .event
+    .event_id;
+    let message_id = arkret_sdk::MessageId::from_event_id(&create_id);
+    let committed = fixture::committed_event::verified_realm_items(
+        realm.clone(),
+        vec![
+            (
+                arkret_sdk::EventKind::MessageCreate.as_str().to_owned(),
+                create_payload,
+            ),
+            (
+                arkret_sdk::EventKind::MessageRedact.as_str().to_owned(),
+                json!({"message_id": message_id, "reason": "user requested tombstone"}),
+            ),
+        ],
+    );
+    assert_eq!(committed[0].event.event_id, create_id);
+    assert_eq!(committed[0].commit.stream_position, 1);
+    assert_eq!(committed[1].commit.stream_position, 2);
+    let signer = arkret_test_kit::keys::seeded_signer(
+        arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+        arkret_sdk::DidUrl::new(
+            "did:web:alice.example#ak:device:0196419b-0000-7000-8000-000000000001",
+        )
+        .unwrap(),
+    );
+    let key = arkret_sdk::canonical::ed25519_pubkey_to_did_key_multibase(
+        signer.verifying_key().as_bytes(),
+    );
+    crate::identity::device_directory::seed_positive_for_test(
+        &committed[0].event.actor_id.to_string(),
+        "ak:device:0196419b-0000-7000-8000-000000000001",
+        crate::identity::device_directory::public_key_from_directory_value(&key).unwrap(),
+    );
+    let create = serde_json::to_value(&committed[0].event).unwrap();
+    let redaction = serde_json::to_value(&committed[1].event).unwrap();
+    let visible =
+        chat_messages_from_events_with_sidecar(realm.as_str(), &[create.clone()], None, None);
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0].body, "secret");
+    assert!(!visible[0].redacted);
 
     for events in [
         vec![create.clone(), redaction.clone()],
         vec![redaction, create],
     ] {
-        let records = message_operations_from_events(
-            "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
-            &events,
-        );
+        let records = message_operations_from_events(realm.as_str(), &events);
         assert_eq!(records.len(), 2);
         let state = ClientLocalState {
             raw_operations: records,
