@@ -116,6 +116,7 @@ pub(crate) fn current_mls_group(
     entry_for(entries, &selector)
         .and_then(value_of)
         .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .filter(|group: &arkret_wire::MlsGroupCurrent| group.effective_scope == *scope_ref)
 }
 
 /// Whether `scope_ref` has activated MLS.
@@ -171,11 +172,10 @@ mod tests {
     const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     fn revision(position: u64) -> CurrentRevision {
+        let mut digest = [0; 32];
+        digest[..8].copy_from_slice(&position.to_be_bytes());
         CurrentRevision {
-            commit_id: RealmCommitId::new(format!(
-                "ak:realm_commit:0196419b-0000-7000-8000-{position:012}"
-            ))
-            .unwrap(),
+            commit_id: RealmCommitId::from_digest(digest),
             stream_position: position,
         }
     }
@@ -243,6 +243,22 @@ mod tests {
         assert!(scope_has_accepted_mls_genesis(&activated, &realm_scope()));
         let group = current_mls_group(&activated, &realm_scope()).expect("current MLS group");
         assert_eq!(group.epoch, 4);
+    }
+
+    #[test]
+    fn a_mls_value_for_another_scope_cannot_activate_this_scope() {
+        let mut wrong_scope = mls_group_value();
+        wrong_scope["effective_scope"]["realm_id"] =
+            serde_json::json!("ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM");
+        let entries = [entry(
+            CurrentSelector::MlsGroup {
+                scope_ref: realm_scope(),
+            },
+            9,
+            wrong_scope,
+        )];
+        assert!(current_mls_group(&entries, &realm_scope()).is_none());
+        assert!(!scope_has_accepted_mls_genesis(&entries, &realm_scope()));
     }
 
     #[test]
