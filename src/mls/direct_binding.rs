@@ -336,6 +336,7 @@ mod tests {
     fn direct_binding_never_invents_a_missing_founding_prefix() {
         let empty = crate::models::BackfillView(arkret_wire::StreamScanOutcome {
             committed_events: Vec::new(),
+            readable_floor: None,
             truncated: false,
         });
         assert!(

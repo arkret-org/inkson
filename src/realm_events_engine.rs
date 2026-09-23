@@ -408,7 +408,7 @@ where
         let request = StreamScanRequest {
             realm_id: realm_id.clone(),
             stream_ref: stream_ref.clone(),
-            after_position,
+            direction: arkret_wire::StreamScanDirection::After(after_position),
             limit: SCAN_LIMIT,
         };
         let outcome = authority.scan(&request).await?;

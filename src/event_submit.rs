@@ -100,7 +100,7 @@ pub(crate) async fn scan_stream_with(
     let request = arkret_wire::StreamScanRequest {
         realm_id: stream_ref.realm_id().clone(),
         stream_ref: stream_ref.clone(),
-        after_position,
+        direction: arkret_wire::StreamScanDirection::After(after_position),
         limit: limit.clamp(1, 1000),
     };
     Ok(BackfillView::from(
