@@ -2,30 +2,6 @@ use super::binding::push_token_entry_key;
 use super::token_source::{current_platform, default_gateway_binding, push_preferences};
 use super::*;
 
-fn push_gateway_describe(providers: &[&str]) -> ServiceDescribe {
-    let mut describe = ServiceDescribe::development(
-        arkret_wire::Did::new("did:web:push.example".to_owned()).unwrap(),
-        arkret_wire::TrustDomainId::new("ak:trust_domain:test".to_owned()).unwrap(),
-        arkret_wire::ServiceKind::PushGateway,
-        vec![
-            "ak.operation_bundle.push_gateway.describe.v1".to_owned(),
-            "ak.operation_bundle.push_gateway.http_notify.v1".to_owned(),
-        ],
-        vec![arkret_models_discovery::TransportBinding::http_json(
-            "https://push.example/_arkret",
-        )],
-    );
-    describe.limits.extensions.insert(
-        "x_floria_supported_providers".to_owned(),
-        serde_json::json!(providers),
-    );
-    describe.limits.extensions.insert(
-        "x_floria_auth_modes".to_owned(),
-        serde_json::json!(["http-message-signature"]),
-    );
-    describe
-}
-
 fn build_register_request(
     device_id: &str,
 ) -> anyhow::Result<chime::ChimePushRegisterDeviceRequest> {
@@ -95,16 +71,6 @@ fn builds_unregister_request_from_existing_state() {
     assert_eq!(unregister.device_id, "dev_inkson");
     assert_eq!(unregister.registration_id.as_deref(), Some("push:test"));
     assert_eq!(unregister.app_id.as_deref(), Some("inkson"));
-}
-
-#[test]
-fn summarizes_canonical_push_gateway_description() {
-    let summary = summarize_push_gateway(&push_gateway_describe(&["webpush", "fcm"]));
-
-    assert!(summary.contains("ak:did_core:web:push.example"));
-    assert!(summary.contains("ak.edge.push.command.notify.v1"));
-    assert!(summary.contains("webpush,fcm"));
-    assert!(summary.contains("http-message-signature"));
 }
 
 #[test]
@@ -204,44 +170,6 @@ fn apns_provider_returns_bridged_host_token() {
     let token = ApnsPushTokenProvider.subscribe(None).unwrap().unwrap();
     assert_eq!(token, "apns:abcdef012345");
     clear_apns_push_token();
-}
-
-#[test]
-fn vapid_extractor_returns_none_when_webpush_not_advertised() {
-    let describe = push_gateway_describe(&["fcm", "apns"]);
-    assert!(vapid_public_key_from_service_describe(&describe).is_none());
-}
-
-#[test]
-fn vapid_extractor_falls_back_to_env_when_webpush_advertised() {
-    // SAFETY: env var mutation in tests is gated behind the per-test
-    // serial guard via a unique key; we still scope the change so a
-    // panic in the test can't leak into other tests.
-    let describe = push_gateway_describe(&["webpush"]);
-
-    // Guard env var manipulation behind cfg(not(target_arch=wasm32))
-    // because std::env::set_var doesn't compile on wasm.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[allow(
-        unsafe_code,
-        reason = "the test mutates push environment before loading configuration"
-    )]
-    unsafe {
-        std::env::set_var("VAPID_PUBLIC_KEY", "BFakeVapidPublicKey-base64url-string");
-    }
-    let key = vapid_public_key_from_service_describe(&describe);
-    // SAFETY: same serial-guard rationale as the set_var above; this restores
-    // the env so neighbouring tests start from a clean slate.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[allow(
-        unsafe_code,
-        reason = "the test restores push environment after loading configuration"
-    )]
-    unsafe {
-        std::env::remove_var("VAPID_PUBLIC_KEY");
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    assert_eq!(key.as_deref(), Some("BFakeVapidPublicKey-base64url-string"));
 }
 
 #[cfg(not(target_arch = "wasm32"))]

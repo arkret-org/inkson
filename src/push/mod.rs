@@ -8,15 +8,13 @@ mod token_source;
 
 // Expose the push API as the module's public surface.
 // Imports kept at the module root so the (glob-importing) `tests`
-// submodule resolves the chime types and `std::sync::Arc` it references.
+// submodule resolves `std::sync::Arc`.
 #[cfg(test)]
 use std::sync::Arc;
 
 #[cfg(test)]
 use arkret_models_integration::PushRegisterDeviceOutcome;
 pub use binding::*;
-#[cfg(test)]
-use chime::ServiceDescribe;
 pub use gateway::*;
 pub use request::*;
 pub use token_provider::*;

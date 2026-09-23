@@ -2,12 +2,10 @@
 //!
 //! This module owns the runtime resolution of the floria push gateway
 //! URL, the development placeholder-token guards, the blind-wakeup
-//! payload lint, and the human-readable describe summary used by tests.
+//! payload lint.
 //! Network calls belong to the Station-facing registration client; Inkson
 //! never connects to the configured gateway directly.
 
-#[cfg(test)]
-use chime::ServiceDescribe;
 use chime::{ChimePushRegisterDeviceRequest, PushRegistrationState};
 use serde_json::Value;
 
@@ -157,45 +155,4 @@ pub fn push_status_label(state: Option<&PushRegistrationState>) -> String {
             .unwrap_or_else(|| "registered".to_owned()),
         None => "Not registered".to_owned(),
     }
-}
-
-#[cfg(test)]
-pub fn summarize_push_gateway(describe: &ServiceDescribe) -> String {
-    let providers = describe
-        .limits
-        .extensions
-        .get("x_floria_supported_providers")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>()
-                .join(",")
-        })
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "none".to_owned());
-    let auth_modes = describe
-        .limits
-        .extensions
-        .get("x_floria_auth_modes")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>()
-                .join(",")
-        })
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "none".to_owned());
-    format!(
-        "service_id={} kind={} protocol={} notify_operation={} providers={} auth_modes={}",
-        describe.service_id,
-        describe.service_kind,
-        describe.protocol_version,
-        arkret_wire::ServiceOperationId::EDGE_PUSH_COMMAND_NOTIFY_V1,
-        providers,
-        auth_modes,
-    )
 }

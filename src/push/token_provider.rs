@@ -9,8 +9,7 @@
 //!
 //! * `WebPushTokenProvider` — drives `navigator.serviceWorker.register` + `pushManager.subscribe({
 //!   userVisibleOnly: true, applicationServerKey })` on wasm32 targets. The VAPID
-//!   `applicationServerKey` eligibility is discovered from the gateway's canonical
-//!   `ServiceDescribe`, so deploys can rotate without rebuilding the client.
+//!   `applicationServerKey` is supplied by the caller.
 //! * `FcmPushTokenProvider` / `ApnsPushTokenProvider` — read tokens bridged by the native host or
 //!   supplied through the documented local environment variables.
 //!
@@ -23,8 +22,6 @@
 //! are unchanged.
 
 use std::sync::{Arc, Mutex, OnceLock};
-
-use chime::ServiceDescribe;
 
 /// Production push-token provider trait. One implementation
 /// is installed at boot (`set_push_token_provider`); push-registration
@@ -424,47 +421,6 @@ impl PushTokenProvider for ApnsPushTokenProvider {
             ],
         ))
     }
-}
-
-/// Resolve the VAPID `applicationServerKey` only when the canonical gateway
-/// description advertises Web Push support.
-///
-/// The lookup order:
-/// 1. If `ServiceDescribe.limits.x_floria_supported_providers` includes `webpush`, the gateway
-///    confirms VAPID is in scope and inkson's deploy MAY rely on environment variable
-///    `VAPID_PUBLIC_KEY` (set by the dev-stack bootstrap) for the actual key bytes.
-/// 2. Otherwise return `None` — the WebPushTokenProvider will subscribe without an
-///    `applicationServerKey`, which produces an unencrypted Web Push subscription and is fine for
-///    restricted-origin demos.
-pub fn vapid_public_key_from_service_describe(describe: &ServiceDescribe) -> Option<String> {
-    let webpush_advertised = describe
-        .limits
-        .extensions
-        .get("x_floria_supported_providers")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|providers| {
-            providers.iter().any(|provider| {
-                provider
-                    .as_str()
-                    .is_some_and(|name| name.eq_ignore_ascii_case("webpush"))
-            })
-        });
-    if !webpush_advertised {
-        return None;
-    }
-    // Production deploys inject the VAPID public key via env so a key
-    // rotation does not require a fresh client build. The dev-stack
-    // bootstrap script sets `VAPID_PUBLIC_KEY` to the soland-side
-    // counterpart of the signing key the push gateway is configured with.
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        if let Ok(value) = std::env::var("VAPID_PUBLIC_KEY")
-            && !value.is_empty()
-        {
-            return Some(value);
-        }
-    }
-    None
 }
 
 /// Produce the platform push key by calling the active
