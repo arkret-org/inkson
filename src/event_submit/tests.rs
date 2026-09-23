@@ -177,15 +177,12 @@ fn account_authority_client_allows_only_insecure_loopback() {
 /// proof exists on the wire, and validating the payload must not add one.
 #[test]
 fn capability_payload_validation_reads_the_intent_without_changing_it() {
-    let genesis = event_with_kind(
-        "ak:event:ASgi2U7PbVyNs4UpiQAoXKoHv84g07gpBvuddCGiMMG1",
-        REALM,
-        "ak.realm.create",
-        json!({"object": {}}),
-    );
     let basis = crate::operation::ak_ops::IssuerRealmAuthorityBasis {
         authority_generation: 0,
-        authority_event_ref: genesis.event_id.clone(),
+        authority_event_ref: arkret_sdk::EventId::new(
+            "ak:event:ASgi2U7PbVyNs4UpiQAoXKoHv84g07gpBvuddCGiMMG1",
+        )
+        .unwrap(),
     };
     let operation = crate::operation::ak_ops::capability_grant_actions(
         REALM,
@@ -318,12 +315,20 @@ fn pending_chat_projection_ignores_settled_items_and_other_conversations() {
 #[test]
 fn the_genesis_lane_projection_counts_committed_and_unsettled_attempts() {
     let signer = test_signer();
+    let binding =
+        arkret_sdk::MlsGovernanceBindingPayload::realm(realm_id(REALM), None, 0, 0, 0).unwrap();
     let genesis_intent: EventIntent = serde_json::from_value(json!({
         "kind": "ak.mls.genesis",
         "scope_ref": {"kind": "realm", "realm_id": REALM},
         "actor_id": account_actor(),
         "created_at": "2026-05-19T00:00:00.000Z",
-        "payload": {}
+        "payload": {
+            "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+            "group_info_ref": format!("ak:blob:sha256:{}", "11".repeat(32)),
+            "ratchet_tree_ref": format!("ak:blob:sha256:{}", "22".repeat(32)),
+            "governance_binding": binding,
+            "created_at": "2026-05-19T00:00:00.000Z"
+        }
     }))
     .unwrap();
     let genesis = author_and_sign(genesis_intent, &signer);

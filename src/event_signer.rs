@@ -1666,14 +1666,14 @@ mod tests {
         let mut event = message_event_with_digest_suite(
             "did:web:sdk.example",
             "typed",
-            arkret_sdk::canonical::DigestSuite::Blake3,
+            arkret_sdk::canonical::DigestSuite::Sha256,
         );
         let context = ProducerProofContext::new()
             .with_domain("did:web:server.example")
             .with_audience(Audience::Single("did:web:server.example".to_owned()))
-            .with_digest_suite(arkret_sdk::canonical::DigestSuite::Blake3)
+            .with_digest_suite(arkret_sdk::canonical::DigestSuite::Sha256)
             .with_signer_resolution_evidence_ref(
-                test_producer_proof_context(arkret_sdk::DigestSuite::Blake3)
+                test_producer_proof_context(arkret_sdk::DigestSuite::Sha256)
                     .signer_resolution_evidence_ref
                     .unwrap(),
             );
@@ -1684,7 +1684,7 @@ mod tests {
 
         let proof = producer_proof(&event);
         assert_eq!(proof.kind, "detached_jws");
-        assert!(proof.event_digest.as_str().starts_with("blake3:"));
+        assert!(proof.event_digest.as_str().starts_with("sha256:"));
         assert_eq!(
             proof.verification_method,
             format!("did:web:sdk.example#{TEST_DEVICE_ID}")
@@ -1692,7 +1692,7 @@ mod tests {
         assert_eq!(proof.domain.as_deref(), Some("did:web:server.example"));
         assert!(proof.audience.is_some());
         event
-            .validate_proof_bindings_with_digest_suite(arkret_sdk::canonical::DigestSuite::Blake3)
+            .validate_proof_bindings_with_digest_suite(arkret_sdk::canonical::DigestSuite::Sha256)
             .expect("proof digest matches");
     }
 
