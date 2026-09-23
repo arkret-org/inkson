@@ -23,8 +23,8 @@ pub(super) fn event(kind: &str) -> arkret_sdk::Event {
         "event_id":"ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "kind":kind,"realm_id":"ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "scope_ref":{"kind":"realm","realm_id":"ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
-        "actor_id":actor,"actor_seq":1,"created_at":"2026-09-12T12:00:00.000Z",
-        "prev_refs":[],"payload":{"peer":peer}
+        "actor_id":actor,"created_at":"2026-09-12T12:00:00.000Z",
+        "payload":{"peer":peer}
     })).unwrap();
     let mut event = arkret_sdk::AuthoredEvent::finalize_with_digest_suite(
         event,
@@ -93,7 +93,7 @@ pub(super) fn operation_id() -> ProtocolOperationId {
 fn signature() -> arkret_sdk::ProtocolSignature {
     serde_json::from_value(
         json!({"verification_method":"did:web:principal.example#key",
-        "created_at":"2026-09-12T12:00:00.000Z","jws":"AA"}),
+        "created_at":"2026-09-12T12:00:00.000Z","jws":"eyJhbGciOiJFZERTQSJ9..c2ln"}),
     )
     .unwrap()
 }
