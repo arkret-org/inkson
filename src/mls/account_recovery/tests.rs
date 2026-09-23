@@ -130,12 +130,17 @@ fn current_series(pointers: Vec<(String, Value)>) -> Value {
     let mut state = serde_json::json!({
         "account_id": authority(),
         "control_realm_id": "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI",
+        // This models the confirmed PCR basis returned by the trusted Station
+        // list endpoint; it is not inferred from the envelopes or pointer.
+        "authority_commit_id": arkret_sdk::RealmCommitId::from_digest([0x58; 32]),
         "secret_storage": {"state":"absent"},
     });
     for (kind, pointer) in pointers {
         state[&kind] = pointer;
     }
-    state
+    let typed: arkret_sdk::BackupActiveSeriesState =
+        serde_json::from_value(state).expect("confirmed active-series fixture is typed");
+    serde_json::to_value(typed).expect("confirmed active-series fixture serializes")
 }
 
 fn backup_series_id(body: &Value) -> &str {

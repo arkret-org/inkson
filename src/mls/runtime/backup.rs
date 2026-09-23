@@ -255,6 +255,7 @@ mod tests {
                     "station_id": "ak:did_core:web:station.example"
                 },
                 "control_realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                "authority_commit_id": arkret_sdk::RealmCommitId::from_digest([0x58; 32]),
                 "secret_storage": pointer
             }
         })

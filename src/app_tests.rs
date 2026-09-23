@@ -1134,7 +1134,10 @@ fn encrypted_realm_projection() -> serde_json::Value {
 fn active_secret_storage_series(series_id: &str) -> serde_json::Value {
     serde_json::json!({
         "account_id": test_authority("did:web:alice.example"),
-        "control_realm_id": ENCRYPTED_REALM,
+        "control_realm_id": arkret_wire::RealmId::from_event_id(
+            &arkret_wire::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [0x31; 32]),
+        ),
+        "authority_commit_id": arkret_wire::RealmCommitId::from_digest([0x58; 32]),
         "secret_storage": {
             "state": "active",
             "series_pointer_version": 1,
