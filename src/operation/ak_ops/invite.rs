@@ -50,11 +50,13 @@ pub fn invite_accept(
     actor: &str,
     invite_id: &str,
     invitee_account_id: Option<arkret_sdk::AccountId>,
+    previous_state: arkret_sdk::InvitePreviousState,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let invite_id_typed = arkret_sdk::InviteId::new(invite_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invite_id not canonical {invite_id:?}: {err}"))?;
     let payload = arkret_sdk::InviteAcceptPayload {
         invite_id: invite_id_typed,
+        previous_state,
         invitee_account_id,
         extensions: Default::default(),
     };
@@ -119,8 +121,12 @@ fn invite_cancel_payload(
         "revoked" => arkret_sdk::InviteCancelTargetState::Revoked,
         _ => unreachable!("validated invite cancel target state"),
     };
-    let mut payload =
-        arkret_sdk::InviteCancelPayload::new(invite_id, invitee.clone(), target_state);
+    let mut payload = arkret_sdk::InviteCancelPayload::new(
+        invite_id,
+        arkret_sdk::InvitePreviousState::Pending,
+        invitee.clone(),
+        target_state,
+    );
     if let Some(reason) = reason {
         payload = payload.with_reason(reason);
     }
@@ -160,6 +166,7 @@ pub fn invite_revoke(
     // The complete account the Invite stores, for the directed branch that
     // releases the live-target slot; `None` for a token / 3PID Invite.
     invitee: Option<&arkret_sdk::AccountId>,
+    previous_state: arkret_sdk::InviteRevokePreviousState,
     target_state: &str,
     reason_code: &str,
 ) -> anyhow::Result<TypedOperationBuilder> {
@@ -207,6 +214,7 @@ pub fn invite_revoke(
     };
     let payload = arkret_sdk::InviteRevokePayload {
         invite_id,
+        previous_state,
         invitee_account_id,
         target_state,
         reason: Some(reason_code.to_owned()),

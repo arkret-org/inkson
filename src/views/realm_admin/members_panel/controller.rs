@@ -175,6 +175,7 @@ pub(super) async fn recover_from_occupied_live_target(
                 actor,
                 &invite_id,
                 Some(invitee.account_id()),
+                arkret_sdk::InviteRevokePreviousState::SendFailed,
                 "revoked",
                 "delivery_target_unreachable",
             )

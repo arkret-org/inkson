@@ -481,6 +481,7 @@ pub async fn revoke_realm_invite(
         actor_id,
         invite_id,
         invitee,
+        arkret_sdk::InviteRevokePreviousState::Pending,
         target_state,
         reason_code,
     )?

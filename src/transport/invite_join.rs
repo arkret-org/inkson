@@ -86,6 +86,7 @@ impl crate::transport::TransportClient {
             actor_id,
             invite_id,
             Some(account_id),
+            arkret_sdk::InvitePreviousState::Pending,
         )?
         .build_sdk_event("inkson")?;
         let submit = self.event_submitter()?.submit_sdk_event(&operation).await?;

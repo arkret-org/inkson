@@ -904,11 +904,13 @@ fn invite_helpers_emit_canonical_kinds() {
         "did:web:bob.example",
         invite_id,
         None,
+        arkret_sdk::InvitePreviousState::Claimed,
     )
     .expect("builds")
     .build("node");
     assert_eq!(accept.kind().as_str(), "ak.invite.accept");
     assert_eq!(accept.payload()["invite_id"], invite_id);
+    assert_eq!(accept.payload()["previous_state"], "claimed");
     assert!(!accept.payload().contains_key("state"));
     assert!(!accept.payload().contains_key("invitee_account_id"));
     assert_registered_payload_valid(&accept);
@@ -919,10 +921,12 @@ fn invite_helpers_emit_canonical_kinds() {
         "did:web:bob.example",
         invite_id,
         Some(invitee_account_id.clone()),
+        arkret_sdk::InvitePreviousState::Pending,
     )
     .expect("builds")
     .build("node");
     assert_eq!(directed_accept.payload()["invite_id"], invite_id);
+    assert_eq!(directed_accept.payload()["previous_state"], "pending");
     assert_eq!(
         directed_accept.payload()["invitee_account_id"],
         json!({
@@ -956,6 +960,7 @@ fn invite_helpers_emit_canonical_kinds() {
     // `target_state` is the signed requested lifecycle transition; the retired
     // `state` alias must not be emitted alongside it.
     assert_eq!(cancel.payload()["target_state"], "revoked");
+    assert_eq!(cancel.payload()["previous_state"], "pending");
     assert!(!cancel.payload().contains_key("state"));
     assert_registered_payload_valid(&cancel);
     // `event-envelope.schema.json` restricts the enum to rejected / revoked on
@@ -978,6 +983,7 @@ fn invite_helpers_emit_canonical_kinds() {
         "did:web:alice.example",
         invite_id,
         None,
+        arkret_sdk::InviteRevokePreviousState::Pending,
         "revoked",
         "admin_revoke",
     )
@@ -985,6 +991,7 @@ fn invite_helpers_emit_canonical_kinds() {
     .build("node");
     assert_eq!(revoke.kind().as_str(), "ak.invite.revoke");
     assert_eq!(revoke.payload()["target_state"], "revoked");
+    assert_eq!(revoke.payload()["previous_state"], "pending");
     assert_eq!(revoke.payload()["reason"], "admin_revoke");
     assert!(!revoke.payload().contains_key("invitee_account_id"));
 }
