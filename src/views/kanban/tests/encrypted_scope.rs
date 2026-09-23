@@ -409,7 +409,10 @@ async fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
         DeviceId::new(bob_device.to_owned()).unwrap(),
     )
     .unwrap();
-    let bob_key_package = bob.key_package_record().unwrap();
+    let bob_key_package = crate::test_support::claimed_mls_key_package(
+        bob.key_package_record().unwrap(),
+        1_900_000_000_000,
+    );
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
     };
@@ -502,7 +505,10 @@ async fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
         DeviceId::new(bob_device.to_owned()).unwrap(),
     )
     .unwrap();
-    let bob_key_package = bob.key_package_record().unwrap();
+    let bob_key_package = crate::test_support::claimed_mls_key_package(
+        bob.key_package_record().unwrap(),
+        1_900_000_000_001,
+    );
     let bob_private_state = bob.export_private_state().unwrap();
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
@@ -701,7 +707,10 @@ async fn encrypted_private_patch_rejects_epoch_zero_without_accepted_genesis_ref
     )
     .await
     .unwrap_err();
-    assert!(error.contains("accepted MLS group-state Event is unavailable"));
+    assert!(
+        error.contains("MLS group-state Event must be accepted before encrypting"),
+        "unexpected failure: {error}"
+    );
     assert!(state.load().raw_operations.is_empty());
 }
 

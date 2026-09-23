@@ -15,7 +15,7 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
     let first = actor("ak:did_core:web:station-a.example");
     let second = actor("ak:did_core:web:station-b.example");
     let mut card = test_card(
-        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "U",
     );
     let selected = std::collections::BTreeSet::from([first.clone(), second.clone()]);
@@ -51,15 +51,15 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
     card.assigned_to_relations = vec![
         CardAssignedToRelation {
             actor_id: first.clone(),
-            relation_id: "ak:relation:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig".to_owned(),
+            relation_id: "ak:relation:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ".to_owned(),
         },
         CardAssignedToRelation {
             actor_id: second.clone(),
-            relation_id: "ak:relation:AFjQnGmj11wy2rA2YjgbfhdhIJlFu9cPeZN5Ld0XzQp4".to_owned(),
+            relation_id: "ak:relation:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1".to_owned(),
         },
     ];
     let retained = std::collections::BTreeSet::from([second.clone()]);
-    let removed_relation_id = "ak:relation:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig";
+    let removed_relation_id = "ak:relation:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ";
     let removed_domain =
         crate::operation::ak_ops::relation_actor_domain("assigned_to", &card.id, &first).unwrap();
     let removed_revision = arkret_sdk::CurrentRevision {
@@ -124,12 +124,12 @@ fn assignment_tombstone_rejects_relation_never_written() {
         arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
     ));
     let mut card = test_card(
-        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "U",
     );
     card.assigned_to_relations = vec![CardAssignedToRelation {
         actor_id: assignee.clone(),
-        relation_id: "ak:relation:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig".to_owned(),
+        relation_id: "ak:relation:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ".to_owned(),
     }];
     let domain =
         crate::operation::ak_ops::relation_actor_domain("assigned_to", &card.id, &assignee)

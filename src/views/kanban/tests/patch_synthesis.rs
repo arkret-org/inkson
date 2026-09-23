@@ -117,7 +117,7 @@ fn local_card_update_overlay_replays_queued_summary_and_content_on_top_of_projec
     // After page refresh, the overlay must re-apply that patch so the
     // user doesn't see their edits silently disappear.
     let mut card = test_card(
-        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "U",
     );
     card.title = "old title".to_owned();
@@ -140,7 +140,7 @@ fn local_card_update_overlay_replays_queued_summary_and_content_on_top_of_projec
             "operation_id": "op-1",
             "write_state": "queued",
             "body": {
-                "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+                "strand_id": "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
                 "patch": {
                     "metadata.title": { "$op": "set", "value": "new title" },
                     "metadata.summary": { "$op": "set", "value": "new summary" },
@@ -162,7 +162,7 @@ fn local_card_update_overlay_replays_queued_summary_and_content_on_top_of_projec
 #[test]
 fn terminally_failed_card_update_never_overlays_the_projection() {
     let mut card = test_card(
-        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "U",
     );
     card.title = "accepted title".to_owned();
@@ -181,7 +181,7 @@ fn terminally_failed_card_update_never_overlays_the_projection() {
             "kind": "ak.strand.update",
             "write_state": "failed",
             "body": {
-                "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+                "strand_id": "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
                 "patch": {
                     "metadata.title": { "$op": "set", "value": "rejected title" }
                 }
@@ -199,14 +199,14 @@ fn authored_card_update_uses_the_closed_typed_patch_without_causal_coordinates()
     let operation = build_card_detail_update_operation(
         TEST_REALM_ID,
         "ak:did_core:web:alice.example",
-        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         json!({"metadata.title": {"$op": "set", "value": "new"}}),
     )
     .unwrap();
 
     assert_eq!(
         operation.payload()["target_ref"],
-        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig"
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ"
     );
     assert_eq!(
         operation.payload()["patch"]["metadata.title"]["value"],
@@ -217,7 +217,7 @@ fn authored_card_update_uses_the_closed_typed_patch_without_causal_coordinates()
 #[test]
 fn overlay_local_card_update_records_clears_due_from_fields_replacement() {
     let mut card = test_card(
-        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "U",
     );
     card.due = "2026-06-11".to_owned();
@@ -237,7 +237,7 @@ fn overlay_local_card_update_records_clears_due_from_fields_replacement() {
             "operation_id": "op-clear-due",
             "write_state": "queued",
             "body": {
-                "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+                "strand_id": "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
                 "patch": {
                     "metadata.fields": {
                         "$op": "set",
@@ -254,7 +254,7 @@ fn overlay_local_card_update_records_clears_due_from_fields_replacement() {
 #[test]
 fn card_synthesis_track_entries_preserve_append_history() {
     let mut card = test_card(
-        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "U",
     );
     card.synthesis = "second synthesis".to_owned();
@@ -278,7 +278,7 @@ fn card_synthesis_track_entries_preserve_append_history() {
                 "created_at": "2026-05-22T10:00:00.000Z",
                 "write_state": "queued",
                 "body": {
-                    "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+                    "strand_id": "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
                     "patch": {
                         "tracks.synthesis.content": content_patch_value("first synthesis")
                     }
@@ -296,7 +296,7 @@ fn card_synthesis_track_entries_preserve_append_history() {
                 "created_at": "2026-05-22T11:00:00.000Z",
                 "write_state": "queued",
                 "body": {
-                    "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+                    "strand_id": "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
                     "patch": {
                         "tracks.synthesis.content": content_patch_value("second synthesis")
                     }
@@ -323,7 +323,7 @@ fn card_synthesis_track_entries_preserve_append_history() {
 #[test]
 fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_history() {
     let mut card = test_card(
-        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "U",
     );
     card.synthesis = join_synthesis_entry_bodies(vec![
@@ -351,7 +351,7 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
                 "created_at": "2026-05-22T10:00:00.000Z",
                 "write_state": "synced",
                 "body": {
-                    "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+                    "strand_id": "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
                     "patch": {
                         "tracks.synthesis.content": content_patch_value("alice synthesis")
                     }
@@ -369,7 +369,7 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
                 "created_at": "2026-05-22T11:00:00.000Z",
                 "write_state": "synced",
                 "body": {
-                    "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+                    "strand_id": "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
                     "patch": {
                         "tracks.synthesis.content": content_patch_value("alice synthesis\n\n---\n\nbob synthesis")
                     }
@@ -473,7 +473,7 @@ fn engine_ingest_dedupes_resent_strand_update_by_canonical_event_id() {
     // track. This is the event-sourced replacement for the old
     // history-merge dedup guarantee.
     let mut card = test_card(
-        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "U",
     );
     card.synthesis = "alice synthesis".to_owned();
@@ -489,7 +489,7 @@ fn engine_ingest_dedupes_resent_strand_update_by_canonical_event_id() {
         "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "payload": {
-            "target_ref": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+            "target_ref": "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
             "patch": { "tracks.synthesis.content": content_patch_value("alice synthesis") }
         }
     });
@@ -527,7 +527,7 @@ fn projection_synthesis_revision_uses_card_author_only_when_single_author() {
     // Single-author card (created_by == updated_by): the projection fallback
     // may confidently attribute the entry to that author.
     let mut card = test_card(
-        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "U",
     );
     card.synthesis = "bob synthesis".to_owned();
@@ -556,7 +556,7 @@ fn projection_synthesis_revision_leaves_multi_author_card_unattributed() {
     // unattributed ("Unknown author") instead, which option B then fills in by
     // fetching the strand event history on card open.
     let mut card = test_card(
-        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "U",
     );
     card.synthesis = "bob synthesis".to_owned();
@@ -579,7 +579,7 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
     let subject = "ak:did_core:web:auth.local.host:principals:alice";
     let digest = "sha256:abababababababababababababababababababababababababababababababab";
     let mut card = test_card(
-        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "U",
     );
     card.synthesis = "wqefqqwf".to_owned();
@@ -639,7 +639,7 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
 fn late_join_synthesis_author_resolves_handle_from_disclosed_subject_account() {
     let actor = "ak:did_core:webvh:zQmHistoricalAuthor";
     let mut card = test_card(
-        "ak:strand:AFjQnGmj11wy2rA2YjgbfhdhIJlFu9cPeZN5Ld0XzQp4",
+        "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
         "U",
     );
     card.synthesis = "historical synthesis".to_owned();
@@ -725,7 +725,7 @@ fn synthesis_author_uses_the_same_persisted_self_handle_as_member_surfaces() {
 #[test]
 fn synthesis_new_entry_appends_without_replacing_existing_entries() {
     let mut card = test_card(
-        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
         "U",
     );
     card.synthesis = join_synthesis_entry_bodies(vec![
@@ -1166,7 +1166,7 @@ fn seed_strand_ids_are_valid_object_patch_targets() {
 
 #[test]
 fn card_current_keeps_value_and_revision_together_across_remote_replacement() {
-    let id = "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig";
+    let id = "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ";
     let source = |byte, title: &str| {
         let revision = arkret_wire::CurrentRevision {
             commit_id: arkret_wire::RealmCommitId::from_digest([byte; 32]),

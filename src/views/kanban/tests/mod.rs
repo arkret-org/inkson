@@ -117,7 +117,8 @@ fn toast_editor_bootstrap_uses_asset_pipeline_urls() {
     let config: serde_json::Value = serde_json::from_str(config_json).expect("editor config JSON");
     assert_eq!(config["scriptUrl"], TOAST_EDITOR_SCRIPT.to_string());
     assert_eq!(config["cssUrl"], TOAST_EDITOR_CSS.to_string());
-    assert!(!script.contains("/assets/vendor/"));
+    let loader = script.split_once(";\n").expect("config statement").1;
+    assert!(!loader.contains("/assets/vendor/"));
     assert!(script.contains("existing.host === host"));
     assert!(script.contains("host.isConnected"));
     assert!(script.contains("fallback.isConnected"));
