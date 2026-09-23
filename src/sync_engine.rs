@@ -130,12 +130,15 @@ pub struct SyncEngineContext {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct AccountClientEventReport {
     account_updates: usize,
-    realm_deltas: usize,
+    committed_events: usize,
+    realm_projections: usize,
+    realm_snapshots: usize,
+    realm_invalidations: usize,
     decoded_messages: usize,
     decoded_events: usize,
     to_device: usize,
     notifications: usize,
-    malformed_realm_ids: Vec<String>,
+    unavailable_realm_ids: Vec<String>,
 }
 
 #[cfg(test)]
@@ -155,10 +158,15 @@ impl AccountClientEventProjector {
         match event {
             ClientEvent::AccountUpdates(updates) => {
                 report.account_updates += 1;
-                report.malformed_realm_ids.extend(updates.malformed_realms);
+                report.unavailable_realm_ids.extend(
+                    updates
+                        .unavailable_realms
+                        .into_iter()
+                        .map(|realm_id| realm_id.to_string()),
+                );
             }
-            ClientEvent::RealmDelta { .. } => {
-                report.realm_deltas += 1;
+            ClientEvent::Committed(_) => {
+                report.committed_events += 1;
             }
             ClientEvent::Message(_) => {
                 report.decoded_messages += 1;
@@ -166,8 +174,14 @@ impl AccountClientEventProjector {
             ClientEvent::Event(_) => {
                 report.decoded_events += 1;
             }
-            ClientEvent::RealmAccepted { .. } => {
-                report.decoded_events += 1;
+            ClientEvent::RealmProjection { .. } => {
+                report.realm_projections += 1;
+            }
+            ClientEvent::RealmSnapshot(_) => {
+                report.realm_snapshots += 1;
+            }
+            ClientEvent::RealmInvalidated { .. } => {
+                report.realm_invalidations += 1;
             }
             ClientEvent::Notification(_) => {
                 report.notifications += 1;
@@ -175,7 +189,6 @@ impl AccountClientEventProjector {
             ClientEvent::ToDevice(_) => {
                 report.to_device += 1;
             }
-            ClientEvent::Backfill { .. } => {}
         }
     }
 }
@@ -2748,6 +2761,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_account_delta_projects_only_batch_context() {
+        let response = empty_response("ak:cursor:account-context");
+        let projector = AccountClientEventProjector::default();
+        let events = garth::account_frame_to_client_events(&response.frame, false)
+            .expect("formal empty account delta projects");
+        projector
+            .project(events)
+            .await
+            .expect("project batch context");
+
+        let report = projector.report();
+        assert_eq!(report.account_updates, 1);
+        assert_eq!(report.committed_events, 0);
+        assert_eq!(report.decoded_messages, 0);
+        assert_eq!(report.decoded_events, 0);
+        assert!(report.unavailable_realm_ids.is_empty());
+    }
+
+    #[tokio::test]
     async fn account_response_projects_client_events_and_decodes_realm_payloads() {
         let message_event = sdk_event(
             arkret_sdk::EventKind::MessageCreate.as_str(),
@@ -2796,10 +2828,10 @@ mod tests {
 
         let report = projector.report();
         assert_eq!(report.account_updates, 1);
-        assert_eq!(report.realm_deltas, 1);
+        assert_eq!(report.committed_events, 1);
         assert_eq!(report.decoded_messages, 1);
         assert_eq!(report.decoded_events, 1);
-        assert!(report.malformed_realm_ids.is_empty());
+        assert!(report.unavailable_realm_ids.is_empty());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -2813,6 +2845,44 @@ mod tests {
         assert!(!control.is_cancelled());
         control.cancel();
         assert!(subscription.control().is_cancelled());
+    }
+
+    #[test]
+    fn committed_event_subscribe_controls_keep_cursor_boundaries() {
+        use arkret_models_collaboration::sync_frames::committed_event_subscribe::{
+            CommittedEventSubscribeFrame, CommittedEventSubscribeFrameKind,
+        };
+
+        for (line, kind, cursor) in [
+            (
+                r#"{"kind":"checkpoint","cursor":"ak:cursor:checkpoint"}"#,
+                CommittedEventSubscribeFrameKind::Checkpoint,
+                Some("ak:cursor:checkpoint"),
+            ),
+            (
+                r#"{"kind":"catchup_complete","cursor":"ak:cursor:catchup"}"#,
+                CommittedEventSubscribeFrameKind::CatchupComplete,
+                Some("ak:cursor:catchup"),
+            ),
+            (
+                r#"{"kind":"heartbeat"}"#,
+                CommittedEventSubscribeFrameKind::Heartbeat,
+                None,
+            ),
+        ] {
+            let frame = CommittedEventSubscribeFrame::from_ndjson_line(line)
+                .expect("formal control frame")
+                .expect("nonblank frame");
+            assert_eq!(frame.kind, kind);
+            assert_eq!(frame.cursor.as_deref(), cursor);
+        }
+        assert!(
+            CommittedEventSubscribeFrame::from_ndjson_line(
+                r#"{"kind":"heartbeat","cursor":"ak:cursor:forbidden"}"#
+            )
+            .is_err(),
+            "heartbeat cannot advance the committed-event cursor"
+        );
     }
 
     /// The per-realm `events/subscribe` engine ingest contract: a realistic
