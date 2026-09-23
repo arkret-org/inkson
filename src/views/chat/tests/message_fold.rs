@@ -296,53 +296,53 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
 
 #[test]
 fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() {
-    let mut events = vec![
-        json!({
-            "event_id": "ak:event:AOOI0zLj06bpcNgRMFMP4JOl0MZWGhQZ5j0hTISOImcg",
-            "event_kind": "ak.message.create",
-            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
-            "created_at": "2026-07-08T01:44:39.000Z",
-            "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
-            "track_name": "discussion",
-            "message_id": "ak:message:AIWq0lfBWlF1m50KYI9kpAdern2SCswm8T4YkkWyU17c",
-            "payload": {
-                "content": {"kind": "ak.content.text", "body": "projection hello"},
-                "event_id": "ak:event:AOOI0zLj06bpcNgRMFMP4JOl0MZWGhQZ5j0hTISOImcg",
-                "message_id": "ak:message:Al0hjLfzAqduLFaBFHqpVgugJnkcc6jI5BmYnNiihIUY",
-                "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
-                "track_name": "discussion"
-            }
-        }),
-        json!({
-            "event_id": "ak:event:AzxKx70X-Q4e1QAhFVEYl97CXxmGGxXPaB1SM9Qi_kO0",
-            "event_kind": "ak.reaction.add",
-            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
-            "created_at": "2026-07-08T01:44:43.000Z",
-            "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
-            "track_name": "discussion",
-            "message_id": "ak:message:Al5XZBjhevpsMMLoRMInf3P3NfbsDatZjIxno3fG8-BU",
-            "payload": {
-                "event_id": "ak:event:AzxKx70X-Q4e1QAhFVEYl97CXxmGGxXPaB1SM9Qi_kO0",
-                "key": "+1",
-                "target_ref": "ak:message:Al0hjLfzAqduLFaBFHqpVgugJnkcc6jI5BmYnNiihIUY"
-            }
-        }),
-    ];
-    sign_chat_fixtures(&mut events);
-
-    let messages = chat_messages_from_events_with_sidecar(
-        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
-        &events,
-        None,
-        None,
+    let realm = arkret_sdk::RealmId::new(
+        "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI".to_owned(),
+    )
+    .unwrap();
+    let create_payload = json!({
+        "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+        "track_name": "discussion",
+        "content": {"kind": "ak.content.text", "body": "projection hello"}
+    });
+    let create = verified_chat_create(&realm, "bob.example", "projection hello");
+    let message_id = arkret_sdk::MessageId::from_event_id(&create.event.event_id);
+    let committed = fixture::committed_event::verified_realm_items_as(
+        realm.clone(),
+        vec![
+            (
+                arkret_sdk::EventKind::MessageCreate.as_str().to_owned(),
+                create_payload,
+            ),
+            (
+                arkret_sdk::EventKind::ReactionAdd.as_str().to_owned(),
+                json!({"target_ref": message_id, "key": "+1"}),
+            ),
+        ],
+        "bob.example",
+        "ak:device:0196419b-0000-7000-8000-000000000001",
     );
+    assert_eq!(committed[0].event.event_id, create.event.event_id);
+    assert_eq!(
+        committed[0].commit.stream_position + 1,
+        committed[1].commit.stream_position
+    );
+    let unrelated = arkret_sdk::MessageId::from_event_id(&arkret_sdk::EventId::from_digest(
+        arkret_sdk::canonical::DigestSuite::Sha256,
+        [0x63; 32],
+    ));
+    assert_ne!(unrelated, message_id);
+    let events = vec![
+        json!({"event_kind": "ak.message.create", "message_id": unrelated, "event": committed[0].event}),
+        json!({"event_kind": "ak.reaction.add", "message_id": unrelated, "event": committed[1].event}),
+    ];
+
+    let messages = chat_messages_from_events_with_sidecar(realm.as_str(), &events, None, None);
 
     assert_eq!(messages.len(), 1);
     assert_eq!(
         messages[0].protocol_message_id.as_deref(),
-        Some("ak:message:Al0hjLfzAqduLFaBFHqpVgugJnkcc6jI5BmYnNiihIUY")
+        Some(message_id.as_str())
     );
     assert_eq!(
         messages[0].reactions,
@@ -352,10 +352,7 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
         )]
     );
 
-    let records = message_operations_from_events(
-        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
-        &events,
-    );
+    let records = message_operations_from_events(realm.as_str(), &events);
     assert_eq!(
         records.len(),
         2,
@@ -369,7 +366,7 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
     assert_eq!(restored.len(), 1);
     assert_eq!(
         restored[0].protocol_message_id.as_deref(),
-        Some("ak:message:Al0hjLfzAqduLFaBFHqpVgugJnkcc6jI5BmYnNiihIUY")
+        Some(message_id.as_str())
     );
     assert_eq!(
         restored[0].reactions,

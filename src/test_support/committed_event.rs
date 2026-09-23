@@ -97,7 +97,7 @@ pub(crate) fn verified_realm_items(
     )
 }
 
-fn verified_realm_items_as(
+pub(crate) fn verified_realm_items_as(
     realm_id: RealmId,
     entries: Vec<(String, Value)>,
     principal: &str,
