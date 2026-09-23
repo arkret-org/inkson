@@ -667,13 +667,13 @@ mod tests {
 
     fn committed_ref(
         event_id: &str,
-        commit_id: &str,
+        commit_seed: u8,
         realm_id: &arkret_sdk::RealmId,
         stream_position: u64,
     ) -> arkret_wire::CommittedEventRef {
         arkret_wire::CommittedEventRef {
             event_id: arkret_sdk::EventId::new(event_id).unwrap(),
-            commit_id: arkret_sdk::RealmCommitId::new(commit_id).unwrap(),
+            commit_id: arkret_sdk::RealmCommitId::from_digest([commit_seed; 32]),
             stream_ref: arkret_wire::CommitStreamRef::Realm {
                 realm_id: realm_id.clone(),
             },
@@ -756,7 +756,10 @@ mod tests {
             device_signing_key.verifying_key().as_bytes(),
         );
         let created_at = policy.issued_at + chrono::Duration::seconds(1);
-        let expires_at = chrono::Utc::now() + chrono::Duration::minutes(15);
+        let expires_at = chrono::DateTime::from_timestamp_millis(
+            (chrono::Utc::now() + chrono::Duration::minutes(15)).timestamp_millis(),
+        )
+        .unwrap();
         let session: arkret_sdk::RecoverySession = serde_json::from_value(serde_json::json!({
             "schema": "ak.schema.recovery_session.v1",
             "request_id": "ak:request:0198ff00-0000-7000-8000-00000000000b",
@@ -886,18 +889,8 @@ mod tests {
             arkret_sdk::EventId::new("ak:event:ASgi2U7PbVyNs4UpiQAoXKoHv84g07gpBvuddCGiMMG1")
                 .unwrap();
         let commits = [
-            committed_ref(
-                create_id.as_str(),
-                "ak:realm_commit:0196419b-0000-7000-8000-000000000001",
-                &realm_id,
-                0,
-            ),
-            committed_ref(
-                authorize_id.as_str(),
-                "ak:realm_commit:0196419b-0000-7000-8000-000000000002",
-                &realm_id,
-                1,
-            ),
+            committed_ref(create_id.as_str(), 1, &realm_id, 0),
+            committed_ref(authorize_id.as_str(), 2, &realm_id, 1),
         ];
 
         validate_pcr_genesis_coordinates(&realm_id, &create_id, &authorize_id, &commits).unwrap();
