@@ -1097,23 +1097,57 @@ fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
 
     assert!(!key.contains("secret-session-token"));
     assert!(!missing_welcome.to_ascii_lowercase().contains("passphrase"));
-    assert!(missing_welcome.contains("MLS Welcome"));
-    assert!(missing_welcome.contains("encrypted MLS history backup"));
+    assert!(missing_welcome.contains("Welcome delivery"));
+    assert!(missing_welcome.contains("next accepted Commit"));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+const ENCRYPTED_REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+
+#[cfg(not(target_arch = "wasm32"))]
+fn encrypted_realm_projection() -> serde_json::Value {
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(ENCRYPTED_REALM).unwrap(),
+    };
+    let group: arkret_wire::MlsGroupCurrent = serde_json::from_value(serde_json::json!({
+        "effective_scope": scope,
+        "genesis_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        "current_mls_commit_event_ref": "ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL",
+        "epoch": 4,
+        "current_key_access_revision": 2,
+        "covered_key_access_revision": 2,
+        "public_tree_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
+    }))
+    .expect("valid MLS current value");
+    let current = arkret_wire::TypedCurrentResult::Value {
+        selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref: scope },
+        revision: arkret_wire::CurrentRevision {
+            commit_id: arkret_wire::RealmCommitId::from_digest([7; 32]),
+            stream_position: 4,
+        },
+        value: serde_json::to_value(group).unwrap(),
+    };
+    serde_json::json!({ "current": [current] })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn active_secret_storage_series(series_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "account_id": test_authority("did:web:alice.example"),
+        "control_realm_id": ENCRYPTED_REALM,
+        "secret_storage": {
+            "state": "active",
+            "series_pointer_version": 1,
+            "active_series_id": series_id,
+        }
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn mls_recovery_setup_missing_flags_encrypted_realm_without_account_backup() {
     let mut store = isolated_store("mls-recovery-missing");
-    store.save_realm_tree_projection(
-        "ak:realm:ACC_KtYySSLem-5NY0yqhOiMuglvO_bk9OnrD0Z8eQHI".to_owned(),
-        serde_json::json!({
-            "summary": {
-                "title": "Encrypted",
-                "encryption_profile": "mls_rfc9420",
-            }
-        }),
-    );
+    store.save_realm_tree_projection(ENCRYPTED_REALM.to_owned(), encrypted_realm_projection());
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({ "backups": [] });
 
@@ -1130,21 +1164,10 @@ fn mls_recovery_setup_missing_flags_encrypted_realm_without_account_backup() {
 #[test]
 fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
     let mut store = isolated_store("mls-recovery-backed-up");
-    store.save_realm_tree_projection(
-        "ak:realm:ACC_KtYySSLem-5NY0yqhOiMuglvO_bk9OnrD0Z8eQHI".to_owned(),
-        serde_json::json!({
-            "summary": {
-                "title": "Encrypted",
-                "encryption_profile": "mls_rfc9420",
-            }
-        }),
-    );
+    store.save_realm_tree_projection(ENCRYPTED_REALM.to_owned(), encrypted_realm_projection());
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({
-        "active_series": {"secret_storage": {
-            "state": "active", "series_pointer_version": 1,
-            "active_series_id": "ak:backup_series:01964137-1000-7000-8000-0000000000a1",
-        }},
+        "active_series": active_secret_storage_series("ak:backup_series:01964137-1000-7000-8000-0000000000a1"),
         "backups": [{
             "backup_id": "ak:backup:passphrase",
             "backup_kind": "secret_storage",
@@ -1170,15 +1193,7 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
 #[test]
 fn mls_recovery_setup_missing_stays_false_when_account_recovery_is_configured() {
     let mut store = isolated_store("mls-recovery-account-configured");
-    store.save_realm_tree_projection(
-        "ak:realm:ACC_KtYySSLem-5NY0yqhOiMuglvO_bk9OnrD0Z8eQHI".to_owned(),
-        serde_json::json!({
-            "summary": {
-                "title": "Encrypted",
-                "encryption_profile": "mls_rfc9420",
-            }
-        }),
-    );
+    store.save_realm_tree_projection(ENCRYPTED_REALM.to_owned(), encrypted_realm_projection());
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({ "backups": [] });
 
@@ -1195,15 +1210,7 @@ fn mls_recovery_setup_missing_stays_false_when_account_recovery_is_configured() 
 #[test]
 fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_secret_storage_backup() {
     let mut store = isolated_store("mls-recovery-local-did-backup");
-    store.save_realm_tree_projection(
-        "ak:realm:ACC_KtYySSLem-5NY0yqhOiMuglvO_bk9OnrD0Z8eQHI".to_owned(),
-        serde_json::json!({
-            "summary": {
-                "title": "Encrypted",
-                "encryption_profile": "mls_rfc9420",
-            }
-        }),
-    );
+    store.save_realm_tree_projection(ENCRYPTED_REALM.to_owned(), encrypted_realm_projection());
     store.save_plain_local_data(
         "recovery.state.v1",
         serde_json::json!({
@@ -1214,10 +1221,16 @@ fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_secret_stor
     );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({
+        "active_series": active_secret_storage_series("ak:backup_series:01964137-1000-7000-8000-0000000000a1"),
         "backups": [{
             "backup_id": "ak:backup:secret-storage",
             "backup_kind": "secret_storage",
+            "series_id": "ak:backup_series:01964137-1000-7000-8000-0000000000a1",
             "encryption": { "recipient_method": "recovery_public_key" },
+            "contents": [{
+                "item_kind": crate::mls::account_recovery::MLS_ACCOUNT_SECRET_ITEM_KIND,
+                "secret_id": crate::mls::account_recovery::MLS_ACCOUNT_SECRET_SECRET_ID,
+            }],
         }]
     });
 

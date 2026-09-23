@@ -1165,30 +1165,22 @@ mod tests {
         sole_projected_principal_control_realm_id,
     };
 
-    /// The installed current `ak.component.realm.genesis.v1` value is the only
-    /// authority for the create-locked control purpose.
-    fn principal_control_projection(realm_id: &str) -> serde_json::Value {
+    /// The accepted create-locked genesis is the only authority for control purpose.
+    fn principal_control_projection() -> serde_json::Value {
         serde_json::json!({
-            "current": {"entries": [{
-                "selector": {
-                    "scope_ref": {"kind": "realm", "realm_id": realm_id},
-                    "cell_id": "ak:cell:ak.component.realm.genesis.v1:null"
-                },
-                "result": {"status": "value", "value": {
-                    "purpose": "principal_control",
-                    "schema_refs": [arkret_wire::ProfileId::PRINCIPAL_CONTROL_REALM_V1]
-                }}
-            }]}
+            "genesis": {
+                "schema": arkret_wire::SchemaId::REALM_GENESIS_V1,
+                "purpose": "principal_control",
+                "schema_refs": [arkret_wire::ProfileId::PRINCIPAL_CONTROL_REALM_V1]
+            }
         })
     }
 
     #[test]
     fn sibling_device_uses_the_only_projected_principal_control_realm() {
         let realm_id = "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc".to_owned();
-        let projections = std::collections::BTreeMap::from([(
-            realm_id.clone(),
-            principal_control_projection(&realm_id),
-        )]);
+        let projections =
+            std::collections::BTreeMap::from([(realm_id.clone(), principal_control_projection())]);
 
         let selected = sole_projected_principal_control_realm_id(&projections)
             .expect("one accepted principal-control projection is authoritative");
@@ -1200,8 +1192,8 @@ mod tests {
         let first = "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc";
         let second = "ak:realm:AdM0E7Gz4z3xDbVnW7yQcEJnaVeXjYprj0Fb4b4kFXR0";
         let projections = std::collections::BTreeMap::from([
-            (first.to_owned(), principal_control_projection(first)),
-            (second.to_owned(), principal_control_projection(second)),
+            (first.to_owned(), principal_control_projection()),
+            (second.to_owned(), principal_control_projection()),
         ]);
 
         assert!(sole_projected_principal_control_realm_id(&projections).is_err());
