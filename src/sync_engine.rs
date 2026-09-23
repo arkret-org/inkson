@@ -2703,29 +2703,14 @@ mod tests {
         assert!(scope_rotate_realm_ids(&response, &store).is_empty());
     }
 
-    fn empty_response(cursor: &str) -> AccountSyncStep {
-        AccountSyncStep {
-            cursor: cursor.to_owned(),
-            realm_entries: Default::default(),
-            realm_projections: Default::default(),
-            updates: arkret_sdk::SyncUpdates {
-                realm_updates: Vec::new(),
-                malformed_realm_ids: Vec::new(),
-                to_device: Vec::new(),
-                to_device_ack_token: None,
-                to_device_limited: false,
-                to_device_next_cursor: None,
-                to_device_lost: false,
-                device_lists: AccountSubscribeDeviceListChanges {
-                    changed_ids: Vec::new(),
-                    left_ids: Vec::new(),
-                },
-                account_data: Vec::new(),
-                station_cas_account_data: Vec::new(),
-                notifications: Vec::new(),
-                partial: false,
-            },
-        }
+    fn empty_response(cursor: &str) -> AccountFrameStep {
+        let frame: AccountSubscribeFrame = serde_json::from_value(json!({
+            "kind": "delta",
+            "cursor": cursor,
+        }))
+        .expect("account delta frame");
+        frame.validate().expect("valid account delta frame");
+        AccountFrameStep::new(frame, cursor.to_owned()).expect("account frame step")
     }
 
     fn temp_store(tag: &str) -> LocalStateStore {
@@ -2796,6 +2781,7 @@ mod tests {
         let entry: arkret_sdk::RealmSyncEntry =
             serde_json::from_value(projection.clone()).expect("typed Realm sync entry");
         response
+            .step
             .realm_projections
             .insert(realm_id.as_str().to_owned(), projection);
         response
@@ -2818,13 +2804,15 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn account_subscription_engine_accepts_inkson_local_state_adapter() {
+    fn account_subscription_accepts_inkson_cursor_adapter() {
         let store = temp_store("subscription-engine-adapter");
         let adapter = crate::client_core::InksonLocalStateStoreAdapter::new(store);
-        let engine =
-            garth::SubscriptionEngine::new(garth::NativeExecutor, adapter.clone(), adapter);
+        let subscription = garth::AccountSubscription::new(garth::NativeExecutor, adapter);
 
-        let _control = engine.control();
+        let control = subscription.control();
+        assert!(!control.is_cancelled());
+        control.cancel();
+        assert!(subscription.control().is_cancelled());
     }
 
     /// The per-realm `events/subscribe` engine ingest contract: a realistic
@@ -3036,9 +3024,11 @@ mod tests {
             },
         }]);
         let response = |membership: &str| {
-            let mut response = empty_response("sx:invite-membership");
+            let mut response = empty_response("ak:cursor:invite-membership");
             let realm_id = arkret_sdk::RealmId::new(realm_id).unwrap();
-            let entry = serde_json::from_value::<arkret_sdk::RealmSyncEntry>(json!({
+            let entry = serde_json::from_value::<
+                arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry,
+            >(json!({
                 "member_roster": {
                     "entries": [{
                         "actor_id": {"kind":"account","account_id":{
@@ -3051,13 +3041,18 @@ mod tests {
                 }
             }))
             .unwrap();
-            response
-                .realm_entries
-                .insert(realm_id.clone(), entry.clone());
-            response.realm_projections.insert(
-                realm_id.as_str().to_owned(),
-                serde_json::to_value(entry).unwrap(),
+            response.frame.realms = Some(
+                arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeRealms {
+                    entries: std::collections::BTreeMap::from([(realm_id.to_string(), entry)]),
+                },
             );
+            response
+                .frame
+                .validate()
+                .expect("valid membership delta frame");
+            response.step =
+                AccountSyncStep::from_frame(response.step.cursor.clone(), &response.frame)
+                    .expect("membership projection from account frame");
             response
         };
 
