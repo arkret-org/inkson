@@ -1546,20 +1546,24 @@ mod tests {
 
     #[test]
     fn authorized_device_requires_exact_directory_signer_match() {
+        let device = "ak:device:01964137-0000-7000-8000-000000000001";
         let viewer = serde_json::json!({
             "devices": [{
-                "device_id": "ak:device:current",
+                "device_id": device,
                 "status": "active",
-                "verification_state": "verified"
+                "verification_state": "verified",
+                "verification_source": "genesis",
+                "authorized_event_ref": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
+                "signer_resolution_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             }]
         });
 
         assert_eq!(
-            device_authorization_probe_from_account_viewer(&viewer, "ak:device:current", true),
+            device_authorization_probe_from_account_viewer(&viewer, device, true),
             (false, false)
         );
         assert_eq!(
-            device_authorization_probe_from_account_viewer(&viewer, "ak:device:current", false),
+            device_authorization_probe_from_account_viewer(&viewer, device, false),
             (true, false)
         );
     }

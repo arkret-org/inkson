@@ -125,33 +125,16 @@ pub(crate) fn recovery_auto_prompt_already_prompted(
         .is_some()
 }
 
-/// Whether one account-viewer device row reports an accepted authorization.
-///
-/// `None` means the row does not carry the fact at all, which is not the same
-/// answer as "not authorized" and must keep the caller waiting rather than
-/// prompting for a fresh authorization.
-fn device_authorization_from_record(device: &Value) -> Option<bool> {
-    if device_revoked(device) {
-        return Some(false);
-    }
-    device
-        .get("authorized")
-        .and_then(Value::as_bool)
-        .or_else(|| {
-            device
-                .get("device_authorize_event_id")
-                .and_then(Value::as_str)
-                .map(|event_id| !event_id.trim().is_empty())
+/// Only a valid current checkpoint can authorize the exact device.
+fn device_authorization_from_record(device: &Value) -> bool {
+    serde_json::from_value::<arkret_sdk::AccountDeviceSummary>(device.clone())
+        .ok()
+        .is_some_and(|summary| {
+            summary.status == arkret_sdk::DeviceSummaryStatus::Active
+                && summary.verification_state
+                    == arkret_sdk::DeviceSummaryVerificationState::Verified
+                && summary.validate().is_ok()
         })
-}
-
-/// Whether one account-viewer device row reports a revoked device.
-fn device_revoked(device: &Value) -> bool {
-    device
-        .get("revoked_at")
-        .is_some_and(|value| !value.is_null())
-        || device.get("revoked").and_then(Value::as_bool) == Some(true)
-        || device.get("state").and_then(Value::as_str) == Some("revoked")
 }
 
 /// Whether the account has any `recovery_public_key` secret-storage backup at
@@ -182,7 +165,7 @@ pub(crate) fn current_device_authorization_from_account_viewer(
     })?;
 
     match current_row {
-        Some(device) => device_authorization_from_record(device),
+        Some(device) => Some(device_authorization_from_record(device)),
         None => Some(false),
     }
 }
@@ -203,7 +186,7 @@ pub(crate) fn account_has_other_active_devices_from_account_viewer(
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .is_some_and(|device_id| !device_id.is_empty() && device_id != current_device)
-                && !device_revoked(device)
+                && device.get("status").and_then(Value::as_str) == Some("active")
         })
 }
 
@@ -969,38 +952,40 @@ mod tests {
     fn a_revoked_device_is_never_reported_as_authorized() {
         let revoked = device_row(
             "ak:device:0196419b-0000-7000-8000-000000000001",
-            serde_json::json!({ "authorized": true, "revoked_at": "2026-01-01T00:00:00.000Z" }),
+            serde_json::json!({ "status": "revoked", "verification_state": "stale" }),
         );
-        assert!(device_revoked(&revoked));
-        assert_eq!(device_authorization_from_record(&revoked), Some(false));
+        assert!(!device_authorization_from_record(&revoked));
     }
 
     #[test]
-    fn a_device_row_without_the_authorization_fact_keeps_the_caller_waiting() {
+    fn a_device_row_without_the_verification_checkpoint_is_not_authorized() {
         let unknown = device_row(
             "ak:device:0196419b-0000-7000-8000-000000000002",
             serde_json::json!({}),
         );
-        assert_eq!(device_authorization_from_record(&unknown), None);
+        assert!(!device_authorization_from_record(&unknown));
 
         let authorized = device_row(
             "ak:device:0196419b-0000-7000-8000-000000000002",
             serde_json::json!({
-                "device_authorize_event_id":
-                    "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk"
+                "status": "active",
+                "verification_state": "verified",
+                "verification_source": "genesis",
+                "authorized_event_ref": "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk",
+                "signer_resolution_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             }),
         );
-        assert_eq!(device_authorization_from_record(&authorized), Some(true));
+        assert!(device_authorization_from_record(&authorized));
     }
 
     #[test]
     fn the_account_viewer_reports_other_active_devices_only_when_they_are_live() {
         let viewer = serde_json::json!({
             "devices": [
-                { "device_id": "ak:device:0196419b-0000-7000-8000-000000000001" },
+                { "device_id": "ak:device:0196419b-0000-7000-8000-000000000001", "status": "active" },
                 {
                     "device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
-                    "state": "revoked"
+                    "status": "revoked"
                 },
             ]
         });

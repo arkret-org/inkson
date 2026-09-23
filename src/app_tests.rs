@@ -262,15 +262,22 @@ fn account_scope_owner_alone_is_not_bootstrap_refresh_material() {
     assert!(!has_bootstrap_refresh_material(&store, Some(&account)));
 }
 
+fn verified_device_row(device: &str) -> serde_json::Value {
+    serde_json::json!({
+        "device_id": device,
+        "status": "active",
+        "verification_state": "verified",
+        "verification_source": "genesis",
+        "authorized_event_ref": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
+        "signer_resolution_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    })
+}
+
 #[test]
 fn current_device_authorization_detects_verified_current_device() {
     let device = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
-        "devices": [{
-            "device_id": device,
-            "status": "active",
-            "verification_state": "verified"
-        }]
+        "devices": [verified_device_row(device)]
     });
 
     assert_eq!(
@@ -333,11 +340,7 @@ fn current_device_authorization_rejects_active_status_without_trust_evidence() {
 fn current_device_authorization_accepts_verified_status_even_when_sdk_status_is_active() {
     let device = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
-        "devices": [{
-            "device_id": device,
-            "status": "active",
-            "verification_state": "verified"
-        }]
+        "devices": [verified_device_row(device)]
     });
 
     assert_eq!(
@@ -447,10 +450,12 @@ fn current_device_authorization_rejects_authorized_at_without_verification() {
 #[test]
 fn current_device_authorization_rejects_current_record_without_authorization_evidence() {
     let device = "ak:device:01964137-0000-7000-8000-000000000001";
+    let mut row = verified_device_row(device);
+    row.as_object_mut()
+        .unwrap()
+        .remove("signer_resolution_evidence_ref");
     let viewer = serde_json::json!({
-        "devices": [{
-            "device_id": device
-        }]
+        "devices": [row]
     });
 
     assert_eq!(
@@ -477,10 +482,7 @@ fn device_authorization_required_allows_only_verified_device() {
     let device = "ak:device:01964137-0000-7000-8000-000000000001";
     assert!(!device_authorization_required_from_account_viewer(
         &serde_json::json!({
-            "devices": [{
-                "device_id": device,
-                "verification_state": "verified"
-            }]
+            "devices": [verified_device_row(device)]
         }),
         device
     ));
