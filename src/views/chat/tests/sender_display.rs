@@ -255,20 +255,21 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
                 )]
             }
         ],
-        "current": {"entries": [{
-            "selector": {
-                "scope_ref": {"kind": "realm", "realm_id": "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE"},
-                "cell_id": "ak:cell:ak.component.realm.policy_bundle.v1:null"
+        "current": [{
+            "selector": {"kind": "realm_policy"},
+            "revision": {
+                "commit_id": arkret_wire::RealmCommitId::from_digest([0x32; 32]),
+                "stream_position": 1
             },
-            "result": {"status": "value", "value": {
+            "value": {
                 "policy_revision": 1,
                 "handle_issuer_policies": [{
                     "issuer_id": "ak:did_core:web:local.host",
                     "authorized_handle_domains": ["local.host"],
                     "issuer_class": "domain_authority"
                 }]
-            }}
-        }]}
+            }
+        }]
     });
 
     let temp = std::env::temp_dir().join(format!("inkson-chat-roster-{}", uuid_v7()));
