@@ -10,16 +10,13 @@ use crate::recovery_crypto::VaultKek;
 fn plaintext_item(
     item: &SecretStorageContentIndex,
     secret: &[u8],
+    secret_generation: Option<u64>,
 ) -> anyhow::Result<SecretStorageSecret> {
-    let secret_id = item
-        .secret_id
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("key backup content item requires secret_id"))?;
     Ok(SecretStorageSecret {
         item_kind: item.item_kind,
-        secret_id,
+        secret_id: item.secret_id.clone(),
         secret_b64u: Base64UrlString::new(B64.encode(secret)).map_err(anyhow::Error::msg)?,
-        secret_generation: item.secret_version.map(u64::from),
+        secret_generation,
         extra: Default::default(),
     })
 }
@@ -27,8 +24,7 @@ fn plaintext_item(
 fn public_content_item(item: &SecretStorageSecret) -> anyhow::Result<SecretStorageContentIndex> {
     Ok(SecretStorageContentIndex {
         item_kind: item.item_kind,
-        secret_id: Some(item.secret_id.clone()),
-        secret_version: item.secret_version()?,
+        secret_id: item.secret_id.clone(),
     })
 }
 
@@ -53,6 +49,7 @@ pub fn build_passphrase_kdf_backup_body(
     class: BackupKind,
     subdomain: &str,
     item: &SecretStorageContentIndex,
+    secret_generation: Option<u64>,
     auth: &arkret_crypto::backup::KeyBackupAuthBinding,
     sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
@@ -70,7 +67,7 @@ pub fn build_passphrase_kdf_backup_body(
         subdomain,
         Default::default(),
         root,
-        vec![plaintext_item(item, secret)?],
+        vec![plaintext_item(item, secret, secret_generation)?],
         auth,
         sign,
         source_commit_ref,
@@ -94,6 +91,7 @@ pub fn build_passphrase_kdf_backup_successor_body(
     root: &VaultKek,
     secret: &[u8],
     item: &SecretStorageContentIndex,
+    secret_generation: Option<u64>,
     auth: &arkret_crypto::backup::KeyBackupAuthBinding,
     sign: arkret_crypto::backup::KeyBackupSignFn<'_>,
     source_commit_ref: Option<arkret_sdk::KeyBackupSourceCommitRef>,
@@ -104,7 +102,7 @@ pub fn build_passphrase_kdf_backup_successor_body(
         Some(arkret_sdk::DeviceId::new(device_id.to_owned())?),
         "kb_1",
         root,
-        vec![plaintext_item(item, secret)?],
+        vec![plaintext_item(item, secret, secret_generation)?],
         auth,
         sign,
         source_commit_ref,
@@ -169,6 +167,7 @@ pub fn build_recovery_public_key_backup_body_in_series(
     subdomain: &str,
     item: &SecretStorageContentIndex,
     plaintext: &[u8],
+    secret_generation: Option<u64>,
     recovery_policy_ref: (&str, u64),
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
@@ -184,7 +183,7 @@ pub fn build_recovery_public_key_backup_body_in_series(
         recovery_key_ref,
         class,
         subdomain,
-        vec![plaintext_item(item, plaintext)?],
+        vec![plaintext_item(item, plaintext, secret_generation)?],
         recovery_policy_ref,
         series_id,
         previous_series_tail,

@@ -13,9 +13,8 @@ use super::backup_body::{
 use super::restore::{mls_backup_prompt_required, verify_active_backup_series};
 use super::{
     is_mls_account_secret_backup, is_mls_private_plaintext_backup,
-    mls_account_secret_backup_version, select_mls_account_secret_backup,
-    select_mls_account_secret_recovery_public_key_backup, select_mls_private_plaintext_backup,
-    select_preferred_mls_account_secret_backup,
+    select_mls_account_secret_backup, select_mls_account_secret_recovery_public_key_backup,
+    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
 use crate::key_backup::BackupKind;
 use crate::recovery_crypto::derive_vault_kek;
@@ -182,7 +181,36 @@ fn backup_restore_rejects_foreign_account_and_missing_current_state() {
 fn wrap_then_unwrap_round_trips_the_secret() {
     let body = wrap();
     let recovered = decrypt_mls_account_secret_backup(PASSPHRASE, &body).unwrap();
-    assert_eq!(recovered, ACCOUNT_SECRET.as_bytes());
+    assert_eq!(recovered.0, ACCOUNT_SECRET.as_bytes());
+    assert_eq!(
+        recovered.1,
+        crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION
+    );
+}
+
+#[test]
+fn account_secret_without_plaintext_generation_fails_closed() {
+    let kek = derive_vault_kek(PASSPHRASE).unwrap();
+    let body = crate::key_backup::build_passphrase_kdf_backup_body(
+        BACKUP_ID,
+        &arkret_sdk::ActorId::account(authority()),
+        DEVICE,
+        &kek,
+        ACCOUNT_SECRET.as_bytes(),
+        BackupKind::SecretStorage,
+        "recovery_vault",
+        &arkret_models_crypto::SecretStorageContentIndex {
+            item_kind: super::backup_body::MLS_ACCOUNT_SECRET_ITEM_KIND,
+            secret_id: MLS_ACCOUNT_SECRET_SECRET_ID.to_owned(),
+        },
+        None,
+        &test_auth(),
+        &test_sign,
+        None,
+    )
+    .unwrap();
+    let error = decrypt_mls_account_secret_backup(PASSPHRASE, &key_backup_wire(&body)).unwrap_err();
+    assert!(error.to_string().contains("secret_generation"));
 }
 
 #[test]
@@ -206,10 +234,19 @@ fn put_body_has_expected_item_identifiers() {
     );
     assert_eq!(body["backup_kind"], "secret_storage");
     // item_kind must be one both validators' allowlists accept.
+    assert_eq!(body["contents"][0].as_object().unwrap().len(), 2);
+    let (_, generation) = decrypt_mls_account_secret_backup(PASSPHRASE, &body).unwrap();
     assert_eq!(
-        mls_account_secret_backup_version(&body),
+        generation,
         crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION
     );
+}
+
+#[test]
+fn public_contents_rejects_legacy_version_field() {
+    let mut body = wrap();
+    body["contents"][0]["secret_version"] = serde_json::json!(99);
+    assert!(serde_json::from_value::<arkret_sdk::KeyBackup>(body).is_err());
 }
 
 #[test]
@@ -254,7 +291,7 @@ fn real_encrypt_build_validate_decrypt_round_trips_end_to_end() {
 
     // 3. The full decrypt path recovers the original secret bytes.
     let recovered = decrypt_mls_account_secret_backup(PASSPHRASE, &body).unwrap();
-    assert_eq!(recovered, ACCOUNT_SECRET.as_bytes());
+    assert_eq!(recovered.0, ACCOUNT_SECRET.as_bytes());
 }
 
 #[test]
@@ -297,7 +334,7 @@ fn round_trips_even_when_random_bytes_would_need_url_safe_alphabet() {
 
         if i == 0 || i == 31 {
             let recovered = decrypt_mls_account_secret_backup(PASSPHRASE, &body).unwrap();
-            assert_eq!(recovered, secret.as_bytes(), "iteration {i}: round-trip");
+            assert_eq!(recovered.0, secret.as_bytes(), "iteration {i}: round-trip");
         }
     }
 }
@@ -447,7 +484,9 @@ fn verify_series_chain_accepts_well_formed_successor() {
         Some(&source_commit_ref)
     );
     assert_eq!(
-        decrypt_mls_account_secret_backup(PASSPHRASE, &successor_wire).unwrap(),
+        decrypt_mls_account_secret_backup(PASSPHRASE, &successor_wire)
+            .unwrap()
+            .0,
         ACCOUNT_SECRET.as_bytes(),
         "successor plaintext identity must decrypt under its final series metadata"
     );
@@ -667,7 +706,7 @@ fn backup_prompt_not_required_when_server_backup_present() {
 
 #[test]
 fn select_account_secret_prefers_tail_seq_over_newer_timestamp() {
-    // P1 rollback guard: within one series (same secret_version), a low-seq
+    // P1 rollback guard: within one active series, a low-seq
     // link with a NEWER created_at MUST NOT beat the true higher-seq tail.
     let series = "ak:backup_series:01964137-0000-7000-8000-0000000000e0";
     let mut tail = wrap();
@@ -700,14 +739,12 @@ fn select_account_secret_honors_active_series_pointer() {
     active["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
     active["series_seq"] = serde_json::json!(0);
     active["created_at"] = serde_json::json!("2026-01-01T00:00:00.000Z");
-    active["contents"][0]["secret_version"] = serde_json::json!(1);
 
     let mut stale = wrap();
     stale["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a2");
     stale["series_id"] = serde_json::json!(STALE_SECRET_STORAGE_SERIES);
     stale["series_seq"] = serde_json::json!(99);
     stale["created_at"] = serde_json::json!("2026-12-31T23:59:59.000Z");
-    stale["contents"][0]["secret_version"] = serde_json::json!(99);
 
     let payload = serde_json::json!({
         "active_series": current_series(vec![
@@ -725,7 +762,6 @@ fn select_account_secret_fails_closed_when_active_series_is_missing() {
     let mut backup = wrap();
     backup["series_id"] = serde_json::json!(STALE_SECRET_STORAGE_SERIES);
     backup["series_seq"] = serde_json::json!(42);
-    backup["contents"][0]["secret_version"] = serde_json::json!(42);
     let payload = serde_json::json!({
         "active_series": current_series(vec![
             active_series_pointer("secret_storage", ACTIVE_SECRET_STORAGE_SERIES)

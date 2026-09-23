@@ -11,9 +11,8 @@ use super::backup_body::{
 };
 use crate::mls::runtime::{
     active_secret_storage_series_id_for, all_secret_storage_backups, backup_series_seq_of,
-    mls_account_secret_backup_version, select_mls_account_secret_backup,
-    select_mls_account_secret_recovery_public_key_backup, select_mls_private_plaintext_backup,
-    select_preferred_mls_account_secret_backup,
+    select_mls_account_secret_backup, select_mls_account_secret_recovery_public_key_backup,
+    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
 
 /// Decide whether the app should ask the user for their Recovery Key to unlock
@@ -413,10 +412,9 @@ pub async fn restore_mls_history_with_passphrase_from_payload(
             .map(serde_json::from_value::<arkret_models_crypto::KeyBackup>)
             .collect::<std::result::Result<Vec<_>, _>>()?;
         verify_series_chain(&tail, &chain).map_err(|error| anyhow!("{error}"))?;
-        let secret_bytes = decrypt_mls_account_secret_backup(passphrase, &secret_body)?;
+        let (secret_bytes, version) = decrypt_mls_account_secret_backup(passphrase, &secret_body)?;
         let secret = String::from_utf8(secret_bytes)
             .map_err(|err| anyhow!("account secret is not valid UTF-8: {err}"))?;
-        let version = mls_account_secret_backup_version(&secret_body);
         crate::mls::runtime::replace_account_mls_secret_version(
             secure_store,
             authority,

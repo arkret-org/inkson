@@ -12,7 +12,6 @@ const ACTOR: &str = "did:web:alice.example";
 const DEVICE: &str = "ak:device:01964137-0000-7000-8000-000000000001";
 const SECOND_DEVICE: &str = "ak:device:01964137-0000-7000-8000-000000000002";
 const DEVICE_AUTHORIZE_EVENT: &str = "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD";
-const REALM_ID: &str = "ak:realm:ASlHbbnJj2aIvNxwyukjGz90ltQwXHCbjIihxsRDrRR5";
 
 fn test_root() -> VaultKek {
     derive_vault_kek_with_salt(b"correct horse battery staple", &[7u8; VAULT_SALT_LEN]).unwrap()
@@ -73,9 +72,9 @@ fn build_recovery_vault_backup_body_signed(
         "recovery_vault",
         &SecretStorageContentIndex {
             item_kind: SecretStorageItemKind::PrivateAccountState,
-            secret_id: Some("inkson_recovery_vault_payload".to_owned()),
-            secret_version: None,
+            secret_id: "inkson_recovery_vault_payload".to_owned(),
         },
+        None,
         &auth,
         &sign,
         None,
@@ -176,9 +175,9 @@ fn successor_binds_the_current_device_without_breaking_the_series() {
         b"second",
         &SecretStorageContentIndex {
             item_kind: SecretStorageItemKind::PrivateAccountState,
-            secret_id: Some("inkson_recovery_vault_payload".to_owned()),
-            secret_version: None,
+            secret_id: "inkson_recovery_vault_payload".to_owned(),
         },
+        None,
         &auth,
         &sign,
         Some(source_commit_ref.clone()),
@@ -403,16 +402,12 @@ fn key_backup_validator_rejects_cross_domain_item_mix() {
     let root = test_root();
     let body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
     let mut body = wire(&body);
-    body["contents"][0] = json!({
-        "item_kind": "history_secret_ranges",
-        "effective_scope": {"kind": "realm", "realm_id": REALM_ID},
-        "ranges": [{"from_epoch": 0, "to_epoch": 1}],
-    });
+    body["contents"][0]["item_kind"] = json!("history_secret_ranges");
     attach_key_backup_domain_separation(&mut body, BackupKind::SecretStorage, "recovery_vault");
 
     let err = validate_wire_envelope(&body, BackupKind::SecretStorage)
         .expect_err("secret_storage must not index history secret ranges");
-    assert!(err.contains("history secret ranges"), "{err}");
+    assert!(err.contains("history_secret_ranges"), "{err}");
 }
 
 #[test]
@@ -468,10 +463,10 @@ fn recovery_public_key_backup_round_trips_and_validates() {
         "recovery_vault",
         &SecretStorageContentIndex {
             item_kind: SecretStorageItemKind::MlsAccountSecret,
-            secret_id: Some("inkson_mls_account_secret".to_owned()),
-            secret_version: Some(1),
+            secret_id: "inkson_mls_account_secret".to_owned(),
         },
         b"opaque account secret bytes",
+        Some(1),
         ("ak:policy:01964137-0000-7000-8000-000000000077", 1),
         None,
         None,

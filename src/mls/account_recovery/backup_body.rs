@@ -1,7 +1,9 @@
 //! Build, decrypt, and classify the on-wire account-recovery backup envelopes.
 
 use anyhow::{Result, anyhow};
-use arkret_models_crypto::{KeyBackup, SecretStorageContentIndex, SecretStorageItemKind};
+use arkret_models_crypto::{
+    KeyBackup, SecretStorageContentIndex, SecretStorageItemKind, SecretStorageSecret,
+};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::Value;
@@ -9,7 +11,6 @@ use serde_json::Value;
 use crate::key_backup::{
     BackupKind, build_passphrase_kdf_backup_body, open_passphrase_kdf_backup_body,
 };
-use crate::mls::runtime::mls_account_secret_backup_version;
 use crate::recovery_crypto::VaultKek;
 
 /// `item_kind` carried by the account MLS snapshot secret backup.
@@ -84,7 +85,7 @@ pub fn build_mls_account_secret_backup_body_with_kek(
 }
 
 /// Variant of [`build_mls_account_secret_backup_body_with_kek`] that records
-/// the local account-secret version in the backup content metadata.
+/// the account-secret generation only inside the encrypted plaintext.
 pub fn build_mls_account_secret_backup_body_with_kek_and_version(
     backup_id: &str,
     account_id: &arkret_sdk::AccountId,
@@ -109,9 +110,9 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
         "recovery_vault",
         &SecretStorageContentIndex {
             item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND,
-            secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
-            secret_version: Some(account_secret_version),
+            secret_id: MLS_ACCOUNT_SECRET_SECRET_ID.to_owned(),
         },
+        Some(u64::from(account_secret_version)),
         auth,
         sign,
         source_commit_ref,
@@ -140,9 +141,9 @@ pub fn build_mls_account_secret_backup_successor_body_with_kek_and_version(
         account_secret.as_bytes(),
         &SecretStorageContentIndex {
             item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND,
-            secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
-            secret_version: Some(account_secret_version),
+            secret_id: MLS_ACCOUNT_SECRET_SECRET_ID.to_owned(),
         },
+        Some(u64::from(account_secret_version)),
         auth,
         sign,
         source_commit_ref,
@@ -155,8 +156,21 @@ pub fn build_mls_account_secret_backup_successor_body_with_kek_and_version(
 /// Delegates to [`crate::key_backup::open_passphrase_kdf_backup_body`]: verifies
 /// `key_commitment`, recomputes the spec §7.5 deterministic nonce, binds the
 /// AEAD AAD, then decrypts.
-pub fn decrypt_mls_account_secret_backup(passphrase: &[u8], body: &Value) -> Result<Vec<u8>> {
-    opened_single_secret(passphrase, body)
+pub fn decrypt_mls_account_secret_backup(
+    passphrase: &[u8],
+    body: &Value,
+) -> Result<(Vec<u8>, u32)> {
+    let plaintext = open_passphrase_kdf_backup_body(passphrase, body)?;
+    let [item] = plaintext.items.as_slice() else {
+        return Err(anyhow!(
+            "account-secret backup must decrypt to exactly one item"
+        ));
+    };
+    let generation = account_secret_generation(item)?;
+    let secret = B64
+        .decode(item.secret_b64u.as_bytes())
+        .map_err(|error| anyhow!("key backup plaintext secret is not base64url: {error}"))?;
+    Ok((secret, generation))
 }
 
 /// X5.3 — build a `secret_storage` PUT body that wraps the entire encrypted
@@ -191,9 +205,9 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
         "recovery_vault",
         &SecretStorageContentIndex {
             item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND,
-            secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
-            secret_version: None,
+            secret_id: MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned(),
         },
+        None,
         auth,
         sign,
         source_commit_ref,
@@ -220,9 +234,9 @@ pub fn build_mls_private_plaintext_backup_successor_body_with_kek(
         sidecar_json,
         &SecretStorageContentIndex {
             item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND,
-            secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
-            secret_version: None,
+            secret_id: MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned(),
         },
+        None,
         auth,
         sign,
         source_commit_ref,
@@ -285,10 +299,10 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
         "recovery_vault",
         &SecretStorageContentIndex {
             item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND,
-            secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
-            secret_version: Some(account_secret_version),
+            secret_id: MLS_ACCOUNT_SECRET_SECRET_ID.to_owned(),
         },
         account_secret.as_bytes(),
+        Some(u64::from(account_secret_version)),
         recovery_policy_ref,
         None,
         previous_series_tail,
@@ -353,5 +367,19 @@ pub fn open_mls_account_secret_recovery_public_key_backup(
             .map_err(|error| anyhow!("account secret is not base64url: {error}"))?,
     )
     .map_err(|err| anyhow!("account secret is not valid UTF-8: {err}"))?;
-    Ok((secret, mls_account_secret_backup_version(body)))
+    Ok((secret, account_secret_generation(item)?))
+}
+
+fn account_secret_generation(item: &SecretStorageSecret) -> Result<u32> {
+    let generation = item
+        .secret_generation
+        .ok_or_else(|| anyhow!("decrypted MLS account secret has no secret_generation"))?;
+    let generation = u32::try_from(generation)
+        .map_err(|_| anyhow!("decrypted MLS account secret generation is out of range"))?;
+    if generation == 0 {
+        return Err(anyhow!(
+            "decrypted MLS account secret generation must be positive"
+        ));
+    }
+    Ok(generation)
 }

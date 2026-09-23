@@ -31,9 +31,8 @@ pub(crate) use garth::mls::backup_series::series_supersedes_digest;
 pub(crate) use crate::mls::runtime::{
     is_mls_account_secret_backup, is_mls_private_plaintext_backup,
     is_passphrase_account_secret_backup, is_recovery_public_key_account_secret_backup,
-    mls_account_secret_backup_version, select_mls_account_secret_backup,
-    select_mls_account_secret_recovery_public_key_backup, select_mls_private_plaintext_backup,
-    select_preferred_mls_account_secret_backup,
+    select_mls_account_secret_backup, select_mls_account_secret_recovery_public_key_backup,
+    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
 
 #[cfg(test)]

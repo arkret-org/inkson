@@ -121,15 +121,6 @@ fn backup_recipient_method(body: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
-fn backup_secret_version(body: &Value) -> u64 {
-    body.get("contents")
-        .and_then(Value::as_array)
-        .and_then(|contents| contents.first())
-        .and_then(|item| item.get("secret_version"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0)
-}
-
 fn carries_item_kind(body: &Value, item_kind: arkret_sdk::SecretStorageItemKind) -> bool {
     let expected = serde_json::to_value(item_kind)
         .ok()
@@ -167,16 +158,6 @@ pub(crate) fn is_mls_private_plaintext_backup(body: &Value) -> bool {
     carries_item_kind(body, arkret_sdk::SecretStorageItemKind::MlsPrivatePlaintext)
 }
 
-/// The account-secret version an envelope records, defaulting to the current
-/// local version when the envelope predates explicit versioning.
-pub(crate) fn mls_account_secret_backup_version(body: &Value) -> u32 {
-    backup_secret_version(body)
-        .try_into()
-        .ok()
-        .filter(|version| *version > 0)
-        .unwrap_or(super::ACCOUNT_MLS_SECRET_CURRENT_VERSION)
-}
-
 fn in_active_series<'a>(
     list_payload: &'a Value,
     keep: impl Fn(&Value) -> bool + 'a,
@@ -190,18 +171,11 @@ fn in_active_series<'a>(
     })
 }
 
-/// Ordering for an account-secret envelope: `secret_version` FIRST so a
-/// rotation that opens a new series (genesis `series_seq = 0` but a bumped
-/// `secret_version`) wins over the old series' tail; then `series_seq` so the
-/// true tail of one series always wins regardless of `created_at` (a replaying
-/// service MUST NOT be able to resurrect an old low-seq link by stamping a
-/// newer timestamp); `created_at` is only a last-resort tiebreak.
-fn account_secret_order(body: &Value) -> (u64, u64, &str) {
-    (
-        backup_secret_version(body),
-        backup_series_seq_of(body),
-        backup_created_at(body),
-    )
+/// The active-series pointer has already selected the canonical series.
+/// Within it the chain's `series_seq` decides the tail; timestamp is only a
+/// tie break for malformed duplicate sequence numbers (rejected on restore).
+fn account_secret_order(body: &Value) -> (u64, &str) {
+    (backup_series_seq_of(body), backup_created_at(body))
 }
 
 /// The latest passphrase-opened account-secret envelope in the active series.
@@ -252,13 +226,7 @@ mod tests {
 
     use super::*;
 
-    fn body(
-        seq: u64,
-        series: &str,
-        item_kind: &str,
-        recipient_method: &str,
-        secret_version: u64,
-    ) -> Value {
+    fn body(seq: u64, series: &str, item_kind: &str, recipient_method: &str) -> Value {
         json!({
             "backup_id": format!("ak:backup:0196419b-0000-7000-8000-00000000003{seq}"),
             "backup_kind": "secret_storage",
@@ -266,7 +234,7 @@ mod tests {
             "series_seq": seq,
             "created_at": format!("2026-05-0{}T00:00:00.000Z", seq + 1),
             "encryption": {"recipient_method": recipient_method},
-            "contents": [{"item_kind": item_kind, "secret_version": secret_version}],
+            "contents": [{"item_kind": item_kind, "secret_id": "test_secret"}],
         })
     }
 
@@ -299,7 +267,7 @@ mod tests {
     fn an_absent_active_series_pointer_selects_nothing() {
         let payload = list(
             None,
-            vec![body(3, SERIES, "mls_account_secret", "passphrase_kdf", 1)],
+            vec![body(3, SERIES, "mls_account_secret", "passphrase_kdf")],
         );
         assert!(select_mls_account_secret_backup(&payload).is_none());
         assert!(all_secret_storage_backups(&payload).is_empty());
@@ -310,8 +278,8 @@ mod tests {
         let payload = list(
             Some(SERIES),
             vec![
-                body(9, OTHER, "mls_account_secret", "passphrase_kdf", 1),
-                body(2, SERIES, "mls_account_secret", "passphrase_kdf", 1),
+                body(9, OTHER, "mls_account_secret", "passphrase_kdf"),
+                body(2, SERIES, "mls_account_secret", "passphrase_kdf"),
             ],
         );
         let selected = select_mls_account_secret_backup(&payload).unwrap();
@@ -324,9 +292,9 @@ mod tests {
         let payload = list(
             Some(SERIES),
             vec![
-                body(1, SERIES, "mls_account_secret", "passphrase_kdf", 1),
-                body(2, SERIES, "mls_account_secret", "recovery_public_key", 1),
-                body(3, SERIES, "mls_private_plaintext", "passphrase_kdf", 1),
+                body(1, SERIES, "mls_account_secret", "passphrase_kdf"),
+                body(2, SERIES, "mls_account_secret", "recovery_public_key"),
+                body(3, SERIES, "mls_private_plaintext", "passphrase_kdf"),
             ],
         );
         assert_eq!(
@@ -345,29 +313,14 @@ mod tests {
     }
 
     #[test]
-    fn a_bumped_secret_version_wins_over_an_older_series_tail() {
+    fn the_active_series_tail_wins_even_if_older_timestamp() {
+        let mut old = body(1, SERIES, "mls_account_secret", "passphrase_kdf");
+        old["created_at"] = json!("2026-12-01T00:00:00.000Z");
         let payload = list(
             Some(SERIES),
-            vec![
-                body(7, SERIES, "mls_account_secret", "passphrase_kdf", 1),
-                body(0, SERIES, "mls_account_secret", "passphrase_kdf", 2),
-            ],
+            vec![old, body(2, SERIES, "mls_account_secret", "passphrase_kdf")],
         );
         let selected = select_mls_account_secret_backup(&payload).unwrap();
-        assert_eq!(selected["contents"][0]["secret_version"], json!(2));
-        assert_eq!(mls_account_secret_backup_version(&selected), 2);
-    }
-
-    #[test]
-    fn an_unversioned_envelope_reads_as_the_current_local_version() {
-        let mut unversioned = body(1, SERIES, "mls_account_secret", "passphrase_kdf", 0);
-        unversioned["contents"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("secret_version");
-        assert_eq!(
-            mls_account_secret_backup_version(&unversioned),
-            super::super::ACCOUNT_MLS_SECRET_CURRENT_VERSION
-        );
+        assert_eq!(selected["series_seq"], json!(2));
     }
 }
