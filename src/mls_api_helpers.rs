@@ -167,17 +167,6 @@ pub(crate) fn sign_keypackage_upload_batch_with_signer(
     })
 }
 
-pub(crate) fn sign_keypackage_upload_batch(
-    unsigned: &arkret_sdk::KeyPackagesUploadUnsignedRequest,
-) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
-    let signer = crate::event_signer::active_signer().ok_or_else(|| {
-        anyhow::anyhow!(
-            "keypackages/upload endpoint_signature requires an active event-signer (fail-closed)"
-        )
-    })?;
-    sign_keypackage_upload_batch_with_signer(&signer, unsigned)
-}
-
 pub(crate) fn sign_keypackage_revoke_batch(
     unsigned: &arkret_sdk::KeyPackagesRevokeUnsignedRequest,
 ) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {

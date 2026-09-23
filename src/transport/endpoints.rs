@@ -121,6 +121,11 @@ impl MlsEndpoints<'_> {
         device_id: &str,
         records: &[arkret_sdk::MlsKeyPackageRecord],
     ) -> anyhow::Result<arkret_sdk::KeyPackagesUploadOutcome> {
+        let signer = crate::event_signer::active_signer().ok_or_else(|| {
+            anyhow::anyhow!(
+                "keypackages/upload endpoint_signature requires an active event-signer (fail-closed)"
+            )
+        })?;
         let first = records
             .first()
             .ok_or_else(|| anyhow::anyhow!("KeyPackage upload batch is empty"))?;
@@ -163,7 +168,8 @@ impl MlsEndpoints<'_> {
             strand_id: None,
             mls_group_id: None,
         };
-        let endpoint_signature = crate::mls_api_helpers::sign_keypackage_upload_batch(&unsigned)?;
+        let endpoint_signature =
+            crate::mls_api_helpers::sign_keypackage_upload_batch_with_signer(&signer, &unsigned)?;
         let body = unsigned.into_signed(endpoint_signature);
         self.transport
             .http()
