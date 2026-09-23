@@ -1,6 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use chrono::Utc;
 use inkson::account_data::{
     ContactRemark, RealmRemark, contact_remark_account_data_key, realm_remark_account_data_key,
 };
@@ -29,6 +28,26 @@ fn service_resolution(did: &str) -> serde_json::Value {
         "method_history_head": "sha256:fixture",
         "version_id": "fixture-v1"
     })
+}
+
+fn public_realm_entry(
+    realm_id: &str,
+    display_name: &str,
+    summary: Option<&str>,
+) -> arkret_models_discovery::PublicRealmDirectoryEntry {
+    let entry = arkret_models_discovery::PublicRealmDirectoryEntry {
+        realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
+        public_metadata: arkret_models_discovery::PublicRealmMetadata {
+            display_name: display_name.to_owned(),
+            summary: summary.map(str::to_owned),
+            public_locator: Some("https://server.local/_arkret".to_owned()),
+            avatar_blob_ref: None,
+        },
+        indexed_at: "2026-05-30T00:00:00Z".parse().unwrap(),
+        expires_at: "2026-06-01T00:00:00Z".parse().unwrap(),
+    };
+    entry.validate().expect("closed public Directory entry");
+    entry
 }
 
 fn problem_bytes(status: StatusCode, code: &str, detail: &str) -> Vec<u8> {
@@ -182,45 +201,6 @@ fn inkson_accepts_server_contract_payloads() {
     assert_eq!(
         directory.service_kind,
         arkret_sdk::ServiceKind::DirectoryService
-    );
-
-    let resolved: inkson::models::DirectoryRealmResolutionOutcome = serde_json::from_value(json!({
-        "realm_preview": {
-            "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
-            "title": "Arkret Demo Realm",
-            "summary": "Shared demo Realm served by server",
-            "as_of": "2026-05-30T00:00:00.000Z",
-            "source_refs": ["ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"],
-            "policy_revision": "contract-rev"
-        },
-        "join_rule": "public",
-        "join_candidates": [{
-            "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
-            "service_id": "ak:did_core:web:server.local",
-            "service_resolution": {
-                "resolution_url": "https://server.local/_arkret/open/services/ak%3Adid_core%3Aweb%3Aserver.local/resolution"
-            },
-            "service_kind": "station",
-            "role": "joined_member_station",
-            "endpoint_url": "http://server",
-            "operations": ["ak.peer.events.command.submit.v1"],
-            "join_methods": ["invite_accept", "member_join"],
-            "encryption_profile": "mls_rfc9420",
-            "digest_algorithm": "sha256",
-            "priority": 0,
-            "source": "invite_hint",
-            "seal_basis": {
-                "leaves": ["ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111"]
-            },
-            "as_of": "2026-05-30T00:00:00.000Z",
-            "expires_at": "2099-01-01T00:00:00.000Z"
-        }]
-    }))
-    .unwrap();
-    assert_eq!(resolved.join_rule, Some(arkret_sdk::JoinRule::Public));
-    assert_eq!(
-        resolved.join_candidates[0].service_id.as_str(),
-        "ak:did_core:web:server.local"
     );
 
     let submit: inkson::models::SubmitEventResult = serde_json::from_value(json!({
@@ -434,6 +414,49 @@ fn inkson_accepts_server_contract_payloads() {
     );
     assert_eq!(error.code(), "expected_head_mismatch");
     assert_eq!(error.detail, "expected_head mismatch");
+}
+
+#[test]
+fn directory_preview_and_join_locator_keep_separate_authority_boundaries() {
+    let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
+    let resolved: inkson::models::DirectoryRealmResolutionOutcome = public_realm_entry(
+        realm_id,
+        "Arkret Demo Realm",
+        Some("Shared demo Realm served by server"),
+    );
+    assert_eq!(resolved.public_metadata.display_name, "Arkret Demo Realm");
+    assert_eq!(
+        resolved.public_metadata.summary.as_deref(),
+        Some("Shared demo Realm served by server")
+    );
+
+    // Directory only supplies public metadata. The join flow carries an
+    // untrusted locator and receives the join rule from an authority preview.
+    let target = arkret_models_discovery::RealmJoinTarget {
+        realm_id: resolved.realm_id.clone(),
+        invite_id: None,
+        invite_token: None,
+        authority_locator_hints: vec![arkret_models_discovery::RealmJoinCandidate {
+            service_kind: arkret_models_discovery::RealmJoinCandidateServiceKind::Station,
+            service_id: arkret_sdk::DidCoreId::new("ak:did_core:web:server.local").unwrap(),
+            endpoint_url: Some("https://server.local/_arkret".to_owned()),
+            source: arkret_models_discovery::AuthorityLocatorSource::Directory,
+        }],
+    };
+    target.validate().expect("closed join locator target");
+    assert_eq!(
+        target.authority_locator_hints[0].service_id.as_str(),
+        "ak:did_core:web:server.local"
+    );
+    let preview = arkret_models_discovery::RealmPublicPreview {
+        realm_id: target.realm_id.clone(),
+        join_rule: arkret_sdk::JoinRule::Public,
+        history_access: arkret_sdk::HistoryAccess::SinceJoin,
+        governance_generation: 0,
+        display_name: Some(resolved.public_metadata.display_name.clone()),
+    };
+    assert_eq!(preview.join_rule, arkret_sdk::JoinRule::Public);
+    assert_eq!(preview.realm_id, resolved.realm_id);
 }
 
 #[test]
@@ -733,36 +756,11 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     assert_no_secret("search", &search, secret);
 
     let directory = arkret_models_discovery::DirectoryRealmSearchOutcome {
-        realms: vec![arkret_models_discovery::RealmPreview {
-            realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
-            )
-            .unwrap(),
-            alias: None,
-            title: Some("Contract Realm".to_owned()),
-            avatar_blob_ref: None,
-            organization_id: None,
-            join_rule: Some("public".to_owned()),
-            member_count_bucket: Some(arkret_models_discovery::RealmMemberCountBucket::Bucket(
-                arkret_models_discovery::RealmMemberCountBucketLabel::OneToTen,
-            )),
-            summary: Some("Public description".to_owned()),
-            owning_organization_ids: Vec::new(),
-            preview_ref: None,
-            discoverability: Some("public".to_owned()),
-            history_access: None,
-            join_candidates: Vec::new(),
-            as_of: Utc::now(),
-            source_refs: vec![
-                arkret_sdk::EventId::new(
-                    "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1".to_owned(),
-                )
-                .unwrap(),
-            ],
-            policy_revision: "contract-rev".to_owned(),
-            stale: None,
-            divergent: None,
-        }],
+        realms: vec![public_realm_entry(
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            "Contract Realm",
+            Some("Public description"),
+        )],
         next_cursor: None,
         has_more: false,
     };
