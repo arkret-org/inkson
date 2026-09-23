@@ -1667,6 +1667,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    static NEXT_TEST_PATH: AtomicU64 = AtomicU64::new(0);
     const REALM: &str = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
     const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq";
     fn row(revision: u64, removed: bool) -> TypedCurrentResult {
@@ -1863,12 +1864,13 @@ mod tests {
     }
     fn path() -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
-            "inkson-current-{}-{}.sqlite",
+            "inkson-current-{}-{}-{}.sqlite",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_TEST_PATH.fetch_add(1, Ordering::Relaxed)
         ))
     }
     #[tokio::test]
@@ -2496,50 +2498,70 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn another_target_reference_keeps_a_shared_snapshot_alive() {
+    async fn another_realm_reference_keeps_a_shared_snapshot_alive() {
         let path = path();
         let store = index(&path, 0).await;
-        let realm_selector = selector_of(&row(1, false));
-        let member = member_row(REALM, "ak:did_core:webvh:z6mkfixture", 1);
-        let member_selector = selector_of(&member);
+        let first = member_row(REALM, "ak:did_core:webvh:z6mkfirst", 1);
+        let second = member_row(OTHER_REALM, "ak:did_core:webvh:z6mksecond", 1);
+        let first_selector = selector_of(&first);
+        let second_selector = selector_of(&second);
         store
             .stage_frame(
                 0,
                 &frame(
-                    vec![row(1, false), member.clone()],
+                    vec![first.clone()],
                     Some(members_baseline(CURSORS[0], 5, true)),
                 ),
             )
             .await
             .unwrap()
             .finish();
-        // Selected members with an empty set retires only the Realm region, so
-        // the member-all coverage mark still reaches the first snapshot.
+        // The same opaque snapshot may be referenced by another Realm. A
+        // complete baseline replaces one Realm's covered selector set only.
         store
             .stage_frame(
                 1,
-                &frame(vec![row(1, false)], Some(baseline(CURSORS[1], 5, true))),
+                &realm_frame(
+                    OTHER_REALM,
+                    vec![second.clone()],
+                    Some(members_baseline(CURSORS[0], 5, true)),
+                ),
             )
             .await
             .unwrap()
             .finish();
+        store
+            .stage_frame(2, &frame(vec![], Some(baseline(CURSORS[1], 5, true))))
+            .await
+            .unwrap()
+            .finish();
         drive(&store, 80).await;
-        assert_eq!(seen_versions(&store, CURSORS[0], &member_selector).await, 1);
-        assert_eq!(seen_versions(&store, CURSORS[0], &realm_selector).await, 1);
+        // GC marks the shared snapshot as a unit while the other Realm still
+        // references it; the old first-Realm evidence is no longer readable.
+        assert_eq!(seen_versions(&store, CURSORS[0], &first_selector).await, 1);
         assert_eq!(
-            store.read_selector(REALM, &member_selector).await.unwrap(),
-            Some(member.clone())
+            seen_versions_in_realm(&store, CURSORS[0], OTHER_REALM, &second_selector).await,
+            1
         );
         assert_eq!(
-            store.read_selector(REALM, &realm_selector).await.unwrap(),
-            Some(row(1, false))
+            store.read_selector(REALM, &first_selector).await.unwrap(),
+            None
         );
-        // Only another member-all baseline detaches the first snapshot.
+        assert_eq!(
+            store
+                .read_selector(OTHER_REALM, &second_selector)
+                .await
+                .unwrap(),
+            Some(second.clone())
+        );
+        // Once the other Realm moves off the shared snapshot, its last seen
+        // evidence is unreachable and may be reclaimed.
         store
             .stage_frame(
-                2,
-                &frame(
-                    vec![row(1, false), member.clone()],
+                3,
+                &realm_frame(
+                    OTHER_REALM,
+                    vec![second.clone()],
                     Some(members_baseline(CURSORS[2], 5, true)),
                 ),
             )
@@ -2547,16 +2569,21 @@ mod tests {
             .unwrap()
             .finish();
         drive(&store, 120).await;
-        assert_eq!(seen_versions(&store, CURSORS[0], &member_selector).await, 0);
-        assert_eq!(seen_versions(&store, CURSORS[0], &realm_selector).await, 0);
-        assert_eq!(seen_versions(&store, CURSORS[2], &member_selector).await, 1);
+        assert_eq!(seen_versions(&store, CURSORS[0], &first_selector).await, 0);
         assert_eq!(
-            store.read_selector(REALM, &member_selector).await.unwrap(),
-            Some(member)
+            seen_versions_in_realm(&store, CURSORS[0], OTHER_REALM, &second_selector).await,
+            0
         );
         assert_eq!(
-            store.read_selector(REALM, &realm_selector).await.unwrap(),
-            Some(row(1, false))
+            seen_versions_in_realm(&store, CURSORS[2], OTHER_REALM, &second_selector).await,
+            1
+        );
+        assert_eq!(
+            store
+                .read_selector(OTHER_REALM, &second_selector)
+                .await
+                .unwrap(),
+            Some(second)
         );
     }
 
