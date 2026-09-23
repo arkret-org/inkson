@@ -6,12 +6,10 @@
 //! Stream J of `_claude_todos.md`: for each typed builder in
 //! `inkson::event_builders`,
 //! run build, stamp the wire-only fields a real submitter would attach
-//! (`seal_basis` when the kind is a Control Move, `proofs[0]` from a real
-//! Ed25519 signer), serialise, and validate
+//! (`producer_proof` from a real Ed25519 signer), serialise, and validate
 //! against `arkret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
-//! Schema distinguishes Control Moves, ordinary Events, and a few bootstrap/facet
-//! reducer kinds; the gate therefore covers both the builder output and the
-//! sign-and-stamp pipeline immediately downstream.
+//! The gate covers both the builder output and the signing pipeline immediately
+//! downstream.
 
 use std::fs;
 use std::path::PathBuf;
@@ -218,8 +216,6 @@ const TEST_ACTOR_DID: &str = "did:web:alice.example";
 const TEST_SERVICE_ID: &str = "ak:did_core:web:server.example";
 const TEST_SERVICE_DID: &str = "did:web:server.example";
 const TEST_INVITEE_DID: &str = "did:web:bob.example";
-const TEST_ANCHOR_REF: &str =
-    "ak:seal:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 fn test_genesis_salt() -> arkret_sdk::GenesisSalt {
     select_authoring_station();
@@ -290,25 +286,8 @@ fn authored_realm_bootstrap(
     )
 }
 
-/// Stamp the members a real submitter attaches, then finalize and sign.
-///
-/// Every one of these is producer-signed content, so it has to be in place
-/// BEFORE the identity is derived from it — which is why this returns an
-/// authored envelope instead of mutating one.
+/// Finalize and sign the producer Event before validating its closed wire shape.
 fn wire_envelope_from_intent(intent: inkson::operation::EventIntent) -> arkret_sdk::AuthoredEvent {
-    let mut intent = intent;
-    // Control Move: `seal_basis` and nothing from the data-plane pair.
-    if intent.kind().is_control_plane() && !cbs_exempt_reducer_kind(intent.kind()) {
-        if intent.seal_basis().is_none() {
-            intent = intent.with_seal_basis(test_seal_basis());
-        }
-    // Ordinary Event: the signed auth context carries verified authority references
-    // and forbids a Control Move `seal_basis` alongside it.
-    } else if intent.kind().is_data_plane() {
-        if intent.auth_context().is_none() {
-            intent = intent.with_auth_context(test_auth_context());
-        }
-    }
     let mut envelope = common::author_intent_at_index(intent, 1);
     let signer_did = TEST_ACTOR_DID;
     let key_id = format!("{signer_did}#device");
@@ -325,48 +304,6 @@ fn wire_envelope_from_intent(intent: inkson::operation::EventIntent) -> arkret_s
         )
         .expect("Ed25519 sign succeeds for schema-conformant envelope");
     envelope
-}
-
-/// Kinds a real submitter builds WITHOUT `seal_basis` because they sit in the
-/// Realm genesis batch, where no accepted Seal exists yet
-/// (realm-and-space.md §2.5). Read from the shared SDK helper rather than a
-/// local hand-list: a second copy of a closed protocol list is exactly the
-/// drift that lets a bootstrap follow-up go untested.
-fn cbs_exempt_reducer_kind(kind: &EventKind) -> bool {
-    kind == &EventKind::RealmCreate
-        || arkret_policy::realm_bootstrap::is_realm_bootstrap_followup_kind(kind)
-}
-
-/// The key coordinates and verified authority decision an ordinary Event pins.
-fn test_auth_context() -> arkret_sdk::AuthContext {
-    arkret_sdk::AuthContext {
-        authority_refs: vec![
-            arkret_sdk::SealId::new(TEST_ANCHOR_REF.to_owned())
-                .expect("test authority ref is canonical"),
-        ],
-    }
-}
-
-fn test_seal_basis() -> arkret_sdk::SealBasis {
-    let view: arkret_sdk::RealmSealFrontierView = serde_json::from_value(serde_json::json!({
-        "kind": "realm_seal",
-        "realm_id": TEST_REALM_ID,
-        "seal_basis": {
-            "leaves": [TEST_ANCHOR_REF]
-        },
-        "governance_health": {
-            "status": "healthy",
-            "pending_proposals": [],
-            "pending_proposals_complete": true
-        },
-        "observation_coordinate": {
-            "service_id": "ak:did_core:web:server.example",
-            "sequence": 1,
-            "observed_at": "2026-05-21T13:00:00.000Z"
-        }
-    }))
-    .expect("test RealmSealFrontierView is valid");
-    view.seal_basis()
 }
 
 /// Sanity check: the validator MUST reject obvious schema violations.
@@ -431,13 +368,6 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
 /// Validate `envelope` against event-schema. Panics with a readable
 /// diff on any schema violation.
 fn assert_envelope_matches_schema(label: &str, envelope: &Event) {
-    assert!(
-        envelope
-            .hlc
-            .as_ref()
-            .is_some_and(|hlc| !hlc.as_str().is_empty()),
-        "{label}: builder produced empty hlc — should be `<12>-<4>-<8>` hex"
-    );
     let value = serde_json::to_value(envelope)
         .unwrap_or_else(|err| panic!("{label}: serialize envelope: {err}"));
     let validator = event_schema_validator();

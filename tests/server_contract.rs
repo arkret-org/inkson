@@ -21,7 +21,9 @@ use serde_json::json;
 fn parse_server_description(
     value: serde_json::Value,
 ) -> anyhow::Result<inkson::models::ServiceDescribe> {
-    Ok(serde_json::from_value(value)?)
+    let describe: inkson::models::ServiceDescribe = serde_json::from_value(value)?;
+    describe.validate()?;
+    Ok(describe)
 }
 
 fn service_resolution(did: &str) -> serde_json::Value {
@@ -79,9 +81,8 @@ fn inkson_accepts_server_contract_payloads() {
             "extension_profile_required": null
         }],
         "supported_features": [],
-        "supported_reducer_profiles": ["ak.reducer.core.v1"],
         "auth_metadata": {},
-        "limits": {"storage": "memory", "max_limit": 100},
+        "limits": {},
         "rate_limit_policy": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "verified_profiles": [],
@@ -89,6 +90,7 @@ fn inkson_accepts_server_contract_payloads() {
         "development_mode": true,
     }))
     .unwrap();
+    describe.validate().expect("formal Station ServiceDescribe");
     assert_eq!(describe.service_kind, arkret_sdk::ServiceKind::Station);
     assert!(describe.supports_operation(arkret_sdk::ServiceOperationId::SelfAuthzReadCheckV1));
     assert_eq!(
@@ -129,16 +131,24 @@ fn inkson_accepts_server_contract_payloads() {
             "ak.operation_bundle.station.describe.v1",
             "ak.operation_bundle.station.http_core.v1"
         ],
-        "transport_bindings": [],
+        "transport_bindings": [{
+            "kind": "http_json",
+            "base_url": "https://server.local/_arkret",
+            "extension_profile_required": null
+        }],
         "supported_features": [],
         "auth_metadata": {},
         "limits": {},
+        "rate_limit_policy": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "verified_profiles": [],
         "interop_surfaces": [],
         "development_mode": false
     }))
     .unwrap();
+    sync_describe
+        .validate()
+        .expect("formal sync Station ServiceDescribe");
     assert!(
         sync_describe
             .supported_profiles
@@ -174,7 +184,7 @@ fn inkson_accepts_server_contract_payloads() {
         "supported_profiles": [],
         "supported_operation_bundles": [
             "ak.operation_bundle.directory_service.describe.v1",
-            "ak.operation_bundle.directory_service.http_core.v1"
+            "ak.operation_bundle.directory_service.public_read.v1"
         ],
         "transport_bindings": [{
             "kind": "http_json",
@@ -189,17 +199,12 @@ fn inkson_accepts_server_contract_payloads() {
         "verified_profiles": [],
         "interop_surfaces": [],
         "development_mode": false,
-        "resource_kinds": ["realm", "organization", "actor"],
-        "restricted_query_proof": false,
-        "accept_policy_kind": "open",
-        "default_ttl_seconds": 86400,
-        "max_ttl_seconds": 604800,
-        "revalidation_grace_seconds": 3600,
-        "accepted_resource_kinds": ["realm", "organization", "actor"],
-        "accepted_did_methods": ["did:web"],
-        "rate_limits": {}
+        "resource_kinds": ["realm"]
     }))
     .unwrap();
+    directory
+        .validate()
+        .expect("formal Directory ServiceDescribe");
     assert_eq!(
         directory.service_kind,
         arkret_sdk::ServiceKind::DirectoryService
@@ -237,19 +242,17 @@ fn inkson_accepts_server_contract_payloads() {
                     }
                 },
                 "issuer_authority_refs": [{
-                    "kind": "realm_authority",
+                    "kind": "realm_root",
                     "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-                    "governance_station_id": "ak:did_core:web:server.local",
-                    "authority_generation": 0,
-                    "basis": {
-                        "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                        "commit_id": "ak:realm_commit:0196419b-0000-7000-8000-000000000001",
-                        "stream_ref": {
-                            "kind": "realm",
-                            "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
-                        },
-                        "stream_position": 0
-                    }
+                    "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                    "authority_generation": 0
+                }],
+                "authority_depth": 1,
+                "authority_root_refs": [{
+                    "kind": "realm_root",
+                    "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+                    "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                    "authority_generation": 0
                 }],
                 "actions": ["ak.message.create"],
                 "status": "active",
@@ -259,7 +262,7 @@ fn inkson_accepts_server_contract_payloads() {
                 "issued_at": "2026-04-28T12:00:00.000Z"
             },
             "revision": {
-                "commit_id": "ak:realm_commit:0196419b-0000-7000-8000-000000000002",
+                "commit_id": arkret_wire::RealmCommitId::from_digest([0x52; 32]),
                 "stream_position": 2
             }
         }],
@@ -537,6 +540,7 @@ fn server_description_gates_event_envelope_write_plane() {
         "supported_features": [],
         "auth_metadata": {},
         "limits": {},
+        "rate_limit_policy": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "verified_profiles": [],
         "interop_surfaces": [],
@@ -578,7 +582,8 @@ fn server_description_gates_event_envelope_write_plane() {
         }],
         "supported_features": [],
         "auth_metadata": {},
-        "limits": {"storage": "postgres"},
+        "limits": {},
+        "rate_limit_policy": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "verified_profiles": [],
         "interop_surfaces": [external_interop_surface],
@@ -640,6 +645,7 @@ fn server_description_gates_event_envelope_write_plane() {
         "supported_features": [],
         "auth_metadata": {},
         "limits": {},
+        "rate_limit_policy": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "verified_profiles": [],
         "interop_surfaces": [],
@@ -653,7 +659,6 @@ fn server_description_gates_event_envelope_write_plane() {
         missing_event_envelope_write_requirements(&events_missing),
         vec![
             "ak.profile.core_event_store.v1",
-            "ak.server.read.describe.v1",
             "ak.self.events.command.submit.v1"
         ]
     );
@@ -663,7 +668,6 @@ fn server_description_gates_event_envelope_write_plane() {
         missing_v1_station_requirements(&events_missing),
         vec![
             "ak.profile.core_event_store.v1",
-            "ak.server.read.describe.v1",
             "ak.self.events.command.submit.v1",
         ]
     );
