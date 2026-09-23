@@ -578,7 +578,7 @@ mod tests {
                 }]
             },
             "revision": {
-                "commit_id": "ak:realm_commit:0196419b-0000-7000-8000-000000000002",
+                "commit_id": "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq",
                 "stream_position": 2
             }
         });
