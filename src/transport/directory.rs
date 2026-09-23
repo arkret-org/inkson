@@ -225,7 +225,7 @@ mod route_tests {
     fn realm_directory_bundle_selects_http_json_route() {
         let description = description(
             ServiceKind::DirectoryService,
-            vec!["ak.operation_bundle.directory_service.http_core.v1".to_owned()],
+            vec!["ak.operation_bundle.directory_service.public_read.v1".to_owned()],
         );
         assert_eq!(
             realm_search_http_json_base(&description).unwrap(),
@@ -237,7 +237,7 @@ mod route_tests {
     fn principal_description_is_never_a_directory_fallback() {
         let description = description(
             ServiceKind::Station,
-            vec!["ak.operation_bundle.directory_service.http_core.v1".to_owned()],
+            vec!["ak.operation_bundle.directory_service.public_read.v1".to_owned()],
         );
         assert!(realm_search_http_json_base(&description).is_err());
     }
