@@ -105,14 +105,9 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(events[1].payload["schema"], "ak.schema.realm_profile.v1");
     assert_eq!(events[1].payload["title"], "Engineering");
     assert_eq!(events[1].payload["summary"], "Roadmap work");
-    assert!(create.payload["object"]["notary"].get("kind").is_none());
-    assert!(create.payload["object"]["notary"].get("signers").is_none());
     assert_eq!(
-        create.payload["object"]["notary"]["signer"]["actor_id"],
-        json!({
-            "kind": "service",
-            "service_id": "ak:did_core:web:server.example"
-        })
+        create.payload["object"]["governance_station_id"],
+        crate::test_support::STATION_ID
     );
     // The typed builder leaves the envelope unsigned — the active
     // signer attaches the detached JWS proof at submit time.
