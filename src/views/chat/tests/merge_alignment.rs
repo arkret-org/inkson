@@ -258,7 +258,8 @@ mod merge_duplicate_create_message_alignment_tests {
             "event_id": "ak:event:AzlDwYnXxsrAJPnV18jXnpRSyNg1pwLq9kdhlLSr3PlI",
             "kind": "ak.message.create",
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "realm_id": "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
+            "scope_ref": {"kind":"realm","realm_id":"ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI"},
             "created_at": "2026-07-07T06:19:20.000Z",
             "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
             "message_id": "ak:message:AiMtOq_gs6Il6jSfTW_-c3OYzV-X5k9afNn8RSyisj38",
@@ -268,7 +269,7 @@ mod merge_duplicate_create_message_alignment_tests {
         })];
         sign_chat_fixtures(&mut events);
         let messages = chat_messages_from_events_with_sidecar(
-            "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
             &events,
             None,
             None,

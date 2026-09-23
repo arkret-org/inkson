@@ -175,7 +175,7 @@ fn chat_messages_read_projected_reaction_summary() {
         "event_id": "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc",
         "kind": "ak.message.create",
         "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-        "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        "realm_id": "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
         "created_at": "2026-05-22T10:00:00.000Z",
         "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
         "message_id": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
@@ -187,7 +187,7 @@ fn chat_messages_read_projected_reaction_summary() {
     sign_chat_fixtures(&mut events);
 
     let messages = chat_messages_from_events_with_sidecar(
-        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
         &events,
         None,
         None,
@@ -213,7 +213,7 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
             "event_id": "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc",
             "kind": "ak.message.create",
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "realm_id": "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
             "created_at": "2026-05-22T10:00:00.000Z",
             "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
             "message_id": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
@@ -223,7 +223,7 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
             "event_id": "ak:event:AgnQ4vQpIlqkjkQiXR6H-aFpDQtU9QIqZUUOyhD651bQ",
             "kind": "ak.reaction.add",
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "realm_id": "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
             "target_ref": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
             "key": "+1"
         }),
@@ -231,7 +231,7 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
             "event_id": "ak:event:AYAHWeIu5Mo1OonYBugKyH6S4a3sR2DjsutRWGcM-7UY",
             "kind": "ak.reaction.add",
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:carol.example","station_id":"ak:did_core:web:principal.example"}},
-            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "realm_id": "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
             "target_ref": "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc",
             "key": "+1"
         }),
@@ -239,7 +239,7 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
             "event_id": "ak:event:A09fNJ-s5wHOmkdCxh3R42mSETgDQzmk3fMm-gCnHXXw",
             "kind": "ak.reaction.remove",
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "realm_id": "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
             "target_ref": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
             "key": "+1"
         }),
@@ -247,7 +247,7 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
     sign_chat_fixtures(&mut events);
 
     let messages = chat_messages_from_events_with_sidecar(
-        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
         &events,
         None,
         None,
@@ -263,7 +263,7 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
     );
 
     let records = message_operations_from_events(
-        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
         &events,
     );
     assert_eq!(
