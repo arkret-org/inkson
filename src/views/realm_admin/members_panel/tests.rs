@@ -340,23 +340,23 @@ fn groups_agent_members_under_reported_controller() {
 
 const PANEL_ISSUER: &str = "ak:did_core:web:acme.example";
 
-/// The installed current `ak.component.realm.policy_bundle.v1` value: one
-/// Station-selected bundle, not a revision race across projected Events.
-fn acme_policy_current(realm_id: &str) -> serde_json::Value {
-    serde_json::json!({"entries": [{
-        "selector": {
-            "scope_ref": {"kind": "realm", "realm_id": realm_id},
-            "cell_id": "ak:cell:ak.component.realm.policy_bundle.v1:null"
+/// The Station-selected Realm policy bundle from the typed current snapshot.
+fn acme_policy_current() -> serde_json::Value {
+    serde_json::json!([{
+        "selector": {"kind": "realm_policy"},
+        "revision": {
+            "commit_id": arkret_wire::RealmCommitId::from_digest([0x31; 32]),
+            "stream_position": 1
         },
-        "result": {"status": "value", "value": {
+        "value": {
             "policy_revision": 1,
             "handle_issuer_policies": [{
                 "issuer_id": PANEL_ISSUER,
                 "authorized_handle_domains": ["acme.example"],
                 "issuer_class": "domain_authority"
             }]
-        }}
-    }]})
+        }
+    }])
 }
 
 #[test]
@@ -378,7 +378,7 @@ fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
                     arkret_models_identity::HandleClaimStatus::Verified,
                 )]
             }],
-            "current": acme_policy_current(realm_id),
+            "current": acme_policy_current(),
             "admins": ["did:web:alice.example"]
         }),
     );
@@ -605,6 +605,7 @@ fn accepted_invite_route_recovers_from_canonical_history_after_restart() {
         invitee.principal_id.as_str(),
         serde_json::json!({
             "invite_id": invite_id,
+            "previous_state": "pending",
             "invitee_account_id": invitee,
         }),
     );
@@ -945,6 +946,12 @@ fn queued_invite_accept_does_not_promote_join_but_realm_remains_reconcilable() {
     store
         .save_mls_checkpoint(realm_id.to_owned(), dummy_mls_checkpoint(realm_id))
         .unwrap();
+    fixture::install_accepted_mls_group(
+        &mut store,
+        &arkret_sdk::ScopeRef::Realm {
+            realm_id: fixture::realm_id(realm_id),
+        },
+    );
     store.append_raw_operation(
         "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA".to_owned(),
         Some(realm_id.to_owned()),
@@ -1093,6 +1100,12 @@ fn admission_candidates_include_direct_conversation_with_local_group() {
     store
         .save_mls_checkpoint(realm_id.to_owned(), dummy_mls_checkpoint(realm_id))
         .unwrap();
+    fixture::install_accepted_mls_group(
+        &mut store,
+        &arkret_sdk::ScopeRef::Realm {
+            realm_id: fixture::realm_id(realm_id),
+        },
+    );
 
     let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
     assert_eq!(candidates.len(), 1);
