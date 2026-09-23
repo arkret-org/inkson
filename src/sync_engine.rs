@@ -35,8 +35,6 @@ use arkret_wire::AccountDataKey;
 use garth::subscription::{AccountBatchProjector, AccountSubscription, SubscriptionControl};
 #[cfg(test)]
 use garth::{ClientEvent, ClientProjector};
-#[cfg(test)]
-use garth::{DecodedInbound, InboundDecoder};
 use garth::{RealmProjectionFrame, reconcile_realm_projection};
 use serde::Serialize;
 use serde_json::Value;
@@ -136,6 +134,7 @@ struct AccountClientEventReport {
     realm_invalidations: usize,
     decoded_messages: usize,
     decoded_events: usize,
+    committed_event_kinds: Vec<String>,
     to_device: usize,
     notifications: usize,
     unavailable_realm_ids: Vec<String>,
@@ -165,8 +164,13 @@ impl AccountClientEventProjector {
                         .map(|realm_id| realm_id.to_string()),
                 );
             }
-            ClientEvent::Committed(_) => {
+            ClientEvent::Committed(delta) => {
                 report.committed_events += 1;
+                if let Some(event) = delta.event() {
+                    report
+                        .committed_event_kinds
+                        .push(event.kind.as_str().to_owned());
+                }
             }
             ClientEvent::Message(_) => {
                 report.decoded_messages += 1;
@@ -203,61 +207,6 @@ impl ClientProjector for AccountClientEventProjector {
             Ok(())
         }
     }
-}
-
-#[cfg(test)]
-fn push_decoded_account_event(
-    decoder: &InboundDecoder,
-    batch: &mut Vec<ClientEvent>,
-    event: arkret_sdk::Event,
-) {
-    match decoder.decode_event(event) {
-        DecodedInbound::Message(message) => batch.push(ClientEvent::Message(message)),
-        DecodedInbound::Event(event) => batch.push(ClientEvent::Event(event)),
-    }
-}
-
-#[cfg(test)]
-fn push_account_event_payload(
-    decoder: &InboundDecoder,
-    batch: &mut Vec<ClientEvent>,
-    event: &arkret_sdk::Event,
-) {
-    push_decoded_account_event(decoder, batch, event.clone());
-}
-
-#[cfg(test)]
-fn push_account_realm_update_events(
-    decoder: &InboundDecoder,
-    batch: &mut Vec<ClientEvent>,
-    update: &arkret_sdk::RealmUpdate,
-) {
-    if let Some(timeline) = &update.entry.timeline {
-        for payload in &timeline.events {
-            push_account_event_payload(decoder, batch, payload);
-        }
-    }
-}
-
-#[cfg(test)]
-async fn project_account_response_client_events<P>(
-    response: &AccountFrameStep,
-    decoder: &InboundDecoder,
-    projector: &P,
-) -> anyhow::Result<()>
-where
-    P: ClientProjector + ?Sized,
-{
-    let updates = response.updates.clone();
-    let realm_updates = updates.realm_updates.clone();
-    let mut batch = garth::account_updates_to_events(updates);
-
-    for update in &realm_updates {
-        push_account_realm_update_events(decoder, &mut batch, update);
-    }
-    projector.project(batch).await?;
-
-    Ok(())
 }
 
 /// Session transport factory for the account subscription.
@@ -2760,21 +2709,6 @@ mod tests {
         arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap()
     }
 
-    fn sdk_event(kind: &str, payload: Value) -> arkret_sdk::Event {
-        arkret_wire::test_support::raw_event(
-            kind,
-            arkret_sdk::ScopeRef::Realm {
-                realm_id: sdk_realm_id(),
-            },
-            sdk_actor_id(),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-            1,
-            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
-            payload,
-        )
-        .unwrap()
-    }
-
     #[tokio::test]
     async fn empty_account_delta_projects_only_batch_context() {
         let response = empty_response("ak:cursor:account-context");
@@ -2796,56 +2730,63 @@ mod tests {
 
     #[tokio::test]
     async fn account_response_projects_client_events_and_decodes_realm_payloads() {
-        let message_event = sdk_event(
-            arkret_sdk::EventKind::MessageCreate.as_str(),
-            json!({
-                "strand_id": "ak:strand:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg",
-                "track_name": "discussion",
-                "content": {"kind": "ak.content.text", "body": "hello"}
-            }),
-        );
-        let space_event = sdk_event(
-            "ak.space.create",
-            json!({
-                "object": {
-                    "id": "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-                    "schema": "ak.schema.space.v1",
-                    "realm_id": sdk_realm_id().as_str(),
-                    "kind": "board",
-                    "title": "Adapter Board"
-                }
-            }),
-        );
-        let mut response = empty_response("ak:cursor:account-adapter");
         let realm_id = sdk_realm_id();
-        let projection = json!({
-            "timeline": {
-                "events": [serde_json::to_value(message_event).unwrap(), serde_json::to_value(space_event).unwrap()],
-                "limited": false
-            },
-            "summary": {}
-        });
-        let entry: arkret_sdk::RealmSyncEntry =
-            serde_json::from_value(projection.clone()).expect("typed Realm sync entry");
-        response
-            .step
-            .realm_projections
-            .insert(realm_id.as_str().to_owned(), projection);
-        response
-            .updates
-            .realm_updates
-            .push(arkret_sdk::RealmUpdate { realm_id, entry });
-
+        let accepted = crate::test_support::committed_event::verified_realm_items(
+            realm_id.clone(),
+            vec![
+                (
+                    arkret_sdk::EventKind::MessageCreate.as_str().to_owned(),
+                    json!({
+                        "strand_id": "ak:strand:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg",
+                        "track_name": "discussion",
+                        "content": {"kind": "ak.content.text", "body": "hello"}
+                    }),
+                ),
+                (
+                    arkret_sdk::EventKind::SpaceCreate.as_str().to_owned(),
+                    json!({
+                        "object": {
+                            "id": "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+                            "schema": "ak.schema.space.v1",
+                            "realm_id": realm_id.as_str(),
+                            "kind": "board",
+                            "title": "Adapter Board"
+                        }
+                    }),
+                ),
+            ],
+        );
+        let frame: AccountSubscribeFrame = serde_json::from_value(json!({
+            "kind": "delta",
+            "cursor": "ak:cursor:account-adapter",
+            "realms": {
+                realm_id.as_str(): {
+                    "committed_events": accepted.into_iter().map(arkret_sdk::CommittedEventView::Full).collect::<Vec<_>>()
+                }
+            }
+        })).expect("formal account frame with committed Realm stream");
+        frame.validate().expect("committed account frame validates");
+        let response = AccountFrameStep::new(frame, "ak:cursor:account-adapter".to_owned())
+            .expect("account frame step");
         let projector = AccountClientEventProjector::default();
-        project_account_response_client_events(&response, &InboundDecoder::new(), &projector)
+        let events = garth::account_frame_to_client_events(&response.frame, false)
+            .expect("formal account frame projects");
+        projector
+            .project(events)
             .await
-            .expect("account response projects through client-core adapter");
-
+            .expect("client events project");
         let report = projector.report();
         assert_eq!(report.account_updates, 1);
-        assert_eq!(report.committed_events, 1);
+        assert_eq!(report.committed_events, 2);
         assert_eq!(report.decoded_messages, 1);
-        assert_eq!(report.decoded_events, 1);
+        assert_eq!(report.decoded_events, 0);
+        assert_eq!(
+            report.committed_event_kinds,
+            vec![
+                arkret_sdk::EventKind::MessageCreate.as_str(),
+                arkret_sdk::EventKind::SpaceCreate.as_str(),
+            ]
+        );
         assert!(report.unavailable_realm_ids.is_empty());
     }
 
@@ -2971,22 +2912,32 @@ mod tests {
     fn membership_events_ingest_into_raw_operations() {
         let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
         let mut store = temp_store("membership-events");
-        let events = [
-            sdk_event(
-                arkret_sdk::EventKind::MemberState.as_str(),
-                json!({
-                    "member_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-                    "membership": "join"
-                }),
-            ),
-            sdk_event(
-                arkret_sdk::EventKind::InviteAccept.as_str(),
-                json!({
-                    "invite_id": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610"
-                }),
-            ),
-            sdk_event(arkret_sdk::EventKind::MlsCommit.as_str(), json!({})),
-        ];
+        let events = crate::test_support::committed_event::verified_realm_items(
+            sdk_realm_id(),
+            vec![
+                (
+                    arkret_sdk::EventKind::MemberState.as_str().to_owned(),
+                    json!({
+                        "member_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
+                        "membership": "join"
+                    }),
+                ),
+                (
+                    arkret_sdk::EventKind::InviteAccept.as_str().to_owned(),
+                    json!({
+                        "invite_id": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610"
+                    }),
+                ),
+                (
+                    arkret_sdk::EventKind::MessageCreate.as_str().to_owned(),
+                    json!({
+                        "strand_id": "ak:strand:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg",
+                        "track_name": "discussion",
+                        "content": {"kind": "ak.content.text", "body": "unrelated message"}
+                    }),
+                ),
+            ],
+        ).into_iter().map(|item| item.event).collect::<Vec<_>>();
         let changed = ingest_membership_projection_events(&mut store, realm_id, &events);
 
         assert_eq!(changed, 2);
@@ -3007,39 +2958,16 @@ mod tests {
     #[test]
     fn accepted_membership_event_retains_exact_human_signing_device() {
         let device_id = "ak:device:0196419b-0000-7000-8000-000000000002";
-        let mut event = sdk_event(
+        let mut event = crate::test_support::committed_event::verified_realm_item_as(
+            sdk_realm_id(),
             arkret_sdk::EventKind::InviteAccept.as_str(),
             json!({
                 "invite_id": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610"
             }),
-        );
-        event.actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-        ));
-        let event_digest = arkret_sdk::Hash::new(
-            event
-                .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
-                .unwrap(),
+            "alice.example",
+            device_id,
         )
-        .unwrap();
-        event.producer_proof = Some(
-            arkret_sdk::ProducerEventProof {
-                kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-                verification_method: arkret_sdk::DidUrl::new(format!(
-                    "did:web:alice.example#{device_id}"
-                ))
-                .unwrap(),
-                event_digest,
-                created_at: event.created_at,
-                domain: None,
-                audience: None,
-                proof_purpose: None,
-                jws: "header..producer".to_owned(),
-            }
-            .into(),
-        );
-
+        .event;
         let record = membership_operation_from_event(&event).unwrap();
         assert_eq!(record.payload["signing_device_id"], device_id);
 
@@ -3060,7 +2988,8 @@ mod tests {
             crate::operation::uuid_v7()
         ));
         let mut store = LocalStateStore::with_path(temp);
-        let mut event = sdk_event(
+        let event = crate::test_support::committed_event::verified_realm_item_as(
+            sdk_realm_id(),
             arkret_sdk::EventKind::StrandUpdate.as_str(),
             json!({
                 "target_ref": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
@@ -3068,10 +2997,10 @@ mod tests {
                     "synthesis": {"$op": "set", "value": "bob synthesis"}
                 }
             }),
-        );
-        event.actor_id =
-            crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:bob.example").unwrap();
-
+            "bob.example",
+            "ak:device:0196419b-0000-7000-8000-000000000003",
+        )
+        .event;
         let changed =
             ingest_kanban_projection_events(&mut store, sdk_realm_id().as_str(), &[event]);
 

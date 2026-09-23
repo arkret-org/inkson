@@ -255,17 +255,60 @@ pub(crate) mod committed_event {
         kind: &str,
         payload: Value,
     ) -> CommittedEventFullView {
+        verified_realm_items(realm_id, vec![(kind.to_owned(), payload)])
+            .into_iter()
+            .next()
+            .unwrap()
+    }
+
+    pub(crate) fn verified_realm_item_as(
+        realm_id: RealmId,
+        kind: &str,
+        payload: Value,
+        principal: &str,
+        device_id: &str,
+    ) -> CommittedEventFullView {
+        verified_realm_items_as(
+            realm_id,
+            vec![(kind.to_owned(), payload)],
+            principal,
+            device_id,
+        )
+        .into_iter()
+        .next()
+        .unwrap()
+    }
+
+    /// One contiguous signed Realm stream after a verified genesis Commit.
+    pub(crate) fn verified_realm_items(
+        realm_id: RealmId,
+        entries: Vec<(String, Value)>,
+    ) -> Vec<CommittedEventFullView> {
+        verified_realm_items_as(
+            realm_id,
+            entries,
+            "alice.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        )
+    }
+
+    fn verified_realm_items_as(
+        realm_id: RealmId,
+        entries: Vec<(String, Value)>,
+        principal: &str,
+        device_id: &str,
+    ) -> Vec<CommittedEventFullView> {
+        assert!(!entries.is_empty());
         let station_key = SigningKey::from_bytes(&[0x71; 32]);
         let event_signer = arkret_test_kit::keys::seeded_signer(
-            Did::new("did:web:alice.example".to_owned()).unwrap(),
-            DidUrl::new("did:web:alice.example#ak:device:0196419b-0000-7000-8000-000000000001")
-                .unwrap(),
+            Did::new(format!("did:web:{principal}")).unwrap(),
+            DidUrl::new(format!("did:web:{principal}#{device_id}")).unwrap(),
         );
         let scope = ScopeRef::Realm {
             realm_id: realm_id.clone(),
         };
         let actor = ActorId::account(arkret_sdk::AccountId::new(
-            DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            DidCoreId::new(format!("ak:did_core:web:{principal}")).unwrap(),
             station_id(),
         ));
         let signed = |kind: &str, payload: Value, at| {
@@ -276,11 +319,15 @@ pub(crate) mod committed_event {
                 .expect_verifiable()
         };
         let genesis = signed(EventKind::RealmCreate.as_str(), json!({}), time(0));
-        let event = signed(kind, payload, time(2));
+        let events = entries
+            .into_iter()
+            .enumerate()
+            .map(|(index, (kind, payload))| signed(&kind, payload, time(2 + index as i64)))
+            .collect::<Vec<_>>();
         let event_key = PublicKeyMaterial::Ed25519Raw {
             bytes: event_signer.verifying_key().to_bytes().to_vec(),
         };
-        for signed_event in [&genesis, &event] {
+        for signed_event in std::iter::once(&genesis).chain(events.iter()) {
             let transcript = arkret_sdk::canonical::canonical::canonical_json_bytes(
                 &signed_event.digest_payload().unwrap(),
             )
@@ -313,27 +360,42 @@ pub(crate) mod committed_event {
             },
             &station_key,
         );
-        let commit = seal_commit(
-            RealmCommit {
-                commit_id: RealmCommitId::from_digest([0x52; 32]),
-                realm_id: realm_id.clone(),
-                stream_ref: stream_ref.clone(),
-                stream_position: 1,
-                previous_commit_ref: Some(genesis_commit.commit_id.clone()),
-                event_ref: event.event_id.clone(),
-                governance_generation: 0,
-                authority_ref: RealmCommitAuthorityRef::GenesisOrChangeEvent(
-                    genesis.event_id.clone(),
-                ),
-                committed_at: time(51),
-                signature: initial_signature(DetachedSignatureContext::RealmCommit, &station_key),
-            },
-            &station_key,
-        );
+        let mut previous = genesis_commit.commit_id.clone();
+        let items = events
+            .into_iter()
+            .enumerate()
+            .map(|(index, event)| {
+                let position = (index + 1) as u64;
+                let commit = seal_commit(
+                    RealmCommit {
+                        commit_id: RealmCommitId::from_digest(
+                            [0x52u8.checked_add(index as u8).unwrap(); 32],
+                        ),
+                        realm_id: realm_id.clone(),
+                        stream_ref: stream_ref.clone(),
+                        stream_position: position,
+                        previous_commit_ref: Some(previous.clone()),
+                        event_ref: event.event_id.clone(),
+                        governance_generation: 0,
+                        authority_ref: RealmCommitAuthorityRef::GenesisOrChangeEvent(
+                            genesis.event_id.clone(),
+                        ),
+                        committed_at: time(50 + position as i64),
+                        signature: initial_signature(
+                            DetachedSignatureContext::RealmCommit,
+                            &station_key,
+                        ),
+                    },
+                    &station_key,
+                );
+                previous = commit.commit_id.clone();
+                CommittedEventFullView { commit, event }
+            })
+            .collect::<Vec<_>>();
         let head = CommitStreamHead {
             stream_ref,
-            stream_position: 1,
-            commit_id: commit.commit_id.clone(),
+            stream_position: items.len() as u64,
+            commit_id: previous,
         };
         let mut assertion = RealmAuthorityCurrentAssertion {
             realm_id: realm_id.clone(),
@@ -402,12 +464,13 @@ pub(crate) mod committed_event {
         )
         .unwrap();
         let verified = verify_realm_authority_bundle(&bundle, &freshness, &keys).unwrap();
-        let item = CommittedEventFullView { commit, event };
-        verified.verify_committed_item(&item, &keys).unwrap();
-        let mut altered = item.clone();
-        altered.commit.commit_id = RealmCommitId::from_digest([0x53; 32]);
-        assert!(verified.verify_committed_item(&altered, &keys).is_err());
-        item
+        for item in &items {
+            verified.verify_committed_item(item, &keys).unwrap();
+            let mut altered = item.clone();
+            altered.commit.commit_id = RealmCommitId::from_digest([0x73; 32]);
+            assert!(verified.verify_committed_item(&altered, &keys).is_err());
+        }
+        items
     }
 }
 
