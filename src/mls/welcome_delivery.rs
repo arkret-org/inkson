@@ -403,10 +403,7 @@ mod tests {
         };
         let accepted_ref = arkret_wire::CommittedEventRef {
             event_id: commit.event_id.clone(),
-            commit_id: arkret_sdk::RealmCommitId::new(
-                "ak:realm_commit:0196419b-0000-7000-8000-000000000002",
-            )
-            .unwrap(),
+            commit_id: arkret_sdk::RealmCommitId::from_digest([2; 32]),
             stream_ref: arkret_wire::CommitStreamRef::Realm {
                 realm_id: realm_id(),
             },

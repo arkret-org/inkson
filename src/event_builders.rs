@@ -1495,10 +1495,7 @@ mod genesis_authority_tests {
                 )
                 .unwrap(),
                 expected_revision: arkret_wire::CurrentRevision {
-                    commit_id: arkret_sdk::RealmCommitId::new(
-                        "ak:realm_commit:0196419b-0000-7000-8000-000000000041",
-                    )
-                    .unwrap(),
+                    commit_id: arkret_sdk::RealmCommitId::from_digest([41; 32]),
                     stream_position: 41,
                 },
                 reason: None,
