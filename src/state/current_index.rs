@@ -2970,6 +2970,93 @@ mod tests {
         );
     }
 
+    /// Run explicitly with `cargo test --lib current_index_capacity -- --ignored --nocapture`.
+    /// This profiles the real SQLite WAL + AEAD backend, not a browser first paint.
+    #[tokio::test]
+    #[ignore = "capacity profile: 1/100/1000 Realm durable writes and bounded maintenance"]
+    async fn current_index_capacity_for_one_hundred_and_thousand_realms() {
+        use std::time::Instant;
+
+        for realm_count in [1usize, 100, 1000] {
+            let path = path();
+            let store = index(&path, 0).await;
+            let realms: Vec<String> = (0..realm_count)
+                .map(|number| {
+                    let mut digest = [0u8; 32];
+                    digest[..8].copy_from_slice(&(number as u64).to_be_bytes());
+                    arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+                        arkret_sdk::DigestSuite::Sha256,
+                        digest,
+                    ))
+                    .to_string()
+                })
+                .collect();
+            let entries: BTreeMap<_, _> = realms
+                .iter()
+                .map(|realm| {
+                    (
+                        realm.clone(),
+                        json!({"current": {
+                            "realm_id": realm,
+                            "governance_generation": 1,
+                            "stream_heads": [],
+                            "entries": [row(1, false)]
+                        }}),
+                    )
+                })
+                .collect();
+            let first: AccountSubscribeFrame = serde_json::from_value(json!({
+                "kind": "delta", "cursor": "ak:cursor:YQ", "realms": entries
+            }))
+            .unwrap();
+            let start = Instant::now();
+            store.stage_frame(0, &first).await.unwrap().finish();
+            let initial_write = start.elapsed();
+
+            let focus = &realms[realm_count / 2];
+            let start = Instant::now();
+            assert_eq!(
+                store
+                    .read_selector(focus, &selector_of(&row(1, false)))
+                    .await
+                    .unwrap(),
+                Some(row(1, false))
+            );
+            let point_read = start.elapsed();
+
+            let start = Instant::now();
+            store
+                .stage_frame(1, &realm_frame(focus, vec![row(2, false)], None))
+                .await
+                .unwrap()
+                .finish();
+            let one_realm_update = start.elapsed();
+            let start = Instant::now();
+            for _ in 0..10 {
+                store.maintain().await.unwrap();
+            }
+            let ten_maintenance_passes = start.elapsed();
+            assert_eq!(
+                store
+                    .read_selector(focus, &selector_of(&row(2, false)))
+                    .await
+                    .unwrap(),
+                Some(row(2, false))
+            );
+            let bytes = [&path, &path.with_extension("sqlite-wal")]
+                .into_iter()
+                .filter_map(|path| std::fs::metadata(path).ok().map(|metadata| metadata.len()))
+                .sum::<u64>();
+            eprintln!(
+                "current_index_capacity realms={realm_count} initial_write_ms={} point_read_us={} one_realm_update_ms={} ten_maintenance_ms={} sqlite_bytes={bytes}",
+                initial_write.as_millis(),
+                point_read.as_micros(),
+                one_realm_update.as_millis(),
+                ten_maintenance_passes.as_millis()
+            );
+        }
+    }
+
     fn selector_of(entry: &TypedCurrentResult) -> CurrentSelector {
         super::selector_of(entry).clone()
     }
