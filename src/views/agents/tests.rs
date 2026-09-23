@@ -137,9 +137,9 @@ mod agent_tests {
                 "ak.event.read",
                 "ak.message.create",
                 "ak.reaction.add",
-                "ak.self.events.command.submit.v1",
                 "ak.self.committed_event.read.scan.v1",
                 "ak.self.committed_event.stream.subscribe.v1",
+                "ak.self.events.command.submit.v1",
                 "ak.self.keys.keypackages.upload.create.v1",
                 "ak.self.keys.keypackages.command.consume.v1",
                 "ak.self.keys.keypackages.command.revoke.v1",
@@ -154,15 +154,15 @@ mod agent_tests {
             serde_json::json!([
                 {
                     "kind": "operation",
-                    "operation": "ak.self.events.command.submit.v1"
-                },
-                {
-                    "kind": "operation",
                     "operation": "ak.self.committed_event.read.scan.v1"
                 },
                 {
                     "kind": "operation",
                     "operation": "ak.self.committed_event.stream.subscribe.v1"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.events.command.submit.v1"
                 },
                 {
                     "kind": "operation",
@@ -207,9 +207,9 @@ mod agent_tests {
                 "ak.event.read".to_owned(),
                 "ak.agent.draft.propose".to_owned(),
                 "ak.agent.action_request".to_owned(),
-                "ak.self.events.command.submit.v1".to_owned(),
                 "ak.self.committed_event.read.scan.v1".to_owned(),
                 "ak.self.committed_event.stream.subscribe.v1".to_owned(),
+                "ak.self.events.command.submit.v1".to_owned(),
             ]
         );
     }
@@ -228,9 +228,9 @@ mod agent_tests {
         assert_eq!(
             scope.actions,
             vec![
-                "ak.self.events.command.submit.v1",
                 "ak.self.committed_event.read.scan.v1",
                 "ak.self.committed_event.stream.subscribe.v1",
+                "ak.self.events.command.submit.v1",
                 "ak.self.committed_event.resource.get.v1",
             ]
         );
