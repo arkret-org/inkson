@@ -723,16 +723,9 @@ mod tests {
     /// One Realm projection carrying exactly the installed current
     /// `ak.component.realm.genesis.v1` value. That single published result is
     /// the whole create-locked identity/security core a client may read.
-    fn installed_genesis_projection(realm_id: &str, genesis: Value) -> Value {
-        json!({
-            "current": {"entries": [{
-                "selector": {
-                    "scope_ref": {"kind": "realm", "realm_id": realm_id},
-                    "cell_id": "ak:cell:ak.component.realm.genesis.v1:null"
-                },
-                "result": {"status": "value", "value": genesis}
-            }]}
-        })
+    fn installed_genesis_projection(_realm_id: &str, mut genesis: Value) -> Value {
+        genesis["schema"] = json!(arkret_wire::SchemaId::REALM_GENESIS_V1);
+        json!({ "genesis": genesis })
     }
 
     fn preview(id: &str, name: &str, parent: Option<&str>) -> RealmTreeNode {
