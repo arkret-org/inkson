@@ -498,14 +498,8 @@ pub(super) async fn probe_device_authorization(
     state_store: SyncSignal<LocalStateStore>,
 ) -> anyhow::Result<(bool, bool)> {
     let viewer = crate::transport::keys::list_devices(&principal_api.sdk_http_client()?).await?;
-    let signer_matches_directory = current_event_signer_matches_directory(
-        principal_api,
-        account,
-        device,
-        &viewer,
-        state_store,
-    )
-    .await?;
+    let signer_matches_directory =
+        current_event_signer_matches_directory(principal_api, account, device, state_store).await?;
     // The account-viewer helpers read `devices[]` leniently via `Value`
     // accessors; serialize the already-validated typed response for them.
     let viewer = serde_json::to_value(viewer)?;
@@ -525,7 +519,6 @@ async fn current_event_signer_matches_directory(
     principal_api: &TransportClient,
     account: &crate::config::ActiveAccountContext,
     device: &str,
-    viewer: &arkret_sdk::AccountView,
     mut state_store: SyncSignal<LocalStateStore>,
 ) -> anyhow::Result<bool> {
     let signer = match crate::event_signer::active_signer() {
@@ -542,7 +535,6 @@ async fn current_event_signer_matches_directory(
     let Some(persisted) =
         crate::identity::device_directory::authenticated_device_authoring_authority(
             &principal_api.sdk_http_client()?,
-            viewer,
             account_id,
             &device_id,
             signer.as_ref(),

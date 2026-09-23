@@ -9,13 +9,10 @@ fn key_backup_authorized_event_ref_for_device(
         .find(|device| {
             &device.device_id == device_id
                 && device.status == arkret_sdk::DeviceSummaryStatus::Active
+                && device.verification_state == arkret_sdk::DeviceSummaryVerificationState::Verified
+                && device.validate().is_ok()
         })
-        .and_then(|device| {
-            device
-                .authorization_ref
-                .as_ref()
-                .map(|reference| reference.event_id.clone())
-        })
+        .and_then(|device| device.authorized_event_ref.clone())
 }
 
 impl crate::transport::TransportClient {
@@ -69,9 +66,12 @@ impl crate::transport::TransportClient {
         let device_id = arkret_sdk::DeviceId::new(signer_device_id.to_owned())?;
         let http = self.sdk_http_client()?;
         let viewer = crate::transport::keys::list_devices(&http).await.ok();
-        let viewer_event_id = viewer.as_ref().and_then(|viewer| {
-            key_backup_authorized_event_ref_for_device(&viewer.devices, &device_id)
-        });
+        let viewer_event_id = viewer
+            .as_ref()
+            .filter(|viewer| viewer.principal_id == account_id.principal_id)
+            .and_then(|viewer| {
+                key_backup_authorized_event_ref_for_device(&viewer.devices, &device_id)
+            });
         let query_event_id = if viewer_event_id.is_none() {
             let outcome =
                 crate::transport::keys::query_keys(&http, account_id, device_id.as_str()).await?;
@@ -240,18 +240,11 @@ mod tests {
             "status": "active",
             "verification_state": "verified",
             "verification_source": "pairing_code",
-            "authorization_ref": {
-                "event_id": event_id,
-                "commit_id": arkret_sdk::RealmCommitId::from_digest([7; 32]),
-                "stream_ref": {
-                    "kind": "realm",
-                    "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
-                },
-                "stream_position": 1
-            }
+            "authorized_event_ref": event_id,
+            "signer_resolution_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }))
         .unwrap();
-        let expected = active.authorization_ref.as_ref().unwrap().event_id.clone();
+        let expected = active.authorized_event_ref.clone().unwrap();
 
         assert_eq!(
             key_backup_authorized_event_ref_for_device(&[active], &device_id),
@@ -268,15 +261,8 @@ mod tests {
             "status": "revoked",
             "verification_state": "verified",
             "verification_source": "recovery",
-            "authorization_ref": {
-                "event_id": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
-                "commit_id": arkret_sdk::RealmCommitId::from_digest([7; 32]),
-                "stream_ref": {
-                    "kind": "realm",
-                    "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
-                },
-                "stream_position": 1
-            }
+            "authorized_event_ref": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
+            "signer_resolution_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }))
         .unwrap();
         let active_without_commit: arkret_sdk::AccountDeviceSummary =

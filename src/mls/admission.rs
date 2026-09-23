@@ -87,13 +87,10 @@ fn requester_device_authorize_event_id(
         .find(|device| {
             &device.device_id == device_id
                 && device.status == arkret_sdk::DeviceSummaryStatus::Active
+                && device.verification_state == arkret_sdk::DeviceSummaryVerificationState::Verified
+                && device.validate().is_ok()
         })
-        .and_then(|device| {
-            device
-                .authorization_ref
-                .as_ref()
-                .map(|reference| reference.event_id.clone())
-        })
+        .and_then(|device| device.authorized_event_ref.clone())
 }
 
 /// Build the complete admission unit for one claimed KeyPackage.
@@ -436,20 +433,23 @@ mod tests {
     fn requester_device_summary(
         device_id: &arkret_sdk::DeviceId,
         status: &str,
-        authorization_ref: Option<serde_json::Value>,
+        authorized_event_ref: Option<serde_json::Value>,
     ) -> arkret_sdk::AccountDeviceSummary {
         let mut value = serde_json::json!({
             "device_id": device_id,
             "status": status,
-            "verification_state": if authorization_ref.is_some() { "verified" } else { "unresolved" },
-            "verification_source": if authorization_ref.is_some() {
+            "verification_state": if authorized_event_ref.is_some() { "verified" } else { "unresolved" },
+            "verification_source": if authorized_event_ref.is_some() {
                 serde_json::Value::String("pairing_code".to_owned())
             } else {
                 serde_json::Value::Null
             }
         });
-        if let Some(authorization_ref) = authorization_ref {
-            value["authorization_ref"] = authorization_ref;
+        if let Some(authorized_event_ref) = authorized_event_ref {
+            value["authorized_event_ref"] = authorized_event_ref;
+            value["signer_resolution_evidence_ref"] = serde_json::json!(
+                "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            );
         }
         serde_json::from_value(value).unwrap()
     }
@@ -461,20 +461,9 @@ mod tests {
         let event_id =
             arkret_sdk::EventId::new("ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e")
                 .unwrap();
-        let active = requester_device_summary(
-            &device_id,
-            "active",
-            Some(serde_json::json!({
-                "event_id": event_id,
-                "commit_id": arkret_sdk::RealmCommitId::from_digest([7; 32]),
-                "stream_ref": {
-                    "kind": "realm",
-                    "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
-                },
-                "stream_position": 1
-            })),
-        );
-        let expected = active.authorization_ref.as_ref().unwrap().event_id.clone();
+        let active =
+            requester_device_summary(&device_id, "active", Some(serde_json::json!(event_id)));
+        let expected = active.authorized_event_ref.clone().unwrap();
 
         assert_eq!(
             requester_device_authorize_event_id(&[active], &device_id),
@@ -486,16 +475,9 @@ mod tests {
     fn welcome_requester_rejects_revoked_or_uncommitted_device() {
         let device_id =
             arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001").unwrap();
-        let authorization_ref = serde_json::json!({
-            "event_id": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
-            "commit_id": arkret_sdk::RealmCommitId::from_digest([7; 32]),
-            "stream_ref": {
-                "kind": "realm",
-                "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
-            },
-            "stream_position": 1
-        });
-        let revoked = requester_device_summary(&device_id, "revoked", Some(authorization_ref));
+        let authorized_event_ref =
+            serde_json::json!("ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e");
+        let revoked = requester_device_summary(&device_id, "revoked", Some(authorized_event_ref));
         let active_without_commit = requester_device_summary(&device_id, "active", None);
 
         assert!(requester_device_authorize_event_id(&[revoked], &device_id).is_none());

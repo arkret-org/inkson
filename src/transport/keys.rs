@@ -33,7 +33,8 @@ fn has_current_verification_checkpoint(
             && device.status == arkret_sdk::DeviceSummaryStatus::Active
             && device.verification_state == arkret_sdk::DeviceSummaryVerificationState::Verified
             && device.verification_source.is_some()
-            && device.authorization_ref.is_some()
+            && device.authorized_event_ref.is_some()
+            && device.signer_resolution_evidence_ref.is_some()
             && device.validate().is_ok()
     })
 }
@@ -169,22 +170,15 @@ mod tests {
         status: DeviceSummaryStatus,
         verification_state: DeviceSummaryVerificationState,
         verification_source: Option<DeviceSummaryVerificationSource>,
-        with_authorization_ref: bool,
+        with_checkpoint: bool,
     ) -> arkret_sdk::AccountDeviceSummary {
         serde_json::from_value(serde_json::json!({
             "device_id": "ak:device:01964137-0000-7000-8000-0000000000c1",
             "status": status,
             "verification_state": verification_state,
             "verification_source": verification_source,
-            "authorization_ref": with_authorization_ref.then(|| serde_json::json!({
-                "event_id": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
-                "commit_id": arkret_sdk::RealmCommitId::from_digest([7; 32]),
-                "stream_ref": {
-                    "kind": "realm",
-                    "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
-                },
-                "stream_position": 1
-            }))
+            "authorized_event_ref": with_checkpoint.then_some("ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e"),
+            "signer_resolution_evidence_ref": with_checkpoint.then_some("ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         }))
         .expect("valid device summary fixture")
     }
@@ -214,6 +208,18 @@ mod tests {
             true,
         );
         assert!(has_current_verification_checkpoint(&[active], &target));
+
+        let mut missing_signer_evidence = device(
+            DeviceSummaryStatus::Active,
+            DeviceSummaryVerificationState::Verified,
+            Some(DeviceSummaryVerificationSource::PairingCode),
+            true,
+        );
+        missing_signer_evidence.signer_resolution_evidence_ref = None;
+        assert!(!has_current_verification_checkpoint(
+            &[missing_signer_evidence],
+            &target
+        ));
 
         for invalid in [
             device(

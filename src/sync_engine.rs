@@ -882,7 +882,7 @@ impl InksonAccountProjector {
             self.control.cancel();
             return Ok(false);
         }
-        refresh_local_device_authoring_authority(http, &viewer, &self.ctx).await?;
+        refresh_local_device_authoring_authority(http, &self.ctx).await?;
         self.ctx
             .state_store
             .write(|store| store.set_local_device_refresh_pending(false));
@@ -1179,7 +1179,6 @@ fn scope_rotate_realm_ids(
 
 async fn refresh_local_device_authoring_authority(
     http: &arkret_sdk::http_client::Client,
-    viewer: &arkret_sdk::AccountView,
     ctx: &SyncEngineContext,
 ) -> anyhow::Result<()> {
     let signer = crate::event_signer::active_signer()
@@ -1198,9 +1197,8 @@ async fn refresh_local_device_authoring_authority(
         .ok_or_else(|| anyhow::anyhow!("active endpoint signer has no public key"))?;
     let expected_key = format!("did:key:{public_key}");
 
-    // A device-list notification (including the first founding Seal) fences
-    // the retained pair before either refreshed reference is consumed. The
-    // next successful refresh installs Data and Control together.
+    // A device-list notification fences retained authoring evidence before
+    // the next exact keys/query refresh installs the current device root.
     crate::identity::device_directory::reset_session_cache();
     crate::identity::authoring_generation::reset_verified_authoring_generations();
     ctx.state_store
@@ -1234,16 +1232,11 @@ async fn refresh_local_device_authoring_authority(
     let persisted =
         crate::identity::device_directory::persisted_device_authoring_authority_from_outcome(
             &outcome,
-            viewer,
             &ctx.account.authority,
             &device_id,
             generation,
         )
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "refreshed device authoring evidence does not contain exact Data and Control roots"
-            )
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("refreshed device authoring evidence is unavailable"))?;
     anyhow::ensure!(
         crate::identity::device_directory::restore_persisted_device_authoring_authority(
             device_cache_epoch,

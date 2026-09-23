@@ -807,25 +807,19 @@ pub(super) async fn finish_principal_setup(
         barrier.wait().await?;
     }
 
-    // The committed genesis unit materializes two distinct Station-verified
-    // authoring roots: keys/query carries Data evidence, while the authenticated
-    // account viewer carries Control evidence adjacent to the exact authorize Event.
-    // Install and durably checkpoint both before authoring the ordinary
-    // Control-plane recovery policy. Neither root is a fallback for the other.
+    // The committed genesis unit makes the exact device projection available
+    // through keys/query. Checkpoint its signer evidence before authoring the
+    // ordinary recovery policy.
     crate::identity::device_directory::reset_session_cache();
     crate::identity::authoring_generation::reset_verified_authoring_generations();
     state_store.write().set_device_authoring_authority(None);
     let device_cache_epoch = crate::identity::device_directory::cache_epoch();
     let http = api.sdk_http_client()?;
-    let viewer = crate::transport::keys::list_devices(&http)
-        .await
-        .context("read the accepted founding device Control evidence")?;
     let signer = crate::event_signer::active_signer()
         .context("accepted founding device signer is unavailable")?;
     let Some(persisted) =
         crate::identity::device_directory::authenticated_device_authoring_authority(
             &http,
-            &viewer,
             &account.authority,
             &account.device_id,
             signer.as_ref(),
@@ -834,9 +828,7 @@ pub(super) async fn finish_principal_setup(
     else {
         crate::identity::device_directory::reset_session_cache();
         crate::identity::authoring_generation::reset_verified_authoring_generations();
-        anyhow::bail!(
-            "accepted founding device projection does not contain exact Data and Control authoring evidence"
-        );
+        anyhow::bail!("accepted founding device projection does not contain authoring evidence");
     };
     if !crate::identity::device_directory::restore_persisted_device_authoring_authority(
         device_cache_epoch,
