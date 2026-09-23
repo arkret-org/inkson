@@ -23,14 +23,11 @@ fn current_strand(
         .fields
         .insert("category".to_owned(), json!("support"));
 
-    let revision_suffix = if alternate_revision { 2 } else { 1 };
+    let revision_seed = if alternate_revision { 2 } else { 1 };
     arkret_wire::TypedCurrentResult::Value {
         selector: arkret_wire::CurrentSelector::Strand { strand_id },
         revision: arkret_wire::CurrentRevision {
-            commit_id: arkret_sdk::RealmCommitId::new(format!(
-                "ak:realm_commit:0196419b-0000-7000-8000-{revision_suffix:012}"
-            ))
-            .unwrap(),
+            commit_id: arkret_sdk::RealmCommitId::from_digest([revision_seed; 32]),
             stream_position: 7,
         },
         value: serde_json::to_value(strand).unwrap(),
@@ -39,10 +36,9 @@ fn current_strand(
 
 fn channel_from_current(current: arkret_wire::TypedCurrentResult) -> ChannelEntity {
     let mut state = ClientLocalState::default();
-    state.realm_tree_projections.insert(
-        CHANNEL_REALM.to_owned(),
-        json!({"current":{"entries":[current]}}),
-    );
+    state
+        .realm_tree_projections
+        .insert(CHANNEL_REALM.to_owned(), json!({"current":[current]}));
     channels_from_local_state(&state, CHANNEL_REALM)
         .into_iter()
         .next()
@@ -72,7 +68,7 @@ fn channel_restore_is_isolated_to_selected_realm() {
         state.realm_tree_projections.insert(
             realm.to_owned(),
             json!({
-                "current":{"entries":[current_strand(realm,title,false)]}
+                "current":[current_strand(realm,title,false)]
             }),
         );
     }
