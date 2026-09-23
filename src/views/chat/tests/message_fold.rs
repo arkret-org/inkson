@@ -34,6 +34,38 @@ fn sign_chat_fixtures(values: &mut [Value]) {
     }
 }
 
+fn verified_chat_create(
+    realm: &arkret_sdk::RealmId,
+    principal: &str,
+    body: &str,
+) -> arkret_sdk::CommittedEventFullView {
+    let device_id = "ak:device:0196419b-0000-7000-8000-000000000001";
+    let committed = fixture::committed_event::verified_realm_item_as(
+        realm.clone(),
+        arkret_sdk::EventKind::MessageCreate.as_str(),
+        json!({
+            "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+            "track_name": "discussion",
+            "content": {"kind": "ak.content.text", "body": body}
+        }),
+        principal,
+        device_id,
+    );
+    let signer = arkret_test_kit::keys::seeded_signer(
+        arkret_sdk::Did::new(format!("did:web:{principal}")).unwrap(),
+        arkret_sdk::DidUrl::new(format!("did:web:{principal}#{device_id}")).unwrap(),
+    );
+    let key = arkret_sdk::canonical::ed25519_pubkey_to_did_key_multibase(
+        signer.verifying_key().as_bytes(),
+    );
+    crate::identity::device_directory::seed_positive_for_test(
+        &committed.event.actor_id.to_string(),
+        device_id,
+        crate::identity::device_directory::public_key_from_directory_value(&key).unwrap(),
+    );
+    committed
+}
+
 #[test]
 fn optimistic_chat_ids_do_not_claim_protocol_identity() {
     let id = new_chat_local_id();
@@ -49,35 +81,28 @@ fn optimistic_chat_ids_do_not_claim_protocol_identity() {
 
 #[test]
 fn restores_messages_from_local_raw_operations() {
-    let mut state = ClientLocalState {
+    let realm = arkret_sdk::RealmId::new(
+        "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI".to_owned(),
+    )
+    .unwrap();
+    let committed = verified_chat_create(&realm, "alice.example", "local fallback message");
+    let state = ClientLocalState {
         raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:local".to_owned(),
-            realm_id: Some("ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
+            realm_id: Some(realm.to_string()),
             received_at: chrono::Utc::now(),
-            payload: json!({
-                "event_id": "ak:event:A4z3EXS8Sy0uqnc2LYMOAl9wdzpzu9JxTnPoGI2aWOf0",
-                "kind": "ak.message.create",
-                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-                "realm_id": "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
-                "body": "local fallback message",
-                "strand_id": "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
-                "message_id": "chat-msg-local"
-            }),
+            payload: serde_json::to_value(&committed.event).unwrap(),
         }],
         ..ClientLocalState::default()
     };
-    sign_chat_fixture(&mut state.raw_operations[0].payload);
 
     let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
 
     assert_eq!(messages.len(), 1);
-    assert_eq!(
-        messages[0].realm_id,
-        "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q"
-    );
+    assert_eq!(messages[0].realm_id, realm.as_str());
     assert_eq!(
         messages[0].strand_id,
-        "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c"
+        "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE"
     );
     assert_eq!(messages[0].sender, "ak:did_core:web:alice.example");
     assert_eq!(messages[0].body, "local fallback message");
@@ -85,24 +110,21 @@ fn restores_messages_from_local_raw_operations() {
 
 #[test]
 fn restores_canonical_actor_id_from_local_raw_operations() {
-    let mut state = ClientLocalState {
+    let realm = arkret_sdk::RealmId::new(
+        "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI".to_owned(),
+    )
+    .unwrap();
+    let committed =
+        verified_chat_create(&realm, "local.host:users:alice", "canonical local message");
+    let state = ClientLocalState {
         raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:local".to_owned(),
-            realm_id: Some("ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
+            realm_id: Some(realm.to_string()),
             received_at: chrono::Utc::now(),
-            payload: json!({
-                "event_id": "ak:event:A4z3EXS8Sy0uqnc2LYMOAl9wdzpzu9JxTnPoGI2aWOf0",
-                "kind": "ak.message.create",
-                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:local.host:users:alice","station_id":"ak:did_core:web:principal.example"}},
-                "realm_id": "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
-                "body": "canonical local message",
-                "strand_id": "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
-                "message_id": "chat-msg-local"
-            }),
+            payload: serde_json::to_value(&committed.event).unwrap(),
         }],
         ..ClientLocalState::default()
     };
-    sign_chat_fixture(&mut state.raw_operations[0].payload);
 
     let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
 
@@ -118,17 +140,12 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
     // dedup id = event_id) that `chat_messages_from_local_state_with_sidecar`
     // renders WITHOUT any backfill — the event-sourced replacement for the
     // per-open realm refetch.
-    let mut create = json!({
-        "event_id": "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc",
-        "kind": "ak.message.create",
-        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-        "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
-        "created_at": "2026-05-22T10:00:00.000Z",
-        "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
-        "message_id": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
-        "body": "hello from bob"
-    });
-    sign_chat_fixture(&mut create);
+    let realm = arkret_sdk::RealmId::new(
+        "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI".to_owned(),
+    )
+    .unwrap();
+    let committed = verified_chat_create(&realm, "bob.example", "hello from bob");
+    let create = serde_json::to_value(&committed.event).unwrap();
     // A non-message timeline event (e.g. a poll close) MUST be ignored.
     let poll = json!({
         "event_id": "ak:event:A-mHyQfTHaRP4hPsEzDRoY0ybwSW0ZIu_kPanXYJ_cJ8",
@@ -137,19 +154,10 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
         "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE"
     });
 
-    let records = message_operations_from_events(
-        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
-        &[create.clone(), poll],
-    );
+    let records = message_operations_from_events(realm.as_str(), &[create.clone(), poll]);
     assert_eq!(records.len(), 1, "only the message-create event is folded");
-    assert_eq!(
-        records[0].operation_id,
-        "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc"
-    );
-    assert_eq!(
-        records[0].realm_id.as_deref(),
-        Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0")
-    );
+    assert_eq!(records[0].operation_id, committed.event.event_id.as_str());
+    assert_eq!(records[0].realm_id.as_deref(), Some(realm.as_str()));
     assert_eq!(
         records[0].payload, create,
         "full event stored for proof/ciphertext"
