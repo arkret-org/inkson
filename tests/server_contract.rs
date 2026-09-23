@@ -124,21 +124,21 @@ fn inkson_accepts_server_contract_payloads() {
             .contains(&"ak.profile.minimal_client.v1".to_owned())
     );
 
-    let frame: arkret_sdk::AccountSubscribeFrame = serde_json::from_value(json!({
-        "kind": "delta",
-        "cursor": "ak:cursor:contract-sync",
-        "realms": {
-            "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk": {
-                "timeline": {"events": [], "limited": false}
+    let frame: arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame =
+        serde_json::from_value(json!({
+            "kind": "delta",
+            "cursor": "ak:cursor:contract-sync",
+            "realms": {
+                "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk": {
+                    "committed_events": []
+                }
             }
-        }
-    }))
-    .unwrap();
-    let sync = inkson::models::AccountSyncStep::from_updates(
-        "ak:cursor:contract-sync".to_owned(),
-        garth::SyncResponseProcessor::process_frame(frame).unwrap(),
-    )
-    .unwrap();
+        }))
+        .unwrap();
+    frame.validate().expect("formal account delta frame");
+    let sync =
+        inkson::models::AccountSyncStep::from_frame("ak:cursor:contract-sync".to_owned(), &frame)
+            .unwrap();
     assert!(
         sync.realm_projections
             .contains_key("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk")
@@ -594,59 +594,62 @@ fn server_description_gates_event_envelope_write_plane() {
 
 #[test]
 fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
-    // Spec-aligned wire shape per `arkret-spec/.../client-sync.md §2`:
-    // flat `realms` keyed by realm id, explicit top-level
-    // `left_realms`, flat arrays for `to_device` / `account_data` /
-    let frame: arkret_sdk::AccountSubscribeFrame = serde_json::from_value(json!({
-        "kind": "delta",
-        "cursor": "ak:cursor:v1-bucket",
-        "realms": {
-            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-": {
-                "timeline": {"events": [], "limited": false}
-            }
-        },
-        "device_lists": {"changed_ids": [], "left_ids": []},
-        "notifications": {"items": []}
-    }))
-    .unwrap();
-    let sync = inkson::models::AccountSyncStep::from_updates(
-        "ak:cursor:v1-bucket".to_owned(),
-        garth::SyncResponseProcessor::process_frame(frame).unwrap(),
-    )
-    .unwrap();
+    // The account frame carries Realm entries keyed by Realm id, while the
+    // independent committed-event subscription owns its cursor controls.
+    let frame: arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame =
+        serde_json::from_value(json!({
+            "kind": "delta",
+            "cursor": "ak:cursor:v1-bucket",
+            "realms": {
+                "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-": {
+                    "committed_events": []
+                }
+            },
+            "device_lists": {"changed_ids": [], "left_ids": []},
+            "notifications": {"items": []}
+        }))
+        .unwrap();
+    frame.validate().expect("formal account delta frame");
+    let sync =
+        inkson::models::AccountSyncStep::from_frame("ak:cursor:v1-bucket".to_owned(), &frame)
+            .unwrap();
     assert_eq!(sync.cursor, "ak:cursor:v1-bucket");
     assert!(
         sync.realm_projections
             .contains_key("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-")
     );
-    assert!(sync.updates.to_device.is_empty());
-    assert!(sync.updates.account_data.is_empty());
-    assert!(sync.updates.notifications.is_empty());
+    assert!(frame.to_device.is_none());
+    assert!(frame.account_data.is_none());
+    assert!(
+        frame
+            .notifications
+            .as_ref()
+            .is_some_and(|items| items.items.is_empty())
+    );
 
+    use arkret_models_collaboration::sync_frames::committed_event_subscribe::{
+        CommittedEventSubscribeFrame, CommittedEventSubscribeFrameKind,
+    };
     let frames = [
         r#"{"kind":"heartbeat"}"#,
-        r#"{"cursor":"ak:cursor:frontier","kind":"frontier"}"#,
-        r#"{"cursor":"ak:cursor:live","kind":"catchup_complete"}"#,
+        r#"{"kind":"checkpoint","cursor":"ak:cursor:frontier"}"#,
+        r#"{"kind":"catchup_complete","cursor":"ak:cursor:live"}"#,
     ]
     .into_iter()
     .map(|line| {
-        arkret_sdk::EventsSubscribeFrame::from_ndjson_line(line)
+        CommittedEventSubscribeFrame::from_ndjson_line(line)
             .unwrap()
             .unwrap()
     })
     .collect::<Vec<_>>();
+    assert_eq!(frames[0].kind, CommittedEventSubscribeFrameKind::Heartbeat);
+    assert_eq!(frames[1].kind, CommittedEventSubscribeFrameKind::Checkpoint);
+    assert_eq!(frames[1].cursor.as_deref(), Some("ak:cursor:frontier"));
     assert_eq!(
-        frames[0].kind(),
-        arkret_sdk::EventsSubscribeFrameKind::Heartbeat
+        frames[2].kind,
+        CommittedEventSubscribeFrameKind::CatchupComplete
     );
-    assert_eq!(
-        frames[1].kind(),
-        arkret_sdk::EventsSubscribeFrameKind::Frontier
-    );
-    assert_eq!(
-        frames[2].kind(),
-        arkret_sdk::EventsSubscribeFrameKind::CatchupComplete
-    );
+    assert_eq!(frames[2].cursor.as_deref(), Some("ak:cursor:live"));
 }
 
 #[test]

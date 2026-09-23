@@ -309,7 +309,7 @@ fn wire_envelope_from_intent(intent: inkson::operation::EventIntent) -> arkret_s
             intent = intent.with_auth_context(test_auth_context());
         }
     }
-    let mut envelope = common::author_intent_at_seq(intent, 1);
+    let mut envelope = common::author_intent_at_index(intent, 1);
     let signer_did = TEST_ACTOR_DID;
     let key_id = format!("{signer_did}#device");
     envelope
