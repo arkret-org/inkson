@@ -1485,6 +1485,9 @@ mod tests {
         alice_group
             .install_accepted_commit(&accepted_commit, &base_current)
             .unwrap();
+        alice_group
+            .install_test_leaf_bindings(vec![alice_endpoint.clone(), bob_endpoint.clone()])
+            .unwrap();
         let mut bob_group = arkret_sdk::ArkretMlsGroup::join_from_verified_welcome_delivery(
             bob_identity,
             &delivery,
