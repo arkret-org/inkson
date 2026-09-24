@@ -348,27 +348,6 @@ struct InksonAccountProjector {
         crate::transport::websocket_rail::StreamRail<crate::client_core::InksonAccountTransport>,
 }
 
-/// Account frames expose committed rows without a nonce-bound Realm bundle,
-/// historical Station directory, readable floor, or verified predecessor.
-/// They cannot be turned into Garth's VerifiedScanPage in this path. Reject the
-/// whole batch before its current-index stage or account cursor can advance;
-/// the independent Realm scanner obtains and verifies these rows separately.
-fn reject_unverified_account_commits(frame: &AccountSubscribeFrame) -> garth::Result<()> {
-    if frame.realms.as_ref().is_some_and(|realms| {
-        realms.entries.values().any(|entry| {
-            entry
-                .committed_events
-                .as_ref()
-                .is_some_and(|items| !items.is_empty())
-        })
-    }) {
-        return Err(garth::Error::Protocol(
-            "account frame committed_events have no verified Realm scan predecessor".to_owned(),
-        ));
-    }
-    Ok(())
-}
-
 /// One committed frame: the Station's batch containers plus the decoded Realm
 /// step the product projections read.
 pub(crate) struct AccountFrameStep {
@@ -653,6 +632,7 @@ impl InksonAccountProjector {
         &self,
         frame: &AccountSubscribeFrame,
         cursor: &str,
+        verified_pages: &[garth::VerifiedScanPage],
     ) -> garth::Result<()> {
         if frame.kind == AccountSubscribeFrameKind::ResyncRequired {
             return self.reset_account_context().await;
@@ -660,7 +640,6 @@ impl InksonAccountProjector {
         if !self.fence() {
             return Ok(());
         }
-        reject_unverified_account_commits(frame)?;
         let response = AccountFrameStep::new(frame.clone(), cursor.to_owned())
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let current_index = self.current_index().await?;
@@ -681,25 +660,29 @@ impl InksonAccountProjector {
             .ctx
             .state_store
             .write(|store| {
-                store.batch(|store| {
-                    let result = (|| -> anyhow::Result<_> {
-                        let staged =
-                            store.prepare_account_demand_frame(current_stage.filtered_frame())?;
-                        let effects = apply_account_frame_payload(store, &response, &self.ctx)?;
-                        if changed_device_accounts(&response.device_lists())
-                            .contains(&local_account)
-                        {
-                            store.set_local_device_refresh_pending(true);
-                        }
-                        store.finish_account_demand_frame(&staged)?;
-                        store.set_current_generation(current_stage.generation());
-                        store.save_sync_demand_filter(self.request_filter.clone())?;
-                        Ok(effects)
-                    })();
-                    if result.is_err() {
-                        store.abort_account_demand_frame(previous_generation);
+                store.verified_projection_transaction(|store| {
+                    for page in verified_pages {
+                        store.ingest_verified_message_commits(page)?;
+                        crate::identity::agent_signer_evidence::index_verified_committed_page(
+                            store, page,
+                        )?;
                     }
-                    result
+                    let staged = store
+                        .prepare_account_demand_frame(current_stage.filtered_frame())
+                        .map_err(|error| error.to_string())?;
+                    let effects = apply_account_frame_payload(store, &response, &self.ctx)
+                        .map_err(|error| error.to_string())?;
+                    if changed_device_accounts(&response.device_lists()).contains(&local_account) {
+                        store.set_local_device_refresh_pending(true);
+                    }
+                    store
+                        .finish_account_demand_frame(&staged)
+                        .map_err(|error| error.to_string())?;
+                    store.set_current_generation(current_stage.generation());
+                    store
+                        .save_sync_demand_filter(self.request_filter.clone())
+                        .map_err(|error| error.to_string())?;
+                    Ok(effects)
                 })
             })
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
@@ -895,12 +878,15 @@ impl InksonAccountProjector {
 
 impl AccountBatchProjector for InksonAccountProjector {
     async fn project(&self, batch: &AccountSubscribeBatch) -> garth::Result<()> {
+        let http = self.transport.http().http();
+        let mut verified = Vec::with_capacity(batch.frames.len());
         for frame in &batch.frames {
-            reject_unverified_account_commits(frame)?;
+            verified
+                .push(crate::realm_events_engine::verify_account_frame_commits(http, frame).await?);
         }
         self.validate_station_cas_batch(batch).await?;
-        for frame in &batch.frames {
-            self.project_frame(frame, &batch.cursor).await?;
+        for (frame, pages) in batch.frames.iter().zip(verified.iter()) {
+            self.project_frame(frame, &batch.cursor, pages).await?;
         }
         Ok(())
     }
@@ -2820,7 +2806,7 @@ mod tests {
     }
 
     #[test]
-    fn account_committed_rows_fail_closed_without_nonce_history_and_predecessor() {
+    fn account_committed_rows_require_exact_verified_scan_material() {
         let realm_id = sdk_realm_id();
         let accepted = crate::test_support::committed_event::verified_realm_items(
             realm_id.clone(),
@@ -2839,7 +2825,13 @@ mod tests {
                 "committed_events": accepted.into_iter().map(arkret_sdk::CommittedEventView::Full).collect::<Vec<_>>()
             }}
         })).unwrap();
-        let mut cases = vec![base.clone()]; // No nonce or historical key carrier.
+        let scanned = base.realms.as_ref().unwrap().entries[realm_id.as_str()]
+            .committed_events
+            .as_ref()
+            .unwrap()
+            .iter()
+            .collect::<Vec<_>>();
+        let mut cases = Vec::new();
         let mut bad_generation = base.clone();
         if let arkret_sdk::CommittedEventView::Full(row) = &mut bad_generation
             .realms
@@ -2871,7 +2863,7 @@ mod tests {
                 arkret_sdk::Hash::new(format!("sha256:{}", "f".repeat(64))).unwrap();
         }
         cases.push(bad_signature);
-        let mut missing_key = base;
+        let mut missing_key = base.clone();
         if let arkret_sdk::CommittedEventView::Full(row) = &mut missing_key
             .realms
             .as_mut()
@@ -2888,8 +2880,17 @@ mod tests {
         }
         cases.push(missing_key);
         let store = crate::state::isolated_store_for_tests("account-unverified-commits");
+        assert!(crate::realm_events_engine::require_exact_claimed_rows(&scanned, &scanned).is_ok());
         for frame in cases {
-            assert!(reject_unverified_account_commits(&frame).is_err());
+            let claimed = frame.realms.as_ref().unwrap().entries[realm_id.as_str()]
+                .committed_events
+                .as_ref()
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>();
+            assert!(
+                crate::realm_events_engine::require_exact_claimed_rows(&claimed, &scanned).is_err()
+            );
             assert!(store.sync_cursor().is_none());
             assert!(store.load().raw_operations.is_empty());
         }
