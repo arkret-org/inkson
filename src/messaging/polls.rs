@@ -264,6 +264,19 @@ pub fn build_poll_vote_op(
     poll_ref: &str,
     selections: &[String],
 ) -> anyhow::Result<crate::operation::LocalOperation> {
+    build_poll_vote_op_with_heads(realm_id, actor, strand_id, poll_ref, selections, Vec::new())
+}
+
+/// Author a replacement declaration only from accepted response Event refs
+/// supplied by the caller's verified current poll projection.
+pub fn build_poll_vote_op_with_heads(
+    realm_id: &str,
+    actor: &str,
+    strand_id: &str,
+    poll_ref: &str,
+    selections: &[String],
+    response_heads: Vec<arkret_sdk::PollResponseHead>,
+) -> anyhow::Result<crate::operation::LocalOperation> {
     if selections.is_empty() {
         anyhow::bail!("poll response requires at least one selection");
     }
@@ -287,7 +300,8 @@ pub fn build_poll_vote_op(
             serde_json::to_value(&block)
                 .map_err(|err| anyhow::anyhow!("poll vote content serialize: {err}"))?,
         )?,
-    );
+    )
+    .with_poll_response_heads(response_heads)?;
     crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
         realm_id, actor, payload,
     )
@@ -305,6 +319,47 @@ pub fn new_poll_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacement_vote_authors_typed_response_heads_without_causal_refs() {
+        let poll_event_ref = arkret_sdk::EventId::new(
+            "ak:event:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu".to_owned(),
+        )
+        .unwrap();
+        let response_event_ref = arkret_sdk::EventId::new(
+            "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z".to_owned(),
+        )
+        .unwrap();
+        let heads = vec![arkret_sdk::PollResponseHead {
+            poll_event_ref: poll_event_ref.clone(),
+            response_event_ref: response_event_ref.clone(),
+        }];
+        let operation = build_poll_vote_op_with_heads(
+            "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+            "ak:did_core:web:alice.example",
+            "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
+            arkret_sdk::MessageId::from_event_id(&poll_event_ref).as_str(),
+            &["opt-1".to_owned()],
+            heads.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            operation.payload()["poll_response_heads"],
+            serde_json::json!(heads)
+        );
+        assert!(!operation.payload().contains_key("causal_refs"));
+        assert!(
+            build_poll_vote_op_with_heads(
+                "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+                "ak:did_core:web:alice.example",
+                "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
+                arkret_sdk::MessageId::from_event_id(&poll_event_ref).as_str(),
+                &["opt-1".to_owned()],
+                vec![heads[0].clone(), heads[0].clone()],
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn draft_starts_with_two_blank_options() {

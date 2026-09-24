@@ -16,7 +16,7 @@ pub(super) fn ensure_first_poll_vote(
     card: &crate::messaging::polls::PollCard,
     poll_ref: &arkret_sdk::MessageId,
     actor: &arkret_sdk::ActorId,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<arkret_sdk::PollResponseHead>> {
     anyhow::ensure!(
         card.poll_ref.as_ref() == Some(poll_ref),
         "poll is not an accepted message"
@@ -24,6 +24,23 @@ pub(super) fn ensure_first_poll_vote(
     anyhow::ensure!(
         !card.actor_has_voted(actor),
         "cannot change a poll vote until the accepted response Event reference is available"
+    );
+    Ok(Vec::new())
+}
+
+fn ensure_response_heads_match_operation(
+    operation: &crate::operation::LocalOperation,
+    response_heads: &[arkret_sdk::PollResponseHead],
+) -> anyhow::Result<()> {
+    let operation_heads = operation.payload().get("poll_response_heads");
+    let expected_heads = if response_heads.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_value(response_heads)?)
+    };
+    anyhow::ensure!(
+        operation_heads == expected_heads.as_ref(),
+        "poll response heads differ from the typed operation"
     );
     Ok(())
 }
@@ -35,7 +52,9 @@ pub(super) async fn submit_poll_operation(
     operation: &crate::operation::LocalOperation,
     realm_id: &str,
     strand_id: &str,
+    response_heads: Vec<arkret_sdk::PollResponseHead>,
 ) -> anyhow::Result<String> {
+    ensure_response_heads_match_operation(operation, &response_heads)?;
     let content = operation
         .payload()
         .get("content")
@@ -60,8 +79,9 @@ pub(super) async fn submit_poll_operation(
         .await
         .map_err(anyhow::Error::msg)?;
         // The closed prepared-message intent does not carry the typed
-        // poll_response_heads declaration. Poll responses therefore use a
-        // directly authored MessageCreate Event; initial votes have no head.
+        // poll_response_heads declaration. Author the encrypted response as a
+        // typed MessageCreate Event so the signed plaintext payload can carry
+        // the caller's verified accepted replacement heads.
         let crate::views::secure_send::SecureWritePlan::Message(authoring) = build.message_plan
         else {
             anyhow::bail!("a poll response requires the encrypted message build");
@@ -79,9 +99,13 @@ pub(super) async fn submit_poll_operation(
                     authoring.reply_to.as_deref(),
                 )
                 .map_err(|error| format!("poll response intent build failed: {error:#}"))?;
+                let payload = intent
+                    .payload()
+                    .with_poll_response_heads(response_heads)
+                    .map_err(|error| format!("poll response heads invalid: {error}"))?;
                 crate::operation::TypedOperationBuilder::new::<
                     arkret_sdk::event_spec::MessageCreate,
-                >(&plan_realm_id, &plan_actor, intent.payload())
+                >(&plan_realm_id, &plan_actor, payload)
                 .effective_scope(plan_scope)
                 .build_sdk_event("inkson")
                 .map(|operation| operation.with_local_operation_id(plan_local_operation_id))
@@ -146,5 +170,31 @@ mod tests {
         card.votes[0].clear();
         card.poll_ref = None;
         assert!(ensure_first_poll_vote(&card, &poll_ref, &actor).is_err());
+    }
+
+    #[test]
+    fn response_head_parameter_must_match_signed_operation_payload() {
+        let poll = arkret_sdk::EventId::new(
+            "ak:event:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu".to_owned(),
+        )
+        .unwrap();
+        let head = arkret_sdk::PollResponseHead {
+            poll_event_ref: poll.clone(),
+            response_event_ref: arkret_sdk::EventId::new(
+                "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z".to_owned(),
+            )
+            .unwrap(),
+        };
+        let operation = crate::messaging::polls::build_poll_vote_op_with_heads(
+            "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+            "ak:did_core:web:alice.example",
+            "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
+            arkret_sdk::MessageId::from_event_id(&poll).as_str(),
+            &["opt-0".to_owned()],
+            vec![head.clone()],
+        )
+        .unwrap();
+        assert!(ensure_response_heads_match_operation(&operation, &[head]).is_ok());
+        assert!(ensure_response_heads_match_operation(&operation, &[]).is_err());
     }
 }

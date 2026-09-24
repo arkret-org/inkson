@@ -1212,10 +1212,13 @@ impl ChatController {
             .and_then(|card| {
                 super::poll_submission::ensure_first_poll_vote(card, &poll_ref, &actor)
             });
-        if let Err(error) = vote_check {
-            self.status_msg.set(format!("Poll vote refused: {error}"));
-            return;
-        }
+        let response_heads = match vote_check {
+            Ok(heads) => heads,
+            Err(error) => {
+                self.status_msg.set(format!("Poll vote refused: {error}"));
+                return;
+            }
+        };
         if let Some(message) = self
             .messages
             .write()
@@ -1249,12 +1252,13 @@ impl ChatController {
         spawn(async move {
             let result =
                 crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
-                    let operation = crate::messaging::polls::build_poll_vote_op(
+                    let operation = crate::messaging::polls::build_poll_vote_op_with_heads(
                         &realm_id,
                         actor.as_str(),
                         &strand_id,
                         poll_ref.as_str(),
                         &[option_id],
+                        response_heads.clone(),
                     )?;
                     super::poll_submission::submit_poll_operation(
                         &api,
@@ -1263,6 +1267,7 @@ impl ChatController {
                         &operation,
                         &realm_id,
                         &strand_id,
+                        response_heads,
                     )
                     .await
                 })

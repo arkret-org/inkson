@@ -177,6 +177,7 @@ pub(super) fn send_poll(
                     &operation,
                     &realm_id,
                     &strand_id,
+                    Vec::new(), // newly created poll has no accepted response head
                 )
                 .await
             })
