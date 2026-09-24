@@ -694,7 +694,6 @@ impl InksonAccountProjector {
                         .map_err(|error| error.to_string())?;
                     let effects = apply_account_frame_payload(store, &response, &self.ctx)
                         .map_err(|error| error.to_string())?;
-                    verified.install_floor_current(store)?;
                     if changed_device_accounts(&response.device_lists()).contains(&local_account) {
                         store.set_local_device_refresh_pending(true);
                     }
@@ -1132,16 +1131,12 @@ async fn current_index_maintenance(
 
 fn selected_account_filter(ctx: &SyncEngineContext) -> AccountFilter {
     let realm = ctx.selected_realm_id.get();
-    let strands = ctx
-        .state_store
-        .read(|store| store.product_current_strands(&ctx.account.authority, &realm));
     let realms = arkret_sdk::RealmId::new(realm.trim().to_owned())
         .ok()
         .into_iter()
         .collect();
     AccountFilter {
         realm_ids: Some(realms),
-        strand_ids: strands,
         window_limit: Some(20),
         lazy_load_members: Some(true),
         ..Default::default()

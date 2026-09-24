@@ -17,9 +17,8 @@ use arkret_models_crypto::{
     SecurityTransactionPreparedPlan, SecurityTransactionStep, SecurityTransactionTerminalOutcome,
 };
 use arkret_wire::{
-    BackupSeriesId, Base64UrlString, CanonicalPublicMaterial, Did, EventId,
-    EventsSubmitBatchRequestBody, Hash, IssueRecoveryCompletionGrantRequest, SchemaId,
-    TransactionId,
+    BackupSeriesId, Base64UrlString, Did, EventId, EventsSubmitBatchRequestBody, Hash,
+    IssueRecoveryCompletionGrantRequest, SchemaId, TransactionId,
 };
 use garth::{SecurityTransactionEngine, SecurityTransactionStore, SecurityTransactionTransport};
 use zeroize::{Zeroize, Zeroizing};
@@ -335,9 +334,12 @@ impl SecurityRotationDraft {
             prepared_event_batch(self.revoke_submission),
         )?;
         let mut prepared = Vec::with_capacity(self.backup_rotations.len());
-        for draft in self.backup_rotations {
+        for mut draft in self.backup_rotations {
             let active_series_event_id =
                 exactly_one_event_id(&draft.active_series_submission, "active-series")?;
+            draft
+                .new_backup_bodies
+                .sort_by(|left, right| left.backup_id.as_str().cmp(right.backup_id.as_str()));
             let mut new_backups = draft
                 .new_backup_bodies
                 .iter()
@@ -357,9 +359,7 @@ impl SecurityRotationDraft {
                     active_series_event_id,
                     old_backups,
                 },
-                encrypted_backup_material: CanonicalPublicMaterial::canonical_json(
-                    serde_json::to_value(draft.new_backup_bodies)?,
-                )?,
+                new_backup_envelopes: draft.new_backup_bodies,
                 active_series_unit: PreparedEventUnit::new(
                     arkret_sdk::canonical::DigestSuite::Sha256,
                     prepared_event_batch(draft.active_series_submission),

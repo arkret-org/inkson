@@ -245,4 +245,26 @@ mod tests {
         );
         assert!(!message_attempt_may_retry(&rejected));
     }
+
+    #[test]
+    fn inactive_mls_scope_never_retries_but_current_read_fault_replays_exactly() {
+        use arkret_sdk::error_codes::ErrorCode;
+
+        let inactive = problem_failure(arkret_sdk::Problem::from_code(
+            ErrorCode::FAILED_PRECONDITION,
+            "scope has no accepted MLS group",
+        ));
+        assert_eq!(inactive.recovery(), MessageAuthoringRecovery::FailClosed);
+        assert!(!message_attempt_may_retry(&inactive));
+
+        let unavailable = problem_failure(arkret_sdk::Problem::from_code(
+            ErrorCode::TEMPORARILY_UNAVAILABLE,
+            "current MLS group is temporarily unavailable",
+        ));
+        assert_eq!(
+            unavailable.recovery(),
+            MessageAuthoringRecovery::RetrySameRequest
+        );
+        assert!(message_attempt_may_retry(&unavailable));
+    }
 }
