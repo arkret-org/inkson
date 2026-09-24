@@ -348,6 +348,27 @@ struct InksonAccountProjector {
         crate::transport::websocket_rail::StreamRail<crate::client_core::InksonAccountTransport>,
 }
 
+/// Account frames expose committed rows without a nonce-bound Realm bundle,
+/// historical Station directory, readable floor, or verified predecessor.
+/// They cannot be turned into Garth's VerifiedScanPage in this path. Reject the
+/// whole batch before its current-index stage or account cursor can advance;
+/// the independent Realm scanner obtains and verifies these rows separately.
+fn reject_unverified_account_commits(frame: &AccountSubscribeFrame) -> garth::Result<()> {
+    if frame.realms.as_ref().is_some_and(|realms| {
+        realms.entries.values().any(|entry| {
+            entry
+                .committed_events
+                .as_ref()
+                .is_some_and(|items| !items.is_empty())
+        })
+    }) {
+        return Err(garth::Error::Protocol(
+            "account frame committed_events have no verified Realm scan predecessor".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 /// One committed frame: the Station's batch containers plus the decoded Realm
 /// step the product projections read.
 pub(crate) struct AccountFrameStep {
@@ -639,6 +660,7 @@ impl InksonAccountProjector {
         if !self.fence() {
             return Ok(());
         }
+        reject_unverified_account_commits(frame)?;
         let response = AccountFrameStep::new(frame.clone(), cursor.to_owned())
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let current_index = self.current_index().await?;
@@ -873,6 +895,9 @@ impl InksonAccountProjector {
 
 impl AccountBatchProjector for InksonAccountProjector {
     async fn project(&self, batch: &AccountSubscribeBatch) -> garth::Result<()> {
+        for frame in &batch.frames {
+            reject_unverified_account_commits(frame)?;
+        }
         self.validate_station_cas_batch(batch).await?;
         for frame in &batch.frames {
             self.project_frame(frame, &batch.cursor).await?;
@@ -2792,6 +2817,82 @@ mod tests {
             ]
         );
         assert!(report.unavailable_realm_ids.is_empty());
+    }
+
+    #[test]
+    fn account_committed_rows_fail_closed_without_nonce_history_and_predecessor() {
+        let realm_id = sdk_realm_id();
+        let accepted = crate::test_support::committed_event::verified_realm_items(
+            realm_id.clone(),
+            vec![(
+                arkret_sdk::EventKind::MessageCreate.as_str().to_owned(),
+                json!({
+                    "strand_id": "ak:strand:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg",
+                    "track_name": "discussion",
+                    "content": {"kind": "ak.content.text", "body": "unverified frame"}
+                }),
+            )],
+        );
+        let base: AccountSubscribeFrame = serde_json::from_value(json!({
+            "kind": "delta", "cursor": "ak:cursor:must-not-advance",
+            "realms": {realm_id.as_str(): {
+                "committed_events": accepted.into_iter().map(arkret_sdk::CommittedEventView::Full).collect::<Vec<_>>()
+            }}
+        })).unwrap();
+        let mut cases = vec![base.clone()]; // No nonce or historical key carrier.
+        let mut bad_generation = base.clone();
+        if let arkret_sdk::CommittedEventView::Full(row) = &mut bad_generation
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(realm_id.as_str())
+            .unwrap()
+            .committed_events
+            .as_mut()
+            .unwrap()[0]
+        {
+            row.commit.governance_generation += 1;
+        }
+        cases.push(bad_generation);
+        let mut bad_signature = base.clone();
+        if let arkret_sdk::CommittedEventView::Full(row) = &mut bad_signature
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(realm_id.as_str())
+            .unwrap()
+            .committed_events
+            .as_mut()
+            .unwrap()[0]
+        {
+            row.commit.signature.signed_digest =
+                arkret_sdk::Hash::new(format!("sha256:{}", "f".repeat(64))).unwrap();
+        }
+        cases.push(bad_signature);
+        let mut missing_key = base;
+        if let arkret_sdk::CommittedEventView::Full(row) = &mut missing_key
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(realm_id.as_str())
+            .unwrap()
+            .committed_events
+            .as_mut()
+            .unwrap()[0]
+        {
+            row.commit.signature.verification_method =
+                arkret_sdk::DidUrl::new("did:web:unknown.example#authority").unwrap();
+        }
+        cases.push(missing_key);
+        let store = crate::state::isolated_store_for_tests("account-unverified-commits");
+        for frame in cases {
+            assert!(reject_unverified_account_commits(&frame).is_err());
+            assert!(store.sync_cursor().is_none());
+            assert!(store.load().raw_operations.is_empty());
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

@@ -41,11 +41,17 @@ const BACKOFF_FLOOR: Duration = Duration::from_secs(1);
 const BACKOFF_CEILING: Duration = Duration::from_secs(60);
 
 /// Pause between drained passes over the Realm's streams.
-const BEAT: Duration = Duration::from_millis(250);
+// A fresh bundle resets the verified predecessor, so each pass replays from
+// genesis. Do not spin that O(history) work at the old shape-only 250 ms beat.
+const BEAT: Duration = Duration::from_secs(5);
 
 /// Rows requested per scan. The Station may return fewer and flag `truncated`,
 /// which this engine drains before moving to the next stream.
 const SCAN_LIMIT: u16 = 200;
+/// Until a signed verified snapshot can anchor resume, cap a single replay's
+/// in-memory staging. Exceeding this limit leaves projections and cursors
+/// unchanged instead of silently accepting an unverified tail.
+const VERIFIED_REPLAY_MAX_ROWS: usize = 4096;
 
 /// Runtime inputs consumed by the realm events engine. UI frameworks are
 /// confined to the app adapter that constructs these handles.
@@ -320,13 +326,13 @@ where
         nonce: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(nonce))
             .map_err(|error| garth::Error::Protocol(error.to_string()))?,
     };
+    let bundle = authority.resolve_authority(&request).await?;
     let freshness = arkret_identity::RealmAuthorityFreshness::new(
         chrono::Utc::now(),
         request.nonce.clone(),
         chrono::Duration::minutes(5),
     )
     .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-    let bundle = authority.resolve_authority(&request).await?;
     let keys =
         crate::identity::realm_authority_keys::fetch_verified_key_directory(http, &bundle, None)
             .await
@@ -402,6 +408,7 @@ where
     // exists; a position alone is never a cryptographic resume anchor.
     let mut after_position = None;
     let mut pages = Vec::new();
+    let mut staged_rows = 0_usize;
     loop {
         let request = StreamScanRequest {
             realm_id: realm_id.clone(),
@@ -410,6 +417,12 @@ where
             limit: SCAN_LIMIT,
         };
         let outcome = authority.scan(&request).await?;
+        staged_rows = staged_rows.saturating_add(outcome.committed_events.len());
+        if staged_rows > VERIFIED_REPLAY_MAX_ROWS {
+            return Err(garth::Error::Protocol(
+                "verified Realm replay exceeds bounded genesis window".to_owned(),
+            ));
+        }
         let truncated = outcome.truncated;
         let keys = crate::identity::realm_authority_keys::fetch_verified_key_directory(
             http,
