@@ -596,7 +596,9 @@ impl garth::AuthorityTransport for ScriptedAuthority {
         _realm_id: &arkret_wire::RealmId,
         _snapshot_id: &arkret_wire::RealmSnapshotId,
     ) -> garth::Result<arkret_wire::RealmStateSnapshot> {
-        Err(garth::Error::Protocol("snapshot read is not scripted".to_owned()))
+        Err(garth::Error::Protocol(
+            "snapshot read is not scripted".to_owned(),
+        ))
     }
 }
 
