@@ -638,9 +638,44 @@ mod tests {
         assert!(!is_account_viewer_projection_missing_error(&unrelated));
     }
 
+    fn api_error(envelope: Problem) -> anyhow::Error {
+        anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: envelope.status,
+            error: Box::new(envelope),
+        })
+    }
+
     #[test]
-    fn mls_stale_classifier_accepts_canonical_typed_reason() {
+    fn mls_send_refusal_pauses_only_on_typed_epoch_update_required() {
         let envelope = Problem::from_code(
+            arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
+            "key-access checkpoint awaits a covering Commit",
+        )
+        .with_extension(
+            "reason_code",
+            Value::String(arkret_sdk::error_codes::ReasonCode::EPOCH_UPDATE_REQUIRED.to_owned()),
+        );
+        assert_eq!(
+            mls_send_refusal(&api_error(envelope)),
+            Some(garth::MlsSendRefusal::EpochUpdateRequired)
+        );
+    }
+
+    #[test]
+    fn mls_send_refusal_refreshes_on_top_level_epoch_mismatch() {
+        let envelope = Problem::from_code(
+            arkret_sdk::error_codes::ErrorCode::EPOCH_MISMATCH,
+            "frozen epoch is superseded",
+        );
+        assert_eq!(
+            mls_send_refusal(&api_error(envelope)),
+            Some(garth::MlsSendRefusal::EpochMismatch)
+        );
+    }
+
+    #[test]
+    fn mls_send_refusal_ignores_key_access_binding_and_detail_text() {
+        let binding_stale = Problem::from_code(
             arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
             "security_frontier_digest is stale",
         )
@@ -650,40 +685,23 @@ mod tests {
                 arkret_sdk::error_codes::ReasonCode::MLS_GOVERNANCE_BINDING_STALE.to_owned(),
             ),
         );
-        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
-            status: 409,
-            error: Box::new(envelope),
-        });
+        assert_eq!(mls_send_refusal(&api_error(binding_stale)), None);
 
-        assert!(is_mls_governance_binding_stale_error(&error));
-    }
-
-    #[test]
-    fn mls_stale_classifier_rejects_wrong_outer_code() {
-        let envelope = Problem::from_code(
-            arkret_sdk::error_codes::ErrorCode::POLICY_VIOLATION,
-            arkret_sdk::error_codes::ReasonCode::MLS_GOVERNANCE_BINDING_STALE,
+        let wording = Problem::from_code(
+            arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
+            "epoch_update_required epoch_mismatch",
         );
-        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
-            status: 409,
-            error: Box::new(envelope),
-        });
+        assert_eq!(mls_send_refusal(&api_error(wording)), None);
 
-        assert!(!is_mls_governance_binding_stale_error(&error));
-    }
-
-    #[test]
-    fn mls_stale_classifier_rejects_unrelated_policy_violation() {
-        let envelope = Problem::from_code(
+        let wrong_outer = Problem::from_code(
             arkret_sdk::error_codes::ErrorCode::POLICY_VIOLATION,
             "ordinary policy denial",
+        )
+        .with_extension(
+            "reason_code",
+            Value::String(arkret_sdk::error_codes::ReasonCode::EPOCH_UPDATE_REQUIRED.to_owned()),
         );
-        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
-            status: 409,
-            error: Box::new(envelope),
-        });
-
-        assert!(!is_mls_governance_binding_stale_error(&error));
+        assert_eq!(mls_send_refusal(&api_error(wrong_outer)), None);
     }
 
     #[test]

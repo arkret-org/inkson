@@ -19,7 +19,10 @@
 //! a new Seal, so "the accepted Seal head moved since our last binding" is
 //! true after every commit and would make the client emit one commit per Seal
 //! forever. Only the receiver can decide that coverage is actually missing,
-//! and it says so with `mls_governance_binding_stale`.
+//! and it says so with `failed_precondition` / `epoch_update_required`. A
+//! top-level `epoch_mismatch` is a different state (decision 0100): a covering
+//! Commit already exists, so this module does nothing for it and the sender
+//! refreshes its group and re-encrypts a new request instead.
 //!
 //! Genesis replay lives in [`crate::mls::creator_bootstrap`]; this is the same
 //! shape (idempotent, re-enterable, driven from the per-Realm MLS effect) for
@@ -44,9 +47,9 @@ pub(crate) fn note_e2ee_submit_refusal(
 
 /// Record the same coverage refusal when it arrives already classified.
 ///
-/// The typed message authoring path reports a stale governance binding as
-/// [`garth::MessageAuthoringFailure::EncryptionContextChanged`] rather than as
-/// a raw transport error, and the epoch still has to advance for that scope.
+/// The typed message authoring path reports `epoch_update_required` as
+/// [`garth::MessageAuthoringFailure::EpochCommitPending`] rather than as a raw
+/// transport error, and the epoch still has to advance for that scope.
 pub(crate) fn note_e2ee_epoch_update_required(
     state_store: &StateStoreHandle,
     realm_id: &str,
@@ -70,7 +73,8 @@ pub(crate) fn note_e2ee_submit_refusal_in_store(
     circle_id: Option<&str>,
     error: &anyhow::Error,
 ) -> bool {
-    if !crate::api_error::is_mls_governance_binding_stale_error(error) {
+    if crate::api_error::mls_send_refusal(error) != Some(garth::MlsSendRefusal::EpochUpdateRequired)
+    {
         return false;
     }
     if let Err(error) =
@@ -107,7 +111,7 @@ pub(crate) fn pending_mls_coverage_repairs(
 
 /// Stable, non-secret fingerprint for the Realm bootstrap effect's dedup key.
 ///
-/// Recording `mls_governance_binding_stale` mutates only the local state store;
+/// Recording `epoch_update_required` mutates only the local state store;
 /// it does not advance the sync cursor or any of the other inputs that used to
 /// make up that effect's key.  Without this hint the effect woke up, compared
 /// the same key, and returned before running the repair it had just been asked
@@ -264,11 +268,59 @@ mod tests {
         let mut store = temp_store("pending");
         assert!(pending_mls_coverage_repairs(&store, REALM).is_empty());
         store
-            .record_mls_coverage_stale(REALM, None, "mls_governance_binding_stale: ...")
+            .record_mls_coverage_stale(REALM, None, "epoch_update_required: ...")
             .unwrap();
         // Still not repairable: without group material there is nothing to
         // commit from, and the creator bootstrap owns that step.
         assert!(pending_mls_coverage_repairs(&store, REALM).is_empty());
+        assert_eq!(store.stale_mls_coverage_scopes(REALM), vec![None]);
+    }
+
+    fn station_problem(problem: arkret_sdk::Problem) -> anyhow::Error {
+        anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: problem.status,
+            error: Box::new(problem),
+        })
+    }
+
+    #[test]
+    fn only_a_typed_epoch_update_required_arms_the_repair() {
+        use arkret_sdk::error_codes::{ErrorCode, ReasonCode};
+        let mut store = temp_store("typed-refusal");
+        let pending = arkret_sdk::Problem::from_code(
+            ErrorCode::FAILED_PRECONDITION,
+            "key-access checkpoint awaits a Commit",
+        )
+        .with_extension(
+            "reason_code",
+            serde_json::Value::String(ReasonCode::EPOCH_UPDATE_REQUIRED.to_owned()),
+        );
+        let mismatch = arkret_sdk::Problem::from_code(ErrorCode::EPOCH_MISMATCH, "stale epoch");
+        let binding_stale = arkret_sdk::Problem::from_code(
+            ErrorCode::FAILED_PRECONDITION,
+            "mls_governance_binding_stale epoch_update_required",
+        )
+        .with_extension(
+            "reason_code",
+            serde_json::Value::String(ReasonCode::MLS_GOVERNANCE_BINDING_STALE.to_owned()),
+        );
+
+        for refusal in [mismatch, binding_stale] {
+            assert!(!note_e2ee_submit_refusal_in_store(
+                &mut store,
+                REALM,
+                None,
+                &station_problem(refusal),
+            ));
+        }
+        assert!(store.stale_mls_coverage_scopes(REALM).is_empty());
+
+        assert!(note_e2ee_submit_refusal_in_store(
+            &mut store,
+            REALM,
+            None,
+            &station_problem(pending),
+        ));
         assert_eq!(store.stale_mls_coverage_scopes(REALM), vec![None]);
     }
 

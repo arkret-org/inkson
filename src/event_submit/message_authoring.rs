@@ -166,7 +166,7 @@ pub(crate) fn message_attempt_may_retry(failure: &MessageAuthoringFailure) -> bo
     match failure.recovery() {
         MessageAuthoringRecovery::RetrySameRequest
         | MessageAuthoringRecovery::ReplayExactSubmission => true,
-        MessageAuthoringRecovery::ReEncrypt
+        MessageAuthoringRecovery::RefreshGroupAndReEncrypt
         | MessageAuthoringRecovery::WaitForEpochCommit
         | MessageAuthoringRecovery::FailClosed => false,
     }
@@ -199,4 +199,50 @@ pub(crate) async fn drive_message_send(
         }
     }
     Err(last.unwrap_or_else(|| failure("the message send produced no result")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn problem_failure(problem: arkret_sdk::Problem) -> MessageAuthoringFailure {
+        classify_submit_failure(&anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: problem.status,
+            error: Box::new(problem),
+        }))
+    }
+
+    #[test]
+    fn mls_send_gate_refusals_never_replay_the_frozen_submission() {
+        use arkret_sdk::error_codes::{ErrorCode, ReasonCode};
+        let mismatch = problem_failure(arkret_sdk::Problem::from_code(
+            ErrorCode::EPOCH_MISMATCH,
+            "stale",
+        ));
+        assert_eq!(
+            mismatch.recovery(),
+            MessageAuthoringRecovery::RefreshGroupAndReEncrypt
+        );
+        assert!(!message_attempt_may_retry(&mismatch));
+
+        let pending = problem_failure(
+            arkret_sdk::Problem::from_code(ErrorCode::FAILED_PRECONDITION, "uncovered")
+                .with_extension(
+                    "reason_code",
+                    serde_json::Value::String(ReasonCode::EPOCH_UPDATE_REQUIRED.to_owned()),
+                ),
+        );
+        assert_eq!(
+            pending.recovery(),
+            MessageAuthoringRecovery::WaitForEpochCommit
+        );
+        assert!(!message_attempt_may_retry(&pending));
+
+        let rejected = garth::classify_authority_rejection(ReasonCode::EPOCH_UPDATE_REQUIRED);
+        assert_eq!(
+            rejected.recovery(),
+            MessageAuthoringRecovery::WaitForEpochCommit
+        );
+        assert!(!message_attempt_may_retry(&rejected));
+    }
 }

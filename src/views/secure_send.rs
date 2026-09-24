@@ -569,8 +569,21 @@ pub(crate) async fn submit_secure_send(
                 ) =>
         {
             SecureSendOutcome::MessageFailed {
-                message: "Sending is paused until the MLS epoch covers the latest governance \
-                          Seal; advancing the epoch"
+                message: "Sending is paused until an MLS Commit covers the latest membership or \
+                          key-access change; advancing the epoch"
+                    .to_owned(),
+            }
+        }
+        // Decision 0100 `epoch_mismatch`: a covering Commit already exists, so
+        // nothing is repaired here. The frozen Event is never replayed; the
+        // next attempt encrypts a new body once the current group is installed.
+        Err(err)
+            if crate::api_error::mls_send_refusal(&err)
+                == Some(garth::MlsSendRefusal::EpochMismatch) =>
+        {
+            SecureSendOutcome::MessageFailed {
+                message: "The MLS group moved to a newer epoch; refresh the group and send again \
+                          to encrypt for the current epoch"
                     .to_owned(),
             }
         }

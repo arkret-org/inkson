@@ -273,25 +273,16 @@ pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
     Some(envelope.retry_after_ms().unwrap_or(0))
 }
 
-/// `true` for a typed MLS Security Frontier refusal: the submitted binding does
-/// not match the frontier projected from accepted control state and active MLS
-/// leaves.
+/// The current MLS send-gate refusal carried by one Station answer, if any.
 ///
-/// §2.4.1 makes this `epoch_update_required`: the scope MUST stop sending new
-/// encrypted application messages until a Commit binds the current frontier.
-pub(crate) fn is_mls_governance_binding_stale_error(error: &anyhow::Error) -> bool {
-    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
-        let outer_code = envelope.code() == arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION;
-        let stable_reason = envelope
-            .extensions
-            .get("reason_code")
-            .and_then(serde_json::Value::as_str)
-            == Some(arkret_sdk::error_codes::ReasonCode::MLS_GOVERNANCE_BINDING_STALE)
-            || envelope
-                .detail
-                .contains(arkret_sdk::error_codes::ReasonCode::MLS_GOVERNANCE_BINDING_STALE);
-        status == StatusCode::CONFLICT && outer_code && stable_reason
-    })
+/// Classification is by the typed registered identity only (decision 0100):
+/// top-level `epoch_mismatch` means refresh the group and re-encrypt a new
+/// request; `failed_precondition` + `epoch_update_required` means pause until a
+/// covering Commit lands. Problem detail text is never consulted, and a
+/// key-access consumption refusal (`mls_governance_binding_stale`) is neither.
+pub(crate) fn mls_send_refusal(error: &anyhow::Error) -> Option<garth::MlsSendRefusal> {
+    let (_, envelope) = api_error_status_and_envelope(error)?;
+    garth::MlsSendRefusal::from_problem(envelope)
 }
 
 pub fn is_space_membership_denied_error(error: &anyhow::Error) -> bool {
