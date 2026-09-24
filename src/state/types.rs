@@ -810,6 +810,10 @@ pub struct MlsCoverageStale {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HistoricalAgentEventCandidate {
+    /// Older persisted candidates came from shape-only rows. Missing means
+    /// untrusted and is never used as a signer-key query target.
+    #[serde(default)]
+    pub authority_chain_verified: bool,
     pub recipient_account_id: arkret_sdk::AccountId,
     pub realm_id: arkret_sdk::RealmId,
     pub target_ref: arkret_wire::CommittedEventRef,

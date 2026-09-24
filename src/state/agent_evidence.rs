@@ -39,7 +39,10 @@ impl LocalStateStore {
         let recipient = self.active_authority();
         self.historical_agent_candidate_index()
             .values()
-            .filter(|entry| recipient.as_ref() == Some(&entry.recipient_account_id))
+            .filter(|entry| {
+                entry.authority_chain_verified
+                    && recipient.as_ref() == Some(&entry.recipient_account_id)
+            })
             .cloned()
             .collect()
     }
@@ -58,6 +61,9 @@ impl LocalStateStore {
         &mut self,
         entry: HistoricalAgentEventCandidate,
     ) -> Result<bool, String> {
+        if !entry.authority_chain_verified {
+            return Err("historical Agent candidate lacks a verified authority chain".to_owned());
+        }
         if self.active_authority().as_ref() != Some(&entry.recipient_account_id)
             || entry.receiver_id != entry.recipient_account_id.station_id
         {
@@ -122,12 +128,18 @@ impl LocalStateStore {
         method: &arkret_sdk::DidUrl,
     ) -> Vec<CachedHistoricalAgentSignerKey> {
         let recipient = self.active_authority();
+        let trusted_targets = self
+            .historical_agent_event_candidates()
+            .into_iter()
+            .map(|candidate| candidate.target_ref)
+            .collect::<std::collections::BTreeSet<_>>();
         self.historical_agent_key_cache()
             .values()
             .filter(|entry| {
                 recipient.as_ref() == Some(&entry.recipient_account_id)
                     && entry.actor == *actor
                     && entry.verification_method == *method
+                    && trusted_targets.contains(&entry.target_ref)
             })
             .cloned()
             .collect()
@@ -138,11 +150,17 @@ impl LocalStateStore {
         realm: &str,
     ) -> Vec<CachedHistoricalAgentSignerKey> {
         let recipient = self.active_authority();
+        let trusted_targets = self
+            .historical_agent_event_candidates()
+            .into_iter()
+            .map(|candidate| candidate.target_ref)
+            .collect::<std::collections::BTreeSet<_>>();
         self.historical_agent_key_cache()
             .values()
             .filter(|entry| {
                 recipient.as_ref() == Some(&entry.recipient_account_id)
                     && entry.realm_id.as_str() == realm
+                    && trusted_targets.contains(&entry.target_ref)
             })
             .cloned()
             .collect()

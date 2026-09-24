@@ -101,21 +101,11 @@ impl ClientProjector for RealmIngestProjector {
                 .filter_map(|event| accepted_direct_message_final(event, digest_suite, store))
                 .collect::<Vec<_>>()
         });
-        let changed = self.state_store.write(|store| -> garth::Result<usize> {
-            crate::identity::agent_signer_evidence::index_verified_committed_events(store, &batch)
-                .map_err(garth::Error::Protocol)
-                .map(|indexed| {
-                    indexed
-                        + crate::sync_engine::ingest_kanban_events(store, &self.realm_id, &batch)
-                        + crate::sync_engine::ingest_message_events(store, &self.realm_id, &batch)
-                        + crate::sync_engine::ingest_membership_events(
-                            store,
-                            &self.realm_id,
-                            &batch,
-                        )
-                        + crate::sync_engine::ingest_moderation_events(store, &batch)
-                })
-        })?;
+        // This batch came from shape-only `apply_scan`; it has no verified
+        // authority proof. Never turn it into historical Agent signer evidence.
+        let changed = self
+            .state_store
+            .write(|store| ingest_shape_only_realm_batch(store, &self.realm_id, &batch));
         // The local fold above is the durable gate. A preview is never
         // removed merely because a frame with the same message id was
         // observed on the wire.
@@ -131,6 +121,17 @@ impl ClientProjector for RealmIngestProjector {
         }
         Ok(())
     }
+}
+
+fn ingest_shape_only_realm_batch(
+    store: &mut crate::state::LocalStateStore,
+    realm_id: &str,
+    batch: &[ClientEvent],
+) -> usize {
+    crate::sync_engine::ingest_kanban_events(store, realm_id, batch)
+        + crate::sync_engine::ingest_message_events(store, realm_id, batch)
+        + crate::sync_engine::ingest_membership_events(store, realm_id, batch)
+        + crate::sync_engine::ingest_moderation_events(store, batch)
 }
 
 /// Fan one stream's scanned commits into the ordered [`ClientEvent`] batch the
@@ -414,9 +415,10 @@ where
         let outcome = authority.scan(&request).await?;
         let truncated = outcome.truncated;
         let batch = committed_views_to_client_events(realm_id, outcome.committed_events.clone())?;
-        // `apply_scan` re-validates the window against the installed head, so
-        // a Station that answers with a gap or a replayed prefix is rejected
-        // before anything is folded or checkpointed.
+        // `apply_scan` validates the page shape and local tail continuity only.
+        // It does not establish a fresh authority chain or verify Commit
+        // signatures. Its rows must never feed the verified poll coordinate
+        // index; that requires `apply_verified_scan` and its page carrier.
         replica.apply_scan(&request, outcome)?;
         let Some(head) = replica
             .streams
@@ -561,5 +563,32 @@ mod tests {
             accepted_direct_message_final(&delegated, arkret_sdk::DigestSuite::Sha256, &store,)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn shape_only_scan_events_never_enter_verified_authority_indexes() {
+        let realm = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let committed = crate::test_support::committed_event::verified_realm_item_as(
+            realm.clone(),
+            arkret_sdk::EventKind::MessageCreate.as_str(),
+            json!({
+                "strand_id": STRAND_ID,
+                "track_name": "discussion",
+                "content": {"kind": "ak.content.text", "body": "not a poll"}
+            }),
+            "agent.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        );
+        let event_id = committed.event.event_id.clone();
+        let batch = committed_views_to_client_events(
+            &realm,
+            vec![arkret_sdk::CommittedEventView::Full(committed)],
+        )
+        .unwrap();
+        let mut store = crate::state::isolated_store_for_tests("shape-only-agent-commit");
+        store.switch_test_account("did:web:reader.example");
+        ingest_shape_only_realm_batch(&mut store, realm.as_str(), &batch);
+        assert!(store.verified_message_commit(&event_id).is_none());
+        assert!(store.historical_agent_event_candidates().is_empty());
     }
 }

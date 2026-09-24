@@ -494,7 +494,7 @@ fn engine_ingest_dedupes_resent_strand_update_by_canonical_event_id() {
         }
     });
 
-    let mut store = LocalStateStore::default();
+    let mut store = crate::state::isolated_store_for_tests("resent-strand-update");
     let events =
         crate::state::projection::kanban_ops::sdk_events_from_values(std::slice::from_ref(&event));
     // Fold the same event twice, as a resubscribe would.

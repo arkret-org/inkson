@@ -3232,21 +3232,9 @@ fn apply_account_frame_payload(
     ctx: &SyncEngineContext,
 ) -> anyhow::Result<(Option<String>, bool)> {
     let mut realm_projection_changed = false;
-    // Historical signer targets are admitted only from the typed committed
-    // rows of the verified account frame. The current projection below is a
-    // display/reducer input and is never recursively searched for Events.
-    for (realm_id, entry) in &response.step.realm_entries {
-        let Some(committed_events) = entry.committed_events.as_ref() else {
-            continue;
-        };
-        for view in committed_events {
-            realm_projection_changed |=
-                crate::identity::agent_signer_evidence::index_verified_committed_event(
-                    store, realm_id, view,
-                )
-                .map_err(anyhow::Error::msg)?;
-        }
-    }
+    // Account-frame validation checks shape, not the Realm authority chain.
+    // Its committed rows cannot seed historical Agent signer evidence until
+    // they cross a fresh `apply_verified_scan` boundary.
     // Apply explicit Realm deltas; baseline completion is reconciled separately
     // by the demand-sync reducer.
     for (id, body) in &response.step.realm_projections {

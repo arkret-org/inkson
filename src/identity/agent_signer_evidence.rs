@@ -207,10 +207,10 @@ pub(crate) async fn prefetch_durable_historical_agent_keys(
     changed
 }
 
-/// Index one row only after its carrier has crossed the account-subscribe or
-/// per-stream scan verification boundary. The exact coordinate is copied from
-/// the row; no projection field, cursor or arrival order participates.
-pub(crate) fn index_verified_committed_event(
+/// Index one row only after its carrier crossed the fresh Realm authority
+/// verifier. This helper stays private so a shape-only account frame or scan
+/// cannot pass its ordinary `CommittedEventView` directly.
+fn index_verified_committed_event(
     store: &mut LocalStateStore,
     realm_id: &RealmId,
     view: &arkret_wire::CommittedEventView,
@@ -238,6 +238,7 @@ pub(crate) fn index_verified_committed_event(
         return Ok(false);
     };
     store.index_historical_agent_event_candidate(HistoricalAgentEventCandidate {
+        authority_chain_verified: true,
         recipient_account_id: recipient,
         realm_id: selector.realm_id,
         target_ref,
@@ -250,19 +251,16 @@ pub(crate) fn index_verified_committed_event(
     })
 }
 
-pub(crate) fn index_verified_committed_events(
+pub(crate) fn index_verified_committed_page(
     store: &mut LocalStateStore,
-    batch: &[garth::ClientEvent],
+    page: &garth::VerifiedScanPage,
 ) -> Result<usize, String> {
     let mut changed = 0;
-    for delta in batch.iter().filter_map(|event| match event {
-        garth::ClientEvent::Committed(delta) => Some(delta),
-        _ => None,
-    }) {
+    for view in page.rows() {
         changed += usize::from(index_verified_committed_event(
             store,
-            &delta.realm_id,
-            &delta.view,
+            view.commit().stream_ref.realm_id(),
+            view,
         )?);
     }
     Ok(changed)
@@ -629,7 +627,10 @@ mod historical_result_tests {
     }
 
     #[test]
-    fn verified_stream_row_builds_and_persists_the_exact_candidate() {
+    fn candidate_builder_persists_exact_coordinate_after_external_verification() {
+        // This unit test enters the private row builder directly; the synthetic
+        // Commit signature is not an authority proof. Production can call it
+        // only through index_verified_committed_page(VerifiedScanPage).
         let (selector, mut entry, _) = fixture();
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -690,6 +691,44 @@ mod historical_result_tests {
         store.switch_test_account("did:web:reader.example");
         assert!(index_verified_committed_event(&mut store, &selector.realm_id, &view).is_err());
         assert!(store.historical_agent_event_candidates().is_empty());
+    }
+
+    #[test]
+    fn legacy_shape_only_candidates_and_cached_keys_are_not_trusted() {
+        let (selector, mut entry, _) = fixture();
+        let mut store = crate::state::isolated_store_for_tests("legacy-agent-candidate");
+        store.switch_test_account("did:web:reader.example");
+        let recipient = store.active_authority().unwrap();
+        entry.recipient_account_id = recipient.clone();
+        entry.receiver_id = recipient.station_id.clone();
+        index_verified_committed_event(&mut store, &selector.realm_id, &committed_view(&selector))
+            .unwrap();
+        store.store_historical_agent_signer_key(entry).unwrap();
+        let mut legacy = store.load();
+        for candidate in legacy.historical_agent_event_candidates.values_mut() {
+            let mut old_value = serde_json::to_value(&*candidate).unwrap();
+            old_value
+                .as_object_mut()
+                .unwrap()
+                .remove("authority_chain_verified");
+            *candidate = serde_json::from_value(old_value).unwrap();
+            assert!(!candidate.authority_chain_verified);
+        }
+        store.save(legacy);
+        assert!(store.historical_agent_event_candidates().is_empty());
+        assert!(
+            store
+                .historical_agent_signer_keys_for_realm(selector.realm_id.as_str())
+                .is_empty()
+        );
+        assert_eq!(
+            verify_cached_event(
+                &serde_json::to_value(selector.accepted_event).unwrap(),
+                &store,
+                None,
+            ),
+            CachedAgentEventVerdict::Unresolved
+        );
     }
 
     #[test]
