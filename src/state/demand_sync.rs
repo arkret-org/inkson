@@ -2,7 +2,7 @@ use arkret_models_collaboration::sync_frames::account_subscribe::{
     AgentDraftPendingIntentChange, AgentDraftPendingIntentContainer,
 };
 use arkret_sdk::Event;
-use arkret_sdk::sync::{AccountSubscribeFrame, SyncFilter};
+use arkret_sdk::sync::{AccountFilter, AccountSubscribeFrame};
 use arkret_wire::Cursor;
 
 use super::*;
@@ -170,7 +170,7 @@ fn baseline_channel(
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct DemandSyncState {
-    filter: Option<SyncFilter>,
+    filter: Option<AccountFilter>,
     list_after: Option<Cursor>,
     requested_list_after: Option<Cursor>,
     list_snapshot: Option<String>,
@@ -474,12 +474,12 @@ impl LocalStateStore {
             realm_projections: self.cached.realm_tree_projections.clone(),
         }
     }
-    pub(crate) fn sync_demand_filter(&self) -> Option<SyncFilter> {
+    pub(crate) fn sync_demand_filter(&self) -> Option<AccountFilter> {
         self.cached.demand_sync.filter.clone()
     }
     pub(crate) fn save_sync_demand_filter(
         &mut self,
-        filter: Option<SyncFilter>,
+        filter: Option<AccountFilter>,
     ) -> anyhow::Result<()> {
         if let Some(filter) = &filter {
             filter.validate()?;

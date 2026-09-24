@@ -27,8 +27,8 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use arkret_models_collaboration::sync_frames::account_subscribe::{
-    AccountSubscribeBatch, AccountSubscribeDeviceListChanges, AccountSubscribeFrame,
-    AccountSubscribeFrameKind, SyncFilter, SyncRequestBody,
+    AccountFilter, AccountSubscribeBatch, AccountSubscribeDeviceListChanges, AccountSubscribeFrame,
+    AccountSubscribeFrameKind, SyncRequestBody,
 };
 use arkret_sdk::EventPayloadExt as _;
 use arkret_wire::AccountDataKey;
@@ -340,7 +340,7 @@ struct InksonAccountProjector {
     start_generation: u64,
     /// The demand this run subscribed with. A navigation that changes it ends
     /// the run so the next attempt resubscribes with the current demand.
-    request_filter: Option<SyncFilter>,
+    request_filter: Option<AccountFilter>,
     control: SubscriptionControl,
     current_index: tokio::sync::Mutex<Option<crate::state::CurrentIndex>>,
     station_cas_projection: std::sync::Arc<tokio::sync::Mutex<garth::StationCasProjection>>,
@@ -1110,7 +1110,7 @@ async fn current_index_maintenance(
     }
 }
 
-fn selected_account_filter(ctx: &SyncEngineContext) -> SyncFilter {
+fn selected_account_filter(ctx: &SyncEngineContext) -> AccountFilter {
     let realm = ctx.selected_realm_id.get();
     let strands = ctx
         .state_store
@@ -1119,10 +1119,10 @@ fn selected_account_filter(ctx: &SyncEngineContext) -> SyncFilter {
         .ok()
         .into_iter()
         .collect();
-    SyncFilter {
+    AccountFilter {
         realm_ids: Some(realms),
         strand_ids: strands,
-        timeline_limit: Some(20),
+        window_limit: Some(20),
         lazy_load_members: Some(true),
         ..Default::default()
     }
