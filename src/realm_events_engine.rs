@@ -589,6 +589,7 @@ pub(crate) async fn verify_account_frame_commits(
     };
     let authority = AuthorityClient::new(http.clone());
     for (realm, entry) in &realms.entries {
+        require_genesis_window_basis(entry)?;
         let Some(rows) = entry
             .committed_events
             .as_ref()
@@ -673,6 +674,26 @@ pub(crate) async fn verify_account_frame_commits(
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
     }
     Ok(verified_pages)
+}
+
+fn require_genesis_window_basis(
+    entry: &arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry,
+) -> garth::Result<()> {
+    use arkret_models_collaboration::sync_frames::account_sync::StreamWindowAnchorKind;
+    if entry.streams.as_ref().is_some_and(|windows| {
+        windows.iter().any(|window| {
+            window.preview_only != Some(true)
+                && window
+                    .window_start_basis
+                    .as_ref()
+                    .is_some_and(|basis| basis.anchor_kind != StreamWindowAnchorKind::StreamGenesis)
+        })
+    }) {
+        return Err(garth::Error::Protocol(
+            "non-genesis Account window requires an exact verified snapshot slice".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn require_exact_claimed_rows(
@@ -1006,6 +1027,22 @@ mod tests {
         let mut forged_window = window;
         forged_window.head_commit_ref = arkret_sdk::RealmCommitId::from_digest([0x77; 32]);
         assert!(require_exact_window_head(&forged_window, &scanned).is_err());
+        forged_window.window_start_basis = Some(
+            arkret_models_collaboration::sync_frames::account_sync::StreamWindowStartBasis {
+                anchor_kind: arkret_models_collaboration::sync_frames::account_sync::StreamWindowAnchorKind::BeforeReadableFloor,
+                anchor_position: Some(1),
+                anchor_commit_ref: Some(items[0].commit.commit_id.clone()),
+                snapshot_ref: arkret_sdk::RealmSnapshotId::from_digest([0x55; 32]),
+                governance_generation: 0,
+                accepted_dependency_refs: None,
+            },
+        );
+        let limited_entry =
+            arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry {
+                streams: Some(vec![forged_window]),
+                ..Default::default()
+            };
+        assert!(require_genesis_window_basis(&limited_entry).is_err());
         let mut forged = items[1].clone();
         forged.commit.signature.signed_digest =
             arkret_sdk::Hash::new(format!("sha256:{}", "f".repeat(64))).unwrap();

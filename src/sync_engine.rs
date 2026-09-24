@@ -327,8 +327,9 @@ impl AccountTransportProvider {
 
 /// Durable fold of one delivered account-subscribe batch.
 ///
-/// [`AccountSubscription`] advances the durable cursor only after this returns
-/// `Ok`, so everything folded here is durable before the resume point moves.
+/// [`AccountSubscription`] passes the next Account checkpoint to this lane;
+/// the final frame writes that checkpoint with its product state in one local
+/// transaction before the resume point moves.
 /// The frame is projected whole rather than through a lossy event fan-out: the
 /// account aggregate carries typed Realm entries, holder-private to-device
 /// deliveries and Station-CAS Account Data that inkson's product projections
@@ -633,6 +634,7 @@ impl InksonAccountProjector {
         frame: &AccountSubscribeFrame,
         cursor: &str,
         verified_pages: &[garth::VerifiedScanPage],
+        next_checkpoint: Option<&(garth::CursorScope, garth::AccountCursorCheckpoint)>,
     ) -> garth::Result<()> {
         if frame.kind == AccountSubscribeFrameKind::ResyncRequired {
             return self.reset_account_context().await;
@@ -682,6 +684,11 @@ impl InksonAccountProjector {
                     store
                         .save_sync_demand_filter(self.request_filter.clone())
                         .map_err(|error| error.to_string())?;
+                    if let Some((scope, checkpoint)) = next_checkpoint {
+                        store
+                            .save_account_checkpoint(scope, checkpoint.clone())
+                            .map_err(|error| error.to_string())?;
+                    }
                     Ok(effects)
                 })
             })
@@ -878,6 +885,36 @@ impl InksonAccountProjector {
 
 impl AccountBatchProjector for InksonAccountProjector {
     async fn project(&self, batch: &AccountSubscribeBatch) -> garth::Result<()> {
+        self.project_verified_batch(batch, None).await
+    }
+
+    async fn project_and_checkpoint<C: garth::CursorStore>(
+        &self,
+        batch: &AccountSubscribeBatch,
+        scope: garth::CursorScope,
+        checkpoint: garth::AccountCursorCheckpoint,
+        cursors: &C,
+    ) -> garth::Result<()> {
+        if batch.frames.is_empty()
+            || batch
+                .frames
+                .iter()
+                .any(|frame| frame.kind == AccountSubscribeFrameKind::ResyncRequired)
+        {
+            self.project(batch).await?;
+            return garth::CursorStore::save_account_checkpoint(cursors, scope, checkpoint).await;
+        }
+        self.project_verified_batch(batch, Some((scope, checkpoint)))
+            .await
+    }
+}
+
+impl InksonAccountProjector {
+    async fn project_verified_batch(
+        &self,
+        batch: &AccountSubscribeBatch,
+        next_checkpoint: Option<(garth::CursorScope, garth::AccountCursorCheckpoint)>,
+    ) -> garth::Result<()> {
         let http = self.transport.http().http();
         let mut verified = Vec::with_capacity(batch.frames.len());
         for frame in &batch.frames {
@@ -885,8 +922,12 @@ impl AccountBatchProjector for InksonAccountProjector {
                 .push(crate::realm_events_engine::verify_account_frame_commits(http, frame).await?);
         }
         self.validate_station_cas_batch(batch).await?;
-        for (frame, pages) in batch.frames.iter().zip(verified.iter()) {
-            self.project_frame(frame, &batch.cursor, pages).await?;
+        for (index, (frame, pages)) in batch.frames.iter().zip(verified.iter()).enumerate() {
+            let final_checkpoint = (index + 1 == batch.frames.len())
+                .then_some(next_checkpoint.as_ref())
+                .flatten();
+            self.project_frame(frame, &batch.cursor, pages, final_checkpoint)
+                .await?;
         }
         Ok(())
     }
@@ -2714,6 +2755,59 @@ mod tests {
                 .as_nanos(),
         ));
         LocalStateStore::with_path(path)
+    }
+
+    #[test]
+    fn account_product_and_checkpoint_rollback_or_commit_together() {
+        let path = std::env::temp_dir().join(format!(
+            "inkson-account-atomic-checkpoint-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        let mut store = LocalStateStore::with_path(&path);
+        let scope = garth::CursorScope::Account {
+            service_id: None,
+            actor_id: crate::mls_api_helpers::local_account_actor_id(
+                "did:webvh:z6mkfixture:alice.example",
+            )
+            .unwrap(),
+            device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
+                .unwrap(),
+        };
+        let checkpoint = garth::AccountCursorCheckpoint {
+            cursor: "ak:cursor:verified-account-batch".to_owned(),
+            station_cas: garth::StationCasProjection::default(),
+        };
+        let failed: Result<(), String> = store.verified_projection_transaction(|store| {
+            store.set_local_device_refresh_pending(true);
+            store
+                .save_account_checkpoint(&scope, checkpoint.clone())
+                .map_err(|error| error.to_string())?;
+            Err("bad verified page".to_owned())
+        });
+        assert_eq!(failed.unwrap_err(), "bad verified page");
+        assert!(!store.local_device_refresh_pending());
+        assert_eq!(store.load_account_checkpoint(&scope).unwrap(), None);
+
+        store
+            .verified_projection_transaction(|store| {
+                store.set_local_device_refresh_pending(true);
+                store
+                    .save_account_checkpoint(&scope, checkpoint.clone())
+                    .map_err(|error| error.to_string())
+            })
+            .unwrap();
+        assert!(store.local_device_refresh_pending());
+        assert_eq!(
+            store.load_account_checkpoint(&scope).unwrap(),
+            Some(checkpoint.clone())
+        );
+        let restored = LocalStateStore::with_path(&path);
+        assert!(restored.load().local_device_refresh_pending);
+        assert_eq!(
+            restored.load_account_checkpoint(&scope).unwrap(),
+            Some(checkpoint)
+        );
+        let _ = std::fs::remove_file(path);
     }
 
     fn sdk_realm_id() -> arkret_sdk::RealmId {
