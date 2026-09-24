@@ -355,6 +355,7 @@ pub(crate) fn install_accepted_mls_group_at_epoch(
         arkret_sdk::EventId::new("ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml").unwrap();
     let entry = serde_json::json!({
         "selector": {"kind": "mls_group", "scope_ref": effective_scope},
+        "source_stream_ref": arkret_wire::CommitStreamRef::from_scope(effective_scope, None).unwrap(),
         "revision": {
             "commit_id": arkret_wire::RealmCommitId::from_digest([0x31; 32]),
             "stream_position": 1,

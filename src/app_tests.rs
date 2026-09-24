@@ -1137,6 +1137,9 @@ fn encrypted_realm_projection() -> serde_json::Value {
     .expect("valid MLS current value");
     let current = arkret_wire::TypedCurrentResult::Value {
         selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref: scope },
+        source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+            realm_id: arkret_wire::RealmId::new(ENCRYPTED_REALM).unwrap(),
+        },
         revision: arkret_wire::CurrentRevision {
             commit_id: arkret_wire::RealmCommitId::from_digest([7; 32]),
             stream_position: 4,

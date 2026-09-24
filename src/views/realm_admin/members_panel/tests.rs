@@ -344,6 +344,7 @@ const PANEL_ISSUER: &str = "ak:did_core:web:acme.example";
 fn acme_policy_current() -> serde_json::Value {
     serde_json::json!([{
         "selector": {"kind": "realm_policy"},
+        "source_stream_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
         "revision": {
             "commit_id": arkret_wire::RealmCommitId::from_digest([0x31; 32]),
             "stream_position": 1

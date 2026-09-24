@@ -1176,6 +1176,9 @@ fn card_current_keeps_value_and_revision_together_across_remote_replacement() {
             selector: arkret_wire::CurrentSelector::Strand {
                 strand_id: arkret_sdk::StrandId::new(id.to_owned()).unwrap(),
             },
+            source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(TEST_REALM_ID).unwrap(),
+            },
             revision: revision.clone(),
             value: json!({
                 "id":id,"schema":"ak.schema.strand.v1","realm_id":TEST_REALM_ID,

@@ -1731,6 +1731,7 @@ mod tests {
     fn row(revision: u64, removed: bool) -> TypedCurrentResult {
         serde_json::from_value(json!({
             "selector":{"kind":"realm_profile"},
+            "source_stream_ref":{"kind":"realm","realm_id":REALM},
             "revision":{"commit_id":COMMIT,"stream_position":revision},
             "value":if removed{json!({"status":"removed"})}else{json!({"status":"value","value":null})}
         })).unwrap()
@@ -1738,6 +1739,7 @@ mod tests {
     fn device_generation_row(revision: u64) -> TypedCurrentResult {
         serde_json::from_value(json!({
             "selector":{"kind":"device_generation"},
+            "source_stream_ref":{"kind":"realm","realm_id":REALM},
             "revision":{"commit_id":COMMIT,"stream_position":revision},
             "value":{"generation":revision}
         }))
@@ -1746,6 +1748,7 @@ mod tests {
     fn mls_group_row(realm: &str, revision: u64) -> TypedCurrentResult {
         serde_json::from_value(json!({
             "selector":{"kind":"mls_group","scope_ref":{"kind":"realm","realm_id":realm}},
+            "source_stream_ref":{"kind":"realm","realm_id":realm},
             "revision":{"commit_id":COMMIT,"stream_position":revision},
             "value":{
                 "effective_scope":{"kind":"realm","realm_id":realm},
@@ -1831,6 +1834,7 @@ mod tests {
     fn member_row(_realm: &str, actor: &str, revision: u64) -> TypedCurrentResult {
         serde_json::from_value(json!({
             "selector":{"kind":"member_state","actor_id":{"kind":"service","service_id":actor}},
+            "source_stream_ref":{"kind":"realm","realm_id":_realm},
             "revision":{"commit_id":COMMIT,"stream_position":revision},
             "value":{"membership":"join"}
         }))
@@ -1939,6 +1943,12 @@ mod tests {
             selector: CurrentSelector::MimiRoomBinding {
                 mimi_room_uri: arkret_wire::MimiRoomUri::new(
                     "mimi://mimi.example.com/rooms/01JSMIMI",
+                )
+                .unwrap(),
+            },
+            source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: arkret_wire::RealmId::new(
+                    "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
                 )
                 .unwrap(),
             },

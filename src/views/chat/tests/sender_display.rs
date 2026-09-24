@@ -257,6 +257,7 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
         ],
         "current": [{
             "selector": {"kind": "realm_policy"},
+            "source_stream_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
             "revision": {
                 "commit_id": arkret_wire::RealmCommitId::from_digest([0x32; 32]),
                 "stream_position": 1
@@ -273,6 +274,12 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
     });
     projection["current"] = json!([arkret_wire::TypedCurrentResult::Value {
         selector: arkret_wire::CurrentSelector::RealmPolicy,
+        source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            )
+            .unwrap(),
+        },
         revision: arkret_wire::CurrentRevision {
             commit_id: arkret_sdk::RealmCommitId::from_digest([0x41; 32]),
             stream_position: 1,

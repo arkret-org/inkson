@@ -26,6 +26,9 @@ fn current_strand(
     let revision_seed = if alternate_revision { 2 } else { 1 };
     arkret_wire::TypedCurrentResult::Value {
         selector: arkret_wire::CurrentSelector::Strand { strand_id },
+        source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+        },
         revision: arkret_wire::CurrentRevision {
             commit_id: arkret_sdk::RealmCommitId::from_digest([revision_seed; 32]),
             stream_position: 7,

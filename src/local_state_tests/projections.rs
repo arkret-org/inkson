@@ -163,6 +163,7 @@ fn mls_encrypted_projection_reads_the_installed_realm_genesis_value() {
             "summary": {"joined_member_count": 2},
             "current": [{
                 "selector": {"kind": "mls_group", "scope_ref": {"kind": "realm", "realm_id": realm}},
+                "source_stream_ref": {"kind": "realm", "realm_id": realm},
                 "revision": {
                     "commit_id": arkret_wire::RealmCommitId::from_digest([0x31; 32]),
                     "stream_position": 1

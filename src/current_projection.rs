@@ -183,6 +183,9 @@ mod tests {
     fn entry(selector: CurrentSelector, position: u64, value: Value) -> TypedCurrentResult {
         TypedCurrentResult::Value {
             selector,
+            source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: RealmId::new(REALM).unwrap(),
+            },
             revision: revision(position),
             value,
         }

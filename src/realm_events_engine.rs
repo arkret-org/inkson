@@ -413,7 +413,7 @@ where
         .read(|store| store.verified_commit_stream_cursor(stream_ref))
         .map_err(garth::Error::Protocol)?;
     let pages = verified_stream_pages(
-        authority, http, replica, bundle, freshness, realm_id, stream_ref,
+        authority, http, replica, bundle, freshness, realm_id, stream_ref, None,
     )
     .await?;
     let tail = replica.verified_head(stream_ref).cloned();
@@ -517,11 +517,31 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
     freshness: &arkret_identity::RealmAuthorityFreshness,
     realm_id: &arkret_sdk::RealmId,
     stream_ref: &CommitStreamRef,
+    floor_basis: Option<
+        &arkret_models_collaboration::sync_frames::account_sync::StreamWindowStartBasis,
+    >,
 ) -> garth::Result<Vec<garth::VerifiedScanPage>> {
-    // Every new authority bundle resets Garth's verified predecessor. Rebuild
-    // it from genesis even when an independently persisted projection cursor
-    // exists; a position alone is never a cryptographic resume anchor.
-    let mut after_position = None;
+    // A full-history stream starts at genesis. A limited Account window may
+    // start only from the exact signed head named by its basis; the first
+    // readable page must prove the matching floor Commit and predecessor.
+    let snapshot = if let Some(basis) = floor_basis {
+        let snapshot = http
+            .realm_state_snapshot_by_ref(realm_id, &basis.snapshot_ref)
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let head = snapshot
+            .visible_stream_heads
+            .iter()
+            .find(|head| &head.stream_ref == stream_ref)
+            .ok_or_else(|| {
+                garth::Error::Protocol("exact floor snapshot omits requested stream".to_owned())
+            })?;
+        let position = head.stream_position;
+        Some((snapshot, position))
+    } else {
+        None
+    };
+    let mut after_position = snapshot.as_ref().map(|(_, position)| *position);
     let mut pages = Vec::new();
     loop {
         let request = StreamScanRequest {
@@ -531,7 +551,40 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
             limit: SCAN_LIMIT,
         };
         let outcome = authority.scan(&request).await?;
-        require_genesis_readable_floor(&outcome)?;
+        if let Some(basis) = floor_basis {
+            if pages.is_empty() {
+                let floor = outcome.readable_floor.as_ref().ok_or_else(|| {
+                    garth::Error::Protocol("limited scan omits readable floor".to_owned())
+                })?;
+                let (snapshot, _) = snapshot.as_ref().ok_or_else(|| {
+                    garth::Error::Protocol("floor basis has no exact snapshot".to_owned())
+                })?;
+                let snapshot_keys =
+                    crate::identity::realm_authority_keys::fetch_verified_key_directory(
+                        http,
+                        bundle,
+                        Some(&outcome),
+                    )
+                    .await
+                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                let snapshot_freshness = arkret_identity::RealmAuthorityFreshness::new(
+                    chrono::Utc::now(),
+                    freshness.expected_nonce.clone(),
+                    freshness.max_bundle_age,
+                )
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                replica.install_verified_floor_predecessor(
+                    stream_ref,
+                    basis,
+                    floor,
+                    snapshot,
+                    &snapshot_freshness,
+                    &snapshot_keys,
+                )?;
+            }
+        } else {
+            require_genesis_readable_floor(&outcome)?;
+        }
         let truncated = outcome.truncated;
         let keys = crate::identity::realm_authority_keys::fetch_verified_key_directory(
             http,
@@ -576,9 +629,9 @@ fn require_genesis_readable_floor(outcome: &arkret_sdk::StreamScanOutcome) -> ga
 }
 
 /// The account aggregate's committed rows are claims until an independent
-/// nonce-bound stream scan returns the same exact rows. This path supports a
-/// complete readable prefix from position 0. A restricted floor needs Garth's
-/// future signed snapshot predecessor and remains fail closed.
+/// nonce-bound stream scan returns the same exact rows. Full history can be
+/// projected; limited windows pass the exact signed predecessor and tail gate
+/// but remain fail closed until snapshot current rows can be installed.
 pub(crate) async fn verify_account_frame_commits(
     http: &arkret_sdk::http_client::Client,
     frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
@@ -589,6 +642,70 @@ pub(crate) async fn verify_account_frame_commits(
     };
     let authority = AuthorityClient::new(http.clone());
     for (realm, entry) in &realms.entries {
+        if let Some(windows) = entry.streams.as_ref() {
+            for window in windows {
+                if window.preview_only == Some(true) {
+                    continue;
+                }
+                let Some(basis) = window.window_start_basis.as_ref() else {
+                    continue;
+                };
+                if basis.anchor_kind
+                    != arkret_models_collaboration::sync_frames::account_sync::StreamWindowAnchorKind::BeforeReadableFloor
+                {
+                    continue;
+                }
+                let realm_id = arkret_sdk::RealmId::new(realm.clone())
+                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                let (bundle, freshness, mut replica) =
+                    fresh_verified_realm(&authority, http, &realm_id).await?;
+                let pages = verified_stream_pages(
+                    &authority,
+                    http,
+                    &mut replica,
+                    &bundle,
+                    &freshness,
+                    &realm_id,
+                    &window.stream_ref,
+                    Some(basis),
+                )
+                .await?;
+                let scanned = pages
+                    .iter()
+                    .flat_map(|page| page.rows())
+                    .collect::<Vec<_>>();
+                if let Some(claimed) = entry.committed_events.as_ref() {
+                    let claimed = claimed
+                        .iter()
+                        .filter(|row| row.commit().stream_ref == window.stream_ref)
+                        .collect::<Vec<_>>();
+                    require_exact_claimed_rows(&claimed, &scanned)?;
+                }
+                let expected_position = window.next_position.checked_sub(1).ok_or_else(|| {
+                    garth::Error::Protocol("account frame stream head has no position".to_owned())
+                })?;
+                if replica
+                    .verified_head(&window.stream_ref)
+                    .is_none_or(|head| {
+                        head.stream_position != expected_position
+                            || head.commit_id != window.head_commit_ref
+                    })
+                {
+                    return Err(garth::Error::Protocol(
+                        "account frame stream head differs from verified scan".to_owned(),
+                    ));
+                }
+                // The exact by-ref snapshot, historical Station signature,
+                // floor predecessor and readable tail have passed Garth.
+                // Snapshot current rows still need a typed product installer
+                // (and a verified Commit witness when readable). Do not
+                // advance the Account cursor or project partial state here.
+                return Err(garth::Error::Protocol(
+                    "signed floor snapshot has no verified current-row product installer"
+                        .to_owned(),
+                ));
+            }
+        }
         require_genesis_window_basis(entry)?;
         let Some(rows) = entry
             .committed_events
@@ -631,6 +748,7 @@ pub(crate) async fn verify_account_frame_commits(
                 &freshness,
                 &realm_id,
                 &stream_ref,
+                None,
             )
             .await?;
             let scanned = pages
