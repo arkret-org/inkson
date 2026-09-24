@@ -664,8 +664,8 @@ impl VerifiedAccountFrame {
 
 /// The first product installer is intentionally narrow: the two complete
 /// collaboration-genesis rows from a signed one-stream cut. The readable tail
-/// may contain audit facts, closed Realm profile writes, or the registered
-/// history-access state transition.
+/// may contain audit facts, closed Realm facet writes, or the registered
+/// history-access state transition. Gate-bearing policy remains fail closed.
 fn admit_single_stream_floor_current(
     entry: &arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry,
     realm_id: &arkret_sdk::RealmId,
@@ -753,6 +753,70 @@ fn fold_floor_current_tail(
                     },
                     value,
                 });
+            } else if full.event.kind.as_str() == "ak.realm.policy_bundle" {
+                let previous = rows.iter().find_map(|row| match row {
+                    arkret_wire::TypedCurrentResult::Value {
+                        selector: arkret_wire::CurrentSelector::RealmPolicyBundle,
+                        value,
+                        ..
+                    } => Some(value),
+                    _ => None,
+                });
+                let value = closed_policy_bundle_value(
+                    previous,
+                    serde_json::to_value(&full.event.payload)
+                        .map_err(|error| garth::Error::Protocol(error.to_string()))?,
+                )?;
+                rows.retain(|row| {
+                    !matches!(
+                        row,
+                        arkret_wire::TypedCurrentResult::Value {
+                            selector: arkret_wire::CurrentSelector::RealmPolicyBundle,
+                            ..
+                        }
+                    )
+                });
+                rows.push(arkret_wire::TypedCurrentResult::Value {
+                    selector: arkret_wire::CurrentSelector::RealmPolicyBundle,
+                    source_stream_ref: full.commit.stream_ref.clone(),
+                    revision: arkret_wire::CurrentRevision {
+                        commit_id: full.commit.commit_id.clone(),
+                        stream_position: full.commit.stream_position,
+                    },
+                    value,
+                });
+            } else if full.event.kind.as_str() == "ak.realm.join_rule" {
+                let policy = rows.iter().find_map(|row| match row {
+                    arkret_wire::TypedCurrentResult::Value {
+                        selector: arkret_wire::CurrentSelector::RealmPolicyBundle,
+                        value,
+                        ..
+                    } => Some(value),
+                    _ => None,
+                });
+                let value = closed_join_rule_value(
+                    policy,
+                    serde_json::to_value(&full.event.payload)
+                        .map_err(|error| garth::Error::Protocol(error.to_string()))?,
+                )?;
+                rows.retain(|row| {
+                    !matches!(
+                        row,
+                        arkret_wire::TypedCurrentResult::Value {
+                            selector: arkret_wire::CurrentSelector::RealmJoinRule,
+                            ..
+                        }
+                    )
+                });
+                rows.push(arkret_wire::TypedCurrentResult::Value {
+                    selector: arkret_wire::CurrentSelector::RealmJoinRule,
+                    source_stream_ref: full.commit.stream_ref.clone(),
+                    revision: arkret_wire::CurrentRevision {
+                        commit_id: full.commit.commit_id.clone(),
+                        stream_position: full.commit.stream_position,
+                    },
+                    value,
+                });
             } else if full.event.kind.as_str() == "ak.realm.history_access" {
                 let previous = rows.iter().find_map(|row| match row {
                     arkret_wire::TypedCurrentResult::Value {
@@ -800,6 +864,67 @@ fn fold_floor_current_tail(
         }
     }
     Ok(rows)
+}
+
+fn closed_policy_bundle_value(
+    previous: Option<&serde_json::Value>,
+    payload: serde_json::Value,
+) -> garth::Result<serde_json::Value> {
+    let bundle: arkret_sdk::RealmPolicyBundlePayload = serde_json::from_value(payload.clone())
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    let canonical =
+        serde_json::to_value(&bundle).map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    if canonical != payload || bundle.join_policy.is_some() {
+        return Err(garth::Error::Protocol(
+            "floor policy bundle has unsupported or non-closed components".to_owned(),
+        ));
+    }
+    let expected_revision = match previous {
+        Some(value) => value
+            .get("policy_revision")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|revision| revision.checked_add(1))
+            .ok_or_else(|| garth::Error::Protocol("invalid prior policy revision".to_owned()))?,
+        None => 1,
+    };
+    if bundle.policy_revision != expected_revision {
+        return Err(garth::Error::Protocol(
+            "floor policy revision is not the next accepted revision".to_owned(),
+        ));
+    }
+    Ok(payload)
+}
+
+fn closed_join_rule_value(
+    policy: Option<&serde_json::Value>,
+    payload: serde_json::Value,
+) -> garth::Result<serde_json::Value> {
+    if policy.is_none() {
+        return Err(garth::Error::Protocol(
+            "floor join rule has no verified policy bundle predecessor".to_owned(),
+        ));
+    }
+    let rule: arkret_sdk::RealmJoinRulePayload = serde_json::from_value(payload.clone())
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    if rule
+        .to_value()
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?
+        != payload
+    {
+        return Err(garth::Error::Protocol(
+            "floor join rule is not the closed payload".to_owned(),
+        ));
+    }
+    let value = payload
+        .get("value")
+        .cloned()
+        .ok_or_else(|| garth::Error::Protocol("floor join rule omits its value".to_owned()))?;
+    if value == "restricted" || value == "knock_restricted" {
+        return Err(garth::Error::Protocol(
+            "floor join rule requires an unverified automatic gate".to_owned(),
+        ));
+    }
+    Ok(value)
 }
 
 fn closed_history_transition(
@@ -1207,13 +1332,18 @@ mod tests {
     const DEVICE_ID: &str = "ak:device:01904100-0000-7000-8000-000000000003";
 
     #[test]
-    fn verified_profile_and_history_tail_require_exact_commits_and_atomic_install() {
+    fn verified_bootstrap_facets_require_exact_commits_and_atomic_install() {
         let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
         let profile = json!({"schema": "ak.schema.realm_profile.v1", "title": "After floor"});
         let (bundle, keys, items) = crate::test_support::committed_event::verified_realm_fixture_as(
             realm_id.clone(),
             vec![
                 ("ak.realm.profile".to_owned(), profile.clone()),
+                (
+                    "ak.realm.policy_bundle".to_owned(),
+                    json!({"policy_revision": 1}),
+                ),
+                ("ak.realm.join_rule".to_owned(), json!({"value": "invite"})),
                 (
                     "ak.realm.history_access".to_owned(),
                     json!({"from": null, "to": "since_join"}),
@@ -1298,7 +1428,35 @@ mod tests {
         )
         .unwrap();
         let expected = fold_floor_current_tail(Vec::new(), &pages).unwrap();
-        assert_eq!(expected.len(), 2);
+        assert_eq!(expected.len(), 4);
+        let TypedCurrentResult::Value {
+            selector,
+            source_stream_ref,
+            revision,
+            value,
+        } = &expected[1]
+        else {
+            panic!("policy bundle must be a closed value");
+        };
+        assert_eq!(selector, &arkret_wire::CurrentSelector::RealmPolicyBundle);
+        assert_eq!(source_stream_ref, &stream_ref);
+        assert_eq!(revision.commit_id, items[1].commit.commit_id);
+        assert_eq!(revision.stream_position, items[1].commit.stream_position);
+        assert_eq!(value, &json!({"policy_revision": 1}));
+        let TypedCurrentResult::Value {
+            selector,
+            source_stream_ref,
+            revision,
+            value,
+        } = &expected[2]
+        else {
+            panic!("join rule must be a closed value");
+        };
+        assert_eq!(selector, &arkret_wire::CurrentSelector::RealmJoinRule);
+        assert_eq!(source_stream_ref, &stream_ref);
+        assert_eq!(revision.commit_id, items[2].commit.commit_id);
+        assert_eq!(revision.stream_position, items[2].commit.stream_position);
+        assert_eq!(value, "invite");
         let TypedCurrentResult::Value {
             source_stream_ref,
             revision,
@@ -1317,14 +1475,14 @@ mod tests {
             source_stream_ref,
             revision,
             value,
-        } = &expected[1]
+        } = &expected[3]
         else {
             panic!("history access must be a closed value");
         };
         assert_eq!(selector, &arkret_wire::CurrentSelector::RealmHistoryAccess);
         assert_eq!(source_stream_ref, &stream_ref);
-        assert_eq!(revision.commit_id, items[1].commit.commit_id);
-        assert_eq!(revision.stream_position, items[1].commit.stream_position);
+        assert_eq!(revision.commit_id, items[3].commit.commit_id);
+        assert_eq!(revision.stream_position, items[3].commit.stream_position);
         assert_eq!(value, "since_join");
         require_exact_floor_tail_current(&expected, &expected).unwrap();
 
@@ -1355,10 +1513,30 @@ mod tests {
         *value = json!({"schema": "ak.schema.realm_profile.v1", "title": "Forged"});
         assert!(require_exact_floor_tail_current(&forged, &expected).is_err());
         let mut forged = expected.clone();
-        let TypedCurrentResult::Value { revision, .. } = &mut forged[1] else {
+        let TypedCurrentResult::Value { revision, .. } = &mut forged[3] else {
             unreachable!()
         };
         revision.commit_id = items[0].commit.commit_id.clone();
+        assert!(require_exact_floor_tail_current(&forged, &expected).is_err());
+        let mut forged = expected.clone();
+        let TypedCurrentResult::Value {
+            source_stream_ref, ..
+        } = &mut forged[3]
+        else {
+            unreachable!()
+        };
+        *source_stream_ref = CommitStreamRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AfTcej7ZFNg8uTbkOiUJT0KN1F_c9l1fmtil65CUwncm",
+            )
+            .unwrap(),
+        };
+        assert!(require_exact_floor_tail_current(&forged, &expected).is_err());
+        let mut forged = expected.clone();
+        let TypedCurrentResult::Value { value, .. } = &mut forged[3] else {
+            unreachable!()
+        };
+        *value = json!("all_history_for_current_members");
         assert!(require_exact_floor_tail_current(&forged, &expected).is_err());
         let mut forged = expected.clone();
         let TypedCurrentResult::Value {
@@ -1375,10 +1553,16 @@ mod tests {
         };
         assert!(require_exact_floor_tail_current(&forged, &expected).is_err());
         let mut forged = expected.clone();
-        let TypedCurrentResult::Value { value, .. } = &mut forged[1] else {
+        let TypedCurrentResult::Value { revision, .. } = &mut forged[2] else {
             unreachable!()
         };
-        *value = json!("all_history_for_current_members");
+        revision.commit_id = items[1].commit.commit_id.clone();
+        assert!(require_exact_floor_tail_current(&forged, &expected).is_err());
+        let mut forged = expected.clone();
+        let TypedCurrentResult::Value { value, .. } = &mut forged[2] else {
+            unreachable!()
+        };
+        *value = json!("public");
         assert!(require_exact_floor_tail_current(&forged, &expected).is_err());
 
         let path = std::env::temp_dir().join(format!(
@@ -1484,6 +1668,39 @@ mod tests {
             ),
         ] {
             assert!(closed_history_transition(prior, payload).is_err());
+        }
+    }
+
+    #[test]
+    fn policy_and_join_tail_reject_gaps_and_unverified_gates() {
+        let first = closed_policy_bundle_value(None, json!({"policy_revision": 1})).unwrap();
+        assert_eq!(first, json!({"policy_revision": 1}));
+        assert_eq!(
+            closed_policy_bundle_value(Some(&first), json!({"policy_revision": 2})).unwrap(),
+            json!({"policy_revision": 2})
+        );
+        for (previous, payload) in [
+            (None, json!({"policy_revision": 0})),
+            (None, json!({"policy_revision": 2})),
+            (Some(&first), json!({"policy_revision": 1})),
+            (Some(&first), json!({"policy_revision": 3})),
+            (None, json!({"policy_revision": 1, "join_policy": null})),
+            (None, json!({"policy_revision": 1, "unknown": true})),
+        ] {
+            assert!(closed_policy_bundle_value(previous, payload).is_err());
+        }
+        assert_eq!(
+            closed_join_rule_value(Some(&first), json!({"value": "invite"})).unwrap(),
+            json!("invite")
+        );
+        for (policy, payload) in [
+            (None, json!({"value": "invite"})),
+            (Some(&first), json!({"value": "restricted"})),
+            (Some(&first), json!({"value": "knock_restricted"})),
+            (Some(&first), json!({"value": "invite", "reason": "extra"})),
+            (Some(&first), json!({"value": "unknown"})),
+        ] {
+            assert!(closed_join_rule_value(policy, payload).is_err());
         }
     }
 
