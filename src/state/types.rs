@@ -95,6 +95,15 @@ pub struct RawOperationRecord {
     pub payload: Value,
 }
 
+/// A MessageCreate coordinate admitted only from a fresh authority-verified
+/// Commit scan. Bare timeline Events never populate this index.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct VerifiedMessageCommit {
+    pub accepted_ref: arkret_wire::CommittedEventRef,
+    pub actor_id: arkret_sdk::ActorId,
+    pub scope_ref: arkret_sdk::ScopeRef,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceMessageReceipt {
     pub canonical_digest: String,
@@ -913,6 +922,11 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub client_core_seen_event_ids: VecDeque<String>,
     pub raw_operations: Vec<RawOperationRecord>,
+    /// Bounded read-side coordinates for poll reduction. The producer may use
+    /// a response head only after a verified reducer also binds its decrypted
+    /// poll content to this exact Event and partition.
+    #[serde(default)]
+    pub(crate) verified_message_commits: Vec<VerifiedMessageCommit>,
     #[serde(default)]
     pub realm_destroy_receipts: BTreeMap<String, RealmDestroyReceipt>,
     pub realm_tree_projections: BTreeMap<String, Value>,
@@ -1470,6 +1484,7 @@ impl Default for ClientLocalState {
             device_message_cursors: BTreeMap::new(),
             client_core_seen_event_ids: VecDeque::new(),
             raw_operations: Vec::new(),
+            verified_message_commits: Vec::new(),
             realm_destroy_receipts: BTreeMap::new(),
             realm_tree_projections: BTreeMap::new(),
             realm_collaboration_roles: BTreeMap::new(),
