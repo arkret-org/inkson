@@ -29,6 +29,9 @@ fn merge_verified_message_commits(
         next.push(record);
         changed += 1;
     }
+    // An evicted coordinate becomes unknown, never a negative or a head.
+    // A later verified replay may reinsert it; conflict detection covers only
+    // the retained window. The scan verifier still checks every replayed row.
     if next.len() > VERIFIED_MESSAGE_COMMITS_MAX {
         next.drain(0..next.len() - VERIFIED_MESSAGE_COMMITS_MAX);
     }
@@ -36,6 +39,9 @@ fn merge_verified_message_commits(
 }
 
 impl LocalStateStore {
+    /// Stage verified coordinates in the existing account-state blob. On wasm,
+    /// the caller must await `begin_durable_flush()` before ACKing the scan
+    /// cursor: `flush()` alone only enqueues the IndexedDB write.
     pub(crate) fn ingest_verified_message_commits(
         &mut self,
         page: &garth::VerifiedScanPage,
@@ -86,15 +92,27 @@ impl LocalStateStore {
         &mut self,
         pending: Vec<VerifiedMessageCommit>,
     ) -> Result<usize, String> {
+        if self.flush_suspended > 0 {
+            return Err(
+                "verified message Commit index cannot persist inside a state batch".to_owned(),
+            );
+        }
         self.ensure_cached_loaded();
         let mut next = self.cached.verified_message_commits.clone();
         let changed = merge_verified_message_commits(&mut next, pending)?;
         if changed == 0 {
+            // A wasm queue can report a later IndexedDB failure after the
+            // in-memory index changed. Re-enqueue exact replay so a caller
+            // can retry its durable barrier before moving the scan cursor.
+            self.flush()
+                .map_err(|error| format!("persist verified message Commits: {error}"))?;
             return Ok(0);
         }
-        self.cached.verified_message_commits = next;
-        self.flush()
-            .map_err(|error| format!("persist verified message Commits: {error}"))?;
+        let previous = std::mem::replace(&mut self.cached.verified_message_commits, next);
+        if let Err(error) = self.flush() {
+            self.cached.verified_message_commits = previous;
+            return Err(format!("persist verified message Commits: {error}"));
+        }
         Ok(changed)
     }
 
@@ -185,6 +203,42 @@ mod tests {
         );
         assert_eq!(
             restarted
+                .verified_message_commit(&stored[0].accepted_ref.event_id)
+                .as_ref(),
+            Some(&stored[0])
+        );
+
+        let blocked_parent = std::env::temp_dir().join(format!(
+            "inkson-verified-message-blocked-{}",
+            crate::operation::uuid_v7()
+        ));
+        std::fs::write(&blocked_parent, b"not a directory").unwrap();
+        let blocked_path = blocked_parent.join("state.json");
+        let mut blocked = LocalStateStore::with_path(blocked_path.clone());
+        assert!(
+            blocked
+                .persist_verified_message_commits(vec![stored[0].clone()])
+                .is_err()
+        );
+        assert!(
+            blocked
+                .verified_message_commit(&stored[0].accepted_ref.event_id)
+                .is_none(),
+            "failed flush must restore the previous in-memory index"
+        );
+        std::fs::remove_file(&blocked_parent).unwrap();
+        std::fs::create_dir(&blocked_parent).unwrap();
+        assert_eq!(
+            blocked
+                .persist_verified_message_commits(vec![stored[0].clone()])
+                .unwrap(),
+            1,
+            "retry after storage recovery must perform the write"
+        );
+        drop(blocked);
+        let reopened = LocalStateStore::with_path(blocked_path);
+        assert_eq!(
+            reopened
                 .verified_message_commit(&stored[0].accepted_ref.event_id)
                 .as_ref(),
             Some(&stored[0])
