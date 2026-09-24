@@ -726,19 +726,6 @@ pub(super) fn ChatEffects(
                                 let next = realm_live_epoch.peek().wrapping_add(1);
                                 realm_live_epoch.set(next);
                             }
-                            // §2.10.3 — a minimal-metadata Realm's backfill never primes
-                            // the device directory: authors verify against the MLS leaf.
-                            let backfill_realm_is_minimal_metadata = state_store
-                                .read()
-                                .realm_projection_is_minimal_metadata(&selected_realm_for_load);
-                            if !backfill_realm_is_minimal_metadata {
-                                crate::sync_engine::prefetch_persistent_event_sender_keys_from_values(
-                                &api,
-                                &backfill_events,
-                                crate::app::runtime_adapter::state_store_handle(state_store),
-                            )
-                            .await;
-                            }
                             loaded_messages.extend(chat_messages_from_events_with_sidecar(
                                 &selected_realm_for_load,
                                 &backfill_events,

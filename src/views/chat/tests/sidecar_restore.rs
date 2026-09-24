@@ -2,22 +2,36 @@
 
 use super::*;
 
+/// The author's own committed encrypted Event: identity only, no readable
+/// body, and the protocol message id the read side derives from it.
+fn own_encrypted_message(realm_id: &str, strand_id: &str) -> (Value, arkret_sdk::MessageId) {
+    let event = signed_chat_event(
+        "ak.message.create",
+        realm_id,
+        json!({"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}),
+        "2026-07-08T01:44:39.000Z",
+        json!({"strand_id": strand_id, "encrypted_content": true}),
+    );
+    let message_id = arkret_sdk::MessageId::from_event_id(
+        &serde_json::from_value::<arkret_sdk::EventId>(event["event_id"].clone()).unwrap(),
+    );
+    (event, message_id)
+}
+
 #[test]
 fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
-    // X10.6 regression: an encrypted send persists a body-less
-    // raw_operation stub (it MUST NOT store the plaintext in
-    // raw_operations) plus the plaintext into the account-private
-    // sidecar keyed by `message:{message_id}` under the strand. On a
-    // card-detail Discussion tab switch / reload the ChatPanel remounts
-    // and re-derives the feed from raw_operations via
-    // `chat_messages_from_local_state_with_sidecar`. The stub now carries
-    // `message_id` + `strand_id`, so the rebuild can re-key the sidecar and
-    // restore the author's own (otherwise undecryptable) message body.
+    // X10.6 regression: an encrypted send keeps no plaintext in
+    // raw_operations; the plaintext lives in the account-private sidecar
+    // keyed by `message:{message_id}` under the strand, where `message_id`
+    // is derived from the accepted event id. On a Discussion tab switch /
+    // reload the feed is re-derived from raw_operations via
+    // `chat_messages_from_local_state_with_sidecar`, which re-keys the
+    // sidecar and restores the author's own (otherwise undecryptable) body.
     let temp = std::env::temp_dir().join(format!("inkson-x10_6-rebuild-sidecar-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
-    let event_id = "ak:event:AQF-oOhhx26_6pizrJdZKnGd4znSSuoeNZmFDAJWlc70";
-    let message_id = arkret_sdk::MessageId::from_event_id(
-        &arkret_sdk::EventId::new(event_id.to_owned()).expect("fixture event id"),
+    let (event, message_id) = own_encrypted_message(
+        "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+        "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
     );
     let sidecar_content = serde_json::to_string(
         &arkret_sdk::ContentBlock::markdown_text("secret discussion body")
@@ -32,29 +46,17 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
         &sidecar_content,
     );
 
-    let mut state = ClientLocalState {
+    let state = ClientLocalState {
         raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:enc".to_owned(),
             realm_id: Some("ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
             received_at: chrono::Utc::now(),
-            // Encrypted stub: identity only, NO plaintext body.
-            payload: json!({
-                "event_id": event_id,
-                "kind": "ak.message.create",
-                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-                "realm_id": "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
-                "scope_ref": {"kind": "realm", "realm_id": "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q"},
-                "strand_id": "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
-                "message_id": message_id,
-                "encrypted_content": true,
-                "status": "accepted"
-            }),
+            payload: event,
         }],
         ..ClientLocalState::default()
     };
-    sign_chat_fixture(&mut state.raw_operations[0].payload);
 
-    // Without the sidecar (e.g. another device) the stub has no readable
+    // Without the sidecar (e.g. another device) the row has no readable
     // body, but it must still surface as an encrypted/locked row so the
     // discussion does not look empty.
     let without_sidecar = chat_messages_from_local_state_with_sidecar(&state, None, None);
@@ -91,65 +93,12 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
 }
 
 #[test]
-fn rebuild_restores_author_body_from_event_derived_sidecar_key() {
-    // The encrypted send path keys the author plaintext sidecar by the
-    // protocol message id derived from the accepted event id
-    // (`MessageId::from_event_id` — the same id the read-side projection
-    // derives first). A record written under that convention must restore
-    // the body even though the raw_operation's `message_id` never wins
-    // candidate selection.
-    let temp = std::env::temp_dir().join(format!("inkson-derived-sidecar-key-{}", uuid_v7()));
-    let mut store = LocalStateStore::with_path(temp);
-    let event_id = "ak:event:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu";
-    let protocol_message_id = arkret_sdk::MessageId::from_event_id(
-        &arkret_sdk::EventId::new(event_id.to_owned()).expect("fixture event id"),
-    )
-    .as_str()
-    .to_owned();
-    store.save_private_plaintext(
-        "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
-        "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
-        &format!("message:{protocol_message_id}"),
-        "secret discussion body",
-    );
-
-    let mut state = ClientLocalState {
-        raw_operations: vec![crate::state::RawOperationRecord {
-            operation_id: "ak:operation:enc-derived".to_owned(),
-            realm_id: Some("ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
-            received_at: chrono::Utc::now(),
-            payload: json!({
-                "event_id": event_id,
-                "kind": "ak.message.create",
-                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-                "realm_id": "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
-                "scope_ref": {"kind": "realm", "realm_id": "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q"},
-                "strand_id": "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
-                "message_id": protocol_message_id,
-                "encrypted_content": true,
-                "status": "accepted"
-            }),
-        }],
-        ..ClientLocalState::default()
-    };
-    sign_chat_fixture(&mut state.raw_operations[0].payload);
-
-    let restored = chat_messages_from_local_state_with_sidecar(&state, Some(&store), None);
-    assert_eq!(restored.len(), 1);
-    assert_eq!(restored[0].body, "secret discussion body");
-    assert!(matches!(
-        restored[0].crypto_state,
-        MessageCryptoState::Plaintext
-    ));
-}
-
-#[test]
 fn rebuild_restores_authors_own_encrypted_poll_from_content_sidecar() {
     let temp = std::env::temp_dir().join(format!("inkson-poll-content-sidecar-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     let realm = "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
     let strand = "ak:strand:AU2FuZ5Cmuwsb0J0xuJwH47SCEL34D7oJWb4JivTH934";
-    let message_id = "ak:message:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu";
+    let (event, message_id) = own_encrypted_message(realm, strand);
     let content = json!({
         "kind": "ak.content.poll",
         "body": "Deploy now?",
@@ -186,22 +135,14 @@ fn rebuild_restores_authors_own_encrypted_poll_from_content_sidecar() {
         &format!("message-content:{message_id}"),
         &serde_json::to_string(&content).expect("content serializes"),
     );
-    let mut event = json!({
-        "event_id": "ak:event:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu",
-        "kind": "ak.message.create",
-        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-        "realm_id": realm,
-        "scope_ref": {"kind": "realm", "realm_id": realm},
-        "strand_id": strand,
-        "encrypted_content": true,
-        "status": "accepted"
-    });
-    sign_chat_fixture(&mut event);
 
     let cards = poll_cards_from_events_with_sidecar(realm, &[event], Some(&store), None);
 
     assert_eq!(cards.len(), 1);
-    assert_eq!(cards[0].poll_ref.as_ref().unwrap().as_str(), message_id);
+    assert_eq!(
+        cards[0].poll_ref.as_ref().unwrap().as_str(),
+        message_id.as_str()
+    );
     assert_eq!(cards[0].question, "Deploy now?");
     assert_eq!(cards[0].options.len(), 2);
     assert_eq!(cards[0].options[1].label, "After backup");
@@ -319,9 +260,15 @@ fn legacy_late_recovery_marker_does_not_override_verified_sidecar_path() {
     let mut store = LocalStateStore::with_path(temp);
     let realm = "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q";
     let strand = "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
-    let event_id = "ak:event:AYBWEYesKK6NG4kEzOZXc7FlBfXuJdaVxsjAp4V6hygg";
+    let event = signed_chat_event(
+        "ak.message.create",
+        realm,
+        json!({"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}),
+        "2026-07-08T01:44:39.000Z",
+        json!({"strand_id": strand, "content": {"encrypted_content": true}}),
+    );
     let message_id = arkret_sdk::MessageId::from_event_id(
-        &arkret_sdk::EventId::new(event_id.to_owned()).expect("fixture event id"),
+        &serde_json::from_value::<arkret_sdk::EventId>(event["event_id"].clone()).unwrap(),
     );
     store.save_private_plaintext(
         realm,
@@ -329,23 +276,13 @@ fn legacy_late_recovery_marker_does_not_override_verified_sidecar_path() {
         &format!("message:{message_id}"),
         "late plaintext",
     );
-    let mut event = json!({
-        "event_id": event_id,
-        "kind": "ak.message.create",
-        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-        "realm_id": realm,
-        "scope_ref": {"kind": "realm", "realm_id": realm},
-        "strand_id": strand,
-        "message_id": message_id,
+    let event = json!({
+        "event": event,
         "decryption_state": "decryption_failed",
         "late_recovery": {
             "receiver_visible_at_t0": false
-        },
-        "content": {
-            "encrypted_content": true
         }
     });
-    sign_chat_fixture(&mut event);
 
     let message =
         chat_message_from_event_with_sidecar(realm, &event, Some(&store), None).expect("message");

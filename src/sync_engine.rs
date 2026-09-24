@@ -45,7 +45,6 @@ use crate::runtime::projection::{ClientProjectionEvent, ProjectionSink, SyncStat
 use crate::state::{LocalStateStore, RawOperationRecord};
 use crate::sync_parse::{
     accepted_human_event_signing_device, collect_member_identity_proof_devices_from_value,
-    collect_persistent_proof_sender_devices, collect_proof_sender_devices_from_value,
     realm_projection_is_durable, sync_realm_timeline_events,
 };
 use crate::transport::TransportClient;
@@ -808,18 +807,7 @@ impl InksonAccountProjector {
             http.clone(),
             crate::transport::RequestContext::new(self.ctx.token.get()),
         );
-        let state_store_for_profiles = self.ctx.state_store.clone();
-        let device_keys_changed = prefetch_persistent_event_sender_keys(
-            &api,
-            response,
-            self.ctx.state_store.clone(),
-            |realm_id| {
-                state_store_for_profiles
-                    .read(|store| store.realm_projection_is_minimal_metadata(realm_id))
-            },
-        )
-        .await;
-        if agent_evidence_changed || device_keys_changed {
+        if agent_evidence_changed {
             refresh_projection_events_from_sync_response(response, &self.ctx);
         }
         prefetch_member_identity_proof_keys(&api, response, self.ctx.state_store.clone()).await;
@@ -1895,104 +1883,48 @@ async fn run_idle_self_update_pass(
     }
 }
 
-/// Prime the same device-directory cache used by the synchronous chat proof
-/// verifier for proof-bearing persistent events in the current sync response.
-/// Chat projection cannot await `keys/query` inline, so `apply_response` first
-/// renders unresolved proofs conservatively; this pass resolves missing sender
-/// device keys and the caller then recomputes the projection.
-///
-/// SPI-INK-001 (encryption-and-audit.md §2.10.3): Realms for which
-/// `is_minimal_metadata_realm(realm_id)` returns true are excluded — content
-/// authorship there is anchored to the active MLS LeafNode and MUST NOT form
-/// a principal-scoped `(actor, device)` `keys/query` pair.
-pub(crate) async fn prefetch_persistent_event_sender_keys<
-    S: crate::mls::governance_proof::GovernanceProofStateStore,
->(
-    api: &TransportClient,
-    response: &AccountFrameStep,
-    state_store: S,
-    is_minimal_metadata_realm: impl Fn(&str) -> bool,
-) -> bool {
-    let pairs = collect_persistent_proof_sender_devices(
-        &response.step.realm_projections,
-        &is_minimal_metadata_realm,
-    );
-    prefetch_persistent_event_sender_key_pairs(api, pairs, state_store).await
-}
-
 /// MID-5: resolve the authoritative device signing key for every
 /// `ak.member.identity.update` asserter referenced by this sync response, so the
 /// synchronous [`crate::identity::member_identity_store::MemberIdentityStore`] proof
 /// verifier (which is cache-only and fail-closed) can validate the proofs. The
 /// `(actor, device)` pair is derived from each proof's `verification_method`
 /// (`did:method:identifier#device`); the controller MUST be the asserting actor.
+/// Only keys missing from the cache are fetched from the authenticated account
+/// Station.
 async fn prefetch_member_identity_proof_keys<
     S: crate::mls::governance_proof::GovernanceProofStateStore,
 >(
     api: &TransportClient,
     response: &AccountFrameStep,
     state_store: S,
-) -> bool {
+) {
     let mut pairs = BTreeSet::<(String, String)>::new();
     for body in response.step.realm_projections.values() {
         collect_member_identity_proof_devices_from_value(body, 0, &mut pairs);
     }
-    prefetch_persistent_event_sender_key_pairs(api, pairs.into_iter().collect(), state_store).await
-}
-
-pub(crate) async fn prefetch_persistent_event_sender_keys_from_values<
-    S: crate::mls::governance_proof::GovernanceProofStateStore,
->(
-    api: &TransportClient,
-    values: &[Value],
-    state_store: S,
-) -> bool {
-    let mut pairs = BTreeSet::<(String, String)>::new();
-    for value in values {
-        collect_proof_sender_devices_from_value(value, 0, &mut pairs);
-    }
-    prefetch_persistent_event_sender_key_pairs(api, pairs.into_iter().collect(), state_store).await
-}
-
-/// Fetch only missing device facts from the authenticated account Station.
-async fn prefetch_persistent_event_sender_key_pairs<
-    S: crate::mls::governance_proof::GovernanceProofStateStore,
->(
-    api: &TransportClient,
-    pairs: Vec<(String, String)>,
-    state_store: S,
-) -> bool {
+    pairs.retain(|(actor, device)| {
+        !matches!(
+            crate::identity::device_directory::cached_device_signing_key(actor, device),
+            crate::identity::device_directory::CacheLookup::Hit(_)
+        )
+    });
     if pairs.is_empty() {
-        return false;
+        return;
     }
-    let missing: Vec<(String, String)> = pairs
-        .into_iter()
-        .filter(|(actor, device)| {
-            !matches!(
-                crate::identity::device_directory::cached_device_signing_key(actor, device),
-                crate::identity::device_directory::CacheLookup::Hit(_)
-            )
-        })
-        .collect();
-    if missing.is_empty() {
-        return false;
-    }
-
     let Some(authority) = state_store.with_read(|store| store.active_authority()) else {
-        return false;
+        return;
     };
-    for (actor, device) in missing {
+    for (actor, device) in pairs {
         if state_store
             .with_read(|store| store.active_authority())
             .as_ref()
             != Some(&authority)
         {
-            return false;
+            return;
         }
         let _ = crate::identity::device_directory::resolve_device_signing_key(api, &actor, &device)
             .await;
     }
-    true
 }
 
 fn refresh_projection_events_from_sync_response(

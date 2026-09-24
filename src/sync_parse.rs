@@ -3,21 +3,21 @@
 //!
 //! Everything here answers a question the delivered frame already settles — does
 //! this Realm entry carry durable projection state, which `(actor, device)`
-//! pairs a projection's proofs name, which device signed an accepted human
-//! Event — so it is decided identically on every surface. No store, transport,
+//! pairs a projection's member-identity proofs name, which device signed an
+//! accepted human Event — so it is decided identically on every surface. No store, transport,
 //! clock or UI participates; the inputs are the decoded SDK frame types and the
 //! JSON projection bodies derived from them.
 //!
 //! These are host projection helpers, not protocol types: they read shapes the
 //! SDK defines and never construct wire objects of their own.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 pub use arkret_models_collaboration::sync_frames::account_subscribe::{
     AccountSubscribeBatch, AccountSubscribeFrame, AccountSubscribeFrameKind,
     AccountSubscribeSnapshotResult,
 };
-use arkret_wire::{ActorId, DeviceId, Did, Event, project_did_to_core_id};
+use arkret_wire::{DeviceId, Did, Event, project_did_to_core_id};
 use serde_json::Value;
 
 /// True when a Realm projection body carries at least one surface worth
@@ -66,8 +66,7 @@ pub fn sync_realm_timeline_events(body: &Value) -> Vec<Value> {
 
 /// Recursively scan a projection `Value` for `ak.member.identity.update`
 /// proofs, extracting `(controller_principal_id, device_id)` from each
-/// `member_identity.proof.verification_method`. Depth-bounded to mirror the
-/// persistent-event scanner.
+/// `member_identity.proof.verification_method`. Depth-bounded.
 pub fn collect_member_identity_proof_devices_from_value(
     value: &Value,
     depth: usize,
@@ -112,113 +111,6 @@ pub fn split_verification_method(verification_method: &str) -> Option<(String, S
         return None;
     }
     Some((controller.to_owned(), device.to_owned()))
-}
-
-/// The `(actor, device)` directory pairs a frame's Realm projections name in
-/// their proofs.
-///
-/// A minimal-metadata Realm's content authorship never forms a directory pair;
-/// its authors verify against the MLS LeafNode instead, so the caller supplies
-/// that classification.
-pub fn collect_persistent_proof_sender_devices(
-    realm_projections: &BTreeMap<String, Value>,
-    is_minimal_metadata_realm: &impl Fn(&str) -> bool,
-) -> Vec<(String, String)> {
-    let mut pairs = BTreeSet::<(String, String)>::new();
-    for (realm_id, body) in realm_projections {
-        if is_minimal_metadata_realm(realm_id) {
-            continue;
-        }
-        collect_proof_sender_devices_from_value(body, 0, &mut pairs);
-    }
-    pairs.into_iter().collect()
-}
-
-/// Recursively collect proof-bearing `(actor, device)` pairs from one
-/// projection body.
-pub fn collect_proof_sender_devices_from_value(
-    value: &Value,
-    depth: usize,
-    pairs: &mut BTreeSet<(String, String)>,
-) {
-    if depth > 32 {
-        return;
-    }
-    match value {
-        Value::Object(object) => {
-            if let Some((actor, device)) = proof_bearing_sender_device(object) {
-                pairs.insert((actor, device));
-            }
-            for child in object.values() {
-                collect_proof_sender_devices_from_value(child, depth + 1, pairs);
-            }
-        }
-        Value::Array(values) => {
-            for child in values {
-                collect_proof_sender_devices_from_value(child, depth + 1, pairs);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// The `(account, device)` a proof-bearing projection object names, when its
-/// proof controller matches the accountable principal.
-pub fn proof_bearing_sender_device(
-    object: &serde_json::Map<String, Value>,
-) -> Option<(String, String)> {
-    let proof = object.get("producer_proof").and_then(Value::as_object)?;
-    let actor = object
-        .get("actor_id")
-        .or_else(|| object.get("sender_actor_id"))
-        .and_then(|value| serde_json::from_value::<ActorId>(value.clone()).ok())?;
-    // A delegated Event keeps the accountable principal in `actor_id`, while
-    // `executed_by` identifies the runtime that actually signed the envelope.
-    // Independent Agent MLS endpoints use their authenticated LeafNode key
-    // instead and deliberately do not form a device-directory lookup here.
-    let proof_subject = object
-        .get("executed_by")
-        .and_then(|value| serde_json::from_value::<ActorId>(value.clone()).ok())
-        .unwrap_or(actor);
-    let account_id = proof_subject.as_account_id()?;
-    let proof_controller = {
-        let method = proof.get("verification_method").and_then(Value::as_str)?;
-        let controller = {
-            let no_query = method.split_once('?').map_or(method, |(head, _)| head);
-            no_query.split_once('#').map_or(no_query, |(head, _)| head)
-        };
-        let controller = Did::new(controller.to_owned()).ok()?;
-        let controller_core = project_did_to_core_id(&controller).ok()?;
-        (controller_core == account_id.principal_id).then_some(controller)
-    }?;
-    let device = object
-        .get("device_id")
-        .or_else(|| object.get("sender_device_id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|device| !device.is_empty())
-        .map(str::to_owned)
-        .or_else(|| {
-            proof_sender_device_from_verification_method(object, proof_controller.as_str())
-        })?;
-    Some((account_id.to_string(), device))
-}
-
-/// The device fragment of the producer proof whose controller is `actor`.
-pub fn proof_sender_device_from_verification_method(
-    object: &serde_json::Map<String, Value>,
-    actor: &str,
-) -> Option<String> {
-    object
-        .get("producer_proof")
-        .and_then(Value::as_object)?
-        .get("verification_method")
-        .and_then(Value::as_str)
-        .and_then(|method| {
-            let no_query = method.split_once('?').map_or(method, |(head, _)| head);
-            let (controller, fragment) = no_query.split_once('#')?;
-            (controller == actor && fragment.starts_with("ak:device:")).then(|| fragment.to_owned())
-        })
 }
 
 /// The device that signed an accepted human Event, when its producer proof is

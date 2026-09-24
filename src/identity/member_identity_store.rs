@@ -19,8 +19,7 @@
 //! verify under the asserter's authoritative device signing key resolved
 //! through [`crate::identity::device_directory`] (never taken from the envelope). A
 //! candidate that fails either check is dropped from the effective plaintext
-//! set, mirroring the Welcome `claim_envelope` directory-resolution +
-//! fail-closed pattern in `mls/runtime/message.rs`. Handle now comes from the
+//! set. Handle now comes from the
 //! `ak.schema.handle_claim.v1` set via §3.2.1 primary handle selection —
 //! `MemberIdentity` no longer carries `primary_handle` / `handles[]`.
 
@@ -250,11 +249,10 @@ impl MemberIdentityStore {
 ///   (a) `proof.payload_digest` byte-equals the recomputed
 ///       `canonical_payload_sha256()` (the signed bytes are the bytes shown);
 ///   (b) the raw `proof.signature` verifies under the asserter's authoritative
-///       device signing key, resolved through [`crate::identity::device_directory`] (the
-///       same cache the Welcome / realm-key-share receive paths use) — never a
-///       key taken from the envelope itself.
+///       device signing key, resolved through [`crate::identity::device_directory`] —
+///       never a key taken from the envelope itself.
 ///
-/// Resolution + trust rules (mirrors `verify_welcome_claim_envelope_signer`):
+/// Resolution + trust rules:
 ///   - `proof.verification_method` is a `did:method:identifier#device` URL; its controller DID MUST
 ///     equal the identity's `actor_id` (an actor can only assert its own member identity).
 ///   - the fragment selects the asserting device; its key is looked up in the device-directory

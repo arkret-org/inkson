@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use arkret_wire::event_kind_str;
 
 use super::*;
-use crate::identity::verification_method_controller;
 #[cfg(test)]
 pub(crate) use crate::state::projection::message_ops::message_operations_from_events;
 // The message-candidate walkers + raw-operation
@@ -1030,26 +1029,20 @@ fn decrypt_chat_encrypted_content_value(
     serde_json::from_slice::<Value>(&plaintext).ok()
 }
 
-/// Find the proof-bearing envelope layer for a chat event and verify its
-/// `producer_proof` against the sender's authoritative directory verify key.
+/// Find the proof-bearing Event layer of a committed chat row and check its
+/// `producer_proof` without resolving any signing key.
 ///
-/// Uses the shared receiver primitive (`device_directory`) — the SAME resolver
-/// and detached-JWS verifier the call-signal path uses. Lookups are cache-only
-/// (the chat render path is synchronous); a cache miss yields
-/// [`ChatProofVerdict::Unresolved`] so the message is flagged, not silently
-/// trusted.
-#[cfg(test)]
-pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
-    verify_chat_envelope_proof_with_local_identity(event, None)
-}
-
-fn verify_chat_envelope_proof_with_local_identity(
-    event: &Value,
-    local_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
-) -> ChatProofVerdict {
-    // Locate the envelope layer that actually carries `actor_id` + `producer_proof`.
-    // Projected chat events nest the signed envelope under `event` / `envelope`
-    // / `raw`; scan the same candidate layers used elsewhere.
+/// The row is a committed Event read from this account's own Station, whose
+/// stream verification already bound it to the governance `RealmCommit`. The
+/// governance Station judged the producer device authorization when it
+/// admitted the Event, so the client only checks that the proof is
+/// self-consistent (`server-trusted-results.md` §2, `federation.md` §3): the
+/// digest covers the exact canonical Event bytes, the verification method
+/// projects to the actual signer and a human device fragment is a complete
+/// device id. A human-device producer is then [`ChatProofVerdict::Verified`];
+/// other producers keep their own evidence rule and stay
+/// [`ChatProofVerdict::Unresolved`] here.
+pub(crate) fn verify_committed_chat_producer_proof(event: &Value) -> ChatProofVerdict {
     let candidates = message_candidates(event);
     let proof_bearing = candidates.iter().copied().find(|candidate| {
         candidate
@@ -1061,115 +1054,44 @@ fn verify_chat_envelope_proof_with_local_identity(
                 .and_then(actor_principal_from_value)
                 .is_some_and(|actor| !actor.trim().is_empty())
     });
-    let envelope = match proof_bearing {
-        Some(envelope) => envelope,
-        None => {
-            // No proof-bearing layer. If any layer is nonetheless attributed
-            // (claims an `actor_id`), it asserts a sender yet ships no proof
-            // — flag it as needing verification rather than render it as
-            // trusted plaintext (device-lifecycle.md §8.2 fail-closed, in
-            // parity with history-response / member-identity / call-signal /
-            // Welcome receiver gates). Only a wholly unattributed row
-            // (no actor_id anywhere — non-persistent / system) is
-            // Unattributed.
-            let attributed = candidates.iter().copied().any(|candidate| {
-                candidate
-                    .get("actor_id")
-                    .and_then(actor_principal_from_value)
-                    .is_some_and(|actor| !actor.trim().is_empty())
-            });
-            return if attributed {
-                ChatProofVerdict::Rejected
-            } else {
-                ChatProofVerdict::Unattributed
-            };
-        }
+    let Some(envelope) = proof_bearing else {
+        // An attributed row that ships no proof asserts a sender it cannot
+        // back, so it never renders as trusted plaintext. Only a wholly
+        // unattributed (system) row is Unattributed.
+        let attributed = candidates.iter().copied().any(|candidate| {
+            candidate
+                .get("actor_id")
+                .and_then(actor_principal_from_value)
+                .is_some_and(|actor| !actor.trim().is_empty())
+        });
+        return if attributed {
+            ChatProofVerdict::Rejected
+        } else {
+            ChatProofVerdict::Unattributed
+        };
     };
-    let actor = envelope
-        .get("actor_id")
-        .and_then(actor_principal_from_value)
-        .unwrap_or_default();
-    if actor.is_empty() {
-        return ChatProofVerdict::Rejected;
+    match committed_human_device_producer(envelope) {
+        Ok(Some(_)) => ChatProofVerdict::Verified,
+        Ok(None) => ChatProofVerdict::Unresolved,
+        Err(()) => ChatProofVerdict::Rejected,
     }
-    // Delegated and Applet-originated envelopes keep the
-    // accountable principal in actor_id while the runtime that actually
-    // signed the envelope is named by executed_by. Native envelopes omit
-    // executed_by and therefore continue to require an actor-controlled key.
-    let proof_controller = envelope
-        .get("executed_by")
-        .and_then(actor_principal_from_value)
-        .filter(|controller| !controller.trim().is_empty())
-        .unwrap_or_else(|| actor.clone());
-    if !persistent_proof_controllers_match(envelope, &proof_controller) {
-        return ChatProofVerdict::Rejected;
-    }
-    let Some(device) = persistent_proof_sender_device(envelope, &proof_controller) else {
-        return ChatProofVerdict::Unresolved;
-    };
-    let Some(proof_actor) = envelope
-        .get("executed_by")
-        .or_else(|| envelope.get("actor_id"))
-        .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
-    else {
-        return ChatProofVerdict::Rejected;
-    };
-    match crate::identity::device_directory::cached_device_signing_key(
-        &proof_actor.to_string(),
-        device,
-    ) {
-        crate::identity::device_directory::CacheLookup::Hit(key) => {
-            if crate::identity::device_directory::verify_persistent_envelope_proof(envelope, &key) {
-                ChatProofVerdict::Verified
-            } else {
-                ChatProofVerdict::Rejected
-            }
-        }
-        crate::identity::device_directory::CacheLookup::NegativeHit => ChatProofVerdict::Rejected,
-        crate::identity::device_directory::CacheLookup::Miss => {
-            // The synchronous render path normally verifies against the
-            // authoritative device-directory cache. Immediately after this
-            // device authors an event, however, account sync can project the
-            // accepted event before the async directory prefetch has warmed
-            // that cache. In that narrow self-authored case we can still do a
-            // real cryptographic verification with the exact active device
-            // key that signed the event. This is not a trust downgrade: the
-            // actor, device id, active signer binding and detached proof must
-            // all agree, and a directory NegativeHit (revoked/absent device)
-            // is never overridden.
-            let local_key =
-                local_identity.and_then(|(local_account, local_actor, local_device)| {
-                    if proof_actor.as_account_id() != Some(local_account)
-                        || local_actor != proof_controller
-                        || local_device.as_str() != device
-                    {
-                        return None;
-                    }
-                    let signer = crate::event_signer::active_signer()?;
-                    if signer.device_id() != Some(device) {
-                        return None;
-                    }
-                    let multibase = signer.public_key_multibase()?;
-                    crate::identity::device_directory::public_key_from_directory_value(&multibase)
-                });
-            match local_key {
-                Some(key)
-                    if crate::identity::device_directory::verify_persistent_envelope_proof(
-                        envelope, &key,
-                    ) =>
-                {
-                    ChatProofVerdict::Verified
-                }
-                Some(_) => ChatProofVerdict::Rejected,
-                None => ChatProofVerdict::Unresolved,
-            }
-        }
-    }
+}
+
+/// The human-device producer of one exact committed Event, after the key-free
+/// self-consistency check under the Realm's digest suite.
+fn committed_human_device_producer(
+    envelope: &Value,
+) -> Result<Option<arkret_wire::HumanDeviceProducer>, ()> {
+    let event = serde_json::from_value::<arkret_sdk::Event>(envelope.clone()).map_err(|_| ())?;
+    let digest_suite = event.realm_id.digest_suite_code().digest_suite();
+    event
+        .verify_producer_proof_self_consistency(digest_suite)
+        .map_err(|_| ())
 }
 
 /// Realm-aware receiver proof gate. A cached retired minimal-metadata marker
 /// is not a valid Realm profile and must not select its old pairwise trust
-/// path or silently fall through to ordinary device-directory verification.
+/// path or silently fall through to ordinary producer verification.
 pub(crate) fn verify_chat_envelope_proof_for_realm(
     realm_id: &str,
     event: &Value,
@@ -1243,7 +1165,7 @@ pub(crate) fn verify_chat_envelope_proof_for_realm(
             }
         };
     }
-    verify_chat_envelope_proof_with_local_identity(event, decrypt_identity)
+    verify_committed_chat_producer_proof(event)
 }
 
 pub(crate) fn verified_chat_sender_domain_for_realm(
@@ -1257,7 +1179,7 @@ pub(crate) fn verified_chat_sender_domain_for_realm(
     {
         return None;
     }
-    // This persistent-envelope verifier proves a device author. Retired
+    // Only a human-device producer yields a device sender domain. Retired
     // marker projections were rejected by the proof gate above.
     let envelope = message_candidates(event).into_iter().find(|candidate| {
         candidate
@@ -1265,17 +1187,8 @@ pub(crate) fn verified_chat_sender_domain_for_realm(
             .and_then(Value::as_object)
             .is_some()
     })?;
-    let actor = envelope
-        .get("executed_by")
-        .and_then(actor_principal_from_value)
-        .or_else(|| {
-            envelope
-                .get("actor_id")
-                .and_then(actor_principal_from_value)
-        })?;
-    let device = persistent_proof_sender_device(envelope, &actor)?;
-    let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;
-    Some(device.as_str().as_bytes().to_vec())
+    let producer = committed_human_device_producer(envelope).ok()??;
+    Some(producer.device_id.as_str().as_bytes().to_vec())
 }
 
 /// Reconstruct the encrypted-content group coordinates used by ordinary
@@ -1310,53 +1223,6 @@ fn encrypted_content_coordinates(
     ))
 }
 
-fn persistent_proof_sender_device<'a>(envelope: &'a Value, actor: &str) -> Option<&'a str> {
-    envelope
-        .get("device_id")
-        .or_else(|| envelope.get("sender_device_id"))
-        .and_then(Value::as_str)
-        .filter(|device| !device.trim().is_empty())
-        .or_else(|| {
-            envelope
-                .get("producer_proof")
-                .and_then(Value::as_object)
-                .and_then(|proof| proof.get("verification_method"))
-                .and_then(Value::as_str)
-                .and_then(|method| verification_method_device_fragment(method, actor))
-        })
-}
-
-fn verification_method_device_fragment<'a>(
-    verification_method: &'a str,
-    actor: &str,
-) -> Option<&'a str> {
-    let no_query = verification_method
-        .split_once('?')
-        .map(|(head, _)| head)
-        .unwrap_or(verification_method);
-    let (controller, fragment) = no_query.split_once('#')?;
-    let controller_matches = arkret_sdk::Did::new(controller.to_owned())
-        .ok()
-        .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
-        .is_some_and(|core_id| core_id.as_str() == actor);
-    (controller_matches && fragment.starts_with("ak:device:")).then_some(fragment)
-}
-
-fn persistent_proof_controllers_match(envelope: &Value, expected_controller: &str) -> bool {
-    let Some(proof) = envelope.get("producer_proof").and_then(Value::as_object) else {
-        return false;
-    };
-    proof
-        .get("verification_method")
-        .and_then(Value::as_str)
-        .is_some_and(|verification_method| {
-            arkret_sdk::Did::new(verification_method_controller(verification_method).to_owned())
-                .ok()
-                .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
-                .is_some_and(|core_id| core_id.as_str() == expected_controller)
-        })
-}
-
 /// X9 — build a `ChatMessage` from a synced/projected event, preferring the
 /// author's own local plaintext sidecar (`mls_private_plaintext`, keyed by
 /// `message:{message_id}`) over the encrypted payload. OpenMLS forbids an
@@ -1374,11 +1240,9 @@ pub(crate) fn chat_message_from_event_with_sidecar(
 ) -> Option<ChatMessage> {
     let candidates = message_candidates(event);
     let is_redaction_tombstone = message_is_redaction_tombstone(&candidates);
-    // Receiver proof gate (device-lifecycle.md §8.2, fail-closed): a present
-    // sender proof that fails verification (bad sig / revoked / absent device)
-    // MUST NOT enter the conversation view. Minimal-metadata Realms verify
-    // against the active MLS LeafNode instead of the device directory
-    // (§2.10.3, SPI-INK-001).
+    // Receiver proof gate (server-trusted-results.md §2, fail-closed): a
+    // producer proof that is not self-consistent MUST NOT enter the
+    // conversation view.
     let mut proof_verdict =
         verify_chat_envelope_proof_for_realm(realm_id, event, state_store, decrypt_identity);
     let server_projection_tombstone = is_redaction_tombstone
@@ -1527,8 +1391,8 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     // matching Circle snapshot above binds decryption to that scope without
     // inventing a payload field that v1 forbids.
     let crypto_state = if proof_verdict == ChatProofVerdict::Unresolved {
-        // A present sender proof whose verify key is not yet resolvable from
-        // the directory cache is flagged rather than presented as trusted.
+        // A non-device producer whose signer evidence is not verified yet is
+        // flagged rather than presented as trusted.
         MessageCryptoState::NeedsVerification
     } else if body_from_sidecar || body_was_decrypted {
         // X9: the author's own plaintext was recovered from the local sidecar,

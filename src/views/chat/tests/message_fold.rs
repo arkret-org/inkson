@@ -39,8 +39,7 @@ fn verified_chat_create(
     principal: &str,
     body: &str,
 ) -> arkret_sdk::CommittedEventFullView {
-    let device_id = "ak:device:0196419b-0000-7000-8000-000000000001";
-    let committed = fixture::committed_event::verified_realm_item_as(
+    fixture::committed_event::verified_realm_item_as(
         realm.clone(),
         arkret_sdk::EventKind::MessageCreate.as_str(),
         json!({
@@ -49,21 +48,8 @@ fn verified_chat_create(
             "content": {"kind": "ak.content.text", "body": body}
         }),
         principal,
-        device_id,
-    );
-    let signer = arkret_test_kit::keys::seeded_signer(
-        arkret_sdk::Did::new(format!("did:web:{principal}")).unwrap(),
-        arkret_sdk::DidUrl::new(format!("did:web:{principal}#{device_id}")).unwrap(),
-    );
-    let key = arkret_sdk::canonical::ed25519_pubkey_to_did_key_multibase(
-        signer.verifying_key().as_bytes(),
-    );
-    crate::identity::device_directory::seed_positive_for_test(
-        &committed.event.actor_id.to_string(),
-        device_id,
-        crate::identity::device_directory::public_key_from_directory_value(&key).unwrap(),
-    );
-    committed
+        "ak:device:0196419b-0000-7000-8000-000000000001",
+    )
 }
 
 #[test]
@@ -179,20 +165,25 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
 
 #[test]
 fn chat_messages_read_projected_reaction_summary() {
-    let mut events = vec![json!({
+    let mut event = json!({
         "event_id": "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc",
         "kind": "ak.message.create",
         "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
         "realm_id": "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
         "created_at": "2026-05-22T10:00:00.000Z",
-        "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
-        "message_id": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
-        "body": "hello from alice",
+        "payload": {
+            "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+            "content": {"kind": "ak.content.text", "body": "hello from alice"}
+        }
+    });
+    sign_chat_fixture(&mut event);
+    // The projected summary rides next to the exact signed Event.
+    let events = vec![json!({
+        "event": event,
         "reaction_summary": {
             "+1": ["ak:did_core:web:bob.example", "ak:did_core:web:carol.example"]
         }
     })];
-    sign_chat_fixtures(&mut events);
 
     let messages = chat_messages_from_events_with_sidecar(
         "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
@@ -223,33 +214,35 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
             "realm_id": "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
             "created_at": "2026-05-22T10:00:00.000Z",
-            "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
-            "message_id": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
-            "body": "hello from alice"
+            "payload": {
+                "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+                "message_id": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
+                "content": {"kind": "ak.content.text", "body": "hello from alice"}
+            }
         }),
         json!({
             "event_id": "ak:event:AQnQ4vQpIlqkjkQiXR6H-aFpDQtU9QIqZUUOyhD651bQ",
             "kind": "ak.reaction.add",
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
             "realm_id": "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
-            "target_ref": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
-            "key": "+1"
+            "created_at": "2026-05-22T10:01:00.000Z",
+            "payload": {"target_ref": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c", "key": "+1"}
         }),
         json!({
             "event_id": "ak:event:AYAHWeIu5Mo1OonYBugKyH6S4a3sR2DjsutRWGcM-7UY",
             "kind": "ak.reaction.add",
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:carol.example","station_id":"ak:did_core:web:principal.example"}},
             "realm_id": "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
-            "target_ref": "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc",
-            "key": "+1"
+            "created_at": "2026-05-22T10:02:00.000Z",
+            "payload": {"target_ref": "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc", "key": "+1"}
         }),
         json!({
             "event_id": "ak:event:AU9fNJ-s5wHOmkdCxh3R42mSETgDQzmk3fMm-gCnHXXw",
             "kind": "ak.reaction.remove",
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
             "realm_id": "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
-            "target_ref": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
-            "key": "+1"
+            "created_at": "2026-05-22T10:03:00.000Z",
+            "payload": {"target_ref": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c", "key": "+1"}
         }),
     ];
     sign_chat_fixtures(&mut events);
@@ -386,10 +379,7 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
             "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "scope_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-            "actor_seq": 1,
             "created_at": "2026-07-08T01:44:39.000Z",
-            "hlc": "01970e589d21-0004-a13f9c2e",
-            "prev_refs": [],
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "canonical hello"},
                 "strand_id": "ak:strand:AbZt0K_NvenxSDAkOnSDRtorrvUXhGqxSoqT2bFL7m8H",
@@ -402,10 +392,7 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
             "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "scope_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-            "actor_seq": 2,
             "created_at": "2026-07-08T01:44:43.000Z",
-            "hlc": "01970e589d22-0004-a13f9c2e",
-            "prev_refs": [],
             "payload": {
                 "key": "👍",
                 "target_ref": "ak:message:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z"
@@ -449,10 +436,7 @@ fn durable_reaction_folds_onto_controller_only_create() {
             "realm_id": realm_id,
             "scope_ref": {"kind": "realm", "realm_id": realm_id},
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-            "actor_seq": 1,
             "created_at": "2026-07-08T01:44:39.000Z",
-            "hlc": "01970e589d21-0004-a13f9c2e",
-            "prev_refs": [],
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "optimistic first"},
                 "strand_id": "ak:strand:AbZt0K_NvenxSDAkOnSDRtorrvUXhGqxSoqT2bFL7m8H",
@@ -465,10 +449,7 @@ fn durable_reaction_folds_onto_controller_only_create() {
             "realm_id": realm_id,
             "scope_ref": {"kind": "realm", "realm_id": realm_id},
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-            "actor_seq": 2,
             "created_at": "2026-07-08T01:44:43.000Z",
-            "hlc": "01970e589d22-0004-a13f9c2e",
-            "prev_refs": [],
             "payload": {"key": "👍", "target_ref": message_id}
         }),
     ];
@@ -527,10 +508,7 @@ fn durable_redaction_folds_onto_controller_only_create() {
         "realm_id": realm_id,
         "scope_ref": {"kind": "realm", "realm_id": realm_id},
         "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-        "actor_seq": 2,
         "created_at": "2026-07-08T01:44:43.000Z",
-        "hlc": "01970e589d22-0004-a13f9c2e",
-        "prev_refs": [],
         "payload": {"message_id": message_id, "reason": "user requested tombstone"}
     })];
     sign_chat_fixtures(&mut redactions);
@@ -549,9 +527,6 @@ fn durable_redaction_folds_onto_controller_only_create() {
 #[test]
 fn chat_messages_fold_revision_chain_into_latest_message() {
     let revision_v2 = "ak:event:AegQeQYGPoF9zEbbEIcD8ndn7DUoCaZVaJ9EM6u1rvuo";
-    let revision_v2_digest = arkret_sdk::EventId::new(revision_v2.to_owned())
-        .unwrap()
-        .event_digest();
     let mut events = vec![
         json!({
             "event_id": "ak:event:AeVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
@@ -571,7 +546,6 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
             "realm_id": "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:01:00.000Z",
-            "prev_refs": ["ak:event:AeVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs"],
             "payload": {
                 "message_id": "ak:message:AeVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
                 "content": {"kind": "ak.content.text", "body": "v2"}
@@ -583,8 +557,6 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
             "realm_id": "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:02:00.000Z",
-            "prev_refs": ["ak:event:AegQeQYGPoF9zEbbEIcD8ndn7DUoCaZVaJ9EM6u1rvuo"],
-            "causal_refs": [revision_v2_digest],
             "payload": {
                 "message_id": "ak:message:AeVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
                 "content": {"kind": "ak.content.text", "body": "v3"}
@@ -705,7 +677,6 @@ fn message_revisions_follow_accepted_commit_order() {
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
             "realm_id": "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:01:00.000Z",
-            "prev_refs": [message_event],
             "payload": {"message_id": message_id, "content": {"kind": "ak.content.text", "body": "branch a"}}
         }),
         json!({
@@ -714,7 +685,6 @@ fn message_revisions_follow_accepted_commit_order() {
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
             "realm_id": "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:02:00.000Z",
-            "prev_refs": [message_event],
             "payload": {"message_id": message_id, "content": {"kind": "ak.content.text", "body": "branch b"}}
         }),
     ];
@@ -813,11 +783,13 @@ fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
             "realm_id": "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:01:00.000Z",
-            "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
-            "target_ref": "ak:message:AQLmz4zWkDYecrEZnVupSWR2EqdHzYP-bSwUXf4qQ82E",
-            "redacted": true,
-            "state": "redacted",
-            "content": {"kind": "ak.content.text", "body": "[redacted]"}
+            "payload": {
+                "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+                "target_ref": "ak:message:AQLmz4zWkDYecrEZnVupSWR2EqdHzYP-bSwUXf4qQ82E",
+                "redacted": true,
+                "state": "redacted",
+                "content": {"kind": "ak.content.text", "body": "[redacted]"}
+            }
         }),
         json!({
             "event_id": "ak:event:AZyIPFgvmgij09wqLnZMFu6qyMVd1cGRZ3bq2gvBKEfQ",
@@ -825,11 +797,13 @@ fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
             "realm_id": "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:00:00.000Z",
-            "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
-            "message_id": "ak:message:AQLmz4zWkDYecrEZnVupSWR2EqdHzYP-bSwUXf4qQ82E",
-            "redacted": true,
-            "state": "redacted",
-            "content": {"kind": "ak.content.text", "body": "[redacted]"}
+            "payload": {
+                "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+                "message_id": "ak:message:AQLmz4zWkDYecrEZnVupSWR2EqdHzYP-bSwUXf4qQ82E",
+                "redacted": true,
+                "state": "redacted",
+                "content": {"kind": "ak.content.text", "body": "[redacted]"}
+            }
         }),
     ];
     sign_chat_fixtures(&mut events);
@@ -1213,21 +1187,6 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
     assert_eq!(committed[0].event.event_id, create_id);
     assert_eq!(committed[0].commit.stream_position, 1);
     assert_eq!(committed[1].commit.stream_position, 2);
-    let signer = arkret_test_kit::keys::seeded_signer(
-        arkret_sdk::Did::new("did:web:alice.example").unwrap(),
-        arkret_sdk::DidUrl::new(
-            "did:web:alice.example#ak:device:0196419b-0000-7000-8000-000000000001",
-        )
-        .unwrap(),
-    );
-    let key = arkret_sdk::canonical::ed25519_pubkey_to_did_key_multibase(
-        signer.verifying_key().as_bytes(),
-    );
-    crate::identity::device_directory::seed_positive_for_test(
-        &committed[0].event.actor_id.to_string(),
-        "ak:device:0196419b-0000-7000-8000-000000000001",
-        crate::identity::device_directory::public_key_from_directory_value(&key).unwrap(),
-    );
     let create = serde_json::to_value(&committed[0].event).unwrap();
     let redaction = serde_json::to_value(&committed[1].event).unwrap();
     let visible =
@@ -1298,21 +1257,6 @@ fn committed_create_revision_redaction_folds_in_any_arrival_order() {
             .map(|item| item.commit.stream_position)
             .collect::<Vec<_>>(),
         vec![1, 2, 3]
-    );
-    let signer = arkret_test_kit::keys::seeded_signer(
-        arkret_sdk::Did::new("did:web:alice.example").unwrap(),
-        arkret_sdk::DidUrl::new(
-            "did:web:alice.example#ak:device:0196419b-0000-7000-8000-000000000001",
-        )
-        .unwrap(),
-    );
-    let key = arkret_sdk::canonical::ed25519_pubkey_to_did_key_multibase(
-        signer.verifying_key().as_bytes(),
-    );
-    crate::identity::device_directory::seed_positive_for_test(
-        &committed[0].event.actor_id.to_string(),
-        "ak:device:0196419b-0000-7000-8000-000000000001",
-        crate::identity::device_directory::public_key_from_directory_value(&key).unwrap(),
     );
     let events = committed
         .iter()

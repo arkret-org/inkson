@@ -9,7 +9,6 @@ struct KanbanProjectionSnapshot {
 async fn fetch_kanban_projection_snapshot(
     api: crate::transport::TransportClient,
     realm_id: &str,
-    state_store: crate::runtime::input::StateStoreHandle,
 ) -> anyhow::Result<KanbanProjectionSnapshot> {
     let http = api.sdk_http_client()?;
     // Read complete derived Space/Strand projection pages for display before
@@ -30,21 +29,6 @@ async fn fetch_kanban_projection_snapshot(
         }
     };
     let events = api.event_submitter()?.backfill(realm_id).await?.events();
-    // A Realm backfill can carry senders absent from account sync. Populate
-    // their verified device authority before the synchronous decrypt/render
-    // path runs, using the same proof resolver as the discussion backfill.
-    if !state_store.read(|store| store.realm_projection_is_minimal_metadata(realm_id)) {
-        let values = events
-            .iter()
-            .map(serde_json::to_value)
-            .collect::<Result<Vec<_>, _>>()?;
-        crate::sync_engine::prefetch_persistent_event_sender_keys_from_values(
-            &api,
-            &values,
-            state_store,
-        )
-        .await;
-    }
     Ok(KanbanProjectionSnapshot {
         containers: spaces,
         strands,
@@ -373,12 +357,7 @@ pub(super) fn KanbanEffects(
             } else {
                 let realm_id = lifecycle_realm_id.clone();
                 match with_authed_api(&base, api_token.clone(), move |api| async move {
-                    fetch_kanban_projection_snapshot(
-                        api,
-                        &realm_id,
-                        crate::app::runtime_adapter::state_store_handle(state_store),
-                    )
-                    .await
+                    fetch_kanban_projection_snapshot(api, &realm_id).await
                 })
                 .await
                 {
@@ -496,12 +475,7 @@ pub(super) fn KanbanEffects(
             let projection_res = {
                 let realm_id = lifecycle_realm_id.clone();
                 with_authed_api(&base, api_token, move |api| async move {
-                    fetch_kanban_projection_snapshot(
-                        api,
-                        &realm_id,
-                        crate::app::runtime_adapter::state_store_handle(state_store),
-                    )
-                    .await
+                    fetch_kanban_projection_snapshot(api, &realm_id).await
                 })
                 .await
             };

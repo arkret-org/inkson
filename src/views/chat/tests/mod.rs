@@ -117,7 +117,6 @@ fn sign_chat_fixture(value: &mut Value) {
                 .strip_prefix("ak:did_core:web:")
                 .map(|suffix| format!("did:web:{suffix}"))
                 .unwrap_or_else(|| actor_core_id.as_str().to_owned());
-            object.insert("device_id".to_owned(), json!(CHAT_FIXTURE_DEVICE));
             object.remove("producer_proof");
             object.remove("unsigned");
             let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
@@ -152,25 +151,61 @@ fn sign_chat_fixture(value: &mut Value) {
                 .as_object_mut()
                 .unwrap()
                 .insert("producer_proof".to_owned(), json!(proof));
-
-            let signing_key = ed25519_dalek::SigningKey::from_bytes(&CHAT_FIXTURE_SEED);
-            let did_key =
-                crate::identity::did_key::did_key_from_verifying_key(&signing_key.verifying_key());
-            let public_key =
-                crate::identity::device_directory::public_key_from_directory_value(&did_key)
-                    .unwrap();
-            crate::identity::device_directory::seed_positive_for_test(
-                actor_core_id.as_str(),
-                CHAT_FIXTURE_DEVICE,
-                public_key,
-            );
         }
         _ => {}
     }
 }
 
-fn sign_chat_fixtures(values: &mut [Value]) {
-    for value in values {
-        sign_chat_fixture(value);
-    }
+/// A canonical Event of `kind` in `realm_id`, authored by `actor_id` at
+/// `created_at` and signed by the fixture device. Its `event_id` is derived
+/// from its content and its producer proof is self-consistent.
+fn signed_chat_event(
+    kind: &str,
+    realm_id: &str,
+    actor_id: Value,
+    created_at: &str,
+    payload: Value,
+) -> Value {
+    signed_chat_event_in_scope(
+        kind,
+        json!({"kind": "realm", "realm_id": realm_id}),
+        actor_id,
+        created_at,
+        payload,
+    )
+}
+
+fn signed_chat_event_in_scope(
+    kind: &str,
+    scope_ref: Value,
+    actor_id: Value,
+    created_at: &str,
+    payload: Value,
+) -> Value {
+    let actor_id = serde_json::from_value::<arkret_sdk::ActorId>(actor_id).unwrap();
+    let signer_did = actor_id
+        .signing_principal_id()
+        .as_str()
+        .strip_prefix("ak:did_core:web:")
+        .map(|suffix| format!("did:web:{suffix}"))
+        .expect("chat fixtures use reversible did:web principals");
+    let signer = arkret_test_kit::keys::seeded_signer(
+        arkret_sdk::Did::new(signer_did.clone()).unwrap(),
+        arkret_sdk::DidUrl::new(format!("{signer_did}#{CHAT_FIXTURE_DEVICE}")).unwrap(),
+    );
+    let event = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+        kind,
+        serde_json::from_value(scope_ref).unwrap(),
+        actor_id,
+        payload,
+    )
+    .with_created_at(
+        chrono::DateTime::parse_from_rfc3339(created_at)
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+    )
+    .sign_verifiable(&signer)
+    .unwrap()
+    .expect_verifiable();
+    serde_json::to_value(&event).unwrap()
 }

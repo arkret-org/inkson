@@ -101,8 +101,8 @@ pub(crate) enum MessageCryptoState {
     /// Welcome may be pending, the epoch may be outside the current snapshot,
     /// or the shared-history key share has not arrived.
     KeyMissing,
-    /// Sender device hasn't been verified (no accepted device-directory
-    /// record for the sender, or a fingerprint mismatch). The body still decrypted, but we flag it.
+    /// The producer is not a human device and its signer evidence has not
+    /// been verified yet. The row stays visible but flagged.
     NeedsVerification,
 }
 
@@ -294,20 +294,21 @@ pub(crate) enum ParticipantRosterRow {
     },
 }
 
-/// Receiver-side proof verdict for a persistent chat message envelope
-/// (`device-lifecycle.md` §8.2, fail-closed).
+/// Receiver-side proof verdict for a committed chat Event
+/// (`server-trusted-results.md` §2, fail-closed).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ChatProofVerdict {
     /// Non-persistent system row with no attributed actor. Persistent actor
     /// messages without proofs are rejected before projection.
     Unattributed,
-    /// Sender proof verified against the authoritative directory verify key.
+    /// Human-device producer proof is self-consistent, or an Agent producer
+    /// verified against its historical signer evidence.
     Verified,
-    /// Proof present but verification failed, or the device is revoked / absent
-    /// from the directory. The message MUST be dropped (fail-closed).
+    /// Proof present but not self-consistent, or Agent evidence failed. The
+    /// message MUST be dropped (fail-closed).
     Rejected,
-    /// Proof present but the sender's verify key is not yet in the directory
-    /// cache. The message is shown flagged (`NeedsVerification`) rather than
-    /// trusted; a directory prefetch makes a later render resolve it.
+    /// Proof is self-consistent but the producer is not a human device and its
+    /// Agent signer evidence is not available yet. The message is shown
+    /// flagged (`NeedsVerification`) rather than trusted.
     Unresolved,
 }

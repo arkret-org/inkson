@@ -569,55 +569,6 @@ fn verification_method_controller_matches_signer(
     controller_core_id == signer_core_id
 }
 
-pub fn verify_proof_value(
-    envelope_without_proof: &serde_json::Value,
-    proof_value: &serde_json::Value,
-    actor_id: &str,
-    public_key: &PublicKeyMaterial,
-) -> bool {
-    verify_proof_value_for_signer(
-        envelope_without_proof,
-        proof_value,
-        actor_id,
-        actor_id,
-        public_key,
-    )
-}
-
-pub fn verify_proof_value_for_signer(
-    envelope_without_proof: &serde_json::Value,
-    proof_value: &serde_json::Value,
-    signer_id: &str,
-    binding_actor_id: &str,
-    public_key: &PublicKeyMaterial,
-) -> bool {
-    verify_proof_value_for_signer_result(
-        envelope_without_proof,
-        proof_value,
-        signer_id,
-        binding_actor_id,
-        public_key,
-    )
-    .is_ok()
-}
-
-pub fn verify_proof_value_for_signer_result(
-    envelope_without_proof: &serde_json::Value,
-    proof_value: &serde_json::Value,
-    signer_id: &str,
-    binding_actor_id: &str,
-    public_key: &PublicKeyMaterial,
-) -> Result<(), String> {
-    verify_proof_value_for_signer_result_with_digest_suite(
-        envelope_without_proof,
-        proof_value,
-        signer_id,
-        binding_actor_id,
-        public_key,
-        arkret_sdk::canonical::DigestSuite::Sha256,
-    )
-}
-
 pub fn verify_proof_value_for_signer_result_with_digest_suite(
     envelope_without_proof: &serde_json::Value,
     proof_value: &serde_json::Value,
@@ -651,34 +602,6 @@ pub fn verify_proof_value_for_signer_result_with_digest_suite(
         digest_suite,
     )
     .map_err(|error| error.to_string())
-}
-
-pub fn verify_persistent_envelope_proof(
-    envelope: &serde_json::Value,
-    public_key: &PublicKeyMaterial,
-) -> bool {
-    let Some(actor_id) = envelope
-        .get("actor_id")
-        .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
-    else {
-        return false;
-    };
-    let actor_principal = actor_id.signing_principal_id().as_str();
-    let Some(proof) = envelope
-        .get("producer_proof")
-        .and_then(|value| value.as_object())
-    else {
-        return false;
-    };
-    let Ok(preimage) = arkret_sdk::event_digest_preimage(envelope) else {
-        return false;
-    };
-    verify_proof_value(
-        &preimage,
-        &serde_json::Value::Object(proof.clone()),
-        actor_principal,
-        public_key,
-    )
 }
 
 pub fn invalidate_actor(actor: &str) -> usize {
@@ -763,18 +686,6 @@ pub(crate) fn seed_device_authorization_for_test(
         device,
         Some(key),
         Some(authorize_event_id),
-        None,
-        None,
-    );
-}
-
-#[cfg(test)]
-pub(crate) fn seed_negative_for_test(actor: &str, device: &str) {
-    store_entry(
-        &test_account_selector(actor),
-        device,
-        None,
-        None,
         None,
         None,
     );

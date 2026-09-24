@@ -70,11 +70,11 @@ fn signed_sidecar_event_with_source_strand_id_never_enters_ordinary_timeline() {
     sign_chat_fixture(&mut shared);
     sign_chat_fixture(&mut private);
     assert_eq!(
-        verify_chat_envelope_proof(&shared),
+        verify_committed_chat_producer_proof(&shared),
         ChatProofVerdict::Verified
     );
     assert_eq!(
-        verify_chat_envelope_proof(&private),
+        verify_committed_chat_producer_proof(&private),
         ChatProofVerdict::Verified
     );
 

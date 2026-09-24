@@ -1,393 +1,178 @@
 #[cfg(test)]
-mod device_identity_proof_tests {
+mod committed_producer_proof_tests {
     use serde_json::json;
 
     use super::super::*;
 
-    /// Build a signed persistent message envelope: `producer_proof:<detached_jws>`
-    /// over the canonical proof binding object, with `event_digest` = canonical
-    /// hash of the envelope without `producer_proof` / `unsigned` (matching
-    /// `event_signer::sign_envelope`).
-    fn signed_message_envelope(
-        signer: &crate::event_signer::InksonEventSigner,
-        actor_id: &str,
-        device_id: &str,
+    const REALM: &str = "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI";
+    const DEVICE: &str = "ak:device:0196419b-0000-7000-8000-0000000000f1";
+    const FOREIGN_STATION: &str = "ak:did_core:web:foreign-station.example";
+
+    fn account_actor(host: &str) -> arkret_sdk::ActorId {
+        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(format!("ak:did_core:web:{host}")).unwrap(),
+            arkret_sdk::DidCoreId::new(FOREIGN_STATION).unwrap(),
+        ))
+    }
+
+    /// A canonical committed `ak.message.create` signed by `signer_host` with
+    /// the method fragment `fragment`.
+    fn committed_message(
+        actor: arkret_sdk::ActorId,
+        executed_by: Option<arkret_sdk::ActorId>,
+        signer_host: &str,
+        fragment: &str,
     ) -> Value {
-        signed_message_envelope_inner(signer, actor_id, Some(device_id))
-    }
-
-    fn authority(actor: &str) -> arkret_sdk::AccountId {
-        crate::test_support::authority_at_authoring_station(actor)
-    }
-
-    #[test]
-    fn retired_minimal_metadata_marker_rejects_even_valid_device_proof() {
-        let realm = "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI";
-        let actor = "did:web:chat-retired-profile.example";
-        let device = "ak:device:01964137-0000-7000-8000-0000000000d1";
-        let signer = crate::event_signer::build_ed25519_device_signer([71u8; 32], actor, device);
-        let envelope = signed_message_envelope(&signer, actor, device);
-        let mut state = crate::state::isolated_store_for_tests("retired-chat-profile");
-        state.save_realm_tree_projection(
-            realm,
-            json!({ "schema_refs": ["ak.profile.mls.minimal_metadata_realm.v1"] }),
-        );
-        assert_eq!(
-            verify_chat_envelope_proof_for_realm(realm, &envelope, Some(&state), None),
-            ChatProofVerdict::Rejected
-        );
-    }
-
-    fn signed_message_envelope_inner(
-        signer: &crate::event_signer::InksonEventSigner,
-        actor_did: &str,
-        device_id: Option<&str>,
-    ) -> Value {
-        let actor_id = arkret_sdk::ActorId::account(authority(actor_did));
-        let mut envelope = json!({
-            "kind": "ak.message.create",
-            "realm_id": "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-            "actor_id": actor_id,
-            "created_at": "2026-06-16T00:00:00.000Z",
-            "message_id": "ak:msg:1",
-            "strand_id": "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
-            "content": { "body": "hello from a verified device" }
-        });
-        if let Some(device_id) = device_id {
-            envelope
-                .as_object_mut()
-                .unwrap()
-                .insert("device_id".to_owned(), json!(device_id));
-        }
-        let canonical_bytes = crate::canonical::canonical_json_bytes(&envelope).unwrap();
-        let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
-        let verification_method =
-            arkret_sdk::DidUrl::new(signer.verification_method().to_owned()).unwrap();
-        // Build the proof binding via the SDK's authoritative
-        // `ProducerEventProof::canonical_binding_bytes` (which folds in the
-        // `context = "ak.event_proof.v1"` domain tag) — the SAME transcript both
-        // the production signer and the verifier use, so this test can never drift
-        // from the on-wire binding again.
-        let proof_created_at = chrono::DateTime::parse_from_rfc3339("2026-06-16T00:00:00.000Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
-        let mut proof = arkret_sdk::ProducerEventProof {
-            kind: "detached_jws".to_owned(),
-            verification_method: verification_method.clone(),
-            event_digest: arkret_sdk::Hash::new(event_digest).unwrap(),
-            created_at: proof_created_at,
-            domain: None,
-            audience: None,
-            proof_purpose: None,
-            jws: String::new(),
-        };
-        let binding_bytes = proof.canonical_binding_bytes(&actor_id).unwrap();
-        proof.jws = signer.detached_jws_over(&binding_bytes).unwrap();
-        envelope.as_object_mut().unwrap().insert(
-            "producer_proof".to_owned(),
-            serde_json::to_value(&proof).unwrap(),
-        );
-        envelope
-    }
-
-    fn pubkey(seed: u8) -> arkret_sdk::signatures::PublicKeyMaterial {
-        let sk = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
-        let did = crate::identity::did_key::did_key_from_verifying_key(&sk.verifying_key());
-        crate::identity::device_directory::public_key_from_directory_value(&did).unwrap()
-    }
-
-    fn core_id(did: &str) -> String {
-        crate::mls_api_helpers::principal_core_id(did)
-            .unwrap()
-            .to_string()
-    }
-
-    #[test]
-    fn verified_message_enters_view() {
-        let actor = "did:web:chat-alice.example";
-        let device = "ak:device:chat-a1";
-        let seed = 51u8;
-        let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
-        let envelope = signed_message_envelope(&signer, actor, device);
-        let actor_core = core_id(actor);
-        crate::identity::device_directory::seed_positive_for_test(
-            &actor_core,
-            device,
-            pubkey(seed),
-        );
-
-        assert_eq!(
-            verify_chat_envelope_proof(&envelope),
-            ChatProofVerdict::Verified
-        );
-        let message = chat_message_from_event(
-            "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-            &envelope,
-        )
-        .expect("verified message must enter the view");
-        assert_eq!(message.sender, actor_core);
-        crate::identity::device_directory::invalidate_actor(&actor_core);
-    }
-
-    #[test]
-    fn wrong_key_drops_message() {
-        let actor = "did:web:chat-bob.example";
-        let device = "ak:device:chat-b1";
-        let signer = crate::event_signer::build_ed25519_signer([52u8; 32], actor);
-        let envelope = signed_message_envelope(&signer, actor, device);
-        let actor_core = core_id(actor);
-        // Cache holds a DIFFERENT device's key → verification fails → drop.
-        crate::identity::device_directory::seed_positive_for_test(&actor_core, device, pubkey(123));
-        assert_eq!(
-            verify_chat_envelope_proof(&envelope),
-            ChatProofVerdict::Rejected
-        );
-        assert!(
-            chat_message_from_event(
-                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-                &envelope
-            )
-            .is_none()
-        );
-        crate::identity::device_directory::invalidate_actor(&actor_core);
-    }
-
-    #[test]
-    fn revoked_device_drops_message() {
-        let actor = "did:web:chat-carol.example";
-        let device = "ak:device:chat-c1";
-        let signer = crate::event_signer::build_ed25519_signer([53u8; 32], actor);
-        let envelope = signed_message_envelope(&signer, actor, device);
-        let actor_core = core_id(actor);
-        crate::identity::device_directory::seed_negative_for_test(&actor_core, device);
-        assert_eq!(
-            verify_chat_envelope_proof(&envelope),
-            ChatProofVerdict::Rejected
-        );
-        assert!(
-            chat_message_from_event(
-                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-                &envelope
-            )
-            .is_none()
-        );
-        crate::identity::device_directory::invalidate_actor(&actor_core);
-    }
-
-    #[test]
-    fn controller_mismatch_drops_message() {
-        let actor = "did:web:chat-dave.example";
-        let device = "ak:device:chat-d1";
-        let seed = 54u8;
-        let signer = crate::event_signer::build_ed25519_signer([seed; 32], actor);
-        let mut envelope = signed_message_envelope(&signer, actor, device);
-        let actor_core = core_id(actor);
-        // Point the verification_method at a different controller DID.
-        envelope["producer_proof"]["verification_method"] =
-            json!("did:web:imposter.example#device");
-        crate::identity::device_directory::seed_positive_for_test(
-            &actor_core,
-            device,
-            pubkey(seed),
-        );
-        assert_eq!(
-            verify_chat_envelope_proof(&envelope),
-            ChatProofVerdict::Rejected
-        );
-        crate::identity::device_directory::invalidate_actor(&actor_core);
-    }
-
-    #[test]
-    fn cache_miss_flags_needs_verification_but_still_shows() {
-        let actor = "did:web:chat-erin.example";
-        let device = "ak:device:chat-e1";
-        let signer = crate::event_signer::build_ed25519_signer([55u8; 32], actor);
-        let envelope = signed_message_envelope(&signer, actor, device);
-        let actor_core = core_id(actor);
-        // No cache entry → Unresolved → message visible but flagged.
-        crate::identity::device_directory::invalidate_actor(&actor_core);
-        assert_eq!(
-            verify_chat_envelope_proof(&envelope),
-            ChatProofVerdict::Unresolved
-        );
-        let message = chat_message_from_event(
-            "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-            &envelope,
-        )
-        .expect("unresolved message stays visible (flagged)");
-        assert_eq!(message.crypto_state, MessageCryptoState::NeedsVerification);
-    }
-
-    #[test]
-    fn cache_miss_verifies_self_authored_message_with_active_device_key() {
-        let actor = "did:web:chat-local.example";
-        let device = "ak:device:01964137-0000-7000-8000-0000000000c1";
-        let seed = 57u8;
-        let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
-            [seed; 32], actor, device,
-        ));
-        let envelope = signed_message_envelope(&signer, actor, device);
-        let actor_core = core_id(actor);
-        let authority = authority(actor);
-        let device_id = arkret_sdk::DeviceId::new(device.to_owned()).unwrap();
-        crate::identity::device_directory::invalidate_actor(&actor_core);
-        let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
-
-        let message = chat_message_from_event_with_sidecar(
-            "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-            &envelope,
-            None,
-            Some((&authority, &actor_core, &device_id)),
-        )
-        .expect("self-authored message must verify with its active device key");
-        assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
-        let mut different_account = authority.clone();
-        different_account.station_id =
-            arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example").unwrap();
-        assert_eq!(
-            verify_chat_envelope_proof_for_realm(
-                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-                &envelope,
-                None,
-                Some((&different_account, &actor_core, &device_id)),
-            ),
-            ChatProofVerdict::Unresolved,
-        );
-    }
-
-    #[test]
-    fn local_device_key_does_not_override_directory_revocation() {
-        let actor = "did:web:chat-local-revoked.example";
-        let device = "ak:device:01964137-0000-7000-8000-0000000000c2";
-        let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
-            [58u8; 32], actor, device,
-        ));
-        let envelope = signed_message_envelope(&signer, actor, device);
-        let actor_core = core_id(actor);
-        let authority = authority(actor);
-        let device_id = arkret_sdk::DeviceId::new(device.to_owned()).unwrap();
-        crate::identity::device_directory::seed_negative_for_test(&actor_core, device);
-        let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
-
-        assert_eq!(
-            verify_chat_envelope_proof_for_realm(
-                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-                &envelope,
-                None,
-                Some((&authority, &actor_core, &device_id)),
-            ),
-            ChatProofVerdict::Rejected
-        );
-        crate::identity::device_directory::invalidate_actor(&actor_core);
-    }
-
-    #[test]
-    fn standard_event_without_device_id_uses_proof_fragment_device() {
-        let actor = "did:web:chat-fran.example";
-        let device = "ak:device:chat-f1";
-        let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
-            [56u8; 32],
+        let mut event = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+            arkret_sdk::EventKind::MessageCreate.as_str(),
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+            },
             actor,
-            format!("{actor}#{device}"),
-        );
-        let envelope = signed_message_envelope_inner(&signer, actor, None);
-        let actor_core = core_id(actor);
-        crate::identity::device_directory::seed_positive_for_test(&actor_core, device, pubkey(56));
-
-        assert_eq!(
-            verify_chat_envelope_proof(&envelope),
-            ChatProofVerdict::Verified
-        );
-        let message = chat_message_from_event(
-            "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-            &envelope,
+            json!({
+                "strand_id": "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
+                "track_name": "discussion",
+                "content": {"kind": "ak.content.text", "body": "hello from a committed Event"}
+            }),
         )
-        .expect("standard Event envelope without device_id uses proof fragment");
-        assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
-        crate::identity::device_directory::invalidate_actor(&actor_core);
+        .build_unsigned()
+        .unwrap();
+        event.executed_by = executed_by;
+        let signer = arkret_test_kit::keys::seeded_signer(
+            arkret_sdk::Did::new(format!("did:web:{signer_host}")).unwrap(),
+            arkret_sdk::DidUrl::new(format!("did:web:{signer_host}#{fragment}")).unwrap(),
+        );
+        let event = arkret_test_kit::signed_event::sign_verifiable_event(
+            event,
+            &signer,
+            arkret_sdk::DigestSuite::Sha256,
+        )
+        .unwrap()
+        .expect_verifiable();
+        serde_json::to_value(&event).unwrap()
+    }
+
+    fn foreign_device_message() -> Value {
+        let host = "chat-foreign.example";
+        committed_message(account_actor(host), None, host, DEVICE)
+    }
+
+    fn assert_rejected(event: &Value) {
+        assert_eq!(
+            verify_committed_chat_producer_proof(event),
+            ChatProofVerdict::Rejected
+        );
+        assert!(chat_message_from_event(REALM, event).is_none());
     }
 
     #[test]
-    fn ordinary_agent_without_evidence_remains_unresolved() {
-        let agent = "did:web:chat-agent.example";
-        let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
-            [59u8; 32],
-            agent,
-            format!("{agent}#runtime-1"),
-        );
-        let envelope = signed_message_envelope_inner(&signer, agent, None);
+    fn foreign_producer_without_a_cached_device_key_is_verified() {
+        let event = foreign_device_message();
+        let actor = event["actor_id"].clone();
+        let actor = serde_json::from_value::<arkret_sdk::ActorId>(actor).unwrap();
+        crate::identity::device_directory::invalidate_actor(&actor.to_string());
+        assert!(matches!(
+            crate::identity::device_directory::cached_device_signing_key(
+                &actor.to_string(),
+                DEVICE
+            ),
+            crate::identity::device_directory::CacheLookup::Miss
+                | crate::identity::device_directory::CacheLookup::NegativeHit
+        ));
 
         assert_eq!(
-            verify_chat_envelope_proof_for_realm(
-                "ak:realm:AzuLpzKBwC3cxyHqYqQRSx5Ox3nr7S9FtADPyvdaYpXY",
-                &envelope,
-                None,
-                None
-            ),
-            ChatProofVerdict::Unresolved
+            verify_committed_chat_producer_proof(&event),
+            ChatProofVerdict::Verified
         );
+        let message = chat_message_from_event(REALM, &event)
+            .expect("a self-consistent committed Event enters the view");
+        assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
+        assert_eq!(message.sender, "ak:did_core:web:chat-foreign.example");
+        assert_eq!(
+            verified_chat_sender_domain_for_realm(REALM, &event, None, None),
+            Some(DEVICE.as_bytes().to_vec())
+        );
+    }
+
+    #[test]
+    fn digest_over_other_bytes_is_rejected() {
+        let mut event = foreign_device_message();
+        event["payload"]["content"]["body"] = json!("tampered after signing");
+        assert_rejected(&event);
+    }
+
+    #[test]
+    fn device_fragment_that_is_not_a_device_id_is_rejected() {
+        let mut event = foreign_device_message();
+        event["producer_proof"]["verification_method"] =
+            json!("did:web:chat-foreign.example#ak:device:dev_foreign_1");
+        assert_rejected(&event);
+    }
+
+    #[test]
+    fn method_of_another_principal_is_rejected() {
+        let mut event = foreign_device_message();
+        event["producer_proof"]["verification_method"] =
+            json!(format!("did:web:imposter.example#{DEVICE}"));
+        assert_rejected(&event);
+    }
+
+    #[test]
+    fn proof_bearing_row_that_is_not_an_event_is_rejected() {
+        let mut event = foreign_device_message();
+        event["device_id"] = json!(DEVICE);
+        assert_rejected(&event);
     }
 
     #[test]
     fn proofless_attributed_projection_is_rejected() {
-        let envelope = json!({
-            "kind": "ak.message.create",
-            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-            "device_id": "ak:device:alice",
-            "message_id": "ak:msg:proofless",
-            "strand_id": "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
-            "content": { "body": "proofless message" }
-        });
+        let mut event = foreign_device_message();
+        event.as_object_mut().unwrap().remove("producer_proof");
+        assert_rejected(&event);
+    }
+
+    #[test]
+    fn retired_minimal_metadata_marker_rejects_even_a_consistent_proof() {
+        let event = foreign_device_message();
+        let mut state = crate::state::isolated_store_for_tests("retired-chat-profile");
+        state.save_realm_tree_projection(
+            REALM,
+            json!({ "schema_refs": ["ak.profile.mls.minimal_metadata_realm.v1"] }),
+        );
         assert_eq!(
-            verify_chat_envelope_proof(&envelope),
+            verify_chat_envelope_proof_for_realm(REALM, &event, Some(&state), None),
             ChatProofVerdict::Rejected
         );
-        assert!(
-            chat_message_from_event(
-                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-                &envelope
-            )
-            .is_none()
+    }
+
+    #[test]
+    fn account_runtime_method_without_agent_evidence_remains_unresolved() {
+        let host = "chat-agent.example";
+        let event = committed_message(account_actor(host), None, host, "runtime-1");
+        assert_eq!(
+            verify_chat_envelope_proof_for_realm(REALM, &event, None, None),
+            ChatProofVerdict::Unresolved
         );
     }
 
     #[test]
     fn applet_executor_proof_is_unresolved_instead_of_rejected() {
-        let actor_full = "did:web:ghost.example:external-user";
-        let executor_full = "did:web:applet.example";
-        let actor = core_id(actor_full);
-        let mut envelope = json!({
-            "kind": "ak.message.create",
-            "realm_id": "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-            "actor_id": arkret_sdk::ActorId::account(authority(actor_full)),
-            "executed_by": arkret_sdk::ActorId::service(
-                crate::mls_api_helpers::principal_core_id(executor_full).unwrap()
-            ),
-            "created_at": "2026-06-16T00:00:00.000Z",
-            "message_id": "ak:msg:applet",
-            "strand_id": "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
-            "content": { "body": "hello through an applet" }
-        });
-        let canonical_bytes = crate::canonical::canonical_json_bytes(&envelope).unwrap();
-        let event_digest = crate::canonical::sha256_digest(&canonical_bytes);
-        envelope["producer_proof"] = json!({
-            "kind": "detached_jws",
-            "verification_method": format!("{executor_full}#applet-service-key"),
-            "event_digest": event_digest,
-            "created_at": "2026-06-16T00:00:00.000Z",
-            "jws": "fixture"
-        });
-
+        let executor = arkret_sdk::ActorId::service(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:applet.example").unwrap(),
+        );
+        let event = committed_message(
+            account_actor("ghost.example"),
+            Some(executor),
+            "applet.example",
+            "applet-service-key",
+        );
         assert_eq!(
-            verify_chat_envelope_proof(&envelope),
+            verify_committed_chat_producer_proof(&event),
             ChatProofVerdict::Unresolved
         );
-        let message = chat_message_from_event(
-            "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-            &envelope,
-        )
-        .expect("an unresolved Applet executor remains visible and flagged");
-        assert_eq!(message.sender, actor);
+        let message = chat_message_from_event(REALM, &event)
+            .expect("an unresolved Applet executor remains visible and flagged");
+        assert_eq!(message.sender, "ak:did_core:web:ghost.example");
         assert_eq!(message.crypto_state, MessageCryptoState::NeedsVerification);
     }
 }

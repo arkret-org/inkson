@@ -31,19 +31,18 @@ fn secure_content_block_round_trips_back_to_text() {
 
 #[test]
 fn chat_message_from_event_flags_encrypted_payload_as_decrypting() {
-    let mut event = json!({
-        "event_id": "evt:1",
-        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-        "content": {
-            "type": "ak.message.create",
-            "body": "[encrypted]",
+    let event = signed_chat_event(
+        "ak.message.create",
+        "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
+        json!({"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}),
+        "2026-05-14T01:23:45.000Z",
+        json!({
             "strand_id": "ak:strand:AI5OKPo7cL4WAh-kQD_G9aUudPNU0xGaEiCVn1F1nFGA",
-            "encrypted_content": {"ciphertext": "blob"},
-        }
-    });
-    sign_chat_fixture(&mut event);
+            "content": {"body": "[encrypted]", "encrypted_content": {"ciphertext": "blob"}}
+        }),
+    );
     let msg = chat_message_from_event(
-        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
         &event,
     )
     .expect("message");
@@ -52,23 +51,21 @@ fn chat_message_from_event_flags_encrypted_payload_as_decrypting() {
 
 #[test]
 fn circle_scoped_message_does_not_require_forbidden_payload_scope_field() {
-    let mut event = json!({
-        "event_id": "ak:event:ASUb86fbFm5UEUFKFTuMNfbNsMTlueGP2DFFuE8vHwt0",
-        "kind": "ak.message.create",
-        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-        "effective_scope": {
+    let event = signed_chat_event_in_scope(
+        "ak.message.create",
+        json!({
             "kind": "circle",
             "realm_id": "ak:realm:AZ50TDWNf7-ZvnbVpb3-bD97v_NiKs0krmIiZeXokdCg",
             "circle_id": "ak:circle:Ad3sAE8SdL97yMaxfdHCkPiyKsWulMWC1Eisx0zigFOe"
-        },
-        "payload": {
+        }),
+        json!({"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}),
+        "2026-05-14T01:23:45.000Z",
+        json!({
             "strand_id": "ak:strand:AegcXfEz2IA1aMoPIHXpIIKiqHdDUdO6mYsEziNN-gnj",
-            "message_id": "message-circle-scoped",
             "track_name": "discussion",
             "content": { "body": "private" }
-        }
-    });
-    sign_chat_fixture(&mut event);
+        }),
+    );
 
     let message = chat_message_from_event(
         "ak:realm:AZ50TDWNf7-ZvnbVpb3-bD97v_NiKs0krmIiZeXokdCg",
@@ -81,28 +78,29 @@ fn circle_scoped_message_does_not_require_forbidden_payload_scope_field() {
 
 #[test]
 fn chat_message_from_event_keeps_bodyless_encrypted_payload_visible() {
-    let mut event = json!({
-        "event_id": "evt:bodyless",
-        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-        "content": {
-            "type": "ak.message.create",
+    let event = signed_chat_event(
+        "ak.message.create",
+        "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
+        json!({"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}),
+        "2026-05-14T01:23:45.000Z",
+        json!({
             "strand_id": "ak:strand:AI5OKPo7cL4WAh-kQD_G9aUudPNU0xGaEiCVn1F1nFGA",
-            "message_id": "ak:message:Abz8ZrG1_9zdkxN9VA-u0IBsaEOpJkC71uo1V6fZ72VY",
-            "encrypted_content": {
-                "scheme": "mls_rfc9420",
-                "version": "1.0",
-                "group_id": "ak:mls:test",
-                "epoch": 1,
-                "content_type": "application/vnd.arkret.message+json",
-                "ciphertext": "AAAA",
-                "payload_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-            },
-        }
-    });
-    sign_chat_fixture(&mut event);
+            "content": {
+                "encrypted_content": {
+                    "scheme": "mls_rfc9420",
+                    "version": "1.0",
+                    "group_id": "ak:mls:test",
+                    "epoch": 1,
+                    "content_type": "application/vnd.arkret.message+json",
+                    "ciphertext": "AAAA",
+                    "payload_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                },
+            }
+        }),
+    );
 
     let msg = chat_message_from_event(
-        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
         &event,
     )
     .expect("message");
@@ -122,25 +120,26 @@ fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
         crate::operation::uuid_v7()
     ));
     let store = LocalStateStore::with_path(temp);
-    let mut event = json!({
-        "event_id": "evt:key-missing",
-        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-        "content": {
-            "type": "ak.message.create",
+    let event = signed_chat_event(
+        "ak.message.create",
+        "ak:realm:AacL7ZYuTtiI1Wvq5aTmbQo8CihIcuFhJ4WKAZZMxlxY",
+        json!({"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}}),
+        "2026-05-14T01:23:45.000Z",
+        json!({
             "strand_id": "ak:strand:AI5OKPo7cL4WAh-kQD_G9aUudPNU0xGaEiCVn1F1nFGA",
-            "message_id": "ak:message:Abz8ZrG1_9zdkxN9VA-u0IBsaEOpJkC71uo1V6fZ72VY",
-            "encrypted_content": {
-                "scheme": "mls_rfc9420",
-                "version": "1.0",
-                "group_id": "ak:mls:test",
-                "epoch": 1,
-                "content_type": "application/vnd.arkret.message+json",
-                "ciphertext": "AAAA",
-                "payload_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-            },
-        }
-    });
-    sign_chat_fixture(&mut event);
+            "content": {
+                "encrypted_content": {
+                    "scheme": "mls_rfc9420",
+                    "version": "1.0",
+                    "group_id": "ak:mls:test",
+                    "epoch": 1,
+                    "content_type": "application/vnd.arkret.message+json",
+                    "ciphertext": "AAAA",
+                    "payload_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                },
+            }
+        }),
+    );
     let authority = fixture::authority("ak:did_core:web:bob.example");
     let device_id = fixture::device_id("ak:device:01964137-0000-7000-8000-000000000001");
 
