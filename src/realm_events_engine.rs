@@ -817,6 +817,45 @@ fn fold_floor_current_tail(
                     },
                     value,
                 });
+            } else if full.event.kind.as_str() == "ak.realm.discovery" {
+                let value = closed_discovery_value(
+                    serde_json::to_value(&full.event.payload)
+                        .map_err(|error| garth::Error::Protocol(error.to_string()))?,
+                )?;
+                rows.retain(|row| {
+                    !matches!(
+                        row,
+                        arkret_wire::TypedCurrentResult::Value {
+                            selector: arkret_wire::CurrentSelector::RealmDiscovery,
+                            ..
+                        }
+                    )
+                });
+                rows.push(arkret_wire::TypedCurrentResult::Value {
+                    selector: arkret_wire::CurrentSelector::RealmDiscovery,
+                    source_stream_ref: full.commit.stream_ref.clone(),
+                    revision: arkret_wire::CurrentRevision {
+                        commit_id: full.commit.commit_id.clone(),
+                        stream_position: full.commit.stream_position,
+                    },
+                    value,
+                });
+            } else if full.event.kind.as_str() == "ak.member.state" {
+                let selector = closed_creator_join_selector(
+                    &rows,
+                    &full.event,
+                    serde_json::to_value(&full.event.payload)
+                        .map_err(|error| garth::Error::Protocol(error.to_string()))?,
+                )?;
+                rows.push(arkret_wire::TypedCurrentResult::Value {
+                    selector,
+                    source_stream_ref: full.commit.stream_ref.clone(),
+                    revision: arkret_wire::CurrentRevision {
+                        commit_id: full.commit.commit_id.clone(),
+                        stream_position: full.commit.stream_position,
+                    },
+                    value: serde_json::json!({"membership": "join"}),
+                });
             } else if full.event.kind.as_str() == "ak.realm.history_access" {
                 let previous = rows.iter().find_map(|row| match row {
                     arkret_wire::TypedCurrentResult::Value {
@@ -864,6 +903,78 @@ fn fold_floor_current_tail(
         }
     }
     Ok(rows)
+}
+
+fn closed_discovery_value(payload: serde_json::Value) -> garth::Result<serde_json::Value> {
+    let discovery: arkret_sdk::RealmDiscoveryPayload = serde_json::from_value(payload.clone())
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    if discovery
+        .to_value()
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?
+        != payload
+    {
+        return Err(garth::Error::Protocol(
+            "floor discovery is not the closed payload".to_owned(),
+        ));
+    }
+    payload
+        .get("value")
+        .cloned()
+        .ok_or_else(|| garth::Error::Protocol("floor discovery omits its value".to_owned()))
+}
+
+fn closed_creator_join_selector(
+    rows: &[arkret_wire::TypedCurrentResult],
+    event: &arkret_sdk::Event,
+    payload: serde_json::Value,
+) -> garth::Result<arkret_wire::CurrentSelector> {
+    let member: arkret_models_collaboration::governance::membership_invite::MembershipPayload =
+        serde_json::from_value(payload.clone())
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    if serde_json::to_value(&member).map_err(|error| garth::Error::Protocol(error.to_string()))?
+        != payload
+        || member.membership
+            != arkret_models_collaboration::governance::membership_invite::MembershipPayloadState::Join
+        || member.member_id != event.actor_id
+        || member.realm_id.as_ref() != Some(&event.realm_id)
+        || member.strand_id.is_some()
+        || !member.gate_proofs.is_empty()
+        || member.membership_cause.is_some()
+        || member.agent_controller_binding.is_some()
+        || member.invite_ref.is_some()
+    {
+        return Err(garth::Error::Protocol(
+            "floor member state is not the closed creator join".to_owned(),
+        ));
+    }
+    for required in [
+        arkret_wire::CurrentSelector::RealmProfile,
+        arkret_wire::CurrentSelector::RealmPolicyBundle,
+        arkret_wire::CurrentSelector::RealmJoinRule,
+        arkret_wire::CurrentSelector::RealmHistoryAccess,
+        arkret_wire::CurrentSelector::RealmDiscovery,
+    ] {
+        if !rows.iter().any(|row| {
+            matches!(row,
+                arkret_wire::TypedCurrentResult::Value { selector, .. } if selector == &required
+            )
+        }) {
+            return Err(garth::Error::Protocol(
+                "creator join lacks verified bootstrap facets".to_owned(),
+            ));
+        }
+    }
+    let selector = arkret_wire::CurrentSelector::MemberState {
+        actor_id: member.member_id,
+    };
+    if rows.iter().any(|row| matches!(row,
+        arkret_wire::TypedCurrentResult::Value { selector: existing, .. } if existing == &selector
+    )) {
+        return Err(garth::Error::Protocol(
+            "creator member state already exists at signed cut".to_owned(),
+        ));
+    }
+    Ok(selector)
 }
 
 fn closed_policy_bundle_value(
@@ -1335,6 +1446,10 @@ mod tests {
     fn verified_bootstrap_facets_require_exact_commits_and_atomic_install() {
         let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
         let profile = json!({"schema": "ak.schema.realm_profile.v1", "title": "After floor"});
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
         let (bundle, keys, items) = crate::test_support::committed_event::verified_realm_fixture_as(
             realm_id.clone(),
             vec![
@@ -1347,6 +1462,19 @@ mod tests {
                 (
                     "ak.realm.history_access".to_owned(),
                     json!({"from": null, "to": "since_join"}),
+                ),
+                (
+                    "ak.realm.discovery".to_owned(),
+                    json!({"value": {"discoverability": "listed"}}),
+                ),
+                (
+                    "ak.member.state".to_owned(),
+                    json!({
+                        "realm_id": REALM_ID,
+                        "member_id": creator,
+                        "membership": "join",
+                        "reason": "creator_membership"
+                    }),
                 ),
             ],
             "alice.example",
@@ -1428,7 +1556,7 @@ mod tests {
         )
         .unwrap();
         let expected = fold_floor_current_tail(Vec::new(), &pages).unwrap();
-        assert_eq!(expected.len(), 4);
+        assert_eq!(expected.len(), 6);
         let TypedCurrentResult::Value {
             selector,
             source_stream_ref,
@@ -1484,6 +1612,57 @@ mod tests {
         assert_eq!(revision.commit_id, items[3].commit.commit_id);
         assert_eq!(revision.stream_position, items[3].commit.stream_position);
         assert_eq!(value, "since_join");
+        let TypedCurrentResult::Value {
+            selector,
+            source_stream_ref,
+            revision,
+            value,
+        } = &expected[4]
+        else {
+            panic!("discovery must be a closed value");
+        };
+        assert_eq!(selector, &arkret_wire::CurrentSelector::RealmDiscovery);
+        assert_eq!(source_stream_ref, &stream_ref);
+        assert_eq!(revision.commit_id, items[4].commit.commit_id);
+        assert_eq!(revision.stream_position, items[4].commit.stream_position);
+        assert_eq!(value, &json!({"discoverability": "listed"}));
+        let TypedCurrentResult::Value {
+            selector,
+            source_stream_ref,
+            revision,
+            value,
+        } = &expected[5]
+        else {
+            panic!("creator membership must be a closed value");
+        };
+        assert_eq!(
+            selector,
+            &arkret_wire::CurrentSelector::MemberState { actor_id: creator }
+        );
+        assert_eq!(source_stream_ref, &stream_ref);
+        assert_eq!(revision.commit_id, items[5].commit.commit_id);
+        assert_eq!(revision.stream_position, items[5].commit.stream_position);
+        assert_eq!(value, &json!({"membership": "join"}));
+        let creator_payload = serde_json::to_value(&items[5].event.payload).unwrap();
+        assert!(
+            closed_creator_join_selector(&expected[..4], &items[5].event, creator_payload.clone())
+                .is_err()
+        );
+        assert!(
+            closed_creator_join_selector(&expected, &items[5].event, creator_payload.clone())
+                .is_err()
+        );
+        let mut forged_join = creator_payload.clone();
+        forged_join["membership"] = json!("leave");
+        assert!(
+            closed_creator_join_selector(&expected[..5], &items[5].event, forged_join).is_err()
+        );
+        let mut forged_join = creator_payload;
+        forged_join["member_id"] =
+            json!({"kind":"service", "service_id":"ak:did_core:web:wrong.example"});
+        assert!(
+            closed_creator_join_selector(&expected[..5], &items[5].event, forged_join).is_err()
+        );
         require_exact_floor_tail_current(&expected, &expected).unwrap();
 
         let mut forged = expected.clone();
@@ -1563,6 +1742,26 @@ mod tests {
             unreachable!()
         };
         *value = json!("public");
+        assert!(require_exact_floor_tail_current(&forged, &expected).is_err());
+        let mut forged = expected.clone();
+        let TypedCurrentResult::Value { value, .. } = &mut forged[4] else {
+            unreachable!()
+        };
+        *value = json!({"discoverability":"secret"});
+        assert!(require_exact_floor_tail_current(&forged, &expected).is_err());
+        let mut forged = expected.clone();
+        let TypedCurrentResult::Value {
+            source_stream_ref, ..
+        } = &mut forged[5]
+        else {
+            unreachable!()
+        };
+        *source_stream_ref = CommitStreamRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AfTcej7ZFNg8uTbkOiUJT0KN1F_c9l1fmtil65CUwncm",
+            )
+            .unwrap(),
+        };
         assert!(require_exact_floor_tail_current(&forged, &expected).is_err());
 
         let path = std::env::temp_dir().join(format!(
@@ -1701,6 +1900,21 @@ mod tests {
             (Some(&first), json!({"value": "unknown"})),
         ] {
             assert!(closed_join_rule_value(policy, payload).is_err());
+        }
+    }
+
+    #[test]
+    fn discovery_tail_requires_closed_whole_value() {
+        assert_eq!(
+            closed_discovery_value(json!({"value":{"discoverability":"listed"}})).unwrap(),
+            json!({"discoverability":"listed"})
+        );
+        for payload in [
+            json!({"value":{"discoverability":"unknown"}}),
+            json!({"value":{"discoverability":"listed","unknown":true}}),
+            json!({"value":{"discoverability":"listed"},"reason":"extra"}),
+        ] {
+            assert!(closed_discovery_value(payload).is_err());
         }
     }
 
