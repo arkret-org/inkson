@@ -236,6 +236,44 @@ fn plan_current_entry(
 }
 
 /// Preflight one Realm entry's baseline transition without changing host state.
+/// Whether a Realm entry's current cut, any row in it, or its baseline
+/// coverage reads a stream whose window in the same entry is preview only.
+fn current_reads_preview_stream(entry: &arkret_sdk::sync::RealmSyncEntry) -> bool {
+    let preview = entry
+        .streams
+        .iter()
+        .flatten()
+        .filter(|window| window.preview_only == Some(true))
+        .map(|window| &window.stream_ref)
+        .collect::<std::collections::BTreeSet<_>>();
+    if preview.is_empty() {
+        return false;
+    }
+    let current = entry.current.as_ref().is_some_and(|current| {
+        current
+            .stream_heads
+            .iter()
+            .any(|head| preview.contains(&head.stream_ref))
+            || current.entries.iter().any(|row| {
+                let (TypedCurrentResult::Value {
+                    source_stream_ref, ..
+                }
+                | TypedCurrentResult::MessageReactions {
+                    source_stream_ref, ..
+                }) = row;
+                preview.contains(source_stream_ref)
+            })
+    });
+    let baseline = entry.baseline.as_ref().is_some_and(|baseline| {
+        baseline
+            .coverage
+            .stream_heads
+            .iter()
+            .any(|head| preview.contains(&head.stream_ref))
+    });
+    current || baseline
+}
+
 fn plan_current_install(
     previous: &CurrentRealmProgress,
     incoming: &arkret_sdk::sync::RealmSyncEntry,
@@ -1036,6 +1074,14 @@ impl CurrentIndex {
                     Some(progress) => progress,
                     None => self.progress_at(realm, expected_generation).await?,
                 };
+                if current_reads_preview_stream(incoming) {
+                    // A preview-only window has no verified start basis, so
+                    // its stream carries no exact current: neither the rows
+                    // it sources nor a cut or baseline coverage over it are
+                    // installed, and later readers never see them.
+                    incoming.current = None;
+                    incoming.baseline = None;
+                }
                 if let Some(baseline) = &incoming.baseline {
                     anyhow::ensure!(
                         baseline.coverage.realm_id.as_str() == realm,
@@ -1985,6 +2031,57 @@ mod tests {
                 .unwrap()
                 .entries,
             vec![row(1, false)]
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_only_stream_window_never_installs_its_current_or_coverage() {
+        let path = path();
+        let index = index(&path, 0).await;
+        let preview_window = json!({
+            "stream_ref":{"kind":"realm","realm_id":REALM},
+            "head_commit_ref":COMMIT,
+            "next_position":2,
+            "limited":true,
+            "window_limit":1,
+            "complete":true,
+            "preview_only":true
+        });
+        let mut preview = frame(vec![row(1, false)], Some(baseline(CURSORS[0], 1, true)));
+        preview
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(REALM)
+            .unwrap()
+            .streams = Some(vec![
+            serde_json::from_value(preview_window.clone()).unwrap(),
+        ]);
+        let stage = index.stage_frame(0, &preview).await.unwrap();
+        let filtered = stage.filtered_frame().realms.as_ref().unwrap().entries[REALM].clone();
+        assert!(filtered.current.is_none() && filtered.baseline.is_none());
+        stage.finish();
+        let selector = selector_of(&row(1, false)).clone();
+        assert_eq!(index.read_selector(REALM, &selector).await.unwrap(), None);
+
+        // The same current over a verified (non-preview) window installs.
+        let mut verified = frame(vec![row(1, false)], Some(baseline(CURSORS[1], 1, true)));
+        let mut window = preview_window;
+        window.as_object_mut().unwrap().remove("preview_only");
+        window["limited"] = json!(false);
+        verified
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(REALM)
+            .unwrap()
+            .streams = Some(vec![serde_json::from_value(window).unwrap()]);
+        index.stage_frame(1, &verified).await.unwrap().finish();
+        assert_eq!(
+            index.read_selector(REALM, &selector).await.unwrap(),
+            Some(row(1, false))
         );
     }
 
