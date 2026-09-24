@@ -668,7 +668,7 @@ fn require_genesis_readable_floor(outcome: &arkret_sdk::StreamScanOutcome) -> ga
 }
 
 #[derive(Default)]
-pub(crate) struct VerifiedAccountFrame {
+pub struct VerifiedAccountFrame {
     pages: Vec<garth::VerifiedScanPage>,
     floor_current_rows: Vec<(arkret_sdk::RealmId, Vec<arkret_wire::TypedCurrentResult>)>,
     /// `preview_only` windows whose whole readable prefix this client
@@ -1408,7 +1408,7 @@ fn validate_signed_floor_rows(
 /// its rows remain display rows only, and neither its current nor any
 /// verified index or checkpoint advances. A verified row that contradicts the
 /// frame still fails closed.
-pub(crate) async fn verify_account_frame_commits(
+pub async fn verify_account_frame_commits(
     http: &arkret_sdk::http_client::Client,
     frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
 ) -> garth::Result<VerifiedAccountFrame> {
