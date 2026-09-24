@@ -245,16 +245,7 @@ fn sign_authored(envelope: &mut arkret_sdk::AuthoredEvent) {
     let signer_did = TEST_ACTOR_DID;
     let key_id = format!("{signer_did}#device");
     envelope
-        .sign_ed25519(
-            signer_did,
-            key_id,
-            test_signing_key(),
-            arkret_sdk::SignerEvidenceRef::new(format!(
-                "ak:signer_evidence:sha256:{}",
-                "11".repeat(32)
-            ))
-            .unwrap(),
-        )
+        .sign_ed25519(signer_did, key_id, test_signing_key())
         .expect("Ed25519 sign succeeds for schema-conformant envelope");
 }
 
@@ -292,16 +283,7 @@ fn wire_envelope_from_intent(intent: inkson::operation::EventIntent) -> arkret_s
     let signer_did = TEST_ACTOR_DID;
     let key_id = format!("{signer_did}#device");
     envelope
-        .sign_ed25519(
-            signer_did,
-            key_id,
-            test_signing_key(),
-            arkret_sdk::SignerEvidenceRef::new(format!(
-                "ak:signer_evidence:sha256:{}",
-                "11".repeat(32)
-            ))
-            .unwrap(),
-        )
+        .sign_ed25519(signer_did, key_id, test_signing_key())
         .expect("Ed25519 sign succeeds for schema-conformant envelope");
     envelope
 }

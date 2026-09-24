@@ -93,7 +93,7 @@ call sites are left failing rather than re-declared locally.
 | `CommandOutcome` / `command_unit_outcome` / `server_command_unit_outcome` (6 sites) | `command-unit.schema.json` | command unit result handling |
 | `BackupSeriesErase{Outcome,RequestBody}` (3 sites, `src/key_backup/`) | `key-backup.schema.json` | backup series erase |
 | `DeviceReanchorPayload` (1 site, `src/fresh_device_recovery.rs`) | `event-payload.schema.json#/$defs/device_reanchor_payload`; `ak.device.reanchor` is the one action a recovery publication authority context may allow | fresh-device recovery re-anchor |
-| `RecoveryPreparedPlan`, `UnsignedClientStepAttestation`, `RecoveryBackupClassUnlocked`, `build_recovery_unlock_proof`, `current_signer_evidence`, `signed_event_digest_claim`, `build_self_principal_pcr_genesis_unit`, `agent_inception_notary`, `CORE_REDUCER_PROFILE` | recovery / security-transaction and principal-genesis schemas | fresh-device recovery, PCR genesis, agent inception |
+| `RecoveryPreparedPlan`, `UnsignedClientStepAttestation`, `RecoveryBackupClassUnlocked`, `build_recovery_unlock_proof`, `signed_event_digest_claim`, `build_self_principal_pcr_genesis_unit`, `agent_inception_notary`, `CORE_REDUCER_PROFILE` | recovery / security-transaction and principal-genesis schemas | fresh-device recovery, PCR genesis, agent inception |
 
 `ProofSummary` was removed from this table: it was a misdiagnosis. The type
 exists as `arkret_models_crypto::RecoverySessionProofSummary` (the session's

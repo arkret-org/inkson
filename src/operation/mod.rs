@@ -569,7 +569,6 @@ pub trait AuthoredEventExt {
         signer_did: impl Into<String>,
         key_id: impl Into<String>,
         signing_key: &ed25519_dalek::SigningKey,
-        signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef,
     ) -> anyhow::Result<()>;
 }
 
@@ -579,7 +578,6 @@ impl AuthoredEventExt for AuthoredEvent {
         signer_did: impl Into<String>,
         key_id: impl Into<String>,
         signing_key: &ed25519_dalek::SigningKey,
-        signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef,
     ) -> anyhow::Result<()> {
         use std::sync::Arc;
 
@@ -595,8 +593,7 @@ impl AuthoredEventExt for AuthoredEvent {
             .sign_envelope_with_context(
                 self,
                 crate::event_signer::ProducerProofContext::new()
-                    .with_digest_suite(self.digest_suite())
-                    .with_signer_resolution_evidence_ref(signer_resolution_evidence_ref),
+                    .with_digest_suite(self.digest_suite()),
             )
             .map_err(|err| anyhow::anyhow!("Ed25519 sign rejected: {err}"))?;
         Ok(())

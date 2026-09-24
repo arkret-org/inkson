@@ -755,14 +755,7 @@ fn sign_ed25519_attaches_typed_proof() {
     let identity = event.event_id().clone();
     let signing_key = SigningKey::from_bytes(&[7u8; 32]);
     event
-        .sign_ed25519(
-            "did:web:alice",
-            "did:web:alice#k1",
-            &signing_key,
-            crate::event_signer::test_producer_proof_context(arkret_sdk::DigestSuite::Sha256)
-                .signer_resolution_evidence_ref
-                .unwrap(),
-        )
+        .sign_ed25519("did:web:alice", "did:web:alice#k1", &signing_key)
         .expect("sign ok");
     let proof = event.producer_proof.as_ref().expect("proof present");
     assert_eq!(proof.verification_method, "did:web:alice#k1");
@@ -812,9 +805,6 @@ fn a_signed_envelope_keeps_the_digest_its_proof_committed_to() {
             "did:web:alice.example",
             "did:web:alice.example#k1",
             &signing_key,
-            crate::event_signer::test_producer_proof_context(arkret_sdk::DigestSuite::Sha256)
-                .signer_resolution_evidence_ref
-                .unwrap(),
         )
         .expect("sign ok");
 

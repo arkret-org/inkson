@@ -85,16 +85,16 @@ pub enum EventSignerError {
     RawSigningUnavailable,
 }
 
-/// Producer-proof domain/audience binding plus the pre-authoring signer
-/// evidence checkpoint used by the surrounding authority decision. The
-/// checkpoint is not a producer-proof member; current v1 proofs bind the
-/// verification method directly.
+/// Producer-proof domain/audience binding and digest suite.
+///
+/// A human device signs every Event through this one context. The proof binds
+/// the verification method directly; the governance Station resolves the
+/// producer device at admission, so no signer evidence travels with it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProducerProofContext {
     pub domain: Option<String>,
     pub audience: Option<Audience>,
     pub digest_suite: arkret_sdk::canonical::DigestSuite,
-    pub signer_resolution_evidence_ref: Option<arkret_sdk::SignerEvidenceRef>,
 }
 
 impl ProducerProofContext {
@@ -114,14 +114,6 @@ impl ProducerProofContext {
 
     pub fn with_digest_suite(mut self, digest_suite: arkret_sdk::canonical::DigestSuite) -> Self {
         self.digest_suite = digest_suite;
-        self
-    }
-
-    pub fn with_signer_resolution_evidence_ref(
-        mut self,
-        signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef,
-    ) -> Self {
-        self.signer_resolution_evidence_ref = Some(signer_resolution_evidence_ref);
         self
     }
 
@@ -163,35 +155,17 @@ pub(crate) fn cached_active_event_proof_context(
                 "active signer has no matching complete Account authority".to_owned(),
             )
         })?;
-    let evidence_ref = crate::identity::device_directory::retained_device_authoring_evidence(
+    crate::identity::device_directory::retained_device_authoring_key(
         &scope.authority.to_string(),
         device_id,
     )
-    .filter(|(retained_key, _)| retained_key == &public_key)
-    .map(|(_, evidence_ref)| evidence_ref)
+    .filter(|retained_key| retained_key == &public_key)
     .ok_or_else(|| {
         EventSignerError::Encoding(
-            "verified signer-resolution evidence is unavailable for the active device".to_owned(),
+            "verified device authorization is unavailable for the active device".to_owned(),
         )
     })?;
-    Ok(ProducerProofContext::new()
-        .with_digest_suite(digest_suite)
-        .with_signer_resolution_evidence_ref(evidence_ref))
-}
-
-#[cfg(test)]
-pub(crate) fn test_producer_proof_context(
-    digest_suite: arkret_sdk::DigestSuite,
-) -> ProducerProofContext {
-    ProducerProofContext::new()
-        .with_digest_suite(digest_suite)
-        .with_signer_resolution_evidence_ref(
-            arkret_sdk::SignerEvidenceRef::new(format!(
-                "ak:signer_evidence:sha256:{}",
-                "11".repeat(32)
-            ))
-            .expect("test signer evidence ref is canonical"),
-        )
+    Ok(ProducerProofContext::new().with_digest_suite(digest_suite))
 }
 
 /// Opaque handle wrapping an SDK [`SdkEventSigner`] trait object plus
@@ -486,7 +460,7 @@ impl InksonEventSigner {
     /// Updates [`Self::last_signed_at_snapshot`] on success.
     pub fn sign_envelope(&self, event: &mut AuthoredEvent) -> Result<(), EventSignerError> {
         #[cfg(test)]
-        let context = test_producer_proof_context(event.digest_suite());
+        let context = ProducerProofContext::new().with_digest_suite(event.digest_suite());
         #[cfg(not(test))]
         let context = cached_active_event_proof_context(event.digest_suite())?;
         self.sign_envelope_with_context(event, context)
@@ -1233,7 +1207,7 @@ mod tests {
         rebound
             .sign_sdk_event_with_context(
                 &mut event,
-                test_producer_proof_context(arkret_sdk::DigestSuite::Sha256),
+                ProducerProofContext::new().with_digest_suite(arkret_sdk::DigestSuite::Sha256),
             )
             .unwrap();
         assert_eq!(
@@ -1582,12 +1556,7 @@ mod tests {
 
         let context = ProducerProofContext::new()
             .with_domain("ak:trust_domain:server.example")
-            .with_audience(Audience::Single("did:web:server.example".to_owned()))
-            .with_signer_resolution_evidence_ref(
-                test_producer_proof_context(arkret_sdk::DigestSuite::Sha256)
-                    .signer_resolution_evidence_ref
-                    .unwrap(),
-            );
+            .with_audience(Audience::Single("did:web:server.example".to_owned()));
         signer
             .sign_envelope_with_context(&mut event, context)
             .expect("sign");
@@ -1623,43 +1592,6 @@ mod tests {
     }
 
     #[test]
-    fn signer_resolution_evidence_stays_out_of_producer_proof_bytes() {
-        let _g = reset();
-        let signer =
-            build_ed25519_device_signer([22u8; 32], "did:web:evidence.example", TEST_DEVICE_ID);
-        let mut without_evidence = message_event("did:web:evidence.example", "same event");
-        let mut with_evidence = without_evidence.clone();
-        let proof_created_at = without_evidence.created_at;
-        let context = ProducerProofContext::new()
-            .with_digest_suite(arkret_sdk::DigestSuite::Sha256)
-            .with_domain("ak:trust_domain:server.example");
-
-        signer
-            .sign_sdk_event_with_context_at(
-                &mut without_evidence,
-                context.clone(),
-                proof_created_at,
-            )
-            .unwrap();
-        signer
-            .sign_sdk_event_with_context_at(
-                &mut with_evidence,
-                context.with_signer_resolution_evidence_ref(
-                    test_producer_proof_context(arkret_sdk::DigestSuite::Sha256)
-                        .signer_resolution_evidence_ref
-                        .unwrap(),
-                ),
-                proof_created_at,
-            )
-            .unwrap();
-
-        assert_eq!(
-            serde_json::to_value(producer_proof(&without_evidence)).unwrap(),
-            serde_json::to_value(producer_proof(&with_evidence)).unwrap()
-        );
-    }
-
-    #[test]
     fn sign_sdk_event_with_context_attaches_typed_proof() {
         let _g = reset();
         let signer = build_ed25519_device_signer([10u8; 32], "did:web:sdk.example", TEST_DEVICE_ID);
@@ -1671,12 +1603,7 @@ mod tests {
         let context = ProducerProofContext::new()
             .with_domain("did:web:server.example")
             .with_audience(Audience::Single("did:web:server.example".to_owned()))
-            .with_digest_suite(arkret_sdk::canonical::DigestSuite::Sha256)
-            .with_signer_resolution_evidence_ref(
-                test_producer_proof_context(arkret_sdk::DigestSuite::Sha256)
-                    .signer_resolution_evidence_ref
-                    .unwrap(),
-            );
+            .with_digest_suite(arkret_sdk::canonical::DigestSuite::Sha256);
 
         signer
             .sign_sdk_event_with_context(&mut event, context)
@@ -1725,13 +1652,13 @@ mod tests {
         signer
             .sign_sdk_event_with_context(
                 &mut event,
-                test_producer_proof_context(arkret_sdk::DigestSuite::Sha256),
+                ProducerProofContext::new().with_digest_suite(arkret_sdk::DigestSuite::Sha256),
             )
             .unwrap();
         signer
             .sign_sdk_event_with_context(
                 &mut event,
-                test_producer_proof_context(arkret_sdk::DigestSuite::Sha256),
+                ProducerProofContext::new().with_digest_suite(arkret_sdk::DigestSuite::Sha256),
             )
             .unwrap();
 
@@ -1756,14 +1683,14 @@ mod tests {
         first
             .sign_sdk_event_with_context(
                 &mut event,
-                test_producer_proof_context(arkret_sdk::DigestSuite::Sha256),
+                ProducerProofContext::new().with_digest_suite(arkret_sdk::DigestSuite::Sha256),
             )
             .unwrap();
         let original = event.producer_proof.clone();
         let error = second
             .sign_sdk_event_with_context(
                 &mut event,
-                test_producer_proof_context(arkret_sdk::DigestSuite::Sha256),
+                ProducerProofContext::new().with_digest_suite(arkret_sdk::DigestSuite::Sha256),
             )
             .unwrap_err();
 

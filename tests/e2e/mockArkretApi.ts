@@ -2703,9 +2703,9 @@ export async function mockArkretApi(
         device_keys: requestedDeviceKeys.map(({ account_id, device_ids }) => ({
           account_id,
           device_keys: Object.fromEntries(device_ids.map((device_id) => [device_id, {
-              // The self face carries the Station-verified projection and the
-              // reference later Events use. The origin attestation and its
-              // proof stay on the peer face and never reach a client.
+              // The self face carries the Station-verified projection. The
+              // origin attestation and its proof stay on the peer face and
+              // never reach a client.
               signer_evidence_ref:
                 "ak:signer_evidence:sha256:3f3c1d4dd0b7f0f0b8f2f1f0a9c8b7a6958473625140f0e1d2c3b4a596877869",
               algorithms: {},

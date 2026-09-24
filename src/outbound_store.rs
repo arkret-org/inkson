@@ -379,9 +379,6 @@ mod tests {
                 "did:web:alice.example",
                 "did:web:alice.example#key-1",
                 &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
-                crate::event_signer::test_producer_proof_context(arkret_sdk::DigestSuite::Sha256)
-                    .signer_resolution_evidence_ref
-                    .expect("test signer evidence ref"),
             )
             .expect("fixture Event has a real producer proof");
         let event = event.into_event();

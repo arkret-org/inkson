@@ -80,7 +80,8 @@ fn author_and_sign(
     signer
         .sign_sdk_event_with_context(
             &mut event,
-            crate::event_signer::test_producer_proof_context(arkret_sdk::DigestSuite::Sha256),
+            crate::event_signer::ProducerProofContext::new()
+                .with_digest_suite(arkret_sdk::DigestSuite::Sha256),
         )
         .unwrap();
     event
