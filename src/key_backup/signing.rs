@@ -439,10 +439,15 @@ mod tests {
                 .unwrap(),
             device_id: None,
             backup_kind: arkret_sdk::BackupKind::SecretStorage,
-            backup_version: "kb_1".to_owned(),
+            backup_version: arkret_sdk::NonEmptyString::new("kb_1").unwrap(),
+            supersedes_id: None,
+            supersedes_digest: None,
+            source_commit_ref: None,
+            recovery_policy_ref: None,
             created_at: chrono::Utc::now(),
             updated_at: None,
             expires_at: None,
+            retention: None,
             ciphertext_digest: arkret_sdk::Hash::new(
                 "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             )
@@ -541,10 +546,15 @@ mod tests {
                 .unwrap(),
             device_id: None,
             backup_kind: arkret_sdk::BackupKind::SecretStorage,
-            backup_version: "kb_1".to_owned(),
+            backup_version: arkret_sdk::NonEmptyString::new("kb_1").unwrap(),
+            supersedes_id: None,
+            supersedes_digest: None,
+            source_commit_ref: None,
+            recovery_policy_ref: None,
             created_at: chrono::Utc::now(),
             updated_at: None,
             expires_at: None,
+            retention: None,
             ciphertext_digest: arkret_sdk::Hash::new(
                 "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             )
