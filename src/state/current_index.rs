@@ -252,6 +252,15 @@ pub(crate) fn current_reads_preview_stream(
         })
         .map(|window| &window.stream_ref)
         .collect::<std::collections::BTreeSet<_>>();
+    current_reads_any_stream(entry, &preview)
+}
+
+/// Whether the entry's current cut, any current row, or its baseline
+/// coverage reads one of `streams`.
+pub(crate) fn current_reads_any_stream(
+    entry: &arkret_sdk::sync::RealmSyncEntry,
+    preview: &std::collections::BTreeSet<&arkret_sdk::CommitStreamRef>,
+) -> bool {
     if preview.is_empty() {
         return false;
     }

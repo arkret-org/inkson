@@ -652,6 +652,12 @@ impl InksonAccountProjector {
                 "Account stream windows stay preview only until a verified basis exists"
             );
         }
+        if !verified.unresolved_streams().is_empty() {
+            tracing::info!(
+                streams = verified.unresolved_streams().len(),
+                "Account stream windows stay display only until their tails have typed reducers"
+            );
+        }
         let response = AccountFrameStep::new(frame.clone(), cursor.to_owned())
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let current_index = self.current_index().await?;

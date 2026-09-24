@@ -676,6 +676,13 @@ pub struct VerifiedAccountFrame {
     resolved_preview_streams: BTreeSet<CommitStreamRef>,
     /// `preview_only` windows that stay display-only in this frame.
     preview_streams: BTreeSet<CommitStreamRef>,
+    /// Non-preview windows this client cannot settle as exact in this frame
+    /// (a verified tail Commit of a kind with no typed reducer here, or a
+    /// snapshot slice of a stream without floor reducers). Like a preview
+    /// stream their rows stay display rows only: no current, no verified
+    /// index rows and no verified stream cursor come from them, and the
+    /// other streams and Realms of the frame are unaffected.
+    unresolved_streams: BTreeSet<CommitStreamRef>,
 }
 
 impl VerifiedAccountFrame {
@@ -693,6 +700,24 @@ impl VerifiedAccountFrame {
         &self.preview_streams
     }
 
+    /// Non-preview windows left display-only by a per-stream fail-closed
+    /// verdict in this frame.
+    pub fn unresolved_streams(&self) -> &BTreeSet<CommitStreamRef> {
+        &self.unresolved_streams
+    }
+
+    /// The exact current this frame installs for `realm_id` from its signed
+    /// floor snapshot and verified tail, if the Realm settled one.
+    pub fn floor_current(
+        &self,
+        realm_id: &arkret_sdk::RealmId,
+    ) -> Option<&[arkret_wire::TypedCurrentResult]> {
+        self.floor_current_rows
+            .iter()
+            .find(|(realm, _)| realm == realm_id)
+            .map(|(_, rows)| rows.as_slice())
+    }
+
     /// The frame the product layer may consume. An entry whose current cut,
     /// rows or baseline coverage read a still-preview stream loses its
     /// current and baseline, so nothing downstream (durable current index,
@@ -704,11 +729,13 @@ impl VerifiedAccountFrame {
     ) -> arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame {
         let mut product = frame.clone();
         if let Some(realms) = product.realms.as_mut() {
+            let unresolved = self.unresolved_streams.iter().collect::<BTreeSet<_>>();
             for entry in realms.entries.values_mut() {
                 if crate::state::current_index::current_reads_preview_stream(
                     entry,
                     &self.resolved_preview_streams,
-                ) {
+                ) || crate::state::current_index::current_reads_any_stream(entry, &unresolved)
+                {
                     entry.current = None;
                     entry.baseline = None;
                 }
@@ -737,18 +764,43 @@ impl VerifiedAccountFrame {
     }
 }
 
-/// Install the current rows of one exact signed single-stream snapshot and
-/// the verified readable tail after it. Every signed row is strictly parsed
-/// as its registered typed family (see [`validate_signed_floor_rows`]); the
-/// tail may contain audit facts, closed Realm facet writes, or the registered
-/// history-access state transition. Gate-bearing policy remains fail closed.
+/// The typed current one signed floor snapshot plus its verified readable
+/// tail folds to, or the per-stream verdict that this client cannot settle
+/// that tail as exact.
+#[derive(Debug)]
+enum FloorTail {
+    /// Every tail Commit ran its registered typed reducer.
+    Exact(Vec<arkret_wire::TypedCurrentResult>),
+    /// A verified tail Commit has no typed reducer here (an unregistered
+    /// kind, or a withheld Event). The stream fails closed on its own: no
+    /// row, tail page or cursor of it is installed, and nothing else in the
+    /// frame is affected.
+    Unsupported(String),
+}
+
+impl FloorTail {
+    #[cfg(test)]
+    fn exact(self) -> garth::Result<Vec<arkret_wire::TypedCurrentResult>> {
+        match self {
+            Self::Exact(rows) => Ok(rows),
+            Self::Unsupported(reason) => Err(garth::Error::Protocol(reason)),
+        }
+    }
+}
+
+/// Admit the current rows of one exact signed single-stream snapshot and the
+/// verified readable tail after it. Every signed row is strictly parsed as
+/// its registered typed family (see [`validate_signed_floor_rows`]); the
+/// tail runs the registered typed reducers of [`fold_floor_current_tail`].
+/// The Account current rows sourced from the snapshot stream must equal the
+/// fold exactly; rows of other streams are the caller's to settle.
 fn admit_single_stream_floor_current(
     entry: &arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry,
     realm_id: &arkret_sdk::RealmId,
     bundle: &arkret_sdk::RealmAuthorityBundle,
     snapshot: garth::VerifiedFloorSnapshot,
     pages: &[garth::VerifiedScanPage],
-) -> garth::Result<Vec<arkret_wire::TypedCurrentResult>> {
+) -> garth::Result<FloorTail> {
     let current = entry.current.as_ref().ok_or_else(|| {
         garth::Error::Protocol("floor snapshot has no exact Account current cut".to_owned())
     })?;
@@ -764,9 +816,30 @@ fn admit_single_stream_floor_current(
         snapshot.history_access(),
         snapshot.rows(),
     )?;
-    let expected = fold_floor_current_tail(snapshot.into_rows(), pages)?;
-    require_exact_floor_tail_current(&current.entries, &expected)?;
-    Ok(current.entries.clone())
+    let stream = snapshot.head().stream_ref.clone();
+    let expected = match fold_floor_current_tail(snapshot.into_rows(), pages)? {
+        FloorTail::Exact(rows) => rows,
+        unsupported @ FloorTail::Unsupported(_) => return Ok(unsupported),
+    };
+    let claimed = current
+        .entries
+        .iter()
+        .filter(|row| row_source(row) == &stream)
+        .cloned()
+        .collect::<Vec<_>>();
+    require_exact_floor_tail_current(&claimed, &expected)?;
+    Ok(FloorTail::Exact(current.entries.clone()))
+}
+
+fn row_source(row: &arkret_wire::TypedCurrentResult) -> &CommitStreamRef {
+    match row {
+        arkret_wire::TypedCurrentResult::Value {
+            source_stream_ref, ..
+        }
+        | arkret_wire::TypedCurrentResult::MessageReactions {
+            source_stream_ref, ..
+        } => source_stream_ref,
+    }
 }
 
 fn require_exact_floor_tail_current(
@@ -781,14 +854,30 @@ fn require_exact_floor_tail_current(
     Ok(())
 }
 
+/// Run the registered typed reducer of every verified tail Commit over the
+/// signed floor rows, in stream order. A registered kind whose Commit breaks
+/// its reducer (non-closed payload, broken CAS, dangling target, missing
+/// predecessor) is a verified contradiction and fails the frame; a kind with
+/// no reducer here, or a withheld Event, leaves only this stream unresolved.
 fn fold_floor_current_tail(
     mut rows: Vec<arkret_wire::TypedCurrentResult>,
     pages: &[garth::VerifiedScanPage],
-) -> garth::Result<Vec<arkret_wire::TypedCurrentResult>> {
+) -> garth::Result<FloorTail> {
+    let tail_row = |selector, full: &arkret_sdk::CommittedEventFullView, value| {
+        arkret_wire::TypedCurrentResult::Value {
+            selector,
+            source_stream_ref: full.commit.stream_ref.clone(),
+            revision: arkret_wire::CurrentRevision {
+                commit_id: full.commit.commit_id.clone(),
+                stream_position: full.commit.stream_position,
+            },
+            value,
+        }
+    };
     for page in pages {
         for committed in page.rows() {
             let arkret_wire::CommittedEventView::Full(full) = committed else {
-                return Err(garth::Error::Protocol(
+                return Ok(FloorTail::Unsupported(
                     "floor current tail requires a disclosed Event".to_owned(),
                 ));
             };
@@ -819,111 +908,43 @@ fn fold_floor_current_tail(
                         "Realm profile tail payload is not the closed current value".to_owned(),
                     ));
                 }
-                rows.retain(|row| {
-                    !matches!(
-                        row,
-                        arkret_wire::TypedCurrentResult::Value {
-                            selector: arkret_wire::CurrentSelector::RealmProfile,
-                            ..
-                        }
-                    )
-                });
-                rows.push(arkret_wire::TypedCurrentResult::Value {
-                    selector: arkret_wire::CurrentSelector::RealmProfile,
-                    source_stream_ref: full.commit.stream_ref.clone(),
-                    revision: arkret_wire::CurrentRevision {
-                        commit_id: full.commit.commit_id.clone(),
-                        stream_position: full.commit.stream_position,
-                    },
-                    value,
-                });
+                replace_singleton(
+                    &mut rows,
+                    tail_row(arkret_wire::CurrentSelector::RealmProfile, full, value),
+                );
             } else if full.event.kind.as_str() == "ak.realm.policy_bundle" {
-                let previous = rows.iter().find_map(|row| match row {
-                    arkret_wire::TypedCurrentResult::Value {
-                        selector: arkret_wire::CurrentSelector::RealmPolicyBundle,
-                        value,
-                        ..
-                    } => Some(value),
-                    _ => None,
-                });
+                let previous =
+                    singleton_value(&rows, &arkret_wire::CurrentSelector::RealmPolicyBundle);
                 let value = closed_policy_bundle_value(
                     previous,
                     serde_json::to_value(&full.event.payload)
                         .map_err(|error| garth::Error::Protocol(error.to_string()))?,
                 )?;
-                rows.retain(|row| {
-                    !matches!(
-                        row,
-                        arkret_wire::TypedCurrentResult::Value {
-                            selector: arkret_wire::CurrentSelector::RealmPolicyBundle,
-                            ..
-                        }
-                    )
-                });
-                rows.push(arkret_wire::TypedCurrentResult::Value {
-                    selector: arkret_wire::CurrentSelector::RealmPolicyBundle,
-                    source_stream_ref: full.commit.stream_ref.clone(),
-                    revision: arkret_wire::CurrentRevision {
-                        commit_id: full.commit.commit_id.clone(),
-                        stream_position: full.commit.stream_position,
-                    },
-                    value,
-                });
+                replace_singleton(
+                    &mut rows,
+                    tail_row(arkret_wire::CurrentSelector::RealmPolicyBundle, full, value),
+                );
             } else if full.event.kind.as_str() == "ak.realm.join_rule" {
-                let policy = rows.iter().find_map(|row| match row {
-                    arkret_wire::TypedCurrentResult::Value {
-                        selector: arkret_wire::CurrentSelector::RealmPolicyBundle,
-                        value,
-                        ..
-                    } => Some(value),
-                    _ => None,
-                });
+                let policy =
+                    singleton_value(&rows, &arkret_wire::CurrentSelector::RealmPolicyBundle);
                 let value = closed_join_rule_value(
                     policy,
                     serde_json::to_value(&full.event.payload)
                         .map_err(|error| garth::Error::Protocol(error.to_string()))?,
                 )?;
-                rows.retain(|row| {
-                    !matches!(
-                        row,
-                        arkret_wire::TypedCurrentResult::Value {
-                            selector: arkret_wire::CurrentSelector::RealmJoinRule,
-                            ..
-                        }
-                    )
-                });
-                rows.push(arkret_wire::TypedCurrentResult::Value {
-                    selector: arkret_wire::CurrentSelector::RealmJoinRule,
-                    source_stream_ref: full.commit.stream_ref.clone(),
-                    revision: arkret_wire::CurrentRevision {
-                        commit_id: full.commit.commit_id.clone(),
-                        stream_position: full.commit.stream_position,
-                    },
-                    value,
-                });
+                replace_singleton(
+                    &mut rows,
+                    tail_row(arkret_wire::CurrentSelector::RealmJoinRule, full, value),
+                );
             } else if full.event.kind.as_str() == "ak.realm.discovery" {
                 let value = closed_discovery_value(
                     serde_json::to_value(&full.event.payload)
                         .map_err(|error| garth::Error::Protocol(error.to_string()))?,
                 )?;
-                rows.retain(|row| {
-                    !matches!(
-                        row,
-                        arkret_wire::TypedCurrentResult::Value {
-                            selector: arkret_wire::CurrentSelector::RealmDiscovery,
-                            ..
-                        }
-                    )
-                });
-                rows.push(arkret_wire::TypedCurrentResult::Value {
-                    selector: arkret_wire::CurrentSelector::RealmDiscovery,
-                    source_stream_ref: full.commit.stream_ref.clone(),
-                    revision: arkret_wire::CurrentRevision {
-                        commit_id: full.commit.commit_id.clone(),
-                        stream_position: full.commit.stream_position,
-                    },
-                    value,
-                });
+                replace_singleton(
+                    &mut rows,
+                    tail_row(arkret_wire::CurrentSelector::RealmDiscovery, full, value),
+                );
             } else if full.event.kind.as_str() == "ak.member.state" {
                 let selector = closed_creator_join_selector(
                     &rows,
@@ -931,62 +952,282 @@ fn fold_floor_current_tail(
                     serde_json::to_value(&full.event.payload)
                         .map_err(|error| garth::Error::Protocol(error.to_string()))?,
                 )?;
-                rows.push(arkret_wire::TypedCurrentResult::Value {
+                rows.push(tail_row(
                     selector,
-                    source_stream_ref: full.commit.stream_ref.clone(),
-                    revision: arkret_wire::CurrentRevision {
-                        commit_id: full.commit.commit_id.clone(),
-                        stream_position: full.commit.stream_position,
-                    },
-                    value: serde_json::json!({"membership": "join"}),
-                });
+                    full,
+                    serde_json::json!({"membership": "join"}),
+                ));
             } else if full.event.kind.as_str() == "ak.realm.history_access" {
-                let previous = rows.iter().find_map(|row| match row {
-                    arkret_wire::TypedCurrentResult::Value {
-                        selector: arkret_wire::CurrentSelector::RealmHistoryAccess,
-                        value,
-                        ..
-                    } => Some(value),
-                    _ => None,
-                });
-                let previous = previous
-                    .map(|value| {
-                        serde_json::from_value::<arkret_sdk::HistoryAccess>(value.clone())
-                            .map_err(|error| garth::Error::Protocol(error.to_string()))
-                    })
-                    .transpose()?;
+                let previous =
+                    singleton_value(&rows, &arkret_wire::CurrentSelector::RealmHistoryAccess)
+                        .map(|value| {
+                            serde_json::from_value::<arkret_sdk::HistoryAccess>(value.clone())
+                                .map_err(|error| garth::Error::Protocol(error.to_string()))
+                        })
+                        .transpose()?;
                 let next = closed_history_transition(
                     previous,
                     serde_json::to_value(&full.event.payload)
                         .map_err(|error| garth::Error::Protocol(error.to_string()))?,
                 )?;
-                rows.retain(|row| {
-                    !matches!(
-                        row,
-                        arkret_wire::TypedCurrentResult::Value {
-                            selector: arkret_wire::CurrentSelector::RealmHistoryAccess,
-                            ..
-                        }
-                    )
-                });
-                rows.push(arkret_wire::TypedCurrentResult::Value {
-                    selector: arkret_wire::CurrentSelector::RealmHistoryAccess,
-                    source_stream_ref: full.commit.stream_ref.clone(),
-                    revision: arkret_wire::CurrentRevision {
-                        commit_id: full.commit.commit_id.clone(),
-                        stream_position: full.commit.stream_position,
-                    },
-                    value: serde_json::to_value(next)
-                        .map_err(|error| garth::Error::Protocol(error.to_string()))?,
-                });
+                replace_singleton(
+                    &mut rows,
+                    tail_row(
+                        arkret_wire::CurrentSelector::RealmHistoryAccess,
+                        full,
+                        serde_json::to_value(next)
+                            .map_err(|error| garth::Error::Protocol(error.to_string()))?,
+                    ),
+                );
+            } else if full.event.kind == arkret_wire::EventKind::StrandCreate {
+                let (selector, value) = closed_strand_create_row(&rows, full)?;
+                rows.push(tail_row(selector, full, value));
+            } else if full.event.kind == arkret_wire::EventKind::RealmSetDefaultStrand {
+                let value = closed_default_strand_value(&rows, full)?;
+                replace_singleton(
+                    &mut rows,
+                    tail_row(
+                        arkret_wire::CurrentSelector::RealmSetDefaultStrand,
+                        full,
+                        value,
+                    ),
+                );
+            } else if full.event.kind == arkret_wire::EventKind::MessageCreate {
+                let (selector, value) = closed_message_create_row(&rows, full)?;
+                rows.push(tail_row(selector, full, value));
             } else {
-                return Err(garth::Error::Protocol(
-                    "floor current tail has an unsupported typed reducer".to_owned(),
-                ));
+                return Ok(FloorTail::Unsupported(format!(
+                    "floor current tail has an unsupported typed reducer: {}",
+                    full.event.kind.as_str()
+                )));
             }
         }
     }
-    Ok(rows)
+    Ok(FloorTail::Exact(rows))
+}
+
+fn singleton_value<'a>(
+    rows: &'a [arkret_wire::TypedCurrentResult],
+    wanted: &arkret_wire::CurrentSelector,
+) -> Option<&'a serde_json::Value> {
+    rows.iter().find_map(|row| match row {
+        arkret_wire::TypedCurrentResult::Value {
+            selector, value, ..
+        } if selector == wanted => Some(value),
+        _ => None,
+    })
+}
+
+/// Replace the one current row of `next`'s selector.
+fn replace_singleton(
+    rows: &mut Vec<arkret_wire::TypedCurrentResult>,
+    next: arkret_wire::TypedCurrentResult,
+) {
+    let arkret_wire::TypedCurrentResult::Value { selector, .. } = &next else {
+        unreachable!("tail reducers write value rows")
+    };
+    let selector = selector.clone();
+    rows.retain(|row| {
+        !matches!(row,
+            arkret_wire::TypedCurrentResult::Value { selector: existing, .. } if existing == &selector
+        )
+    });
+    rows.push(next);
+}
+
+/// The Realm-scope Event of this Realm stream, strictly valid against the
+/// formal Event schema (the same gate the Station applies at submit), whose
+/// actor is a joined member at this cut.
+fn require_realm_member_event(
+    rows: &[arkret_wire::TypedCurrentResult],
+    full: &arkret_sdk::CommittedEventFullView,
+    family: &str,
+) -> garth::Result<serde_json::Value> {
+    let event = &full.event;
+    let realm_stream = CommitStreamRef::Realm {
+        realm_id: event.realm_id.clone(),
+    };
+    if full.commit.stream_ref != realm_stream
+        || full.commit.realm_id != event.realm_id
+        || event.scope_ref
+            != (arkret_sdk::ScopeRef::Realm {
+                realm_id: event.realm_id.clone(),
+            })
+    {
+        return Err(protocol(format!(
+            "floor {family} tail is not a Realm-scope Event of the Realm stream"
+        )));
+    }
+    arkret_schema::validate_event_for_submit(event)
+        .map_err(|error| protocol(format!("floor {family} tail Event: {error}")))?;
+    let member = arkret_wire::CurrentSelector::MemberState {
+        actor_id: event.actor_id.clone(),
+    };
+    if singleton_value(rows, &member)
+        .and_then(|value| value.get("membership"))
+        .and_then(serde_json::Value::as_str)
+        != Some("join")
+    {
+        return Err(protocol(format!(
+            "floor {family} tail actor is not a joined member at the cut"
+        )));
+    }
+    serde_json::to_value(&event.payload).map_err(protocol)
+}
+
+/// The active Realm-scoped Strand current `strand_id` names at this cut.
+fn active_realm_strand<'a>(
+    rows: &'a [arkret_wire::TypedCurrentResult],
+    strand_id: &arkret_sdk::StrandId,
+    family: &str,
+) -> garth::Result<&'a serde_json::Value> {
+    singleton_value(
+        rows,
+        &arkret_wire::CurrentSelector::Strand {
+            strand_id: strand_id.clone(),
+        },
+    )
+    .filter(|value| {
+        value.get("state").and_then(serde_json::Value::as_str) == Some("active")
+            && value
+                .get("scope_circle_id")
+                .is_none_or(serde_json::Value::is_null)
+    })
+    .ok_or_else(|| {
+        protocol(format!(
+            "floor {family} tail names no active Realm-scoped Strand at the cut"
+        ))
+    })
+}
+
+/// `ak.strand.create` writes the `strand` family: the authored business
+/// region of the create object, with the Event-derived id and the initial
+/// `active` state derived by the reducer. Every other derived member must be
+/// the create's own (Realm, creator, create time) or absent.
+fn closed_strand_create_row(
+    rows: &[arkret_wire::TypedCurrentResult],
+    full: &arkret_sdk::CommittedEventFullView,
+) -> garth::Result<(arkret_wire::CurrentSelector, serde_json::Value)> {
+    let event = &full.event;
+    let payload = require_realm_member_event(rows, full, "Strand create")?;
+    let create: arkret_models_collaboration::events_payloads::strand::StrandCreatePayload =
+        closed_value(&payload, "Strand create payload")?;
+    let object = create.object;
+    if object.id.is_some()
+        || object.schema != arkret_wire::SchemaId::STRAND_V1
+        || object.realm_id != event.realm_id
+        || object.scope_circle_id.is_some()
+        || object.created_by != event.actor_id
+        || object.created_at != event.created_at
+        || object
+            .state
+            .as_ref()
+            .is_some_and(|state| *state != arkret_sdk::ObjectState::Active)
+        || object.state_changed_at.is_some()
+        || object.stage.is_some()
+        || object.stage_changed_at.is_some()
+        || object.updated_by.is_some()
+        || object.updated_at.is_some()
+    {
+        return Err(protocol(
+            "floor Strand create is not the initial Realm-scoped Strand of its Event",
+        ));
+    }
+    let strand_id = arkret_sdk::StrandId::from_event_id(&event.event_id);
+    let selector = arkret_wire::CurrentSelector::Strand {
+        strand_id: strand_id.clone(),
+    };
+    if singleton_value(rows, &selector).is_some() {
+        return Err(protocol("floor Strand create names an existing Strand"));
+    }
+    let mut value = payload
+        .get("object")
+        .cloned()
+        .ok_or_else(|| protocol("floor Strand create omits its object"))?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| protocol("floor Strand create object is not an object"))?;
+    object.insert(
+        "id".to_owned(),
+        serde_json::to_value(&strand_id).map_err(protocol)?,
+    );
+    object.insert("state".to_owned(), serde_json::json!("active"));
+    closed_value::<arkret_models_collaboration::objects::strand::Strand>(&value, "strand")?;
+    Ok((selector, value))
+}
+
+/// `ak.realm.set_default_strand` replaces the one-member
+/// `realm_set_default_strand` pointer after its CAS (absent and null both
+/// assert a null pointer) against the current pointer, and only onto an
+/// active Realm-scoped Strand of this cut.
+fn closed_default_strand_value(
+    rows: &[arkret_wire::TypedCurrentResult],
+    full: &arkret_sdk::CommittedEventFullView,
+) -> garth::Result<serde_json::Value> {
+    let payload = require_realm_member_event(rows, full, "default Strand")?;
+    let pointer: arkret_models_collaboration::events_payloads::strand::RealmSetDefaultStrandPayload =
+        closed_value(&payload, "default Strand payload")?;
+    if pointer.realm_id != full.event.realm_id {
+        return Err(protocol("floor default Strand names another Realm"));
+    }
+    let current = singleton_value(rows, &arkret_wire::CurrentSelector::RealmSetDefaultStrand)
+        .map(|value| {
+            let member = value
+                .as_object()
+                .filter(|object| object.len() == 1)
+                .and_then(|object| object.get("default_strand_id"))
+                .ok_or_else(|| protocol("current default Strand is not its closed value"))?;
+            serde_json::from_value::<Option<arkret_sdk::StrandId>>(member.clone()).map_err(protocol)
+        })
+        .transpose()?
+        .flatten();
+    if current != pointer.expected_default_strand_id {
+        return Err(protocol(
+            "floor default Strand expected pointer differs from the current pointer",
+        ));
+    }
+    active_realm_strand(rows, &pointer.strand_id, "default Strand")?;
+    Ok(serde_json::json!({ "default_strand_id": pointer.strand_id }))
+}
+
+/// `ak.message.create` writes the `message_revision` family: the selector is
+/// the Event-derived MessageId and the value is the accepted create payload
+/// (the create/revise carrier). A plaintext carrier must target a track of
+/// an active Realm-scoped Strand; the scope has no accepted MLS group at a
+/// cut this reducer can reach, so an encrypted carrier is a contradiction.
+fn closed_message_create_row(
+    rows: &[arkret_wire::TypedCurrentResult],
+    full: &arkret_sdk::CommittedEventFullView,
+) -> garth::Result<(arkret_wire::CurrentSelector, serde_json::Value)> {
+    let payload = require_realm_member_event(rows, full, "Message create")?;
+    let message: arkret_models_collaboration::events_payloads::message::MessageCreatePayload =
+        closed_value(&payload, "Message create payload")?;
+    if message.content.is_none()
+        || message.encrypted_content.is_some()
+        || message.encrypted_metadata.is_some()
+    {
+        return Err(protocol(
+            "floor Message create is not a plaintext carrier of an unencrypted scope",
+        ));
+    }
+    let strand = active_realm_strand(rows, &message.strand_id, "Message create")?;
+    if strand
+        .get("tracks")
+        .and_then(|tracks| tracks.get(&message.track_name))
+        .and_then(serde_json::Value::as_object)
+        .is_none_or(|track| track.get("enabled") == Some(&serde_json::Value::Bool(false)))
+    {
+        return Err(protocol(
+            "floor Message create names no enabled track of its Strand",
+        ));
+    }
+    let selector = arkret_wire::CurrentSelector::MessageRevision {
+        message_id: arkret_sdk::MessageId::from_event_id(&full.event.event_id),
+    };
+    if singleton_value(rows, &selector).is_some() {
+        return Err(protocol("floor Message create names an existing Message"));
+    }
+    Ok((selector, payload))
 }
 
 fn closed_discovery_value(payload: serde_json::Value) -> garth::Result<serde_json::Value> {
@@ -1395,19 +1636,28 @@ fn validate_signed_floor_rows(
 
 /// The account aggregate's committed rows are claims until an independent
 /// nonce-bound stream scan returns the same exact rows. Full history can be
-/// projected. One non-preview single-stream window anchored
+/// projected. A non-preview Realm-stream window anchored
 /// `before_readable_floor` or `after_committed_prefix` installs its exact
 /// signed snapshot rows plus the verified tail; any other limited shape stays
 /// out of the product current.
 ///
-/// A `preview_only` window (client-sync §5.2) is decided per stream and never
-/// fails its siblings: the client backfills it with the same verified scan
-/// from genesis. When that replay verifies the whole readable prefix, the
-/// window start is no longer unknown and the stream is exact; when the
-/// caller's readable history starts above genesis, the stream stays preview:
-/// its rows remain display rows only, and neither its current nor any
-/// verified index or checkpoint advances. A verified row that contradicts the
-/// frame still fails closed.
+/// Every window is decided per stream (client-sync §5.2), and a Realm may
+/// carry a snapshot-anchored window beside other stream windows:
+///
+/// - A `preview_only` window never fails its siblings: the client backfills
+///   it with the same verified scan from genesis. When that replay verifies
+///   the whole readable prefix, the window start is no longer unknown and the
+///   stream is exact; when the caller's readable history starts above
+///   genesis, the stream stays preview: its rows remain display rows only,
+///   and neither its current nor any verified index or checkpoint advances.
+/// - A snapshot-anchored window whose verified tail holds a Commit with no
+///   typed reducer here, or a snapshot slice of a non-Realm stream, stays
+///   unresolved the same way (decision 0103: zero new rows, tail or cursor
+///   from it) without failing the frame.
+///
+/// A verified row that contradicts the frame, a snapshot that fails
+/// verification, or a registered reducer the verified tail breaks still
+/// fails the whole frame closed.
 pub async fn verify_account_frame_commits(
     http: &arkret_sdk::http_client::Client,
     frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
@@ -1420,112 +1670,313 @@ async fn verify_account_frame_with<T: garth::AuthorityTransport>(
     http: &arkret_sdk::http_client::Client,
     frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
 ) -> garth::Result<VerifiedAccountFrame> {
+    verify_account_frame_described(authority, http, None, frame).await
+}
+
+/// `describe` is the own Station description whose operation bundles gate
+/// the by-ref snapshot read; `None` reads it from the Station when a Realm
+/// names a snapshot basis.
+async fn verify_account_frame_described<T: garth::AuthorityTransport>(
+    authority: &AuthorityClient<T>,
+    http: &arkret_sdk::http_client::Client,
+    describe: Option<&arkret_models_discovery::ServiceDescribe>,
+    frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
+) -> garth::Result<VerifiedAccountFrame> {
     let mut verified = VerifiedAccountFrame::default();
     let Some(realms) = frame.realms.as_ref() else {
         return Ok(verified);
     };
-    'realms: for (realm, entry) in &realms.entries {
+    for (realm, entry) in &realms.entries {
         let realm_id = arkret_sdk::RealmId::new(realm.clone())
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        if let Some(windows) = entry.streams.as_ref() {
-            for window in windows {
-                let Some(basis) = snapshot_window_basis(window) else {
-                    continue;
-                };
-                if windows.len() != 1 {
-                    return Err(garth::Error::Protocol(
-                        "floor current projection requires one exact Realm stream".to_owned(),
-                    ));
-                }
-                let describe = http
-                    .describe_for_role(arkret_sdk::ServiceKind::Station)
-                    .await?;
-                let (bundle, freshness, mut replica) =
-                    fresh_verified_realm(authority, http, &realm_id).await?;
-                let (pages, floor_snapshot) = verified_stream_pages(
-                    authority,
-                    http,
-                    &mut replica,
-                    &bundle,
-                    &freshness,
-                    &realm_id,
-                    &window.stream_ref,
-                    Some(FloorAnchor {
-                        basis,
-                        describe: &describe,
-                    }),
-                )
-                .await?
-                .into_verified()?;
-                let scanned = pages
-                    .iter()
-                    .flat_map(|page| page.rows())
-                    .collect::<Vec<_>>();
-                require_window_start_row(basis, &scanned)?;
-                if let Some(all_claimed) = entry.committed_events.as_ref() {
-                    let claimed = all_claimed
-                        .iter()
-                        .filter(|row| row.commit().stream_ref == window.stream_ref)
-                        .collect::<Vec<_>>();
-                    require_exact_claimed_rows(&claimed, &scanned)?;
-                    if claimed.len() != scanned.len() || claimed.len() != all_claimed.len() {
-                        return Err(garth::Error::Protocol(
-                            "Account window rows differ from the verified floor stream".to_owned(),
-                        ));
-                    }
-                } else if !scanned.is_empty() {
-                    return Err(garth::Error::Protocol(
-                        "Account window omits its verified floor tail".to_owned(),
-                    ));
-                }
-                let expected_position = window.next_position.checked_sub(1).ok_or_else(|| {
-                    garth::Error::Protocol("account frame stream head has no position".to_owned())
-                })?;
-                if replica
-                    .verified_head(&window.stream_ref)
-                    .is_none_or(|head| {
-                        head.stream_position != expected_position
-                            || head.commit_id != window.head_commit_ref
-                    })
-                {
-                    return Err(garth::Error::Protocol(
-                        "account frame stream head differs from verified scan".to_owned(),
-                    ));
-                }
-                let floor_snapshot = floor_snapshot.ok_or_else(|| {
-                    garth::Error::Protocol("floor snapshot did not pass Garth".to_owned())
-                })?;
-                let current = entry.current.as_ref().ok_or_else(|| {
-                    garth::Error::Protocol("floor snapshot has no Account current cut".to_owned())
-                })?;
-                if window.stream_ref
-                    != (CommitStreamRef::Realm {
-                        realm_id: realm_id.clone(),
-                    })
-                    || current.governance_generation != floor_snapshot.governance_generation()
-                    || current.stream_heads.len() != 1
-                    || current.stream_heads.first() != replica.verified_head(&window.stream_ref)
-                {
-                    return Err(garth::Error::Protocol(
-                        "Account current cut differs from signed floor snapshot".to_owned(),
-                    ));
-                }
-                let rows = admit_single_stream_floor_current(
-                    entry,
-                    &realm_id,
-                    &bundle,
-                    floor_snapshot,
-                    &pages,
-                )?;
-                verified.pages.extend(pages);
-                verified.floor_current_rows.push((realm_id, rows));
-                continue 'realms;
-            }
+        if entry
+            .streams
+            .iter()
+            .flatten()
+            .any(|window| snapshot_window_basis(window).is_some())
+        {
+            verify_snapshot_realm(authority, http, describe, &realm_id, entry, &mut verified)
+                .await?;
+            continue;
         }
         require_genesis_window_basis(entry)?;
         verify_full_history_realm(authority, http, &realm_id, entry, &mut verified).await?;
     }
     Ok(verified)
+}
+
+/// Committed rows of one Realm entry grouped by their exact stream, each
+/// stream named by exactly one window of the entry.
+fn claimed_rows_by_stream<'a>(
+    realm_id: &arkret_sdk::RealmId,
+    entry: &'a arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry,
+) -> garth::Result<BTreeMap<CommitStreamRef, Vec<&'a CommittedEventView>>> {
+    let mut windows = BTreeSet::new();
+    for window in entry.streams.iter().flatten() {
+        if window.stream_ref.realm_id() != realm_id {
+            return Err(garth::Error::Protocol(
+                "account frame stream window belongs to another Realm".to_owned(),
+            ));
+        }
+        if !windows.insert(&window.stream_ref) {
+            return Err(garth::Error::Protocol(
+                "account frame repeats a stream window".to_owned(),
+            ));
+        }
+    }
+    let mut by_stream: BTreeMap<CommitStreamRef, Vec<&CommittedEventView>> = BTreeMap::new();
+    let mut seen_rows = BTreeSet::new();
+    for row in entry.committed_events.iter().flatten() {
+        if row.commit().realm_id != *realm_id {
+            return Err(garth::Error::Protocol(
+                "account frame Commit belongs to another Realm".to_owned(),
+            ));
+        }
+        if !seen_rows.insert((
+            row.commit().stream_ref.clone(),
+            row.commit().stream_position,
+        )) {
+            return Err(garth::Error::Protocol(
+                "account frame repeats a committed stream position".to_owned(),
+            ));
+        }
+        if !windows.contains(&row.commit().stream_ref) {
+            return Err(garth::Error::Protocol(
+                "account frame Commit has no exact stream window head".to_owned(),
+            ));
+        }
+        by_stream
+            .entry(row.commit().stream_ref.clone())
+            .or_default()
+            .push(row);
+    }
+    Ok(by_stream)
+}
+
+/// Verify one Realm entry that names a signed snapshot basis on at least one
+/// stream window. Each window is settled on its own stream: the Realm-stream
+/// snapshot window through the exact by-ref snapshot, its verified tail and
+/// the typed reducers; every other window through a verified replay from
+/// genesis (or as preview). The Account current is installed only when the
+/// snapshot stream folds exactly and the cut reads no unsettled stream.
+async fn verify_snapshot_realm<T: garth::AuthorityTransport>(
+    authority: &AuthorityClient<T>,
+    http: &arkret_sdk::http_client::Client,
+    describe: Option<&arkret_models_discovery::ServiceDescribe>,
+    realm_id: &arkret_sdk::RealmId,
+    entry: &arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry,
+    verified: &mut VerifiedAccountFrame,
+) -> garth::Result<()> {
+    let mut claimed = claimed_rows_by_stream(realm_id, entry)?;
+    let realm_stream = CommitStreamRef::Realm {
+        realm_id: realm_id.clone(),
+    };
+    let (bundle, freshness, mut replica) = fresh_verified_realm(authority, http, realm_id).await?;
+    let mut exact_pages = Vec::new();
+    let mut exact_streams = BTreeSet::new();
+    let mut unsettled = BTreeSet::new();
+    let mut unresolved = BTreeSet::new();
+    let mut floor = None;
+    let mut replayed_from_genesis = false;
+    for window in entry.streams.iter().flatten() {
+        let rows = claimed.remove(&window.stream_ref).unwrap_or_default();
+        if let Some(basis) = snapshot_window_basis(window) {
+            if window.stream_ref != realm_stream {
+                // Typed floor reducers exist for the Realm stream only; a
+                // Circle or Sidecar slice stays unresolved on its own.
+                unresolved.insert(window.stream_ref.clone());
+                continue;
+            }
+            let fetched;
+            let describe = match describe {
+                Some(describe) => describe,
+                None => {
+                    fetched = http
+                        .describe_for_role(arkret_sdk::ServiceKind::Station)
+                        .await?;
+                    &fetched
+                }
+            };
+            let (pages, floor_snapshot) = verified_stream_pages(
+                authority,
+                http,
+                &mut replica,
+                &bundle,
+                &freshness,
+                realm_id,
+                &window.stream_ref,
+                Some(FloorAnchor { basis, describe }),
+            )
+            .await?
+            .into_verified()?;
+            let scanned = pages
+                .iter()
+                .flat_map(|page| page.rows())
+                .collect::<Vec<_>>();
+            require_window_start_row(basis, &scanned)?;
+            require_exact_claimed_rows(&rows, &scanned)?;
+            if rows.len() != scanned.len() {
+                return Err(garth::Error::Protocol(
+                    "Account window rows differ from the verified floor stream".to_owned(),
+                ));
+            }
+            require_verified_window_head(window, &replica)?;
+            let floor_snapshot = floor_snapshot.ok_or_else(|| {
+                garth::Error::Protocol("floor snapshot did not pass Garth".to_owned())
+            })?;
+            floor = Some((floor_snapshot, pages));
+            continue;
+        }
+        let scan = verified_stream_pages(
+            authority,
+            http,
+            &mut replica,
+            &bundle,
+            &freshness,
+            realm_id,
+            &window.stream_ref,
+            None,
+        )
+        .await?;
+        replayed_from_genesis = true;
+        match resolve_full_history_window(Some(window), &rows, scan)? {
+            WindowResolution::Exact(pages) => {
+                if window.preview_only == Some(true) {
+                    verified
+                        .resolved_preview_streams
+                        .insert(window.stream_ref.clone());
+                }
+                exact_streams.insert(window.stream_ref.clone());
+                exact_pages.extend(pages);
+            }
+            WindowResolution::Preview => {
+                verified.preview_streams.insert(window.stream_ref.clone());
+                unsettled.insert(window.stream_ref.clone());
+            }
+        }
+    }
+    // Without a Realm-stream floor (only a non-Realm slice named a basis)
+    // the entry is settled per stream like full history; its current reads
+    // the unresolved slice and stays out of the product current.
+    if let Some((floor_snapshot, floor_pages)) = floor {
+        let current = entry.current.as_ref().ok_or_else(|| {
+            garth::Error::Protocol("floor snapshot has no Account current cut".to_owned())
+        })?;
+        require_floor_current_cut(
+            current,
+            &floor_snapshot,
+            &replica,
+            entry,
+            &exact_streams,
+            &unsettled,
+            &unresolved,
+        )?;
+        match admit_single_stream_floor_current(
+            entry,
+            realm_id,
+            &bundle,
+            floor_snapshot,
+            &floor_pages,
+        )? {
+            FloorTail::Exact(rows) => {
+                verified.pages.extend(floor_pages);
+                unsettled.extend(unresolved.iter().cloned());
+                if !crate::state::current_index::current_reads_any_stream(
+                    entry,
+                    &unsettled.iter().collect(),
+                ) {
+                    verified.floor_current_rows.push((realm_id.clone(), rows));
+                }
+            }
+            FloorTail::Unsupported(reason) => {
+                tracing::info!(
+                    realm_id = %realm_id,
+                    %reason,
+                    "Account snapshot window stays unresolved until its tail has typed reducers"
+                );
+                unresolved.insert(realm_stream);
+            }
+        }
+    }
+    verified.pages.extend(exact_pages);
+    verified.unresolved_streams.extend(unresolved);
+    if replayed_from_genesis {
+        let final_freshness = arkret_identity::RealmAuthorityFreshness::new(
+            chrono::Utc::now(),
+            freshness.expected_nonce.clone(),
+            freshness.max_bundle_age,
+        )
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
+        arkret_identity::verify_realm_authority_bundle(&bundle, &final_freshness, &keys)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    }
+    Ok(())
+}
+
+fn require_verified_window_head(
+    window: &arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow,
+    replica: &RealmReplica,
+) -> garth::Result<()> {
+    let expected_position = window.next_position.checked_sub(1).ok_or_else(|| {
+        garth::Error::Protocol("account frame stream head has no position".to_owned())
+    })?;
+    if replica
+        .verified_head(&window.stream_ref)
+        .is_none_or(|head| {
+            head.stream_position != expected_position || head.commit_id != window.head_commit_ref
+        })
+    {
+        return Err(garth::Error::Protocol(
+            "account frame stream head differs from verified scan".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// The Account current cut of a snapshot-anchored Realm: the signed floor's
+/// governance generation, one head per stream window, the snapshot stream at
+/// its verified head, every exactly replayed stream at its verified head, and
+/// every row sourced from a stream the frame settles (exact, or explicitly
+/// preview / unresolved so the cut stays out of the product current).
+fn require_floor_current_cut(
+    current: &arkret_models_collaboration::sync_frames::current_results::AccountCurrentResult,
+    floor_snapshot: &garth::VerifiedFloorSnapshot,
+    replica: &RealmReplica,
+    entry: &arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry,
+    exact_streams: &BTreeSet<CommitStreamRef>,
+    unsettled: &BTreeSet<CommitStreamRef>,
+    unresolved: &BTreeSet<CommitStreamRef>,
+) -> garth::Result<()> {
+    let floor_stream = &floor_snapshot.head().stream_ref;
+    let windows = entry
+        .streams
+        .iter()
+        .flatten()
+        .map(|window| &window.stream_ref)
+        .collect::<BTreeSet<_>>();
+    let mut heads = BTreeSet::new();
+    let mismatch = current.governance_generation != floor_snapshot.governance_generation()
+        || current.stream_heads.iter().any(|head| {
+            !heads.insert(&head.stream_ref)
+                || !windows.contains(&head.stream_ref)
+                || ((&head.stream_ref == floor_stream || exact_streams.contains(&head.stream_ref))
+                    && replica.verified_head(&head.stream_ref) != Some(head))
+        })
+        || !heads.contains(floor_stream)
+        || current.entries.iter().any(|row| {
+            let source = row_source(row);
+            source != floor_stream
+                && !exact_streams.contains(source)
+                && !unsettled.contains(source)
+                && !unresolved.contains(source)
+        });
+    if mismatch {
+        return Err(garth::Error::Protocol(
+            "Account current cut differs from signed floor snapshot".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Verify one Realm entry without a signed snapshot basis: every stream that
@@ -1884,7 +2335,9 @@ mod tests {
             &mut pages,
         )
         .unwrap();
-        let expected = fold_floor_current_tail(Vec::new(), &pages).unwrap();
+        let expected = fold_floor_current_tail(Vec::new(), &pages)
+            .and_then(FloorTail::exact)
+            .unwrap();
         assert_eq!(expected.len(), 6);
         let TypedCurrentResult::Value {
             selector,
@@ -2751,7 +3204,9 @@ mod tests {
             &mut pages,
         )
         .unwrap();
-        let expected = fold_floor_current_tail(signed_rows.clone(), &pages).unwrap();
+        let expected = fold_floor_current_tail(signed_rows.clone(), &pages)
+            .and_then(FloorTail::exact)
+            .unwrap();
         assert_eq!(expected.len(), 8);
         let head = replica.verified_head(&stream_ref).cloned().unwrap();
         assert_eq!(head.stream_position, 6);
@@ -2780,6 +3235,7 @@ mod tests {
         );
         let rows =
             admit_single_stream_floor_current(&entry, &realm_id, &bundle, floor_snapshot, &pages)
+                .and_then(FloorTail::exact)
                 .unwrap();
         assert_eq!(rows, expected);
 
@@ -2909,6 +3365,15 @@ mod tests {
                     CurrentSelector::RealmSetDefaultStrand,
                     commit,
                     json!({"default_strand_id": payload["strand_id"]}),
+                ),
+                // Soland's `message_revision` writer: the create payload at
+                // the Event-derived MessageId.
+                "ak.message.create" => row(
+                    CurrentSelector::MessageRevision {
+                        message_id: arkret_sdk::MessageId::from_event_id(&item.event.event_id),
+                    },
+                    commit,
+                    payload,
                 ),
                 other => panic!("{other} is outside the Soland bootstrap cut"),
             });
@@ -3096,8 +3561,9 @@ mod tests {
                 .flat_map(|page| page.rows())
                 .collect::<Vec<_>>();
             require_window_start_row(&cut.basis, &scanned).map_err(text)?;
-            let expected =
-                fold_floor_current_tail(carrier.rows().to_vec(), &pages).map_err(text)?;
+            let expected = fold_floor_current_tail(carrier.rows().to_vec(), &pages)
+                .and_then(FloorTail::exact)
+                .map_err(text)?;
             let entry =
                 arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry {
                     current: Some(
@@ -3112,6 +3578,7 @@ mod tests {
                 };
             let rows =
                 admit_single_stream_floor_current(&entry, &realm_id, &cut.bundle, carrier, &pages)
+                    .and_then(FloorTail::exact)
                     .map_err(text)?;
             let verified = VerifiedAccountFrame {
                 pages,
@@ -3472,6 +3939,214 @@ mod tests {
         }
     }
 
+    /// A Realm-scoped Strand create of `creator` at the fixture Event time
+    /// of tail index `index`, carrying the discussion track.
+    fn strand_create_entry(
+        realm_id: &arkret_sdk::RealmId,
+        creator: &arkret_sdk::ActorId,
+        created_at: chrono::DateTime<chrono::Utc>,
+    ) -> (String, serde_json::Value) {
+        let mut object = arkret_models_collaboration::objects::strand::Strand::new_create(
+            realm_id.clone(),
+            "General",
+            creator.clone(),
+        );
+        object.created_at = created_at;
+        object.tracks.clear();
+        object.tracks.insert(
+            "discussion".to_owned(),
+            arkret_models_collaboration::objects::profiles::StrandTrack::discussion_primary(),
+        );
+        ("ak.strand.create".to_owned(), json!({ "object": object }))
+    }
+
+    fn default_strand_entry(
+        target: &arkret_sdk::StrandId,
+        expected: Option<&arkret_sdk::StrandId>,
+    ) -> (String, serde_json::Value) {
+        let mut payload = json!({"realm_id": REALM_ID, "strand_id": target});
+        if let Some(expected) = expected {
+            payload["expected_default_strand_id"] = json!(expected);
+        }
+        ("ak.realm.set_default_strand".to_owned(), payload)
+    }
+
+    fn message_create_entry(
+        strand_id: &arkret_sdk::StrandId,
+        track_name: &str,
+    ) -> (String, serde_json::Value) {
+        (
+            "ak.message.create".to_owned(),
+            json!({
+                "strand_id": strand_id,
+                "track_name": track_name,
+                "content": {"kind": "ak.content.text", "format": "plain", "body": "hello"}
+            }),
+        )
+    }
+
+    /// The live shape: `/head` signs the seven-Commit bootstrap, then the
+    /// creator adds a default Strand (and a message), and a limited Account
+    /// window names the issued snapshot as its `after_committed_prefix`
+    /// basis. The verified tail folds through the registered typed reducers
+    /// to exactly the rows Soland's same-cut writers produce; a reducer the
+    /// tail breaks fails closed, and an unregistered kind is unsupported.
+    #[test]
+    fn floor_tail_folds_strand_default_and_message_reducers_or_fails_closed() {
+        use crate::test_support::committed_event::{FixtureStation, fixture_time};
+        use arkret_models_collaboration::sync_frames::account_sync::{
+            StreamWindowAnchorKind, StreamWindowStartBasis,
+        };
+
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let inception_at = fixture_time(-1000);
+        let station = FixtureStation::webvh(0x44, inception_at);
+        let resolutions = BTreeMap::from([(
+            station.service_id().clone(),
+            station.resolution().unwrap().clone(),
+        )]);
+        let genesis_payload = json!({"object": collaboration_genesis(GENESIS_SALT)});
+        // The seven-Commit bootstrap signed at position 6, then `tail`.
+        let cut_for = |tail: Vec<(String, serde_json::Value)>| {
+            let (bundle, _, items) =
+                crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                    &station,
+                    realm_id.clone(),
+                    genesis_payload.clone(),
+                    ordinary_bootstrap_entries(&creator)
+                        .into_iter()
+                        .chain(tail)
+                        .collect(),
+                    "alice.example",
+                    DEVICE_ID,
+                );
+            let cut = SignedCut {
+                snapshot: snapshot_at(&bundle, &items[..6], fixture_time(58)),
+                basis: StreamWindowStartBasis {
+                    anchor_kind: StreamWindowAnchorKind::AfterCommittedPrefix,
+                    anchor_position: Some(6),
+                    anchor_commit_ref: Some(items[5].commit.commit_id.clone()),
+                    snapshot_ref: arkret_sdk::RealmSnapshotId::from_digest([0; 32]),
+                    governance_generation: 0,
+                    accepted_dependency_refs: None,
+                },
+                floor: arkret_sdk::ReadableFloor {
+                    oldest_position: 0,
+                    floor_commit_id: bundle.genesis_commit.commit_id.clone(),
+                    floor_reason: arkret_sdk::ReadableFloorReason::StreamStart,
+                },
+                tail: items[6..].to_vec(),
+                bundle,
+            }
+            .resigned(&station, |_| {});
+            (cut, items)
+        };
+        // Event times are `2 + index`: the Strand create is tail index 6.
+        let strand = strand_create_entry(&realm_id, &creator, fixture_time(8));
+        let (probe, _) = cut_for(vec![strand.clone()]);
+        let strand_id = arkret_sdk::StrandId::from_event_id(&probe.tail[0].event.event_id);
+
+        // Live repro: StrandCreate + default Strand after the issued head.
+        let (cut, items) = cut_for(vec![strand.clone(), default_strand_entry(&strand_id, None)]);
+        let rows = attempt_signed_cut(&cut, &resolutions, "Bootstrap").unwrap();
+        assert_eq!(rows.len(), 10);
+        require_exact_floor_tail_current(&rows, &soland_bootstrap_rows(&cut.bundle, &items))
+            .unwrap();
+
+        // Plus a plaintext message on the default Strand's discussion track.
+        let (cut, items) = cut_for(vec![
+            strand.clone(),
+            default_strand_entry(&strand_id, None),
+            message_create_entry(&strand_id, "discussion"),
+        ]);
+        let rows = attempt_signed_cut(&cut, &resolutions, "Bootstrap").unwrap();
+        assert_eq!(rows.len(), 11);
+        let expected = soland_bootstrap_rows(&cut.bundle, &items);
+        require_exact_floor_tail_current(&rows, &expected).unwrap();
+        assert!(rows.iter().any(|row| matches!(
+            row,
+            TypedCurrentResult::Value {
+                selector: arkret_wire::CurrentSelector::MessageRevision { message_id },
+                value,
+                ..
+            } if message_id == &arkret_sdk::MessageId::from_event_id(&items[8].event.event_id)
+                && value["content"]["body"] == "hello"
+        )));
+
+        let other = arkret_sdk::StrandId::new(STRAND_ID).unwrap();
+        let forged_strand = |edit: &dyn Fn(&mut serde_json::Value)| {
+            let mut entry = strand.clone();
+            edit(&mut entry.1["object"]);
+            entry
+        };
+        type Rejected<'a> = (&'a str, Vec<(String, serde_json::Value)>, &'a str);
+        let rejected: Vec<Rejected<'_>> = vec![
+            (
+                "default Strand CAS names a pointer the cut does not hold",
+                vec![
+                    strand.clone(),
+                    default_strand_entry(&strand_id, Some(&strand_id)),
+                ],
+                "expected pointer",
+            ),
+            (
+                "default Strand names no Strand of the cut",
+                vec![strand.clone(), default_strand_entry(&other, None)],
+                "no active Realm-scoped Strand",
+            ),
+            (
+                "Strand create time differs from its Event",
+                vec![strand_create_entry(&realm_id, &creator, fixture_time(9))],
+                "initial Realm-scoped Strand",
+            ),
+            (
+                "Strand create forges its derived id",
+                vec![forged_strand(&|object| object["id"] = json!(STRAND_ID))],
+                "initial Realm-scoped Strand",
+            ),
+            (
+                "Strand create begins archived",
+                vec![forged_strand(&|object| object["state"] = json!("archived"))],
+                "initial Realm-scoped Strand",
+            ),
+            (
+                "Strand create carries a non-closed member",
+                vec![forged_strand(&|object| object["unknown"] = json!(true))],
+                "Strand create",
+            ),
+            (
+                "message targets a track the Strand lacks",
+                vec![
+                    strand.clone(),
+                    message_create_entry(&strand_id, "synthesis"),
+                ],
+                "no enabled track",
+            ),
+            (
+                "message targets no Strand of the cut",
+                vec![strand.clone(), message_create_entry(&other, "discussion")],
+                "no active Realm-scoped Strand",
+            ),
+            (
+                "unregistered tail kind",
+                vec![
+                    strand.clone(),
+                    ("ak.realm.alias".to_owned(), json!({"alias": "general"})),
+                ],
+                "unsupported typed reducer",
+            ),
+        ];
+        for (case, tail, reason) in rejected {
+            let (cut, _) = cut_for(tail);
+            let error = attempt_signed_cut(&cut, &resolutions, "Bootstrap").unwrap_err();
+            assert!(error.contains(reason), "{case}: {error}");
+        }
+    }
+
     #[test]
     fn preview_and_genesis_windows_never_reach_the_snapshot_installer() {
         use arkret_models_collaboration::sync_frames::account_sync::{
@@ -3784,7 +4459,11 @@ mod tests {
             &mut pages,
         )
         .unwrap();
-        assert!(fold_floor_current_tail(Vec::new(), &pages).is_err());
+        // A genesis row has no floor tail reducer: the stream stays unresolved.
+        assert!(matches!(
+            fold_floor_current_tail(Vec::new(), &pages),
+            Ok(FloorTail::Unsupported(_))
+        ));
         let scanned = pages[0].rows().iter().collect::<Vec<_>>();
         let claimed = vec![scanned[1]];
         require_exact_claimed_rows(&claimed, &scanned).unwrap();
@@ -3876,6 +4555,8 @@ mod tests {
         station: crate::test_support::committed_event::FixtureStation,
         realms: BTreeMap<arkret_sdk::RealmId, StationRealm>,
         scans: std::sync::Mutex<Vec<CommitStreamRef>>,
+        /// Issued exact snapshots the by-ref read returns.
+        snapshots: BTreeMap<arkret_sdk::RealmSnapshotId, arkret_sdk::RealmStateSnapshot>,
     }
 
     impl garth::AuthorityTransport for FrameStation {
@@ -3893,6 +4574,22 @@ mod tests {
         ) -> garth::Result<arkret_sdk::StreamScanOutcome> {
             self.scans.lock().unwrap().push(request.stream_ref.clone());
             let realm = &self.realms[&request.realm_id];
+            if request.stream_ref
+                != (CommitStreamRef::Realm {
+                    realm_id: request.realm_id.clone(),
+                })
+            {
+                // The caller joined every other stream above its genesis.
+                return Ok(arkret_sdk::StreamScanOutcome {
+                    committed_events: Vec::new(),
+                    readable_floor: Some(arkret_sdk::ReadableFloor {
+                        oldest_position: 1,
+                        floor_commit_id: arkret_sdk::RealmCommitId::from_digest([0x6c; 32]),
+                        floor_reason: arkret_sdk::ReadableFloorReason::MembershipJoin,
+                    }),
+                    truncated: false,
+                });
+            }
             let arkret_sdk::StreamScanDirection::After(after) = request.direction else {
                 unreachable!("frame verification replays forward")
             };
@@ -3942,9 +4639,19 @@ mod tests {
         async fn exact_snapshot(
             &self,
             _realm_id: &arkret_sdk::RealmId,
-            _snapshot_id: &arkret_sdk::RealmSnapshotId,
+            snapshot_id: &arkret_sdk::RealmSnapshotId,
         ) -> garth::Result<arkret_sdk::RealmStateSnapshot> {
-            unreachable!("a preview or full-history window names no snapshot")
+            self.snapshots
+                .get(snapshot_id)
+                .cloned()
+                .ok_or_else(|| garth::Error::Api {
+                    status: 503,
+                    error: Box::new(arkret_wire::Problem::new(
+                        "realm_state_snapshot_unavailable",
+                        503,
+                        "never issued",
+                    )),
+                })
         }
     }
 
@@ -4092,6 +4799,7 @@ mod tests {
                 ),
             ]),
             scans: std::sync::Mutex::new(Vec::new()),
+            snapshots: BTreeMap::new(),
         };
         let batch = |station: &FrameStation| {
             account_frame(vec![
@@ -4239,5 +4947,388 @@ mod tests {
             panic!("a non-preview window above genesis must fail closed");
         };
         assert!(error.to_string().contains("readable-floor snapshot anchor"));
+    }
+
+    /// A Realm whose issued `/head` anchors a limited Realm-stream window,
+    /// beside a full-history sibling Realm: the snapshot window's tail runs
+    /// the typed reducers; an unregistered tail kind leaves only that stream
+    /// unresolved (no current, page or cursor of it) without failing the
+    /// frame; another stream window of the same Realm is settled on its own
+    /// stream; a contradicting Account current still fails the frame.
+    #[tokio::test]
+    async fn snapshot_window_tail_and_sibling_windows_settle_per_stream() {
+        use crate::test_support::committed_event::FixtureStation;
+        use arkret_models_collaboration::sync_frames::account_sync::{
+            RealmStreamWindow, StreamWindowAnchorKind, StreamWindowStartBasis,
+        };
+        let inception_at = chrono::Utc::now() - chrono::Duration::seconds(1000);
+        let fixture_station = || FixtureStation::webvh(0x47, inception_at);
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let sibling_id = arkret_sdk::RealmId::new(OTHER_REALM_ID).unwrap();
+        let realm_stream = CommitStreamRef::Realm {
+            realm_id: realm_id.clone(),
+        };
+        let sibling_stream = CommitStreamRef::Realm {
+            realm_id: sibling_id.clone(),
+        };
+        let circle_stream = CommitStreamRef::Circle {
+            realm_id: realm_id.clone(),
+            circle_id: arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [0x6e; 32],
+            )),
+        };
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let with_genesis =
+            |bundle: &arkret_sdk::RealmAuthorityBundle,
+             items: Vec<arkret_sdk::CommittedEventFullView>| {
+                std::iter::once(CommittedEventView::Full(
+                    arkret_sdk::CommittedEventFullView {
+                        commit: bundle.genesis_commit.clone(),
+                        event: bundle.genesis_event.clone(),
+                    },
+                ))
+                .chain(items.into_iter().map(CommittedEventView::Full))
+                .collect::<Vec<_>>()
+            };
+        let (sibling_bundle, _, sibling_items) =
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &fixture_station(),
+                sibling_id.clone(),
+                json!({}),
+                message_entries(&["s1", "s2"]),
+                "alice.example",
+                DEVICE_ID,
+            );
+        let sibling = StationRealm {
+            rows: with_genesis(&sibling_bundle, sibling_items),
+            bundle: sibling_bundle,
+            readable_floor: 0,
+        };
+        // The anchored Realm: bootstrap signed at position 6, then `tail`.
+        let anchored = |tail: Vec<(String, serde_json::Value)>| {
+            let (bundle, _, items) =
+                crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                    &fixture_station(),
+                    realm_id.clone(),
+                    json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                    ordinary_bootstrap_entries(&creator)
+                        .into_iter()
+                        .chain(tail)
+                        .collect(),
+                    "alice.example",
+                    DEVICE_ID,
+                );
+            let mut snapshot = snapshot_at(
+                &bundle,
+                &items[..6],
+                chrono::Utc::now() - chrono::Duration::seconds(60),
+            );
+            fixture_station().sign_snapshot(&mut snapshot);
+            (bundle, items, snapshot)
+        };
+        let strand = strand_create_entry(
+            &realm_id,
+            &creator,
+            crate::test_support::committed_event::fixture_time(8),
+        );
+        let (_, probe, _) = anchored(vec![strand.clone()]);
+        let strand_id = arkret_sdk::StrandId::from_event_id(&probe[6].event.event_id);
+        let exact_tail = vec![strand.clone(), default_strand_entry(&strand_id, None)];
+        let unsupported_tail = vec![
+            strand.clone(),
+            ("ak.realm.alias".to_owned(), json!({"alias": "general"})),
+        ];
+        let station_for = |tail: &[(String, serde_json::Value)]| {
+            let (bundle, items, snapshot) = anchored(tail.to_vec());
+            let rows = with_genesis(&bundle, items.clone());
+            let station = FrameStation {
+                station: fixture_station(),
+                realms: BTreeMap::from([
+                    (
+                        realm_id.clone(),
+                        StationRealm {
+                            bundle: bundle.clone(),
+                            rows,
+                            readable_floor: 0,
+                        },
+                    ),
+                    (
+                        sibling_id.clone(),
+                        StationRealm {
+                            bundle: sibling.bundle.clone(),
+                            rows: sibling.rows.clone(),
+                            readable_floor: 0,
+                        },
+                    ),
+                ]),
+                scans: std::sync::Mutex::new(Vec::new()),
+                snapshots: BTreeMap::from([(snapshot.snapshot_id.clone(), snapshot.clone())]),
+            };
+            (station, bundle, items, snapshot)
+        };
+        let circle_window = RealmStreamWindow {
+            stream_ref: circle_stream.clone(),
+            head_commit_ref: arkret_sdk::RealmCommitId::from_digest([0x6d; 32]),
+            next_position: 3,
+            limited: true,
+            window_limit: 1,
+            complete: true,
+            preview_only: Some(true),
+            window_start_basis: None,
+            e2ee_epoch: None,
+        };
+        // The Account entry the own Station serves for the anchored Realm:
+        // its window after the issued head, and the same-cut current.
+        let anchored_entry = |bundle: &arkret_sdk::RealmAuthorityBundle,
+                              items: &[arkret_sdk::CommittedEventFullView],
+                              snapshot: &arkret_sdk::RealmStateSnapshot,
+                              current_rows: Vec<TypedCurrentResult>,
+                              circle: bool| {
+            let head = &items.last().unwrap().commit;
+            let mut streams = vec![RealmStreamWindow {
+                stream_ref: realm_stream.clone(),
+                head_commit_ref: head.commit_id.clone(),
+                next_position: head.stream_position + 1,
+                limited: true,
+                window_limit: (items.len() - 6) as u32,
+                complete: true,
+                preview_only: None,
+                window_start_basis: Some(StreamWindowStartBasis {
+                    anchor_kind: StreamWindowAnchorKind::AfterCommittedPrefix,
+                    anchor_position: Some(6),
+                    anchor_commit_ref: Some(items[5].commit.commit_id.clone()),
+                    snapshot_ref: snapshot.snapshot_id.clone(),
+                    governance_generation: 0,
+                    accepted_dependency_refs: None,
+                }),
+                e2ee_epoch: None,
+            }];
+            let mut stream_heads = vec![arkret_wire::CommitStreamHead {
+                stream_ref: realm_stream.clone(),
+                stream_position: head.stream_position,
+                commit_id: head.commit_id.clone(),
+            }];
+            if circle {
+                streams.push(circle_window.clone());
+                stream_heads.push(arkret_wire::CommitStreamHead {
+                    stream_ref: circle_stream.clone(),
+                    stream_position: 2,
+                    commit_id: circle_window.head_commit_ref.clone(),
+                });
+            }
+            let _ = bundle;
+            arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry {
+                streams: Some(streams),
+                committed_events: Some(
+                    items[6..]
+                        .iter()
+                        .cloned()
+                        .map(CommittedEventView::Full)
+                        .collect(),
+                ),
+                current: Some(
+                    arkret_models_collaboration::sync_frames::current_results::AccountCurrentResult {
+                        realm_id: realm_id.clone(),
+                        governance_generation: 0,
+                        stream_heads,
+                        entries: current_rows,
+                    },
+                ),
+                ..Default::default()
+            }
+        };
+        let describe = station_describe(&[
+            "ak.operation_bundle.station.http_core.v1",
+            "ak.operation_bundle.station.snapshot_exact_read.v1",
+        ]);
+        let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
+            .allow_insecure_localhost()
+            .build()
+            .unwrap();
+        let positions = |verified: &VerifiedAccountFrame, stream: &CommitStreamRef| {
+            verified
+                .pages()
+                .iter()
+                .flat_map(|page| page.rows())
+                .filter(|row| &row.commit().stream_ref == stream)
+                .map(|row| row.commit().stream_position)
+                .collect::<Vec<_>>()
+        };
+
+        // 1. Exact: StrandCreate + default Strand fold to Soland's rows.
+        let (station, bundle, items, snapshot) = station_for(&exact_tail);
+        let exact_rows = soland_bootstrap_rows(&bundle, &items);
+        let frame = account_frame(vec![
+            (
+                REALM_ID,
+                anchored_entry(&bundle, &items, &snapshot, exact_rows.clone(), false),
+            ),
+            (OTHER_REALM_ID, frame_entry(&sibling, 2, false)),
+        ]);
+        let verified = verify_account_frame_described(
+            &AuthorityClient::new(station),
+            &http,
+            Some(&describe),
+            &frame,
+        )
+        .await
+        .unwrap();
+        assert!(verified.unresolved_streams().is_empty());
+        assert_eq!(verified.floor_current_rows.len(), 1);
+        assert_eq!(verified.floor_current_rows[0].0, realm_id);
+        require_exact_floor_tail_current(&verified.floor_current_rows[0].1, &exact_rows).unwrap();
+        assert_eq!(positions(&verified, &realm_stream), vec![7, 8]);
+        assert_eq!(positions(&verified, &sibling_stream), vec![0, 1, 2]);
+        assert_eq!(
+            serde_json::to_value(verified.product_frame(&frame)).unwrap(),
+            serde_json::to_value(&frame).unwrap()
+        );
+
+        // 2. The same frame whose Account current drops a tail row
+        //    contradicts the verified fold and fails the whole frame.
+        let (station, bundle, items, snapshot) = station_for(&exact_tail);
+        let mut forged_rows = exact_rows.clone();
+        forged_rows.pop();
+        let forged = account_frame(vec![
+            (
+                REALM_ID,
+                anchored_entry(&bundle, &items, &snapshot, forged_rows, false),
+            ),
+            (OTHER_REALM_ID, frame_entry(&sibling, 2, false)),
+        ]);
+        let Err(error) = verify_account_frame_described(
+            &AuthorityClient::new(station),
+            &http,
+            Some(&describe),
+            &forged,
+        )
+        .await
+        else {
+            panic!("a contradicting Account current must fail the frame");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("verified floor and readable tail")
+        );
+
+        // 3. An unregistered tail kind leaves only this stream unresolved:
+        //    no floor current, no verified page of it, its current stripped
+        //    from the product frame, the sibling Realm verified as before.
+        let (station, bundle, items, snapshot) = station_for(&unsupported_tail);
+        let frame = account_frame(vec![
+            (
+                REALM_ID,
+                anchored_entry(
+                    &bundle,
+                    &items,
+                    &snapshot,
+                    soland_bootstrap_rows(&bundle, &items[..7]),
+                    false,
+                ),
+            ),
+            (OTHER_REALM_ID, frame_entry(&sibling, 2, false)),
+        ]);
+        let verified = verify_account_frame_described(
+            &AuthorityClient::new(station),
+            &http,
+            Some(&describe),
+            &frame,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            verified.unresolved_streams(),
+            &BTreeSet::from([realm_stream.clone()])
+        );
+        assert!(verified.floor_current_rows.is_empty());
+        assert!(positions(&verified, &realm_stream).is_empty());
+        assert_eq!(positions(&verified, &sibling_stream), vec![0, 1, 2]);
+        let product = verified.product_frame(&frame);
+        let entries = &product.realms.as_ref().unwrap().entries;
+        assert!(entries[REALM_ID].current.is_none() && entries[REALM_ID].baseline.is_none());
+        assert_eq!(
+            entries[REALM_ID].committed_events.as_ref().unwrap().len(),
+            2
+        );
+        assert_eq!(
+            entries[OTHER_REALM_ID].current,
+            frame.realms.as_ref().unwrap().entries[OTHER_REALM_ID].current
+        );
+        let mut store = crate::state::isolated_store_for_tests("account-frame-unresolved-tail");
+        store.switch_test_account("did:web:reader.example");
+        let scope = account_scope();
+        store
+            .verified_projection_transaction(|store| {
+                for page in verified.pages() {
+                    store.ingest_verified_message_commits(page)?;
+                }
+                verified.install_floor_current(store)?;
+                store
+                    .save_account_checkpoint(
+                        &scope,
+                        garth::AccountCursorCheckpoint {
+                            cursor: "ak:cursor:unresolved".to_owned(),
+                            station_cas: garth::StationCasProjection::default(),
+                        },
+                    )
+                    .map_err(|error| error.to_string())
+            })
+            .unwrap();
+        assert!(store.realm_tree_projection(REALM_ID).is_none());
+        assert!(
+            store
+                .verified_commit_stream_cursor(&realm_stream)
+                .unwrap()
+                .is_none()
+        );
+        for event_id in event_ids(&sibling) {
+            assert!(store.verified_message_commit(&event_id).is_some());
+        }
+
+        // 4. A preview Circle window beside the snapshot window is settled
+        //    on its own stream. With a cut that does not read the Circle the
+        //    Realm-stream current installs; a cut that reads it stays out of
+        //    the product current without failing the frame.
+        for reads_circle in [false, true] {
+            let (station, bundle, items, snapshot) = station_for(&exact_tail);
+            let frame = account_frame(vec![(
+                REALM_ID,
+                anchored_entry(&bundle, &items, &snapshot, exact_rows.clone(), reads_circle),
+            )]);
+            let mut entry = frame.realms.as_ref().unwrap().entries[REALM_ID].clone();
+            if !reads_circle {
+                entry.current.as_mut().unwrap().stream_heads.truncate(1);
+                entry.streams.as_mut().unwrap().push(circle_window.clone());
+            }
+            let frame = account_frame(vec![(REALM_ID, entry)]);
+            let verified = verify_account_frame_described(
+                &AuthorityClient::new(station),
+                &http,
+                Some(&describe),
+                &frame,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                verified.preview_streams(),
+                &BTreeSet::from([circle_stream.clone()])
+            );
+            assert!(verified.unresolved_streams().is_empty());
+            assert_eq!(positions(&verified, &realm_stream), vec![7, 8]);
+            let product = verified.product_frame(&frame);
+            let installed = product.realms.as_ref().unwrap().entries[REALM_ID]
+                .current
+                .is_some();
+            assert_eq!(installed, !reads_circle, "reads Circle: {reads_circle}");
+            assert_eq!(
+                verified.floor_current_rows.len(),
+                usize::from(!reads_circle)
+            );
+        }
     }
 }
