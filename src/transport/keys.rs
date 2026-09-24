@@ -24,6 +24,31 @@ fn is_secret_sharing_kind(kind: &arkret_wire::ProtocolKind) -> bool {
     )
 }
 
+/// Default maximum DeviceMessage enqueue TTL (`device-lifecycle.md` §7).
+const DEVICE_MESSAGE_MAX_ENQUEUE_TTL_HOURS: i64 = 24;
+
+/// Parse a caller-chosen DeviceMessage `expires_at` and refuse, before any
+/// network I/O, a value the queue would reject at enqueue: the Station admits
+/// only `sent_at < expires_at <= sent_at + 24h`, with `sent_at` materialized at
+/// enqueue. `now` stands in for that `sent_at`; the Station stays authoritative.
+fn device_message_expiry(
+    now: chrono::DateTime<chrono::Utc>,
+    expires_at: &str,
+) -> anyhow::Result<chrono::DateTime<chrono::Utc>> {
+    let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)
+        .map_err(|error| anyhow::anyhow!("device message expires_at `{expires_at}`: {error}"))?
+        .with_timezone(&chrono::Utc);
+    if expires_at <= now {
+        anyhow::bail!("device message expires_at must be later than the send time");
+    }
+    if expires_at > now + chrono::Duration::hours(DEVICE_MESSAGE_MAX_ENQUEUE_TTL_HOURS) {
+        anyhow::bail!(
+            "device message expires_at exceeds the {DEVICE_MESSAGE_MAX_ENQUEUE_TTL_HOURS} hour enqueue TTL"
+        );
+    }
+    Ok(expires_at)
+}
+
 fn has_current_verification_checkpoint(
     devices: &[arkret_sdk::AccountDeviceSummary],
     target_device_id: &arkret_sdk::DeviceId,
@@ -119,6 +144,7 @@ pub async fn send_device_message_with_id(
     content: std::collections::BTreeMap<String, serde_json::Value>,
 ) -> anyhow::Result<DeviceMessagesSendOutcome> {
     target_actor.validate()?;
+    let expires_at = device_message_expiry(crate::clock::now_utc(), expires_at)?;
     let account_id = target_actor
         .as_account_id()
         .ok_or_else(|| anyhow::anyhow!("device messages require an account target"))?;
@@ -130,7 +156,6 @@ pub async fn send_device_message_with_id(
     if is_secret_sharing_kind(&kind) {
         anyhow::bail!("ak.secret.request and ak.secret.send are not admitted in v1");
     }
-    let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)?.with_timezone(&chrono::Utc);
     let target = arkret_sdk::DeviceMessageTarget {
         device_message_id: message_id,
         kind,
@@ -176,6 +201,34 @@ mod tests {
     fn target_device_id() -> arkret_sdk::DeviceId {
         arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-0000000000c1".to_owned())
             .expect("device id")
+    }
+
+    #[test]
+    fn device_message_expiry_admits_only_the_enqueue_window() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-09-24T12:00:00.000Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        for admitted in [
+            "2026-09-24T12:00:00.001Z",
+            "2026-09-24T12:10:00.000Z",
+            "2026-09-25T12:00:00.000Z",
+            "2026-09-25T20:00:00.000+08:00",
+        ] {
+            let parsed = device_message_expiry(now, admitted).unwrap();
+            assert!(parsed > now && parsed <= now + chrono::Duration::hours(24));
+        }
+        for refused in [
+            "2026-09-24T12:00:00.000Z",
+            "2026-09-24T11:59:59.999Z",
+            "2026-09-25T12:00:00.001Z",
+            "2026-09-26T12:00:00.000Z",
+            "not-a-timestamp",
+        ] {
+            assert!(
+                device_message_expiry(now, refused).is_err(),
+                "{refused} must be refused"
+            );
+        }
     }
 
     #[test]
