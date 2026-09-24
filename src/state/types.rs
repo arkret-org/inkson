@@ -910,6 +910,11 @@ pub struct ClientLocalState {
     /// ordering domain and its cursor must never be reused by another stream.
     #[serde(default)]
     pub commit_stream_cursors: BTreeMap<String, String>,
+    /// Only pages admitted by Garth's fresh authority and Commit signature
+    /// gate may advance these positions. Never use them as scan anchors: a
+    /// new replica reconstructs its verified predecessor from genesis.
+    #[serde(default)]
+    pub verified_commit_stream_cursors: BTreeMap<String, arkret_sdk::CommitStreamHead>,
     /// Station-CAS revision identity folded through the same durable account
     /// checkpoint as `sync_cursor`.
     #[serde(default)]
@@ -1482,6 +1487,7 @@ impl Default for ClientLocalState {
             sync_cursor: None,
             demand_sync: Default::default(),
             commit_stream_cursors: BTreeMap::new(),
+            verified_commit_stream_cursors: BTreeMap::new(),
             station_cas_projection: garth::StationCasProjection::default(),
             client_core_pending_deliveries: VecDeque::new(),
             client_core_next_delivery_id: 0,

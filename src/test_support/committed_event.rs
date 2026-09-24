@@ -103,6 +103,19 @@ pub(crate) fn verified_realm_items_as(
     principal: &str,
     device_id: &str,
 ) -> Vec<CommittedEventFullView> {
+    verified_realm_fixture_as(realm_id, entries, principal, device_id).2
+}
+
+pub(crate) fn verified_realm_fixture_as(
+    realm_id: RealmId,
+    entries: Vec<(String, Value)>,
+    principal: &str,
+    device_id: &str,
+) -> (
+    RealmAuthorityBundle,
+    RealmAuthorityKeyMap,
+    Vec<CommittedEventFullView>,
+) {
     assert!(!entries.is_empty());
     let station_key = SigningKey::from_bytes(&[0x71; 32]);
     let event_signer = arkret_test_kit::keys::seeded_signer(
@@ -273,5 +286,5 @@ pub(crate) fn verified_realm_items_as(
         altered.commit.commit_id = RealmCommitId::from_digest([0x73; 32]);
         assert!(verified.verify_committed_item(&altered, &keys).is_err());
     }
-    items
+    (bundle, keys, items)
 }

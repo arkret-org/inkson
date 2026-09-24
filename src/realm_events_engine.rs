@@ -27,9 +27,8 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use garth::{
-    AuthorityClient, ClientEvent, ClientProjector, CommitStreamRef, CommittedDelta,
-    CommittedEventView, CursorScope, CursorStore, DecodedInbound, InboundDecoder, RealmReplica,
-    RetrySchedule, StreamScanRequest,
+    AuthorityClient, ClientEvent, CommitStreamRef, CommittedDelta, CommittedEventView,
+    DecodedInbound, InboundDecoder, RealmReplica, RetrySchedule, StreamScanRequest,
 };
 
 use crate::config::MultiProfileConfig;
@@ -76,11 +75,7 @@ pub struct RealmEventsEngineContext {
     pub effect: crate::runtime::effects::EffectHandle,
 }
 
-/// [`ClientProjector`] that folds each scanned batch into the shared local
-/// store (kanban / message / membership), bumping `realm_live_epoch`
-/// immediately after each batch that changes the projection. The fold is
-/// durable BEFORE the stream position is checkpointed, so a failed fold is
-/// redelivered by the next scan rather than skipped.
+/// Shared product projection handles for a fully verified Realm replay.
 struct RealmIngestProjector {
     state_store: crate::runtime::input::StateStoreHandle,
     realm_id: String,
@@ -89,41 +84,7 @@ struct RealmIngestProjector {
     message_stream_hub: crate::views::message_streams::MessageStreamHub,
 }
 
-impl ClientProjector for RealmIngestProjector {
-    async fn project(&self, batch: Vec<ClientEvent>) -> garth::Result<()> {
-        if batch.is_empty() {
-            return Ok(());
-        }
-        let digest_suite = self.digest_suite;
-        let finals = self.state_store.read(|store| {
-            batch
-                .iter()
-                .filter_map(|event| accepted_direct_message_final(event, digest_suite, store))
-                .collect::<Vec<_>>()
-        });
-        // This batch came from shape-only `apply_scan`; it has no verified
-        // authority proof. Never turn it into historical Agent signer evidence.
-        let changed = self
-            .state_store
-            .write(|store| ingest_shape_only_realm_batch(store, &self.realm_id, &batch));
-        // The local fold above is the durable gate. A preview is never
-        // removed merely because a frame with the same message id was
-        // observed on the wire.
-        let mut message_stream_hub = self.message_stream_hub;
-        for (event, sender_endpoint) in finals {
-            if let Err(error) = message_stream_hub.bind_verified_final(event, &sender_endpoint) {
-                tracing::warn!(%error, event_id = %event.event_id, "message stream final binding failed closed");
-            }
-        }
-        if changed > 0 {
-            self.realm_live_epoch
-                .update(|epoch| *epoch = epoch.wrapping_add(1));
-        }
-        Ok(())
-    }
-}
-
-fn ingest_shape_only_realm_batch(
+fn ingest_realm_batch(
     store: &mut crate::state::LocalStateStore,
     realm_id: &str,
     batch: &[ClientEvent],
@@ -211,6 +172,23 @@ fn realm_live_digest_suite(realm_id: &arkret_sdk::RealmId) -> arkret_sdk::Digest
     realm_id.digest_suite_code().digest_suite()
 }
 
+fn stage_verified_page(
+    replica: &mut RealmReplica,
+    request: &StreamScanRequest,
+    outcome: arkret_sdk::StreamScanOutcome,
+    freshness: &arkret_identity::RealmAuthorityFreshness,
+    keys: &arkret_identity::RealmAuthorityKeyMap,
+    pages: &mut Vec<garth::VerifiedScanPage>,
+) -> garth::Result<(Option<u64>, bool)> {
+    let page = replica.apply_verified_scan(request, outcome, freshness, keys)?;
+    let empty = page.rows().is_empty();
+    let position = replica
+        .verified_head(&request.stream_ref)
+        .map(|head| head.stream_position);
+    pages.push(page);
+    Ok((position, empty))
+}
+
 /// Run the Realm commit-stream follow loop for `realm_id` until the generation
 /// is bumped, the active profile rotates, or the selected realm changes.
 pub async fn run_realm_events_engine(
@@ -246,8 +224,6 @@ pub async fn run_realm_events_engine(
         realm_live_epoch: ctx.realm_live_epoch.clone(),
         message_stream_hub: ctx.message_stream_hub,
     };
-    let cursors = ctx.client_runtime.inbox_store();
-    let mut replica = RealmReplica::new(realm_id_typed.clone());
     let mut backoff = RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING);
 
     while is_active() {
@@ -264,11 +240,10 @@ pub async fn run_realm_events_engine(
                 continue;
             }
         };
-        let authority = AuthorityClient::new(http);
+        let authority = AuthorityClient::new(http.clone());
         match follow_once(
             &authority,
-            &cursors,
-            &mut replica,
+            &http,
             &realm_id_typed,
             &projector,
             &ctx,
@@ -327,8 +302,7 @@ async fn retry_after(backoff: &mut RetrySchedule, active: bool, reason: &str) ->
 /// Drain every stream this client follows for the Realm, once.
 async fn follow_once<T, F>(
     authority: &AuthorityClient<T>,
-    cursors: &crate::client_core::InksonLocalStateStoreAdapter,
-    replica: &mut RealmReplica,
+    http: &arkret_sdk::http_client::Client,
     realm_id: &arkret_sdk::RealmId,
     projector: &RealmIngestProjector,
     ctx: &RealmEventsEngineContext,
@@ -338,14 +312,37 @@ where
     T: garth::AuthorityTransport,
     F: Fn() -> bool,
 {
+    let mut nonce = [0_u8; 32];
+    getrandom::fill(&mut nonce)
+        .map_err(|error| garth::Error::Protocol(format!("authority nonce: {error}")))?;
+    let request = arkret_sdk::AuthorityBundleRequest {
+        realm_id: realm_id.clone(),
+        nonce: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(nonce))
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?,
+    };
+    let freshness = arkret_identity::RealmAuthorityFreshness::new(
+        chrono::Utc::now(),
+        request.nonce.clone(),
+        chrono::Duration::minutes(5),
+    )
+    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    let bundle = authority.resolve_authority(&request).await?;
+    let keys =
+        crate::identity::realm_authority_keys::fetch_verified_key_directory(http, &bundle, None)
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    let mut replica = RealmReplica::new(realm_id.clone());
+    replica.install_verified_authority(&request, bundle.clone(), &freshness, &keys)?;
     for stream_ref in followed_streams(realm_id, ctx) {
         if !is_active() {
             return Ok(());
         }
         drain_stream(
             authority,
-            cursors,
-            replica,
+            http,
+            &mut replica,
+            &bundle,
+            &freshness,
             realm_id,
             &stream_ref,
             projector,
@@ -385,8 +382,10 @@ fn followed_streams(
 /// reporting a truncated window.
 async fn drain_stream<T>(
     authority: &AuthorityClient<T>,
-    cursors: &crate::client_core::InksonLocalStateStoreAdapter,
+    http: &arkret_sdk::http_client::Client,
     replica: &mut RealmReplica,
+    bundle: &arkret_sdk::RealmAuthorityBundle,
+    freshness: &arkret_identity::RealmAuthorityFreshness,
     realm_id: &arkret_sdk::RealmId,
     stream_ref: &CommitStreamRef,
     projector: &RealmIngestProjector,
@@ -394,17 +393,15 @@ async fn drain_stream<T>(
 where
     T: garth::AuthorityTransport,
 {
-    let scope = CursorScope::CommitStream {
-        service_id: None,
-        stream_ref: stream_ref.clone(),
-    };
-    let mut after_position = cursors
-        .load(scope.clone())
-        .await?
-        .as_deref()
-        .map(str::parse::<u64>)
-        .transpose()
-        .map_err(|error| garth::Error::Protocol(format!("stored stream position: {error}")))?;
+    let projected_through = projector
+        .state_store
+        .read(|store| store.verified_commit_stream_cursor(stream_ref))
+        .map_err(garth::Error::Protocol)?;
+    // Every new authority bundle resets Garth's verified predecessor. Rebuild
+    // it from genesis even when an independently persisted projection cursor
+    // exists; a position alone is never a cryptographic resume anchor.
+    let mut after_position = None;
+    let mut pages = Vec::new();
     loop {
         let request = StreamScanRequest {
             realm_id: realm_id.clone(),
@@ -414,38 +411,128 @@ where
         };
         let outcome = authority.scan(&request).await?;
         let truncated = outcome.truncated;
-        let batch = committed_views_to_client_events(realm_id, outcome.committed_events.clone())?;
-        // `apply_scan` validates the page shape and local tail continuity only.
-        // It does not establish a fresh authority chain or verify Commit
-        // signatures. Its rows must never feed the verified poll coordinate
-        // index; that requires `apply_verified_scan` and its page carrier.
-        replica.apply_scan(&request, outcome)?;
-        let Some(head) = replica
-            .streams
-            .get(stream_ref)
-            .and_then(|stream| stream.head.as_ref())
-        else {
-            return Ok(());
-        };
-        let next_position = head.stream_position;
-        if batch.is_empty() {
-            return Ok(());
+        let keys = crate::identity::realm_authority_keys::fetch_verified_key_directory(
+            http,
+            bundle,
+            Some(&outcome),
+        )
+        .await
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let page_freshness = arkret_identity::RealmAuthorityFreshness::new(
+            chrono::Utc::now(),
+            freshness.expected_nonce.clone(),
+            freshness.max_bundle_age,
+        )
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let (next_position, empty) = stage_verified_page(
+            replica,
+            &request,
+            outcome,
+            &page_freshness,
+            &keys,
+            &mut pages,
+        )?;
+        if empty || !truncated {
+            break;
         }
-        // Durable fold first: the position is only advanced once the product
-        // projection that consumes these rows has committed them.
-        projector.project(batch).await?;
-        cursors
-            .save(scope.clone(), next_position.to_string())
-            .await?;
-        after_position = Some(next_position);
-        if !truncated {
-            return Ok(());
+        after_position = next_position;
+    }
+    let tail = replica.verified_head(stream_ref).cloned();
+    // A stored cursor is a commit identity, not merely a number. Locate that
+    // exact commit in the newly verified genesis replay before deduplicating.
+    if let Some(saved) = projected_through.as_ref() {
+        let found = pages
+            .iter()
+            .flat_map(|page| page.rows())
+            .find(|row| row.commit().stream_position == saved.stream_position);
+        if found.is_none_or(|row| row.commit().commit_id != saved.commit_id)
+            || tail
+                .as_ref()
+                .is_none_or(|head| head.stream_position < saved.stream_position)
+        {
+            return Err(garth::Error::Protocol(
+                "verified replay does not contain stored Commit cursor".to_owned(),
+            ));
         }
     }
+    let fresh_rows = pages
+        .iter()
+        .flat_map(|page| page.rows())
+        .filter(|row| {
+            projected_through
+                .as_ref()
+                .is_none_or(|saved| row.commit().stream_position > saved.stream_position)
+        })
+        .cloned()
+        .collect();
+    let batch = committed_views_to_client_events(realm_id, fresh_rows)?;
+    if batch.is_empty() {
+        return Ok(());
+    }
+    let final_freshness = arkret_identity::RealmAuthorityFreshness::new(
+        chrono::Utc::now(),
+        freshness.expected_nonce.clone(),
+        freshness.max_bundle_age,
+    )
+    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    let bundle_keys =
+        crate::identity::realm_authority_keys::fetch_verified_key_directory(http, bundle, None)
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    arkret_identity::verify_realm_authority_bundle(bundle, &final_freshness, &bundle_keys)
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    // Nothing is projected until the complete stream has passed the verifier.
+    // Index, product fold, and cursor form one account-state write. Any
+    // validation conflict restores the previous state before persistence.
+    let (changed, finals) = projector
+        .state_store
+        .write(|store| {
+            store.verified_projection_transaction(|store| {
+                for page in &pages {
+                    store.ingest_verified_message_commits(page)?;
+                    crate::identity::agent_signer_evidence::index_verified_committed_page(
+                        store, page,
+                    )?;
+                }
+                let finals = batch
+                    .iter()
+                    .filter_map(|event| {
+                        accepted_direct_message_final(event, projector.digest_suite, store)
+                    })
+                    .collect::<Vec<_>>();
+                let changed = ingest_realm_batch(store, &projector.realm_id, &batch);
+                if let Some(tail) = tail.clone() {
+                    store.save_verified_commit_stream_cursor(stream_ref, tail)?;
+                }
+                Ok((changed, finals))
+            })
+        })
+        .map_err(garth::Error::Protocol)?;
+    let barrier = projector
+        .state_store
+        .read(|store| store.begin_durable_flush())
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    barrier
+        .wait()
+        .await
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    let mut message_stream_hub = projector.message_stream_hub;
+    for (event, sender_endpoint) in finals {
+        if let Err(error) = message_stream_hub.bind_verified_final(event, &sender_endpoint) {
+            tracing::warn!(%error, event_id = %event.event_id, "message stream final binding failed closed");
+        }
+    }
+    if changed > 0 {
+        projector
+            .realm_live_epoch
+            .update(|epoch| *epoch = epoch.wrapping_add(1));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use garth::CursorScope;
     use serde_json::json;
 
     use super::*;
@@ -587,8 +674,122 @@ mod tests {
         .unwrap();
         let mut store = crate::state::isolated_store_for_tests("shape-only-agent-commit");
         store.switch_test_account("did:web:reader.example");
-        ingest_shape_only_realm_batch(&mut store, realm.as_str(), &batch);
+        ingest_realm_batch(&mut store, realm.as_str(), &batch);
         assert!(store.verified_message_commit(&event_id).is_none());
         assert!(store.historical_agent_event_candidates().is_empty());
+    }
+
+    #[test]
+    fn forged_second_page_cannot_project_a_verified_first_page() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let (bundle, keys, items) = crate::test_support::committed_event::verified_realm_fixture_as(
+            realm_id.clone(),
+            vec![
+                (
+                    arkret_sdk::EventKind::MessageCreate.as_str().to_owned(),
+                    json!({
+                        "strand_id": STRAND_ID, "track_name": "discussion",
+                        "content": {"kind": "ak.content.text", "body": "first"}
+                    }),
+                ),
+                (
+                    arkret_sdk::EventKind::MessageCreate.as_str().to_owned(),
+                    json!({
+                        "strand_id": STRAND_ID, "track_name": "discussion",
+                        "content": {"kind": "ak.content.text", "body": "second"}
+                    }),
+                ),
+            ],
+            "agent.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        );
+        let stream_ref = arkret_sdk::CommitStreamRef::Realm {
+            realm_id: realm_id.clone(),
+        };
+        let request = arkret_sdk::AuthorityBundleRequest {
+            realm_id: realm_id.clone(),
+            nonce: bundle.current_assertion.nonce.clone(),
+        };
+        let freshness = arkret_identity::RealmAuthorityFreshness::new(
+            bundle.bundle_issued_at + chrono::Duration::seconds(50),
+            request.nonce.clone(),
+            chrono::Duration::minutes(5),
+        )
+        .unwrap();
+        let mut replica = RealmReplica::new(realm_id.clone());
+        replica
+            .install_verified_authority(&request, bundle.clone(), &freshness, &keys)
+            .unwrap();
+        let first_event_id = items[0].event.event_id.clone();
+        let first = arkret_sdk::StreamScanOutcome {
+            committed_events: vec![
+                arkret_sdk::CommittedEventView::Full(arkret_sdk::CommittedEventFullView {
+                    commit: bundle.genesis_commit.clone(),
+                    event: bundle.genesis_event.clone(),
+                }),
+                arkret_sdk::CommittedEventView::Full(items[0].clone()),
+            ],
+            readable_floor: Some(arkret_sdk::ReadableFloor {
+                oldest_position: 0,
+                floor_commit_id: bundle.genesis_commit.commit_id.clone(),
+                floor_reason: arkret_sdk::ReadableFloorReason::StreamStart,
+            }),
+            truncated: true,
+        };
+        let first_request = StreamScanRequest {
+            realm_id: realm_id.clone(),
+            stream_ref: stream_ref.clone(),
+            direction: arkret_sdk::StreamScanDirection::After(None),
+            limit: 2,
+        };
+        let mut pages = Vec::new();
+        stage_verified_page(
+            &mut replica,
+            &first_request,
+            first,
+            &freshness,
+            &keys,
+            &mut pages,
+        )
+        .unwrap();
+        let mut forged = items[1].clone();
+        forged.commit.signature.signed_digest =
+            arkret_sdk::Hash::new(format!("sha256:{}", "f".repeat(64))).unwrap();
+        let second = arkret_sdk::StreamScanOutcome {
+            committed_events: vec![arkret_sdk::CommittedEventView::Full(forged)],
+            readable_floor: Some(arkret_sdk::ReadableFloor {
+                oldest_position: 0,
+                floor_commit_id: bundle.genesis_commit.commit_id,
+                floor_reason: arkret_sdk::ReadableFloorReason::StreamStart,
+            }),
+            truncated: false,
+        };
+        let second_request = StreamScanRequest {
+            realm_id: realm_id.clone(),
+            stream_ref: stream_ref.clone(),
+            direction: arkret_sdk::StreamScanDirection::After(Some(1)),
+            limit: 2,
+        };
+        assert!(
+            stage_verified_page(
+                &mut replica,
+                &second_request,
+                second,
+                &freshness,
+                &keys,
+                &mut pages
+            )
+            .is_err()
+        );
+        assert_eq!(pages.len(), 1);
+        let mut store = crate::state::isolated_store_for_tests("forged-second-realm-page");
+        store.switch_test_account("did:web:reader.example");
+        assert!(store.verified_message_commit(&first_event_id).is_none());
+        assert!(
+            store
+                .verified_commit_stream_cursor(&stream_ref)
+                .unwrap()
+                .is_none()
+        );
     }
 }

@@ -578,6 +578,39 @@ impl LocalStateStore {
         result
     }
 
+    /// Apply a fallible verified projection as one account-state write. A
+    /// validation or index conflict restores the previous in-memory state;
+    /// callers await `begin_durable_flush` before acknowledging its cursor.
+    pub(crate) fn verified_projection_transaction<R>(
+        &mut self,
+        body: impl FnOnce(&mut Self) -> Result<R, String>,
+    ) -> Result<R, String> {
+        if self.flush_suspended != 0 {
+            return Err("verified projection cannot nest inside a state batch".to_owned());
+        }
+        self.ensure_cached_loaded();
+        let previous = self.cached.clone();
+        let prior_flush_pending = self.flush_pending.load(Ordering::Relaxed);
+        self.flush_suspended += 1;
+        let result = body(self);
+        self.flush_suspended -= 1;
+        self.flush_pending
+            .store(prior_flush_pending, Ordering::Relaxed);
+        match result {
+            Ok(value) => {
+                if let Err(error) = self.flush() {
+                    self.cached = previous;
+                    return Err(error.to_string());
+                }
+                Ok(value)
+            }
+            Err(error) => {
+                self.cached = previous;
+                Err(error)
+            }
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub fn with_path(path: impl Into<PathBuf>) -> Self {
         Self {

@@ -39,6 +39,48 @@ fn merge_verified_message_commits(
 }
 
 impl LocalStateStore {
+    pub(crate) fn verified_commit_stream_cursor(
+        &self,
+        stream_ref: &arkret_sdk::CommitStreamRef,
+    ) -> Result<Option<arkret_sdk::CommitStreamHead>, String> {
+        let key = serde_json::to_string(stream_ref).map_err(|error| error.to_string())?;
+        Ok(self
+            .load()
+            .verified_commit_stream_cursors
+            .get(&key)
+            .cloned())
+    }
+
+    pub(crate) fn save_verified_commit_stream_cursor(
+        &mut self,
+        stream_ref: &arkret_sdk::CommitStreamRef,
+        head: arkret_sdk::CommitStreamHead,
+    ) -> Result<(), String> {
+        let key = serde_json::to_string(stream_ref).map_err(|error| error.to_string())?;
+        self.ensure_cached_loaded();
+        if &head.stream_ref != stream_ref {
+            return Err("verified stream cursor belongs to another stream".to_owned());
+        }
+        let previous = self
+            .cached
+            .verified_commit_stream_cursors
+            .insert(key.clone(), head);
+        if let Err(error) = self.flush() {
+            match previous {
+                Some(previous) => {
+                    self.cached
+                        .verified_commit_stream_cursors
+                        .insert(key, previous);
+                }
+                None => {
+                    self.cached.verified_commit_stream_cursors.remove(&key);
+                }
+            }
+            return Err(format!("persist verified commit stream cursor: {error}"));
+        }
+        Ok(())
+    }
+
     /// Stage verified coordinates in the existing account-state blob. On wasm,
     /// the caller must await `begin_durable_flush()` before ACKing the scan
     /// cursor: `flush()` alone only enqueues the IndexedDB write.
@@ -92,11 +134,6 @@ impl LocalStateStore {
         &mut self,
         pending: Vec<VerifiedMessageCommit>,
     ) -> Result<usize, String> {
-        if self.flush_suspended > 0 {
-            return Err(
-                "verified message Commit index cannot persist inside a state batch".to_owned(),
-            );
-        }
         self.ensure_cached_loaded();
         let mut next = self.cached.verified_message_commits.clone();
         let changed = merge_verified_message_commits(&mut next, pending)?;
@@ -130,6 +167,51 @@ impl LocalStateStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verified_cursor_transaction_rolls_back_and_never_uses_shape_cursor() {
+        let path = std::env::temp_dir().join(format!(
+            "inkson-verified-cursor-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        let realm_id =
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap();
+        let stream_ref = arkret_sdk::CommitStreamRef::Realm { realm_id };
+        let head = arkret_sdk::CommitStreamHead {
+            stream_ref: stream_ref.clone(),
+            stream_position: 2,
+            commit_id: arkret_sdk::RealmCommitId::from_digest([0x62; 32]),
+        };
+        let mut store = LocalStateStore::with_path(&path);
+        let failed: Result<(), String> = store.verified_projection_transaction(|store| {
+            store.save_verified_commit_stream_cursor(&stream_ref, head.clone())?;
+            Err("bad second page".to_owned())
+        });
+        assert_eq!(failed.unwrap_err(), "bad second page");
+        assert_eq!(
+            store.verified_commit_stream_cursor(&stream_ref).unwrap(),
+            None
+        );
+        assert_eq!(
+            LocalStateStore::with_path(&path)
+                .verified_commit_stream_cursor(&stream_ref)
+                .unwrap(),
+            None
+        );
+        store
+            .verified_projection_transaction(|store| {
+                store.save_verified_commit_stream_cursor(&stream_ref, head.clone())
+            })
+            .unwrap();
+        assert_eq!(
+            LocalStateStore::with_path(&path)
+                .verified_commit_stream_cursor(&stream_ref)
+                .unwrap(),
+            Some(head)
+        );
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn verified_message_coordinates_replay_and_conflicts_fail_closed() {
