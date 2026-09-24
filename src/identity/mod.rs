@@ -13,7 +13,6 @@ pub(crate) mod member_identity_store;
 pub(crate) mod principal_control;
 pub(crate) mod principal_genesis;
 pub(crate) mod principal_registration;
-pub(crate) mod realm_authority_keys;
 pub(crate) mod session_refresh;
 
 /// The controller portion of a DID URL verification method.

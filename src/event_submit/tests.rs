@@ -590,6 +590,14 @@ impl garth::AuthorityTransport for ScriptedAuthority {
     ) -> garth::Result<arkret_wire::RealmAuthorityHandoff> {
         Err(garth::Error::Protocol("handoff is not scripted".to_owned()))
     }
+
+    async fn exact_snapshot(
+        &self,
+        _realm_id: &arkret_wire::RealmId,
+        _snapshot_id: &arkret_wire::RealmSnapshotId,
+    ) -> garth::Result<arkret_wire::RealmStateSnapshot> {
+        Err(garth::Error::Protocol("snapshot read is not scripted".to_owned()))
+    }
 }
 
 fn scripted_engine(

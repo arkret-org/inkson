@@ -52,6 +52,30 @@ fn seal_commit(mut commit: RealmCommit, key: &SigningKey) -> RealmCommit {
     commit
 }
 
+/// Re-address and sign a Snapshot as the fixture Station, whose method and
+/// key are the ones [`verified_realm_fixture_as`] puts in its key directory.
+pub(crate) fn sign_fixture_snapshot(snapshot: &mut arkret_sdk::RealmStateSnapshot) {
+    let station_key = SigningKey::from_bytes(&[0x71; 32]);
+    let mut identity = serde_json::to_value(&*snapshot).unwrap();
+    let object = identity.as_object_mut().unwrap();
+    object.remove("signature");
+    object.remove("snapshot_id");
+    snapshot.snapshot_id =
+        arkret_sdk::RealmSnapshotId::from_digest(arkret_sdk::canonical::sha256_bytes(
+            &arkret_sdk::canonical::canonical::canonical_json_bytes(&identity).unwrap(),
+        ));
+    let unsigned =
+        arkret_sdk::canonical::canonical::unsigned_value(&*snapshot, &["signature"]).unwrap();
+    snapshot.signature = sign_detached_object(
+        &unsigned,
+        DetachedSignatureContext::RealmSnapshot,
+        method(),
+        snapshot.created_at,
+        &station_key,
+    )
+    .unwrap();
+}
+
 /// A signed Event and Station commit checked against a fresh, nonce-bound
 /// generation-0 authority chain. The returned pair is fit for accepted
 /// projection tests; callers cannot obtain it without verifier success.
