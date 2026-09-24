@@ -33,6 +33,7 @@ fn selector() -> String {
 fn frame(revision: u64, removed: bool) -> String {
     let entry = json!({
         "selector": serde_json::from_str::<serde_json::Value>(&selector()).unwrap(),
+        "source_stream_ref": {"kind":"realm","realm_id":REALM},
         "revision": {"commit_id":COMMIT,"stream_position":revision},
         "value": if removed { json!({"status":"removed"}) } else { json!({"status":"value","value":null}) },
     });

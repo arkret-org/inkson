@@ -25,6 +25,9 @@ fn snapshot_payload() -> Value {
         }],
         current_state_entries: vec![arkret_sdk::TypedCurrentResult::Value {
             selector: arkret_sdk::CurrentSelector::RealmProfile,
+            source_stream_ref: arkret_sdk::CommitStreamRef::Realm {
+                realm_id: realm_id.clone(),
+            },
             revision: arkret_sdk::CurrentRevision {
                 commit_id,
                 stream_position: 7,
