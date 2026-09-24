@@ -237,13 +237,19 @@ fn plan_current_entry(
 
 /// Preflight one Realm entry's baseline transition without changing host state.
 /// Whether a Realm entry's current cut, any row in it, or its baseline
-/// coverage reads a stream whose window in the same entry is preview only.
-fn current_reads_preview_stream(entry: &arkret_sdk::sync::RealmSyncEntry) -> bool {
+/// coverage reads a stream whose window in the same entry is preview only
+/// and was not `resolved` as exact by a verified replay from genesis.
+pub(crate) fn current_reads_preview_stream(
+    entry: &arkret_sdk::sync::RealmSyncEntry,
+    resolved: &std::collections::BTreeSet<arkret_sdk::CommitStreamRef>,
+) -> bool {
     let preview = entry
         .streams
         .iter()
         .flatten()
-        .filter(|window| window.preview_only == Some(true))
+        .filter(|window| {
+            window.preview_only == Some(true) && !resolved.contains(&window.stream_ref)
+        })
         .map(|window| &window.stream_ref)
         .collect::<std::collections::BTreeSet<_>>();
     if preview.is_empty() {
@@ -1014,6 +1020,23 @@ impl CurrentIndex {
         expected_generation: u64,
         frame: &AccountSubscribeFrame,
     ) -> anyhow::Result<CurrentStage> {
+        self.stage_verified_frame(
+            expected_generation,
+            frame,
+            &std::collections::BTreeSet::new(),
+        )
+        .await
+    }
+
+    /// Stage one frame whose `preview_only` windows in
+    /// `resolved_preview_streams` were replayed from genesis by a verified
+    /// scan; every other preview window still withholds its current.
+    pub(crate) async fn stage_verified_frame(
+        &self,
+        expected_generation: u64,
+        frame: &AccountSubscribeFrame,
+        resolved_preview_streams: &std::collections::BTreeSet<arkret_sdk::CommitStreamRef>,
+    ) -> anyhow::Result<CurrentStage> {
         let lease = self.lease.clone().lock_owned().await;
         anyhow::ensure!(
             !self.is_poisoned(),
@@ -1074,7 +1097,7 @@ impl CurrentIndex {
                     Some(progress) => progress,
                     None => self.progress_at(realm, expected_generation).await?,
                 };
-                if current_reads_preview_stream(incoming) {
+                if current_reads_preview_stream(incoming, resolved_preview_streams) {
                     // A preview-only window has no verified start basis, so
                     // its stream carries no exact current: neither the rows
                     // it sources nor a cut or baseline coverage over it are
@@ -2081,6 +2104,104 @@ mod tests {
         index.stage_frame(1, &verified).await.unwrap().finish();
         assert_eq!(
             index.read_selector(REALM, &selector).await.unwrap(),
+            Some(row(1, false))
+        );
+    }
+
+    #[tokio::test]
+    async fn unresolved_preview_realm_never_blocks_a_verified_sibling_realm() {
+        let path = path();
+        let index = index(&path, 0).await;
+        let window = |realm: &str, preview: bool| {
+            let mut window = json!({
+                "stream_ref":{"kind":"realm","realm_id":realm},
+                "head_commit_ref":COMMIT,
+                "next_position":2,
+                "limited":preview,
+                "window_limit":1,
+                "complete":true
+            });
+            if preview {
+                window["preview_only"] = json!(true);
+            }
+            window
+        };
+        let member = member_row(OTHER_REALM, "ak:did_core:web:bob.example", 1);
+        let batch = |profile: u64, other: u64| -> AccountSubscribeFrame {
+            let mut preview = serde_json::to_value(
+                &realm_frame(REALM, vec![row(profile, false)], None)
+                    .realms
+                    .unwrap()
+                    .entries[REALM],
+            )
+            .unwrap();
+            preview["streams"] = json!([window(REALM, true)]);
+            let mut sibling = serde_json::to_value(
+                &realm_frame(
+                    OTHER_REALM,
+                    vec![member_row(
+                        OTHER_REALM,
+                        "ak:did_core:web:bob.example",
+                        other,
+                    )],
+                    None,
+                )
+                .realms
+                .unwrap()
+                .entries[OTHER_REALM],
+            )
+            .unwrap();
+            sibling["streams"] = json!([window(OTHER_REALM, false)]);
+            serde_json::from_value(json!({
+                "kind":"delta",
+                "cursor":"ak:cursor:YQ",
+                "realms":{REALM: preview, OTHER_REALM: sibling}
+            }))
+            .unwrap()
+        };
+        let preview_stream = arkret_sdk::CommitStreamRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+        };
+
+        // Unresolved: the sibling installs, the preview Realm's current and
+        // coverage stay out of the index.
+        let unresolved = std::collections::BTreeSet::new();
+        let stage = index
+            .stage_verified_frame(0, &batch(1, 1), &unresolved)
+            .await
+            .unwrap();
+        let filtered = stage.filtered_frame().realms.clone().unwrap();
+        assert!(filtered.entries[REALM].current.is_none());
+        assert!(filtered.entries[OTHER_REALM].current.is_some());
+        stage.finish();
+        let profile = selector_of(&row(1, false)).clone();
+        assert_eq!(index.read_selector(REALM, &profile).await.unwrap(), None);
+        assert_eq!(
+            index
+                .read_selector(OTHER_REALM, &selector_of(&member))
+                .await
+                .unwrap(),
+            Some(member.clone())
+        );
+        assert!(
+            index
+                .progress_at(REALM, 1)
+                .await
+                .unwrap()
+                .governance_generation
+                .is_none()
+        );
+
+        // Once a verified replay from genesis settles the same preview
+        // window, its Realm current installs as exact.
+        let resolved = std::collections::BTreeSet::from([preview_stream]);
+        index
+            .stage_verified_frame(1, &batch(1, 1), &resolved)
+            .await
+            .unwrap()
+            .finish();
+        assert_eq!(
+            index.read_selector(REALM, &profile).await.unwrap(),
             Some(row(1, false))
         );
     }

@@ -155,6 +155,33 @@ impl FixtureStation {
         commit
     }
 
+    /// Re-issue a fixture bundle and its current assertion at `issued_at`
+    /// for a caller's fresh authority nonce, as the governing Station
+    /// answers each request.
+    pub(crate) fn reassert_for_nonce(
+        &self,
+        bundle: &mut RealmAuthorityBundle,
+        nonce: Base64UrlString,
+        issued_at: chrono::DateTime<Utc>,
+    ) {
+        bundle.bundle_issued_at = issued_at;
+        bundle.current_assertion.nonce = nonce;
+        bundle.current_assertion.expires_at = issued_at + Duration::seconds(300);
+        let unsigned = arkret_sdk::canonical::canonical::unsigned_value(
+            &bundle.current_assertion,
+            &["signature"],
+        )
+        .unwrap();
+        bundle.current_assertion.signature = sign_detached_object(
+            &unsigned,
+            DetachedSignatureContext::RealmAuthorityCurrentAssertion,
+            self.method.clone(),
+            issued_at,
+            &self.key,
+        )
+        .unwrap();
+    }
+
     /// Re-address and sign a Snapshot at its own `created_at`.
     pub(crate) fn sign_snapshot(&self, snapshot: &mut arkret_sdk::RealmStateSnapshot) {
         let mut identity = serde_json::to_value(&*snapshot).unwrap();

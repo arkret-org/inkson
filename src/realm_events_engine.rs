@@ -412,7 +412,8 @@ where
     let (pages, _) = verified_stream_pages(
         authority, http, replica, bundle, freshness, realm_id, stream_ref, None,
     )
-    .await?;
+    .await?
+    .into_verified()?;
     let tail = replica.verified_head(stream_ref).cloned();
     // A stored cursor is a commit identity, not merely a number. Locate that
     // exact commit in the newly verified genesis replay before deduplicating.
@@ -522,10 +523,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
     realm_id: &arkret_sdk::RealmId,
     stream_ref: &CommitStreamRef,
     floor_anchor: Option<FloorAnchor<'_>>,
-) -> garth::Result<(
-    Vec<garth::VerifiedScanPage>,
-    Option<garth::VerifiedFloorSnapshot>,
-)> {
+) -> garth::Result<StreamPages> {
     // A full-history stream starts at genesis. A limited Account window may
     // start only from the exact signed head named by its basis, read by
     // reference from a Station that advertises the exact-read bundle; the
@@ -591,8 +589,13 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
                     &snapshot_keys,
                 )?);
             }
-        } else {
-            require_genesis_readable_floor(&outcome)?;
+        } else if let Err(error) = require_genesis_readable_floor(&outcome) {
+            // Only the first page decides whether a genesis replay can start;
+            // a floor that moves above genesis mid-replay is a broken scan.
+            if pages.is_empty() {
+                return Ok(StreamPages::AboveGenesis);
+            }
+            return Err(error);
         }
         let truncated = outcome.truncated;
         let keys =
@@ -617,7 +620,38 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
         }
         after_position = next_position;
     }
-    Ok((pages, verified_floor_snapshot))
+    Ok(StreamPages::Verified(pages, verified_floor_snapshot))
+}
+
+/// One stream's verified scan, or the fact that a replay from genesis cannot
+/// start because the caller's readable history begins above position 0 and
+/// no signed basis was named.
+enum StreamPages {
+    Verified(
+        Vec<garth::VerifiedScanPage>,
+        Option<garth::VerifiedFloorSnapshot>,
+    ),
+    AboveGenesis,
+}
+
+impl StreamPages {
+    fn into_verified(
+        self,
+    ) -> garth::Result<(
+        Vec<garth::VerifiedScanPage>,
+        Option<garth::VerifiedFloorSnapshot>,
+    )> {
+        match self {
+            Self::Verified(pages, snapshot) => Ok((pages, snapshot)),
+            Self::AboveGenesis => Err(above_genesis_without_basis()),
+        }
+    }
+}
+
+fn above_genesis_without_basis() -> garth::Error {
+    garth::Error::Protocol(
+        "verified stream requires a signed readable-floor snapshot anchor".to_owned(),
+    )
 }
 
 fn require_genesis_readable_floor(outcome: &arkret_sdk::StreamScanOutcome) -> garth::Result<()> {
@@ -633,14 +667,54 @@ fn require_genesis_readable_floor(outcome: &arkret_sdk::StreamScanOutcome) -> ga
     Ok(())
 }
 
+#[derive(Default)]
 pub(crate) struct VerifiedAccountFrame {
     pages: Vec<garth::VerifiedScanPage>,
-    floor_current_rows: Option<(arkret_sdk::RealmId, Vec<arkret_wire::TypedCurrentResult>)>,
+    floor_current_rows: Vec<(arkret_sdk::RealmId, Vec<arkret_wire::TypedCurrentResult>)>,
+    /// `preview_only` windows whose whole readable prefix this client
+    /// replayed from genesis through a verified scan: exact from here on.
+    resolved_preview_streams: BTreeSet<CommitStreamRef>,
+    /// `preview_only` windows that stay display-only in this frame.
+    preview_streams: BTreeSet<CommitStreamRef>,
 }
 
 impl VerifiedAccountFrame {
     pub fn pages(&self) -> &[garth::VerifiedScanPage] {
         &self.pages
+    }
+
+    /// Preview windows the verified genesis replay settled as exact.
+    pub fn resolved_preview_streams(&self) -> &BTreeSet<CommitStreamRef> {
+        &self.resolved_preview_streams
+    }
+
+    /// Preview windows that remain display-only.
+    pub fn preview_streams(&self) -> &BTreeSet<CommitStreamRef> {
+        &self.preview_streams
+    }
+
+    /// The frame the product layer may consume. An entry whose current cut,
+    /// rows or baseline coverage read a still-preview stream loses its
+    /// current and baseline, so nothing downstream (durable current index,
+    /// Realm projection, product view) can take them as exact; the preview
+    /// stream's committed rows stay as display rows.
+    pub fn product_frame(
+        &self,
+        frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
+    ) -> arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame {
+        let mut product = frame.clone();
+        if let Some(realms) = product.realms.as_mut() {
+            for entry in realms.entries.values_mut() {
+                if crate::state::current_index::current_reads_preview_stream(
+                    entry,
+                    &self.resolved_preview_streams,
+                ) {
+                    entry.current = None;
+                    entry.baseline = None;
+                }
+            }
+        }
+        product
     }
 
     /// Called inside the Account frame's durable projection transaction.
@@ -650,7 +724,7 @@ impl VerifiedAccountFrame {
         &self,
         store: &mut crate::state::LocalStateStore,
     ) -> Result<(), String> {
-        if let Some((realm_id, rows)) = &self.floor_current_rows {
+        for (realm_id, rows) in &self.floor_current_rows {
             store
                 .install_current_product_view(
                     realm_id.as_str(),
@@ -1323,40 +1397,53 @@ fn validate_signed_floor_rows(
 /// nonce-bound stream scan returns the same exact rows. Full history can be
 /// projected. One non-preview single-stream window anchored
 /// `before_readable_floor` or `after_committed_prefix` installs its exact
-/// signed snapshot rows plus the verified tail; any other limited shape, and
-/// every preview window, stays out of the product current.
+/// signed snapshot rows plus the verified tail; any other limited shape stays
+/// out of the product current.
+///
+/// A `preview_only` window (client-sync §5.2) is decided per stream and never
+/// fails its siblings: the client backfills it with the same verified scan
+/// from genesis. When that replay verifies the whole readable prefix, the
+/// window start is no longer unknown and the stream is exact; when the
+/// caller's readable history starts above genesis, the stream stays preview:
+/// its rows remain display rows only, and neither its current nor any
+/// verified index or checkpoint advances. A verified row that contradicts the
+/// frame still fails closed.
 pub(crate) async fn verify_account_frame_commits(
     http: &arkret_sdk::http_client::Client,
     frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
 ) -> garth::Result<VerifiedAccountFrame> {
-    let mut verified = VerifiedAccountFrame {
-        pages: Vec::new(),
-        floor_current_rows: None,
-    };
+    verify_account_frame_with(&AuthorityClient::new(http.clone()), http, frame).await
+}
+
+async fn verify_account_frame_with<T: garth::AuthorityTransport>(
+    authority: &AuthorityClient<T>,
+    http: &arkret_sdk::http_client::Client,
+    frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
+) -> garth::Result<VerifiedAccountFrame> {
+    let mut verified = VerifiedAccountFrame::default();
     let Some(realms) = frame.realms.as_ref() else {
         return Ok(verified);
     };
-    let authority = AuthorityClient::new(http.clone());
-    for (realm, entry) in &realms.entries {
+    'realms: for (realm, entry) in &realms.entries {
+        let realm_id = arkret_sdk::RealmId::new(realm.clone())
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         if let Some(windows) = entry.streams.as_ref() {
             for window in windows {
                 let Some(basis) = snapshot_window_basis(window) else {
                     continue;
                 };
-                if realms.entries.len() != 1 || windows.len() != 1 {
+                if windows.len() != 1 {
                     return Err(garth::Error::Protocol(
                         "floor current projection requires one exact Realm stream".to_owned(),
                     ));
                 }
-                let realm_id = arkret_sdk::RealmId::new(realm.clone())
-                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
                 let describe = http
                     .describe_for_role(arkret_sdk::ServiceKind::Station)
                     .await?;
                 let (bundle, freshness, mut replica) =
-                    fresh_verified_realm(&authority, http, &realm_id).await?;
+                    fresh_verified_realm(authority, http, &realm_id).await?;
                 let (pages, floor_snapshot) = verified_stream_pages(
-                    &authority,
+                    authority,
                     http,
                     &mut replica,
                     &bundle,
@@ -1368,7 +1455,8 @@ pub(crate) async fn verify_account_frame_commits(
                         describe: &describe,
                     }),
                 )
-                .await?;
+                .await?
+                .into_verified()?;
                 let scanned = pages
                     .iter()
                     .flat_map(|page| page.rows())
@@ -1429,93 +1517,142 @@ pub(crate) async fn verify_account_frame_commits(
                     floor_snapshot,
                     &pages,
                 )?;
-                verified.pages = pages;
-                verified.floor_current_rows = Some((realm_id, rows));
-                return Ok(verified);
+                verified.pages.extend(pages);
+                verified.floor_current_rows.push((realm_id, rows));
+                continue 'realms;
             }
         }
         require_genesis_window_basis(entry)?;
-        let Some(rows) = entry
-            .committed_events
-            .as_ref()
-            .filter(|rows| !rows.is_empty())
-        else {
-            continue;
-        };
-        let realm_id = arkret_sdk::RealmId::new(realm.clone())
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        let (bundle, freshness, mut replica) =
-            fresh_verified_realm(&authority, http, &realm_id).await?;
-        let mut by_stream: BTreeMap<CommitStreamRef, Vec<&CommittedEventView>> = BTreeMap::new();
-        let mut seen_rows = BTreeSet::new();
-        for row in rows {
-            if row.commit().realm_id != realm_id {
-                return Err(garth::Error::Protocol(
-                    "account frame Commit belongs to another Realm".to_owned(),
-                ));
-            }
-            if !seen_rows.insert((
-                row.commit().stream_ref.clone(),
-                row.commit().stream_position,
-            )) {
-                return Err(garth::Error::Protocol(
-                    "account frame repeats a committed stream position".to_owned(),
-                ));
-            }
-            by_stream
-                .entry(row.commit().stream_ref.clone())
-                .or_default()
-                .push(row);
-        }
-        for (stream_ref, claimed_rows) in by_stream {
-            let (pages, _) = verified_stream_pages(
-                &authority,
-                http,
-                &mut replica,
-                &bundle,
-                &freshness,
-                &realm_id,
-                &stream_ref,
-                None,
-            )
-            .await?;
-            let scanned = pages
-                .iter()
-                .flat_map(|page| page.rows())
-                .collect::<Vec<_>>();
-            require_exact_claimed_rows(&claimed_rows, &scanned)?;
-            let window = entry
-                .streams
-                .as_ref()
-                .and_then(|windows| {
-                    windows
-                        .iter()
-                        .find(|window| window.stream_ref == stream_ref)
-                })
-                .ok_or_else(|| {
-                    garth::Error::Protocol(
-                        "account frame Commit has no exact stream window head".to_owned(),
-                    )
-                })?;
-            if window.preview_only == Some(true) {
-                return Err(garth::Error::Protocol(
-                    "account frame stream window is preview only".to_owned(),
-                ));
-            }
-            require_exact_window_head(window, &scanned)?;
-            verified.pages.extend(pages);
-        }
-        let final_freshness = arkret_identity::RealmAuthorityFreshness::new(
-            chrono::Utc::now(),
-            freshness.expected_nonce.clone(),
-            freshness.max_bundle_age,
-        )
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
-        arkret_identity::verify_realm_authority_bundle(&bundle, &final_freshness, &keys)
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        verify_full_history_realm(authority, http, &realm_id, entry, &mut verified).await?;
     }
     Ok(verified)
+}
+
+/// Verify one Realm entry without a signed snapshot basis: every stream that
+/// carries rows, and every `preview_only` window, is replayed from genesis
+/// through a fresh nonce-bound verified scan.
+async fn verify_full_history_realm<T: garth::AuthorityTransport>(
+    authority: &AuthorityClient<T>,
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &arkret_sdk::RealmId,
+    entry: &arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry,
+    verified: &mut VerifiedAccountFrame,
+) -> garth::Result<()> {
+    let mut by_stream: BTreeMap<CommitStreamRef, Vec<&CommittedEventView>> = BTreeMap::new();
+    let mut seen_rows = BTreeSet::new();
+    for row in entry.committed_events.iter().flatten() {
+        if row.commit().realm_id != *realm_id {
+            return Err(garth::Error::Protocol(
+                "account frame Commit belongs to another Realm".to_owned(),
+            ));
+        }
+        if !seen_rows.insert((
+            row.commit().stream_ref.clone(),
+            row.commit().stream_position,
+        )) {
+            return Err(garth::Error::Protocol(
+                "account frame repeats a committed stream position".to_owned(),
+            ));
+        }
+        by_stream
+            .entry(row.commit().stream_ref.clone())
+            .or_default()
+            .push(row);
+    }
+    for window in entry.streams.iter().flatten() {
+        if window.preview_only != Some(true) {
+            continue;
+        }
+        if window.stream_ref.realm_id() != realm_id {
+            return Err(garth::Error::Protocol(
+                "account frame stream window belongs to another Realm".to_owned(),
+            ));
+        }
+        by_stream.entry(window.stream_ref.clone()).or_default();
+    }
+    if by_stream.is_empty() {
+        return Ok(());
+    }
+    let (bundle, freshness, mut replica) = fresh_verified_realm(authority, http, realm_id).await?;
+    for (stream_ref, claimed_rows) in by_stream {
+        let window = entry.streams.as_ref().and_then(|windows| {
+            windows
+                .iter()
+                .find(|window| window.stream_ref == stream_ref)
+        });
+        let scan = verified_stream_pages(
+            authority,
+            http,
+            &mut replica,
+            &bundle,
+            &freshness,
+            realm_id,
+            &stream_ref,
+            None,
+        )
+        .await?;
+        let preview = window.is_some_and(|window| window.preview_only == Some(true));
+        match resolve_full_history_window(window, &claimed_rows, scan)? {
+            WindowResolution::Exact(pages) => {
+                if preview {
+                    verified.resolved_preview_streams.insert(stream_ref);
+                }
+                verified.pages.extend(pages);
+            }
+            WindowResolution::Preview => {
+                verified.preview_streams.insert(stream_ref);
+            }
+        }
+    }
+    let final_freshness = arkret_identity::RealmAuthorityFreshness::new(
+        chrono::Utc::now(),
+        freshness.expected_nonce.clone(),
+        freshness.max_bundle_age,
+    )
+    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
+    arkret_identity::verify_realm_authority_bundle(&bundle, &final_freshness, &keys)
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    Ok(())
+}
+
+/// How one stream window of a snapshot-less Realm entry was settled.
+#[derive(Debug)]
+enum WindowResolution {
+    /// The verified replay from genesis covers the window and its head.
+    Exact(Vec<garth::VerifiedScanPage>),
+    /// A `preview_only` window whose prefix the caller cannot replay: its
+    /// rows are display rows only.
+    Preview,
+}
+
+fn resolve_full_history_window(
+    window: Option<&arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow>,
+    claimed_rows: &[&CommittedEventView],
+    scan: StreamPages,
+) -> garth::Result<WindowResolution> {
+    let window = window.ok_or_else(|| {
+        garth::Error::Protocol("account frame Commit has no exact stream window head".to_owned())
+    })?;
+    let pages = match scan {
+        StreamPages::Verified(pages, None) => pages,
+        StreamPages::Verified(_, Some(_)) => {
+            return Err(garth::Error::Protocol(
+                "genesis replay cannot carry a floor snapshot".to_owned(),
+            ));
+        }
+        StreamPages::AboveGenesis if window.preview_only == Some(true) => {
+            return Ok(WindowResolution::Preview);
+        }
+        StreamPages::AboveGenesis => return Err(above_genesis_without_basis()),
+    };
+    let scanned = pages
+        .iter()
+        .flat_map(|page| page.rows())
+        .collect::<Vec<_>>();
+    require_exact_claimed_rows(claimed_rows, &scanned)?;
+    require_exact_window_head(window, &scanned)?;
+    Ok(WindowResolution::Exact(pages))
 }
 
 /// The exact signed-snapshot basis of one stream window. A preview window
@@ -1963,7 +2100,8 @@ mod tests {
         let mut store = crate::state::LocalStateStore::with_path(&path);
         let verified = VerifiedAccountFrame {
             pages: Vec::new(),
-            floor_current_rows: Some((realm_id.clone(), expected.clone())),
+            floor_current_rows: vec![(realm_id.clone(), expected.clone())],
+            ..Default::default()
         };
         let scope = garth::CursorScope::Account {
             service_id: None,
@@ -2267,7 +2405,8 @@ mod tests {
         let mut store = crate::state::LocalStateStore::with_path(&path);
         let verified = VerifiedAccountFrame {
             pages: Vec::new(),
-            floor_current_rows: Some((realm_id.clone(), installed_rows.clone())),
+            floor_current_rows: vec![(realm_id.clone(), installed_rows.clone())],
+            ..Default::default()
         };
         let scope = garth::CursorScope::Account {
             service_id: None,
@@ -2651,7 +2790,8 @@ mod tests {
         let mut store = crate::state::LocalStateStore::with_path(&path);
         let verified = VerifiedAccountFrame {
             pages,
-            floor_current_rows: Some((realm_id.clone(), rows.clone())),
+            floor_current_rows: vec![(realm_id.clone(), rows.clone())],
+            ..Default::default()
         };
         let scope = garth::CursorScope::Account {
             service_id: None,
@@ -2975,7 +3115,8 @@ mod tests {
                     .map_err(text)?;
             let verified = VerifiedAccountFrame {
                 pages,
-                floor_current_rows: Some((realm_id.clone(), rows.clone())),
+                floor_current_rows: vec![(realm_id.clone(), rows.clone())],
+                ..Default::default()
             };
             store.verified_projection_transaction(|store| {
                 verified.install_floor_current(store)?;
@@ -3717,5 +3858,386 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    const OTHER_REALM_ID: &str = "ak:realm:AQJmSg1s9QyzppFeJL40dN92YVHZeLdBBt3UWHa9XNOD";
+
+    /// One fixture Realm the frame Station serves: its bundle, every row
+    /// from genesis, and the caller's readable floor on that stream.
+    struct StationRealm {
+        bundle: arkret_sdk::RealmAuthorityBundle,
+        rows: Vec<CommittedEventView>,
+        readable_floor: u64,
+    }
+
+    /// The own Station behind an Account frame: a fresh nonce-bound bundle
+    /// per request and forward verified scans. Nothing else is reachable.
+    struct FrameStation {
+        station: crate::test_support::committed_event::FixtureStation,
+        realms: BTreeMap<arkret_sdk::RealmId, StationRealm>,
+        scans: std::sync::Mutex<Vec<CommitStreamRef>>,
+    }
+
+    impl garth::AuthorityTransport for FrameStation {
+        async fn submit(
+            &self,
+            _request: &arkret_wire::AuthoritySubmitRequest,
+            _options: &arkret_sdk::http_client::ClientRequestOptions,
+        ) -> garth::Result<arkret_wire::AuthoritySubmitOutcome> {
+            unreachable!("frame verification never submits")
+        }
+
+        async fn scan(
+            &self,
+            request: &StreamScanRequest,
+        ) -> garth::Result<arkret_sdk::StreamScanOutcome> {
+            self.scans.lock().unwrap().push(request.stream_ref.clone());
+            let realm = &self.realms[&request.realm_id];
+            let arkret_sdk::StreamScanDirection::After(after) = request.direction else {
+                unreachable!("frame verification replays forward")
+            };
+            let floor = &realm.rows[realm.readable_floor as usize];
+            Ok(arkret_sdk::StreamScanOutcome {
+                committed_events: realm
+                    .rows
+                    .iter()
+                    .filter(|row| {
+                        let position = row.commit().stream_position;
+                        position >= realm.readable_floor
+                            && after.is_none_or(|after| position > after)
+                    })
+                    .cloned()
+                    .collect(),
+                readable_floor: Some(arkret_sdk::ReadableFloor {
+                    oldest_position: realm.readable_floor,
+                    floor_commit_id: floor.commit().commit_id.clone(),
+                    floor_reason: if realm.readable_floor == 0 {
+                        arkret_sdk::ReadableFloorReason::StreamStart
+                    } else {
+                        arkret_sdk::ReadableFloorReason::MembershipJoin
+                    },
+                }),
+                truncated: false,
+            })
+        }
+
+        async fn authority_bundle(
+            &self,
+            request: &arkret_sdk::AuthorityBundleRequest,
+        ) -> garth::Result<arkret_sdk::RealmAuthorityBundle> {
+            let mut bundle = self.realms[&request.realm_id].bundle.clone();
+            self.station
+                .reassert_for_nonce(&mut bundle, request.nonce.clone(), chrono::Utc::now());
+            Ok(bundle)
+        }
+
+        async fn install_handoff(
+            &self,
+            _request: &arkret_wire::AuthorityHandoffRequest,
+            _options: &arkret_sdk::http_client::ClientRequestOptions,
+        ) -> garth::Result<arkret_wire::RealmAuthorityHandoff> {
+            unreachable!("frame verification never installs a handoff")
+        }
+
+        async fn exact_snapshot(
+            &self,
+            _realm_id: &arkret_sdk::RealmId,
+            _snapshot_id: &arkret_sdk::RealmSnapshotId,
+        ) -> garth::Result<arkret_sdk::RealmStateSnapshot> {
+            unreachable!("a preview or full-history window names no snapshot")
+        }
+    }
+
+    fn message_entries(bodies: &[&str]) -> Vec<(String, serde_json::Value)> {
+        bodies
+            .iter()
+            .map(|body| {
+                (
+                    arkret_sdk::EventKind::MessageCreate.as_str().to_owned(),
+                    json!({
+                        "strand_id": STRAND_ID, "track_name": "discussion",
+                        "content": {"kind": "ak.content.text", "body": body}
+                    }),
+                )
+            })
+            .collect()
+    }
+
+    /// A Realm entry whose window carries `window_rows` of the stream and a
+    /// profile current sourced from its first Commit.
+    fn frame_entry(
+        realm: &StationRealm,
+        window_rows: usize,
+        preview: bool,
+    ) -> arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry {
+        let head = realm.rows.last().unwrap().commit();
+        let first = realm.rows[1].commit();
+        arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry {
+            streams: Some(vec![
+                arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow {
+                    stream_ref: head.stream_ref.clone(),
+                    head_commit_ref: head.commit_id.clone(),
+                    next_position: head.stream_position + 1,
+                    limited: preview,
+                    window_limit: window_rows as u32,
+                    complete: true,
+                    preview_only: preview.then_some(true),
+                    window_start_basis: None,
+                    e2ee_epoch: None,
+                },
+            ]),
+            committed_events: Some(realm.rows[realm.rows.len() - window_rows..].to_vec()),
+            current: Some(
+                arkret_models_collaboration::sync_frames::current_results::AccountCurrentResult {
+                    realm_id: head.realm_id.clone(),
+                    governance_generation: 0,
+                    stream_heads: vec![arkret_wire::CommitStreamHead {
+                        stream_ref: head.stream_ref.clone(),
+                        stream_position: head.stream_position,
+                        commit_id: head.commit_id.clone(),
+                    }],
+                    entries: vec![TypedCurrentResult::Value {
+                        selector: arkret_wire::CurrentSelector::RealmProfile,
+                        source_stream_ref: first.stream_ref.clone(),
+                        revision: arkret_wire::CurrentRevision {
+                            commit_id: first.commit_id.clone(),
+                            stream_position: first.stream_position,
+                        },
+                        value: json!({"schema": "ak.schema.realm_profile.v1", "title": "Realm"}),
+                    }],
+                },
+            ),
+            ..Default::default()
+        }
+    }
+
+    fn account_frame(
+        entries: Vec<(
+            &str,
+            arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry,
+        )>,
+    ) -> arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame {
+        let mut frame: arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame =
+            serde_json::from_value(json!({"kind": "delta", "cursor": "ak:cursor:YQ"})).unwrap();
+        frame.realms = Some(
+            arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeRealms {
+                entries: entries
+                    .into_iter()
+                    .map(|(realm, entry)| (realm.to_owned(), entry))
+                    .collect(),
+            },
+        );
+        frame
+    }
+
+    fn event_ids(realm: &StationRealm) -> Vec<arkret_sdk::EventId> {
+        realm
+            .rows
+            .iter()
+            .skip(1)
+            .map(|row| row.commit().event_ref.clone())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn preview_realm_stays_display_only_beside_a_verified_realm_until_backfilled() {
+        use crate::test_support::committed_event::FixtureStation;
+        // The Station answers every request at the caller's wall clock, so
+        // its did:webvh history starts before it.
+        let inception_at = chrono::Utc::now() - chrono::Duration::seconds(1000);
+        let fixture_realm = |realm_id: &str, bodies: &[&str], readable_floor| {
+            let (bundle, _, items) =
+                crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                    &FixtureStation::webvh(0x46, inception_at),
+                    arkret_sdk::RealmId::new(realm_id).unwrap(),
+                    json!({}),
+                    message_entries(bodies),
+                    "alice.example",
+                    DEVICE_ID,
+                );
+            let rows = std::iter::once(CommittedEventView::Full(
+                arkret_sdk::CommittedEventFullView {
+                    commit: bundle.genesis_commit.clone(),
+                    event: bundle.genesis_event.clone(),
+                },
+            ))
+            .chain(items.into_iter().map(CommittedEventView::Full))
+            .collect();
+            StationRealm {
+                bundle,
+                rows,
+                readable_floor,
+            }
+        };
+        let preview_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let verified_id = arkret_sdk::RealmId::new(OTHER_REALM_ID).unwrap();
+        let preview_stream = CommitStreamRef::Realm {
+            realm_id: preview_id.clone(),
+        };
+        let verified_stream = CommitStreamRef::Realm {
+            realm_id: verified_id.clone(),
+        };
+        // The preview Realm has more Commits than its window and the caller
+        // joined above genesis, so no verified replay can reach its start.
+        let station = |preview_floor| FrameStation {
+            station: FixtureStation::webvh(0x46, inception_at),
+            realms: BTreeMap::from([
+                (
+                    preview_id.clone(),
+                    fixture_realm(REALM_ID, &["p1", "p2", "p3"], preview_floor),
+                ),
+                (
+                    verified_id.clone(),
+                    fixture_realm(OTHER_REALM_ID, &["v1", "v2"], 0),
+                ),
+            ]),
+            scans: std::sync::Mutex::new(Vec::new()),
+        };
+        let batch = |station: &FrameStation| {
+            account_frame(vec![
+                (REALM_ID, frame_entry(&station.realms[&preview_id], 1, true)),
+                (
+                    OTHER_REALM_ID,
+                    frame_entry(&station.realms[&verified_id], 2, false),
+                ),
+            ])
+        };
+        let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
+            .allow_insecure_localhost()
+            .build()
+            .unwrap();
+        let mut store = crate::state::isolated_store_for_tests("account-frame-preview-sibling");
+        store.switch_test_account("did:web:reader.example");
+        let scope = account_scope();
+        let project = |store: &mut crate::state::LocalStateStore,
+                       verified: &VerifiedAccountFrame,
+                       cursor: &str| {
+            store
+                .verified_projection_transaction(|store| {
+                    for page in verified.pages() {
+                        store.ingest_verified_message_commits(page)?;
+                    }
+                    store
+                        .save_account_checkpoint(
+                            &scope,
+                            garth::AccountCursorCheckpoint {
+                                cursor: cursor.to_owned(),
+                                station_cas: garth::StationCasProjection::default(),
+                            },
+                        )
+                        .map_err(|error| error.to_string())
+                })
+                .unwrap();
+        };
+
+        // 1. Unresolved preview: the sibling Realm verifies and installs; the
+        //    preview Realm's rows stay display rows, with no current, no
+        //    verified index and no verified stream checkpoint.
+        let unresolved = station(2);
+        let frame = batch(&unresolved);
+        let verified = verify_account_frame_with(&AuthorityClient::new(unresolved), &http, &frame)
+            .await
+            .unwrap();
+        assert_eq!(
+            verified.preview_streams(),
+            &BTreeSet::from([preview_stream.clone()])
+        );
+        assert!(verified.resolved_preview_streams().is_empty());
+        assert!(
+            verified
+                .pages()
+                .iter()
+                .flat_map(|page| page.rows())
+                .all(|row| row.commit().stream_ref == verified_stream)
+        );
+        let product = verified.product_frame(&frame);
+        let entries = &product.realms.as_ref().unwrap().entries;
+        assert!(entries[REALM_ID].current.is_none() && entries[REALM_ID].baseline.is_none());
+        assert_eq!(
+            entries[REALM_ID].committed_events.as_ref().unwrap().len(),
+            1
+        );
+        assert_eq!(
+            entries[OTHER_REALM_ID].current,
+            frame.realms.as_ref().unwrap().entries[OTHER_REALM_ID].current
+        );
+        project(&mut store, &verified, "ak:cursor:preview-1");
+        let unresolved = station(2);
+        for event_id in event_ids(&unresolved.realms[&verified_id]) {
+            assert!(store.verified_message_commit(&event_id).is_some());
+        }
+        for event_id in event_ids(&unresolved.realms[&preview_id]) {
+            assert!(store.verified_message_commit(&event_id).is_none());
+        }
+        assert!(
+            store
+                .verified_commit_stream_cursor(&preview_stream)
+                .unwrap()
+                .is_none()
+        );
+
+        // 2. A contradicting row in a preview window still fails closed once
+        //    the replay can reach genesis.
+        let readable = station(0);
+        let mut forged = batch(&readable);
+        let entry = forged
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(REALM_ID)
+            .unwrap();
+        let CommittedEventView::Full(row) = &mut entry.committed_events.as_mut().unwrap()[0] else {
+            unreachable!()
+        };
+        row.commit.commit_id = arkret_sdk::RealmCommitId::from_digest([0x7e; 32]);
+        let Err(error) =
+            verify_account_frame_with(&AuthorityClient::new(readable), &http, &forged).await
+        else {
+            panic!("a forged preview row must fail closed");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("differs from verified stream row")
+        );
+
+        // 3. Backfill: the verified replay from genesis covers the preview
+        //    window and its head, so the stream becomes exact.
+        let readable = station(0);
+        let frame = batch(&readable);
+        let verified = verify_account_frame_with(&AuthorityClient::new(readable), &http, &frame)
+            .await
+            .unwrap();
+        assert!(verified.preview_streams().is_empty());
+        assert_eq!(
+            verified.resolved_preview_streams(),
+            &BTreeSet::from([preview_stream.clone()])
+        );
+        let product = verified.product_frame(&frame);
+        assert_eq!(
+            serde_json::to_value(&product).unwrap(),
+            serde_json::to_value(&frame).unwrap()
+        );
+        project(&mut store, &verified, "ak:cursor:preview-2");
+        for event_id in event_ids(&station(0).realms[&preview_id]) {
+            assert!(store.verified_message_commit(&event_id).is_some());
+        }
+
+        // 4. A non-preview window whose readable history starts above genesis
+        //    and names no signed basis still fails closed.
+        let mut restricted = station(0);
+        restricted
+            .realms
+            .get_mut(&verified_id)
+            .unwrap()
+            .readable_floor = 1;
+        let frame = batch(&restricted);
+        let Err(error) =
+            verify_account_frame_with(&AuthorityClient::new(restricted), &http, &frame).await
+        else {
+            panic!("a non-preview window above genesis must fail closed");
+        };
+        assert!(error.to_string().contains("readable-floor snapshot anchor"));
     }
 }
