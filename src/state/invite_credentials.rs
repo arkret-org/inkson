@@ -257,6 +257,11 @@ mod tests {
                 "station_id": "ak:did_core:web:station.example"
             },
             "invite_token": token,
+            "authority_locator_hints": [{
+                "service_kind": "station",
+                "service_id": "ak:did_core:web:station.example",
+                "source": "invite"
+            }],
             "received_at": received_at,
             "expires_at": expires_at
         })
