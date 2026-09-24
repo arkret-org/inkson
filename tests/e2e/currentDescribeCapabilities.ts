@@ -2,8 +2,8 @@ export const PRINCIPAL_HTTP_CORE_BUNDLE =
   "ak.operation_bundle.station.http_core.v1";
 export const PRINCIPAL_DESCRIBE_BUNDLE =
   "ak.operation_bundle.station.describe.v1";
-export const DIRECTORY_HTTP_CORE_BUNDLE =
-  "ak.operation_bundle.directory_service.http_core.v1";
+export const DIRECTORY_PUBLIC_READ_BUNDLE =
+  "ak.operation_bundle.directory_service.public_read.v1";
 export const DIRECTORY_DESCRIBE_BUNDLE =
   "ak.operation_bundle.directory_service.describe.v1";
 

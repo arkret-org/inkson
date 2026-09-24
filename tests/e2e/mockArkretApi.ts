@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   currentHttpDescribeCapabilities,
   DIRECTORY_DESCRIBE_BUNDLE,
-  DIRECTORY_HTTP_CORE_BUNDLE,
+  DIRECTORY_PUBLIC_READ_BUNDLE,
   PRINCIPAL_DESCRIBE_BUNDLE,
   PRINCIPAL_HTTP_CORE_BUNDLE,
 } from "./currentDescribeCapabilities";
@@ -3718,7 +3718,7 @@ function directoryServiceDescribe() {
     protocol_version: "1.0",
     supported_profiles: [],
     ...currentHttpDescribeCapabilities(
-      [DIRECTORY_DESCRIBE_BUNDLE, DIRECTORY_HTTP_CORE_BUNDLE],
+      [DIRECTORY_DESCRIBE_BUNDLE, DIRECTORY_PUBLIC_READ_BUNDLE],
       "https://server.local/_arkret/find/directory",
     ),
     supported_features: [],
