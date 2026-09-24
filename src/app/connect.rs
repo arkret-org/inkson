@@ -1553,8 +1553,7 @@ mod tests {
                 "status": "active",
                 "verification_state": "verified",
                 "verification_source": "genesis",
-                "authorized_event_ref": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
-                "signer_resolution_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                "authorized_event_ref": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e"
             }]
         });
 

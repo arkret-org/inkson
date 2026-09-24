@@ -1638,8 +1638,20 @@ impl EventSubmitter {
                     }
                     return Ok(*item);
                 }
-                OutboundEngineOutcome::Failed { item, error } if item.event_id() == &event_id => {
-                    anyhow::bail!("durable submission of {event_id} failed: {error}");
+                OutboundEngineOutcome::Failed {
+                    item,
+                    error,
+                    problem,
+                } if item.event_id() == &event_id => {
+                    let context = format!("durable submission of {event_id} failed");
+                    return Err(match problem {
+                        Some(problem) => anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+                            status: problem.status,
+                            error: problem,
+                        })
+                        .context(context),
+                        None => anyhow::anyhow!("{context}: {error}"),
+                    });
                 }
                 OutboundEngineOutcome::Retry { item, delay } if item.event_id() == &event_id => {
                     if retry_scope == InteractiveRetryScope::RealmBootstrap

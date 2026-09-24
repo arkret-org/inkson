@@ -939,7 +939,6 @@ export async function mockArkretApi(
       if (summary.verification_state === "verified") {
         summary.verification_source = "genesis";
         summary.authorized_event_ref = DEMO_FRONTIER_EVENT;
-        summary.signer_resolution_evidence_ref = `ak:signer_evidence:sha256:${"a".repeat(64)}`;
       }
       if (device.display_name !== undefined) {
         summary.display_name = device.display_name;

@@ -90,20 +90,6 @@ mod agent_tests {
     }
 
     #[test]
-    fn action_request_expired_only_when_now_strictly_after_expires_at() {
-        assert!(is_action_request_expired(
-            "2026-05-26T00:00:00.000Z",
-            "2026-05-27T00:00:00.000Z"
-        ));
-        assert!(!is_action_request_expired(
-            "2026-05-27T00:00:00.000Z",
-            "2026-05-26T00:00:00.000Z"
-        ));
-        assert!(!is_action_request_expired("", "2026-05-26T00:00:00.000Z"));
-        assert!(!is_action_request_expired("2026-05-26T00:00:00.000Z", ""));
-    }
-
-    #[test]
     fn nonce_status_badge_classes_are_distinct() {
         assert_ne!(
             ActionRequestNonceStatus::Fresh.badge_class(),
@@ -695,12 +681,8 @@ mod agent_tests {
             serde_json::json!({"content": {"body": "draft text"}}),
             serde_json::json!({"request_canonical_digest": format!("sha256:{}", "b".repeat(64))}),
         ] {
-            let error = build_action_approve_payload(
-                &request,
-                "2026-06-26T00:00:00.000Z",
-                "2026-06-26T01:00:00.000Z",
-            )
-            .unwrap_err();
+            let error =
+                build_action_approve_payload(&request, "2026-06-26T01:00:00.000Z").unwrap_err();
             assert!(
                 error
                     .to_string()
@@ -736,6 +718,7 @@ mod agent_tests {
             ActionApproveDialogState::Submitted,
             ActionApproveDialogState::Rejected,
             ActionApproveDialogState::NonceExhausted,
+            ActionApproveDialogState::Expired,
         ] {
             // Every variant maps to a non-empty kebab/snake string.
             let token = s.as_data_state();

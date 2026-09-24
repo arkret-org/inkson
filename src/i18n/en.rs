@@ -2133,6 +2133,14 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
         "error.agent.approval_already_consumed",
         "This approval nonce was already consumed. Request a fresh approval.",
     );
+    dict.set(
+        "error.agent.approval_expired",
+        "This confirmation reached the Station after its expiry. Ask the agent for a new request, then confirm again.",
+    );
+    dict.set(
+        "error.agent.approval_required",
+        "The confirmation for this action has expired. Confirm the action again before it can be published.",
+    );
 
     // Media binding.
     dict.set(

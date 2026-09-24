@@ -285,6 +285,44 @@ pub(crate) fn mls_send_refusal(error: &anyhow::Error) -> Option<garth::MlsSendRe
     garth::MlsSendRefusal::from_problem(envelope)
 }
 
+/// The governance Station refused an `ak.agent.action_approve` confirmation
+/// because its covering RealmCommit would commit after the payload
+/// `expires_at` (`constraint-schema.md` §9.2.6): a top-level
+/// `failed_precondition` with no dedicated reason, zero writes and no nonce
+/// allocation. The Station's signed `committed_at` is the only clock, so this
+/// answer, never a local time comparison, closes the confirmation window.
+///
+/// Only the confirmation submit call site may ask this: a bare
+/// `failed_precondition` means expiry there and nowhere else.
+pub(crate) fn is_agent_confirmation_expired_error(error: &anyhow::Error) -> bool {
+    use arkret_sdk::error_codes::ErrorCode;
+
+    crate::ephemeral::authority_rejected_for_reason(error, ErrorCode::FAILED_PRECONDITION)
+        || api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
+            envelope.code() == ErrorCode::FAILED_PRECONDITION
+                && !envelope.extensions.contains_key("reason_code")
+        })
+}
+
+/// The governance Station refused an approved Event whose covering
+/// RealmCommit would commit after the approval's `expires_at`
+/// (`constraint-schema.md` §9.2.6): the Event lacks a valid confirmation,
+/// reported as `claim_required` with reason `approval_required` and zero
+/// writes. The controller must confirm again before the Event can publish.
+pub(crate) fn is_agent_approval_required_error(error: &anyhow::Error) -> bool {
+    use arkret_sdk::error_codes::{ErrorCode, ReasonCode};
+
+    crate::ephemeral::authority_rejected_for_reason(error, ReasonCode::APPROVAL_REQUIRED)
+        || api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
+            envelope.code() == ErrorCode::CLAIM_REQUIRED
+                && envelope
+                    .extensions
+                    .get("reason_code")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(ReasonCode::APPROVAL_REQUIRED)
+        })
+}
+
 pub fn is_space_membership_denied_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         let code = envelope.code();

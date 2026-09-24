@@ -447,9 +447,6 @@ mod tests {
         });
         if let Some(authorized_event_ref) = authorized_event_ref {
             value["authorized_event_ref"] = authorized_event_ref;
-            value["signer_resolution_evidence_ref"] = serde_json::json!(
-                "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            );
         }
         serde_json::from_value(value).unwrap()
     }

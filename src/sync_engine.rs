@@ -3344,7 +3344,6 @@ mod tests {
                 "device_id":device,"status":"revoked","verification_state":"verified",
                 "verification_source":"pairing_code",
                 "authorized_event_ref":authorization_event,
-                "signer_resolution_evidence_ref":format!("ak:signer_evidence:sha256:{}", "3".repeat(64)),
                 "revocation_states":[{
                     "schema":"ak.schema.device_revocation_state.v1",
                     "account_id":account,
@@ -3355,7 +3354,8 @@ mod tests {
                     "committed_at":"2026-09-22T00:00:01.000Z"
                 }]
             }]
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(viewer.devices[0].validate().is_ok());
         assert!(device_summary_revokes_local_device(
             &viewer, &account, device

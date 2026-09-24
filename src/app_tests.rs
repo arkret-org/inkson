@@ -1,8 +1,6 @@
 use super::*;
 
 const VERIFIED_DEVICE_EVENT: &str = "ak:event:Ad0EZUHcfLJv92Of4w-RJec6fkNlWP11fsQAQ4dqUOHS";
-const VERIFIED_SIGNER_EVIDENCE: &str =
-    "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 fn test_client_config(
     server_url: &str,
@@ -272,8 +270,7 @@ fn verified_device_row(device: &str) -> serde_json::Value {
         "status": "active",
         "verification_state": "verified",
         "verification_source": "genesis",
-        "authorized_event_ref": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
-        "signer_resolution_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "authorized_event_ref": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e"
     })
 }
 
@@ -316,8 +313,7 @@ fn current_device_authorization_treats_missing_current_device_as_unauthorized() 
             "status": "active",
             "verification_state": "verified",
             "verification_source": "genesis",
-            "authorized_event_ref": VERIFIED_DEVICE_EVENT,
-            "signer_resolution_evidence_ref": VERIFIED_SIGNER_EVIDENCE
+            "authorized_event_ref": VERIFIED_DEVICE_EVENT
         }]
     });
 
@@ -400,8 +396,7 @@ fn account_has_other_active_devices_detects_prior_device() {
                 "status": "active",
                 "verification_state": "verified",
             "verification_source": "genesis",
-            "authorized_event_ref": VERIFIED_DEVICE_EVENT,
-            "signer_resolution_evidence_ref": VERIFIED_SIGNER_EVIDENCE
+            "authorized_event_ref": VERIFIED_DEVICE_EVENT
             },
             {
                 "device_id": current,
@@ -428,7 +423,6 @@ fn account_has_other_active_devices_ignores_revoked_prior_device() {
                 "verification_state": "verified",
             "verification_source": "genesis",
             "authorized_event_ref": VERIFIED_DEVICE_EVENT,
-            "signer_resolution_evidence_ref": VERIFIED_SIGNER_EVIDENCE,
                 "revoked_at": "2026-06-14T00:00:00.000Z"
             },
             {
@@ -436,8 +430,7 @@ fn account_has_other_active_devices_ignores_revoked_prior_device() {
                 "status": "active",
                 "verification_state": "verified",
             "verification_source": "genesis",
-            "authorized_event_ref": VERIFIED_DEVICE_EVENT,
-            "signer_resolution_evidence_ref": VERIFIED_SIGNER_EVIDENCE
+            "authorized_event_ref": VERIFIED_DEVICE_EVENT
             }
         ]
     });
@@ -467,9 +460,7 @@ fn current_device_authorization_rejects_authorized_at_without_verification() {
 fn current_device_authorization_rejects_current_record_without_authorization_evidence() {
     let device = "ak:device:01964137-0000-7000-8000-000000000001";
     let mut row = verified_device_row(device);
-    row.as_object_mut()
-        .unwrap()
-        .remove("signer_resolution_evidence_ref");
+    row.as_object_mut().unwrap().remove("authorized_event_ref");
     let viewer = serde_json::json!({
         "devices": [row]
     });

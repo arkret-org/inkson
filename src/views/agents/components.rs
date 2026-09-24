@@ -7,9 +7,8 @@ use serde_json::{Value, json};
 use super::model::{
     ActionApproveDialogState, ActionRequestNonceStatus, actor_kind_badge_class, actor_kind_label,
     approval_publication, build_action_approve_payload, build_action_reject_payload,
-    is_action_request_expired,
 };
-use crate::transport::auth::with_authed_api;
+use crate::transport::auth::{ApiCallError, with_authed_api};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::views::helpers::short_protocol_id;
@@ -32,6 +31,32 @@ pub fn ActorKindBadge(actor_kind: Option<String>) -> Element {
     }
 }
 
+/// Classify a failed confirmation submit into the dialog state it leaves and
+/// the status copy it shows.
+///
+/// Expiry is only ever the governance Station's verdict against the covering
+/// RealmCommit `committed_at` (`constraint-schema.md` §9.2.6); the client
+/// never compares `expires_at` with its own clock.
+fn approval_submit_failure(error: &ApiCallError) -> (ActionApproveDialogState, String) {
+    let inner = error.inner();
+    if crate::api_error::is_agent_confirmation_expired_error(inner) {
+        (
+            ActionApproveDialogState::Expired,
+            crate::api_error::localized_error_copy("error.agent.approval_expired"),
+        )
+    } else if crate::api_error::is_agent_approval_required_error(inner) {
+        (
+            ActionApproveDialogState::Reviewing,
+            crate::api_error::localized_error_copy("error.agent.approval_required"),
+        )
+    } else {
+        (
+            ActionApproveDialogState::Reviewing,
+            format!("approve failed: {}", error.display()),
+        )
+    }
+}
+
 /// Review a complete pre-signed Agent publication before submitting its
 /// target-Realm approval command. The attachment remains immutable on retries.
 #[component]
@@ -45,21 +70,18 @@ pub fn ActionApproveDialog(
     publication_event: arkret_sdk::Event,
     expires_at: String,
     nonce_status: String,
-    now: String,
 ) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state = use_signal(|| ActionApproveDialogState::Reviewing);
     let mut status_text = use_signal(String::new);
 
-    let expired = is_action_request_expired(&expires_at, &now);
     let nonce_st = match nonce_status.as_str() {
         "fresh" => ActionRequestNonceStatus::Fresh,
         "consumed" => ActionRequestNonceStatus::Consumed,
         _ => ActionRequestNonceStatus::Unknown,
     };
-    let can_submit = !expired
-        && nonce_st != ActionRequestNonceStatus::Consumed
+    let can_submit = nonce_st != ActionRequestNonceStatus::Consumed
         && state() == ActionApproveDialogState::Reviewing;
 
     rsx! {
@@ -77,13 +99,6 @@ pub fn ActionApproveDialog(
             }
             div { class: "muted", "data-testid": "action-approve-expires-at",
                 "expires_at: {expires_at}"
-            }
-            if expired {
-                div {
-                    class: "badge red",
-                    "data-testid": "action-approve-expiry-blocked",
-                    "expired — submit rejected"
-                }
             }
             div { class: "actions",
                 Button {
@@ -126,10 +141,8 @@ pub fn ActionApproveDialog(
                                     "target": target,
                                     "publication_event": publication,
                                 });
-                                let approved_at = crate::clock::now_timestamp();
                                 let op = build_action_approve_payload(
                                     &request_payload,
-                                    &approved_at,
                                     &approval_expires_at,
                                 )
                                 .and_then(|payload| {
@@ -168,10 +181,9 @@ pub fn ActionApproveDialog(
                                         ));
                                     }
                                     Err(err) => {
-                                        state.set(ActionApproveDialogState::Reviewing);
-                                        status_text.set(format!(
-                                            "approve failed: {}", err.display()
-                                        ));
+                                        let (next, status) = approval_submit_failure(&err);
+                                        state.set(next);
+                                        status_text.set(status);
                                     }
                                 }
                             });
@@ -354,11 +366,9 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_principal_id: String
                                                     let draft = drafts.read()[idx].clone();
                                                     // Default approval window: 1h
                                                     // from now, single-use nonce.
-                                                    let approved_at = crate::clock::now_timestamp();
                                                     let approval_expires_at = crate::clock::timestamp_in(60);
                                                     let op = build_action_approve_payload(
                                                         &draft,
-                                                        &approved_at,
                                                         &approval_expires_at,
                                                     )
                                                     .and_then(|payload| {
@@ -398,9 +408,9 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_principal_id: String
                                                                     resp.event_id
                                                                 ));
                                                             }
-                                                            Err(err) => panel_status.set(format!(
-                                                                "approve failed: {}", err.display()
-                                                            )),
+                                                            Err(err) => {
+                                                                panel_status.set(approval_submit_failure(&err).1)
+                                                            }
                                                         }
                                                     });
                                                 }

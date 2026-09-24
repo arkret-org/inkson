@@ -30,6 +30,14 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
         "error.agent.approval_already_consumed",
         "该 approval nonce 已被消费,请申请新的 approval。",
     );
+    dict.set(
+        "error.agent.approval_expired",
+        "该确认在有效期截止后才到达 Station。请让 Agent 重新发起请求,然后再次确认。",
+    );
+    dict.set(
+        "error.agent.approval_required",
+        "该操作的确认已过期。请重新确认后才能发布。",
+    );
 
     dict.set(
         "error.call.focus_unavailable_for_client",

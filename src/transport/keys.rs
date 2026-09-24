@@ -59,7 +59,6 @@ fn has_current_verification_checkpoint(
             && device.verification_state == arkret_sdk::DeviceSummaryVerificationState::Verified
             && device.verification_source.is_some()
             && device.authorized_event_ref.is_some()
-            && device.signer_resolution_evidence_ref.is_some()
             && device.validate().is_ok()
     })
 }
@@ -192,8 +191,7 @@ mod tests {
             "status": status,
             "verification_state": verification_state,
             "verification_source": verification_source,
-            "authorized_event_ref": with_checkpoint.then_some("ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e"),
-            "signer_resolution_evidence_ref": with_checkpoint.then_some("ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            "authorized_event_ref": with_checkpoint.then_some("ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e")
         }))
         .expect("valid device summary fixture")
     }
@@ -252,15 +250,15 @@ mod tests {
         );
         assert!(has_current_verification_checkpoint(&[active], &target));
 
-        let mut missing_signer_evidence = device(
+        let mut missing_authorization = device(
             DeviceSummaryStatus::Active,
             DeviceSummaryVerificationState::Verified,
             Some(DeviceSummaryVerificationSource::PairingCode),
             true,
         );
-        missing_signer_evidence.signer_resolution_evidence_ref = None;
+        missing_authorization.authorized_event_ref = None;
         assert!(!has_current_verification_checkpoint(
-            &[missing_signer_evidence],
+            &[missing_authorization],
             &target
         ));
 

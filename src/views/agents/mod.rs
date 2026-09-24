@@ -16,8 +16,8 @@ pub use model::{
     agent_state_label, approval_publication, build_action_approve_payload,
     build_action_reject_payload, build_agent_key_authorization_for_pairing,
     build_agent_pairing_bootstrap_json, build_requested_scope_disclosure_for_pairing,
-    content_actions_for_presets, into_agent_key_pair_request, is_action_request_expired,
-    is_pairing_request_expired, parse_runtime_key_approval_request, requested_scope_for_presets,
+    content_actions_for_presets, into_agent_key_pair_request, is_pairing_request_expired,
+    parse_runtime_key_approval_request, requested_scope_for_presets,
     runtime_key_pairing_error_message, service_actions_for_presets,
     summarize_runtime_key_approval_request,
 };

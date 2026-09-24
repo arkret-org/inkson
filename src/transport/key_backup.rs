@@ -240,8 +240,7 @@ mod tests {
             "status": "active",
             "verification_state": "verified",
             "verification_source": "pairing_code",
-            "authorized_event_ref": event_id,
-            "signer_resolution_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            "authorized_event_ref": event_id
         }))
         .unwrap();
         let expected = active.authorized_event_ref.clone().unwrap();
@@ -261,8 +260,7 @@ mod tests {
             "status": "revoked",
             "verification_state": "verified",
             "verification_source": "recovery",
-            "authorized_event_ref": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
-            "signer_resolution_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            "authorized_event_ref": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e"
         }))
         .unwrap();
         let active_without_commit: arkret_sdk::AccountDeviceSummary =

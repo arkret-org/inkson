@@ -172,6 +172,9 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
         if reason == ReasonCode::INVITE_LIVE_TARGET_OCCUPIED {
             return Some("error.invite.live_target_occupied");
         }
+        if envelope.code() == ErrorCode::CLAIM_REQUIRED && reason == ReasonCode::APPROVAL_REQUIRED {
+            return Some("error.agent.approval_required");
+        }
         if matches!(
             reason,
             r if r == ReasonCode::PAIRING_REQUEST_EXPIRED
@@ -736,5 +739,64 @@ mod tests {
             });
             assert!(!is_identity_creation_challenge_expired_error(&error));
         }
+    }
+
+    fn station_rejection(reason_code: &str) -> anyhow::Error {
+        crate::ephemeral::ensure_authority_accepted(arkret_wire::AuthoritySubmitOutcome::Rejected {
+            status: arkret_wire::AuthorityRejectionStatus::Rejected,
+            reason_code: reason_code.to_owned(),
+        })
+        .unwrap_err()
+    }
+
+    #[test]
+    fn agent_confirmation_expiry_is_the_bare_top_level_failed_precondition() {
+        use arkret_sdk::error_codes::{ErrorCode, ReasonCode};
+
+        let expired = api_error(Problem::from_code(
+            ErrorCode::FAILED_PRECONDITION,
+            "covering commit is after expires_at",
+        ))
+        .context("durable submission failed");
+        assert!(is_agent_confirmation_expired_error(&expired));
+        assert!(!is_agent_approval_required_error(&expired));
+        assert!(is_agent_confirmation_expired_error(&station_rejection(
+            ErrorCode::FAILED_PRECONDITION
+        )));
+
+        let consumed = api_error(
+            Problem::from_code(ErrorCode::FAILED_PRECONDITION, "nonce consumed").with_extension(
+                "reason_code",
+                Value::String(ReasonCode::APPROVAL_ALREADY_CONSUMED.to_owned()),
+            ),
+        );
+        assert!(!is_agent_confirmation_expired_error(&consumed));
+        assert!(!is_agent_confirmation_expired_error(&anyhow::anyhow!(
+            "failed_precondition"
+        )));
+    }
+
+    #[test]
+    fn an_expired_approval_asks_for_a_new_confirmation() {
+        use arkret_sdk::error_codes::{ErrorCode, ReasonCode};
+
+        let required = api_error(
+            Problem::from_code(ErrorCode::CLAIM_REQUIRED, "approval window closed").with_extension(
+                "reason_code",
+                Value::String(ReasonCode::APPROVAL_REQUIRED.to_owned()),
+            ),
+        );
+        assert!(is_agent_approval_required_error(&required));
+        assert!(!is_agent_confirmation_expired_error(&required));
+        assert_eq!(
+            user_facing_error_key(&required),
+            Some("error.agent.approval_required")
+        );
+        assert!(is_agent_approval_required_error(&station_rejection(
+            ReasonCode::APPROVAL_REQUIRED
+        )));
+
+        let other_claim = api_error(Problem::from_code(ErrorCode::CLAIM_REQUIRED, "claim"));
+        assert!(!is_agent_approval_required_error(&other_claim));
     }
 }

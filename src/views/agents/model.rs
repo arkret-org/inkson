@@ -819,9 +819,12 @@ pub enum ActionApproveDialogState {
     /// Controller explicitly rejected (or a `ak.agent.action_reject`
     /// is being submitted).
     Rejected,
-    /// The single-use nonce was already consumed by another approve
-    /// or the expiry passed.
+    /// The single-use nonce was already consumed by another approve.
     NonceExhausted,
+    /// The governance Station refused the confirmation because its covering
+    /// RealmCommit would commit after `expires_at`. Only a new request with a
+    /// new window can be confirmed.
+    Expired,
 }
 
 impl ActionApproveDialogState {
@@ -833,20 +836,9 @@ impl ActionApproveDialogState {
             Self::Submitted => "submitted",
             Self::Rejected => "rejected",
             Self::NonceExhausted => "nonce_exhausted",
+            Self::Expired => "expired",
         }
     }
-}
-
-/// Returns true when the per-request expiry timestamp has already
-/// passed. The dialog must refuse to submit an approve event once
-/// expiry elapses (agent spec §4 action_request invariants).
-pub fn is_action_request_expired(expires_at: &str, now: &str) -> bool {
-    // Both arguments are RFC3339 timestamps emitted by the SDK
-    // event-canonicalizer; do a lexicographic compare on UTC ISO-8601
-    // strings as a safe baseline. TODO(P3-impl): swap to chrono
-    // DateTime parsing once the timezone normalization path is
-    // settled.
-    !expires_at.is_empty() && !now.is_empty() && now > expires_at
 }
 
 /// Single-use nonce status. The reducer is the source of truth — the
@@ -998,9 +990,12 @@ pub fn approval_publication(request: &Value) -> anyhow::Result<arkret_sdk::Event
 
 /// Build a `ak.agent.action_approve` payload for a controller-owned
 /// draft or action request using the current schema fields.
+///
+/// The payload carries no confirmation time: the envelope `created_at` is the
+/// display-only confirmation time, and the governance Station alone judges
+/// `expires_at` against the covering RealmCommit `committed_at`.
 pub fn build_action_approve_payload(
     request: &Value,
-    approved_at: &str,
     expires_at: &str,
 ) -> anyhow::Result<arkret_sdk::AgentActionApprovePayload> {
     let draft_content_digest = request.get("content").and_then(canonical_digest);
@@ -1029,7 +1024,6 @@ pub fn build_action_approve_payload(
             .map(arkret_sdk::Hash::new)
             .transpose()?,
         approval_nonce: crate::operation::uuid_v7(),
-        approved_at: chrono::DateTime::parse_from_rfc3339(approved_at)?.with_timezone(&chrono::Utc),
         expires_at: chrono::DateTime::parse_from_rfc3339(expires_at)?.with_timezone(&chrono::Utc),
     })
 }
