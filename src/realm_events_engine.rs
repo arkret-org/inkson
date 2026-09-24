@@ -664,7 +664,8 @@ impl VerifiedAccountFrame {
 
 /// The first product installer is intentionally narrow: the two complete
 /// collaboration-genesis rows from a signed one-stream cut. The readable tail
-/// may contain audit facts or the closed, whole-value Realm profile reducer.
+/// may contain audit facts, closed Realm profile writes, or the registered
+/// history-access state transition.
 fn admit_single_stream_floor_current(
     entry: &arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry,
     realm_id: &arkret_sdk::RealmId,
@@ -752,6 +753,45 @@ fn fold_floor_current_tail(
                     },
                     value,
                 });
+            } else if full.event.kind.as_str() == "ak.realm.history_access" {
+                let previous = rows.iter().find_map(|row| match row {
+                    arkret_wire::TypedCurrentResult::Value {
+                        selector: arkret_wire::CurrentSelector::RealmHistoryAccess,
+                        value,
+                        ..
+                    } => Some(value),
+                    _ => None,
+                });
+                let previous = previous
+                    .map(|value| {
+                        serde_json::from_value::<arkret_sdk::HistoryAccess>(value.clone())
+                            .map_err(|error| garth::Error::Protocol(error.to_string()))
+                    })
+                    .transpose()?;
+                let next = closed_history_transition(
+                    previous,
+                    serde_json::to_value(&full.event.payload)
+                        .map_err(|error| garth::Error::Protocol(error.to_string()))?,
+                )?;
+                rows.retain(|row| {
+                    !matches!(
+                        row,
+                        arkret_wire::TypedCurrentResult::Value {
+                            selector: arkret_wire::CurrentSelector::RealmHistoryAccess,
+                            ..
+                        }
+                    )
+                });
+                rows.push(arkret_wire::TypedCurrentResult::Value {
+                    selector: arkret_wire::CurrentSelector::RealmHistoryAccess,
+                    source_stream_ref: full.commit.stream_ref.clone(),
+                    revision: arkret_wire::CurrentRevision {
+                        commit_id: full.commit.commit_id.clone(),
+                        stream_position: full.commit.stream_position,
+                    },
+                    value: serde_json::to_value(next)
+                        .map_err(|error| garth::Error::Protocol(error.to_string()))?,
+                });
             } else {
                 return Err(garth::Error::Protocol(
                     "floor current tail has an unsupported typed reducer".to_owned(),
@@ -760,6 +800,50 @@ fn fold_floor_current_tail(
         }
     }
     Ok(rows)
+}
+
+fn closed_history_transition(
+    previous: Option<arkret_sdk::HistoryAccess>,
+    payload: serde_json::Value,
+) -> garth::Result<arkret_sdk::HistoryAccess> {
+    if payload.get("from").is_none() {
+        return Err(garth::Error::Protocol(
+            "Realm history access tail omits required from".to_owned(),
+        ));
+    }
+    if payload
+        .get("reason")
+        .is_some_and(|reason| !reason.is_string())
+    {
+        return Err(garth::Error::Protocol(
+            "Realm history access tail has a non-string reason".to_owned(),
+        ));
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct HistoryTransition {
+        from: Option<arkret_sdk::HistoryAccess>,
+        to: arkret_sdk::HistoryAccess,
+        #[allow(dead_code)]
+        reason: Option<String>,
+    }
+    let transition: HistoryTransition = serde_json::from_value(payload)
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    let allowed = match (&previous, &transition.from, &transition.to) {
+        (None, None, _) => true,
+        (
+            Some(arkret_sdk::HistoryAccess::AllHistoryForCurrentMembers),
+            Some(arkret_sdk::HistoryAccess::AllHistoryForCurrentMembers),
+            arkret_sdk::HistoryAccess::SinceJoin,
+        ) => true,
+        _ => false,
+    };
+    if !allowed {
+        return Err(garth::Error::Protocol(
+            "Realm history access tail violates its closed transition".to_owned(),
+        ));
+    }
+    Ok(transition.to)
 }
 
 fn validate_floor_current_rows(
@@ -1123,12 +1207,18 @@ mod tests {
     const DEVICE_ID: &str = "ak:device:01904100-0000-7000-8000-000000000003";
 
     #[test]
-    fn verified_profile_tail_requires_exact_covering_commit_and_atomic_install() {
+    fn verified_profile_and_history_tail_require_exact_commits_and_atomic_install() {
         let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
         let profile = json!({"schema": "ak.schema.realm_profile.v1", "title": "After floor"});
         let (bundle, keys, items) = crate::test_support::committed_event::verified_realm_fixture_as(
             realm_id.clone(),
-            vec![("ak.realm.profile".to_owned(), profile.clone())],
+            vec![
+                ("ak.realm.profile".to_owned(), profile.clone()),
+                (
+                    "ak.realm.history_access".to_owned(),
+                    json!({"from": null, "to": "since_join"}),
+                ),
+            ],
             "alice.example",
             DEVICE_ID,
         );
@@ -1185,7 +1275,11 @@ mod tests {
             limit: 10,
         };
         let scan = arkret_sdk::StreamScanOutcome {
-            committed_events: vec![CommittedEventView::Full(items[0].clone())],
+            committed_events: items
+                .iter()
+                .cloned()
+                .map(CommittedEventView::Full)
+                .collect(),
             readable_floor: Some(arkret_sdk::ReadableFloor {
                 oldest_position: 1,
                 floor_commit_id: items[0].commit.commit_id.clone(),
@@ -1204,7 +1298,7 @@ mod tests {
         )
         .unwrap();
         let expected = fold_floor_current_tail(Vec::new(), &pages).unwrap();
-        assert_eq!(expected.len(), 1);
+        assert_eq!(expected.len(), 2);
         let TypedCurrentResult::Value {
             source_stream_ref,
             revision,
@@ -1218,6 +1312,20 @@ mod tests {
         assert_eq!(revision.commit_id, items[0].commit.commit_id);
         assert_eq!(revision.stream_position, items[0].commit.stream_position);
         assert_eq!(value, &profile);
+        let TypedCurrentResult::Value {
+            selector,
+            source_stream_ref,
+            revision,
+            value,
+        } = &expected[1]
+        else {
+            panic!("history access must be a closed value");
+        };
+        assert_eq!(selector, &arkret_wire::CurrentSelector::RealmHistoryAccess);
+        assert_eq!(source_stream_ref, &stream_ref);
+        assert_eq!(revision.commit_id, items[1].commit.commit_id);
+        assert_eq!(revision.stream_position, items[1].commit.stream_position);
+        assert_eq!(value, "since_join");
         require_exact_floor_tail_current(&expected, &expected).unwrap();
 
         let mut forged = expected.clone();
@@ -1245,6 +1353,32 @@ mod tests {
             unreachable!()
         };
         *value = json!({"schema": "ak.schema.realm_profile.v1", "title": "Forged"});
+        assert!(require_exact_floor_tail_current(&forged, &expected).is_err());
+        let mut forged = expected.clone();
+        let TypedCurrentResult::Value { revision, .. } = &mut forged[1] else {
+            unreachable!()
+        };
+        revision.commit_id = items[0].commit.commit_id.clone();
+        assert!(require_exact_floor_tail_current(&forged, &expected).is_err());
+        let mut forged = expected.clone();
+        let TypedCurrentResult::Value {
+            source_stream_ref, ..
+        } = &mut forged[1]
+        else {
+            unreachable!()
+        };
+        *source_stream_ref = CommitStreamRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AfTcej7ZFNg8uTbkOiUJT0KN1F_c9l1fmtil65CUwncm",
+            )
+            .unwrap(),
+        };
+        assert!(require_exact_floor_tail_current(&forged, &expected).is_err());
+        let mut forged = expected.clone();
+        let TypedCurrentResult::Value { value, .. } = &mut forged[1] else {
+            unreachable!()
+        };
+        *value = json!("all_history_for_current_members");
         assert!(require_exact_floor_tail_current(&forged, &expected).is_err());
 
         let path = std::env::temp_dir().join(format!(
@@ -1295,6 +1429,62 @@ mod tests {
             "After floor"
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn history_access_tail_obeys_registered_one_way_transition() {
+        use arkret_sdk::HistoryAccess::{AllHistoryForCurrentMembers, SinceJoin};
+
+        assert_eq!(
+            closed_history_transition(None, json!({"from": null, "to": "since_join"})).unwrap(),
+            SinceJoin
+        );
+        assert_eq!(
+            closed_history_transition(
+                None,
+                json!({"from": null, "to": "all_history_for_current_members"})
+            )
+            .unwrap(),
+            AllHistoryForCurrentMembers
+        );
+        assert_eq!(
+            closed_history_transition(
+                Some(AllHistoryForCurrentMembers),
+                json!({"from": "all_history_for_current_members", "to": "since_join"})
+            )
+            .unwrap(),
+            SinceJoin
+        );
+        for (prior, payload) in [
+            (None, json!({"to": "since_join"})),
+            (None, json!({"from": "since_join", "to": "since_join"})),
+            (
+                Some(SinceJoin),
+                json!({"from": "since_join", "to": "all_history_for_current_members"}),
+            ),
+            (
+                Some(SinceJoin),
+                json!({"from": "since_join", "to": "since_join"}),
+            ),
+            (
+                Some(AllHistoryForCurrentMembers),
+                json!({"from": null, "to": "since_join"}),
+            ),
+            (
+                Some(AllHistoryForCurrentMembers),
+                json!({"from": "since_join", "to": "since_join"}),
+            ),
+            (
+                None,
+                json!({"from": null, "to": "since_join", "other": true}),
+            ),
+            (
+                None,
+                json!({"from": null, "to": "since_join", "reason": null}),
+            ),
+        ] {
+            assert!(closed_history_transition(prior, payload).is_err());
+        }
     }
 
     #[test]
