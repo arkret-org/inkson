@@ -633,7 +633,7 @@ impl InksonAccountProjector {
         &self,
         frame: &AccountSubscribeFrame,
         cursor: &str,
-        verified_pages: &[garth::VerifiedScanPage],
+        verified: &crate::realm_events_engine::VerifiedAccountFrame,
         next_checkpoint: Option<&(garth::CursorScope, garth::AccountCursorCheckpoint)>,
     ) -> garth::Result<()> {
         if frame.kind == AccountSubscribeFrameKind::ResyncRequired {
@@ -663,7 +663,7 @@ impl InksonAccountProjector {
             .state_store
             .write(|store| {
                 store.verified_projection_transaction(|store| {
-                    for page in verified_pages {
+                    for page in verified.pages() {
                         store.ingest_verified_message_commits(page)?;
                         crate::identity::agent_signer_evidence::index_verified_committed_page(
                             store, page,
@@ -674,6 +674,7 @@ impl InksonAccountProjector {
                         .map_err(|error| error.to_string())?;
                     let effects = apply_account_frame_payload(store, &response, &self.ctx)
                         .map_err(|error| error.to_string())?;
+                    verified.install_floor_current(store)?;
                     if changed_device_accounts(&response.device_lists()).contains(&local_account) {
                         store.set_local_device_refresh_pending(true);
                     }
@@ -922,11 +923,11 @@ impl InksonAccountProjector {
                 .push(crate::realm_events_engine::verify_account_frame_commits(http, frame).await?);
         }
         self.validate_station_cas_batch(batch).await?;
-        for (index, (frame, pages)) in batch.frames.iter().zip(verified.iter()).enumerate() {
+        for (index, (frame, proof)) in batch.frames.iter().zip(verified.iter()).enumerate() {
             let final_checkpoint = (index + 1 == batch.frames.len())
                 .then_some(next_checkpoint.as_ref())
                 .flatten();
-            self.project_frame(frame, &batch.cursor, pages, final_checkpoint)
+            self.project_frame(frame, &batch.cursor, proof, final_checkpoint)
                 .await?;
         }
         Ok(())
