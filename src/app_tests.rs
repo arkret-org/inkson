@@ -1112,7 +1112,7 @@ fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
 const ENCRYPTED_REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
 #[cfg(not(target_arch = "wasm32"))]
-fn encrypted_realm_projection() -> serde_json::Value {
+fn encrypted_realm_current() -> arkret_wire::TypedCurrentResult {
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(ENCRYPTED_REALM).unwrap(),
     };
@@ -1137,7 +1137,7 @@ fn encrypted_realm_projection() -> serde_json::Value {
         },
         value: serde_json::to_value(group).unwrap(),
     };
-    serde_json::json!({ "current": [current] })
+    current
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1160,7 +1160,12 @@ fn active_secret_storage_series(series_id: &str) -> serde_json::Value {
 #[test]
 fn mls_recovery_setup_missing_flags_encrypted_realm_without_account_backup() {
     let mut store = isolated_store("mls-recovery-missing");
-    store.save_realm_tree_projection(ENCRYPTED_REALM.to_owned(), encrypted_realm_projection());
+    store.save_realm_tree_projection(ENCRYPTED_REALM.to_owned(), serde_json::json!({}));
+    crate::test_support::install_current_entries(
+        &mut store,
+        ENCRYPTED_REALM,
+        vec![encrypted_realm_current()],
+    );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({ "backups": [] });
 
@@ -1177,7 +1182,12 @@ fn mls_recovery_setup_missing_flags_encrypted_realm_without_account_backup() {
 #[test]
 fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
     let mut store = isolated_store("mls-recovery-backed-up");
-    store.save_realm_tree_projection(ENCRYPTED_REALM.to_owned(), encrypted_realm_projection());
+    store.save_realm_tree_projection(ENCRYPTED_REALM.to_owned(), serde_json::json!({}));
+    crate::test_support::install_current_entries(
+        &mut store,
+        ENCRYPTED_REALM,
+        vec![encrypted_realm_current()],
+    );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({
         "active_series": active_secret_storage_series("ak:backup_series:01964137-1000-7000-8000-0000000000a1"),
@@ -1206,7 +1216,12 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
 #[test]
 fn mls_recovery_setup_missing_stays_false_when_account_recovery_is_configured() {
     let mut store = isolated_store("mls-recovery-account-configured");
-    store.save_realm_tree_projection(ENCRYPTED_REALM.to_owned(), encrypted_realm_projection());
+    store.save_realm_tree_projection(ENCRYPTED_REALM.to_owned(), serde_json::json!({}));
+    crate::test_support::install_current_entries(
+        &mut store,
+        ENCRYPTED_REALM,
+        vec![encrypted_realm_current()],
+    );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({ "backups": [] });
 
@@ -1223,7 +1238,12 @@ fn mls_recovery_setup_missing_stays_false_when_account_recovery_is_configured() 
 #[test]
 fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_secret_storage_backup() {
     let mut store = isolated_store("mls-recovery-local-did-backup");
-    store.save_realm_tree_projection(ENCRYPTED_REALM.to_owned(), encrypted_realm_projection());
+    store.save_realm_tree_projection(ENCRYPTED_REALM.to_owned(), serde_json::json!({}));
+    crate::test_support::install_current_entries(
+        &mut store,
+        ENCRYPTED_REALM,
+        vec![encrypted_realm_current()],
+    );
     store.save_plain_local_data(
         "recovery.state.v1",
         serde_json::json!({

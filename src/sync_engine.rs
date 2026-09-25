@@ -25,7 +25,6 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use anyhow::Context as _;
 use arkret_models_collaboration::sync_frames::account_subscribe::{
     AccountFilter, AccountSubscribeBatch, AccountSubscribeDeviceListChanges, AccountSubscribeFrame,
     AccountSubscribeFrameKind, SyncRequestBody,
@@ -471,6 +470,23 @@ impl InksonAccountProjector {
             return false;
         }
         true
+    }
+
+    /// Install the selected Realm's product view from what the durable index
+    /// already holds, before the first frame of this run arrives. A reload or a
+    /// Realm switch thereby shows the committed current rows at once instead of
+    /// waiting for the Station to send a delta.
+    async fn prime_current_product_view(&self) {
+        let index = match self.current_index().await {
+            Ok(index) => index,
+            Err(error) => {
+                tracing::debug!(%error, "current index is not available for the product view yet");
+                return;
+            }
+        };
+        if let Err(error) = refresh_current_product_view(&index, &self.ctx).await {
+            tracing::warn!(%error, "current product view remains pending");
+        }
     }
 
     async fn current_index(&self) -> garth::Result<crate::state::CurrentIndex> {
@@ -1004,14 +1020,19 @@ pub async fn run_sync_engine(
             transport,
         };
         let result = {
-            let run = subscription.run(
-                &projector.transport,
-                &projector,
-                None,
-                actor_id.clone(),
-                device_id.clone(),
-                request,
-            );
+            let run = async {
+                projector.prime_current_product_view().await;
+                subscription
+                    .run(
+                        &projector.transport,
+                        &projector,
+                        None,
+                        actor_id.clone(),
+                        device_id.clone(),
+                        request,
+                    )
+                    .await
+            };
             let maintenance = current_index_maintenance(&provider, &projector);
             futures_util::pin_mut!(run, maintenance);
             match futures_util::future::select(run, maintenance).await {
@@ -1131,19 +1152,15 @@ fn selected_account_filter(ctx: &SyncEngineContext) -> AccountFilter {
     }
 }
 
-/// Install the selected Realm's bounded typed current view.
+/// Install the selected Realm's product view from the durable current index.
 ///
 /// A current result is authority-signed: the Station computed it and named the
 /// exact `RealmCommit` revision it holds at, so nothing here re-runs a reducer,
-/// replays Event order, or reads a Cell projection. The entries arrive inside
-/// the Realm entry the account aggregate already delivered, which is why this
-/// runs after the frame is durable rather than as a second network read.
-///
-/// `_index` stays in the signature because the durable current index owns the
-/// staging and compaction of those same frames; it is intentionally not a
-/// second source of the view installed here.
+/// replays Event order, or reads a Cell projection. The rows are read in
+/// bounded pages of the index the frame was just committed to and held only in
+/// memory; the account blob carries no copy of them.
 async fn refresh_current_product_view(
-    _index: &crate::state::CurrentIndex,
+    index: &crate::state::CurrentIndex,
     ctx: &SyncEngineContext,
 ) -> anyhow::Result<()> {
     let realm_id = ctx.selected_realm_id.get();
@@ -1151,16 +1168,18 @@ async fn refresh_current_product_view(
         return Ok(());
     }
     let session_generation = ctx.session.generation();
-    let Some(entries) = ctx.state_store.read(|store| {
-        store
-            .realm_tree_projection(&realm_id)
-            .as_ref()
-            .and_then(|body| body.get("current").cloned())
-    }) else {
-        return Ok(());
-    };
-    let entries: Vec<arkret_wire::TypedCurrentResult> = serde_json::from_value(entries)
-        .context("Realm entry carried a non-canonical current result array")?;
+    let mut entries = Vec::new();
+    let mut after: Option<String> = None;
+    loop {
+        let page = index
+            .read_realm_page(&realm_id, after.as_deref(), CURRENT_VIEW_PAGE)
+            .await?;
+        entries.extend(page.entries);
+        match page.next_cursor {
+            Some(next) => after = Some(next),
+            None => break,
+        }
+    }
     if ctx.effect.is_cancelled()
         || ctx.session.generation() != session_generation
         || ctx.selected_realm_id.get() != realm_id
@@ -1170,13 +1189,16 @@ async fn refresh_current_product_view(
     {
         return Ok(());
     }
-    let ready = crate::current_projection::required_realm_values_ready(&entries);
+    let view = crate::current_projection::RealmCurrentView::new(&realm_id, entries)?;
     ctx.state_store
-        .write(|store| store.install_current_product_view(&realm_id, entries, ready))?;
+        .write(|store| store.install_current_product_view(view))?;
     ctx.realm_live_epoch
         .update(|epoch| *epoch = epoch.wrapping_add(1));
     Ok(())
 }
+
+/// Rows per bounded index read while installing the product view.
+const CURRENT_VIEW_PAGE: usize = 100;
 
 fn scope_rotate_realm_ids(
     response: &AccountFrameStep,
@@ -1423,9 +1445,12 @@ mod removal_schedule_tests {
         crate::test_support::install_accepted_mls_group_at_epoch(&mut store, &scope, 1, 7);
         assert!(removal_scope_stamp(&store, &scope, &desired).is_some());
 
-        let mut projection = store.realm_tree_projection(REALM).unwrap();
-        projection["current"][0]["value"]["covered_key_access_revision"] = serde_json::json!(6);
-        store.save_realm_tree_projection(REALM, projection);
+        let mut entries = store.realm_current_state_entries(REALM);
+        let arkret_wire::TypedCurrentResult::Value { value, .. } = &mut entries[0] else {
+            panic!("fixture installs a value row");
+        };
+        value["covered_key_access_revision"] = serde_json::json!(6);
+        crate::test_support::install_current_entries(&mut store, REALM, entries);
         assert!(removal_scope_stamp(&store, &scope, &desired).is_none());
     }
 }
@@ -1510,7 +1535,7 @@ async fn run_circle_scope_rotate_pass(
                 };
                 let has_mls_genesis = ctx.state_store.read(|store| {
                     crate::current_projection::scope_has_accepted_mls_genesis(
-                        &store.cached_current_entries(realm.as_str()),
+                        &store.realm_current_state_entries(realm.as_str()),
                         &scope,
                     )
                 });
@@ -3385,8 +3410,16 @@ fn apply_account_frame_payload(
         // Summary/member/state-only deltas must invalidate durable
         // consumers just as timeline events do.
         realm_projection_changed = true;
+        // Typed current rows and baseline progress are owned by the durable
+        // current index, which installed this frame before the projection is
+        // folded. The account blob keeps no second copy of either.
+        let mut body = body.clone();
+        if let Some(object) = body.as_object_mut() {
+            object.remove("current");
+            object.remove("baseline");
+        }
         let existing = store.realm_tree_projection(id);
-        let frame = RealmProjectionFrame::Incremental(body);
+        let frame = RealmProjectionFrame::Incremental(&body);
         let projection = reconcile_realm_projection(existing.as_ref(), frame);
         store.save_realm_tree_projection(id.to_owned(), projection.clone());
         if response.step.has_window_start_realm_metadata(id) {

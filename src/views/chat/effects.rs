@@ -600,7 +600,10 @@ pub(super) fn ChatEffects(
                         Some(&store),
                         local_decrypt_identity,
                     ),
-                    channels_from_local_state(&snapshot, &selected_realm_for_load),
+                    channels_from_current_view(
+                        store.current_product_view().as_ref(),
+                        &selected_realm_for_load,
+                    ),
                 )
             };
             if !local_channels.is_empty() {
@@ -737,7 +740,10 @@ pub(super) fn ChatEffects(
                 }
 
                 event_sink.emit(ChatProjectionEvent::MergeChannels(
-                    channels_from_local_state(&state_store.read().load(), &selected_realm_for_load),
+                    channels_from_current_view(
+                        state_store.read().current_product_view().as_ref(),
+                        &selected_realm_for_load,
+                    ),
                 ));
                 if selected_channel().trim().is_empty()
                     && let Some(first_channel) = channels.read().first()

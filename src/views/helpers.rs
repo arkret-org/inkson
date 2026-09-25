@@ -420,22 +420,6 @@ mod tests {
     }
 }
 
-/// The authority-signed typed current results a Realm projection carries.
-///
-/// `crate::current_projection::install_complete_view` stores the snapshot's
-/// `current_state_entries` under `current`, so this is the one read path from
-/// a stored projection body to the Station's selected values.
-pub(crate) fn projection_current_state_entries(
-    projection: &serde_json::Value,
-) -> Vec<arkret_wire::TypedCurrentResult> {
-    projection
-        .get("current")
-        .and_then(|entries| {
-            serde_json::from_value::<Vec<arkret_wire::TypedCurrentResult>>(entries.clone()).ok()
-        })
-        .unwrap_or_default()
-}
-
 /// Home Realm of a stored projection body, falling back to the key it is
 /// stored under.
 fn projection_home_realm_id(projection: &serde_json::Value, stored_under: &str) -> String {
@@ -459,18 +443,17 @@ fn projection_home_realm_id(projection: &serde_json::Value, stored_under: &str) 
 /// A scope is plaintext until its own accepted `ak.mls.genesis` and
 /// irreversibly standard RFC 9420 afterwards, so the presence of the Station's
 /// `MlsGroup` current result for that scope is the whole judgement. `None`
-/// means the Realm's snapshot has not been installed yet — never "plaintext";
+/// means no current view of that Realm is installed — never "plaintext";
 /// gates that could leak plaintext must fail closed on it.
 pub(crate) fn realm_scope_security_state(
-    projections: &std::collections::BTreeMap<String, serde_json::Value>,
+    current: Option<&crate::current_projection::RealmCurrentView>,
     realm_id: &str,
 ) -> Option<bool> {
     let realm_id = realm_id.trim();
-    let projection = projections.get(realm_id)?;
+    let entries = current?.entries_for(realm_id)?;
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?;
-    let entries = projection_current_state_entries(projection);
     Some(crate::current_projection::scope_has_accepted_mls_genesis(
-        &entries,
+        entries,
         &arkret_sdk::ScopeRef::Realm { realm_id: realm },
     ))
 }
@@ -483,6 +466,7 @@ pub(crate) fn realm_scope_security_state(
 /// carry a scope of its own.
 pub(crate) fn scope_security_state(
     projections: &std::collections::BTreeMap<String, serde_json::Value>,
+    current: Option<&crate::current_projection::RealmCurrentView>,
     scope_id: &str,
 ) -> Option<bool> {
     let scope_id = scope_id.trim();
@@ -490,5 +474,5 @@ pub(crate) fn scope_security_state(
         return None;
     }
     let projection = projections.get(scope_id)?;
-    realm_scope_security_state(projections, &projection_home_realm_id(projection, scope_id))
+    realm_scope_security_state(current, &projection_home_realm_id(projection, scope_id))
 }

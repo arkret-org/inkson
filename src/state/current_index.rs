@@ -492,9 +492,6 @@ const MARK_STREAMS: [&str; 2] = ["progress/", "coverage/"];
 #[derive(Clone, Debug)]
 pub(crate) struct CurrentTargetPage {
     pub entries: Vec<TypedCurrentResult>,
-    // Pagination is owned by the 0540 durable-index follow-up. Keep the cursor
-    // in the internal result shape until that reader is wired.
-    #[allow(dead_code)]
     pub next_cursor: Option<String>,
 }
 
@@ -533,9 +530,6 @@ fn version(generation: u64) -> String {
 }
 fn target_key(target: &CurrentTarget) -> anyhow::Result<String> {
     hash(target)
-}
-fn member_all_key() -> &'static str {
-    "member-all"
 }
 /// Snapshot cursors reach storage only as this digest, so marks and `seen`
 /// keys address the same snapshot without keeping the cursor itself around.
@@ -948,13 +942,12 @@ impl CurrentIndex {
         }
         Ok(Some(entry))
     }
-    // These bounded readers are the explicit 0540 hand-off surface.
-    #[allow(dead_code)]
     pub(crate) async fn read_progress(&self, realm: &str) -> anyhow::Result<CurrentRealmProgress> {
         let _lease = self.lease.lock().await;
         self.progress_at(realm, self.generation.load(Ordering::Acquire))
             .await
     }
+    #[cfg(test)]
     pub(crate) async fn read_target_page(
         &self,
         realm: &str,
@@ -962,23 +955,30 @@ impl CurrentIndex {
         after: Option<&str>,
         limit: usize,
     ) -> anyhow::Result<CurrentTargetPage> {
-        self.read_region_page(realm, &target_key(target)?, after, limit)
-            .await
+        let prefix = format!(
+            "{}target/{}/{}/",
+            self.prefix,
+            hash(&realm)?,
+            target_key(target)?
+        );
+        self.read_region_page(realm, prefix, after, limit).await
     }
-    #[allow(dead_code)]
-    pub(crate) async fn read_members_page(
+    /// One bounded page of every product-ready current row of a Realm, in
+    /// index order. `next_cursor` resumes the scan; `None` means the Realm's
+    /// rows are exhausted.
+    pub(crate) async fn read_realm_page(
         &self,
         realm: &str,
         after: Option<&str>,
         limit: usize,
     ) -> anyhow::Result<CurrentTargetPage> {
-        self.read_region_page(realm, member_all_key(), after, limit)
-            .await
+        let prefix = format!("{}target/{}/", self.prefix, hash(&realm)?);
+        self.read_region_page(realm, prefix, after, limit).await
     }
     async fn read_region_page(
         &self,
         realm: &str,
-        target: &str,
+        prefix: String,
         after: Option<&str>,
         limit: usize,
     ) -> anyhow::Result<CurrentTargetPage> {
@@ -988,7 +988,6 @@ impl CurrentIndex {
         );
         let _lease = self.lease.lock().await;
         let generation = self.generation.load(Ordering::Acquire);
-        let prefix = format!("{}target/{}/{target}/", self.prefix, hash(&realm)?);
         if let Some(after) = after {
             anyhow::ensure!(
                 after.starts_with(&prefix),
@@ -1260,18 +1259,6 @@ impl CurrentIndex {
                             ),
                             serde_json::to_vec(selector)?,
                         );
-                        if matches!(target, CurrentTarget::Member { .. }) {
-                            unversioned.insert(
-                                format!(
-                                    "{}target/{}/{}/{}",
-                                    self.prefix,
-                                    hash(realm)?,
-                                    member_all_key(),
-                                    hash(selector)?
-                                ),
-                                serde_json::to_vec(selector)?,
-                            );
-                        }
                     }
                     if let Some(cleanup) = &plan.cleanup {
                         let prefix = self.mark_prefix(realm)?;
@@ -1758,9 +1745,7 @@ impl CurrentIndex {
             }
             deletes.extend(versions.iter().cloned());
             if versions.len() < 100 {
-                // The selector may have more than one target index (member
-                // rows also have `member-all`). This scan reaches and deletes
-                // each concrete index key independently.
+                // This scan reaches and deletes each concrete index key.
                 deletes.push(index_key.clone());
                 task.after = Some(index_key);
             }
@@ -2677,6 +2662,231 @@ mod tests {
                 .is_some()
         );
     }
+    fn membership_row(
+        realm: &str,
+        actor: &str,
+        revision: u64,
+        membership: &str,
+    ) -> TypedCurrentResult {
+        serde_json::from_value(json!({
+            "selector":{"kind":"member_state","actor_id":{"kind":"service","service_id":actor}},
+            "source_stream_ref":{"kind":"realm","realm_id":realm},
+            "revision":{"commit_id":COMMIT,"stream_position":revision},
+            "value":{"membership":membership}
+        }))
+        .unwrap()
+    }
+    fn actor(n: usize) -> String {
+        format!("ak:did_core:webvh:z6mkactor{n:04}")
+    }
+    /// Deliver `rows` as one frozen baseline in frames of at most 100 rows,
+    /// complete on the last frame. Returns the next generation.
+    async fn stage_baseline(
+        index: &CurrentIndex,
+        mut generation: u64,
+        realm: &str,
+        rows: Vec<TypedCurrentResult>,
+        snapshot: &str,
+        cut: u64,
+    ) -> u64 {
+        let chunks = rows.chunks(100).collect::<Vec<_>>();
+        for (n, chunk) in chunks.iter().enumerate() {
+            let complete = n + 1 == chunks.len();
+            index
+                .stage_frame(
+                    generation,
+                    &realm_frame(
+                        realm,
+                        chunk.to_vec(),
+                        Some(baseline(snapshot, cut, complete)),
+                    ),
+                )
+                .await
+                .unwrap()
+                .finish();
+            generation += 1;
+        }
+        generation
+    }
+    async fn realm_rows(
+        index: &CurrentIndex,
+        realm: &str,
+        limit: usize,
+    ) -> Vec<TypedCurrentResult> {
+        let mut rows = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let page = index
+                .read_realm_page(realm, after.as_deref(), limit)
+                .await
+                .unwrap();
+            assert!(page.entries.len() <= limit);
+            rows.extend(page.entries);
+            match page.next_cursor {
+                Some(next) => after = Some(next),
+                None => return rows,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_realm_page_reads_every_ready_row_once_in_bounded_pages() {
+        let path = path();
+        let store = index(&path, 0).await;
+        let mut rows = (0..150)
+            .map(|n| membership_row(REALM, &actor(n), 1, "join"))
+            .collect::<Vec<_>>();
+        rows.push(row(1, false));
+        let generation = stage_baseline(&store, 0, REALM, rows, CURSORS[0], 5).await;
+        stage_baseline(
+            &store,
+            generation,
+            OTHER_REALM,
+            vec![membership_row(OTHER_REALM, &actor(0), 1, "join")],
+            CURSORS[1],
+            5,
+        )
+        .await;
+        let read = realm_rows(&store, REALM, 40).await;
+        let selectors = read
+            .iter()
+            .map(|entry| selector_key(&selector_of(entry)).unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(read.len(), 151);
+        assert_eq!(selectors.len(), 151, "a row was read twice");
+        assert!(read.iter().all(|entry| {
+            let (TypedCurrentResult::Value {
+                source_stream_ref, ..
+            }
+            | TypedCurrentResult::MessageReactions {
+                source_stream_ref, ..
+            }) = entry;
+            source_stream_ref
+                == &arkret_sdk::CommitStreamRef::Realm {
+                    realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+                }
+        }));
+        assert_eq!(realm_rows(&store, OTHER_REALM, 40).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn revocation_rows_invalidate_and_clean_up_per_realm_without_blocking_siblings() {
+        let path = path();
+        let store = index(&path, 0).await;
+        let revoked = |n: usize| n < 60;
+        let generation = stage_baseline(
+            &store,
+            0,
+            REALM,
+            (0..120)
+                .map(|n| membership_row(REALM, &actor(n), 1, "join"))
+                .collect(),
+            CURSORS[0],
+            5,
+        )
+        .await;
+        let sibling = membership_row(OTHER_REALM, &actor(0), 1, "join");
+        let mut generation = stage_baseline(
+            &store,
+            generation,
+            OTHER_REALM,
+            vec![sibling.clone()],
+            CURSORS[1],
+            5,
+        )
+        .await;
+        let sibling_ready = |store: &CurrentIndex| {
+            let store = store.clone();
+            let sibling = sibling.clone();
+            async move {
+                store
+                    .read_selector_ready(OTHER_REALM, &selector_of(&sibling))
+                    .await
+                    .unwrap()
+                    == Some(sibling)
+            }
+        };
+
+        // A revocation arrives as one live row of its own selector, past the
+        // installed cut, and replaces that selector alone.
+        let banned = membership_row(REALM, &actor(0), 6, "ban");
+        store
+            .stage_frame(generation, &frame(vec![banned.clone()], None))
+            .await
+            .unwrap()
+            .finish();
+        generation += 1;
+        assert_eq!(
+            store
+                .read_selector_ready(REALM, &selector_of(&banned))
+                .await
+                .unwrap(),
+            Some(banned.clone())
+        );
+
+        // The Station invalidates the Realm. Its rows go pending together; the
+        // sibling Realm's first screen is not held back by it.
+        let invalidation = serde_json::from_value(json!({
+            "kind":"delta","cursor":"ak:cursor:YQ",
+            "realm_invalidations":[{"realm_id":REALM,"revision":6}]
+        }))
+        .unwrap();
+        store
+            .stage_frame(generation, &invalidation)
+            .await
+            .unwrap()
+            .finish();
+        generation += 1;
+        assert!(realm_rows(&store, REALM, 100).await.is_empty());
+        assert!(
+            store
+                .read_selector_ready(REALM, &selector_of(&banned))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(sibling_ready(&store).await);
+        assert_eq!(
+            realm_rows(&store, OTHER_REALM, 100).await,
+            vec![sibling.clone()]
+        );
+
+        // The fresh complete baseline no longer covers the revoked members.
+        let kept = (0..120)
+            .filter(|n| !revoked(*n))
+            .map(|n| membership_row(REALM, &actor(n), 7, "join"))
+            .collect::<Vec<_>>();
+        stage_baseline(&store, generation, REALM, kept.clone(), CURSORS[2], 8).await;
+        let visible = realm_rows(&store, REALM, 100).await;
+        assert_eq!(visible.len(), kept.len());
+        for n in (0..120).filter(|n| revoked(*n)) {
+            let selector = selector_of(&membership_row(REALM, &actor(n), 1, "join"));
+            assert!(
+                store
+                    .read_selector_ready(REALM, &selector)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "revoked member {n} is still readable"
+            );
+        }
+
+        // Cleanup runs in bounded passes over this Realm's own index only. The
+        // sibling Realm stays readable at every pass, and the revoked rows are
+        // eventually deleted rather than merely hidden.
+        let rows = format!("{}row/{}/", store.prefix, hash(&REALM).unwrap());
+        let mut passes = 0;
+        while count_keys(&store, &rows).await > kept.len() {
+            store.maintain().await.unwrap();
+            assert!(sibling_ready(&store).await);
+            passes += 1;
+            assert!(passes < 400, "revoked rows were never reclaimed");
+        }
+        assert!(passes > 1, "cleanup must not reclaim the Realm in one pass");
+        assert_eq!(realm_rows(&store, REALM, 100).await.len(), kept.len());
+        assert_eq!(realm_rows(&store, OTHER_REALM, 100).await, vec![sibling]);
+    }
+
     #[tokio::test]
     async fn coverage_cleanup_keeps_post_cut_live_and_rejects_retired_conflicts() {
         let path = path();
@@ -3283,7 +3493,7 @@ mod tests {
         let seen = format!("{}seen/", store.prefix);
         let total = count_keys(&store, &seen).await;
         assert_eq!(total, 120);
-        // A later member-all baseline delivers none of them, so every one of
+        // A later complete baseline delivers none of them, so every one of
         // those snapshot references becomes unreachable at once.
         store
             .stage_frame(

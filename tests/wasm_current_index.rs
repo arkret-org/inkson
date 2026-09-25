@@ -410,3 +410,154 @@ async fn opening_the_secret_store_never_decrypts_current_entries() {
         Vec::<String>::new()
     );
 }
+
+/// Every product-ready row of `realm`, read in pages of `limit`.
+async fn realm_rows(store: &CurrentIndexHarness, realm: &str, limit: usize) -> Vec<String> {
+    let mut rows = Vec::new();
+    let mut after: Option<String> = None;
+    loop {
+        let (page, next) = store
+            .read_realm_page(realm, after.as_deref(), limit)
+            .await
+            .unwrap();
+        assert!(page.len() <= limit);
+        rows.extend(page);
+        match next {
+            Some(next) => after = Some(next),
+            None => return rows,
+        }
+    }
+}
+
+/// One Realm entry carrying `rows` member rows of `membership`, as one segment
+/// of a frozen baseline when `baseline` is given.
+fn member_frame(
+    realm: &str,
+    actors: std::ops::Range<usize>,
+    revision: u64,
+    membership: &str,
+    baseline: Option<(&str, u64, bool)>,
+) -> String {
+    let heads = |cut: u64| {
+        json!([{
+            "stream_ref":{"kind":"realm","realm_id":realm},
+            "stream_position":cut,
+            "commit_id":COMMIT
+        }])
+    };
+    let entries = actors
+        .map(|n| {
+            json!({
+                "selector": serde_json::from_str::<serde_json::Value>(&member_selector(&format!(
+                    "ak:did_core:webvh:z6mkactor{n:04}"
+                )))
+                .unwrap(),
+                "source_stream_ref":{"kind":"realm","realm_id":realm},
+                "revision":{"commit_id":COMMIT,"stream_position":revision},
+                "value":{"membership":membership},
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut entry = json!({"current":{
+        "realm_id":realm,
+        "governance_generation":1,
+        "stream_heads": baseline.map_or_else(|| json!([]), |(_, cut, _)| heads(cut)),
+        "entries":entries
+    }});
+    if let Some((snapshot, cut, complete)) = baseline {
+        entry["baseline"] = json!({
+            "snapshot_cursor":snapshot,
+            "cut_revision":cut,
+            "coverage":{
+                "realm_id":realm,
+                "stream_heads":heads(cut),
+                "complete_for_authorized_streams":true
+            },
+            "complete":complete
+        });
+    }
+    json!({"kind":"delta","cursor":"ak:cursor:YQ","realms":{realm:entry}}).to_string()
+}
+
+#[wasm_bindgen_test(async)]
+async fn product_reads_page_the_realm_and_revocation_pends_only_its_realm() {
+    let id = authority("product-view");
+    let store = CurrentIndexHarness::open(&id, 0).await.unwrap();
+    // 150 member rows arrive as two segments of one frozen baseline.
+    store
+        .commit(
+            0,
+            &member_frame(REALM, 0..100, 1, "join", Some((CURSORS[0], 5, false))),
+        )
+        .await
+        .unwrap();
+    store
+        .commit(
+            1,
+            &member_frame(REALM, 100..150, 1, "join", Some((CURSORS[0], 5, true))),
+        )
+        .await
+        .unwrap();
+    store
+        .commit(
+            2,
+            &member_frame(OTHER_REALM, 0..1, 1, "join", Some((CURSORS[1], 5, true))),
+        )
+        .await
+        .unwrap();
+    let rows = realm_rows(&store, REALM, 40).await;
+    assert_eq!(rows.len(), 150);
+    assert_eq!(
+        rows.iter().collect::<std::collections::BTreeSet<_>>().len(),
+        150
+    );
+    assert_eq!(realm_rows(&store, OTHER_REALM, 40).await.len(), 1);
+
+    // A revocation is one live row of its own selector past the cut.
+    store
+        .commit(3, &member_frame(REALM, 0..1, 6, "ban", None))
+        .await
+        .unwrap();
+    let rows = realm_rows(&store, REALM, 100).await;
+    assert_eq!(rows.len(), 150);
+    assert_eq!(rows.iter().filter(|row| row.contains("\"ban\"")).count(), 1);
+
+    // An invalidation of this Realm leaves its rows pending; the other Realm's
+    // first screen is not held back by it.
+    let invalidation = json!({
+        "kind":"delta","cursor":"ak:cursor:YQ",
+        "realm_invalidations":[{"realm_id":REALM,"revision":6}]
+    })
+    .to_string();
+    store.commit(4, &invalidation).await.unwrap();
+    assert!(realm_rows(&store, REALM, 100).await.is_empty());
+    assert_eq!(realm_rows(&store, OTHER_REALM, 100).await.len(), 1);
+
+    // A fresh complete baseline without the revoked half hides it at once and
+    // bounded maintenance reclaims it without touching the other Realm.
+    store
+        .commit(
+            5,
+            &member_frame(REALM, 60..150, 7, "join", Some((CURSORS[2], 8, true))),
+        )
+        .await
+        .unwrap();
+    assert_eq!(realm_rows(&store, REALM, 100).await.len(), 90);
+    for _ in 0..200 {
+        store.maintain().await.unwrap();
+        assert_eq!(realm_rows(&store, OTHER_REALM, 100).await.len(), 1);
+    }
+    assert_eq!(realm_rows(&store, REALM, 100).await.len(), 90);
+    for n in 0..60 {
+        assert_eq!(
+            store
+                .read_ready(
+                    REALM,
+                    &member_selector(&format!("ak:did_core:webvh:z6mkactor{n:04}"))
+                )
+                .await
+                .unwrap(),
+            None
+        );
+    }
+}

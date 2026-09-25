@@ -455,7 +455,7 @@ pub(super) fn projected_member_profiles_for_realm(
     );
     if let Some(projection) = state.realm_tree_projections.get(realm_id) {
         let handle_issuer_policies =
-            crate::views::member_display::handle_issuer_policies_from_projection(Some(projection));
+            crate::views::member_display::realm_handle_issuer_policies(store, realm_id);
         for row in crate::views::member_display::realm_member_roster(Some(projection)) {
             let display = crate::views::member_display::resolve_member_display_with_policies(
                 store,

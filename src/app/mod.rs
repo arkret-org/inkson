@@ -844,6 +844,7 @@ fn AppBootstrap() -> Element {
         pinned_realm_ids_from_store(&store)
     };
     let realm_tree_projections = state_store.read().load().realm_tree_projections;
+    let current_product_view = state_store.read().current_product_view();
     // A persisted Realm-default MLS snapshot is authoritative local evidence
     // for previously created/joined encrypted Realms. It also repairs clients
     // whose cached account projection was already downgraded by the old
@@ -873,6 +874,7 @@ fn AppBootstrap() -> Element {
         active_realm_id: &active_realm_id,
         pinned_realm_ids: &pinned_realm_ids,
         realm_tree_projections: &realm_tree_projections,
+        current_product_view: current_product_view.as_ref(),
         realm_ids_with_local_mls: &realm_ids_with_local_mls,
         realm_remarks: &realm_remarks_for_sidebar,
         collaboration_query: &collaboration_sidebar_query_value,
@@ -2448,7 +2450,7 @@ fn AppBootstrap() -> Element {
                                     let (icon_name, icon_class, icon_title) = match item_node.kind {
                                         RealmTreeNodeKind::Realm => {
                                             let is_encrypted = crate::views::helpers::realm_scope_security_state(
-                                                    &realm_tree_projections,
+                                                    current_product_view.as_ref(),
                                                     &item_node.id,
                                                 )
                                                 .unwrap_or_else(|| realm_ids_with_local_mls.contains(&item_node.id));

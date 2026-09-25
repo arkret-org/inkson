@@ -1103,7 +1103,7 @@ mod scope_activation_tests {
         ));
         // An authoritative "no accepted Genesis" answer still blocks this path:
         // an unencrypted scope has no MLS state to author under at all.
-        store.save_realm_tree_projection(REALM, serde_json::json!({"current": []}));
+        crate::test_support::install_current_entries(&mut store, REALM, Vec::new());
         assert!(!realm_mls_is_active(&store, REALM));
         assert!(matches!(
             require_active_mls_for_send(&store, &scope()),

@@ -120,19 +120,13 @@ impl LocalStateStore {
             .map_err(|error| error.to_string())
     }
 
-    /// The authority-signed typed current results this client holds for
-    /// `realm_id`, as delivered in the Realm state snapshot.
+    /// The authority-signed typed current results of `realm_id` in the
+    /// installed product view; empty while no view of that Realm is installed.
     pub(crate) fn realm_current_state_entries(
         &self,
         realm_id: &str,
     ) -> Vec<arkret_wire::TypedCurrentResult> {
-        self.load()
-            .realm_tree_projections
-            .get(realm_id.trim())
-            .and_then(|projection| projection.get("current"))
-            .and_then(|entries| {
-                serde_json::from_value::<Vec<arkret_wire::TypedCurrentResult>>(entries.clone()).ok()
-            })
+        self.realm_current_view_entries(realm_id)
             .unwrap_or_default()
     }
 
@@ -145,7 +139,7 @@ impl LocalStateStore {
         effective_scope: &arkret_sdk::ScopeRef,
     ) -> Option<arkret_wire::MlsGroupCurrent> {
         let realm_id = effective_scope.realm_id_opt()?;
-        let entries = self.realm_current_state_entries(realm_id.as_str());
+        let entries = self.realm_current_view_entries(realm_id.as_str())?;
         crate::current_projection::current_mls_group(&entries, effective_scope)
     }
 
@@ -717,18 +711,14 @@ impl LocalStateStore {
         let Some(realm_id) = effective_scope.realm_id_opt() else {
             return garth::InstalledMlsEpoch::Pending;
         };
-        let local = self.load();
-        if !local
-            .realm_tree_projections
-            .get(realm_id.as_str())
-            .is_some_and(|projection| projection.get("current").is_some())
-        {
+        let Some(entries) = self.realm_current_view_entries(realm_id.as_str()) else {
             return garth::InstalledMlsEpoch::Pending;
-        }
-        // The snapshot carried a complete current view, so the absence of this
-        // scope's MLS group entry is the Station's authoritative "no accepted
-        // Genesis" answer rather than an undelivered one.
-        let genesis_accepted = self.current_mls_group_for_scope(effective_scope).is_some();
+        };
+        // The installed view holds the Realm's product-ready current rows, so
+        // the absence of this scope's MLS group entry is the Station's "no
+        // accepted Genesis" answer rather than an undelivered one.
+        let genesis_accepted =
+            crate::current_projection::current_mls_group(&entries, effective_scope).is_some();
         if genesis_accepted {
             garth::InstalledMlsEpoch::Pending
         } else {
@@ -1236,7 +1226,7 @@ mod tests {
         ));
         // A delivered current view without this scope's MLS group entry is the
         // authoritative "still plaintext" answer.
-        store.save_realm_tree_projection(REALM, json!({"current": []}));
+        crate::test_support::install_current_entries(&mut store, REALM, Vec::new());
         assert!(matches!(
             store.accepted_mls_epoch_binding(&scope),
             garth::InstalledMlsEpoch::NoAcceptedGenesis

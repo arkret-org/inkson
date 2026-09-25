@@ -47,6 +47,7 @@ fn navigation_input<'a>(
         active_realm_id,
         pinned_realm_ids: pinned,
         realm_tree_projections: projections,
+        current_product_view: None,
         realm_ids_with_local_mls: local_mls,
         realm_remarks: remarks,
         collaboration_query: query,

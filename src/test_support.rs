@@ -370,18 +370,32 @@ pub(crate) fn install_accepted_mls_group_at_epoch(
             "public_tree_ref": format!("ak:blob:sha256:{}", "a".repeat(64)),
         },
     });
-    let mut projection = state
-        .realm_tree_projection(&realm_id)
-        .unwrap_or_else(|| serde_json::json!({}));
-    // Add to whatever the fixture already installed: one Realm view carries the
-    // Realm's own current results plus one MLS group result per scope it owns.
-    let mut entries = projection
-        .get("current")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
+    let entry: arkret_wire::TypedCurrentResult = serde_json::from_value(entry).unwrap();
+    install_current_entries(state, &realm_id, vec![entry]);
+}
+
+/// Merge typed current rows into the store's installed product view of
+/// `realm_id`, replacing any row with the same selector. This is the view the
+/// sync engine installs from the durable current index.
+pub(crate) fn install_current_entries(
+    state: &mut crate::state::LocalStateStore,
+    realm_id: &str,
+    rows: Vec<arkret_wire::TypedCurrentResult>,
+) {
+    let selector = |entry: &arkret_wire::TypedCurrentResult| match entry {
+        arkret_wire::TypedCurrentResult::Value { selector, .. }
+        | arkret_wire::TypedCurrentResult::MessageReactions { selector, .. } => selector.clone(),
+    };
+    let mut entries = state
+        .realm_current_view_entries(realm_id)
         .unwrap_or_default();
-    entries.retain(|existing| existing.get("selector") != entry.get("selector"));
-    entries.push(entry);
-    projection["current"] = serde_json::Value::Array(entries);
-    state.save_realm_tree_projection(&realm_id, projection);
+    for row in rows {
+        entries.retain(|existing| selector(existing) != selector(&row));
+        entries.push(row);
+    }
+    state
+        .install_current_product_view(
+            crate::current_projection::RealmCurrentView::new(realm_id, entries).unwrap(),
+        )
+        .unwrap();
 }

@@ -241,7 +241,7 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
         arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example".to_owned()).unwrap(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
     );
-    let mut projection = json!({
+    let projection = json!({
         "member_roster_entries": [
             {
                 "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
@@ -254,31 +254,13 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
                     arkret_models_identity::HandleClaimStatus::Verified,
                 )]
             }
-        ],
-        "current": [{
-            "selector": {"kind": "realm_policy"},
-            "source_stream_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
-            "revision": {
-                "commit_id": arkret_wire::RealmCommitId::from_digest([0x32; 32]),
-                "stream_position": 1
-            },
-            "value": {
-                "policy_revision": 1,
-                "handle_issuer_policies": [{
-                    "issuer_id": "ak:did_core:web:local.host",
-                    "authorized_handle_domains": ["local.host"],
-                    "issuer_class": "domain_authority"
-                }]
-            }
-        }]
+        ]
     });
-    projection["current"] = json!([arkret_wire::TypedCurrentResult::Value {
+    const POLICY_REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let policy = arkret_wire::TypedCurrentResult::Value {
         selector: arkret_wire::CurrentSelector::RealmPolicy,
         source_stream_ref: arkret_wire::CommitStreamRef::Realm {
-            realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            )
-            .unwrap(),
+            realm_id: arkret_sdk::RealmId::new(POLICY_REALM).unwrap(),
         },
         revision: arkret_wire::CurrentRevision {
             commit_id: arkret_sdk::RealmCommitId::from_digest([0x41; 32]),
@@ -292,14 +274,15 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
                 "issuer_class": "domain_authority"
             }]
         }),
-    }]);
+    };
 
     let temp = std::env::temp_dir().join(format!("inkson-chat-roster-{}", uuid_v7()));
-    let store = LocalStateStore::with_path(temp);
+    let mut store = LocalStateStore::with_path(temp);
+    crate::test_support::install_current_entries(&mut store, POLICY_REALM, vec![policy]);
     let participants = space_participants(
         Some(&projection),
         &store,
-        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        POLICY_REALM,
         "ak:did_core:web:alice.example",
     );
     let bob = participants

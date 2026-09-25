@@ -428,11 +428,7 @@ impl LocalStateStore {
             detail.complete = false;
             detail.invalidated_snapshot = detail.snapshot.clone();
         }
-        for projection in self.cached.realm_tree_projections.values_mut() {
-            if let Some(object) = projection.as_object_mut() {
-                object.remove("__current_required_ready");
-            }
-        }
+        self.clear_current_product_view();
     }
     /// Already delivered holder-private Events; this clones no Realm/history cache.
     pub(crate) fn current_account_data_events(&mut self) -> Vec<Event> {
@@ -500,14 +496,7 @@ impl LocalStateStore {
         self.cached.demand_sync.list_after.clone()
     }
     pub(crate) fn realm_detail_invalidated(&self, realm_id: &str) -> bool {
-        if self
-            .cached
-            .realm_tree_projections
-            .get(realm_id)
-            .and_then(|projection| projection.get("__current_required_ready"))
-            .and_then(Value::as_bool)
-            == Some(true)
-        {
+        if self.current_product_view_ready(realm_id) {
             return false;
         }
         self.cached
@@ -641,13 +630,10 @@ impl LocalStateStore {
                     state.invalidated = true;
                     state.complete = false;
                     state.invalidated_snapshot = state.snapshot.clone();
-                    if let Some(projection) = self
-                        .cached
-                        .realm_tree_projections
-                        .get_mut(invalidation.realm_id.as_str())
-                    {
-                        projection["__current_required_ready"] = Value::Bool(false);
-                    }
+                    super::realm_tree_snapshot::invalidate_current_view(
+                        &self.current_view,
+                        invalidation.realm_id.as_str(),
+                    );
                 }
             }
         }
@@ -663,9 +649,7 @@ impl LocalStateStore {
                     state.invalidated = true;
                     state.complete = false;
                     state.invalidated_snapshot = state.snapshot.clone();
-                    if let Some(projection) = self.cached.realm_tree_projections.get_mut(id) {
-                        projection["__current_required_ready"] = Value::Bool(false);
-                    }
+                    super::realm_tree_snapshot::invalidate_current_view(&self.current_view, id);
                     return true;
                 }
                 if let Some(segment) = &entry.baseline {
@@ -1514,10 +1498,38 @@ mod tests {
             8
         );
     }
+    /// Install a product view carrying the Realm's required current values.
+    fn install_ready_view(store: &mut LocalStateStore) {
+        let row = |selector: arkret_wire::CurrentSelector, value: Value| {
+            serde_json::from_value::<arkret_wire::TypedCurrentResult>(json!({
+                "selector": selector,
+                "source_stream_ref": {"kind":"realm","realm_id":REALM},
+                "revision": {
+                    "commit_id": arkret_wire::RealmCommitId::from_digest([0x21; 32]),
+                    "stream_position": 1
+                },
+                "value": value
+            }))
+            .unwrap()
+        };
+        crate::test_support::install_current_entries(
+            store,
+            REALM,
+            vec![
+                row(
+                    arkret_wire::CurrentSelector::RealmProfile,
+                    json!({"schema":"ak.schema.realm_profile.v1","title":"r"}),
+                ),
+                row(arkret_wire::CurrentSelector::RealmPolicy, json!({})),
+            ],
+        );
+        assert!(store.current_product_view_ready(REALM));
+    }
     #[test]
     fn invalidation_rejects_old_detail_completion() {
         let mut store = store();
-        store.save_realm_tree_projection(REALM, json!({"__current_required_ready": true}));
+        install_ready_view(&mut store);
+        assert!(!store.realm_detail_invalidated(REALM));
         apply(
             &mut store,
             &frame(
@@ -1538,10 +1550,7 @@ mod tests {
         );
         assert!(accepted.realms.unwrap().entries.is_empty());
         assert!(store.realm_detail_invalidated(REALM));
-        assert_eq!(
-            store.load().realm_tree_projections[REALM]["__current_required_ready"],
-            false
-        );
+        assert!(!store.current_product_view_ready(REALM));
     }
 
     #[test]
@@ -1557,16 +1566,8 @@ mod tests {
         assert!(!store.realm_detail_invalidated(REALM));
         // Baseline completion is delivery progress, not a verified current
         // value or an authoring decision by the governing Station.
-        assert!(store.cached_current_entries(REALM).is_empty());
-        assert!(
-            store
-                .load()
-                .realm_tree_projections
-                .get(REALM)
-                .is_none_or(|projection| {
-                    projection.get("__current_required_ready") != Some(&Value::Bool(true))
-                })
-        );
+        assert!(store.realm_current_state_entries(REALM).is_empty());
+        assert!(!store.current_product_view_ready(REALM));
     }
 
     #[test]
@@ -1581,12 +1582,11 @@ mod tests {
                 ..Default::default()
             },
         );
-        store.cached.realm_tree_projections.insert(
-            REALM.into(),
-            json!({
-                "__current_required_ready":true, "title":"cached"
-            }),
-        );
+        store
+            .cached
+            .realm_tree_projections
+            .insert(REALM.into(), json!({"title":"cached"}));
+        install_ready_view(&mut store);
         let result = store.batch(|store| -> anyhow::Result<()> {
             store.set_current_generation(5);
             store.save_sync_cursor("ak:cursor:YQ");
@@ -1599,6 +1599,7 @@ mod tests {
         assert!(store.sync_cursor().is_none());
         assert!(store.sync_demand_filter().is_none());
         assert!(store.realm_detail_invalidated(REALM));
+        assert!(store.current_product_view().is_none());
         assert!(!store.cached.demand_sync.details[REALM].complete);
     }
 }

@@ -204,18 +204,12 @@ pub(crate) fn test_issuer_policy(issuer_did: &str, domain: &str) -> HandleIssuer
 /// mandatory, so an empty policy makes the inline candidate set empty and the
 /// renderer degrades instead of showing an unvetted handle.
 pub(crate) fn realm_handle_issuer_policies(
-    projections: &BTreeMap<String, Value>,
+    store: &LocalStateStore,
     realm_id: &str,
 ) -> Vec<HandleIssuerPolicyEntry> {
-    handle_issuer_policies_from_projection(projections.get(realm_id.trim()))
-}
-
-/// [`realm_handle_issuer_policies`] over one already-selected Realm
-/// projection entry.
-pub(crate) fn handle_issuer_policies_from_projection(
-    projection: Option<&Value>,
-) -> Vec<HandleIssuerPolicyEntry> {
-    let Some(value) = projection.and_then(crate::current_projection::current_realm_policy_value)
+    let Some(value) = store
+        .realm_current_view_entries(realm_id)
+        .and_then(|entries| crate::current_projection::current_realm_policy_value(&entries))
     else {
         return Vec::new();
     };
@@ -427,7 +421,7 @@ pub(crate) fn resolve_member_display(
     realm_id: &str,
     row: &RealmMemberRow,
 ) -> ResolvedMemberDisplay {
-    let policies = realm_handle_issuer_policies(&store.load().realm_tree_projections, realm_id);
+    let policies = realm_handle_issuer_policies(store, realm_id);
     resolve_member_display_with_policies(store, realm_id, row, &policies)
 }
 

@@ -1497,14 +1497,11 @@ pub fn ChatPanel(
         })
         .map(|channel| channel.unread)
         .unwrap_or(0);
-    let selected_realm_security_encrypted = {
-        let state = state_store.read().load();
-        crate::views::helpers::realm_scope_security_state(
-            &state.realm_tree_projections,
-            &selected_realm_id,
-        )
-        .unwrap_or(false)
-    };
+    let selected_realm_security_encrypted = crate::views::helpers::realm_scope_security_state(
+        state_store.read().current_product_view().as_ref(),
+        &selected_realm_id,
+    )
+    .unwrap_or(false);
     // The first-class Sidecar contract requires an independent MLS backing scope.
     // The private Strand only carries its internal scope id, so ordinary Realm
     // inheritance would incorrectly downgrade a Sidecar opened from a

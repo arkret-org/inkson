@@ -341,8 +341,8 @@ fn groups_agent_members_under_reported_controller() {
 const PANEL_ISSUER: &str = "ak:did_core:web:acme.example";
 
 /// The Station-selected Realm policy bundle from the typed current snapshot.
-fn acme_policy_current() -> serde_json::Value {
-    serde_json::json!([{
+fn acme_policy_current() -> Vec<arkret_wire::TypedCurrentResult> {
+    serde_json::from_value(serde_json::json!([{
         "selector": {"kind": "realm_policy"},
         "source_stream_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
         "revision": {
@@ -357,7 +357,8 @@ fn acme_policy_current() -> serde_json::Value {
                 "issuer_class": "domain_authority"
             }]
         }
-    }])
+    }]))
+    .unwrap()
 }
 
 #[test]
@@ -379,10 +380,10 @@ fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
                     arkret_models_identity::HandleClaimStatus::Verified,
                 )]
             }],
-            "current": acme_policy_current(),
             "admins": ["did:web:alice.example"]
         }),
     );
+    crate::test_support::install_current_entries(&mut store, realm_id, acme_policy_current());
 
     let profiles = projected_member_profiles_for_realm(&store, realm_id);
     let alice = profiles

@@ -99,11 +99,6 @@ fn removed_creation_encryption_profile_does_not_activate_mls() {
         }),
     );
     assert!(!store.realm_projection_is_mls_encrypted(realm));
-    assert!(
-        store.load().realm_tree_projections[realm]["summary"]
-            .get("encryption_profile")
-            .is_none()
-    );
 
     let plain = "ak:realm:ARHSf2mxKS6wI8GpuAtLKy-RJVOSL_M_UEJprJwbHfO2";
     store.save_realm_tree_projection(
@@ -125,29 +120,28 @@ fn mls_encrypted_projection_reads_the_installed_realm_genesis_value() {
     let mut store = LocalStateStore::with_path(path);
     let realm = "ak:realm:AbL5fawW_ixBPm33UQ3u2DB4FgKEE52qRcPacwGPz9Hh";
     assert!(!store.realm_projection_is_mls_encrypted(realm));
-    store.save_realm_tree_projection(
-        realm,
-        json!({
-            "summary": {"joined_member_count": 2},
-            "current": [{
-                "selector": {"kind": "mls_group", "scope_ref": {"kind": "realm", "realm_id": realm}},
-                "source_stream_ref": {"kind": "realm", "realm_id": realm},
-                "revision": {
-                    "commit_id": arkret_wire::RealmCommitId::from_digest([0x31; 32]),
-                    "stream_position": 1
-                },
-                "value": {
-                    "effective_scope": {"kind": "realm", "realm_id": realm},
-                    "genesis_event_ref": arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x32; 32]),
-                    "current_mls_commit_event_ref": arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x32; 32]),
-                    "epoch": 0,
-                    "current_key_access_revision": 0,
-                    "covered_key_access_revision": 0,
-                    "public_tree_ref": format!("ak:blob:sha256:{}", "3".repeat(64))
-                }
-            }]
-        }),
-    );
+    store.save_realm_tree_projection(realm, json!({"summary": {"joined_member_count": 2}}));
+    // A stored projection alone is not a current view.
+    assert!(!store.realm_projection_is_mls_encrypted(realm));
+    let group = serde_json::from_value(json!({
+        "selector": {"kind": "mls_group", "scope_ref": {"kind": "realm", "realm_id": realm}},
+        "source_stream_ref": {"kind": "realm", "realm_id": realm},
+        "revision": {
+            "commit_id": arkret_wire::RealmCommitId::from_digest([0x31; 32]),
+            "stream_position": 1
+        },
+        "value": {
+            "effective_scope": {"kind": "realm", "realm_id": realm},
+            "genesis_event_ref": arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x32; 32]),
+            "current_mls_commit_event_ref": arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x32; 32]),
+            "epoch": 0,
+            "current_key_access_revision": 0,
+            "covered_key_access_revision": 0,
+            "public_tree_ref": format!("ak:blob:sha256:{}", "3".repeat(64))
+        }
+    }))
+    .unwrap();
+    crate::test_support::install_current_entries(&mut store, realm, vec![group]);
 
     assert!(store.realm_projection_is_mls_encrypted(realm));
 }

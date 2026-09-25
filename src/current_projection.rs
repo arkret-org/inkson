@@ -40,54 +40,74 @@ pub(crate) fn required_realm_values_ready(entries: &[TypedCurrentResult]) -> boo
         .all(|selector| entry_for(entries, selector).and_then(value_of).is_some())
 }
 
-/// Build presentation fields from the snapshot's typed current results.
+/// The typed current results of one Realm as the product reads them.
 ///
-/// The Station already selected each value and signed the snapshot that carries
-/// it, so nothing here re-runs a reducer or reads Event order.
-pub(crate) fn install_complete_view(
-    projection: &mut Value,
-    realm_id: &str,
-    entries: Vec<TypedCurrentResult>,
-) -> anyhow::Result<()> {
-    // v1 carries one complete inline snapshot. Capacity is enforced atomically
-    // by RealmCommit admission; a client must not impose an item-count dialect,
-    // truncate entries, or invent a private paging protocol here.
-    let realm = RealmId::new(realm_id.to_owned())?;
-    for entry in &entries {
-        // Only the scope-carrying selectors can name another Realm at all; the
-        // rest are Realm-singletons of the snapshot they arrived in.
-        if let CurrentSelector::MlsGroup { scope_ref } = selector_of(entry) {
-            anyhow::ensure!(
-                scope_ref.realm_id_opt() == Some(&realm),
-                "current MLS group result belongs to another Realm"
-            );
+/// Host view only: the rows are read page by page from the durable current
+/// index for the selected Realm and held in memory. It never reaches the wire
+/// and is never persisted in the account blob.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RealmCurrentView {
+    pub realm_id: String,
+    pub entries: Vec<TypedCurrentResult>,
+}
+
+impl RealmCurrentView {
+    /// Validate that every scope-carrying row belongs to `realm_id`.
+    pub(crate) fn new(realm_id: &str, entries: Vec<TypedCurrentResult>) -> anyhow::Result<Self> {
+        let realm = RealmId::new(realm_id.to_owned())?;
+        for entry in &entries {
+            // Only the scope-carrying selectors can name another Realm at all;
+            // the rest are Realm-singletons of the index region they came from.
+            if let CurrentSelector::MlsGroup { scope_ref } = selector_of(entry) {
+                anyhow::ensure!(
+                    scope_ref.realm_id_opt() == Some(&realm),
+                    "current MLS group result belongs to another Realm"
+                );
+            }
         }
+        Ok(Self {
+            realm_id: realm.as_str().to_owned(),
+            entries,
+        })
     }
 
-    let profile = entry_for(&entries, &CurrentSelector::RealmProfile)
-        .and_then(value_of)
-        .and_then(|value| serde_json::from_value::<arkret_sdk::RealmProfile>(value.clone()).ok());
+    /// The rows of `realm_id`, or `None` when this view belongs to another
+    /// Realm. `None` is "not installed", never an empty current set.
+    pub(crate) fn entries_for(&self, realm_id: &str) -> Option<&[TypedCurrentResult]> {
+        (self.realm_id == realm_id.trim()).then_some(self.entries.as_slice())
+    }
+}
 
+/// Write the presentation fields derived from the current Realm profile into a
+/// stored Realm projection. Only the title and summary are copied; the typed
+/// rows themselves stay in the index.
+pub(crate) fn apply_profile_summary(
+    projection: &mut Value,
+    entries: &[TypedCurrentResult],
+) -> anyhow::Result<()> {
+    let Some(profile) = entry_for(entries, &CurrentSelector::RealmProfile)
+        .and_then(value_of)
+        .and_then(|value| serde_json::from_value::<arkret_sdk::RealmProfile>(value.clone()).ok())
+    else {
+        return Ok(());
+    };
     let object = projection
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("Realm projection must be an object"))?;
-    if let Some(profile) = profile {
-        let summary = object
-            .entry("summary")
-            .or_insert_with(|| serde_json::json!({}));
-        if let Some(summary) = summary.as_object_mut() {
-            summary.insert("title".to_owned(), Value::String(profile.title));
-            match profile.summary {
-                Some(value) => {
-                    summary.insert("summary".to_owned(), Value::String(value));
-                }
-                None => {
-                    summary.remove("summary");
-                }
+    let summary = object
+        .entry("summary")
+        .or_insert_with(|| serde_json::json!({}));
+    if let Some(summary) = summary.as_object_mut() {
+        summary.insert("title".to_owned(), Value::String(profile.title));
+        match profile.summary {
+            Some(value) => {
+                summary.insert("summary".to_owned(), Value::String(value));
+            }
+            None => {
+                summary.remove("summary");
             }
         }
     }
-    object.insert("current".to_owned(), serde_json::to_value(&entries)?);
     Ok(())
 }
 
@@ -132,17 +152,9 @@ pub(crate) fn scope_has_accepted_mls_genesis(
     current_mls_group(entries, scope_ref).is_some()
 }
 
-/// The Station-selected current `ak.realm.policy` value carried by a stored
-/// Realm projection, if that projection already holds a signed current view.
-///
-/// Callers hand in the whole locally stored projection (`realm_tree_projection`
-/// output); the `current` member is the exact `Vec<TypedCurrentResult>` that
-/// [`install_complete_view`] wrote, so nothing here re-derives state from Event
-/// order or from a protocol-level component id.
-pub(crate) fn current_realm_policy_value(projection: &Value) -> Option<Value> {
-    let entries: Vec<TypedCurrentResult> =
-        serde_json::from_value(projection.get("current")?.clone()).ok()?;
-    entry_for(&entries, &CurrentSelector::RealmPolicy)
+/// The Station-selected current `ak.realm.policy` value.
+pub(crate) fn current_realm_policy_value(entries: &[TypedCurrentResult]) -> Option<Value> {
+    entry_for(entries, &CurrentSelector::RealmPolicy)
         .and_then(value_of)
         .cloned()
 }
@@ -275,8 +287,7 @@ mod tests {
             2,
             mls_group_value(),
         )];
-        let mut projection = serde_json::json!({});
-        let error = install_complete_view(&mut projection, REALM, entries).unwrap_err();
+        let error = RealmCurrentView::new(REALM, entries).unwrap_err();
         assert!(
             error.to_string().contains("belongs to another Realm"),
             "unexpected error: {error}"
@@ -284,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn the_bounded_view_installs_the_current_profile_title() {
+    fn the_profile_summary_is_copied_without_the_typed_rows() {
         let entries = vec![entry(
             CurrentSelector::RealmProfile,
             5,
@@ -295,32 +306,19 @@ mod tests {
             }),
         )];
         let mut projection = serde_json::json!({});
-        install_complete_view(&mut projection, REALM, entries).unwrap();
+        apply_profile_summary(&mut projection, &entries).unwrap();
         assert_eq!(projection["summary"]["title"], "Launch planning");
         assert_eq!(projection["summary"]["summary"], "Q4");
-        // The signed revision travels with the value, so a reader can tell which
-        // commit it was computed at without consulting Event order.
-        assert_eq!(projection["current"][0]["revision"]["stream_position"], 5);
+        assert!(projection.get("current").is_none());
     }
 
     #[test]
-    fn a_complete_inline_view_is_not_cut_off_at_a_private_item_limit() {
-        let entries = (0..513)
-            .map(|position| {
-                entry(
-                    CurrentSelector::RealmProfile,
-                    position,
-                    serde_json::json!({
-                        "schema": "ak.schema.realm_profile.v1",
-                        "title": format!("Realm {position}")
-                    }),
-                )
-            })
-            .collect::<Vec<_>>();
-        let mut projection = serde_json::json!({});
-
-        install_complete_view(&mut projection, REALM, entries).unwrap();
-
-        assert_eq!(projection["current"].as_array().unwrap().len(), 513);
+    fn a_view_answers_only_for_its_own_realm() {
+        let view = RealmCurrentView::new(REALM, Vec::new()).unwrap();
+        assert_eq!(view.entries_for(REALM), Some(&[][..]));
+        assert_eq!(
+            view.entries_for("ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM"),
+            None
+        );
     }
 }

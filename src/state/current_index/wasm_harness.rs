@@ -102,6 +102,31 @@ impl CurrentIndexHarness {
             .transpose()
     }
 
+    /// One bounded page of the Realm's product-ready rows, as canonical JSON,
+    /// with the cursor that resumes the scan.
+    pub async fn read_realm_page(
+        &self,
+        realm: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<(Vec<String>, Option<String>), String> {
+        let page = self
+            .index
+            .read_realm_page(realm, after, limit)
+            .await
+            .map_err(message)?;
+        let rows = page
+            .entries
+            .iter()
+            .map(|entry| {
+                arkret_sdk::canonical::canonical_json_bytes(entry)
+                    .map_err(message)
+                    .and_then(|bytes| String::from_utf8(bytes).map_err(message))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((rows, page.next_cursor))
+    }
+
     pub async fn maintain(&self) -> Result<bool, String> {
         self.index.maintain().await.map_err(message)
     }

@@ -143,6 +143,7 @@ pub(super) struct RealmNavigationInput<'a> {
     pub active_realm_id: &'a str,
     pub pinned_realm_ids: &'a BTreeSet<String>,
     pub realm_tree_projections: &'a BTreeMap<String, Value>,
+    pub current_product_view: Option<&'a crate::current_projection::RealmCurrentView>,
     pub realm_ids_with_local_mls: &'a BTreeSet<String>,
     pub realm_remarks: &'a BTreeMap<String, RealmRemark>,
     /// Already trimmed and lowercased by the caller.
@@ -201,7 +202,7 @@ pub(super) fn build_realm_navigation(input: RealmNavigationInput<'_>) -> RealmNa
         .map(|node| {
             let display_name = remark_display_name(input.realm_remarks, node);
             let encrypted = crate::views::helpers::realm_scope_security_state(
-                input.realm_tree_projections,
+                input.current_product_view,
                 &node.id,
             )
             .unwrap_or_else(|| input.realm_ids_with_local_mls.contains(&node.id));
@@ -234,6 +235,7 @@ pub(super) fn build_realm_navigation(input: RealmNavigationInput<'_>) -> RealmNa
         .or_else(|| {
             crate::views::helpers::scope_security_state(
                 input.realm_tree_projections,
+                input.current_product_view,
                 security_scope_id,
             )
         })

@@ -534,7 +534,7 @@ fn encrypted_realm_write_mls_ready(
         realm_id: realm_id.clone(),
     };
     if !crate::current_projection::scope_has_accepted_mls_genesis(
-        &state_store.cached_current_entries(realm_id.as_str()),
+        &state_store.realm_current_state_entries(realm_id.as_str()),
         &scope,
     ) {
         return false;

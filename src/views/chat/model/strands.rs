@@ -80,15 +80,16 @@ pub(crate) fn channel_from_current_strand(
     })
 }
 
-pub(crate) fn channels_from_local_state(
-    state: &ClientLocalState,
+pub(crate) fn channels_from_current_view(
+    current: Option<&crate::current_projection::RealmCurrentView>,
     selected_realm_id: &str,
 ) -> Vec<ChannelEntity> {
-    let Some(projection) = state.realm_tree_projections.get(selected_realm_id) else {
+    let Some(entries) = current.and_then(|view| view.entries_for(selected_realm_id)) else {
         return Vec::new();
     };
-    crate::views::helpers::projection_current_state_entries(projection)
-        .into_iter()
+    entries
+        .iter()
+        .cloned()
         .filter_map(|entry| match entry {
             arkret_wire::TypedCurrentResult::Value {
                 selector: arkret_wire::CurrentSelector::Strand { .. },

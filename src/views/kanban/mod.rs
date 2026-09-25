@@ -1200,18 +1200,24 @@ pub fn KanbanPanel(
     // plaintext-block guard fails closed on `None`.
     let selected_scope_security_encrypted: Option<bool> = {
         let state = state_store.read().load();
+        let current = state_store.read().current_product_view();
         let scope_id = if projection_realm_id.trim().is_empty() {
             selected_realm_id.as_str()
         } else {
             projection_realm_id.as_str()
         };
-        crate::views::helpers::scope_security_state(&state.realm_tree_projections, scope_id)
-            .or_else(|| {
-                crate::views::helpers::scope_security_state(
-                    &state.realm_tree_projections,
-                    &selected_realm_id,
-                )
-            })
+        crate::views::helpers::scope_security_state(
+            &state.realm_tree_projections,
+            current.as_ref(),
+            scope_id,
+        )
+        .or_else(|| {
+            crate::views::helpers::scope_security_state(
+                &state.realm_tree_projections,
+                current.as_ref(),
+                &selected_realm_id,
+            )
+        })
     };
     // Fail-closed `bool` projection for the non-guard consumers (security
     // badge display, the per-card encrypt decision): when the Realm security

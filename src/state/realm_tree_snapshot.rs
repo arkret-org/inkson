@@ -66,31 +66,74 @@ impl LocalStateStore {
         self.cached.realm_tree_projections.get(realm_id).cloned()
     }
 
+    /// Install the selected Realm's product view read from the durable
+    /// current index. The rows stay in memory; only the profile title and
+    /// summary are copied into the stored Realm projection.
     pub(crate) fn install_current_product_view(
         &mut self,
-        realm_id: &str,
-        entries: Vec<arkret_wire::TypedCurrentResult>,
-        ready: bool,
+        view: crate::current_projection::RealmCurrentView,
     ) -> anyhow::Result<()> {
         self.ensure_cached_loaded();
-        // Keep only the active Realm's bounded current view in the account
-        // blob. Full rows and baseline seen markers belong to CurrentIndex.
-        for (id, projection) in &mut self.cached.realm_tree_projections {
-            if id != realm_id {
-                if let Some(object) = projection.as_object_mut() {
-                    object.remove("current");
-                    object.remove("__current_required_ready");
-                }
+        let account_key = self.cached_account_key.clone();
+        let required_ready = crate::current_projection::required_realm_values_ready(&view.entries);
+        if let Some(projection) = self.cached.realm_tree_projections.get(&view.realm_id) {
+            let mut updated = projection.clone();
+            crate::current_projection::apply_profile_summary(&mut updated, &view.entries)?;
+            if &updated != projection {
+                self.cached
+                    .realm_tree_projections
+                    .insert(view.realm_id.clone(), updated);
+                self.flush()?;
             }
         }
-        let projection = self
-            .cached
-            .realm_tree_projections
-            .entry(realm_id.to_owned())
-            .or_insert_with(|| serde_json::json!({}));
-        crate::current_projection::install_complete_view(projection, realm_id, entries)?;
-        projection["__current_required_ready"] = Value::Bool(ready);
-        self.flush()
+        *self.current_view.lock().unwrap_or_else(|p| p.into_inner()) =
+            Some(super::CurrentProductView {
+                account_key,
+                view,
+                required_ready,
+            });
+        Ok(())
+    }
+
+    /// Forget the in-memory product view, for example after a reset, so no
+    /// reader keeps serving rows of a durable generation that was dropped.
+    pub(crate) fn clear_current_product_view(&self) {
+        *self.current_view.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    /// The installed product view of the active account, if any.
+    pub(crate) fn current_product_view(
+        &self,
+    ) -> Option<crate::current_projection::RealmCurrentView> {
+        self.current_view
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .filter(|view| view.account_key == self.cached_account_key)
+            .map(|view| view.view.clone())
+    }
+
+    /// Whether the installed view of `realm_id` carries every required value.
+    pub(crate) fn current_product_view_ready(&self, realm_id: &str) -> bool {
+        self.current_view
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .is_some_and(|view| {
+                view.account_key == self.cached_account_key
+                    && view.view.realm_id == realm_id.trim()
+                    && view.required_ready
+            })
+    }
+
+    /// The typed current rows of `realm_id`, or `None` while no view of that
+    /// Realm is installed. `None` is never an empty current set.
+    pub(crate) fn realm_current_view_entries(
+        &self,
+        realm_id: &str,
+    ) -> Option<Vec<arkret_wire::TypedCurrentResult>> {
+        self.current_product_view()
+            .and_then(|view| view.entries_for(realm_id).map(<[_]>::to_vec))
     }
 
     /// Return every canonical Realm id currently represented by the local
@@ -261,38 +304,21 @@ impl LocalStateStore {
             .retain(|_, record| record.realm_id != projection_id);
     }
 
-    /// True when the Realm's own default scope has an accepted
-    /// `ak.mls.genesis` in the cached typed current results.
-    ///
-    /// This is the single client-side judgement of "is this scope encrypted":
-    /// a scope is plaintext until its own genesis commits and is irreversibly
-    /// standard RFC 9420 afterwards. There is no create-locked encryption
-    /// profile or encryption floor to read.
+    /// Whether the Realm-default scope of `realm_id` has an accepted MLS
+    /// Genesis in the installed current view. A Realm without an installed
+    /// view answers `false`; gates that could leak plaintext must use
+    /// [`Self::accepted_mls_epoch_binding`], which keeps that case pending.
     pub fn realm_projection_is_mls_encrypted(&self, realm_id: &str) -> bool {
         let Ok(realm) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
             return false;
         };
-        let entries = self.cached_current_entries(realm_id);
-        crate::current_projection::scope_has_accepted_mls_genesis(
-            &entries,
-            &arkret_sdk::ScopeRef::Realm { realm_id: realm },
-        )
-    }
-
-    /// Typed current results last installed for `realm_id` by
-    /// [`Self::install_current_product_view`].
-    pub(crate) fn cached_current_entries(
-        &self,
-        realm_id: &str,
-    ) -> Vec<arkret_wire::TypedCurrentResult> {
-        self.load()
-            .realm_tree_projections
-            .get(realm_id)
-            .and_then(|projection| projection.get("current"))
-            .and_then(|current| {
-                serde_json::from_value::<Vec<arkret_wire::TypedCurrentResult>>(current.clone()).ok()
+        self.realm_current_view_entries(realm_id)
+            .is_some_and(|entries| {
+                crate::current_projection::scope_has_accepted_mls_genesis(
+                    &entries,
+                    &arkret_sdk::ScopeRef::Realm { realm_id: realm },
+                )
             })
-            .unwrap_or_default()
     }
 
     /// Joined-actor projection hint when account sync explicitly says the
@@ -346,5 +372,22 @@ impl LocalStateStore {
     /// receive path is being migrated to reject the marker explicitly.
     pub fn realm_projection_is_minimal_metadata(&self, realm_id: &str) -> bool {
         self.realm_projection_has_retired_minimal_metadata_marker(realm_id)
+    }
+}
+
+/// Mark the installed view of `realm_id` as no longer covering the Realm's
+/// required values until the next install. Takes the field so callers that
+/// already hold a mutable borrow of another store field can use it.
+pub(super) fn invalidate_current_view(
+    view: &Mutex<Option<super::CurrentProductView>>,
+    realm_id: &str,
+) {
+    if let Some(view) = view
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_mut()
+        .filter(|view| view.view.realm_id == realm_id.trim())
+    {
+        view.required_ready = false;
     }
 }

@@ -166,6 +166,11 @@ pub struct LocalStateStore {
             )>,
         >,
     >,
+    /// Bounded in-memory product view of the selected Realm's typed current
+    /// results, read page by page from the durable [`CurrentIndex`]. It is
+    /// never persisted: the index owns durable current state, and the account
+    /// blob carries no copy of it.
+    current_view: Arc<Mutex<Option<CurrentProductView>>>,
     /// Perf: whether `cached` has been reconciled with the persistence layer at
     /// least once. Before this flag existed, an empty/default account (where
     /// `cached == ClientLocalState::default()`) re-read the backing store (disk
@@ -215,12 +220,24 @@ pub struct LocalStateStore {
     path: PathBuf,
 }
 
+/// The typed current results of one Realm as the product reads them, taken
+/// from the durable index for the account namespace that installed them.
+#[derive(Clone, Debug)]
+pub(crate) struct CurrentProductView {
+    /// The account namespace of the store that installed the view; a clone
+    /// hydrated for another account never reads it.
+    account_key: Option<String>,
+    view: crate::current_projection::RealmCurrentView,
+    required_ready: bool,
+}
+
 impl Clone for LocalStateStore {
     fn clone(&self) -> Self {
         Self {
             cached: self.cached.clone(),
             cached_account_key: self.cached_account_key.clone(),
             product_current_demand: Arc::clone(&self.product_current_demand),
+            current_view: Arc::clone(&self.current_view),
             loaded: AtomicBool::new(self.loaded.load(Ordering::Acquire)),
             flush_suspended: self.flush_suspended,
             flush_pending: AtomicBool::new(self.flush_pending.load(Ordering::Acquire)),
@@ -292,6 +309,7 @@ impl Default for LocalStateStore {
             cached: ClientLocalState::default(),
             cached_account_key: None,
             product_current_demand: Arc::new(Mutex::new(None)),
+            current_view: Arc::new(Mutex::new(None)),
             loaded: AtomicBool::new(false),
             flush_suspended: 0,
             flush_pending: AtomicBool::new(false),
@@ -617,6 +635,7 @@ impl LocalStateStore {
             cached: ClientLocalState::default(),
             cached_account_key: None,
             product_current_demand: Arc::new(Mutex::new(None)),
+            current_view: Arc::new(Mutex::new(None)),
             loaded: AtomicBool::new(false),
             flush_suspended: 0,
             flush_pending: AtomicBool::new(false),

@@ -1,5 +1,6 @@
 //! Discussion channels read the Station's deterministic current Strand value.
 use super::*;
+use crate::current_projection::RealmCurrentView;
 
 const CHANNEL_REALM: &str = "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI";
 
@@ -37,12 +38,12 @@ fn current_strand(
     }
 }
 
+fn view(realm: &str, entries: Vec<arkret_wire::TypedCurrentResult>) -> RealmCurrentView {
+    RealmCurrentView::new(realm, entries).unwrap()
+}
+
 fn channel_from_current(current: arkret_wire::TypedCurrentResult) -> ChannelEntity {
-    let mut state = ClientLocalState::default();
-    state
-        .realm_tree_projections
-        .insert(CHANNEL_REALM.to_owned(), json!({"current":[current]}));
-    channels_from_local_state(&state, CHANNEL_REALM)
+    channels_from_current_view(Some(&view(CHANNEL_REALM, vec![current])), CHANNEL_REALM)
         .into_iter()
         .next()
         .unwrap()
@@ -66,19 +67,14 @@ fn deterministic_current_value_is_displayable() {
 #[test]
 fn channel_restore_is_isolated_to_selected_realm() {
     let other = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
-    let mut state = ClientLocalState::default();
     for (realm, title) in [(CHANNEL_REALM, "Selected"), (other, "Other")] {
-        state.realm_tree_projections.insert(
-            realm.to_owned(),
-            json!({
-                "current":[current_strand(realm,title,false)]
-            }),
-        );
-    }
-    for (realm, title) in [(CHANNEL_REALM, "Selected"), (other, "Other")] {
-        let channels = channels_from_local_state(&state, realm);
+        let installed = view(realm, vec![current_strand(realm, title, false)]);
+        let channels = channels_from_current_view(Some(&installed), realm);
         assert_eq!(channels.len(), 1);
         assert_eq!(channels[0].name, title);
+        // The view of one Realm never answers for another.
+        let foreign = if realm == other { CHANNEL_REALM } else { other };
+        assert!(channels_from_current_view(Some(&installed), foreign).is_empty());
     }
-    assert!(channels_from_local_state(&state, "").is_empty());
+    assert!(channels_from_current_view(None, CHANNEL_REALM).is_empty());
 }

@@ -257,7 +257,7 @@ pub(crate) fn space_participants(
     let mut participants = Vec::new();
 
     let handle_issuer_policies =
-        crate::views::member_display::handle_issuer_policies_from_projection(projection);
+        crate::views::member_display::realm_handle_issuer_policies(state_store, realm_id);
     for row in crate::views::member_display::realm_member_roster(projection) {
         let display = crate::views::member_display::resolve_member_display_with_policies(
             state_store,
