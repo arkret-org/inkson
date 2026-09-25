@@ -138,7 +138,7 @@ mod tests {
     fn realm_creation_does_not_require_identity_resolver_or_upload_transport() {
         let description = station(&[
             "ak.operation_bundle.station.describe.v1",
-            "ak.operation_bundle.station.http_core.v1",
+            "ak.operation_bundle.station.http_core_current.v1",
         ]);
         assert!(!description.supports_operation(ServiceOperationId::RootIdentityReadResolveV1));
         assert!(StationFeature::CreateRealm.ready(Some(&description)));
@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn missing_describe_bundle_blocks_creation_but_not_reading_or_key_publication() {
-        let description = station(&["ak.operation_bundle.station.http_core.v1"]);
+        let description = station(&["ak.operation_bundle.station.http_core_current.v1"]);
         assert_eq!(
             StationFeature::CreateRealm.missing_requirements(Some(&description)),
             vec!["ak.server.read.describe.v1 (http_json)"]
@@ -186,10 +186,10 @@ mod tests {
             .supported_profiles
             .push(ProfileId::FULL_CLIENT_V1.to_owned());
         assert!(!StationFeature::CreateRealm.ready(Some(&description)));
-        description = station(&["ak.operation_bundle.station.http_core.v1"]);
+        description = station(&["ak.operation_bundle.station.http_core_current.v1"]);
         description.transport_bindings.clear();
         assert!(!StationFeature::Discussion.ready(Some(&description)));
-        description = station(&["ak.operation_bundle.station.http_core.v1"]);
+        description = station(&["ak.operation_bundle.station.http_core_current.v1"]);
         description.service_kind = ServiceKind::IdentityRegistry;
         assert!(!StationFeature::Discussion.ready(Some(&description)));
         description = station(&["ak.operation_bundle.station.unknown.v1"]);

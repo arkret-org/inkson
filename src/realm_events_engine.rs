@@ -2923,7 +2923,7 @@ mod tests {
             }
         };
         let describe = station_describe(&[
-            "ak.operation_bundle.station.http_core.v1",
+            "ak.operation_bundle.station.http_core_current.v1",
             "ak.operation_bundle.station.snapshot_exact_read.v1",
         ]);
         let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())

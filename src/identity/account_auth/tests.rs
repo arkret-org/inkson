@@ -405,7 +405,7 @@ fn principal_description() -> arkret_sdk::ServiceDescribe {
         arkret_sdk::ServiceKind::Station,
         vec![
             "ak.operation_bundle.station.describe.v1".to_owned(),
-            "ak.operation_bundle.station.http_core.v1".to_owned(),
+            "ak.operation_bundle.station.http_core_current.v1".to_owned(),
         ],
         vec![arkret_sdk::TransportBinding::HttpJson {
             base_url: "https://principal.example/_arkret".to_owned(),

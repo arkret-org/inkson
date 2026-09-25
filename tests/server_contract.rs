@@ -73,7 +73,7 @@ fn inkson_accepts_server_contract_payloads() {
         "supported_profiles": ["ak.profile.core_event_store.v1"],
         "supported_operation_bundles": [
             "ak.operation_bundle.station.describe.v1",
-            "ak.operation_bundle.station.http_core.v1"
+            "ak.operation_bundle.station.http_core_current.v1"
         ],
         "transport_bindings": [{
             "kind": "http_json",
@@ -129,7 +129,7 @@ fn inkson_accepts_server_contract_payloads() {
         "supported_profiles": ["ak.profile.minimal_client.v1"],
         "supported_operation_bundles": [
             "ak.operation_bundle.station.describe.v1",
-            "ak.operation_bundle.station.http_core.v1"
+            "ak.operation_bundle.station.http_core_current.v1"
         ],
         "transport_bindings": [{
             "kind": "http_json",
@@ -530,7 +530,7 @@ fn server_description_gates_event_envelope_write_plane() {
         ],
         "supported_operation_bundles": [
             "ak.operation_bundle.station.describe.v1",
-            "ak.operation_bundle.station.http_core.v1"
+            "ak.operation_bundle.station.http_core_current.v1"
         ],
         "transport_bindings": [{
             "kind": "http_json",
@@ -573,7 +573,7 @@ fn server_description_gates_event_envelope_write_plane() {
         ],
         "supported_operation_bundles": [
             "ak.operation_bundle.station.describe.v1",
-            "ak.operation_bundle.station.http_core.v1"
+            "ak.operation_bundle.station.http_core_current.v1"
         ],
         "transport_bindings": [{
             "kind": "http_json",

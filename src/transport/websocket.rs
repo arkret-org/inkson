@@ -527,7 +527,7 @@ mod browser {
 pub(crate) mod tests_support {
     pub(crate) fn describe_without_websocket() -> arkret_sdk::ServiceDescribe {
         super::tests::describe_with(
-            "ak.operation_bundle.station.http_core.v1",
+            "ak.operation_bundle.station.http_core_current.v1",
             arkret_sdk::TransportBinding::HttpJson {
                 base_url: "https://server.example/_arkret".to_owned(),
                 extension_profile_required: (),
@@ -588,7 +588,7 @@ pub(crate) mod tests {
     #[test]
     fn a_service_without_the_profile_stays_on_http() {
         let selector = WebSocketTransportSelector::from_describe(&describe_with(
-            "ak.operation_bundle.station.http_core.v1",
+            "ak.operation_bundle.station.http_core_current.v1",
             arkret_sdk::TransportBinding::HttpJson {
                 base_url: "https://server.example/_arkret".to_owned(),
                 extension_profile_required: (),
