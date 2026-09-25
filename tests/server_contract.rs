@@ -489,15 +489,15 @@ fn directory_preview_and_join_locator_keep_separate_authority_boundaries() {
 
     // Directory only supplies public metadata. The join flow carries an
     // untrusted locator and receives the join rule from an authority preview.
-    let target = arkret_models_discovery::RealmJoinTarget {
+    let target = arkret_sdk::RealmJoinTarget {
         realm_id: resolved.realm_id.clone(),
         invite_id: None,
         invite_token: None,
-        authority_locator_hints: vec![arkret_models_discovery::RealmJoinCandidate {
-            service_kind: arkret_models_discovery::RealmJoinCandidateServiceKind::Station,
+        authority_locator_hints: vec![arkret_sdk::RealmJoinCandidate {
+            service_kind: arkret_sdk::RealmJoinCandidateServiceKind::Station,
             service_id: arkret_sdk::DidCoreId::new("ak:did_core:web:server.local").unwrap(),
             endpoint_url: Some("https://server.local/_arkret".to_owned()),
-            source: arkret_models_discovery::AuthorityLocatorSource::Directory,
+            source: arkret_sdk::AuthorityLocatorSource::Directory,
         }],
     };
     target.validate().expect("closed join locator target");
@@ -505,7 +505,7 @@ fn directory_preview_and_join_locator_keep_separate_authority_boundaries() {
         target.authority_locator_hints[0].service_id.as_str(),
         "ak:did_core:web:server.local"
     );
-    let preview = arkret_models_discovery::RealmPublicPreview {
+    let preview = arkret_sdk::RealmPublicPreview {
         realm_id: target.realm_id.clone(),
         join_rule: arkret_sdk::JoinRule::Public,
         history_access: arkret_sdk::HistoryAccess::SinceJoin,
