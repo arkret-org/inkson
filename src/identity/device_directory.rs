@@ -738,8 +738,7 @@ mod verification_method_controller_tests {
             }}],
             "failures": [],
             "device_generations": [{"account_id": account, "generation_state": {
-                "current_device_generation_ref": 7,
-                "device_generation_status": "active"
+                "current_device_generation_ref": 7
             }}]
         }))
         .unwrap()

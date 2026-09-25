@@ -774,7 +774,6 @@ mod tests {
             "policy_version": policy.version,
             "identity_model": "pcr_policy",
             "current_device_generation_ref": 3,
-            "device_generation_status": "active",
             "realm_stream_head": {
                 "stream_ref": {"kind": "realm", "realm_id": realm_id},
                 "stream_position": 12,

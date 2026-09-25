@@ -278,13 +278,6 @@ fn resolve_principal_authoring_generation_from_keys(
 
     match outcome.generation_for(account_id) {
         Some(generation) => {
-            if generation.device_generation_status
-                != arkret_models_crypto::DeviceGenerationStatus::Active
-            {
-                return Ok(PrincipalGenerationResolution::Quarantine(
-                    "device_generation_conflicted".to_owned(),
-                ));
-            }
             let Some(record) = record else {
                 return Ok(PrincipalGenerationResolution::Quarantine(
                     "authoring_device_not_active".to_owned(),
@@ -442,7 +435,6 @@ mod tests {
                 account_id: account_id.clone(),
                 generation_state: arkret_models_crypto::DeviceGenerationState {
                     current_device_generation_ref: 7,
-                    device_generation_status: arkret_models_crypto::DeviceGenerationStatus::Active,
                 },
             }],
         };
