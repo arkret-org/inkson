@@ -343,7 +343,7 @@ const PANEL_ISSUER: &str = "ak:did_core:web:acme.example";
 /// The Station-selected Realm policy bundle from the typed current snapshot.
 fn acme_policy_current() -> Vec<arkret_wire::TypedCurrentResult> {
     serde_json::from_value(serde_json::json!([{
-        "selector": {"kind": "realm_policy"},
+        "selector": {"kind": "realm_policy_bundle"},
         "source_stream_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
         "revision": {
             "commit_id": arkret_wire::RealmCommitId::from_digest([0x31; 32]),

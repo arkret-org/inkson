@@ -258,7 +258,7 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
     });
     const POLICY_REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let policy = arkret_wire::TypedCurrentResult::Value {
-        selector: arkret_wire::CurrentSelector::RealmPolicy,
+        selector: arkret_wire::CurrentSelector::RealmPolicyBundle,
         source_stream_ref: arkret_wire::CommitStreamRef::Realm {
             realm_id: arkret_sdk::RealmId::new(POLICY_REALM).unwrap(),
         },

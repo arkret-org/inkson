@@ -72,9 +72,7 @@ pub(crate) enum CurrentTarget {
 
 fn target_of(selector: &CurrentSelector) -> CurrentTarget {
     match selector {
-        CurrentSelector::RealmProfile
-        | CurrentSelector::RealmPolicy
-        | CurrentSelector::DeviceGeneration => CurrentTarget::Realm,
+        CurrentSelector::RealmProfile | CurrentSelector::DeviceGeneration => CurrentTarget::Realm,
         CurrentSelector::Policy { policy_id } => CurrentTarget::Policy {
             policy_id: policy_id.clone(),
         },

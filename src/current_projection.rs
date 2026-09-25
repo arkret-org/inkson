@@ -10,8 +10,10 @@ use serde_json::Value;
 
 /// The current results a Realm view needs before it can render its own
 /// identity and policy. Everything else is optional and rendered as it arrives.
-pub(crate) const REQUIRED_REALM_SELECTORS: [CurrentSelector; 2] =
-    [CurrentSelector::RealmProfile, CurrentSelector::RealmPolicy];
+pub(crate) const REQUIRED_REALM_SELECTORS: [CurrentSelector; 2] = [
+    CurrentSelector::RealmProfile,
+    CurrentSelector::RealmPolicyBundle,
+];
 
 fn selector_of(entry: &TypedCurrentResult) -> &CurrentSelector {
     match entry {
@@ -152,9 +154,9 @@ pub(crate) fn scope_has_accepted_mls_genesis(
     current_mls_group(entries, scope_ref).is_some()
 }
 
-/// The Station-selected current `ak.realm.policy` value.
-pub(crate) fn current_realm_policy_value(entries: &[TypedCurrentResult]) -> Option<Value> {
-    entry_for(entries, &CurrentSelector::RealmPolicy)
+/// The Station-selected current `ak.realm.policy_bundle` value.
+pub(crate) fn current_realm_policy_bundle_value(entries: &[TypedCurrentResult]) -> Option<Value> {
+    entry_for(entries, &CurrentSelector::RealmPolicyBundle)
         .and_then(value_of)
         .cloned()
 }
@@ -231,7 +233,7 @@ mod tests {
             serde_json::json!({"schema": "ak.schema.realm_profile.v1", "title": "Launch"}),
         );
         let policy = entry(
-            CurrentSelector::RealmPolicy,
+            CurrentSelector::RealmPolicyBundle,
             4,
             serde_json::json!({"policy_revision": 1}),
         );

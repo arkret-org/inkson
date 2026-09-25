@@ -209,7 +209,7 @@ pub(crate) fn realm_handle_issuer_policies(
 ) -> Vec<HandleIssuerPolicyEntry> {
     let Some(value) = store
         .realm_current_view_entries(realm_id)
-        .and_then(|entries| crate::current_projection::current_realm_policy_value(&entries))
+        .and_then(|entries| crate::current_projection::current_realm_policy_bundle_value(&entries))
     else {
         return Vec::new();
     };

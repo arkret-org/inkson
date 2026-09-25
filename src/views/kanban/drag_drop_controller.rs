@@ -787,7 +787,7 @@ pub(super) fn dispatch_strand_position_move(
         Ok(r) => r,
         Err(RankError::Exhausted) => {
             board_status.set(
-                "rank exhausted between neighbours — request ak.container.rebalance before retrying"
+                "rank exhausted between neighbours — reorder a neighbouring card first, then retry"
                     .to_owned(),
             );
             return;

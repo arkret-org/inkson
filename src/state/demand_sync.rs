@@ -1520,7 +1520,7 @@ mod tests {
                     arkret_wire::CurrentSelector::RealmProfile,
                     json!({"schema":"ak.schema.realm_profile.v1","title":"r"}),
                 ),
-                row(arkret_wire::CurrentSelector::RealmPolicy, json!({})),
+                row(arkret_wire::CurrentSelector::RealmPolicyBundle, json!({})),
             ],
         );
         assert!(store.current_product_view_ready(REALM));

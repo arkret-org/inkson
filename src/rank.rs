@@ -13,9 +13,9 @@
 //! sentinel, and exhaustion surfaces as the recoverable
 //! [`RankError::Exhausted`] signal.
 //!
-//! Callers MUST treat `Exhausted` as a signal to either request a
-//! `ak.container.rebalance` Move or fall back to a UI affordance that
-//! lets the user trigger one. Inserting an out-of-profile sentinel like
+//! Callers MUST treat `Exhausted` as a signal to re-rank a neighbour with
+//! the container's own reorder Event (`ak.strand.reorder` on a board) and
+//! retry, per encoding.md §9. Inserting an out-of-profile sentinel like
 //! `format!("r{millis}")` is a wire-shape violation — reducers reject any
 //! rank that contains characters outside the alphabet or exceeds the
 //! 128-char limit.
@@ -23,17 +23,15 @@
 use arkret_event_draft::EventDraftError;
 
 /// Errors from rank generation. `Exhausted` is the recoverable signal —
-/// callers should fall back to `ak.container.rebalance`. `Invalid`
+/// callers re-rank a neighbour first and retry. `Invalid`
 /// indicates the input string is not a well-formed rank (alphabet or
 /// length violation) or the interval is inverted, and is a programmer
 /// error.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum RankError {
-    /// No rank exists strictly between the given sentinels. Trigger a
-    /// container rebalance.
-    #[error(
-        "rank_exhausted: no valid rank between the given sentinels; trigger ak.container.rebalance"
-    )]
+    /// No rank exists strictly between the given sentinels. Re-rank a
+    /// neighbour first.
+    #[error("rank_exhausted: no valid rank between the given sentinels; re-rank a neighbour first")]
     Exhausted,
     /// The SDK rejected an input boundary; the message is its reason
     /// verbatim.
@@ -77,7 +75,7 @@ mod tests {
 
     /// Empty-string sentinels map to the SDK's open interval, and an
     /// unrepresentable gap surfaces as `RankError::Exhausted` so callers
-    /// can trigger `ak.container.rebalance` — never a fabricated rank.
+    /// can re-rank a neighbour first — never a fabricated rank.
     #[test]
     fn rank_between_empty_and_zero_returns_exhausted() {
         let err = rank_between("", "0").unwrap_err();

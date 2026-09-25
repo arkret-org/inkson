@@ -1695,7 +1695,7 @@ mod tests {
         let TypedCurrentResult::Value { selector, .. } = &mut unsupported else {
             unreachable!()
         };
-        *selector = arkret_wire::CurrentSelector::RealmPolicy;
+        *selector = arkret_wire::CurrentSelector::DeviceGeneration;
         forged_rows.push(vec![unsupported, root.clone()]);
         let mut wrong_source = row.clone();
         let TypedCurrentResult::Value {
