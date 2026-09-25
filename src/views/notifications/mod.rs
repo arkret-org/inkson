@@ -7,8 +7,10 @@
 //!   * [`model`]   — data types plus the pure projection / hydration / value helpers.
 //!   * [`actions`] — the network-driven handlers (refresh, mark-all-read, invite accept).
 //!   * [`panel`]   — the `NotificationsPanel` RSX component.
+//!   * [`invite_preview`] — the pre-accept Realm preview on invite cards.
 
 mod actions;
+mod invite_preview;
 mod model;
 mod panel;
 

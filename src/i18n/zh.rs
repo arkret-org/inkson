@@ -1333,6 +1333,49 @@ pub fn chinese_translations() -> TranslationDict {
 
     // Notifications panel
     dict.set("notifications.feed_title", "通知流");
+    dict.set(
+        "notifications.invite_preview.loading",
+        "正在加载 Realm 预览…",
+    );
+    dict.set(
+        "notifications.invite_preview.restricted",
+        "该 Realm 未向你开放预览。你仍可以接受或忽略此邀请。",
+    );
+    dict.set(
+        "notifications.invite_preview.awaiting_delivery",
+        "邀请详情仍在同步到此设备。",
+    );
+    dict.set(
+        "notifications.invite_preview.unavailable",
+        "暂时无法获取 Realm 预览。",
+    );
+    dict.set("notifications.invite_preview.retry", "重试预览");
+    dict.set(
+        "notifications.invite_preview.join_rule.public",
+        "任何人可加入",
+    );
+    dict.set("notifications.invite_preview.join_rule.invite", "仅限邀请");
+    dict.set("notifications.invite_preview.join_rule.knock", "申请加入");
+    dict.set(
+        "notifications.invite_preview.join_rule.restricted",
+        "受限成员",
+    );
+    dict.set(
+        "notifications.invite_preview.join_rule.knock_restricted",
+        "受限或申请加入",
+    );
+    dict.set(
+        "notifications.invite_preview.join_rule.closed",
+        "不接受新成员",
+    );
+    dict.set(
+        "notifications.invite_preview.history.since_join",
+        "新成员从加入时起可见历史",
+    );
+    dict.set(
+        "notifications.invite_preview.history.all_history",
+        "成员可见全部历史",
+    );
     dict.set("notifications.view.latest", "最新");
     dict.set("notifications.view.realm", "Realm");
     dict.set("notifications.view.type", "类型");

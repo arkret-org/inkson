@@ -1315,6 +1315,55 @@ pub fn english_translations() -> TranslationDict {
 
     // Notifications panel (group tabs + toolbar tooltips)
     dict.set("notifications.feed_title", "Notification feed");
+    dict.set(
+        "notifications.invite_preview.loading",
+        "Loading Realm preview…",
+    );
+    dict.set(
+        "notifications.invite_preview.restricted",
+        "This Realm shares no preview with you. You can still accept or ignore the invite.",
+    );
+    dict.set(
+        "notifications.invite_preview.awaiting_delivery",
+        "Invite details are still syncing to this device.",
+    );
+    dict.set(
+        "notifications.invite_preview.unavailable",
+        "Realm preview is unavailable right now.",
+    );
+    dict.set("notifications.invite_preview.retry", "Retry preview");
+    dict.set(
+        "notifications.invite_preview.join_rule.public",
+        "Anyone can join",
+    );
+    dict.set(
+        "notifications.invite_preview.join_rule.invite",
+        "Invite only",
+    );
+    dict.set(
+        "notifications.invite_preview.join_rule.knock",
+        "Join by request",
+    );
+    dict.set(
+        "notifications.invite_preview.join_rule.restricted",
+        "Restricted membership",
+    );
+    dict.set(
+        "notifications.invite_preview.join_rule.knock_restricted",
+        "Restricted, or join by request",
+    );
+    dict.set(
+        "notifications.invite_preview.join_rule.closed",
+        "Closed to new members",
+    );
+    dict.set(
+        "notifications.invite_preview.history.since_join",
+        "New members see history from when they join",
+    );
+    dict.set(
+        "notifications.invite_preview.history.all_history",
+        "Members see the full history",
+    );
     dict.set("notifications.view.latest", "Latest");
     dict.set("notifications.view.realm", "Realm");
     dict.set("notifications.view.type", "Type");

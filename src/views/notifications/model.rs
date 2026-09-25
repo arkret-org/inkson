@@ -279,8 +279,8 @@ fn notification_from_stored(
             invite_id: invite.invite_id.as_str().to_owned(),
             // Neither member is registered on the Invite object
             // (`governance-objects.md` §5.3), so the accept flow resolves the
-            // Realm preview itself and the private delivery credential (token
-            // and locator hints) — when a directed invite has one — comes from
+            // Realm preview itself and the private delivery credential (its
+            // locator hints) — when a directed invite has one — comes from
             // the local private state the `ak.account.invite_delivery`
             // carrier wrote.
             credential: local_state

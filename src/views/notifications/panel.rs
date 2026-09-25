@@ -266,6 +266,22 @@ pub fn NotificationsPanel(
                             }
                         }
                     }
+                    if let Some(super::model::UiNotificationAction::AcceptInvite {
+                        realm_id,
+                        invite_id,
+                        credential,
+                    }) = notification.action.clone()
+                    {
+                        super::invite_preview::InvitePreview {
+                            key: "{notification.id}-preview",
+                            base_url: base_url.clone(),
+                            token,
+                            authority: authority.clone(),
+                            realm_id,
+                            invite_id,
+                            credential,
+                        }
+                    }
                     div { class: "actions",
                         if !notification.read {
                             Button {

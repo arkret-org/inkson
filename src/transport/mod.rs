@@ -12,7 +12,7 @@ pub(crate) mod describe_cache;
 pub mod directory;
 mod endpoints;
 mod invite;
-mod invite_join;
+pub(crate) mod invite_join;
 mod key_backup;
 pub mod keys;
 pub mod media;
