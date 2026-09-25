@@ -1028,17 +1028,20 @@ pub fn build_action_approve_payload(
     })
 }
 
-/// Build a `ak.agent.action_reject` payload for a draft or action
-/// request. A human-entered reason is included when present.
+/// Build a `ak.agent.action_reject` payload for one action request. A
+/// draft is not a rejection target: its workflow state is the
+/// controller's own encrypted Account Data. A human-entered reason is
+/// included when present.
 pub fn build_action_reject_payload(
     request: &Value,
     rejected_at: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::AgentActionRejectPayload> {
+    let request_id = non_empty_field(request, "request_id")
+        .ok_or_else(|| anyhow::anyhow!("only an action request can be rejected"))?;
     Ok(arkret_sdk::AgentActionRejectPayload {
         rejection_id: format!("ak:agent_rejection:{}", crate::operation::uuid_v7()),
-        request_id: non_empty_field(request, "request_id"),
-        draft_id: non_empty_field(request, "draft_id"),
+        request_id,
         agent_id: arkret_sdk::DidCoreId::new(
             request
                 .get("agent_id")

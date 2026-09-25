@@ -710,6 +710,15 @@ mod agent_tests {
     }
 
     #[test]
+    fn build_action_reject_payload_refuses_a_draft_target() {
+        let draft = serde_json::json!({
+            "draft_id": "draft-001",
+            "agent_id": "ak:did_core:web:agents.example:summary",
+        });
+        assert!(build_action_reject_payload(&draft, "2026-06-26T00:00:00.000Z", None).is_err());
+    }
+
+    #[test]
     fn dialog_state_round_trip_data_state_tokens() {
         for s in [
             ActionApproveDialogState::Idle,
