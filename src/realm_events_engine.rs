@@ -832,8 +832,9 @@ where
 ///   (a restricted mode needs an automatic gate in that bundle), history access (equal to the
 ///   signed floor's `history_access`), discovery, the alias and plaintext-visible-services facets,
 ///   member state, Realm-scoped Strand and the default-Strand pointer, which must name a Strand in
-///   the same signed cut, and the `message_revision` of each created message, whose Strand must
-///   have been created earlier in the same signed cut.
+///   the same signed cut, the `message_revision` of each message (a create carrier's Strand must
+///   have been created earlier in the same signed cut; a revise carrier names its own Message), and
+///   the `object_redaction` of a redacted Message, whose every assertion redacts that Message.
 ///
 /// Any other family, extra member, gate-bearing policy or cross-row mismatch
 /// rejects the whole snapshot.
@@ -981,11 +982,34 @@ fn validate_signed_floor_rows(
                     arkret_models_collaboration::governance::plaintext_visibility::PlaintextVisibleServicesPayload,
                 >(value, "realm_plaintext_visible_services")?;
             }
-            CurrentSelector::MessageRevision { .. } => {
-                // A create carrier; a revise chain has no product installer.
-                let parsed: arkret_sdk::MessageCreatePayload =
-                    closed_value(value, "message_revision")?;
-                messages.push((parsed.strand_id, revision.stream_position));
+            CurrentSelector::MessageRevision { message_id } => {
+                // The chain's current carrier: its create, or the revise that
+                // replaced it, which must name this same Message.
+                if value.get("message_id").is_some() {
+                    let parsed: arkret_models_collaboration::events_payloads::message::MessageRevisePayload =
+                        closed_value(value, "message_revision")?;
+                    if &parsed.message_id != message_id {
+                        return Err(protocol("signed message revision names another Message"));
+                    }
+                } else {
+                    let parsed: arkret_sdk::MessageCreatePayload =
+                        closed_value(value, "message_revision")?;
+                    messages.push((parsed.strand_id, revision.stream_position));
+                }
+            }
+            CurrentSelector::ObjectRedaction { target_ref } => {
+                // Only a Message redaction has a product installer; its
+                // assertions all redact exactly the selected Message.
+                if arkret_sdk::MessageId::new(target_ref.as_str()).is_err() {
+                    return Err(protocol(
+                        "signed object redaction subject has no product installer",
+                    ));
+                }
+                closed_value::<
+                    arkret_models_collaboration::events_payloads::redaction::ObjectRedactionCurrentValue,
+                >(value, "object_redaction")?
+                .validate_for_subject(target_ref)
+                .map_err(protocol)?;
             }
             CurrentSelector::MemberState { .. } => {
                 closed_value::<arkret_wire::MemberStateCurrent>(value, "member_state")?;
@@ -1864,6 +1888,156 @@ mod tests {
         for rows in forged {
             assert!(
                 validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &rows).is_err()
+            );
+        }
+    }
+
+    /// Soland's founder cut after an edit and a retraction: the edited
+    /// Message's `message_revision` is the revise carrier naming that Message,
+    /// and a retracted Message is disclosed as its `object_redaction` row, each
+    /// assertion redacting exactly that Message. A revise naming another
+    /// Message, an open or foreign redaction and a non-Message redaction
+    /// subject reject the whole snapshot.
+    #[test]
+    fn signed_floor_snapshot_installs_message_revise_and_redaction() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let chain = |tail: Vec<(String, serde_json::Value)>| {
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&creator)
+                    .into_iter()
+                    .chain(tail)
+                    .collect(),
+                "alice.example",
+                DEVICE_ID,
+            )
+        };
+        let strand = strand_create_entry(
+            &realm_id,
+            &creator,
+            crate::test_support::committed_event::fixture_time(8),
+        );
+        let (_, _, probe) = chain(vec![strand.clone()]);
+        let strand_id = arkret_sdk::StrandId::from_event_id(&probe[6].event.event_id);
+        let (bundle, _, items) = chain(vec![
+            strand,
+            default_strand_entry(&strand_id, None),
+            message_create_entry(&strand_id, "discussion"),
+        ]);
+        let head_commit = &items.last().unwrap().commit;
+        let head = arkret_wire::CommitStreamHead {
+            stream_ref: head_commit.stream_ref.clone(),
+            stream_position: head_commit.stream_position,
+            commit_id: head_commit.commit_id.clone(),
+        };
+        let mut rows = soland_bootstrap_rows(&bundle, &items);
+        let message_index = rows
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    TypedCurrentResult::Value {
+                        selector: arkret_wire::CurrentSelector::MessageRevision { .. },
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        let TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::MessageRevision { message_id },
+            ..
+        } = rows[message_index].clone()
+        else {
+            unreachable!()
+        };
+        set_row_value(
+            &mut rows[message_index],
+            json!({
+                "message_id": message_id,
+                "content": {"kind": "ak.content.text", "body": "edited", "format": "plain"}
+            }),
+        );
+        let retracted = arkret_sdk::MessageId::from_event_id(&items[5].event.event_id);
+        let redaction_tag = format!("{}:0", items.last().unwrap().event.event_id);
+        let redaction = |target: &str, value: serde_json::Value| TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::ObjectRedaction {
+                target_ref: target.to_owned(),
+            },
+            source_stream_ref: head.stream_ref.clone(),
+            revision: arkret_wire::CurrentRevision {
+                commit_id: head.commit_id.clone(),
+                stream_position: head.stream_position,
+            },
+            value,
+        };
+        rows.push(redaction(
+            retracted.as_str(),
+            json!({"assertions": [{
+                "tag_id": redaction_tag,
+                "value": {"message_id": retracted, "reason": "retracted"}
+            }]}),
+        ));
+        let since_join = arkret_sdk::HistoryAccess::SinceJoin;
+        validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &rows).unwrap();
+
+        let redaction_index = rows.len() - 1;
+        let mut forged = Vec::new();
+        let mut foreign_revision = rows.clone();
+        let TypedCurrentResult::Value { value, .. } = &mut foreign_revision[message_index] else {
+            unreachable!()
+        };
+        value["message_id"] = json!(retracted);
+        forged.push(foreign_revision);
+        let mut open_revision = rows.clone();
+        let TypedCurrentResult::Value { value, .. } = &mut open_revision[message_index] else {
+            unreachable!()
+        };
+        value["unknown"] = json!(true);
+        forged.push(open_revision);
+        let mut foreign_redaction = rows.clone();
+        set_row_value(
+            &mut foreign_redaction[redaction_index],
+            json!({"assertions": [{
+                "tag_id": redaction_tag,
+                "value": {"message_id": message_id}
+            }]}),
+        );
+        forged.push(foreign_redaction);
+        let mut open_redaction = rows.clone();
+        set_row_value(
+            &mut open_redaction[redaction_index],
+            json!({"assertions": [{
+                "tag_id": redaction_tag,
+                "value": {"message_id": retracted}
+            }], "redaction_ref": redaction_tag}),
+        );
+        forged.push(open_redaction);
+        let mut empty_redaction = rows.clone();
+        set_row_value(
+            &mut empty_redaction[redaction_index],
+            json!({"assertions": []}),
+        );
+        forged.push(empty_redaction);
+        let mut event_subject = rows.clone();
+        let event_target = items[5].event.event_id.to_string();
+        event_subject[redaction_index] = redaction(
+            &event_target,
+            json!({"assertions": [{
+                "tag_id": redaction_tag,
+                "value": {"target_ref": event_target}
+            }]}),
+        );
+        forged.push(event_subject);
+        for rows in forged {
+            assert!(
+                validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &rows).is_err(),
+                "{rows:?}"
             );
         }
     }
