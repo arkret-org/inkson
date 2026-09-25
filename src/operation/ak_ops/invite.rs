@@ -187,8 +187,8 @@ pub fn invite_revoke(
     if target_state == "send_failed" && invitee.is_some() {
         anyhow::bail!("ak.invite.revoke send_failed must not carry an invitee_account_id");
     }
-    if reason_code.trim().is_empty() {
-        anyhow::bail!("ak.invite.revoke reason_code is required");
+    if !arkret_sdk::ReasonCode::is_valid_wire(reason_code) {
+        anyhow::bail!("ak.invite.revoke reason_code must match ^[a-z][a-z0-9_]{{0,63}}$");
     }
     let invite_id = arkret_sdk::InviteId::new(invite_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invite_id not canonical: {err}"))?;
@@ -212,13 +212,13 @@ pub fn invite_revoke(
         "invalidated_by_rate_limit" => arkret_sdk::InviteRevokeTargetState::InvalidatedByRateLimit,
         _ => unreachable!("validated invite revoke target state"),
     };
-    let payload = arkret_sdk::InviteRevokePayload {
+    let payload = arkret_sdk::InviteRevokePayload::new(
         invite_id,
         previous_state,
         invitee_account_id,
         target_state,
-        reason: Some(reason_code.to_owned()),
-    };
+    )
+    .with_reason_code(arkret_sdk::ReasonCode::from_wire(reason_code));
     payload.validate()?;
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::InviteRevoke>(

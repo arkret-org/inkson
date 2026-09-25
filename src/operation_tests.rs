@@ -982,7 +982,8 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(revoke.kind().as_str(), "ak.invite.revoke");
     assert_eq!(revoke.payload()["target_state"], "revoked");
     assert_eq!(revoke.payload()["previous_state"], "pending");
-    assert_eq!(revoke.payload()["reason"], "admin_revoke");
+    assert_eq!(revoke.payload()["reason_code"], "admin_revoke");
+    assert!(!revoke.payload().contains_key("reason"));
     assert!(!revoke.payload().contains_key("invitee_account_id"));
 }
 
