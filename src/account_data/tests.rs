@@ -617,9 +617,9 @@ fn actor_blocklist_never_merges_same_principal_at_different_stations() {
 }
 
 #[test]
-fn blocklist_payload_uses_cas_revision_and_preserves_empty_clear() {
-    let body = build_blocklist_account_data_body(7, &[]).unwrap();
-    assert_eq!(body["version"], 7);
+fn blocklist_value_carries_no_revision_and_preserves_empty_clear() {
+    let body = build_blocklist_account_data_body(&[]).unwrap();
+    assert!(body.get("version").is_none());
     assert_eq!(body["entries"], json!([]));
     assert!(
         blocklist_entries_from_account_data(&body)
@@ -629,14 +629,14 @@ fn blocklist_payload_uses_cas_revision_and_preserves_empty_clear() {
 }
 
 #[test]
-fn blocklist_payload_rejects_unknown_holder_mirror_and_zero_revision() {
-    let mut body = build_blocklist_account_data_body(2, &[]).unwrap();
+fn blocklist_value_rejects_unknown_holder_mirror_and_a_revision_field() {
+    let mut body = build_blocklist_account_data_body(&[]).unwrap();
     body["holder_id"] = json!("ak:did_core:web:other.example");
     assert!(blocklist_entries_from_account_data(&body).is_err());
     body.as_object_mut().unwrap().remove("holder_id");
-    let mut wrong_version = body;
-    wrong_version["version"] = json!(0);
-    assert!(blocklist_entries_from_account_data(&wrong_version).is_err());
+    let mut with_version = body;
+    with_version["version"] = json!(2);
+    assert!(blocklist_entries_from_account_data(&with_version).is_err());
 }
 
 #[test]
@@ -658,7 +658,7 @@ fn blocklist_payload_round_trip_keeps_sdk_closed_types() {
     .unwrap();
     entry.mode = AccountBlocklistMode::Hide;
 
-    let body = build_blocklist_account_data_body(9, &[entry.clone()]).unwrap();
+    let body = build_blocklist_account_data_body(&[entry.clone()]).unwrap();
     let decoded = blocklist_entries_from_account_data(&body).unwrap();
     assert_eq!(decoded, vec![entry]);
     assert!(matches!(

@@ -6,9 +6,9 @@
 //! wire model.
 
 use arkret_models_collaboration::objects::productivity::{
-    AccountBlocklistActorTarget, AccountBlocklistActorTargetKind, AccountBlocklistMode,
-    AccountBlocklistPayload, AccountBlocklistPayloadEntry, AccountBlocklistSurface,
-    AccountBlocklistTarget, AccountBlocklistValueTarget, AccountBlocklistValueTargetKind,
+    AccountBlocklistActorTarget, AccountBlocklistActorTargetKind, AccountBlocklistEntry,
+    AccountBlocklistMode, AccountBlocklistSurface, AccountBlocklistTarget, AccountBlocklistValue,
+    AccountBlocklistValueTarget, AccountBlocklistValueTargetKind,
 };
 use serde_json::Value;
 
@@ -164,7 +164,7 @@ pub fn new_blocklist_entry(
     applies_to: Vec<AccountBlocklistSurface>,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
     created_at: chrono::DateTime<chrono::Utc>,
-) -> Result<AccountBlocklistPayloadEntry, String> {
+) -> Result<AccountBlocklistEntry, String> {
     let target = target_from_ui(kind, value)?;
     let reason_code = reason_code
         .map(|value| value.trim().to_owned())
@@ -179,7 +179,7 @@ pub fn new_blocklist_entry(
     };
     let entry_id = arkret_sdk::NonEmptyString::new(derive_entry_id(&target, created_at))
         .map_err(|error| error.to_string())?;
-    let entry = AccountBlocklistPayloadEntry {
+    let entry = AccountBlocklistEntry {
         entry_id: Some(entry_id),
         target,
         mode: AccountBlocklistMode::Block,
@@ -192,12 +192,12 @@ pub fn new_blocklist_entry(
     Ok(entry)
 }
 
-pub fn is_blocked(list: &[AccountBlocklistPayloadEntry], actor_id: &str) -> bool {
+pub fn is_blocked(list: &[AccountBlocklistEntry], actor_id: &str) -> bool {
     actor_entries_filter_surface(list, actor_id, AccountBlocklistSurface::Messages, false)
 }
 
 pub fn suppresses_notifications(
-    list: &[AccountBlocklistPayloadEntry],
+    list: &[AccountBlocklistEntry],
     actor_id: &str,
     related_surfaces: &[AccountBlocklistSurface],
 ) -> bool {
@@ -206,7 +206,7 @@ pub fn suppresses_notifications(
         .any(|surface| actor_entries_filter_surface(list, actor_id, *surface, true))
 }
 
-pub fn hides_actor_messages(entry: &AccountBlocklistPayloadEntry) -> bool {
+pub fn hides_actor_messages(entry: &AccountBlocklistEntry) -> bool {
     entry_filters_surface(
         entry,
         AccountBlocklistSurface::Messages,
@@ -216,7 +216,7 @@ pub fn hides_actor_messages(entry: &AccountBlocklistPayloadEntry) -> bool {
 }
 
 fn actor_entries_filter_surface(
-    list: &[AccountBlocklistPayloadEntry],
+    list: &[AccountBlocklistEntry],
     actor_id: &str,
     surface: AccountBlocklistSurface,
     include_mute: bool,
@@ -233,7 +233,7 @@ fn actor_entries_filter_surface(
 }
 
 fn entry_filters_surface(
-    entry: &AccountBlocklistPayloadEntry,
+    entry: &AccountBlocklistEntry,
     surface: AccountBlocklistSurface,
     include_mute: bool,
     now: chrono::DateTime<chrono::Utc>,
@@ -251,7 +251,7 @@ fn entry_filters_surface(
 }
 
 pub fn block_user_in(
-    list: &mut Vec<AccountBlocklistPayloadEntry>,
+    list: &mut Vec<AccountBlocklistEntry>,
     actor_id: &str,
     reason_code: Option<String>,
     created_at: chrono::DateTime<chrono::Utc>,
@@ -268,7 +268,7 @@ pub fn block_user_in(
 }
 
 pub fn block_target_in(
-    list: &mut Vec<AccountBlocklistPayloadEntry>,
+    list: &mut Vec<AccountBlocklistEntry>,
     kind: BlocklistUiTargetKind,
     value: &str,
     reason_code: Option<String>,
@@ -298,7 +298,7 @@ pub fn block_target_in(
 /// "block DM" intent for this exact ActorId. Hide/mute and blocks that do not
 /// cover the DM surface must never revoke Contact authority.
 pub fn requires_contact_tombstone(
-    list: &[AccountBlocklistPayloadEntry],
+    list: &[AccountBlocklistEntry],
     actor_id: &str,
     now: chrono::DateTime<chrono::Utc>,
 ) -> bool {
@@ -314,7 +314,7 @@ pub fn requires_contact_tombstone(
     })
 }
 
-pub fn unblock_user_in(list: &mut Vec<AccountBlocklistPayloadEntry>, actor_id: &str) -> bool {
+pub fn unblock_user_in(list: &mut Vec<AccountBlocklistEntry>, actor_id: &str) -> bool {
     let Ok(needle) = serde_json::from_str::<arkret_sdk::ActorId>(actor_id) else {
         return false;
     };
@@ -327,7 +327,7 @@ pub fn unblock_user_in(list: &mut Vec<AccountBlocklistPayloadEntry>, actor_id: &
 }
 
 pub fn unblock_target_in(
-    list: &mut Vec<AccountBlocklistPayloadEntry>,
+    list: &mut Vec<AccountBlocklistEntry>,
     target: &AccountBlocklistTarget,
 ) -> bool {
     let before = list.len();
@@ -337,16 +337,12 @@ pub fn unblock_target_in(
 
 /// Build the canonical blocklist payload for the next Account Data CAS write.
 ///
-/// The inner `version` and the outer
-/// `ak.account_data.set.expected_server_revision`
-/// share one counter.  Callers must therefore pass the exact accepted revision
-/// they are about to create (`current + 1`); this is not a schema version.
+/// The value carries no revision: the only counter is the enclosing
+/// `ak.account_data.set.expected_server_revision` CAS.
 pub fn build_blocklist_account_data_body(
-    version: u64,
-    entries: &[AccountBlocklistPayloadEntry],
+    entries: &[AccountBlocklistEntry],
 ) -> Result<Value, String> {
-    let payload = AccountBlocklistPayload {
-        version,
+    let payload = AccountBlocklistValue {
         entries: entries.to_vec(),
         updated_at: Some(chrono::Utc::now()),
     };
@@ -355,22 +351,17 @@ pub fn build_blocklist_account_data_body(
 }
 
 #[cfg(test)]
-/// Decode the SDK payload and enforce holder binding.  The sync layer compares
-/// `payload.version` with the enclosing Account Data row revision before
-/// installing it, so this helper only validates the closed payload itself.
+/// Decode the SDK value and validate the closed shape itself.
 pub fn blocklist_entries_from_account_data(
     value: &Value,
-) -> Result<Vec<AccountBlocklistPayloadEntry>, String> {
+) -> Result<Vec<AccountBlocklistEntry>, String> {
     Ok(blocklist_payload_from_account_data(value)?.entries)
 }
 
-/// Decode and validate the complete blocklist payload. Sync consumers use the
-/// returned version to enforce equality with the enclosing Account Data CAS
-/// revision before changing the local privacy projection.
-pub fn blocklist_payload_from_account_data(
-    value: &Value,
-) -> Result<AccountBlocklistPayload, String> {
-    let payload: AccountBlocklistPayload =
+/// Decode and validate the complete blocklist value. Its revision is the
+/// enclosing Account Data row revision.
+pub fn blocklist_payload_from_account_data(value: &Value) -> Result<AccountBlocklistValue, String> {
+    let payload: AccountBlocklistValue =
         serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
     payload.validate().map_err(|error| error.to_string())?;
     Ok(payload)

@@ -1605,7 +1605,7 @@ pub(crate) async fn persist_personal_block_saga(
     submitter: &EventSubmitter,
     authority: &arkret_sdk::AccountId,
     state_store: &crate::runtime::input::StateStoreHandle,
-    entries: &[arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry],
+    entries: &[arkret_models_collaboration::objects::productivity::AccountBlocklistEntry],
 ) -> anyhow::Result<Value> {
     let outcome = update_account_data_with_conditional_merge(
         submitter,
@@ -1619,19 +1619,12 @@ pub(crate) async fn persist_personal_block_saga(
                 )
                 && let Ok(payload) =
                     crate::account_data::blocklist_payload_from_account_data(&plaintext)
-                && payload.version == current.revision
                 && payload.entries == entries
             {
                 return Ok(AccountDataMergeDecision::KeepCurrent);
             }
-            let plaintext = crate::account_data::build_blocklist_account_data_body(
-                snapshot
-                    .revision
-                    .checked_add(1)
-                    .ok_or_else(|| anyhow::anyhow!("ak.account.blocklist revision overflow"))?,
-                entries,
-            )
-            .map_err(anyhow::Error::msg)?;
+            let plaintext = crate::account_data::build_blocklist_account_data_body(entries)
+                .map_err(anyhow::Error::msg)?;
             crate::account_data::encrypt_account_data_value(
                 authority,
                 arkret_wire::AccountDataKey::ACCOUNT_BLOCKLIST,
@@ -1653,7 +1646,7 @@ pub(crate) async fn persist_personal_block_saga(
 pub(crate) async fn resume_personal_block_contact_sagas(
     http: &arkret_sdk::http_client::Client,
     state_store: &crate::runtime::input::StateStoreHandle,
-    entries: &[arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry],
+    entries: &[arkret_models_collaboration::objects::productivity::AccountBlocklistEntry],
 ) -> anyhow::Result<()> {
     let pending = state_store.read(LocalStateStore::committed_personal_block_sagas);
     if pending.is_empty() {

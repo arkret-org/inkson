@@ -59,7 +59,7 @@ struct BlocklistProjectionCache {
     revision: Option<u64>,
     by_actor: BTreeMap<
         String,
-        Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry>,
+        Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistEntry>,
     >,
 }
 

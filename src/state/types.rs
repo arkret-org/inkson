@@ -1252,7 +1252,7 @@ pub struct ClientLocalState {
     /// DTO is persisted alongside it.
     #[serde(default)]
     pub client_blocklist:
-        Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry>,
+        Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistEntry>,
     /// Account Data CAS revision that produced `client_blocklist`. The
     /// blocklist payload's `version` is the same counter, not a schema marker.
     #[serde(default)]

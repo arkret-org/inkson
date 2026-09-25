@@ -207,7 +207,7 @@ impl LocalStateStore {
     /// is short by design (curated by the user).
     pub fn client_blocklist(
         &self,
-    ) -> Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry> {
+    ) -> Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistEntry> {
         self.load().client_blocklist
     }
 
@@ -221,7 +221,7 @@ impl LocalStateStore {
     pub fn client_blocklist_for_actor(
         &self,
         actor_id: &str,
-    ) -> Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry> {
+    ) -> Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistEntry> {
         let Ok(actor) = serde_json::from_str::<arkret_sdk::ActorId>(actor_id) else {
             return Vec::new();
         };
@@ -398,9 +398,7 @@ impl LocalStateStore {
     pub fn set_client_blocklist(
         &mut self,
         revision: u64,
-        entries: Vec<
-            arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry,
-        >,
+        entries: Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistEntry>,
     ) {
         self.ensure_cached_loaded();
         if revision < self.cached.client_blocklist_revision

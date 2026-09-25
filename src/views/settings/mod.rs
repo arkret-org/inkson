@@ -273,7 +273,7 @@ pub(crate) fn push_blocklist_account_data(
     api_token: String,
     principal_id: String,
     state_store: SyncSignal<crate::state::LocalStateStore>,
-    entries: Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry>,
+    entries: Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistEntry>,
 ) {
     if api_token.trim().is_empty() {
         return;
