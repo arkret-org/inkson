@@ -530,13 +530,8 @@ fn encrypted_realm_write_mls_ready(
     let Ok(realm_id) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
         return false;
     };
-    let scope = arkret_sdk::ScopeRef::Realm {
-        realm_id: realm_id.clone(),
-    };
-    if !crate::current_projection::scope_has_accepted_mls_genesis(
-        &state_store.realm_current_state_entries(realm_id.as_str()),
-        &scope,
-    ) {
+    let scope = arkret_sdk::ScopeRef::Realm { realm_id };
+    if state_store.current_mls_group_for_scope(&scope).is_none() {
         return false;
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");

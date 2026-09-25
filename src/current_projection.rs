@@ -51,11 +51,43 @@ pub(crate) fn required_realm_values_ready(entries: &[TypedCurrentResult]) -> boo
 pub(crate) struct RealmCurrentView {
     pub realm_id: String,
     pub entries: Vec<TypedCurrentResult>,
+    /// Whether the rows were read at one complete verified cut of the durable
+    /// index (installed baseline, every authorized stream covered, no pending
+    /// refresh). Only such a view may answer a selector's absence.
+    pub complete_cut: bool,
+}
+
+/// What an installed current view says about one scope's MLS activation.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ScopeMlsCurrent {
+    /// The view carries the scope's accepted `mls_group`: the scope is
+    /// irreversibly standard RFC 9420.
+    Activated(arkret_wire::MlsGroupCurrent),
+    /// The view is a complete verified cut without an `mls_group` for the
+    /// scope: it has no accepted Genesis.
+    NotActivated,
+    /// No complete cut of the scope's Realm is installed; nothing is known.
+    Unknown,
+}
+
+impl ScopeMlsCurrent {
+    /// `Some(activated)` once known, `None` while unknown.
+    pub(crate) fn activated(&self) -> Option<bool> {
+        match self {
+            Self::Activated(_) => Some(true),
+            Self::NotActivated => Some(false),
+            Self::Unknown => None,
+        }
+    }
 }
 
 impl RealmCurrentView {
     /// Validate that every scope-carrying row belongs to `realm_id`.
-    pub(crate) fn new(realm_id: &str, entries: Vec<TypedCurrentResult>) -> anyhow::Result<Self> {
+    pub(crate) fn new(
+        realm_id: &str,
+        entries: Vec<TypedCurrentResult>,
+        complete_cut: bool,
+    ) -> anyhow::Result<Self> {
         let realm = RealmId::new(realm_id.to_owned())?;
         for entry in &entries {
             // Only the scope-carrying selectors can name another Realm at all;
@@ -70,7 +102,25 @@ impl RealmCurrentView {
         Ok(Self {
             realm_id: realm.as_str().to_owned(),
             entries,
+            complete_cut,
         })
+    }
+
+    /// The MLS activation of `scope_ref` as this view knows it. An accepted
+    /// row is positive evidence on its own, because activation is
+    /// irreversible; its absence answers only on a complete cut.
+    pub(crate) fn scope_mls_current(&self, scope_ref: &arkret_sdk::ScopeRef) -> ScopeMlsCurrent {
+        let Some(entries) = scope_ref
+            .realm_id_opt()
+            .and_then(|realm_id| self.entries_for(realm_id.as_str()))
+        else {
+            return ScopeMlsCurrent::Unknown;
+        };
+        match current_mls_group(entries, scope_ref) {
+            Some(group) => ScopeMlsCurrent::Activated(group),
+            None if self.complete_cut => ScopeMlsCurrent::NotActivated,
+            None => ScopeMlsCurrent::Unknown,
+        }
     }
 
     /// The rows of `realm_id`, or `None` when this view belongs to another
@@ -139,19 +189,6 @@ pub(crate) fn current_mls_group(
         .and_then(value_of)
         .and_then(|value| serde_json::from_value(value.clone()).ok())
         .filter(|group: &arkret_wire::MlsGroupCurrent| group.effective_scope == *scope_ref)
-}
-
-/// Whether `scope_ref` has activated MLS.
-///
-/// This is the single client-side judgement of "is this scope encrypted". A
-/// scope is plaintext until its own accepted `ak.mls.genesis` and irreversibly
-/// standard RFC 9420 afterwards; there is no create-locked encryption profile
-/// or encryption floor to consult.
-pub(crate) fn scope_has_accepted_mls_genesis(
-    entries: &[TypedCurrentResult],
-    scope_ref: &arkret_sdk::ScopeRef,
-) -> bool {
-    current_mls_group(entries, scope_ref).is_some()
 }
 
 /// The Station-selected current `ak.realm.policy_bundle` value.
@@ -243,23 +280,52 @@ mod tests {
 
     #[test]
     fn a_scope_is_encrypted_exactly_when_it_has_an_accepted_mls_genesis() {
-        let plaintext = [entry(
+        let plaintext = vec![entry(
             CurrentSelector::RealmProfile,
             1,
             serde_json::json!({"schema": "ak.schema.realm_profile.v1", "title": "Open"}),
         )];
-        assert!(!scope_has_accepted_mls_genesis(&plaintext, &realm_scope()));
+        let complete = RealmCurrentView::new(REALM, plaintext.clone(), true).unwrap();
+        assert_eq!(
+            complete.scope_mls_current(&realm_scope()),
+            ScopeMlsCurrent::NotActivated
+        );
 
-        let activated = [entry(
+        let activated = vec![entry(
             CurrentSelector::MlsGroup {
                 scope_ref: realm_scope(),
             },
             9,
             mls_group_value(),
         )];
-        assert!(scope_has_accepted_mls_genesis(&activated, &realm_scope()));
         let group = current_mls_group(&activated, &realm_scope()).expect("current MLS group");
         assert_eq!(group.epoch, 4);
+        let view = RealmCurrentView::new(REALM, activated, false).unwrap();
+        assert_eq!(
+            view.scope_mls_current(&realm_scope()),
+            ScopeMlsCurrent::Activated(group)
+        );
+    }
+
+    #[test]
+    fn an_incomplete_cut_never_answers_plaintext() {
+        let rows = vec![entry(
+            CurrentSelector::RealmProfile,
+            1,
+            serde_json::json!({"schema": "ak.schema.realm_profile.v1", "title": "Open"}),
+        )];
+        let partial = RealmCurrentView::new(REALM, rows, false).unwrap();
+        assert_eq!(
+            partial.scope_mls_current(&realm_scope()),
+            ScopeMlsCurrent::Unknown
+        );
+        assert_eq!(partial.scope_mls_current(&realm_scope()).activated(), None);
+        let other = arkret_sdk::ScopeRef::Realm {
+            realm_id: RealmId::new("ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM")
+                .unwrap(),
+        };
+        let complete = RealmCurrentView::new(REALM, Vec::new(), true).unwrap();
+        assert_eq!(complete.scope_mls_current(&other), ScopeMlsCurrent::Unknown);
     }
 
     #[test]
@@ -275,7 +341,6 @@ mod tests {
             wrong_scope,
         )];
         assert!(current_mls_group(&entries, &realm_scope()).is_none());
-        assert!(!scope_has_accepted_mls_genesis(&entries, &realm_scope()));
     }
 
     #[test]
@@ -289,7 +354,7 @@ mod tests {
             2,
             mls_group_value(),
         )];
-        let error = RealmCurrentView::new(REALM, entries).unwrap_err();
+        let error = RealmCurrentView::new(REALM, entries, true).unwrap_err();
         assert!(
             error.to_string().contains("belongs to another Realm"),
             "unexpected error: {error}"
@@ -316,7 +381,7 @@ mod tests {
 
     #[test]
     fn a_view_answers_only_for_its_own_realm() {
-        let view = RealmCurrentView::new(REALM, Vec::new()).unwrap();
+        let view = RealmCurrentView::new(REALM, Vec::new(), true).unwrap();
         assert_eq!(view.entries_for(REALM), Some(&[][..]));
         assert_eq!(
             view.entries_for("ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM"),

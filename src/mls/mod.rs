@@ -20,4 +20,6 @@ pub(crate) mod governance_proof;
 pub(crate) mod group_events;
 pub mod persistence;
 pub mod runtime;
+/// The durable MLS send gate of one effective scope.
+pub(crate) mod send_gate;
 pub(crate) mod welcome_delivery;

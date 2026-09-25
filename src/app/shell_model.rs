@@ -201,11 +201,9 @@ pub(super) fn build_realm_navigation(input: RealmNavigationInput<'_>) -> RealmNa
         .filter(|node| node.kind == RealmTreeNodeKind::Realm)
         .map(|node| {
             let display_name = remark_display_name(input.realm_remarks, node);
-            let encrypted = crate::views::helpers::realm_scope_security_state(
-                input.current_product_view,
-                &node.id,
-            )
-            .unwrap_or_else(|| input.realm_ids_with_local_mls.contains(&node.id));
+            let encrypted =
+                crate::views::helpers::realm_mls_activation(input.current_product_view, &node.id)
+                    .unwrap_or_else(|| input.realm_ids_with_local_mls.contains(&node.id));
             let space_count = descendant_node_ids(&collaboration_nodes, &node.id)
                 .len()
                 .saturating_sub(1);
@@ -233,7 +231,7 @@ pub(super) fn build_realm_navigation(input: RealmNavigationInput<'_>) -> RealmNa
         .find(|row| row.realm_id == input.active_realm_id)
         .map(|row| row.encrypted)
         .or_else(|| {
-            crate::views::helpers::scope_security_state(
+            crate::views::helpers::scope_mls_activation(
                 input.realm_tree_projections,
                 input.current_product_view,
                 security_scope_id,

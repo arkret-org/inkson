@@ -1497,11 +1497,14 @@ pub fn ChatPanel(
         })
         .map(|channel| channel.unread)
         .unwrap_or(0);
-    let selected_realm_security_encrypted = crate::views::helpers::realm_scope_security_state(
+    // The Realm's MLS activation as the installed durable current cut knows
+    // it. Unknown is not plaintext: the composer keeps the secure path and the
+    // pending reason below blocks it until the cut is complete.
+    let selected_realm_mls_activation = crate::views::helpers::realm_mls_activation(
         state_store.read().current_product_view().as_ref(),
         &selected_realm_id,
-    )
-    .unwrap_or(false);
+    );
+    let selected_realm_security_encrypted = selected_realm_mls_activation.unwrap_or(true);
     // The first-class Sidecar contract requires an independent MLS backing scope.
     // The private Strand only carries its internal scope id, so ordinary Realm
     // inheritance would incorrectly downgrade a Sidecar opened from a
@@ -1531,20 +1534,33 @@ pub fn ChatPanel(
         && !sidecar_mode
         && selected_realm_pending_mls_binding_reason.is_none()
     {
-        let accepted_binding = arkret_sdk::RealmId::new(selected_realm_id.clone())
-            .map(|realm_id| {
-                state_store
-                    .read()
-                    .accepted_mls_epoch_binding(&arkret_sdk::ScopeRef::Realm { realm_id })
-            })
-            .unwrap_or(garth::InstalledMlsEpoch::Pending);
-        if let Some(reason) = match accepted_binding {
-            garth::InstalledMlsEpoch::Installed { .. } => None,
-            garth::InstalledMlsEpoch::NoAcceptedGenesis => Some(
+        let realm_scope = arkret_sdk::RealmId::new(selected_realm_id.clone())
+            .ok()
+            .map(|realm_id| arkret_sdk::ScopeRef::Realm { realm_id });
+        let installed = realm_scope
+            .as_ref()
+            .map(|scope| state_store.read().installed_scope_mls_current(scope))
+            .unwrap_or(crate::current_projection::ScopeMlsCurrent::Unknown);
+        let local_epoch = realm_scope.as_ref().and_then(|scope| {
+            state_store
+                .read()
+                .mls_checkpoint_for_scope(scope)
+                .map(|checkpoint| checkpoint.epoch)
+        });
+        if let Some(reason) = match installed {
+            crate::current_projection::ScopeMlsCurrent::Activated(current) => match local_epoch {
+                Some(epoch) if epoch != current.epoch => Some(format!(
+                    "encryption_transition_pending: waiting for the accepted MLS epoch {}",
+                    current.epoch
+                )),
+                _ => None,
+            },
+            crate::current_projection::ScopeMlsCurrent::NotActivated => Some(
                 "encryption_policy_pending: this Realm has no accepted MLS Genesis yet".to_owned(),
             ),
-            garth::InstalledMlsEpoch::Pending => Some(
-                "encryption_policy_pending: waiting for the verified content scheme".to_owned(),
+            crate::current_projection::ScopeMlsCurrent::Unknown => Some(
+                "encryption_policy_pending: waiting for the Realm's verified current state"
+                    .to_owned(),
             ),
         } {
             selected_realm_pending_mls_binding_reason = Some(reason);

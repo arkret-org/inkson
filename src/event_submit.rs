@@ -985,30 +985,6 @@ impl EventSubmitter {
         Ok(matches!(founding, RealmCreateAuthority::Root { controller } if controller == actor))
     }
 
-    /// Whether the Realm scope has already activated standard RFC 9420
-    /// encryption.
-    ///
-    /// Activation is a committed `ak.mls.genesis` for that scope and nothing
-    /// else: the Realm create no longer carries an encryption choice, and the
-    /// transition is irreversible once it lands.
-    pub(crate) async fn accepted_realm_is_encrypted(&self, realm_id: &str) -> anyhow::Result<bool> {
-        let events = self.realm_stream_events(realm_id).await?;
-        let scope_ref = arkret_sdk::ScopeRef::Realm {
-            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
-        };
-        Ok(scope_has_accepted_mls_genesis(&events, &scope_ref))
-    }
-
-    /// Whether the typed Realm state snapshot already carries an MLS group for
-    /// this scope. Same judgement as [`Self::accepted_realm_is_encrypted`],
-    /// read from a snapshot the caller already holds.
-    pub(crate) fn snapshot_scope_is_encrypted(
-        snapshot: &arkret_wire::RealmStateSnapshot,
-        scope_ref: &arkret_sdk::ScopeRef,
-    ) -> bool {
-        snapshot_scope_has_mls_group(snapshot, scope_ref)
-    }
-
     // ------------------------------------------------------------ authoring
 
     /// The digest suite an Event authored into this scope must use.
@@ -1217,6 +1193,7 @@ impl EventSubmitter {
     ) -> anyhow::Result<SubmitEventResult> {
         let intent = operation.intent().clone();
         self.ensure_recovery_material_ready(&intent).await?;
+        self.ensure_application_send_gate(&intent).await?;
         self.refresh_direct_message_authority(&intent, None).await?;
         let local_operation_id = operation.local_operation_id().to_string();
         let _single_writer = outbound_submit_lock().lock().await;
@@ -1255,6 +1232,10 @@ impl EventSubmitter {
             .ok_or_else(|| anyhow::anyhow!("an ordered submission must not be empty"))?;
         self.ensure_recovery_material_ready(&EventIntent::from_authored(first))
             .await?;
+        for event in sdk_events {
+            self.ensure_application_send_gate(&EventIntent::from_authored(event))
+                .await?;
+        }
         let _single_writer = outbound_submit_lock().lock().await;
         let mut results = Vec::with_capacity(sdk_events.len());
         for event in sdk_events {
@@ -1872,11 +1853,61 @@ impl EventSubmitter {
         if !is_join {
             return Ok(false);
         }
-        let Some(realm_id) = intent.realm_id_opt() else {
-            return Ok(false);
+        // Only a complete verified cut without the scope's `mls_group` shows
+        // the join targets a plaintext scope. Every other answer (activated,
+        // not ready, no current index for a Realm not yet joined) keeps the
+        // recovery gate armed.
+        let Some(input) = self.mls_send_gate_input(intent.scope_ref()) else {
+            return Ok(true);
         };
-        let events = self.realm_stream_events(realm_id.as_str()).await?;
-        Ok(scope_has_accepted_mls_genesis(&events, intent.scope_ref()))
+        Ok(!matches!(
+            crate::mls::send_gate::resolve_mls_send_gate(&input, intent.scope_ref()).await,
+            Ok(crate::mls::send_gate::MlsSendGate::Plaintext)
+        ))
+    }
+
+    /// The durable send-gate input of `scope` from this submitter's account
+    /// store, or `None` when the submitter has no store to read.
+    fn mls_send_gate_input(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> Option<crate::mls::send_gate::MlsSendGateInput> {
+        self.state_store.as_ref().map(|store| {
+            store.read(|state| crate::mls::send_gate::MlsSendGateInput::capture(state, scope))
+        })
+    }
+
+    /// Refuse an application body the durable accepted MLS current of its
+    /// scope does not admit (encryption-and-audit §2.5.2).
+    ///
+    /// Every chat, Kanban and ordinary Event write reaches the authority
+    /// through this submitter, so this is the one client-side gate between a
+    /// built body and the network: plaintext needs a complete verified cut
+    /// without the scope's `mls_group`, ciphertext needs the exact current
+    /// epoch and group-state reference with a covered key-access revision.
+    /// Sidecar scopes ride their own contract and are not gated here.
+    async fn ensure_application_send_gate(&self, intent: &EventIntent) -> anyhow::Result<()> {
+        if !matches!(
+            intent.scope_ref(),
+            arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+        ) {
+            return Ok(());
+        }
+        let Some(body) =
+            crate::mls::send_gate::ApplicationBody::of_event(intent.kind(), intent.payload())?
+        else {
+            return Ok(());
+        };
+        let input = self
+            .mls_send_gate_input(intent.scope_ref())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "MLS send gate is not ready: no account store to read the scope's current"
+                )
+            })?;
+        crate::mls::send_gate::check_application_body(&input, intent.scope_ref(), body)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     /// Refresh before authoring. A service-observed binding closes bootstrap
@@ -2048,6 +2079,22 @@ impl EventSubmitter {
     ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
         if header.sender_actor_id.as_account_id() != Some(authority) {
             anyhow::bail!("Signal sender does not match the encryption authority");
+        }
+        // A Signal is sealed under the scope's accepted current group only;
+        // the durable send gate decides, and the sealing material must name
+        // exactly that current epoch and group-state reference.
+        let input = state_store.read(|store| {
+            crate::mls::send_gate::MlsSendGateInput::capture(store, &header.scope_ref)
+        });
+        match crate::mls::send_gate::resolve_mls_send_gate(&input, &header.scope_ref).await? {
+            crate::mls::send_gate::MlsSendGate::Encrypted(current) => anyhow::ensure!(
+                current.epoch == material.epoch
+                    && current.current_mls_commit_event_ref.as_str() == material.group_state_ref,
+                "Signal material does not name the scope's accepted current MLS state"
+            ),
+            crate::mls::send_gate::MlsSendGate::Plaintext => {
+                anyhow::bail!("the Signal scope has no accepted MLS Genesis")
+            }
         }
         let sequence = crate::signal::next_signal_sequence(
             state_store,

@@ -1206,13 +1206,13 @@ pub fn KanbanPanel(
         } else {
             projection_realm_id.as_str()
         };
-        crate::views::helpers::scope_security_state(
+        crate::views::helpers::scope_mls_activation(
             &state.realm_tree_projections,
             current.as_ref(),
             scope_id,
         )
         .or_else(|| {
-            crate::views::helpers::scope_security_state(
+            crate::views::helpers::scope_mls_activation(
                 &state.realm_tree_projections,
                 current.as_ref(),
                 &selected_realm_id,

@@ -2449,7 +2449,7 @@ fn AppBootstrap() -> Element {
                                     };
                                     let (icon_name, icon_class, icon_title) = match item_node.kind {
                                         RealmTreeNodeKind::Realm => {
-                                            let is_encrypted = crate::views::helpers::realm_scope_security_state(
+                                            let is_encrypted = crate::views::helpers::realm_mls_activation(
                                                     current_product_view.as_ref(),
                                                     &item_node.id,
                                                 )

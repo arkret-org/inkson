@@ -438,33 +438,30 @@ fn projection_home_realm_id(projection: &serde_json::Value, stored_under: &str) 
         .to_owned()
 }
 
-/// Whether the Realm-default scope of `realm_id` has activated MLS.
+/// The MLS activation of the Realm-default scope of `realm_id` as the
+/// installed durable current view knows it.
 ///
-/// A scope is plaintext until its own accepted `ak.mls.genesis` and
-/// irreversibly standard RFC 9420 afterwards, so the presence of the Station's
-/// `MlsGroup` current result for that scope is the whole judgement. `None`
-/// means no current view of that Realm is installed — never "plaintext";
-/// gates that could leak plaintext must fail closed on it.
-pub(crate) fn realm_scope_security_state(
+/// `Some(true)` is the Station's accepted `mls_group`; `Some(false)` is a
+/// complete verified cut without one. `None` means no complete cut of that
+/// Realm is installed — never "plaintext"; gates that could leak plaintext
+/// must fail closed on it.
+pub(crate) fn realm_mls_activation(
     current: Option<&crate::current_projection::RealmCurrentView>,
     realm_id: &str,
 ) -> Option<bool> {
-    let realm_id = realm_id.trim();
-    let entries = current?.entries_for(realm_id)?;
-    let realm = arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?;
-    Some(crate::current_projection::scope_has_accepted_mls_genesis(
-        entries,
-        &arkret_sdk::ScopeRef::Realm { realm_id: realm },
-    ))
+    let realm = arkret_sdk::RealmId::new(realm_id.trim().to_owned()).ok()?;
+    current?
+        .scope_mls_current(&arkret_sdk::ScopeRef::Realm { realm_id: realm })
+        .activated()
 }
 
-/// [`realm_scope_security_state`] for an id that may name a Realm or one of the
+/// [`realm_mls_activation`] for an id that may name a Realm or one of the
 /// containers stored beside it.
 ///
 /// Only Realm, Circle and Sidecar are security scopes, so a Space or board id
 /// resolves through its stored body's home Realm rather than pretending to
 /// carry a scope of its own.
-pub(crate) fn scope_security_state(
+pub(crate) fn scope_mls_activation(
     projections: &std::collections::BTreeMap<String, serde_json::Value>,
     current: Option<&crate::current_projection::RealmCurrentView>,
     scope_id: &str,
@@ -474,5 +471,5 @@ pub(crate) fn scope_security_state(
         return None;
     }
     let projection = projections.get(scope_id)?;
-    realm_scope_security_state(current, &projection_home_realm_id(projection, scope_id))
+    realm_mls_activation(current, &projection_home_realm_id(projection, scope_id))
 }

@@ -143,6 +143,20 @@ pub(crate) struct CurrentRealmProgress {
     pub needs_refresh: bool,
 }
 
+/// Whether `progress` is a complete verified cut of `realm_id`.
+fn progress_is_complete_cut(
+    progress: &CurrentRealmProgress,
+    realm_id: &arkret_sdk::RealmId,
+) -> bool {
+    progress.baseline.as_ref().is_some_and(|baseline| {
+        !progress.needs_refresh
+            && baseline.complete
+            && baseline.coverage.complete_for_authorized_streams
+            && baseline.coverage.realm_id == *realm_id
+            && progress.governance_generation.is_some()
+    })
+}
+
 impl CurrentRealmProgress {
     fn invalidate(&mut self, revision: u64) {
         if self.has_invalidation && revision <= self.invalidation_revision {
@@ -839,9 +853,23 @@ impl CurrentIndex {
         self.ready_selector(realm, selector, generation).await
     }
 
+    /// The durable generation at which `realm` holds a complete verified cut:
+    /// an installed baseline covering every authorized stream, no pending
+    /// refresh, and a verified governance generation. `None` while any of that
+    /// is missing; a caller must then treat the Realm as not ready rather than
+    /// read absence as an answer.
+    pub(crate) async fn read_complete_cut(&self, realm: &str) -> anyhow::Result<Option<u64>> {
+        let realm_id = arkret_sdk::RealmId::new(realm.trim().to_owned())?;
+        let _lease = self.lease.lock().await;
+        let generation = self.generation.load(Ordering::Acquire);
+        let progress = self.progress_at(realm_id.as_str(), generation).await?;
+        Ok(progress_is_complete_cut(&progress, &realm_id).then_some(generation))
+    }
+
     /// Read the exact MLS group at the installed baseline cut after all
-    /// authorized streams are covered. Absence describes that cut only; this
-    /// reader cannot decide whether a new write may use plaintext.
+    /// authorized streams are covered. `None` is the answer of that complete
+    /// cut: the scope has no accepted `ak.mls.genesis`. An incomplete cut is an
+    /// error, never an absence.
     pub(crate) async fn read_mls_group_ready(
         &self,
         scope_ref: &arkret_sdk::ScopeRef,
@@ -852,15 +880,12 @@ impl CurrentIndex {
         let _lease = self.lease.lock().await;
         let generation = self.generation.load(Ordering::Acquire);
         let progress = self.progress_at(realm_id.as_str(), generation).await?;
-        let baseline = progress.baseline.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("MLS current read requires an installed Realm baseline")
-        })?;
         anyhow::ensure!(
-            !progress.needs_refresh
-                && baseline.complete
-                && baseline.coverage.complete_for_authorized_streams
-                && baseline.coverage.realm_id == *realm_id
-                && progress.governance_generation.is_some(),
+            progress.baseline.is_some(),
+            "MLS current read requires an installed Realm baseline"
+        );
+        anyhow::ensure!(
+            progress_is_complete_cut(&progress, realm_id),
             "MLS current read requires complete authorized-stream coverage"
         );
         let selector = CurrentSelector::MlsGroup {
@@ -2276,15 +2301,19 @@ mod tests {
             .unwrap()
             .finish();
         assert!(index.read_mls_group_ready(&scope).await.is_err());
+        assert_eq!(index.read_complete_cut(REALM).await.unwrap(), None);
         index
             .stage_frame(1, &frame(vec![], Some(baseline(CURSORS[0], 1, true))))
             .await
             .unwrap()
             .finish();
         assert!(index.read_mls_group_ready(&scope).await.unwrap().is_some());
+        assert!(index.read_complete_cut(REALM).await.unwrap().is_some());
+        assert_eq!(index.read_complete_cut(OTHER_REALM).await.unwrap(), None);
         let reset = serde_json::from_value(json!({"kind":"resync_required"})).unwrap();
         index.stage_frame(2, &reset).await.unwrap().finish();
         assert!(index.read_mls_group_ready(&scope).await.is_err());
+        assert_eq!(index.read_complete_cut(REALM).await.unwrap(), None);
     }
 
     #[tokio::test]

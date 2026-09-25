@@ -615,25 +615,16 @@ pub fn restore_signal_mls_session(
     if state_store.realm_projection_is_minimal_metadata(realm_id) {
         anyhow::bail!("minimal-metadata endpoints have no registered Signal device carrier");
     }
-    // Realm and Circle groups each publish their own `ak.component.mls.epoch.v1`
-    // value; Sidecar rides its separate contract and has no Signal carrier here.
-    let binding = match scope_ref {
-        arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. } => {
-            state_store.accepted_mls_epoch_binding(scope_ref)
-        }
-        _ => garth::InstalledMlsEpoch::Pending,
-    };
-    match binding {
-        garth::InstalledMlsEpoch::Installed { epoch, .. } if epoch == expected_epoch => {}
-        garth::InstalledMlsEpoch::Installed { epoch, .. } => anyhow::bail!(
-            "signal names MLS epoch {expected_epoch}, but the installed scope epoch is {epoch}"
-        ),
-        garth::InstalledMlsEpoch::NoAcceptedGenesis => {
-            anyhow::bail!("the Signal scope has no accepted MLS Genesis")
-        }
-        garth::InstalledMlsEpoch::Pending => {
-            anyhow::bail!("Signal requires the scope's accepted MLS state")
-        }
+    // Realm and Circle groups each carry their own Signal key material;
+    // Sidecar rides its separate contract and has no Signal carrier here.
+    // Whether a new Signal may be sent is the durable send gate's decision
+    // (`crate::mls::send_gate`), taken by the sender before sealing; this
+    // restore only binds the installed local group to `expected_epoch`.
+    if !matches!(
+        scope_ref,
+        arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+    ) {
+        anyhow::bail!("Signal requires a Realm or Circle MLS scope");
     }
     let circle_id = scope_ref.circle_id().map(arkret_sdk::CircleId::as_str);
     let snapshot = state_store

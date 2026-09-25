@@ -39,7 +39,7 @@ fn current_strand(
 }
 
 fn view(realm: &str, entries: Vec<arkret_wire::TypedCurrentResult>) -> RealmCurrentView {
-    RealmCurrentView::new(realm, entries).unwrap()
+    RealmCurrentView::new(realm, entries, true).unwrap()
 }
 
 fn channel_from_current(current: arkret_wire::TypedCurrentResult) -> ChannelEntity {

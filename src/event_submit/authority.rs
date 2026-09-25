@@ -44,38 +44,6 @@ pub(super) fn realm_create_authority_from_events(
     })
 }
 
-/// Whether a scope has already activated standard RFC 9420 encryption.
-///
-/// The only admissible test is the presence of an accepted `ak.mls.genesis`
-/// for that exact scope: activation is irreversible and a Realm create carries
-/// no encryption choice any more.
-pub(super) fn scope_has_accepted_mls_genesis(
-    events: &[arkret_sdk::Event],
-    scope_ref: &arkret_sdk::ScopeRef,
-) -> bool {
-    events.iter().any(|event| {
-        event.kind == arkret_sdk::EventKind::MlsGenesis && &event.scope_ref == scope_ref
-    })
-}
-
-/// [`scope_has_accepted_mls_genesis`] read from a typed Realm state snapshot.
-pub(super) fn snapshot_scope_has_mls_group(
-    snapshot: &arkret_wire::RealmStateSnapshot,
-    scope_ref: &arkret_sdk::ScopeRef,
-) -> bool {
-    snapshot.current_state_entries.iter().any(|entry| {
-        let selector = match entry {
-            arkret_wire::TypedCurrentResult::Value { selector, .. }
-            | arkret_wire::TypedCurrentResult::MessageReactions { selector, .. } => selector,
-        };
-        matches!(
-            selector,
-            arkret_wire::CurrentSelector::MlsGroup { scope_ref: entry_scope }
-                if entry_scope == scope_ref
-        )
-    })
-}
-
 pub(super) fn realm_owner_covers_event_kind(kind: &str) -> bool {
     arkret_schema::capability_action(CapabilityActionId::REALM_OWNER)
         .is_some_and(|descriptor| descriptor.target_event_kinds.contains(&kind))
@@ -110,30 +78,6 @@ mod tests {
             payload: BTreeMap::from([("object".to_owned(), json!({}))]),
             producer_proof: None,
         }
-    }
-
-    #[test]
-    fn encryption_is_decided_by_an_accepted_mls_genesis_for_the_exact_scope() {
-        let realm_scope = arkret_sdk::ScopeRef::Realm {
-            realm_id: realm_id(),
-        };
-        let circle_scope = arkret_sdk::ScopeRef::Circle {
-            realm_id: realm_id(),
-            circle_id: arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
-                arkret_sdk::DigestSuite::Sha256,
-                [9; 32],
-            )),
-        };
-        let events = vec![
-            event(arkret_sdk::EventKind::RealmCreate, realm_scope.clone()),
-            event(arkret_sdk::EventKind::MlsGenesis, circle_scope.clone()),
-        ];
-
-        assert!(scope_has_accepted_mls_genesis(&events, &circle_scope));
-        assert!(
-            !scope_has_accepted_mls_genesis(&events, &realm_scope),
-            "a sibling scope's genesis must never activate this scope"
-        );
     }
 
     #[test]

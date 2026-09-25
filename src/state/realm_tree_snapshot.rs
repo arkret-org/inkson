@@ -305,20 +305,17 @@ impl LocalStateStore {
     }
 
     /// Whether the Realm-default scope of `realm_id` has an accepted MLS
-    /// Genesis in the installed current view. A Realm without an installed
-    /// view answers `false`; gates that could leak plaintext must use
-    /// [`Self::accepted_mls_epoch_binding`], which keeps that case pending.
+    /// Genesis in the installed current view. This is positive evidence only:
+    /// `false` also covers "not known yet", so gates that could leak plaintext
+    /// must use [`crate::mls::send_gate`] instead.
     pub fn realm_projection_is_mls_encrypted(&self, realm_id: &str) -> bool {
         let Ok(realm) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
             return false;
         };
-        self.realm_current_view_entries(realm_id)
-            .is_some_and(|entries| {
-                crate::current_projection::scope_has_accepted_mls_genesis(
-                    &entries,
-                    &arkret_sdk::ScopeRef::Realm { realm_id: realm },
-                )
-            })
+        matches!(
+            self.installed_scope_mls_current(&arkret_sdk::ScopeRef::Realm { realm_id: realm }),
+            crate::current_projection::ScopeMlsCurrent::Activated(_)
+        )
     }
 
     /// Joined-actor projection hint when account sync explicitly says the

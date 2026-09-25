@@ -51,49 +51,6 @@ pub struct WelcomeApplyOutcome {
     pub first_error: Option<String>,
 }
 
-/// Whether `effective_scope` has activated MLS, i.e. whether its own
-/// `ak.mls.genesis` has been accepted.
-///
-/// This is the single client-side judgement of "is this scope encrypted". A
-/// scope is plaintext before its own accepted Genesis and irreversibly standard
-/// RFC 9420 afterwards; there is no create-locked content scheme or encryption
-/// floor to consult.
-pub(crate) fn scope_mls_is_active(
-    state_store: &crate::state::LocalStateStore,
-    effective_scope: &arkret_sdk::ScopeRef,
-) -> bool {
-    state_store
-        .accepted_mls_epoch_binding(effective_scope)
-        .is_encrypted()
-}
-
-pub(crate) fn realm_mls_is_active(
-    state_store: &crate::state::LocalStateStore,
-    realm_id: &str,
-) -> bool {
-    let Ok(realm_id) = arkret_sdk::RealmId::new(realm_id.trim().to_owned()) else {
-        return false;
-    };
-    scope_mls_is_active(state_store, &arkret_sdk::ScopeRef::Realm { realm_id })
-}
-
-/// Refuse to author encrypted content for a scope whose MLS state this device
-/// cannot execute yet. `Pending` and `NoAcceptedGenesis` both block the send:
-/// a scope with no accepted Genesis has nothing to encrypt under, and an
-/// undelivered current view is not an answer. Neither may fall back to sending
-/// plaintext into a scope that may already be encrypted.
-pub(super) fn require_active_mls_for_send(
-    state_store: &crate::state::LocalStateStore,
-    effective_scope: &arkret_sdk::ScopeRef,
-) -> Result<(), MlsRuntimeError> {
-    match state_store.accepted_mls_epoch_binding(effective_scope) {
-        garth::InstalledMlsEpoch::Installed { .. } => Ok(()),
-        garth::InstalledMlsEpoch::NoAcceptedGenesis | garth::InstalledMlsEpoch::Pending => {
-            Err(MlsRuntimeError::EncryptionTransitionPending)
-        }
-    }
-}
-
 /// Test-only entry point: production decryption always carries a verified
 /// sender domain and enters via
 /// [`decrypt_application_payload_for_scope_from_verified_sender`]; these
@@ -173,8 +130,8 @@ pub(crate) fn encrypted_payload_from_verified_event_context(
     };
     if !matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. })
         && matches!(
-            state_store.accepted_mls_epoch_binding(effective_scope),
-            garth::InstalledMlsEpoch::NoAcceptedGenesis
+            state_store.installed_scope_mls_current(effective_scope),
+            crate::current_projection::ScopeMlsCurrent::NotActivated
         )
     {
         warn_pending("the scope has no accepted MLS Genesis, so it carries no ciphertext");
@@ -1078,53 +1035,5 @@ fn runtime_effective_scope(
             })?,
         }),
         None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
-    }
-}
-
-#[cfg(test)]
-mod scope_activation_tests {
-    use super::*;
-
-    const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-
-    fn scope() -> arkret_sdk::ScopeRef {
-        arkret_sdk::ScopeRef::Realm {
-            realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
-        }
-    }
-
-    #[test]
-    fn an_undelivered_current_view_pauses_the_send_instead_of_sending_plaintext() {
-        let mut store = crate::state::isolated_store_for_tests("mls-scope-activation");
-        assert!(!scope_mls_is_active(&store, &scope()));
-        assert!(matches!(
-            require_active_mls_for_send(&store, &scope()),
-            Err(MlsRuntimeError::EncryptionTransitionPending)
-        ));
-        // An authoritative "no accepted Genesis" answer still blocks this path:
-        // an unencrypted scope has no MLS state to author under at all.
-        crate::test_support::install_current_entries(&mut store, REALM, Vec::new());
-        assert!(!realm_mls_is_active(&store, REALM));
-        assert!(matches!(
-            require_active_mls_for_send(&store, &scope()),
-            Err(MlsRuntimeError::EncryptionTransitionPending)
-        ));
-    }
-
-    #[test]
-    fn an_installed_group_reports_the_scope_as_active() {
-        let mut store = crate::state::isolated_store_for_tests("mls-scope-active");
-        let group_id = scope().canonical_mls_group_id().unwrap();
-        store
-            .save_mls_checkpoint_for_scope(
-                &scope(),
-                crate::mls::persistence::encrypt_state(
-                    REALM, &group_id, 3, b"state", "secret", &[5; 16],
-                ),
-            )
-            .unwrap();
-        assert!(scope_mls_is_active(&store, &scope()));
-        assert!(realm_mls_is_active(&store, REALM));
-        assert!(require_active_mls_for_send(&store, &scope()).is_ok());
     }
 }

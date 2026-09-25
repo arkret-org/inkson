@@ -1168,6 +1168,10 @@ async fn refresh_current_product_view(
         return Ok(());
     }
     let session_generation = ctx.session.generation();
+    // Absence of a selector answers only at one complete verified cut, so the
+    // cut is read before and after the pages and must be the same durable
+    // generation both times.
+    let cut_before = index.read_complete_cut(&realm_id).await?;
     let mut entries = Vec::new();
     let mut after: Option<String> = None;
     loop {
@@ -1189,7 +1193,9 @@ async fn refresh_current_product_view(
     {
         return Ok(());
     }
-    let view = crate::current_projection::RealmCurrentView::new(&realm_id, entries)?;
+    let cut_after = index.read_complete_cut(&realm_id).await?;
+    let complete_cut = cut_before.is_some() && cut_before == cut_after;
+    let view = crate::current_projection::RealmCurrentView::new(&realm_id, entries, complete_cut)?;
     ctx.state_store
         .write(|store| store.install_current_product_view(view))?;
     ctx.realm_live_epoch
@@ -1534,10 +1540,11 @@ async fn run_circle_scope_rotate_pass(
                     circle_id: circle.circle_id,
                 };
                 let has_mls_genesis = ctx.state_store.read(|store| {
-                    crate::current_projection::scope_has_accepted_mls_genesis(
+                    crate::current_projection::current_mls_group(
                         &store.realm_current_state_entries(realm.as_str()),
                         &scope,
                     )
+                    .is_some()
                 });
                 if has_mls_genesis {
                     scopes.push((scope, circle.member_ids.into_iter().collect()));

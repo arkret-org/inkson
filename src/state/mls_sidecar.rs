@@ -688,42 +688,23 @@ impl LocalStateStore {
         Ok(record.event_id)
     }
 
-    /// What this device knows about the installed MLS epoch of
-    /// `effective_scope`.
+    /// The installed product view's answer about `effective_scope`'s MLS
+    /// activation.
     ///
-    /// A scope is plaintext until its own accepted `ak.mls.genesis` and
-    /// irreversibly standard RFC 9420 afterwards, so there are exactly three
-    /// answers and they stay distinct all the way to the callers: this device
-    /// has installed provider state at an epoch, the authority-signed snapshot
-    /// says the scope has no accepted Genesis, or nothing authoritative has
-    /// arrived yet. Only the second is an answer; `Pending` never downgrades to
-    /// "definitely plaintext".
-    pub fn accepted_mls_epoch_binding(
+    /// The view is read from the durable current index; its `mls_group`
+    /// absence answers only when it was read at a complete verified cut. A
+    /// Realm without such a view is [`ScopeMlsCurrent::Unknown`], never
+    /// plaintext. New application bodies are gated by
+    /// [`crate::mls::send_gate`], which reads the durable index directly.
+    ///
+    /// [`ScopeMlsCurrent::Unknown`]: crate::current_projection::ScopeMlsCurrent::Unknown
+    pub(crate) fn installed_scope_mls_current(
         &self,
         effective_scope: &arkret_sdk::ScopeRef,
-    ) -> garth::InstalledMlsEpoch {
-        if let Some(snapshot) = self.mls_checkpoint_for_scope(effective_scope) {
-            return garth::InstalledMlsEpoch::Installed {
-                group_id: snapshot.group_id,
-                epoch: snapshot.epoch,
-            };
-        }
-        let Some(realm_id) = effective_scope.realm_id_opt() else {
-            return garth::InstalledMlsEpoch::Pending;
-        };
-        let Some(entries) = self.realm_current_view_entries(realm_id.as_str()) else {
-            return garth::InstalledMlsEpoch::Pending;
-        };
-        // The installed view holds the Realm's product-ready current rows, so
-        // the absence of this scope's MLS group entry is the Station's "no
-        // accepted Genesis" answer rather than an undelivered one.
-        let genesis_accepted =
-            crate::current_projection::current_mls_group(&entries, effective_scope).is_some();
-        if genesis_accepted {
-            garth::InstalledMlsEpoch::Pending
-        } else {
-            garth::InstalledMlsEpoch::NoAcceptedGenesis
-        }
+    ) -> crate::current_projection::ScopeMlsCurrent {
+        self.current_product_view()
+            .map(|view| view.scope_mls_current(effective_scope))
+            .unwrap_or(crate::current_projection::ScopeMlsCurrent::Unknown)
     }
 
     /// Every effective scope inside `realm_id` this client holds MLS state for,
@@ -1180,10 +1161,6 @@ mod tests {
             event_id("aaaa")
         );
         assert_eq!(store.mls_checkpoint_for_scope(&scope).unwrap().epoch, 2);
-        assert!(matches!(
-            store.accepted_mls_epoch_binding(&scope),
-            garth::InstalledMlsEpoch::Installed { epoch: 2, .. }
-        ));
         let _ = std::fs::remove_file(path);
     }
 
@@ -1213,24 +1190,33 @@ mod tests {
 
     #[test]
     fn an_undelivered_current_view_never_reads_as_no_accepted_genesis() {
+        use crate::current_projection::{RealmCurrentView, ScopeMlsCurrent};
         let (mut store, path) = temp_store("pending");
         let scope = realm_scope();
-        assert!(matches!(
-            store.accepted_mls_epoch_binding(&scope),
-            garth::InstalledMlsEpoch::Pending
-        ));
+        assert_eq!(
+            store.installed_scope_mls_current(&scope),
+            ScopeMlsCurrent::Unknown
+        );
         store.save_realm_tree_projection(REALM, json!({"summary": {"title": "r"}}));
-        assert!(matches!(
-            store.accepted_mls_epoch_binding(&scope),
-            garth::InstalledMlsEpoch::Pending
-        ));
-        // A delivered current view without this scope's MLS group entry is the
+        assert_eq!(
+            store.installed_scope_mls_current(&scope),
+            ScopeMlsCurrent::Unknown
+        );
+        // A view read outside a complete verified cut does not answer absence.
+        store
+            .install_current_product_view(RealmCurrentView::new(REALM, Vec::new(), false).unwrap())
+            .unwrap();
+        assert_eq!(
+            store.installed_scope_mls_current(&scope),
+            ScopeMlsCurrent::Unknown
+        );
+        // A complete cut without this scope's MLS group entry is the
         // authoritative "still plaintext" answer.
         crate::test_support::install_current_entries(&mut store, REALM, Vec::new());
-        assert!(matches!(
-            store.accepted_mls_epoch_binding(&scope),
-            garth::InstalledMlsEpoch::NoAcceptedGenesis
-        ));
+        assert_eq!(
+            store.installed_scope_mls_current(&scope),
+            ScopeMlsCurrent::NotActivated
+        );
         assert!(store.current_mls_group_for_scope(&scope).is_none());
         let _ = std::fs::remove_file(path);
     }

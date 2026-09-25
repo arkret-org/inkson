@@ -125,8 +125,9 @@ pub fn encrypt_reaction_with_device_snapshot(
             .map_err(|error| MlsRuntimeError::Serialize(error.to_string()))?,
     };
     // A scope is standard RFC 9420 from its accepted Genesis onward, so a
-    // reaction rides the same scheme as every other application payload.
-    super::message::require_active_mls_for_send(state_store, &effective_scope)?;
+    // reaction rides the same scheme as every other application payload. The
+    // caller resolved the durable send gate; submission re-checks the frozen
+    // envelope against the accepted current (`crate::mls::send_gate`).
     let scheme = arkret_sdk::EncryptedPayloadScheme::MlsRfc9420;
     let routing_window = u64::try_from(created_at.timestamp_millis().div_euclid(3_600_000))
         .map_err(|_| {

@@ -395,7 +395,7 @@ pub(crate) fn install_current_entries(
     }
     state
         .install_current_product_view(
-            crate::current_projection::RealmCurrentView::new(realm_id, entries).unwrap(),
+            crate::current_projection::RealmCurrentView::new(realm_id, entries, true).unwrap(),
         )
         .unwrap();
 }
