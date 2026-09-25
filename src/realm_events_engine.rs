@@ -760,11 +760,11 @@ fn closed_join_rule_value(
     policy: Option<&serde_json::Value>,
     payload: serde_json::Value,
 ) -> garth::Result<serde_json::Value> {
-    if policy.is_none() {
+    let Some(policy) = policy else {
         return Err(garth::Error::Protocol(
             "floor join rule has no verified policy bundle predecessor".to_owned(),
         ));
-    }
+    };
     let rule: arkret_sdk::RealmJoinRulePayload = serde_json::from_value(payload.clone())
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
     if rule
@@ -780,10 +780,28 @@ fn closed_join_rule_value(
         .get("value")
         .cloned()
         .ok_or_else(|| garth::Error::Protocol("floor join rule omits its value".to_owned()))?;
+    // join-policy.md §2: a restricted entry mode needs at least one automatic
+    // gate in the same signed cut's policy bundle. The Station evaluated the
+    // gates at admission; the client only checks the signed rows agree.
     if value == "restricted" || value == "knock_restricted" {
-        return Err(garth::Error::Protocol(
-            "floor join rule requires an unverified automatic gate".to_owned(),
-        ));
+        let bundle: arkret_sdk::RealmPolicyBundlePayload =
+            serde_json::from_value(policy.clone()).map_err(protocol)?;
+        let automatic = bundle.join_policy.is_some_and(|join_policy| {
+            join_policy.gates.iter().any(|gate| {
+                matches!(
+                    gate,
+                    arkret_models_collaboration::events_payloads::join_policy::JoinPolicyGate::ClaimRequired { .. }
+                        | arkret_models_collaboration::events_payloads::join_policy::JoinPolicyGate::ChallengeResponse { .. }
+                        | arkret_models_collaboration::events_payloads::join_policy::JoinPolicyGate::ParentMembership { .. }
+                )
+            })
+        });
+        if !automatic {
+            return Err(garth::Error::Protocol(
+                "floor restricted join rule has no automatic join gate in the signed cut"
+                    .to_owned(),
+            ));
+        }
     }
     Ok(value)
 }
@@ -820,11 +838,12 @@ where
 ///   is the verified bundle's exact genesis Commit, the genesis value is the genesis Event's
 ///   `object`, and the root is the generation-zero creator controller.
 /// - Other admitted families are the ordinary bootstrap closure a single governing Station issues:
-///   profile, policy bundle, join rule, history access (equal to the signed floor's
-///   `history_access`), discovery, the alias and plaintext-visible-services facets, member state,
-///   Realm-scoped Strand and the default-Strand pointer, which must name a Strand in the same
-///   signed cut, and the `message_revision` of each created message, whose Strand must have been
-///   created earlier in the same signed cut.
+///   profile, policy bundle (including a join policy the Station evaluated at admission), join rule
+///   (a restricted mode needs an automatic gate in that bundle), history access (equal to the
+///   signed floor's `history_access`), discovery, the alias and plaintext-visible-services facets,
+///   member state, Realm-scoped Strand and the default-Strand pointer, which must name a Strand in
+///   the same signed cut, and the `message_revision` of each created message, whose Strand must
+///   have been created earlier in the same signed cut.
 ///
 /// Any other family, extra member, gate-bearing policy or cross-row mismatch
 /// rejects the whole snapshot.
@@ -941,10 +960,8 @@ fn validate_signed_floor_rows(
             CurrentSelector::RealmPolicyBundle => {
                 let parsed: arkret_sdk::RealmPolicyBundlePayload =
                     closed_value(value, "realm_policy_bundle")?;
-                if parsed.join_policy.is_some() || parsed.policy_revision == 0 {
-                    return Err(protocol(
-                        "signed policy bundle carries an unverified gate or revision",
-                    ));
+                if parsed.policy_revision == 0 {
+                    return Err(protocol("signed policy bundle has no policy revision"));
                 }
             }
             CurrentSelector::RealmJoinRule => {
@@ -1861,6 +1878,101 @@ mod tests {
         for rows in forged {
             assert!(
                 validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &rows).is_err()
+            );
+        }
+    }
+
+    /// A restricted founder Realm: the Station evaluated the join policy at
+    /// admission, so its signed bundle and restricted join rule install; a
+    /// restricted rule without an automatic gate in that bundle does not.
+    #[test]
+    fn signed_floor_rows_admit_a_join_policy_and_its_restricted_join_rule() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let (bundle, _, items) =
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&creator),
+                "alice.example",
+                DEVICE_ID,
+            );
+        let head_commit = &items.last().unwrap().commit;
+        let head = arkret_wire::CommitStreamHead {
+            stream_ref: head_commit.stream_ref.clone(),
+            stream_position: head_commit.stream_position,
+            commit_id: head_commit.commit_id.clone(),
+        };
+        let since_join = arkret_sdk::HistoryAccess::SinceJoin;
+        let rows_with = |join_policy: Option<serde_json::Value>, rule: &str| {
+            let mut rows = soland_bootstrap_rows(&bundle, &items);
+            for row in &mut rows {
+                let TypedCurrentResult::Value {
+                    selector, value, ..
+                } = row
+                else {
+                    unreachable!()
+                };
+                match selector {
+                    arkret_wire::CurrentSelector::RealmPolicyBundle => {
+                        if let Some(join_policy) = &join_policy {
+                            value["join_policy"] = join_policy.clone();
+                        }
+                    }
+                    arkret_wire::CurrentSelector::RealmJoinRule => *value = json!(rule),
+                    _ => {}
+                }
+            }
+            rows
+        };
+        let claim_gate = json!({"gates": [{
+            "gate_id": "employee",
+            "kind": "claim_required",
+            "required_claims": ["employee"],
+            "trusted_issuer_ids": ["ak:did_core:web:issuer.example"]
+        }], "combinator": "all"});
+        let hard_only = json!({"gates": [{
+            "gate_id": "cooldown",
+            "kind": "cooldown",
+            "min_interval_since_leave": "P1D"
+        }], "combinator": "all"});
+        for (join_policy, rule) in [
+            (Some(claim_gate.clone()), "restricted"),
+            (Some(claim_gate.clone()), "knock_restricted"),
+            (Some(hard_only.clone()), "invite"),
+            (None, "invite"),
+        ] {
+            validate_signed_floor_rows(
+                &realm_id,
+                &bundle,
+                &head,
+                since_join,
+                &rows_with(join_policy, rule),
+            )
+            .unwrap();
+        }
+        for (join_policy, rule) in [
+            (None, "restricted"),
+            (Some(hard_only), "knock_restricted"),
+            (
+                Some(json!({"gates": [], "combinator": "all", "extra": 1})),
+                "invite",
+            ),
+        ] {
+            assert!(
+                validate_signed_floor_rows(
+                    &realm_id,
+                    &bundle,
+                    &head,
+                    since_join,
+                    &rows_with(join_policy, rule),
+                )
+                .is_err(),
+                "{rule}"
             );
         }
     }
