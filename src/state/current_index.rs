@@ -2540,6 +2540,57 @@ mod tests {
         );
     }
     #[tokio::test]
+    async fn a_resent_snapshot_with_another_cut_or_head_is_rejected_whole() {
+        let path = path();
+        let store = index(&path, 0).await;
+        let selector = selector_of(&row(1, false));
+        store
+            .stage_frame(
+                0,
+                &frame(vec![row(1, false)], Some(baseline(CURSORS[0], 5, false))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        // One frozen snapshot answers each stream once. A later segment of it
+        // that names another head, or another cut, is not the same baseline.
+        let mut moved_head = baseline(CURSORS[0], 5, true);
+        moved_head["coverage"]["stream_heads"][0]["stream_position"] = json!(6);
+        assert!(
+            store
+                .stage_frame(1, &frame(vec![row(2, false)], Some(moved_head)))
+                .await
+                .is_err()
+        );
+        assert!(
+            store
+                .stage_frame(
+                    1,
+                    &frame(vec![row(2, false)], Some(baseline(CURSORS[0], 6, true)))
+                )
+                .await
+                .is_err()
+        );
+        // Neither rejected frame left a row, a seen marker or a progress change.
+        assert_eq!(
+            store.read_selector(REALM, &selector).await.unwrap(),
+            Some(row(1, false))
+        );
+        assert!(store.read_progress(REALM).await.unwrap().needs_refresh);
+        store
+            .stage_frame(
+                1,
+                &frame(vec![row(2, false)], Some(baseline(CURSORS[0], 5, true))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        assert_eq!(
+            store.read_selector_ready(REALM, &selector).await.unwrap(),
+            Some(row(2, false))
+        );
+    }
+    #[tokio::test]
     async fn reset_and_invalidation_require_fresh_seen_without_waiting_for_completion() {
         let path = path();
         let index = index(&path, 0).await;

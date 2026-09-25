@@ -134,35 +134,10 @@ impl LocalStateStore {
     pub fn save_realm_tree_projection(
         &mut self,
         projection_id: impl Into<String>,
-        mut projection: Value,
+        projection: Value,
     ) {
         self.ensure_cached_loaded();
         let projection_id = projection_id.into();
-        // Realm creation no longer locks an encryption mechanism. These old
-        // projection carriers must not survive in the durable account blob or
-        // be used as a pre-Genesis default after reload: accepted
-        // `ak.mls.genesis` current is the only activation fact. Strip the
-        // historical root/summary/facet spellings while retaining unrelated
-        // Realm presentation data.
-        fn strip_removed_encryption_carriers(value: &mut Value) {
-            let Some(object) = value.as_object_mut() else {
-                return;
-            };
-            for key in [
-                "content_scheme",
-                "encryption_profile",
-                "encryption_floor",
-                "durability_policy",
-            ] {
-                object.remove(key);
-            }
-            for container in ["summary", "object", "realm", "metadata", "history_facet"] {
-                if let Some(nested) = object.get_mut(container) {
-                    strip_removed_encryption_carriers(nested);
-                }
-            }
-        }
-        strip_removed_encryption_carriers(&mut projection);
         if self.cached.realm_tree_projections.get(&projection_id) == Some(&projection) {
             return; // projection identical — skip flush + dirtying renders
         }

@@ -56,38 +56,6 @@ fn account_realm_state_snapshot_refresh_preserves_local_realm_profile_overlay() 
 }
 
 #[test]
-fn account_realm_state_snapshot_drops_removed_encryption_carriers() {
-    let path = temp_state_path("removed-encryption-carriers");
-    let mut store = LocalStateStore::with_path(path);
-    let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
-
-    store.save_realm_tree_projection(
-        realm_id,
-        json!({
-            "summary": {"title": "Encrypted"},
-            "content_scheme": "mls_exporter_aead_v1",
-            "durability_policy": {"kind": "rhrk_v1"},
-            "history_facet": {"encryption_floor": "mls_rfc9420"}
-        }),
-    );
-    store.save_realm_tree_projection(
-        realm_id,
-        json!({"summary": {"title": "Encrypted", "encryption_profile": "mls_rfc9420"}}),
-    );
-
-    let projection = &store.load().realm_tree_projections[realm_id];
-    assert_eq!(projection["summary"]["title"], "Encrypted");
-    assert!(projection.get("content_scheme").is_none());
-    assert!(projection.get("durability_policy").is_none());
-    assert!(projection["summary"].get("encryption_profile").is_none());
-    assert!(
-        projection["history_facet"]
-            .get("encryption_floor")
-            .is_none()
-    );
-}
-
-#[test]
 fn submit_receipt_reconciles_before_local_projection_runs() {
     let path = temp_state_path("local-projection-command-fast-receipt");
     let mut store = LocalStateStore::with_path(path);

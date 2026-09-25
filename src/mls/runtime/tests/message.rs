@@ -44,8 +44,8 @@ fn seed_complete_rfc9420_projection(
     seed_accepted_rfc9420_binding(state, realm);
 }
 
-/// The group's accepted `content_scheme`, delivered the only way a client may
-/// learn it: the Station's installed `ak.component.mls.epoch.v1` value.
+/// The scope's accepted MLS Genesis, delivered the only way a client may learn
+/// it: the Station's typed `mls_group` current result.
 #[cfg(not(target_arch = "wasm32"))]
 fn seed_accepted_rfc9420_binding(state: &mut crate::state::LocalStateStore, realm: &str) {
     fixture::install_accepted_mls_group(
