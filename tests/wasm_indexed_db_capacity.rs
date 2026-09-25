@@ -129,66 +129,63 @@ async fn account_state_fault_injection_contract_holds_in_browser() {
 
 const CONTRACT_REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
-#[cfg(target_arch = "wasm32")]
-fn contract_record() -> garth::QueuedRecord {
+/// One ordinary, structurally valid submission. These contracts are about the
+/// storage tier, so the item only has to be something `SendQueue::enqueue`
+/// accepts and `from_snapshot` reads back.
+fn contract_submission(nth: usize) -> garth::QueuedSubmission {
+    use inkson::operation::AuthoredEventExt as _;
+
     let actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
         arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
     ));
-    let event: arkret_sdk::Event = serde_json::from_value(serde_json::json!({
-        "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "kind": "ak.presence",
-        "realm_id": CONTRACT_REALM,
-        "scope_ref": {"kind": "realm", "realm_id": CONTRACT_REALM},
-        "actor_id": actor_id,
-        "actor_seq": 1,
-        "created_at": "2026-05-19T00:00:00.000Z",
-        "hlc": "01970e589d21-0001-a13f9c2e",
-        "prev_refs": [],
-        "payload": {"actor_id": actor_id, "state": "online"}
-    }))
-    .unwrap();
-    garth::QueuedRecord::SdkEvent(Box::new(
-        garth::QueuedSdkEvent::unauthored(
-            garth::QueuedEventIntent::new(
-                arkret_event_draft::EventIntent::from_authored(&event),
-                arkret_sdk::DigestSuite::Sha256,
-            ),
-            "local-operation".to_owned(),
-            "attempt".to_owned(),
-            None,
-            garth::AuthoringGeneration {
-                authority_model: garth::AuthoringAuthorityModel::AcceptedDevice,
-                authority_principal_id: arkret_sdk::DidCoreId::new(
-                    "ak:did_core:web:alice.example".to_owned(),
-                )
-                .unwrap(),
-                generation_ref: "1-QmCurrent".to_owned(),
-            },
-            None,
+    let payload = arkret_sdk::MessageCreatePayload::with_content(
+        arkret_sdk::StrandId::new("ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df")
+            .unwrap(),
+        "discussion",
+        arkret_sdk::ContentBlock::text(format!("queued contract {nth} {}", "x".repeat(2048))),
+    );
+    let mut event = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MessageCreate>::new(
+        arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(CONTRACT_REALM.to_owned()).unwrap(),
+        },
+        actor_id,
+        payload,
+    )
+    .unwrap()
+    .author_with_digest_suite(
+        chrono::DateTime::from_timestamp_millis(
+            1_760_000_000_000 + i64::try_from(nth).unwrap_or(0),
         )
         .unwrap(),
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap();
+    event
+        .sign_ed25519(
+            "did:web:alice.example",
+            "did:web:alice.example#key-1",
+            &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
+        )
+        .expect("contract Event has a real producer proof");
+    garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
+        arkret_wire::EventAdmissionSubmission {
+            event: event.into_event(),
+            approval_signatures: None,
+        },
     ))
+    .expect("contract submission is structurally valid")
 }
 
-#[cfg(target_arch = "wasm32")]
 fn fill_queue(queue: &mut garth::SendQueue, count: usize) {
-    let realm = arkret_sdk::RealmId::new(CONTRACT_REALM.to_owned()).unwrap();
     let now = chrono::Utc::now();
     for index in 0..count {
         queue
-            .enqueue(
-                Some(format!("txn-{index}")),
-                realm.clone(),
-                contract_record(),
-                Vec::new(),
-                now,
-            )
+            .enqueue(contract_submission(index), now)
             .expect("enqueue contract item");
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 fn browser_local_storage() -> web_sys::Storage {
     web_sys::window()
         .expect("window")
@@ -229,18 +226,18 @@ async fn outbound_queue_past_the_localstorage_quota_round_trips_in_indexeddb() {
         .expect("reopen reader store");
     let (items, first, last) =
         inkson::outbound_store_test_api::mutate_outbound_queue(&reader, &key, |queue| {
-            let active = queue.active_items();
+            let items = queue.items();
             Ok((
-                queue.len(),
-                active.first().unwrap().transaction_id.clone(),
-                active.last().unwrap().transaction_id.clone(),
+                items.len(),
+                items.first().unwrap().event_id().clone(),
+                items.last().unwrap().event_id().clone(),
             ))
         })
         .await
         .expect("reload the persisted queue");
     assert_eq!(items, 2048, "every queued item must survive the reload");
-    assert_eq!(first, "txn-0");
-    assert_eq!(last, "txn-2047");
+    assert_eq!(first, contract_submission(0).event_id);
+    assert_eq!(last, contract_submission(2047).event_id);
 }
 
 #[wasm_bindgen_test(async)]
@@ -251,14 +248,14 @@ async fn localstorage_queue_is_not_imported_into_the_secure_store() {
         .expect("open store");
     let storage = browser_local_storage();
     let key = inkson::outbound_store_test_api::outbound_queue_key("nsObsolete", "standard");
-    let mut queue = garth::SendQueue::new();
+    let mut queue = garth::SendQueue::default();
     fill_queue(&mut queue, 2);
     let obsolete = serde_json::to_string(&queue.snapshot()).unwrap();
     storage
         .set_item(&key, &obsolete)
         .expect("seed obsolete queue");
     let count = inkson::outbound_store_test_api::mutate_outbound_queue(&store, &key, |queue| {
-        Ok(queue.len())
+        Ok(queue.items().len())
     })
     .await
     .expect("open current queue");

@@ -8,11 +8,13 @@
 //! type. Every method here forwards to the same production entry point the
 //! native regressions drive; the harness adds no behaviour of its own and takes
 //! JSON at its boundary so it never grows a second model of the wire types.
+//! The observation methods only read durable state the native regressions read
+//! directly, such as the reachability cycle position and seen evidence.
 
 use arkret_sdk::CurrentSelector;
 use arkret_sdk::sync::AccountSubscribeFrame;
 
-use super::{CurrentIndex, CurrentIndexLocation};
+use super::{CurrentIndex, CurrentIndexLocation, GcPhase, GcState, PAGE_LIMIT};
 
 fn message(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -102,5 +104,42 @@ impl CurrentIndexHarness {
 
     pub async fn maintain(&self) -> Result<bool, String> {
         self.index.maintain().await.map_err(message)
+    }
+
+    /// Observation only: the durable reachability cycle's epoch and whether it
+    /// has reached its sweep phase.
+    pub async fn gc_position(&self) -> Result<(u64, bool), String> {
+        let state: GcState = self
+            .index
+            .load_state(&self.index.gc_state_key())
+            .await
+            .map_err(message)?;
+        Ok((state.epoch, state.phase == GcPhase::Sweep))
+    }
+
+    /// Observation only: the seen versions one snapshot holds for a selector.
+    pub async fn seen_versions(
+        &self,
+        snapshot: &str,
+        realm: &str,
+        selector: &str,
+    ) -> Result<usize, String> {
+        let selector: CurrentSelector = serde_json::from_str(selector).map_err(message)?;
+        let prefix = self
+            .index
+            .seen_prefix(snapshot, realm, &selector)
+            .map_err(message)?;
+        self.index
+            .backend
+            .keys(&prefix, None, None, PAGE_LIMIT)
+            .await
+            .map(|keys| keys.len())
+            .map_err(message)
+    }
+
+    /// Observation only: the storage key prefix every entry of this account's
+    /// index lives under.
+    pub fn storage_prefix(&self) -> &str {
+        &self.index.prefix
     }
 }
