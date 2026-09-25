@@ -298,17 +298,27 @@ fn build_welcome_delivery(
         keypackage_claim_ref: draft.keypackage_claim_ref.clone(),
         ciphertext_b64: draft.ciphertext_b64.clone(),
     };
-    let signing_bytes = unsigned.canonical_signing_bytes()?;
     let WelcomeRequester::Device { sender_device_id } = requester;
+    let body = unsigned.unsigned_body();
+    let signed_digest = arkret_signatures::detached_object::detached_object_signed_digest(&body)
+        .map_err(|error| format!("Welcome delivery signed digest: {error}"))?;
+    let created_at = arkret_sdk::canonical::normalize_timestamp_canonical(crate::clock::now_utc());
     let (verification_method, signature) =
-        sign_with_active_device_signer(requester_actor_id, sender_device_id, &signing_bytes)?;
+        sign_with_active_device_signer(requester_actor_id, sender_device_id, |method| {
+            arkret_signatures::detached_object::detached_object_signing_bytes(
+                arkret_wire::DetachedSignatureContext::MlsWelcomeDelivery,
+                method,
+                &signed_digest,
+                created_at,
+            )
+            .map_err(|error| format!("Welcome delivery signing transcript: {error}"))
+        })?;
     let producer_proof = arkret_wire::DetachedObjectSignature {
         context: arkret_wire::DetachedSignatureContext::MlsWelcomeDelivery,
         signature_algorithm: arkret_wire::DetachedSignatureAlgorithm::Ed25519,
         verification_method,
-        signed_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&signing_bytes))
-            .map_err(|error| format!("Welcome delivery signed digest: {error}"))?,
-        created_at: crate::clock::now_utc(),
+        signed_digest,
+        created_at,
         sig: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature))
             .map_err(|error| format!("Welcome delivery signature encoding: {error}"))?,
     };
@@ -320,12 +330,6 @@ fn build_welcome_delivery(
 }
 
 /// The Welcome delivery body before its producer proof is attached.
-///
-/// The signature covers the canonical unsigned body, per
-/// `detached-object-signature.schema.json` ("canonical unsigned body of an
-/// authority or recipient-delivery object"). Constructing that signing input
-/// belongs in `arkret-wire` next to `MlsWelcomeDelivery`; it is assembled here
-/// only because the crate exposes no builder for it.
 struct UnsignedWelcomeDelivery {
     welcome_id: arkret_wire::MlsWelcomeDeliveryId,
     realm_id: arkret_sdk::RealmId,
@@ -338,8 +342,11 @@ struct UnsignedWelcomeDelivery {
 }
 
 impl UnsignedWelcomeDelivery {
-    fn canonical_signing_bytes(&self) -> Result<Vec<u8>, String> {
-        let body = serde_json::json!({
+    /// The closed delivery minus `producer_proof`: the body
+    /// `ak.mls_welcome_delivery_signature.v1` seals (encryption-and-audit.md
+    /// §2.6.1).
+    fn unsigned_body(&self) -> serde_json::Value {
+        serde_json::json!({
             "welcome_id": self.welcome_id,
             "realm_id": self.realm_id,
             "effective_scope": self.effective_scope,
@@ -348,9 +355,7 @@ impl UnsignedWelcomeDelivery {
             "recipient_endpoint": self.recipient_endpoint,
             "keypackage_claim_ref": self.keypackage_claim_ref,
             "ciphertext_b64": self.ciphertext_b64,
-        });
-        arkret_sdk::canonical::canonical_json_bytes(&body)
-            .map_err(|error| format!("Welcome delivery canonical bytes: {error}"))
+        })
     }
 
     fn into_delivery(
@@ -371,11 +376,12 @@ impl UnsignedWelcomeDelivery {
     }
 }
 
-/// Sign with the exact active device method, refusing any other signer.
+/// Sign with the exact active device method, refusing any other signer. The
+/// signed bytes are built from that method, which the transcript covers.
 fn sign_with_active_device_signer(
     actor_id: &str,
     sender_device_id: &arkret_sdk::DeviceId,
-    signing_bytes: &[u8],
+    signing_bytes: impl FnOnce(&arkret_sdk::DidUrl) -> Result<Vec<u8>, String>,
 ) -> Result<(arkret_sdk::DidUrl, Vec<u8>), String> {
     let signer = match crate::event_signer::active_signer() {
         Some(signer) => signer,
@@ -399,8 +405,9 @@ fn sign_with_active_device_signer(
     }
     let verification_method = arkret_sdk::DidUrl::new(expected_kid)
         .map_err(|err| format!("Welcome delivery signing method: {err}"))?;
+    let bytes = signing_bytes(&verification_method)?;
     let signature = signer
-        .sign_raw(signing_bytes)
+        .sign_raw(&bytes)
         .map_err(|err| format!("Welcome delivery device signature: {err}"))?;
     Ok((verification_method, signature))
 }
@@ -672,24 +679,38 @@ mod tests {
             .unwrap(),
             ciphertext_b64: arkret_sdk::Base64UrlString::new("AQID").unwrap(),
         };
-        let bytes = unsigned.canonical_signing_bytes().unwrap();
-        let text = String::from_utf8(bytes.clone()).unwrap();
-        assert!(!text.contains("producer_proof"));
-        for field in [
-            "welcome_id",
-            "realm_id",
-            "effective_scope",
-            "commit_event_ref",
-            "recipient_actor_id",
-            "recipient_endpoint",
-            "keypackage_claim_ref",
-            "ciphertext_b64",
-        ] {
-            assert!(text.contains(field), "{field} must be signed");
-        }
-        // Canonical JSON is deterministic, so two builds of the same body sign
-        // identical bytes.
-        assert_eq!(bytes, unsigned.canonical_signing_bytes().unwrap());
+        let body = unsigned.unsigned_body();
+        let object = body.as_object().unwrap();
+        assert!(!object.contains_key("producer_proof"));
+        let mut fields = object.keys().map(String::as_str).collect::<Vec<_>>();
+        fields.sort_unstable();
+        assert_eq!(
+            fields,
+            [
+                "ciphertext_b64",
+                "commit_event_ref",
+                "effective_scope",
+                "keypackage_claim_ref",
+                "realm_id",
+                "recipient_actor_id",
+                "recipient_endpoint",
+                "welcome_id",
+            ]
+        );
+        let delivery = unsigned.into_delivery(arkret_wire::DetachedObjectSignature {
+            context: arkret_wire::DetachedSignatureContext::MlsWelcomeDelivery,
+            signature_algorithm: arkret_wire::DetachedSignatureAlgorithm::Ed25519,
+            verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device").unwrap(),
+            signed_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64))).unwrap(),
+            created_at: "2026-09-16T00:00:00.000Z".parse().unwrap(),
+            sig: arkret_sdk::Base64UrlString::new("AA").unwrap(),
+        });
+        let mut expected = serde_json::to_value(&delivery).unwrap();
+        expected.as_object_mut().unwrap().remove("producer_proof");
+        assert_eq!(
+            body, expected,
+            "the sealed body is the delivery minus its proof"
+        );
     }
 
     #[test]

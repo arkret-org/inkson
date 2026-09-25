@@ -647,9 +647,6 @@ fn historical_author_view_survives_epoch_rotation() {
     alice_group
         .install_accepted_commit(&accepted_commit, &base_current)
         .unwrap();
-    for proposal in &add.proposals {
-        bob_group.apply_proposal(proposal).unwrap();
-    }
     bob_group
         .install_accepted_commit(&accepted_commit, &base_current)
         .unwrap();
