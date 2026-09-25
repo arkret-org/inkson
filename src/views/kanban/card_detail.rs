@@ -703,6 +703,19 @@ struct QueuedCalendarRsvpRecord<'a> {
     body: arkret_sdk::RsvpSetPayload,
 }
 
+/// The local raw-operation record of an RSVP the Station accepted.
+#[derive(serde::Serialize)]
+struct SyncedCalendarRsvpRecord<'a> {
+    kind: &'a str,
+    operation_id: &'a str,
+    event_id: &'a str,
+    local_operation_idempotency_alias: &'a str,
+    actor_id: &'a str,
+    created_at: String,
+    write_state: &'static str,
+    body: arkret_sdk::RsvpSetPayload,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_calendar_rsvp(
     base_url: String,
@@ -798,21 +811,28 @@ pub(super) fn dispatch_calendar_rsvp(
                     return;
                 };
                 let accepted_event_id = response.event_id.clone();
+                let record = match serde_json::to_value(SyncedCalendarRsvpRecord {
+                    kind: &kind,
+                    operation_id: &accepted_event_id,
+                    event_id: &response.event_id,
+                    local_operation_idempotency_alias: &operation_id,
+                    actor_id: &actor_id,
+                    created_at: arkret_sdk::canonical::format_timestamp_canonical(
+                        crate::clock::now_utc(),
+                    ),
+                    write_state: "synced",
+                    body,
+                }) {
+                    Ok(record) => record,
+                    Err(err) => {
+                        board_status.set(format!("cannot record RSVP: {err}"));
+                        return;
+                    }
+                };
                 state_store.write().upsert_raw_operation(
                     accepted_event_id.clone(),
                     Some(realm_id),
-                    serde_json::json!({
-                        "kind": kind,
-                        "operation_id": accepted_event_id,
-                        "event_id": response.event_id,
-                        "local_operation_idempotency_alias": operation_id,
-                        "actor_id": actor_id,
-                        "created_at": arkret_sdk::canonical::format_timestamp_canonical(
-                            crate::clock::now_utc()
-                        ),
-                        "write_state": "synced",
-                        "body": body,
-                    }),
+                    record,
                 );
                 board_status.set(format!(
                     "{} accepted as {}",
