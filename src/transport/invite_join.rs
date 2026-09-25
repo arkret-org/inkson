@@ -24,59 +24,49 @@ impl crate::transport::TransportClient {
         realm_id: &str,
         actor_id: &str,
         invite_id: &str,
-        invite_token: Option<&str>,
+        credential: Option<&crate::state::StoredInviteCredential>,
         invitee_account_id: Option<arkret_sdk::AccountId>,
     ) -> anyhow::Result<(SubmitEventResult, Option<String>)> {
         let account_id = invitee_account_id.ok_or_else(|| {
             anyhow::anyhow!("directed invite acceptance requires the current complete account")
         })?;
-        let invite_token = invite_token
-            .map(str::trim)
-            .filter(|token| !token.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("missing invite credential"))?;
+        let credential = credential.ok_or_else(|| anyhow::anyhow!("missing invite credential"))?;
         if account_id.principal_id.as_str() != actor_id {
             anyhow::bail!("invite acceptance actor differs from the accepting account");
         }
         let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
-        // The locator hint set is untrusted routing input. This account's own
-        // Station is the one endpoint the client already authenticated, so it
-        // is the single hint offered; the returned bundle decides who the
-        // current governance Station actually is.
-        let hint = arkret_sdk::RealmJoinCandidate {
-            service_kind: arkret_sdk::RealmJoinCandidateServiceKind::Station,
-            service_id: self.describe_cached().await?.service_id.clone(),
-            endpoint_url: Some(self.base_url().to_string()),
-            source: arkret_sdk::AuthorityLocatorSource::Invite,
-        };
+        if credential.realm_id != realm {
+            anyhow::bail!("invite credential belongs to another Realm");
+        }
+        let invite = arkret_sdk::InviteId::new(invite_id.to_owned())?;
+        // The locator hints are the untrusted set the delivery carried; this
+        // account's own Station resolves them to a verified nonce-bound
+        // authority bundle. The client offers exactly those hints and never
+        // substitutes an endpoint of its own choosing.
         let target = arkret_sdk::RealmJoinTarget {
-            realm_id: realm.clone(),
-            invite_id: Some(arkret_sdk::InviteId::new(invite_id.to_owned())?),
-            invite_token: Some(invite_token.to_owned()),
-            authority_locator_hints: vec![hint],
+            realm_id: realm,
+            invite_id: Some(invite.clone()),
+            invite_token: Some(credential.invite_token.clone()),
+            authority_locator_hints: credential.authority_locator_hints.clone(),
         };
-        target.validate()?;
         let request = arkret_sdk::SelfRealmJoinPrepareRequestBody {
             request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms() as u64),
             target,
             intent: arkret_sdk::RealmJoinIntent::InviteAccept {
-                invite_id: arkret_sdk::InviteId::new(invite_id.to_owned())?,
-                invite_token: invite_token.to_owned(),
+                invite_id: invite,
+                invite_token: credential.invite_token.clone(),
             },
         };
+        // The SDK checks the request and binds the outcome to it: echoed
+        // request id, requested Realm and its Realm stream head.
         let prepared = self
             .sdk_http_client()?
             .self_realm_join_prepare(&request)
             .await?;
-        if prepared.request_id != request.request_id {
-            anyhow::bail!("join preparation answered a different request");
-        }
-        prepared.authority_bundle.validate_shape()?;
-        let now = crate::clock::now_utc();
-        if prepared.authority_bundle.realm_id != realm
-            || prepared.authority_bundle.bundle_issued_at > now
-            || prepared.authority_bundle.current_assertion.expires_at <= now
-        {
-            anyhow::bail!("join preparation returned a stale or mismatched authority bundle");
+        // The unexpired nonce-bound current assertion is the only freshness
+        // rule; the client adds no bundle age or clock-skew window.
+        if prepared.authority_bundle.current_assertion.expires_at <= crate::clock::now_utc() {
+            anyhow::bail!("join preparation returned an expired authority assertion");
         }
         if prepared.realm_stream_head != prepared.authority_bundle.realm_stream_head {
             anyhow::bail!("join preparation stream head contradicts the authority bundle");

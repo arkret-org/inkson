@@ -399,7 +399,7 @@ pub(crate) fn run_notification_action(
         UiNotificationAction::AcceptInvite {
             realm_id,
             invite_id,
-            invite_token,
+            credential,
         } => accept_invite_notification(
             base_url,
             session_credential,
@@ -410,7 +410,7 @@ pub(crate) fn run_notification_action(
             notification_id,
             realm_id,
             invite_id,
-            invite_token,
+            credential,
         ),
     }
 }
@@ -426,7 +426,7 @@ fn accept_invite_notification(
     notification_id: String,
     realm_id: String,
     invite_id: String,
-    invite_token: Option<String>,
+    credential: Option<crate::state::StoredInviteCredential>,
 ) {
     let accepted_realm = realm_id;
     status_msg.set(format!(
@@ -441,29 +441,30 @@ fn accept_invite_notification(
             let account = crate::transport::account::account_me(&api.sdk_http_client()?).await?;
             // Catch-up path: the live `ak.account_data.update` fanout may have
             // raced ahead of this accept (or this device was offline), so when
-            // no token is in local state pull the server-held delivery cell
-            // once and use its credential directly.
-            let mut invite_token = invite_token;
+            // no usable credential is in local state pull the server-held
+            // delivery cell once and use its credential directly.
+            let mut credential = credential;
             let mut delivery_cell = None;
-            if invite_token.is_none() {
+            if credential.is_none() {
                 let snapshot = crate::transport::account::account_data_snapshot(
                     &api.sdk_http_client()?,
                     arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY,
                 )
                 .await?;
                 if let Some(content) = snapshot.entry.map(|entry| entry.content) {
-                    invite_token =
+                    credential =
                         crate::state::invite_credentials::invite_delivery_entries_from_cell(
                             &content,
                         )
                         .into_iter()
                         .find(|(entry_invite_id, credential)| {
                             entry_invite_id == &invite_id
-                                && !credential
-                                    .expires_at
-                                    .is_some_and(|expires_at| expires_at <= chrono::Utc::now())
+                                && crate::state::invite_credentials::credential_usable(
+                                    credential,
+                                    chrono::Utc::now(),
+                                )
                         })
-                        .map(|(_, credential)| credential.invite_token);
+                        .map(|(_, credential)| credential);
                     delivery_cell = Some(content);
                 }
             }
@@ -486,7 +487,7 @@ fn accept_invite_notification(
                     &accepted_realm_for_api,
                     account.principal_id.as_str(),
                     &invite_id,
-                    invite_token.as_deref(),
+                    credential.as_ref(),
                     Some(invitee_account_id),
                 )
                 .await?;

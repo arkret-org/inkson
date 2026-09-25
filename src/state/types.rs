@@ -169,6 +169,11 @@ pub struct StoredInviteNotification {
 pub struct StoredInviteCredential {
     pub realm_id: arkret_sdk::RealmId,
     pub invite_token: String,
+    /// The untrusted locator hints the delivery carried. Acceptance offers
+    /// exactly these to this account's Station, which verifies a nonce-bound
+    /// authority bundle before anything is authored.
+    #[serde(default)]
+    pub authority_locator_hints: Vec<arkret_sdk::RealmJoinCandidate>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<DateTime<Utc>>,
     pub received_at: DateTime<Utc>,

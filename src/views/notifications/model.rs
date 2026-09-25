@@ -41,7 +41,7 @@ pub(crate) enum UiNotificationAction {
     AcceptInvite {
         realm_id: String,
         invite_id: String,
-        invite_token: Option<String>,
+        credential: Option<crate::state::StoredInviteCredential>,
     },
 }
 
@@ -279,12 +279,13 @@ fn notification_from_stored(
             invite_id: invite.invite_id.as_str().to_owned(),
             // Neither member is registered on the Invite object
             // (`governance-objects.md` §5.3), so the accept flow resolves the
-            // Realm preview itself and the private delivery token — when a
-            // directed invite has one — comes from the local private
-            // credential state the `ak.account.invite_delivery` carrier wrote.
-            invite_token: local_state
+            // Realm preview itself and the private delivery credential (token
+            // and locator hints) — when a directed invite has one — comes from
+            // the local private state the `ak.account.invite_delivery`
+            // carrier wrote.
+            credential: local_state
                 .invite_credential_for(invite.invite_id.as_str())
-                .map(|credential| credential.invite_token.clone()),
+                .cloned(),
         });
     let timestamp = arkret_sdk::canonical::format_timestamp_canonical(value.created_at());
     let (projection_read, projection_archived) = notification_wire_state(&value);

@@ -31,6 +31,7 @@ fn stored_invite_credential(entry: &InviteDeliveryEntry) -> StoredInviteCredenti
     StoredInviteCredential {
         realm_id: entry.realm_id.clone(),
         invite_token: entry.invite_token.clone(),
+        authority_locator_hints: entry.authority_locator_hints.clone(),
         expires_at: Some(entry.expires_at),
         received_at: entry.received_at,
     }
@@ -68,13 +69,21 @@ fn credential_expired(credential: &StoredInviteCredential, now: DateTime<Utc>) -
         .is_some_and(|expires_at| expires_at <= now)
 }
 
+/// A credential can accept only while unexpired and while it still carries
+/// the delivery's complete locator hint set.
+pub(crate) fn credential_usable(credential: &StoredInviteCredential, now: DateTime<Utc>) -> bool {
+    !credential_expired(credential, now)
+        && arkret_sdk::validate_authority_locator_hints(&credential.authority_locator_hints).is_ok()
+}
+
 impl ClientLocalState {
-    /// The accept token the private delivery carried for `invite_id`, when it
-    /// is still valid. Expired credentials are not returned.
+    /// The accept credential the private delivery carried for `invite_id`,
+    /// when it is still valid and complete. Expired credentials, and ones
+    /// without a valid locator hint set, are not returned.
     pub fn invite_credential_for(&self, invite_id: &str) -> Option<&StoredInviteCredential> {
         self.invite_credentials
             .get(invite_id)
-            .filter(|credential| !credential_expired(credential, Utc::now()))
+            .filter(|credential| credential_usable(credential, Utc::now()))
     }
 }
 
@@ -390,6 +399,7 @@ mod tests {
             StoredInviteCredential {
                 realm_id: arkret_sdk::RealmId::new(REALM_ID.to_owned()).unwrap(),
                 invite_token: "ak:invite-token:abc".to_owned(),
+                authority_locator_hints: vec![hint()],
                 expires_at: Some(
                     DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z")
                         .unwrap()
@@ -400,5 +410,48 @@ mod tests {
         );
         assert!(state.invite_credential_for(INVITE_ID).is_none());
         assert!(state.invite_credential_for("ak:invite:unknown").is_none());
+    }
+
+    #[test]
+    fn lookup_drops_credentials_without_the_delivery_locator_hints() {
+        let mut state = ClientLocalState::default();
+        let credential = StoredInviteCredential {
+            realm_id: arkret_sdk::RealmId::new(REALM_ID.to_owned()).unwrap(),
+            invite_token: "ak:invite-token:abc".to_owned(),
+            authority_locator_hints: Vec::new(),
+            expires_at: Some(
+                DateTime::parse_from_rfc3339("2099-01-01T00:00:00Z")
+                    .unwrap()
+                    .with_timezone(&Utc),
+            ),
+            received_at: Utc::now(),
+        };
+        state
+            .invite_credentials
+            .insert(INVITE_ID.to_owned(), credential.clone());
+        assert!(state.invite_credential_for(INVITE_ID).is_none());
+
+        state.invite_credentials.insert(
+            INVITE_ID.to_owned(),
+            StoredInviteCredential {
+                authority_locator_hints: vec![hint()],
+                ..credential
+            },
+        );
+        assert_eq!(
+            state
+                .invite_credential_for(INVITE_ID)
+                .map(|credential| credential.authority_locator_hints.clone()),
+            Some(vec![hint()])
+        );
+    }
+
+    fn hint() -> arkret_sdk::RealmJoinCandidate {
+        serde_json::from_value(json!({
+            "service_kind": "station",
+            "service_id": "ak:did_core:web:station.example",
+            "source": "invite"
+        }))
+        .unwrap()
     }
 }

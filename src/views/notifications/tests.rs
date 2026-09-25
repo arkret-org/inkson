@@ -571,7 +571,7 @@ fn invite_notification_carries_no_unregistered_invite_members() {
     assert!(matches!(
         notifications[0].action.as_ref(),
         Some(UiNotificationAction::AcceptInvite {
-            invite_token: None,
+            credential: None,
             realm_id: action_realm_id,
             ..
         }) if action_realm_id == realm_id
@@ -592,6 +592,14 @@ fn invite_notification_token_comes_only_from_private_credential_state() {
         crate::state::StoredInviteCredential {
             realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
             invite_token: "ak:invite-token:delivered".to_owned(),
+            authority_locator_hints: vec![
+                serde_json::from_value(serde_json::json!({
+                    "service_kind": "station",
+                    "service_id": "ak:did_core:web:station.example",
+                    "source": "invite"
+                }))
+                .unwrap(),
+            ],
             expires_at: Some(
                 chrono::DateTime::parse_from_rfc3339("2099-01-01T00:00:00Z")
                     .unwrap()
@@ -606,9 +614,10 @@ fn invite_notification_token_comes_only_from_private_credential_state() {
     assert!(matches!(
         notifications[0].action.as_ref(),
         Some(UiNotificationAction::AcceptInvite {
-            invite_token: Some(token),
+            credential: Some(credential),
             ..
-        }) if token == "ak:invite-token:delivered"
+        }) if credential.invite_token == "ak:invite-token:delivered"
+            && credential.authority_locator_hints.len() == 1
     ));
 }
 
