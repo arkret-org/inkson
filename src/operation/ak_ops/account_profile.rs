@@ -7,7 +7,7 @@ use super::*;
 pub fn account_profile_create(
     principal_control_realm_id: &arkret_sdk::RealmId,
     account_id: &arkret_sdk::AccountId,
-    profile: arkret_models_identity::ActorProfile,
+    profile: arkret_models_identity::ActorProfileDefinition,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::ProfileCreate>(
         principal_control_realm_id.as_str(),

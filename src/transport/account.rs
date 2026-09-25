@@ -228,23 +228,15 @@ pub async fn update_profile(
             .map(|value| arkret_sdk::BlobRef::new(value.to_owned()))
             .transpose()?;
         let principal_control_realm_id = authority_evidence.principal_control_realm_id.clone();
-        let profile = arkret_models_identity::ActorProfile {
-            id: None,
-            schema: arkret_models_identity::ActorProfile::SCHEMA.to_owned(),
-            realm_id: Some(principal_control_realm_id.clone()),
+        let profile = arkret_models_identity::ActorProfileDefinition {
             principal_id: principal_id.clone(),
             actor_kind: arkret_sdk::ActorKind::User,
             display_name: display_name.to_owned(),
             handle: None,
             agent_slug: None,
             avatar_blob_ref,
-            status: None,
             accountable_principal_ids: Vec::new(),
-            resolution: None,
             profile_fields,
-            created_at: crate::clock::now_utc(),
-            updated_by: None,
-            updated_at: None,
         };
         crate::operation::ak_ops::account_profile_create(
             &principal_control_realm_id,
