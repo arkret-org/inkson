@@ -159,16 +159,16 @@ pub struct StoredInviteNotification {
     pub created_at: DateTime<Utc>,
 }
 
-/// Private invite delivery credential received over the actor-private
-/// account-data carrier (`ak.account.invite_delivery`).
+/// Private invite delivery received over the actor-private account-data
+/// carrier (`ak.account.invite_delivery`).
 ///
-/// This is the only legitimate source of an invite-accept token: the Invite
-/// read model carries no token (`governance-objects.md` §5.3), so the accept
-/// flow MUST read it from this holder-private state and nowhere else.
+/// A directed invite carries no bearer token: the governance Station
+/// authorizes acceptance from its accepted Invite bound to this exact account.
+/// The accept flow still reads the delivery's locator hints only from this
+/// holder-private state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredInviteCredential {
     pub realm_id: arkret_sdk::RealmId,
-    pub invite_token: String,
     /// The untrusted locator hints the delivery carried. Acceptance offers
     /// exactly these to this account's Station, which verifies a nonce-bound
     /// authority bundle before anything is authored.

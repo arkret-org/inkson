@@ -46,16 +46,12 @@ impl crate::transport::TransportClient {
         let target = arkret_sdk::RealmJoinTarget {
             realm_id: realm,
             invite_id: Some(invite.clone()),
-            invite_token: Some(credential.invite_token.clone()),
             authority_locator_hints: credential.authority_locator_hints.clone(),
         };
         let request = arkret_sdk::SelfRealmJoinPrepareRequestBody {
             request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms() as u64),
             target,
-            intent: arkret_sdk::RealmJoinIntent::InviteAccept {
-                invite_id: invite,
-                invite_token: credential.invite_token.clone(),
-            },
+            intent: arkret_sdk::RealmJoinIntent::InviteAccept { invite_id: invite },
         };
         // The SDK checks the request and binds the outcome to it: echoed
         // request id, requested Realm and its Realm stream head.

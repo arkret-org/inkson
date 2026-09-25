@@ -492,7 +492,6 @@ fn directory_preview_and_join_locator_keep_separate_authority_boundaries() {
     let target = arkret_sdk::RealmJoinTarget {
         realm_id: resolved.realm_id.clone(),
         invite_id: None,
-        invite_token: None,
         authority_locator_hints: vec![arkret_sdk::RealmJoinCandidate {
             service_kind: arkret_sdk::RealmJoinCandidateServiceKind::Station,
             service_id: arkret_sdk::DidCoreId::new("ak:did_core:web:server.local").unwrap(),

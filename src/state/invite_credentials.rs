@@ -30,7 +30,6 @@ fn validated_invite_delivery(content: &Value) -> Option<InviteDelivery> {
 fn stored_invite_credential(entry: &InviteDeliveryEntry) -> StoredInviteCredential {
     StoredInviteCredential {
         realm_id: entry.realm_id.clone(),
-        invite_token: entry.invite_token.clone(),
         authority_locator_hints: entry.authority_locator_hints.clone(),
         expires_at: Some(entry.expires_at),
         received_at: entry.received_at,
@@ -257,7 +256,7 @@ mod tests {
         })
     }
 
-    fn entry(invite_id: &str, token: &str, received_at: &str, expires_at: &str) -> Value {
+    fn entry(invite_id: &str, received_at: &str, expires_at: &str) -> Value {
         json!({
             "invite_id": invite_id,
             "realm_id": REALM_ID,
@@ -265,7 +264,6 @@ mod tests {
                 "principal_id": "ak:did_core:web:alice.example",
                 "station_id": "ak:did_core:web:station.example"
             },
-            "invite_token": token,
             "authority_locator_hints": [{
                 "service_kind": "station",
                 "service_id": "ak:did_core:web:station.example",
@@ -280,14 +278,12 @@ mod tests {
     fn canonical_account_data_snapshot_decodes_delivery_entries() {
         let entries = invite_delivery_entries_from_cell(&cell(json!([entry(
             INVITE_ID,
-            "ak:invite-token:abc",
             "2026-08-18T00:00:00.000Z",
             "2099-08-25T00:00:00.000Z"
         )])));
         assert_eq!(entries.len(), 1);
         let (invite_id, credential) = &entries[0];
         assert_eq!(invite_id, INVITE_ID);
-        assert_eq!(credential.invite_token, "ak:invite-token:abc");
         assert_eq!(credential.realm_id.as_str(), REALM_ID);
     }
 
@@ -309,7 +305,6 @@ mod tests {
                 "revision": 1,
                 "content": cell(json!([entry(
                     INVITE_ID,
-                    "ak:invite-token:live",
                     "2026-08-18T00:00:00.000Z",
                     "2099-08-25T00:00:00.000Z"
                 )])),
@@ -323,8 +318,8 @@ mod tests {
             store
                 .load()
                 .invite_credential_for(INVITE_ID)
-                .map(|credential| credential.invite_token.as_str()),
-            Some("ak:invite-token:live")
+                .map(|credential| credential.realm_id.as_str()),
+            Some(REALM_ID)
         );
         let projection = store.notification_projection();
         assert!(matches!(
@@ -356,7 +351,6 @@ mod tests {
                 revision: 3,
                 content: cell(json!([entry(
                     INVITE_ID,
-                    "ak:invite-token:baseline",
                     "2026-08-18T00:00:00.000Z",
                     "2099-08-25T00:00:00.000Z"
                 )])),
@@ -368,8 +362,8 @@ mod tests {
             store
                 .load()
                 .invite_credential_for(INVITE_ID)
-                .map(|credential| credential.invite_token.as_str()),
-            Some("ak:invite-token:baseline")
+                .map(|credential| credential.realm_id.as_str()),
+            Some(REALM_ID)
         );
 
         store.apply_station_cas_account_data(&[arkret_sdk::sync::StationCasAccountDataContainer {
@@ -398,7 +392,6 @@ mod tests {
             INVITE_ID.to_owned(),
             StoredInviteCredential {
                 realm_id: arkret_sdk::RealmId::new(REALM_ID.to_owned()).unwrap(),
-                invite_token: "ak:invite-token:abc".to_owned(),
                 authority_locator_hints: vec![hint()],
                 expires_at: Some(
                     DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z")
@@ -417,7 +410,6 @@ mod tests {
         let mut state = ClientLocalState::default();
         let credential = StoredInviteCredential {
             realm_id: arkret_sdk::RealmId::new(REALM_ID.to_owned()).unwrap(),
-            invite_token: "ak:invite-token:abc".to_owned(),
             authority_locator_hints: Vec::new(),
             expires_at: Some(
                 DateTime::parse_from_rfc3339("2099-01-01T00:00:00Z")
