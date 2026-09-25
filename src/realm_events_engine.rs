@@ -521,8 +521,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
     // A full-history stream starts at genesis. A limited Account window may
     // start only from the exact signed head named by its basis, read by
     // reference from a Station that advertises the exact-read bundle; the
-    // first readable page must extend that signed head (and, for a
-    // `before_readable_floor` basis, be the named floor Commit).
+    // first readable page must extend that signed head.
     let floor_basis = floor_anchor.map(|anchor| anchor.basis);
     let snapshot = if let Some(anchor) = floor_anchor {
         let snapshot = authority
@@ -1076,10 +1075,9 @@ fn validate_signed_floor_rows(
 
 /// The account aggregate's committed rows are claims until an independent
 /// nonce-bound stream scan returns the same exact rows. Full history can be
-/// projected. A non-preview Realm-stream window anchored
-/// `before_readable_floor` or `after_committed_prefix` verifies its exact
-/// signed snapshot and continuous tail; typed current remains the Station
-/// result carried by the Account frame.
+/// projected. A non-preview Realm-stream window anchored after a committed
+/// prefix verifies its exact signed snapshot and continuous tail; typed
+/// current remains the Station result carried by the Account frame.
 ///
 /// Every window is decided per stream (client-sync §5.2), and a Realm may
 /// carry a snapshot-anchored window beside other stream windows:
@@ -1529,24 +1527,16 @@ fn snapshot_window_basis(
     window.window_start_basis.as_ref()
 }
 
-/// The first verified row of a snapshot-anchored window. `before_readable_floor`
-/// must start with the floor Commit the basis names; `after_committed_prefix`
-/// starts right after the signed head the basis names (Garth has already
-/// bound the first row's predecessor to that head) and may be empty.
+/// The first verified row of a snapshot-anchored window starts right after
+/// the committed-prefix anchor the basis names (Garth has already bound the
+/// first row's predecessor to that signed head); the tail may be empty.
 fn require_window_start_row(
     basis: &arkret_models_collaboration::sync_frames::account_sync::StreamWindowStartBasis,
     scanned: &[&CommittedEventView],
 ) -> garth::Result<()> {
-    use arkret_models_collaboration::sync_frames::account_sync::StreamWindowAnchorKind;
-    let anchored = match basis.anchor_kind {
-        StreamWindowAnchorKind::BeforeReadableFloor => scanned.first().is_some_and(|row| {
-            row.commit().stream_position == basis.anchor_position
-                && row.commit().commit_id == basis.anchor_commit_ref
-        }),
-        StreamWindowAnchorKind::AfterCommittedPrefix => scanned.first().is_none_or(|row| {
-            basis.anchor_position.checked_add(1) == Some(row.commit().stream_position)
-        }),
-    };
+    let anchored = scanned.first().is_none_or(|row| {
+        basis.anchor_position.checked_add(1) == Some(row.commit().stream_position)
+    });
     if anchored {
         Ok(())
     } else {
@@ -2362,11 +2352,10 @@ mod tests {
     #[test]
     fn preview_and_position_zero_windows_never_reach_the_snapshot_installer() {
         use arkret_models_collaboration::sync_frames::account_sync::{
-            RealmStreamWindow, StreamWindowAnchorKind, StreamWindowStartBasis,
+            RealmStreamWindow, StreamWindowStartBasis,
         };
         let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
         let basis = StreamWindowStartBasis {
-            anchor_kind: StreamWindowAnchorKind::AfterCommittedPrefix,
             anchor_position: 8,
             anchor_commit_ref: arkret_wire::RealmCommitId::from_digest([8; 32]),
             snapshot_ref: arkret_sdk::RealmSnapshotId::from_digest([1; 32]),
@@ -2391,14 +2380,8 @@ mod tests {
         let mut genesis = window.clone();
         genesis.window_start_basis = None;
         assert_eq!(snapshot_window_basis(&genesis), None);
-        let mut floor_basis = basis.clone();
-        floor_basis.anchor_kind = StreamWindowAnchorKind::BeforeReadableFloor;
-        let mut floor_window = window;
-        floor_window.window_start_basis = Some(floor_basis.clone());
-        assert_eq!(snapshot_window_basis(&floor_window), Some(&floor_basis));
-        // An empty prefix tail is legal only for `after_committed_prefix`.
+        // An empty tail after the committed-prefix anchor is legal.
         assert!(require_window_start_row(&basis, &[]).is_ok());
-        assert!(require_window_start_row(&floor_basis, &[]).is_err());
     }
 
     fn direct_message_event() -> ClientEvent {
@@ -2681,16 +2664,26 @@ mod tests {
         let mut forged_window = window;
         forged_window.head_commit_ref = arkret_sdk::RealmCommitId::from_digest([0x77; 32]);
         assert!(require_exact_window_head(&forged_window, &scanned).is_err());
-        forged_window.window_start_basis = Some(
+        let prefix_basis =
             arkret_models_collaboration::sync_frames::account_sync::StreamWindowStartBasis {
-                anchor_kind: arkret_models_collaboration::sync_frames::account_sync::StreamWindowAnchorKind::BeforeReadableFloor,
-                anchor_position: 1,
-                anchor_commit_ref: items[0].commit.commit_id.clone(),
+                anchor_position: 0,
+                anchor_commit_ref: bundle.genesis_commit.commit_id.clone(),
                 snapshot_ref: arkret_sdk::RealmSnapshotId::from_digest([0x55; 32]),
                 governance_generation: 0,
                 accepted_dependency_refs: None,
-            },
-        );
+            };
+        // The tail starts right after the committed-prefix anchor.
+        require_window_start_row(&prefix_basis, &scanned[1..]).unwrap();
+        // A basis never names the first row of its own window: a window
+        // starting exactly at a nonzero readable floor carries no basis.
+        let floor_start_basis =
+            arkret_models_collaboration::sync_frames::account_sync::StreamWindowStartBasis {
+                anchor_position: 1,
+                anchor_commit_ref: items[0].commit.commit_id.clone(),
+                ..prefix_basis.clone()
+            };
+        assert!(require_window_start_row(&floor_start_basis, &scanned[1..]).is_err());
+        forged_window.window_start_basis = Some(prefix_basis);
         let limited_entry =
             arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry {
                 streams: Some(vec![forged_window]),
@@ -3157,7 +3150,7 @@ mod tests {
     #[tokio::test]
     async fn snapshot_window_tail_and_sibling_windows_settle_per_stream() {
         use arkret_models_collaboration::sync_frames::account_sync::{
-            RealmStreamWindow, StreamWindowAnchorKind, StreamWindowStartBasis,
+            RealmStreamWindow, StreamWindowStartBasis,
         };
 
         use crate::test_support::committed_event::FixtureStation;
@@ -3298,7 +3291,6 @@ mod tests {
                 complete: true,
                 preview_only: None,
                 window_start_basis: Some(StreamWindowStartBasis {
-                    anchor_kind: StreamWindowAnchorKind::AfterCommittedPrefix,
                     anchor_position: 6,
                     anchor_commit_ref: items[5].commit.commit_id.clone(),
                     snapshot_ref: snapshot.snapshot_id.clone(),
