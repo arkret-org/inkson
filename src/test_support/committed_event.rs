@@ -425,12 +425,8 @@ pub(crate) fn verified_realm_fixture_signed_by(
             bytes: station.key.verifying_key().to_bytes().to_vec(),
         },
     );
-    let freshness = RealmAuthorityFreshness::new(
-        time(100),
-        Base64UrlString::new(NONCE.to_owned()).unwrap(),
-        Duration::seconds(300),
-    )
-    .unwrap();
+    let freshness =
+        RealmAuthorityFreshness::new(time(100), Base64UrlString::new(NONCE.to_owned()).unwrap());
     let verified = verify_realm_authority_bundle(&bundle, &freshness, &keys).unwrap();
     for item in &items {
         verified.verify_committed_item(item, &keys).unwrap();

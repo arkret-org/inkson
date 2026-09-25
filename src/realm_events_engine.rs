@@ -352,12 +352,8 @@ async fn fresh_verified_realm<T: garth::AuthorityTransport>(
             .map_err(|error| garth::Error::Protocol(error.to_string()))?,
     };
     let bundle = authority.resolve_authority(&request).await?;
-    let freshness = arkret_identity::RealmAuthorityFreshness::new(
-        chrono::Utc::now(),
-        request.nonce.clone(),
-        chrono::Duration::minutes(5),
-    )
-    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    let freshness =
+        arkret_identity::RealmAuthorityFreshness::new(chrono::Utc::now(), request.nonce.clone());
     let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
     let mut replica = RealmReplica::new(realm_id.clone());
     replica.install_verified_authority(&request, bundle.clone(), &freshness, &keys)?;
@@ -449,9 +445,7 @@ where
     let final_freshness = arkret_identity::RealmAuthorityFreshness::new(
         chrono::Utc::now(),
         freshness.expected_nonce.clone(),
-        freshness.max_bundle_age,
-    )
-    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    );
     let bundle_keys =
         garth::fetch_historical_station_key_directory(http, bundle, None, None).await?;
     arkret_identity::verify_realm_authority_bundle(bundle, &final_freshness, &bundle_keys)
@@ -577,9 +571,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
                 let snapshot_freshness = arkret_identity::RealmAuthorityFreshness::new(
                     chrono::Utc::now(),
                     freshness.expected_nonce.clone(),
-                    freshness.max_bundle_age,
-                )
-                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                );
                 verified_floor_snapshot = Some(replica.install_verified_floor_predecessor(
                     stream_ref,
                     basis,
@@ -604,9 +596,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
         let page_freshness = arkret_identity::RealmAuthorityFreshness::new(
             chrono::Utc::now(),
             freshness.expected_nonce.clone(),
-            freshness.max_bundle_age,
-        )
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        );
         let (next_position, empty) = stage_verified_page(
             replica,
             &request,
@@ -1308,9 +1298,7 @@ async fn verify_snapshot_realm<T: garth::AuthorityTransport>(
         let final_freshness = arkret_identity::RealmAuthorityFreshness::new(
             chrono::Utc::now(),
             freshness.expected_nonce.clone(),
-            freshness.max_bundle_age,
-        )
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        );
         let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
         arkret_identity::verify_realm_authority_bundle(&bundle, &final_freshness, &keys)
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
@@ -1459,9 +1447,7 @@ async fn verify_full_history_realm<T: garth::AuthorityTransport>(
     let final_freshness = arkret_identity::RealmAuthorityFreshness::new(
         chrono::Utc::now(),
         freshness.expected_nonce.clone(),
-        freshness.max_bundle_age,
-    )
-    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    );
     let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
     arkret_identity::verify_realm_authority_bundle(&bundle, &final_freshness, &keys)
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
@@ -2411,9 +2397,7 @@ mod tests {
         let freshness = arkret_identity::RealmAuthorityFreshness::new(
             bundle.bundle_issued_at + chrono::Duration::seconds(50),
             request.nonce.clone(),
-            chrono::Duration::minutes(5),
-        )
-        .unwrap();
+        );
         let mut replica = RealmReplica::new(realm_id.clone());
         replica
             .install_verified_authority(&request, bundle.clone(), &freshness, &keys)
@@ -2444,9 +2428,7 @@ mod tests {
         let wrong_nonce = arkret_identity::RealmAuthorityFreshness::new(
             freshness.now,
             arkret_sdk::Base64UrlString::new("BBBBBBBBBBBBBBBBBBBBBB").unwrap(),
-            freshness.max_bundle_age,
-        )
-        .unwrap();
+        );
         assert!(
             stage_verified_page(
                 &mut replica,
