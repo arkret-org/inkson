@@ -821,8 +821,10 @@ where
 ///   `object`, and the root is the generation-zero creator controller.
 /// - Other admitted families are the ordinary bootstrap closure a single governing Station issues:
 ///   profile, policy bundle, join rule, history access (equal to the signed floor's
-///   `history_access`), discovery, member state, Realm-scoped Strand and the default-Strand
-///   pointer, which must name a Strand in the same signed cut.
+///   `history_access`), discovery, the alias and plaintext-visible-services facets, member state,
+///   Realm-scoped Strand and the default-Strand pointer, which must name a Strand in the same
+///   signed cut, and the `message_revision` of each created message, whose Strand must have been
+///   created earlier in the same signed cut.
 ///
 /// Any other family, extra member, gate-bearing policy or cross-row mismatch
 /// rejects the whole snapshot.
@@ -865,6 +867,7 @@ fn validate_signed_floor_rows(
     let mut root = false;
     let mut strands = BTreeMap::new();
     let mut default_strand = None;
+    let mut messages = Vec::new();
     for row in rows {
         let arkret_wire::TypedCurrentResult::Value {
             selector,
@@ -959,6 +962,24 @@ fn validate_signed_floor_rows(
             CurrentSelector::RealmDiscovery => {
                 closed_discovery_value(serde_json::json!({ "value": value }))?;
             }
+            CurrentSelector::RealmAlias => {
+                closed_value::<
+                    arkret_models_collaboration::governance::realm_governance::RealmAliasPayload,
+                >(value, "realm_alias")?
+                .validate()
+                .map_err(protocol)?;
+            }
+            CurrentSelector::RealmPlaintextVisibleServices => {
+                closed_value::<
+                    arkret_models_collaboration::governance::plaintext_visibility::PlaintextVisibleServicesPayload,
+                >(value, "realm_plaintext_visible_services")?;
+            }
+            CurrentSelector::MessageRevision { .. } => {
+                // A create carrier; a revise chain has no product installer.
+                let parsed: arkret_sdk::MessageCreatePayload =
+                    closed_value(value, "message_revision")?;
+                messages.push((parsed.strand_id, revision.stream_position));
+            }
             CurrentSelector::MemberState { .. } => {
                 closed_value::<arkret_wire::MemberStateCurrent>(value, "member_state")?;
             }
@@ -1002,6 +1023,15 @@ fn validate_signed_floor_rows(
     {
         return Err(protocol(
             "signed default Strand names no Strand in the signed cut",
+        ));
+    }
+    if messages.iter().any(|(strand_id, position)| {
+        strands
+            .get(strand_id)
+            .is_none_or(|created| created >= position)
+    }) {
+        return Err(protocol(
+            "signed message names no earlier Strand in the signed cut",
         ));
     }
     if genesis && root {
@@ -1710,6 +1740,127 @@ mod tests {
             assert!(
                 validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &rows).is_err(),
                 "{rows:?}"
+            );
+        }
+    }
+
+    /// Soland discloses the founder's cut after messages and bootstrap facets:
+    /// alias, plaintext-visible services and each created message's
+    /// `message_revision` are installable closed rows, and a message must name
+    /// a Strand created earlier in the same signed cut.
+    #[test]
+    fn signed_floor_rows_admit_bootstrap_facets_and_messages_of_earlier_strands() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let chain = |tail: Vec<(String, serde_json::Value)>| {
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&creator)
+                    .into_iter()
+                    .chain(tail)
+                    .collect(),
+                "alice.example",
+                DEVICE_ID,
+            )
+        };
+        let strand = strand_create_entry(
+            &realm_id,
+            &creator,
+            crate::test_support::committed_event::fixture_time(8),
+        );
+        let (_, _, probe) = chain(vec![strand.clone()]);
+        let strand_id = arkret_sdk::StrandId::from_event_id(&probe[6].event.event_id);
+        let (bundle, _, items) = chain(vec![
+            strand,
+            default_strand_entry(&strand_id, None),
+            message_create_entry(&strand_id, "discussion"),
+        ]);
+        let head_commit = &items.last().unwrap().commit;
+        let head = arkret_wire::CommitStreamHead {
+            stream_ref: head_commit.stream_ref.clone(),
+            stream_position: head_commit.stream_position,
+            commit_id: head_commit.commit_id.clone(),
+        };
+        let facet = |selector, value| TypedCurrentResult::Value {
+            selector,
+            source_stream_ref: items[0].commit.stream_ref.clone(),
+            revision: arkret_wire::CurrentRevision {
+                commit_id: items[0].commit.commit_id.clone(),
+                stream_position: items[0].commit.stream_position,
+            },
+            value,
+        };
+        let mut rows = soland_bootstrap_rows(&bundle, &items);
+        rows.push(facet(
+            arkret_wire::CurrentSelector::RealmPlaintextVisibleServices,
+            json!({"services": [{
+                "service_id": "ak:did_core:web:station.example",
+                "service_kind": "station",
+                "purposes": ["search"],
+                "data_classes": ["message_content"],
+                "visibility": "private_plaintext"
+            }]}),
+        ));
+        rows.push(facet(
+            arkret_wire::CurrentSelector::RealmAlias,
+            json!({"tombstone": true}),
+        ));
+        let since_join = arkret_sdk::HistoryAccess::SinceJoin;
+        validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &rows).unwrap();
+
+        let message_index = rows
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    TypedCurrentResult::Value {
+                        selector: arkret_wire::CurrentSelector::MessageRevision { .. },
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        let mut forged = Vec::new();
+        let mut unknown_strand = rows.clone();
+        let TypedCurrentResult::Value { value, .. } = &mut unknown_strand[message_index] else {
+            unreachable!()
+        };
+        value["strand_id"] = json!(arkret_sdk::StrandId::from_event_id(
+            &bundle.genesis_event.event_id
+        ));
+        forged.push(unknown_strand);
+        let mut open_message = rows.clone();
+        let TypedCurrentResult::Value { value, .. } = &mut open_message[message_index] else {
+            unreachable!()
+        };
+        value["unknown"] = json!(true);
+        forged.push(open_message);
+        let mut early_message = rows.clone();
+        let TypedCurrentResult::Value { revision, .. } = &mut early_message[message_index] else {
+            unreachable!()
+        };
+        revision.stream_position = items[5].commit.stream_position;
+        revision.commit_id = items[5].commit.commit_id.clone();
+        forged.push(early_message);
+        let mut open_alias = rows.clone();
+        let last = open_alias.len() - 1;
+        set_row_value(&mut open_alias[last], json!({"tombstone": false}));
+        forged.push(open_alias);
+        let mut open_services = rows.clone();
+        let services = open_services.len() - 2;
+        set_row_value(
+            &mut open_services[services],
+            json!({"services": [], "extra": true}),
+        );
+        forged.push(open_services);
+        for rows in forged {
+            assert!(
+                validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &rows).is_err()
             );
         }
     }
