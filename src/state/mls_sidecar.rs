@@ -45,6 +45,68 @@ fn attach_group_state_ref_to_snapshot(
 impl LocalStateStore {
     // ── MLS group state persistence ─────────────────────────────────
 
+    /// Install the group a Welcome joined together with the signed
+    /// `keypackages/consume` command its endpoint owes for it, in one durable
+    /// flush (device-lifecycle.md §9, decision 0121). The command is sent
+    /// only once the returned barrier resolves; a failed flush is undone with
+    /// [`Self::forget_pending_keypackage_consume`] so it is never sent.
+    pub(crate) fn install_accepted_mls_welcome(
+        &mut self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+        accepted_event_id: &arkret_sdk::EventId,
+        consume: &arkret_sdk::KeyPackagesConsumeRequestBody,
+    ) -> Result<LocalStatePersistBarrier, String> {
+        self.ensure_cached_loaded();
+        let claim_id = consume.claim_id.as_str().to_owned();
+        let signed = arkret_sdk::canonical::canonical_json_string(consume)
+            .map_err(|error| format!("KeyPackage consume command encoding: {error}"))?;
+        let previous = self
+            .cached
+            .mls_pending_keypackage_consumes
+            .insert(claim_id.clone(), signed);
+        self.install_accepted_mls_transition(effective_scope, envelope, accepted_event_id)
+            .inspect_err(|_| {
+                match previous {
+                    Some(previous) => self
+                        .cached
+                        .mls_pending_keypackage_consumes
+                        .insert(claim_id.clone(), previous),
+                    None => self
+                        .cached
+                        .mls_pending_keypackage_consumes
+                        .remove(&claim_id),
+                };
+            })
+    }
+
+    /// Every durably owed `keypackages/consume` command, exactly as signed.
+    pub(crate) fn pending_keypackage_consumes(
+        &self,
+    ) -> Vec<(String, arkret_sdk::KeyPackagesConsumeRequestBody)> {
+        self.load()
+            .mls_pending_keypackage_consumes
+            .iter()
+            .filter_map(|(claim_id, signed)| {
+                serde_json::from_str(signed)
+                    .ok()
+                    .map(|request| (claim_id.clone(), request))
+            })
+            .collect()
+    }
+
+    /// Drop one owed consume command, settled by its Station or never made
+    /// durable, and flush.
+    pub(crate) fn forget_pending_keypackage_consume(
+        &mut self,
+        claim_id: &str,
+    ) -> Result<LocalStatePersistBarrier, String> {
+        self.ensure_cached_loaded();
+        self.cached.mls_pending_keypackage_consumes.remove(claim_id);
+        self.begin_durable_flush()
+            .map_err(|error| error.to_string())
+    }
+
     /// Install one Station-accepted MLS transition: the provider state the
     /// installer produced for it, and the accepted Event that materialized the
     /// exact `(group, epoch)` pair.

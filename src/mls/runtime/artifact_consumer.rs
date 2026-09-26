@@ -154,7 +154,7 @@ pub(crate) async fn install_accepted_welcome(
     device_id: &arkret_sdk::DeviceId,
     delivery: &arkret_wire::MlsWelcomeDelivery,
     accepted_commit: &CommittedEventFullView,
-    claim: &arkret_sdk::KeyPackageClaimRecord,
+    claim: &VerifiedWelcomeClaim,
     authority_hints: &[MlsLeafAuthorityHint],
 ) -> Result<MlsInstallOutcome, String> {
     let transition = accepted_mls_transition(accepted_commit)?;
@@ -186,7 +186,7 @@ pub(crate) async fn install_accepted_welcome(
         secure_store.as_ref(),
         authority,
         device_id,
-        &claim.keypackage_ref,
+        &claim.record.keypackage_ref,
     )
     .map_err(describe)?
     .ok_or_else(|| "accepted Welcome KeyPackage private state is unavailable".to_owned())?;
@@ -213,14 +213,79 @@ pub(crate) async fn install_accepted_welcome(
         &[],
         authority_hints,
     )?;
-    persist_installed_group(
+    // device-lifecycle.md §9: the consume this endpoint owes is signed now
+    // and becomes durable with the joined group; it is sent only after both
+    // are durable.
+    let consume = crate::mls::welcome_consume::sign_welcome_consume(
+        delivery,
+        &claim.outcome,
+        authority,
+        device_id,
+        &claim.station,
+        transition.next_epoch,
+    )?;
+    persist_joined_welcome(
         state,
         &transition,
         &group,
         &snapshot_secret,
         transition.event().event_id.clone(),
+        &consume,
     )
     .await
+}
+
+/// The claim a Welcome names, as read from and verified against this
+/// endpoint's own Station.
+pub(crate) struct VerifiedWelcomeClaim {
+    pub(crate) record: arkret_sdk::KeyPackageClaimRecord,
+    pub(crate) outcome: arkret_sdk::KeyPackagesClaimOutcome,
+    pub(crate) station: arkret_sdk::DidCoreId,
+}
+
+/// Send every consume command this device durably owes, exactly as signed,
+/// and forget the ones its Station settled (device-lifecycle.md §9). A lost
+/// response keeps the command owed for the next pass.
+pub(crate) async fn deliver_owed_keypackage_consumes(
+    api: &crate::transport::TransportClient,
+    state: &StateStoreHandle,
+) {
+    let owed = state.read(|store| store.pending_keypackage_consumes());
+    if owed.is_empty() {
+        return;
+    }
+    let clients = crate::transport::EndpointClients::new(api.clone());
+    let attempts = crate::mls::welcome_consume::drain_owed_consumes(owed, |(_, request)| {
+        let clients = clients.clone();
+        async move {
+            crate::mls::welcome_consume::classify_consume_response(
+                &clients.mls().consume_key_package(&request).await,
+            )
+        }
+    })
+    .await;
+    for ((claim_id, _), attempt) in attempts {
+        match &attempt {
+            crate::mls::welcome_consume::ConsumeAttempt::Consumed => {}
+            crate::mls::welcome_consume::ConsumeAttempt::Retry(error) => {
+                tracing::debug!(%claim_id, %error, "KeyPackage consume stays owed");
+                continue;
+            }
+            crate::mls::welcome_consume::ConsumeAttempt::Refused(error) => {
+                tracing::warn!(%claim_id, %error, "KeyPackage consume was refused");
+            }
+        }
+        match state.write(|store| store.forget_pending_keypackage_consume(&claim_id)) {
+            Ok(barrier) => {
+                if let Err(error) = barrier.wait().await {
+                    tracing::warn!(%claim_id, %error, "settled KeyPackage consume not forgotten");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%claim_id, %error, "settled KeyPackage consume not forgotten");
+            }
+        }
+    }
 }
 
 /// Join every encrypted scope this device has been Welcomed into but has not
@@ -248,6 +313,7 @@ pub(crate) async fn converge_accepted_mls_artifacts(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<usize, String> {
+    deliver_owed_keypackage_consumes(api, state).await;
     let deliveries = state.read(|store| {
         crate::mls::welcome_delivery::pending_welcome_deliveries(&store.to_device_inbox())
     });
@@ -330,6 +396,9 @@ pub(crate) async fn converge_accepted_mls_artifacts(
             }
         }
     }
+    if applied > 0 {
+        deliver_owed_keypackage_consumes(api, state).await;
+    }
     Ok(applied)
 }
 
@@ -343,7 +412,7 @@ async fn verified_welcome_claim(
     endpoint: &garth::LocalMlsEndpoint,
     accepted_commit: &CommittedEventFullView,
     device_id: &arkret_sdk::DeviceId,
-) -> Result<arkret_sdk::KeyPackageClaimRecord, String> {
+) -> Result<VerifiedWelcomeClaim, String> {
     let clients = crate::transport::EndpointClients::new(api.clone());
     let (outcome, station) = clients
         .mls()
@@ -355,7 +424,7 @@ async fn verified_welcome_claim(
         device_id.as_str(),
     )
     .await?;
-    garth::mls::verify_welcome_claim(
+    let record = garth::mls::verify_welcome_claim(
         delivery,
         endpoint,
         &accepted_commit.event,
@@ -363,7 +432,12 @@ async fn verified_welcome_claim(
         &station,
         &authorization,
     )
-    .map_err(describe)
+    .map_err(describe)?;
+    Ok(VerifiedWelcomeClaim {
+        record,
+        outcome,
+        station,
+    })
 }
 
 /// Resolve the exact accepted Commit a Welcome names on the scope's own stream.
@@ -440,6 +514,66 @@ async fn persist_installed_group(
     snapshot_secret: &str,
     accepted_event_id: arkret_sdk::EventId,
 ) -> Result<MlsInstallOutcome, String> {
+    let envelope = sealed_checkpoint(transition, group, snapshot_secret)?;
+    let scope = transition.effective_scope.clone();
+    let barrier = state.write(|store| {
+        store.install_accepted_mls_transition(&scope, envelope, &accepted_event_id)
+    })?;
+    barrier.wait().await.map_err(describe)?;
+    Ok(MlsInstallOutcome::Applied)
+}
+
+/// Persist the group a Welcome joined together with the consume command it
+/// owes, in one durable flush. A flush that does not resolve drops the
+/// command, so a join that is not durable is never consumed.
+async fn persist_joined_welcome(
+    state: &StateStoreHandle,
+    transition: &AcceptedMlsTransition,
+    group: &arkret_sdk::ArkretMlsGroup,
+    snapshot_secret: &str,
+    accepted_event_id: arkret_sdk::EventId,
+    consume: &arkret_sdk::KeyPackagesConsumeRequestBody,
+) -> Result<MlsInstallOutcome, String> {
+    let envelope = sealed_checkpoint(transition, group, snapshot_secret)?;
+    record_joined_welcome(
+        state,
+        &transition.effective_scope,
+        envelope,
+        &accepted_event_id,
+        consume,
+    )
+    .await?;
+    Ok(MlsInstallOutcome::Applied)
+}
+
+/// Install a joined Welcome's checkpoint and its owed consume in one flush;
+/// when the flush does not resolve, the consume is dropped again so it is
+/// never sent for a join that is not durable.
+async fn record_joined_welcome(
+    state: &StateStoreHandle,
+    scope: &arkret_sdk::ScopeRef,
+    envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    accepted_event_id: &arkret_sdk::EventId,
+    consume: &arkret_sdk::KeyPackagesConsumeRequestBody,
+) -> Result<(), String> {
+    let barrier = state.write(|store| {
+        store.install_accepted_mls_welcome(scope, envelope, accepted_event_id, consume)
+    })?;
+    if let Err(error) = barrier.wait().await {
+        let claim_id = consume.claim_id.as_str().to_owned();
+        let _ = state.write(|store| store.forget_pending_keypackage_consume(&claim_id));
+        return Err(describe(error));
+    }
+    Ok(())
+}
+
+/// The device-secret-encrypted checkpoint of `group` at the accepted
+/// transition's exact coordinate.
+fn sealed_checkpoint(
+    transition: &AcceptedMlsTransition,
+    group: &arkret_sdk::ArkretMlsGroup,
+    snapshot_secret: &str,
+) -> Result<crate::mls::persistence::MlsLocalCheckpointEnvelope, String> {
     let realm_id = transition
         .effective_scope
         .realm_id_opt()
@@ -455,20 +589,14 @@ async fn persist_installed_group(
     let mut salt = [0_u8; 16];
     getrandom::fill(&mut salt).map_err(describe)?;
     let encoded = serde_json::to_vec(&post_state).map_err(describe)?;
-    let envelope = crate::mls::persistence::encrypt_state(
+    Ok(crate::mls::persistence::encrypt_state(
         realm_id.as_str(),
         post_state.group_id.as_str(),
         post_state.epoch,
         &encoded,
         snapshot_secret,
         &salt,
-    );
-    let scope = transition.effective_scope.clone();
-    let barrier = state.write(|store| {
-        store.install_accepted_mls_transition(&scope, envelope, &accepted_event_id)
-    })?;
-    barrier.wait().await.map_err(describe)?;
-    Ok(MlsInstallOutcome::Applied)
+    ))
 }
 
 fn validate_installed_coordinate(
@@ -602,6 +730,169 @@ mod tests {
                 device_id()
             )
         );
+    }
+
+    fn consume_command() -> arkret_sdk::KeyPackagesConsumeRequestBody {
+        let method = arkret_sdk::DidUrl::new("did:web:alice.example#device").unwrap();
+        let signature = || arkret_sdk::KeyOperationSignature {
+            kid: arkret_sdk::NonEmptyString::new(method.as_str().to_owned()).unwrap(),
+            signature_algorithm: Some(arkret_sdk::NonEmptyString::new("Ed25519").unwrap()),
+            sig: arkret_sdk::Base64UrlString::new("A".repeat(86)).unwrap(),
+        };
+        let delivery = welcome_delivery(arkret_wire::MlsWelcomeRecipientEndpoint::Device {
+            device_id: device_id(),
+        });
+        arkret_sdk::KeyPackagesConsumeRequestBody {
+            claim_id: delivery.keypackage_claim_ref.clone(),
+            recipient_durable_receipt: arkret_sdk::RecipientMlsDurableReceipt {
+                domain: arkret_sdk::NonEmptyString::new(
+                    arkret_wire::DomainSeparationId::MLS_RECIPIENT_DURABLE_RECEIPT_V1.to_owned(),
+                )
+                .unwrap(),
+                claim_request_id: arkret_sdk::Base64UrlString::new("Y2xhaW0tcmVxdWVzdA").unwrap(),
+                key_package_ref: arkret_sdk::NonEmptyString::new(format!(
+                    "sha256:{}",
+                    "33".repeat(32)
+                ))
+                .unwrap(),
+                recipient: arkret_sdk::RecipientMlsDurableSigner::Device {
+                    recipient_account_id: authority(),
+                    recipient_device_id: device_id(),
+                    device_verification_method: method.clone(),
+                },
+                recipient_id: authority().station_id,
+                realm_id: realm_id(),
+                mls_group_id: garth::mls::mls_group_id_for_realm(&realm_id()).unwrap(),
+                mls_epoch: 1,
+                welcome_ref: delivery.welcome_id.clone(),
+                welcome_digest: delivery.durable_receipt_digest().unwrap(),
+                durable_at: chrono::DateTime::from_timestamp(1_790_000_000, 0).unwrap(),
+                signature: signature(),
+            },
+            signature: signature(),
+        }
+    }
+
+    fn checkpoint() -> crate::mls::persistence::MlsLocalCheckpointEnvelope {
+        crate::mls::persistence::encrypt_state(REALM, "AQID", 1, b"one", "test-secret", &[7; 16])
+    }
+
+    fn accepted_event() -> arkret_sdk::EventId {
+        arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk").unwrap()
+    }
+
+    fn handle(
+        store: crate::state::LocalStateStore,
+    ) -> (
+        StateStoreHandle,
+        std::sync::Arc<std::sync::Mutex<crate::state::LocalStateStore>>,
+    ) {
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(store));
+        let read = shared.clone();
+        let write = shared.clone();
+        (
+            StateStoreHandle::new(
+                move |callback| callback(&read.lock().unwrap()),
+                move |callback| callback(&mut write.lock().unwrap()),
+            ),
+            shared,
+        )
+    }
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "inkson-welcome-consume-{name}-{}-{}",
+            std::process::id(),
+            crate::operation::uuid_v7(),
+        ))
+    }
+
+    fn owed_bytes(store: &crate::state::LocalStateStore) -> Vec<String> {
+        store
+            .pending_keypackage_consumes()
+            .into_iter()
+            .map(|(_, request)| arkret_sdk::canonical::canonical_json_string(&request).unwrap())
+            .collect()
+    }
+
+    /// decision 0121: a joined Welcome whose checkpoint flush does not
+    /// resolve owes no consume, so nothing is ever sent for it.
+    #[tokio::test]
+    async fn a_join_that_is_not_durable_owes_no_consume() {
+        let blocker = temp_path("blocker");
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let (state, shared) = handle(crate::state::LocalStateStore::with_path(
+            blocker.join("state.json"),
+        ));
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id(),
+        };
+        assert!(
+            record_joined_welcome(
+                &state,
+                &scope,
+                checkpoint(),
+                &accepted_event(),
+                &consume_command()
+            )
+            .await
+            .is_err()
+        );
+        assert!(owed_bytes(&shared.lock().unwrap()).is_empty());
+        let _ = std::fs::remove_file(blocker);
+    }
+
+    /// A durable join owes its consume across a restart; a lost response
+    /// resends the exact same signed bytes, and a settled consume is
+    /// forgotten durably.
+    #[tokio::test]
+    async fn a_lost_consume_response_resends_the_durable_command_unchanged() {
+        let path = temp_path("durable").with_extension("json");
+        let (state, _) = handle(crate::state::LocalStateStore::with_path(&path));
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id(),
+        };
+        let command = consume_command();
+        record_joined_welcome(&state, &scope, checkpoint(), &accepted_event(), &command)
+            .await
+            .unwrap();
+        let signed = arkret_sdk::canonical::canonical_json_string(&command).unwrap();
+        let restarted = crate::state::LocalStateStore::with_path(&path);
+        assert_eq!(owed_bytes(&restarted), vec![signed.clone()]);
+
+        let sent = std::cell::RefCell::new(Vec::new());
+        let lost = crate::mls::welcome_consume::drain_owed_consumes(
+            restarted.pending_keypackage_consumes(),
+            |(_, request)| {
+                sent.borrow_mut()
+                    .push(arkret_sdk::canonical::canonical_json_string(&request).unwrap());
+                async { crate::mls::welcome_consume::ConsumeAttempt::Retry("lost".to_owned()) }
+            },
+        )
+        .await;
+        assert!(lost.iter().all(|(_, attempt)| !attempt.settled()));
+        let (state, shared) = handle(restarted);
+        let consumed = crate::mls::welcome_consume::drain_owed_consumes(
+            shared.lock().unwrap().pending_keypackage_consumes(),
+            |(_, request)| {
+                sent.borrow_mut()
+                    .push(arkret_sdk::canonical::canonical_json_string(&request).unwrap());
+                async { crate::mls::welcome_consume::ConsumeAttempt::Consumed }
+            },
+        )
+        .await;
+        assert_eq!(sent.into_inner(), vec![signed.clone(), signed]);
+        for ((claim_id, _), attempt) in consumed {
+            assert!(attempt.settled());
+            state
+                .write(|store| store.forget_pending_keypackage_consume(&claim_id))
+                .unwrap()
+                .wait()
+                .await
+                .unwrap();
+        }
+        assert!(owed_bytes(&crate::state::LocalStateStore::with_path(&path)).is_empty());
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

@@ -22,4 +22,6 @@ pub mod persistence;
 pub mod runtime;
 /// The durable MLS send gate of one effective scope.
 pub(crate) mod send_gate;
+/// The `keypackages/consume` a joined Welcome owes once it is durable.
+pub mod welcome_consume;
 pub(crate) mod welcome_delivery;

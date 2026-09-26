@@ -1124,6 +1124,12 @@ pub struct ClientLocalState {
     /// the current locally persisted epoch, keyed by effective scope.
     #[serde(default)]
     pub mls_group_state_refs: BTreeMap<String, MlsGroupStateRefRecord>,
+    /// Signed `keypackages/consume` commands this device owes for Welcomes
+    /// whose joined group state is durable, as the canonical JSON of the
+    /// exact signed request keyed by claim id. Each is resent unchanged until
+    /// its Station settles it (device-lifecycle.md §9, decision 0121).
+    #[serde(default)]
+    pub mls_pending_keypackage_consumes: BTreeMap<String, String>,
     /// Bounded accepted historical epoch references, keyed by exact
     /// `(epoch, effective scope, group)` coordinates.
     #[serde(default)]
@@ -1536,6 +1542,7 @@ impl Default for ClientLocalState {
             mls_receive_recovery_checkpoints: BTreeMap::new(),
             mls_genesis_emitted: BTreeSet::new(),
             mls_group_state_refs: BTreeMap::new(),
+            mls_pending_keypackage_consumes: BTreeMap::new(),
             mls_historical_group_state_refs: BTreeMap::new(),
             mls_historical_checkpoints: BTreeMap::new(),
             historical_agent_event_candidates: BTreeMap::new(),
