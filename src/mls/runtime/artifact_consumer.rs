@@ -145,14 +145,16 @@ pub(crate) async fn install_accepted_transition(
 ///
 /// The SDK verifies the delivery against the accepted Commit it names, so this
 /// only supplies the two host-held inputs: the KeyPackage private identity
-/// state the claim consumed, and the verified leaf attribution for the joined
-/// roster.
+/// state of the exact claim `claim` names -- already read from this device's
+/// own Station and verified ([`verified_welcome_claim`]) -- and the verified
+/// leaf attribution for the joined roster.
 pub(crate) async fn install_accepted_welcome(
     state: &StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     delivery: &arkret_wire::MlsWelcomeDelivery,
     accepted_commit: &CommittedEventFullView,
+    claim: &arkret_sdk::KeyPackageClaimRecord,
     authority_hints: &[MlsLeafAuthorityHint],
 ) -> Result<MlsInstallOutcome, String> {
     let transition = accepted_mls_transition(accepted_commit)?;
@@ -184,7 +186,7 @@ pub(crate) async fn install_accepted_welcome(
         secure_store.as_ref(),
         authority,
         device_id,
-        delivery.keypackage_claim_ref.as_str(),
+        &claim.keypackage_ref,
     )
     .map_err(describe)?
     .ok_or_else(|| "accepted Welcome KeyPackage private state is unavailable".to_owned())?;
@@ -289,12 +291,30 @@ pub(crate) async fn converge_accepted_mls_artifacts(
                 continue;
             }
         };
+        // device-lifecycle.md §9.2.4: the claim is read from this device's
+        // own Station and verified before the Welcome is decrypted; a read or
+        // binding failure leaves the Welcome undecrypted in the inbox.
+        let claim =
+            match verified_welcome_claim(api, &delivery, &endpoint, &accepted_commit, device_id)
+                .await
+            {
+                Ok(claim) => claim,
+                Err(error) => {
+                    tracing::warn!(
+                        welcome = %delivery.welcome_id.as_str(),
+                        %error,
+                        "MLS Welcome claim is not verified; the Welcome stays undecrypted",
+                    );
+                    continue;
+                }
+            };
         match install_accepted_welcome(
             state,
             authority,
             device_id,
             &delivery,
             &accepted_commit,
+            &claim,
             &[],
         )
         .await
@@ -311,6 +331,39 @@ pub(crate) async fn converge_accepted_mls_artifacts(
         }
     }
     Ok(applied)
+}
+
+/// The claim record a Welcome names, read through
+/// `ak.self.keys.keypackages.read.claim.v1` from this device's own Station
+/// with its receipt verified, and bound to the delivery, this endpoint's
+/// current device authorization and the accepted Commit's inline Add.
+async fn verified_welcome_claim(
+    api: &crate::transport::TransportClient,
+    delivery: &arkret_wire::MlsWelcomeDelivery,
+    endpoint: &garth::LocalMlsEndpoint,
+    accepted_commit: &CommittedEventFullView,
+    device_id: &arkret_sdk::DeviceId,
+) -> Result<arkret_sdk::KeyPackageClaimRecord, String> {
+    let clients = crate::transport::EndpointClients::new(api.clone());
+    let (outcome, station) = clients
+        .mls()
+        .own_key_package_claim(&delivery.keypackage_claim_ref)
+        .await
+        .map_err(|error| format!("read the Welcome's KeyPackage claim: {error}"))?;
+    let authorization = crate::mls::admission::current_requester_device_authorize_event_id(
+        api.http(),
+        device_id.as_str(),
+    )
+    .await?;
+    garth::mls::verify_welcome_claim(
+        delivery,
+        endpoint,
+        &accepted_commit.event,
+        &outcome,
+        &station,
+        &authorization,
+    )
+    .map_err(describe)
 }
 
 /// Resolve the exact accepted Commit a Welcome names on the scope's own stream.

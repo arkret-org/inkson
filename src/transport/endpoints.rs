@@ -211,6 +211,43 @@ impl MlsEndpoints<'_> {
             .map_err(anyhow::Error::from)
     }
 
+    /// Read the exact outcome of the claim a Welcome names from this
+    /// endpoint's own Account Station (`ak.self.keys.keypackages.read.claim.v1`)
+    /// and verify its receipt before anything is decrypted
+    /// (device-lifecycle.md §9 `claims/query`). The receipt must be this
+    /// Station's own, signed under its service key effective at `claimed_at`.
+    pub async fn own_key_package_claim(
+        &self,
+        claim_id: &arkret_wire::KeypackageClaimId,
+    ) -> anyhow::Result<(arkret_sdk::KeyPackagesClaimOutcome, arkret_sdk::DidCoreId)> {
+        let station = self.transport.describe_cached().await?.service_id.clone();
+        let outcome = self
+            .transport
+            .http()
+            .keypackages_claim_query(&arkret_sdk::KeyPackagesClaimQueryRequestBody {
+                claim_id: claim_id.clone(),
+            })
+            .await
+            .map_err(anyhow::Error::from)?;
+        outcome
+            .validate_shape()
+            .map_err(|error| anyhow::anyhow!("KeyPackage claim outcome is invalid: {error}"))?;
+        let receipt = &outcome.claim_receipt;
+        if receipt.destination_id != station {
+            anyhow::bail!("KeyPackage claim receipt is not this Station's own");
+        }
+        let resolution = self
+            .transport
+            .http()
+            .open_service_resolution(&receipt.destination_id)
+            .await
+            .map_err(anyhow::Error::from)?;
+        arkret_sdk::verify_peer_keypackage_claim_receipt_signature(receipt, &resolution).map_err(
+            |error| anyhow::anyhow!("KeyPackage claim receipt signature is invalid: {error}"),
+        )?;
+        Ok((outcome, station))
+    }
+
     pub async fn claim_key_package(
         &self,
         target_principal_id: &str,
