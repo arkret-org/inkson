@@ -772,6 +772,7 @@ pub fn SettingsPanel(
                             }
                         }
                 }
+                }
                 section { class: "settings-content-column",
                     div { class: "event settings-content-hero",
                         div { class: "settings-content-title-row",
@@ -2616,7 +2617,6 @@ pub fn SettingsPanel(
 
 
                         }
-                    }
 
                     // ── U4 invite_receive_policy ─────────────────────────
                     if active_section == SettingsSection::Contacts {
