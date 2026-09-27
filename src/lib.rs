@@ -141,6 +141,7 @@ pub mod signal_receive_engine;
 /// Sync projection layer (account/realm wire payloads -> local projection
 /// models); moved out of `views/`.
 pub(crate) mod state;
+pub use state::LocalStateStore;
 /// Browser regression harness for the durable current index. Not product
 /// surface: the wasm test target cannot otherwise reach the crate-private
 /// index, and the IndexedDB backend owes the same transaction, cancellation

@@ -124,7 +124,7 @@ pub(crate) fn device_message_cursor_key(
 }
 
 struct OwnedLocalStateBackend {
-    store: Mutex<crate::state::LocalStateStore>,
+    store: Arc<Mutex<crate::state::LocalStateStore>>,
 }
 
 impl OwnedLocalStateBackend {
@@ -265,9 +265,11 @@ impl LocalStateBackend for OwnedLocalStateBackend {
 
 impl InksonLocalStateStoreAdapter {
     pub fn new(store: crate::state::LocalStateStore) -> Self {
-        Self::from_backend(OwnedLocalStateBackend {
-            store: Mutex::new(store),
-        })
+        Self::from_shared_store(Arc::new(Mutex::new(store)))
+    }
+
+    pub(crate) fn from_shared_store(store: Arc<Mutex<crate::state::LocalStateStore>>) -> Self {
+        Self::from_backend(OwnedLocalStateBackend { store })
     }
 
     pub(crate) fn from_backend(backend: impl LocalStateBackend + 'static) -> Self {

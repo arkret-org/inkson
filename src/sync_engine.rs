@@ -348,6 +348,200 @@ struct InksonAccountProjector {
         crate::transport::websocket_rail::StreamRail<crate::client_core::InksonAccountTransport>,
 }
 
+/// A native host for bounded account-aggregate synchronization. It uses the
+/// same authenticated account boundary, projector, cursor adapter and driver
+/// as the application. Keeping the host alive owns its account attempt;
+/// dropping it returns privacy Signal freshness to unknown.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct NativeAccountHost {
+    http: arkret_sdk::http_client::Client,
+    projector: InksonAccountProjector,
+    store: std::sync::Arc<std::sync::Mutex<LocalStateStore>>,
+    request: SyncRequestBody,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl NativeAccountHost {
+    pub async fn new(
+        http: arkret_sdk::http_client::Client,
+        authority: arkret_sdk::AccountId,
+        device_id: arkret_sdk::DeviceId,
+        mut store: LocalStateStore,
+    ) -> anyhow::Result<Self> {
+        use crate::runtime::input::{StateStoreHandle, ValueCell, ValueReader};
+        fn cell<T: Clone + 'static>(value: T) -> ValueCell<T> {
+            let value = std::rc::Rc::new(std::cell::RefCell::new(value));
+            let read = value.clone();
+            let write = value.clone();
+            ValueCell::new(
+                move || read.borrow().clone(),
+                move |next| *write.borrow_mut() = next,
+                move |update| update(&mut value.borrow_mut()),
+            )
+        }
+        let account = crate::transport::account::resolve_active_account_context(
+            &http,
+            "native-account-host".into(),
+            authority.clone(),
+            device_id.clone(),
+            http.base_url().clone(),
+        )
+        .await?;
+        store.switch_active_account(&account)?;
+        let blocklist_catchup = store.begin_blocklist_catchup();
+        let store = std::sync::Arc::new(std::sync::Mutex::new(store));
+        let adapter =
+            crate::client_core::InksonLocalStateStoreAdapter::from_shared_store(store.clone());
+        let client_runtime = crate::client_core::InksonClientRuntime::from_state_adapter(adapter);
+        let read = store.clone();
+        let write = store.clone();
+        let handle = StateStoreHandle::new(
+            move |read_fn| read_fn(&read.lock().unwrap_or_else(|error| error.into_inner())),
+            move |write_fn| write_fn(&mut write.lock().unwrap_or_else(|error| error.into_inner())),
+        );
+        let effect = crate::runtime::effects::EffectRegistry::default().register(
+            crate::runtime::effects::EffectKey {
+                owner: crate::runtime::effects::EffectOwner::Account(
+                    arkret_sdk::ActorId::account(authority.clone()).to_string(),
+                ),
+                name: "native-account-sync".into(),
+                generation: 1,
+            },
+        );
+        let ctx = SyncEngineContext {
+            token: ValueReader::new(String::new),
+            state_store: handle,
+            principal_id: authority.principal_id.clone(),
+            account,
+            device_id: device_id.to_string(),
+            live_device_id: cell(device_id.to_string()),
+            selected_realm_id: ValueReader::new(String::new),
+            websocket_rail: crate::transport::websocket_rail::WebSocketRail::default(),
+            realm_live_epoch: cell(0),
+            session: crate::runtime::session::SessionCoordinator::new(|| {
+                Box::pin(std::future::pending())
+            }),
+            client_runtime,
+            effect,
+            projection_sink: crate::runtime::projection::ProjectionRouter::default(),
+        };
+        let request = SyncRequestBody {
+            after: None,
+            catchup: Some(true),
+            filter: Some(selected_account_filter(&ctx)),
+            realm_list: None,
+            replace_filter: None,
+        };
+        let projector = InksonAccountProjector {
+            blocklist_catchup,
+            ctx,
+            generation: ValueReader::new(|| 1),
+            start_generation: 1,
+            request_filter: request.filter.clone(),
+            control: SubscriptionControl::default(),
+            current_index: tokio::sync::Mutex::new(None),
+            station_cas_projection: std::sync::Arc::new(tokio::sync::Mutex::new(
+                garth::StationCasProjection::default(),
+            )),
+            removal_schedule: std::sync::Mutex::new(RemovalSchedule::default()),
+            transport: crate::transport::websocket_rail::StreamRail::select(
+                &crate::transport::websocket_rail::WebSocketRail::default(),
+                crate::client_core::InksonAccountTransport::new(http.clone()),
+            ),
+        };
+        Ok(Self {
+            http,
+            projector,
+            store,
+            request,
+        })
+    }
+
+    pub fn state_store(&self) -> LocalStateStore {
+        self.store
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    pub fn state_store_handle(&self) -> crate::runtime::input::StateStoreHandle {
+        self.projector.ctx.state_store.clone()
+    }
+
+    /// Use the ordinary production Signal sender with this host's account
+    /// attempt and durable privacy state; no UI context is required.
+    pub async fn send_scope_signal(
+        &self,
+        scope: arkret_sdk::ScopeRef,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+    ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+        crate::event_submit::EventSubmitter::new(self.http.clone())
+            .send_scope_signal(
+                scope,
+                &self.projector.ctx.account.authority,
+                &self.projector.ctx.account.device_id,
+                material,
+                payload,
+                &self.projector.ctx.state_store,
+            )
+            .await
+    }
+
+    /// Synchronize one validated and durably projected bounded window. The
+    /// ordinary account driver owns resume / Station-CAS trace semantics.
+    pub async fn catch_up(&self) -> garth::Result<()> {
+        struct OneWindow<'a> {
+            projector: &'a InksonAccountProjector,
+            control: SubscriptionControl,
+        }
+        impl AccountBatchProjector for OneWindow<'_> {
+            async fn project(&self, batch: &AccountSubscribeBatch) -> garth::Result<()> {
+                self.projector.project(batch).await
+            }
+            async fn project_and_checkpoint<C: garth::CursorStore>(
+                &self,
+                batch: &AccountSubscribeBatch,
+                scope: garth::CursorScope,
+                checkpoint: garth::AccountCursorCheckpoint,
+                cursors: &C,
+            ) -> garth::Result<()> {
+                self.projector
+                    .project_and_checkpoint(batch, scope, checkpoint, cursors)
+                    .await?;
+                self.control.cancel();
+                Ok(())
+            }
+        }
+        let subscription = AccountSubscription::new(
+            self.projector.ctx.client_runtime.executor(),
+            self.projector.ctx.client_runtime.cursors(),
+        );
+        let projector = OneWindow {
+            projector: &self.projector,
+            control: subscription.control(),
+        };
+        let result = subscription
+            .run(
+                &self.projector.transport,
+                &projector,
+                None,
+                arkret_sdk::ActorId::account(self.projector.ctx.account.authority.clone()),
+                self.projector.ctx.account.device_id.clone(),
+                self.request.clone(),
+            )
+            .await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                self.projector
+                    .blocklist_catchup
+                    .finish_checkpoint(Err(error), false, false)
+            }
+        }
+    }
+}
+
 /// One committed frame: the Station's batch containers plus the decoded Realm
 /// step the product projections read.
 pub(crate) struct AccountFrameStep {
@@ -720,7 +914,7 @@ impl InksonAccountProjector {
                         .prepare_account_demand_frame(current_stage.filtered_frame())
                         .map_err(|error| error.to_string())?;
                     let effects = apply_account_frame_payload(store, &response, &self.ctx)
-                        .map_err(|error| error.to_string())?;
+                        .map_err(|error| format!("{error:#}"))?;
                     if changed_device_accounts(&response.device_lists()).contains(&local_account) {
                         store.set_local_device_refresh_pending(true);
                     }
@@ -2638,11 +2832,13 @@ pub(crate) fn apply_account_data_entries(
             .and_then(|content| {
                 let payload = crate::account_data::blocklist_payload_from_account_data(&content)
                     .map_err(anyhow::Error::msg)?;
-                let revision = entry
-                    .payload
-                    .get("revision")
-                    .and_then(Value::as_u64)
-                    .ok_or_else(|| anyhow::anyhow!("ak.account.blocklist is missing revision"))?;
+                let accepted: arkret_sdk::AccountDataSetPayload =
+                    serde_json::from_value(serde_json::to_value(&entry.payload)?)?;
+                accepted.validate().map_err(anyhow::Error::msg)?;
+                let revision = accepted
+                    .expected_server_revision
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow::anyhow!("blocklist accepted revision overflow"))?;
                 Ok((revision, payload.entries))
             }) {
                 Ok((revision, entries)) => {

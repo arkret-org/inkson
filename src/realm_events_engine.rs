@@ -1115,6 +1115,26 @@ fn validate_signed_floor_rows(
                 .validate_for_subject(target_ref)
                 .map_err(protocol)?;
             }
+            CurrentSelector::MemberIdentityUpdates { member_id, segment } => {
+                // This family is Realm-local; the enclosing stream gate rejects
+                // a Circle source. Preserve every exact signed update payload.
+                closed_value::<arkret_models_identity::MemberIdentityUpdatesCurrentValue>(
+                    value,
+                    "member_identity_updates",
+                )?
+                .validate_for_tuple(realm_id, member_id, *segment)
+                .map_err(protocol)?;
+            }
+            CurrentSelector::AppletRegistration { applet_id } => {
+                let registration = closed_value::<
+                    arkret_models_integration::AppletRegistrationPayload,
+                >(value, "applet_registration")?;
+                if &registration.applet_id != applet_id {
+                    return Err(protocol(
+                        "signed Applet registration differs from its selector",
+                    ));
+                }
+            }
             CurrentSelector::MemberState { .. } => {
                 closed_value::<arkret_wire::MemberStateCurrent>(value, "member_state")?;
             }
