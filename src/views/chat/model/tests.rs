@@ -90,7 +90,7 @@ mod committed_producer_proof_tests {
         assert_eq!(message.sender, "ak:did_core:web:chat-foreign.example");
         assert_eq!(
             verified_chat_sender_domain_for_realm(REALM, &event, None, None),
-            Some(DEVICE.as_bytes().to_vec())
+            Some(arkret_sdk::mls_basic_credential_identity(&actor).unwrap())
         );
     }
 

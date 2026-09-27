@@ -528,6 +528,83 @@ fn two_member_group_with_bob_snapshot(
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn committed_sender_credential_reconstructs_real_standard_mls_content_aad() {
+    let mut state = temp_state_store("committed-content-aad");
+    let secure = MemorySecureKeyStore::new();
+    let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
+    let (mut alice, _) =
+        two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
+    let header = test_message_header(&alice, realm);
+    let encrypted = alice
+        .encrypt_payload(header.clone(), b"verified private content")
+        .unwrap();
+    let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(&encrypted).unwrap();
+    let event = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+        arkret_sdk::EventKind::MessageCreate.as_str(),
+        header.effective_scope.clone(),
+        fixture::account_actor("did:web:alice.example"),
+        json!({
+            "strand_id": "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
+            "track_name": "discussion", "encrypted_content": envelope,
+        }),
+    )
+    .build_unsigned()
+    .unwrap();
+    let signer = arkret_test_kit::keys::seeded_signer(
+        arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+        arkret_sdk::DidUrl::new(
+            "did:web:alice.example#ak:device:01904100-0000-7000-8000-0000000000a1",
+        )
+        .unwrap(),
+    );
+    let event = arkret_test_kit::signed_event::sign_verifiable_event(
+        event,
+        &signer,
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap()
+    .expect_verifiable();
+    let sender = crate::views::chat::verified_chat_sender_domain_for_realm(
+        realm,
+        &serde_json::to_value(&event).unwrap(),
+        None,
+        None,
+    )
+    .unwrap();
+    let rebuilt = envelope
+        .reconstruct_pre_encryption_header(
+            arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+            header.effective_scope.clone(),
+            event.kind.as_str(),
+            std::str::from_utf8(&sender).unwrap(),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        rebuilt.canonical_bytes().unwrap(),
+        header.canonical_bytes().unwrap()
+    );
+    let payload =
+        arkret_sdk::mls::encrypted_envelope_to_payload_with_verified_header(&envelope, rebuilt)
+            .unwrap();
+    let snapshot = state.mls_checkpoint_for(realm).unwrap();
+    let secret = load_device_checkpoint_secret(
+        &secure,
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
+    )
+    .unwrap();
+    let mut bob = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).unwrap();
+    assert_eq!(
+        bob.decrypt_payload(&payload).unwrap(),
+        b"verified private content"
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn historical_author_view_survives_epoch_rotation() {
     let mut state = temp_state_store("historical-author-view");
     let secure = MemorySecureKeyStore::new();

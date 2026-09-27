@@ -1179,8 +1179,9 @@ pub(crate) fn verified_chat_sender_domain_for_realm(
     {
         return None;
     }
-    // Only a human-device producer yields a device sender domain. Retired
-    // marker projections were rejected by the proof gate above.
+    // Standard content AAD uses the sender leaf's canonical ActorId
+    // credential, preserving its Station. The device remains a proof selector
+    // and must not replace the credential identity.
     let envelope = message_candidates(event).into_iter().find(|candidate| {
         candidate
             .get("producer_proof")
@@ -1188,7 +1189,8 @@ pub(crate) fn verified_chat_sender_domain_for_realm(
             .is_some()
     })?;
     let producer = committed_human_device_producer(envelope).ok()??;
-    Some(producer.device_id.as_str().as_bytes().to_vec())
+    arkret_sdk::mls_basic_credential_identity(&arkret_sdk::ActorId::account(producer.account_id))
+        .ok()
 }
 
 /// Reconstruct the encrypted-content group coordinates used by ordinary

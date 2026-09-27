@@ -273,7 +273,7 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
         keypackage_ref,
         cipher_suites: Vec::new(),
         capabilities: claim.capabilities.clone(),
-        state: arkret_sdk::MlsKeyPackageState::Published,
+        state: arkret_sdk::MlsKeyPackageState::Claimed,
         claim_id: Some(claim.claim_id.clone()),
         created_at: crate::clock::now_utc(),
         expires_at: Some(claim.expires_at),
@@ -540,6 +540,57 @@ mod tests {
             revocation_status: None,
             last_resort: None,
         }
+    }
+
+    #[test]
+    fn claimed_record_can_prepare_a_real_mls_add_without_republishing_it() {
+        let station = principal_core_id("did:web:station.example").unwrap();
+        let identity = |name: &str, index| {
+            arkret_sdk::ArkretMlsIdentity::new_test_human_device(
+                arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                    principal_core_id(name).unwrap(),
+                    station.clone(),
+                )),
+                arkret_sdk::DeviceId::new(format!("ak:device:01964137-0000-7000-8000-{index:012}"))
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+        let alice = identity("did:web:alice.example", 1);
+        let bob = identity("did:web:bob.example", 2);
+        let published = bob.key_package_record().unwrap();
+        let mut claim = claim_for(&published, "unused");
+        claim.claim_id = "ak:keypackage_claim:01964137-0000-7000-8000-000000000003".to_owned();
+        let claimed = keypackage_claim_record_to_mls_record(&claim).unwrap();
+        assert_eq!(claimed.state, arkret_sdk::MlsKeyPackageState::Claimed);
+        assert_eq!(claimed.claim_id.as_deref(), Some(claim.claim_id.as_str()));
+        assert_eq!(claimed.keypackage, published.keypackage);
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [0x54; 32],
+            )),
+        };
+        let mut group = alice.create_group(&scope).unwrap();
+        let transition = arkret_sdk::MlsGovernanceBindingPayload::new(
+            scope,
+            Some(arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [0x51; 32],
+            )),
+            0,
+            1,
+            0,
+        )
+        .unwrap();
+        assert!(
+            group
+                .add_member_with_governance_binding(&published, &transition)
+                .is_err()
+        );
+        group
+            .add_member_with_governance_binding(&claimed, &transition)
+            .unwrap();
     }
 
     #[test]
