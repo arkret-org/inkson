@@ -933,8 +933,10 @@ where
 ///   have been created earlier in the same signed cut; a revise carrier names its own Message), and
 ///   the `object_redaction` of a redacted Message, whose every assertion redacts that Message.
 ///
-/// Any other family, extra member, gate-bearing policy or cross-row mismatch
-/// rejects the whole snapshot.
+/// MLS, Space structural siblings, placement, Invite registers and grants
+/// use their existing SDK value types and retain their exact Realm subjects.
+/// Missing structural siblings, unknown families and cross-row mismatches
+/// reject the whole snapshot.
 fn validate_signed_floor_rows(
     realm_id: &arkret_sdk::RealmId,
     bundle: &arkret_sdk::RealmAuthorityBundle,
@@ -975,6 +977,11 @@ fn validate_signed_floor_rows(
     let mut strands = BTreeMap::new();
     let mut default_strand = None;
     let mut messages = Vec::new();
+    let mut spaces = BTreeMap::new();
+    let mut space_parents = BTreeMap::new();
+    let mut space_policies = BTreeSet::new();
+    let mut positions = Vec::new();
+    let mut selectors = BTreeSet::new();
     for row in rows {
         let arkret_wire::TypedCurrentResult::Value {
             selector,
@@ -987,6 +994,11 @@ fn validate_signed_floor_rows(
                 "signed floor current family has no product installer",
             ));
         };
+        if !selectors
+            .insert(arkret_sdk::canonical::canonical_json_bytes(selector).map_err(protocol)?)
+        {
+            return Err(protocol("signed floor repeats a current selector"));
+        }
         if source_stream_ref != &realm_stream
             || revision.stream_position > signed_head.stream_position
             || (revision.stream_position == signed_head.stream_position
@@ -1021,17 +1033,12 @@ fn validate_signed_floor_rows(
                 genesis = true;
             }
             CurrentSelector::RealmAuthorityRoot => {
-                #[derive(serde::Deserialize, serde::Serialize)]
-                #[serde(deny_unknown_fields)]
-                struct AuthorityRoot {
-                    controller_actor_id: arkret_sdk::ActorId,
-                    controller_epoch: u64,
-                    authority_generation: u64,
-                }
-                let parsed: AuthorityRoot = closed_value(value, "realm_authority_root")?;
-                if parsed.controller_actor_id != bundle.genesis_event.actor_id
-                    || parsed.controller_epoch != 0
-                    || parsed.authority_generation != 0
+                if *value
+                    != serde_json::json!({
+                        "controller_actor_id": bundle.genesis_event.actor_id,
+                        "controller_epoch": 0,
+                        "authority_generation": 0,
+                    })
                 {
                     return Err(protocol(
                         "signed authority root is not the generation-zero creator controller",
@@ -1125,6 +1132,100 @@ fn validate_signed_floor_rows(
                 }
                 strands.insert(strand_id.clone(), revision.stream_position);
             }
+            CurrentSelector::MlsGroup { scope_ref } => {
+                let group: arkret_wire::MlsGroupCurrent = closed_value(value, "mls_group")?;
+                if scope_ref
+                    != &(arkret_sdk::ScopeRef::Realm {
+                        realm_id: realm_id.clone(),
+                    })
+                    || group.effective_scope != *scope_ref
+                    || group.covered_key_access_revision > group.current_key_access_revision
+                {
+                    return Err(protocol(
+                        "signed MLS group differs from its Realm selector or key-access cut",
+                    ));
+                }
+            }
+            CurrentSelector::Space { space_id } => {
+                let space: arkret_models_collaboration::objects::space::Space =
+                    closed_value(value, "space")?;
+                space.validate().map_err(protocol)?;
+                if space.id.as_ref() != Some(space_id)
+                    || space.schema != arkret_wire::SchemaId::SPACE_V1
+                    || space.realm_id != *realm_id
+                    || space.scope_circle_id.is_some()
+                    || space.parent_space_id.is_some()
+                    || space.child_scope_policy.is_some()
+                {
+                    return Err(protocol(
+                        "signed Space metadata differs from its registered Realm subject",
+                    ));
+                }
+                spaces.insert(space_id.clone(), space);
+            }
+            CurrentSelector::SpaceParent { space_id } => {
+                let parent = value
+                    .as_object()
+                    .filter(|object| object.len() == 1)
+                    .and_then(|object| object.get("parent_space_id"))
+                    .ok_or_else(|| {
+                        protocol("signed Space parent is not its one-member closed value")
+                    })?;
+                let parent: Option<arkret_sdk::SpaceId> =
+                    serde_json::from_value(parent.clone()).map_err(protocol)?;
+                space_parents.insert(space_id.clone(), parent);
+            }
+            CurrentSelector::SpaceChildScopePolicy { space_id } => {
+                closed_value::<
+                    Option<arkret_models_collaboration::objects::space::ChildScopePolicy>,
+                >(value, "space_child_scope_policy")?;
+                space_policies.insert(space_id.clone());
+            }
+            CurrentSelector::StrandPosition {
+                board_space_id,
+                strand_id,
+            } => {
+                let position: Option<
+                    arkret_models_collaboration::objects::strand::StrandPositionCurrent,
+                > = closed_value(value, "strand_position")?;
+                if position.as_ref().is_some_and(|position| {
+                    !(1..=128).contains(&position.rank.len())
+                        || !position
+                            .rank
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric())
+                }) {
+                    return Err(protocol(
+                        "signed Strand position has an invalid canonical rank",
+                    ));
+                }
+                positions.push((board_space_id.clone(), strand_id.clone(), position));
+            }
+            CurrentSelector::InviteLifecycle { .. } => {
+                closed_value::<arkret_wire::InviteState>(value, "invite_lifecycle")?;
+            }
+            CurrentSelector::InviteDirectedInvitee { .. } => {
+                closed_value::<arkret_models_collaboration::governance::membership_invite::InviteDirectedInviteeValue>(
+                    value, "invite_directed_invitee",
+                )?;
+            }
+            CurrentSelector::InviteLiveTarget { .. } => {
+                closed_value::<arkret_models_collaboration::governance::membership_invite::InviteLiveTargetValue>(
+                    value, "invite_live_target",
+                )?;
+            }
+            CurrentSelector::CapabilityGrant { grant_id } => {
+                let grant: arkret_models_collaboration::governance::grant_constraint::CapabilityGrant =
+                    closed_value(value, "capability_grant")?;
+                if &grant.id != grant_id
+                    || grant.realm_id.as_ref() != Some(realm_id)
+                    || grant.schema != arkret_wire::SchemaId::CAPABILITY_V1
+                {
+                    return Err(protocol(
+                        "signed Capability Grant differs from its registered Realm subject",
+                    ));
+                }
+            }
             CurrentSelector::RealmSetDefaultStrand => {
                 let member = value
                     .as_object()
@@ -1142,6 +1243,39 @@ fn validate_signed_floor_rows(
                     "signed floor current family has no product installer",
                 ));
             }
+        }
+    }
+    if spaces.keys().collect::<BTreeSet<_>>() != space_parents.keys().collect::<BTreeSet<_>>()
+        || spaces.keys().collect::<BTreeSet<_>>() != space_policies.iter().collect::<BTreeSet<_>>()
+    {
+        return Err(protocol(
+            "signed Space cut omits a registered structural sibling",
+        ));
+    }
+    for space_id in spaces.keys() {
+        let mut parent = space_parents.get(space_id).and_then(Option::as_ref);
+        let mut visited = BTreeSet::from([space_id]);
+        while let Some(id) = parent {
+            if !visited.insert(id) || !spaces.contains_key(id) {
+                return Err(protocol("signed Space parent chain is missing or cyclic"));
+            }
+            parent = space_parents.get(id).and_then(Option::as_ref);
+        }
+    }
+    for (board_id, strand_id, position) in positions {
+        if !strands.contains_key(&strand_id)
+            || spaces
+                .get(&board_id)
+                .is_none_or(|space| space.kind != "board")
+            || position.as_ref().is_some_and(|position| {
+                spaces
+                    .get(&position.list_space_id)
+                    .is_none_or(|space| space.kind != "list")
+            })
+        {
+            return Err(protocol(
+                "signed Strand position has no matching Board, List or Strand in its Realm cut",
+            ));
         }
     }
     if let Some((Some(strand_id), position)) = &default_strand
@@ -1788,6 +1922,101 @@ mod tests {
             unreachable!()
         };
         *value = next;
+    }
+
+    #[test]
+    fn signed_floor_space_cut_requires_closed_structural_siblings_and_acyclic_parents() {
+        use arkret_wire::CurrentSelector;
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let (bundle, _, items) =
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                vec![(
+                    "ak.realm.profile".to_owned(),
+                    json!({"schema": "ak.schema.realm_profile.v1", "title": "Tail"}),
+                )],
+                "alice.example",
+                DEVICE_ID,
+            );
+        let snapshot = snapshot_at(&bundle, &items, bundle.bundle_issued_at);
+        let head = &snapshot.visible_stream_heads[0];
+        let space_id = arkret_sdk::SpaceId::from_event_id(&items[0].event.event_id);
+        let space = arkret_models_collaboration::objects::space::Space::new(
+            space_id.clone(),
+            realm_id.clone(),
+            "board",
+            "Board",
+            bundle.genesis_event.actor_id.clone(),
+        );
+        let row = |selector, value| TypedCurrentResult::Value {
+            selector,
+            source_stream_ref: head.stream_ref.clone(),
+            revision: arkret_wire::CurrentRevision {
+                commit_id: head.commit_id.clone(),
+                stream_position: head.stream_position,
+            },
+            value,
+        };
+        let mut rows = snapshot.current_state_entries.clone();
+        rows.extend([
+            row(
+                CurrentSelector::Space {
+                    space_id: space_id.clone(),
+                },
+                json!(space),
+            ),
+            row(
+                CurrentSelector::SpaceParent {
+                    space_id: space_id.clone(),
+                },
+                json!({"parent_space_id": null}),
+            ),
+            row(
+                CurrentSelector::SpaceChildScopePolicy {
+                    space_id: space_id.clone(),
+                },
+                json!(null),
+            ),
+        ]);
+        let validate = |rows: &[TypedCurrentResult]| {
+            validate_signed_floor_rows(
+                &realm_id,
+                &bundle,
+                head,
+                arkret_sdk::HistoryAccess::SinceJoin,
+                rows,
+            )
+        };
+        // These checks exercise the current-value boundary after snapshot authentication.
+        validate(&rows).unwrap();
+        let mut incomplete = rows.clone();
+        incomplete.pop();
+        assert!(validate(&incomplete).is_err());
+        let mut cyclic = rows.clone();
+        let parent_index = cyclic.len() - 2;
+        set_row_value(
+            &mut cyclic[parent_index],
+            json!({"parent_space_id": space_id}),
+        );
+        assert!(validate(&cyclic).is_err());
+        let mut extra = rows.clone();
+        set_row_value(
+            &mut extra[parent_index],
+            json!({"parent_space_id": null, "unexpected": true}),
+        );
+        assert!(validate(&extra).is_err());
+        let mut duplicate = rows.clone();
+        duplicate.push(rows.last().unwrap().clone());
+        assert!(validate(&duplicate).is_err());
+        let mut foreign = rows.clone();
+        let metadata_index = foreign.len() - 3;
+        let mut foreign_space = space;
+        foreign_space.realm_id = arkret_sdk::RealmId::from_event_id(&items[0].event.event_id);
+        assert_ne!(foreign_space.realm_id, realm_id);
+        set_row_value(&mut foreign[metadata_index], json!(foreign_space));
+        assert!(validate(&foreign).is_err());
     }
 
     #[test]
