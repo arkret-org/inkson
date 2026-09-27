@@ -183,6 +183,9 @@ pub(super) struct ChatController {
     pub new_channel_create_card: Signal<bool>,
     pub create_dialog_open: Signal<bool>,
     pub strand_watch_level: Signal<WatchLevel>,
+    pub strand_watch_current: Signal<Option<arkret_sdk::StrandWatchCurrentOutcome>>,
+    pub strand_watch_pending: Signal<bool>,
+    pub strand_watch_request: Signal<u64>,
     pub watch_level_menu_open: Signal<bool>,
     pub status_msg: Signal<String>,
     /// Holder-local ids of the sends still sitting in the durable queue.
@@ -1399,38 +1402,94 @@ impl ChatController {
         });
     }
 
-    /// Persist the optimistic watch-level change, rolling `strand_watch_level`
-    /// back to `previous` if the Event is not accepted.
+    /// Observe only the exact self cell. A missing observation disables writes.
+    pub fn refresh_strand_watch(
+        mut self,
+        base_url: String,
+        api_token: String,
+        request: Option<arkret_sdk::StrandWatchCurrentRequestBody>,
+    ) {
+        let sequence = self.strand_watch_request.peek().wrapping_add(1);
+        self.strand_watch_request.set(sequence);
+        self.strand_watch_current.set(None);
+        self.strand_watch_pending.set(false);
+        let Some(request) = request else {
+            return;
+        };
+        self.strand_watch_pending.set(true);
+        spawn(async move {
+            let result = crate::transport::auth::with_authed_sdk_client(
+                &base_url,
+                api_token,
+                |http| async move { crate::transport::strand_watch::read(&http, &request).await },
+            )
+            .await;
+            if *self.strand_watch_request.peek() != sequence {
+                return;
+            }
+            self.strand_watch_pending.set(false);
+            if let Ok(current) = result {
+                self.strand_watch_level.set(super::watch_level_from_wire(
+                    crate::transport::strand_watch::current_level(&current),
+                ));
+                self.strand_watch_current.set(Some(current));
+            }
+        });
+    }
+
+    /// Read the real preimage immediately before signing; never fold raw watch Events.
     pub fn set_strand_watch_level(
         mut self,
         base_url: String,
         api_token: String,
-        wait_for: Option<String>,
-        operation: crate::operation::LocalOperation,
-        previous: WatchLevel,
+        request: arkret_sdk::StrandWatchCurrentRequestBody,
+        level: Option<arkret_sdk::StrandWatchLevel>,
     ) {
+        if *self.strand_watch_pending.peek() || self.strand_watch_current.peek().is_none() {
+            return;
+        }
+        let sequence = self.strand_watch_request.peek().wrapping_add(1);
+        self.strand_watch_request.set(sequence);
+        self.strand_watch_pending.set(true);
+        self.watch_level_menu_open.set(false);
         spawn(async move {
-            let submitted = match authed_api_with_sync(&base_url, api_token, wait_for) {
-                Ok(api) => match api.event_submitter() {
-                    Ok(sub) => sub.submit_sdk_event(&operation).await,
-                    Err(err) => Err(err),
-                },
-                Err(_) => {
-                    self.strand_watch_level.set(previous);
+            let result =
+                crate::transport::auth::with_authed_sdk_client(
+                    &base_url,
+                    api_token.clone(),
+                    |http| {
+                        let request = request.clone();
+                        async move {
+                            crate::transport::strand_watch::write(&http, &request, level).await
+                        }
+                    },
+                )
+                .await;
+            if *self.strand_watch_request.peek() != sequence {
+                return;
+            }
+            self.strand_watch_pending.set(false);
+            match result {
+                Ok(current) => {
+                    self.strand_watch_level.set(super::watch_level_from_wire(
+                        crate::transport::strand_watch::current_level(&current),
+                    ));
+                    self.strand_watch_current.set(Some(current));
                     self.status_msg
-                        .set(crate::i18n::tr("chat.watch_level.failed"));
-                    return;
+                        .set(crate::i18n::tr("chat.watch_level.saved"));
                 }
-            };
-            match submitted {
-                Ok(_) => self
-                    .status_msg
-                    .set(crate::i18n::tr("chat.watch_level.saved")),
-                Err(_) => {
-                    // Rollback on failure.
-                    self.strand_watch_level.set(previous);
-                    self.status_msg
-                        .set(crate::i18n::tr("chat.watch_level.failed"));
+                Err(error) => {
+                    let queued = crate::event_submit::is_durably_queued_error(error.inner());
+                    self.status_msg.set(if queued {
+                        crate::i18n::tr("chat.watch_level.queued")
+                    } else {
+                        crate::i18n::tr("chat.watch_level.failed")
+                    });
+                    if queued {
+                        self.strand_watch_current.set(None);
+                    } else {
+                        self.refresh_strand_watch(base_url, api_token, Some(request));
+                    }
                 }
             }
         });
@@ -1635,6 +1694,9 @@ pub(super) fn use_chat_controller(
         new_channel_create_card: use_signal(|| false),
         create_dialog_open: use_signal(|| false),
         strand_watch_level: use_signal(|| WatchLevel::All),
+        strand_watch_current: use_signal(|| None),
+        strand_watch_pending: use_signal(|| false),
+        strand_watch_request: use_signal(|| 0),
         watch_level_menu_open: use_signal(|| false),
         status_msg: use_signal(String::new),
         queued_outbound_local_operation_ids: use_signal(std::collections::BTreeSet::<String>::new),

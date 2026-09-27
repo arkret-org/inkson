@@ -334,7 +334,7 @@ where
     Ok(())
 }
 
-async fn fresh_verified_realm<T: garth::AuthorityTransport>(
+pub(crate) async fn fresh_verified_realm<T: garth::AuthorityTransport>(
     authority: &AuthorityClient<T>,
     http: &arkret_sdk::http_client::Client,
     realm_id: &arkret_sdk::RealmId,
@@ -1258,6 +1258,11 @@ fn validate_signed_floor_rows(
                     serde_json::from_value(member.clone()).map_err(protocol)?;
                 default_strand = Some((pointer, revision.stream_position));
             }
+            CurrentSelector::StrandWatch { .. } => {
+                // This authenticated snapshot row remains typed current state.
+                // Only the separate exact read can supply a self-watch CAS preimage.
+                closed_value::<arkret_sdk::StrandWatchCurrentValue>(value, "strand_watch")?;
+            }
             _ => {
                 return Err(protocol(
                     "signed floor current family has no product installer",
@@ -1945,6 +1950,139 @@ mod tests {
     }
 
     #[test]
+    fn signed_floor_watch_rows_admit_written_null_and_closed_object_but_reject_open_value() {
+        use crate::test_support::committed_event::FixtureStation;
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let station = FixtureStation::did_web();
+        let chain = |tail: Vec<(String, serde_json::Value)>| {
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &station,
+                realm_id.clone(),
+                json!({"object":collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&creator)
+                    .into_iter()
+                    .chain(tail)
+                    .collect(),
+                "alice.example",
+                DEVICE_ID,
+            )
+        };
+        let strand = strand_create_entry(
+            &realm_id,
+            &creator,
+            crate::test_support::committed_event::fixture_time(8),
+        );
+        let (_, _, probe) = chain(vec![strand.clone()]);
+        let strand_id = arkret_sdk::StrandId::from_event_id(&probe[6].event.event_id);
+        for level in [None, Some(arkret_sdk::StrandWatchLevel::All)] {
+            let watch = match level {
+                Some(level) => arkret_sdk::StrandWatchSetPayload::set(
+                    strand_id.clone(),
+                    creator.clone(),
+                    level,
+                    Some(true),
+                ),
+                None => {
+                    arkret_sdk::StrandWatchSetPayload::clear(strand_id.clone(), creator.clone())
+                }
+            };
+            let (bundle, keys, items) = chain(vec![
+                strand.clone(),
+                ("ak.strand.watch.set".to_owned(), json!(watch)),
+            ]);
+            let mut snapshot = snapshot_at(&bundle, &items, bundle.bundle_issued_at);
+            station.sign_snapshot(&mut snapshot);
+            let request = arkret_sdk::AuthorityBundleRequest {
+                realm_id: realm_id.clone(),
+                nonce: bundle.current_assertion.nonce.clone(),
+            };
+            let freshness = arkret_identity::RealmAuthorityFreshness::new(
+                bundle.bundle_issued_at + chrono::Duration::seconds(50),
+                request.nonce.clone(),
+            );
+            let mut replica = RealmReplica::new(realm_id.clone());
+            replica
+                .install_verified_authority(&request, bundle.clone(), &freshness, &keys)
+                .unwrap();
+            replica
+                .install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)
+                .unwrap();
+            validate_signed_floor_rows(
+                &realm_id,
+                &bundle,
+                &snapshot.visible_stream_heads[0],
+                arkret_sdk::HistoryAccess::SinceJoin,
+                &snapshot.current_state_entries,
+            )
+            .unwrap();
+            let watch_row = snapshot
+                .current_state_entries
+                .iter()
+                .find(|row| {
+                    matches!(
+                        row,
+                        TypedCurrentResult::Value {
+                            selector: arkret_sdk::CurrentSelector::StrandWatch { .. },
+                            ..
+                        }
+                    )
+                })
+                .unwrap();
+            let TypedCurrentResult::Value { value, .. } = watch_row else {
+                unreachable!()
+            };
+            assert_eq!(
+                *value,
+                if level.is_some() {
+                    json!({"level":"all","level_public":true})
+                } else {
+                    json!(null)
+                }
+            );
+            let mut open_snapshot = snapshot.clone();
+            let row = open_snapshot
+                .current_state_entries
+                .iter_mut()
+                .find(|row| {
+                    matches!(
+                        row,
+                        TypedCurrentResult::Value {
+                            selector: arkret_sdk::CurrentSelector::StrandWatch { .. },
+                            ..
+                        }
+                    )
+                })
+                .unwrap();
+            set_row_value(
+                row,
+                json!({"level":"all","level_public":true,"unknown":true}),
+            );
+            station.sign_snapshot(&mut open_snapshot);
+            let mut open_replica = RealmReplica::new(realm_id.clone());
+            open_replica
+                .install_verified_authority(&request, bundle.clone(), &freshness, &keys)
+                .unwrap();
+            open_replica
+                .install_verified_current_snapshot_heads(&open_snapshot, &freshness, &keys)
+                .unwrap();
+            assert!(
+                validate_signed_floor_rows(
+                    &realm_id,
+                    &bundle,
+                    &open_snapshot.visible_stream_heads[0],
+                    arkret_sdk::HistoryAccess::SinceJoin,
+                    &open_snapshot.current_state_entries
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn signed_floor_space_cut_requires_closed_structural_siblings_and_acyclic_parents() {
         use arkret_wire::CurrentSelector;
         let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
@@ -2617,6 +2755,27 @@ mod tests {
                     commit,
                     json!({"default_strand_id": payload["strand_id"]}),
                 ),
+                "ak.strand.watch.set" => {
+                    let watch: arkret_sdk::StrandWatchSetPayload =
+                        serde_json::from_value(payload).unwrap();
+                    let value = match watch.level {
+                        Some(level) => arkret_sdk::StrandWatchCurrentValue::Set(
+                            arkret_sdk::StrandWatchExpectedValue {
+                                level,
+                                level_public: watch.level_public,
+                            },
+                        ),
+                        None => arkret_sdk::StrandWatchCurrentValue::Cleared(()),
+                    };
+                    row(
+                        CurrentSelector::StrandWatch {
+                            strand_id: watch.strand_id,
+                            watcher_actor_id: watch.watcher_actor_id,
+                        },
+                        commit,
+                        json!(value),
+                    )
+                }
                 // Soland's `message_revision` writer: the create payload at
                 // the Event-derived MessageId.
                 "ak.message.create" => row(

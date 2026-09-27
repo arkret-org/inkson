@@ -6,45 +6,7 @@ use serde_json::{Value, json};
 use super::{
     TypedOperationBuilder, patch_from_value, strand_id_value, strand_move_payload,
     strand_object_patch_payload, strand_reorder_payload, strand_tracks_update_payload,
-    strand_watch_set_payload,
 };
-
-/// Build a `ak.strand.watch.set` operation. Spec:
-/// `arkret-spec/spec/v1/zh/models/strand-and-message.md §8.3` —
-/// writes the causal-register cell `ak.component.strand.watch.v1` keyed by
-/// `(strand_id, watcher_actor_id)`.
-///
-/// `level` is one of `mentions_only` / `participating` / `all` / `muted`,
-/// or `None` to clear the cell (equivalent to `mentions_only` default).
-/// `level_public` is the opt-in flag from §8.5 — when `true`, projection
-/// to non-self viewers does not strip the level value (but `muted` still
-/// stays invisible). Caller MUST omit `level_public` when `level` is None.
-///
-/// Default reducer invariant: `target_actor` MUST equal `sender_actor`
-/// unless the sender holds `ak.strand.watch.set.others`. Callers
-/// helping someone else subscribe (e.g. Strand creator seeding
-/// watchers on create) need that capability.
-pub fn strand_watch_set(
-    realm_id: &str,
-    sender_actor: &str,
-    target_actor_id: &str,
-    strand_id: &str,
-    level: Option<&str>,
-    level_public: Option<bool>,
-) -> anyhow::Result<TypedOperationBuilder> {
-    // Strong type: strand_watch_set_payload (additionalProperties:false +
-    // allOf forbidding level_public when level is null). The typed
-    // constructors keep the clear path (level:null) free of level_public.
-    let payload = strand_watch_set_payload(strand_id, target_actor_id, level, level_public)?;
-    Ok(
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandWatchSet>(
-            realm_id,
-            sender_actor,
-            payload,
-        )
-        .target_ref(strand_id),
-    )
-}
 
 /// Build a `ak.strand.tracks.update` operation. Spec:
 /// `arkret-spec/spec/v1/zh/models/strand-and-message.md §3` (post dc01ad7).

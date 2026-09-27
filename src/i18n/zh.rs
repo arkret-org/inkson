@@ -1180,6 +1180,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.watch_level.mentions_only", "仅 @ 我");
     dict.set("chat.watch_level.participating", "参与中");
     dict.set("chat.watch_level.all", "全部");
+    dict.set("chat.watch_level.clear", "恢复默认（仅提及）");
+    dict.set("chat.watch_level.queued", "订阅变更已排队，等待权威接纳");
     dict.set("chat.watch_level.muted", "静音");
     dict.set("chat.watch_level.pending", "正在更新 watch level…");
     dict.set("chat.watch_level.saved", "watch level 已更新。");

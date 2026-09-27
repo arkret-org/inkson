@@ -19,6 +19,7 @@ pub mod media;
 pub mod moderation;
 pub mod realm_read;
 pub mod realm_write;
+pub(crate) mod strand_watch;
 pub mod websocket;
 pub mod websocket_rail;
 

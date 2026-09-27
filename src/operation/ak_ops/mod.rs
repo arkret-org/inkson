@@ -137,44 +137,6 @@ pub(super) fn strand_tracks_update_payload(
     strand_object_patch_payload(strand_id, patch)
 }
 
-pub(super) fn strand_watch_level_value(
-    level: &str,
-) -> anyhow::Result<arkret_sdk::StrandWatchLevel> {
-    match level {
-        "mentions_only" => Ok(arkret_sdk::StrandWatchLevel::MentionsOnly),
-        "participating" => Ok(arkret_sdk::StrandWatchLevel::Participating),
-        "all" => Ok(arkret_sdk::StrandWatchLevel::All),
-        "muted" => Ok(arkret_sdk::StrandWatchLevel::Muted),
-        other => Err(anyhow::anyhow!(
-            "unknown ak.strand.watch.set level {other:?}"
-        )),
-    }
-}
-
-/// Build the canonical `strand_watch_set_payload` body via the SDK strong
-/// type. `level=None` clears the cell (`level:null`); per the schema
-/// `allOf`, the typed constructor forces `level_public` off on that path.
-pub(super) fn strand_watch_set_payload(
-    strand_id: &str,
-    watcher_actor_id: &str,
-    level: Option<&str>,
-    level_public: Option<bool>,
-) -> anyhow::Result<arkret_sdk::StrandWatchSetPayload> {
-    let payload = match level {
-        Some(level) => arkret_sdk::StrandWatchSetPayload::set(
-            strand_id_value(strand_id)?,
-            actor_id(watcher_actor_id)?,
-            strand_watch_level_value(level)?,
-            level_public,
-        ),
-        None => arkret_sdk::StrandWatchSetPayload::clear(
-            strand_id_value(strand_id)?,
-            actor_id(watcher_actor_id)?,
-        ),
-    };
-    Ok(payload)
-}
-
 /// Build the canonical `strand_move_payload` body via the SDK strong type.
 /// `additionalProperties:false` — the destination is single-sourced by
 /// `target_space_id`; the optional `from_space_id` / `expected_position`

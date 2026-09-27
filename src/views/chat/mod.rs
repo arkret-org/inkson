@@ -1351,6 +1351,9 @@ pub fn ChatPanel(
         mut new_channel_create_card,
         mut create_dialog_open,
         strand_watch_level: _,
+        strand_watch_current: _,
+        strand_watch_pending: _,
+        strand_watch_request: _,
         watch_level_menu_open: _,
         mut status_msg,
         queued_outbound_local_operation_ids,
@@ -2284,20 +2287,59 @@ pub fn ChatPanel(
                             }
                         }
                         }
-                        // 0357: Station's exact self watch-current read is not
-                        // available in the current server. A local Event fold
-                        // cannot prove the CAS prior value, so keep this
-                        // control visibly unavailable and emit no write.
-                        div { class: "watch-level-picker", "data-testid": "watch-level-picker",
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                r#type: "button",
-                                class: "watch-level-toggle",
-                                "data-testid": "watch-level-toggle",
-                                disabled: true,
-                                title: crate::i18n::tr("chat.watch_level.unavailable"),
-                                span { class: "watch-level-toggle-label",
-                                    "{crate::i18n::tr(\"chat.watch_level.prefix\")}: {crate::i18n::tr(\"chat.watch_level.unavailable\")}"
+                        {
+                            let request = if !sidecar_mode && selected_scope_circle.is_none() {
+                                arkret_sdk::RealmId::new(selected_realm_id.clone()).ok().zip(
+                                    arkret_sdk::StrandId::new(selected_channel_value.clone()).ok()
+                                ).map(|(realm_id, strand_id)| arkret_sdk::StrandWatchCurrentRequestBody {
+                                    realm_id, strand_id, watcher_actor_id: arkret_sdk::ActorId::account(authority.clone()),
+                                })
+                            } else { None };
+                            let observed = (controller.strand_watch_current)();
+                            let enabled = request.as_ref().zip(observed.as_ref()).is_some_and(|(request, current)| current.validate_for_request(request).is_ok())
+                                && !(controller.strand_watch_pending)();
+                            let label = if (controller.strand_watch_pending)() { crate::i18n::tr("chat.watch_level.pending") }
+                                else if enabled { crate::i18n::tr(watch_level_label_key((controller.strand_watch_level)())) }
+                                else { crate::i18n::tr("chat.watch_level.unavailable") };
+                            rsx! {
+                                div { class: "watch-level-picker", "data-testid": "watch-level-picker",
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        r#type: "button",
+                                        class: "watch-level-toggle",
+                                        "data-testid": "watch-level-toggle",
+                                        disabled: !enabled,
+                                        onclick: move |_| {
+                                            let mut menu = controller.watch_level_menu_open;
+                                            let open = *menu.peek();
+                                            menu.set(!open);
+                                        },
+                                        span { class: "watch-level-toggle-label", "{label}" }
+                                    }
+                                    if enabled && (controller.watch_level_menu_open)() {
+                                        for (level, key) in [
+                                            (Some(arkret_sdk::StrandWatchLevel::MentionsOnly), "chat.watch_level.mentions_only"),
+                                            (Some(arkret_sdk::StrandWatchLevel::Participating), "chat.watch_level.participating"),
+                                            (Some(arkret_sdk::StrandWatchLevel::All), "chat.watch_level.all"),
+                                            (Some(arkret_sdk::StrandWatchLevel::Muted), "chat.watch_level.muted"),
+                                            (None, "chat.watch_level.clear"),
+                                        ] {
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
+                                                r#type: "button",
+                                                onclick: {
+                                                    let request = request.clone();
+                                                    let base = base_url.clone();
+                                                    move |_| {
+                                                        if let Some(request) = request.clone() {
+                                                            controller.set_strand_watch_level(base.clone(), token(), request, level);
+                                                        }
+                                                    }
+                                                },
+                                                {crate::i18n::tr(key)}
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

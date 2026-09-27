@@ -75,6 +75,36 @@ pub(super) fn ChatEffects(
     let initial_sync_requested = controller.initial_sync_requested;
 
     {
+        let watch_base_url = base_url.clone();
+        let watch_realm_id = selected_realm_id.clone();
+        let watch_authority = authority.clone();
+        use_effect(use_reactive!(|(
+            watch_base_url,
+            watch_realm_id,
+            watch_authority,
+        )| {
+            let strand = selected_channel();
+            let credential = token();
+            let _epoch = realm_live_epoch();
+            let readable_realm_strand = channels().iter().any(|channel| {
+                channel.strand_id == strand
+                    && channel.scope_circle.is_none()
+                    && !channel.is_private_sidecar
+            });
+            let request = readable_realm_strand
+                .then(|| {
+                    Some(arkret_sdk::StrandWatchCurrentRequestBody {
+                        realm_id: arkret_sdk::RealmId::new(watch_realm_id.clone()).ok()?,
+                        strand_id: arkret_sdk::StrandId::new(strand).ok()?,
+                        watcher_actor_id: arkret_sdk::ActorId::account(watch_authority.clone()),
+                    })
+                })
+                .flatten();
+            controller.refresh_strand_watch(watch_base_url.clone(), credential, request);
+        }));
+    }
+
+    {
         let base = base_url.clone();
         let account = principal_id.clone();
         use_effect(move || {

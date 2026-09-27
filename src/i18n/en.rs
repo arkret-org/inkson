@@ -1154,6 +1154,11 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.watch_level.mentions_only", "Mentions only");
     dict.set("chat.watch_level.participating", "Participating");
     dict.set("chat.watch_level.all", "All");
+    dict.set("chat.watch_level.clear", "Use default (mentions only)");
+    dict.set(
+        "chat.watch_level.queued",
+        "Watch change queued; awaiting authority acceptance",
+    );
     dict.set("chat.watch_level.muted", "Muted");
     dict.set("chat.watch_level.pending", "Updating watch level…");
     dict.set("chat.watch_level.saved", "Watch level updated.");
