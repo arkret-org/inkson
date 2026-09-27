@@ -555,6 +555,9 @@ fn queued_and_forwarding_items_never_report_realm_commit_acceptance() {
 /// rather than asserting on a hand-written state machine.
 #[derive(Clone)]
 struct ScriptedAuthority {
+    unit_outcome: Option<arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome>,
+    expected_unit:
+        Option<arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest>,
     outcome: arkret_wire::AuthoritySubmitOutcome,
     submits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -568,6 +571,42 @@ impl garth::AuthorityTransport for ScriptedAuthority {
         self.submits
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(self.outcome.clone())
+    }
+
+    async fn submit_self(
+        &self,
+        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+        options: &arkret_sdk::http_client::ClientRequestOptions,
+    ) -> garth::Result<arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome>
+    {
+        use arkret_models_collaboration::authority_commit::{
+            SelfAuthoritySubmitOutcome, SelfAuthoritySubmitRequest,
+        };
+        if let Some(outcome) = &self.unit_outcome {
+            assert_eq!(Some(request), self.expected_unit.as_ref());
+            let SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) = request else {
+                panic!("complete unit must reach transport")
+            };
+            assert_eq!(
+                options.idempotency_key.as_deref(),
+                Some(unit.idempotency_key.as_uuid().to_string().as_str())
+            );
+            self.submits
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return Ok(outcome.clone());
+        }
+        let ordinary = match request {
+            SelfAuthoritySubmitRequest::Event(value) => {
+                arkret_wire::AuthoritySubmitRequest::Event(value.clone())
+            }
+            SelfAuthoritySubmitRequest::MlsCommit(value) => {
+                arkret_wire::AuthoritySubmitRequest::MlsCommit(value.clone())
+            }
+            _ => panic!("unexpected atomic unit"),
+        };
+        self.submit(&ordinary, options)
+            .await
+            .map(SelfAuthoritySubmitOutcome::Ordinary)
     }
 
     async fn scan(
@@ -614,6 +653,8 @@ fn scripted_engine(
     (
         OutboundEngine::new(garth::MemoryOutboundQueueStore::new(), InksonHostClock),
         garth::AuthorityClient::new(ScriptedAuthority {
+            unit_outcome: None,
+            expected_unit: None,
             outcome,
             submits: submits.clone(),
         }),
@@ -784,7 +825,10 @@ async fn one_mls_commit_and_its_welcomes_are_a_single_atomic_submission() {
     // The frozen queue item still carries every Welcome: nothing delivers
     // them separately, and nothing waits for a recipient acknowledgement.
     let queued = engine.snapshot().await.unwrap();
-    let arkret_wire::AuthoritySubmitRequest::MlsCommit(stored) = queued.items[0].request() else {
+    let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::MlsCommit(
+        stored,
+    ) = queued.items[0].request()
+    else {
         panic!("the MLS lane freezes an MlsCommit submission");
     };
     assert_eq!(stored.welcomes, sorted);
@@ -944,4 +988,163 @@ async fn a_quarantined_item_is_withdrawn_instead_of_forwarded() {
         engine.snapshot().await.unwrap().items[0].status,
         SendQueueStatus::Cancelled
     );
+}
+
+#[tokio::test]
+async fn realm_bootstrap_queue_restores_the_whole_unit_and_rejects_partial_receipts() {
+    use arkret_models_collaboration::authority_commit::{
+        AggregateAcceptanceStatus, OrdinaryRealmBootstrapAcceptanceOutcome,
+        OrdinaryRealmBootstrapUnitKind, OrdinaryRealmBootstrapUnitSubmission,
+        SelfAuthoritySubmitOutcome,
+    };
+    let signer = test_signer();
+    let mut events = author_event_unit_for_test(
+        crate::event_builders::build_realm_bootstrap_steps_for_station(
+            crate::test_support::core_id("ak:did_core:web:principal.example"),
+            arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
+            PRINCIPAL,
+            "did:web:principal.example",
+            "https://principal.example",
+            "Queued Realm",
+            None,
+            "listed",
+            "invite",
+            "all_history_for_current_members",
+            "standard",
+            "closed",
+            "sha256",
+            "ak:trust_domain:did.web.example",
+            &[],
+            None,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    for event in &mut events {
+        signer
+            .sign_sdk_event_with_context(
+                event,
+                crate::event_signer::ProducerProofContext::new()
+                    .with_digest_suite(arkret_sdk::DigestSuite::Sha256),
+            )
+            .unwrap();
+    }
+    let unit = OrdinaryRealmBootstrapUnitSubmission {
+        unit_kind: OrdinaryRealmBootstrapUnitKind::OrdinaryRealmBootstrap,
+        idempotency_key: serde_json::from_value(json!("01904100-0000-7000-8000-000000000002"))
+            .unwrap(),
+        events: events
+            .iter()
+            .map(|event| arkret_wire::EventAdmissionSubmission::new(event.event().clone()))
+            .collect(),
+    };
+    let queued = QueuedSubmission::realm_bootstrap(unit.clone()).unwrap();
+    let mut queue = garth::SendQueue::default();
+    queue.enqueue(queued.clone(), chrono::Utc::now()).unwrap();
+    let frozen = serde_json::to_value(queue.snapshot()).unwrap();
+    let restored = garth::SendQueue::from_snapshot(serde_json::from_value(frozen.clone()).unwrap());
+    assert_eq!(restored.items()[0].request(), &queued.request);
+    assert_eq!(restored.items().len(), 1);
+    let outcome = OrdinaryRealmBootstrapAcceptanceOutcome {
+        unit_kind: OrdinaryRealmBootstrapUnitKind::OrdinaryRealmBootstrap,
+        status: AggregateAcceptanceStatus::Committed,
+        commits: events
+            .iter()
+            .enumerate()
+            .map(|(position, event)| commit_for(event.event(), position as u64))
+            .collect(),
+    };
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let authority = garth::AuthorityClient::new(ScriptedAuthority {
+        unit_outcome: Some(SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(
+            outcome.clone(),
+        )),
+        expected_unit: Some(queued.request.clone()),
+        outcome: arkret_wire::AuthoritySubmitOutcome::Rejected {
+            status: arkret_wire::AuthorityRejectionStatus::Rejected,
+            reason_code: "must_not_submit_single_events".to_owned(),
+        },
+        submits: calls.clone(),
+    });
+    let engine = OutboundEngine::new(garth::MemoryOutboundQueueStore::new(), InksonHostClock);
+    engine
+        .enqueue(restored.items()[0].submission.clone())
+        .await
+        .unwrap();
+    let accepted_by_engine = engine
+        .submit_next(
+            &authority,
+            &arkret_sdk::http_client::ClientRequestOptions::new()
+                .idempotency_key("unrelated-current-ui-write"),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        accepted_by_engine,
+        OutboundEngineOutcome::Committed { .. }
+    ));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let persisted: garth::SendQueueSnapshot =
+        serde_json::from_value(serde_json::to_value(engine.snapshot().await.unwrap()).unwrap())
+            .unwrap();
+    assert_eq!(persisted.items[0].status, garth::SendQueueStatus::Committed);
+    assert!(
+        matches!(&persisted.items[0].submission.state, garth::SubmissionState::UnitCommitted { outcome: stored } if **stored == SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(outcome.clone()))
+    );
+    assert!(matches!(
+        engine
+            .submit_next(&authority, &Default::default())
+            .await
+            .unwrap(),
+        OutboundEngineOutcome::Idle
+    ));
+    let mut partial = outcome.clone();
+    partial.commits.pop();
+    let mut candidate = queued.clone();
+    assert!(
+        candidate
+            .apply_self_outcome(SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(partial))
+            .is_err()
+    );
+    assert_eq!(candidate.state, garth::SubmissionState::Queued);
+    let mut swapped = outcome.clone();
+    swapped.commits.swap(1, 2);
+    assert!(
+        candidate
+            .apply_self_outcome(SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(swapped))
+            .is_err()
+    );
+    let mut wrong_realm = outcome.clone();
+    for commit in &mut wrong_realm.commits {
+        commit.realm_id = realm_id(OTHER_REALM);
+        commit.stream_ref = arkret_wire::CommitStreamRef::Realm {
+            realm_id: realm_id(OTHER_REALM),
+        };
+    }
+    assert!(
+        candidate
+            .apply_self_outcome(SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(
+                wrong_realm
+            ))
+            .is_err()
+    );
+    candidate
+        .apply_self_outcome(SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(
+            outcome.clone(),
+        ))
+        .unwrap();
+    let accepted: QueuedSubmission =
+        serde_json::from_value(serde_json::to_value(&candidate).unwrap()).unwrap();
+    assert_eq!(accepted.state, candidate.state);
+    let mut duplicate = outcome;
+    duplicate.status = AggregateAcceptanceStatus::Duplicate;
+    candidate
+        .apply_self_outcome(SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(
+            duplicate,
+        ))
+        .unwrap();
+    assert_eq!(candidate.request, queued.request);
+    let mut corrupt = frozen;
+    corrupt["items"][0]["submission"]["event_id"] = json!(events[1].event_id());
+    assert!(serde_json::from_value::<garth::SendQueueSnapshot>(corrupt).is_err());
 }

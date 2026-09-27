@@ -1,11 +1,11 @@
 //! `EventSubmitter` — the authenticated producer-submission engine.
 //!
-//! One user write is one producer-authored `Event`. Authoring finalizes its
+//! A user write is one producer Event or one registered atomic unit. Authoring finalizes each
 //! content-bound `event_id` exactly once: there is no chain position, no
 //! predecessor, no basis and no precondition to resolve, so nothing after the
 //! authoring boundary can change the identity. The frozen
-//! [`arkret_wire::AuthoritySubmitRequest`] is what the durable queue stores,
-//! and the current governance Station's authority-signed
+//! [`arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest`] is what the
+//! durable queue stores, and the current governance Station's authority-signed
 //! [`arkret_wire::RealmCommit`] is the only finality signal.
 //!
 //! Retry, backoff and terminal classification belong to
@@ -316,10 +316,7 @@ pub(crate) fn reset_verified_recovery_gates() {
 /// The producer Event a queue item is carrying, whichever submission shape it
 /// took.
 fn queued_event(item: &garth::SendQueueItem) -> &arkret_sdk::Event {
-    match item.request() {
-        arkret_wire::AuthoritySubmitRequest::Event(submission) => &submission.event,
-        arkret_wire::AuthoritySubmitRequest::MlsCommit(submission) => &submission.commit_event,
-    }
+    item.submission.primary_event()
 }
 
 /// An item that has not reached a terminal authority answer yet.
@@ -478,6 +475,9 @@ fn settled_outbound_result(item: &garth::SendQueueItem) -> anyhow::Result<Submit
             })
             .map(|commit| SubmitEventResult::committed(item.event_id().to_string(), commit))
         }
+        garth::SubmissionState::UnitCommitted { .. } => Err(anyhow::anyhow!(
+            "aggregate unit requires its complete Commit result"
+        )),
         garth::SubmissionState::Rejected {
             status,
             reason_code,
@@ -1282,37 +1282,32 @@ impl EventSubmitter {
             .ok_or_else(|| anyhow::anyhow!("Realm bootstrap unit is empty"))?
             .realm_id
             .clone();
-        let mut first_commit = None;
-        for (index, event) in events.iter().enumerate() {
-            let submission = event_submission(event)?;
-            let item = self
-                .enqueue_and_drive(QueuedWrite {
-                    lane: OutboundLane::Standard,
-                    submission,
-                    local_operation_id: if index == 0 {
-                        local_operation_id.clone()
-                    } else {
-                        event.event_id().to_string()
-                    },
-                    post_accept: PostAccept::None,
-                    retry_scope: InteractiveRetryScope::RealmBootstrap,
-                })
-                .await?;
-            let settled = settled_outbound_result(&item)?;
-            let commit = settled.commit.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Realm bootstrap Event {} completed without a RealmCommit",
-                    settled.event_id
-                )
-            })?;
-            if first_commit.is_none() {
-                first_commit = Some(commit);
-            }
-        }
+        let unit = arkret_models_collaboration::authority_commit::OrdinaryRealmBootstrapUnitSubmission {
+            unit_kind: arkret_models_collaboration::authority_commit::OrdinaryRealmBootstrapUnitKind::OrdinaryRealmBootstrap,
+            idempotency_key: serde_json::from_value(serde_json::json!(local_operation_id.strip_prefix("ak:operation:").ok_or_else(|| anyhow::anyhow!("bootstrap operation must be a canonical OperationId"))?))?,
+            events: self.prepare_initial_submissions(&events).await?,
+        };
+        let submission = QueuedSubmission::realm_bootstrap(unit)?;
+        let item = self
+            .enqueue_and_drive(QueuedWrite {
+                lane: OutboundLane::Standard,
+                submission,
+                local_operation_id,
+                post_accept: PostAccept::None,
+                retry_scope: InteractiveRetryScope::RealmBootstrap,
+            })
+            .await?;
+        let garth::SubmissionState::UnitCommitted { outcome } = &item.submission.state else {
+            settled_outbound_result(&item)?;
+            anyhow::bail!("Realm bootstrap completed without its aggregate outcome");
+        };
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(outcome) = outcome.as_ref() else {
+            anyhow::bail!("Realm bootstrap returned a different aggregate unit");
+        };
+        outcome.validate()?;
         Ok(CommittedRealmBootstrap {
             realm_id,
-            first_commit: first_commit
-                .ok_or_else(|| anyhow::anyhow!("Realm bootstrap produced no RealmCommit"))?,
+            first_commit: outcome.commits[0].clone(),
         })
     }
 
@@ -1469,7 +1464,20 @@ impl EventSubmitter {
             }
             decisions.insert(
                 item.event_id().clone(),
-                queued_event_generation_decision(queued_event(&item))?,
+                match item.request() {
+                    arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) => {
+                        let mut decision = GenerationFenceDecision::Current;
+                        for submission in &unit.events {
+                            let candidate = queued_event_generation_decision(&submission.event)?;
+                            if candidate != GenerationFenceDecision::Current {
+                                decision = candidate;
+                                break;
+                            }
+                        }
+                        decision
+                    }
+                    _ => queued_event_generation_decision(queued_event(&item))?,
+                },
             );
         }
         Ok(ResolvedQueueGenerationFence::new(decisions))

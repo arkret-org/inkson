@@ -644,6 +644,9 @@ pub async fn direct_conversation_found(
             garth::SubmissionState::Rejected { reason_code, .. } => {
                 anyhow::bail!("Direct Conversation founding Event rejected: {reason_code}");
             }
+            garth::SubmissionState::UnitCommitted { .. } => {
+                anyhow::bail!("ordinary founding Event returned an aggregate outcome")
+            }
             garth::SubmissionState::Queued => {
                 anyhow::bail!(
                     "Direct Conversation founding Event was not answered by the authority"

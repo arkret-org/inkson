@@ -440,11 +440,11 @@ impl LocalStateStore {
             .cloned()
             .collect()
     }
-    pub(crate) fn account_data_baseline_complete(&self) -> bool {
+    pub(crate) fn station_cas_account_data_baseline_complete(&self) -> bool {
         self.cached
             .demand_sync
             .channels
-            .get(&Channel::AccountDataEvents)
+            .get(&Channel::StationCas)
             .is_some_and(|state| state.complete)
     }
     /// Dedicated controller-private Agent draft projection. Values have already
