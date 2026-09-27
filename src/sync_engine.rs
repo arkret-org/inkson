@@ -333,6 +333,7 @@ impl AccountTransportProvider {
 /// deliveries and Station-CAS Account Data that inkson's product projections
 /// read directly.
 struct InksonAccountProjector {
+    blocklist_catchup: crate::state::BlocklistCatchup,
     ctx: SyncEngineContext,
     generation: crate::runtime::input::ValueReader<u64>,
     start_generation: u64,
@@ -742,6 +743,9 @@ impl InksonAccountProjector {
             return Err(garth::Error::Protocol(error.to_string()));
         }
         current_stage.finish();
+        if self.fence() && frame.kind == AccountSubscribeFrameKind::CatchupComplete {
+            self.blocklist_catchup.complete();
+        }
         if !self.active() {
             return Ok(());
         }
@@ -1009,6 +1013,9 @@ pub async fn run_sync_engine(
     ));
 
     while provider.is_active() {
+        let blocklist_catchup = ctx
+            .state_store
+            .read(LocalStateStore::begin_blocklist_catchup);
         let transport = match provider.provide().await {
             Ok(transport) => transport,
             Err(error) => {
@@ -1022,6 +1029,7 @@ pub async fn run_sync_engine(
         let subscription =
             AccountSubscription::new(ctx.client_runtime.executor(), ctx.client_runtime.cursors());
         let projector = InksonAccountProjector {
+            blocklist_catchup,
             ctx: ctx.clone(),
             generation: generation.clone(),
             start_generation,
@@ -1059,6 +1067,7 @@ pub async fn run_sync_engine(
                 }
             }
         };
+        drop(projector);
         match result {
             Ok(garth::SubscriptionStopReason::Cancelled) => {
                 backoff.reset();
@@ -2632,6 +2641,7 @@ pub(crate) fn apply_account_data_entries(
                     store.set_client_blocklist(revision, entries);
                 }
                 Err(error) => {
+                    store.invalidate_blocklist_freshness();
                     tracing::warn!(
                         "sync engine: ignoring malformed ak.account.blocklist account_data: {error}",
                     );

@@ -1,6 +1,98 @@
 use super::*;
 
+/// A connection-local privacy gate. The accepted list remains durable; freshness
+/// cannot survive a lost account subscription or be restored from a disk cache.
+#[derive(Debug, Default)]
+pub(super) struct BlocklistSyncState {
+    scope: String,
+    attempt: u64,
+    valid: bool,
+    caught_up: bool,
+}
+
+/// Owns one account catch-up attempt. Dropping an old connection cannot invalidate
+/// its replacement, and a stale completion cannot authorize the replacement.
+pub struct BlocklistCatchup {
+    state: Arc<Mutex<BlocklistSyncState>>,
+    scope: String,
+    attempt: u64,
+}
+
+impl BlocklistCatchup {
+    pub(crate) fn complete(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.scope == self.scope && state.attempt == self.attempt && state.valid {
+            state.caught_up = true;
+        }
+    }
+}
+
+impl Drop for BlocklistCatchup {
+    fn drop(&mut self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.scope == self.scope && state.attempt == self.attempt {
+            state.caught_up = false;
+            state.valid = false;
+        }
+    }
+}
+
 impl LocalStateStore {
+    pub(crate) fn begin_blocklist_catchup(&self) -> BlocklistCatchup {
+        let scope = self.effective_account_key();
+        let mut state = self
+            .blocklist_sync
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.attempt = state.attempt.wrapping_add(1);
+        state.scope = scope.clone();
+        state.valid = true;
+        state.caught_up = false;
+        BlocklistCatchup {
+            state: Arc::clone(&self.blocklist_sync),
+            scope,
+            attempt: state.attempt,
+        }
+    }
+
+    pub(crate) fn invalidate_blocklist_freshness(&self) {
+        let mut state = self
+            .blocklist_sync
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if state.scope == self.effective_account_key() {
+            state.valid = false;
+            state.caught_up = false;
+        }
+    }
+
+    pub fn blocklist_freshness_known(&self) -> bool {
+        let state = self
+            .blocklist_sync
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.scope == self.effective_account_key() && state.valid && state.caught_up
+    }
+
+    /// A local-only refusal, before stream-head lookup, nonce allocation or HTTP.
+    pub fn require_blocklist_signal_freshness(
+        &self,
+        payload: &crate::signal::SignalPayload,
+    ) -> anyhow::Result<()> {
+        if matches!(
+            payload,
+            crate::signal::SignalPayload::Presence { .. }
+                | crate::signal::SignalPayload::ReadReceipt { .. }
+                | crate::signal::SignalPayload::Typing { .. }
+        ) {
+            anyhow::ensure!(
+                self.blocklist_freshness_known(),
+                "blocklist freshness is unknown; privacy Signal withheld"
+            );
+        }
+        Ok(())
+    }
+
     /// Return the stored remark for `realm_id`, if any. `None` means the
     /// user has not set a local override and the public Realm title
     /// should be rendered.
@@ -543,5 +635,110 @@ impl LocalStateStore {
         self.cached.realm_authority_basis.insert(key, basis);
         let _ = self.flush();
         true
+    }
+}
+
+#[cfg(test)]
+mod blocklist_freshness_tests {
+    use super::*;
+
+    fn store() -> (tempfile::TempDir, LocalStateStore) {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalStateStore::with_path(directory.path().join("state.json"));
+        (directory, store)
+    }
+
+    #[test]
+    fn blocklist_freshness_is_connection_local_and_shared_with_clones() {
+        let (_directory, store) = store();
+        let clone = store.clone();
+        assert!(!store.blocklist_freshness_known());
+        let first = store.begin_blocklist_catchup();
+        first.complete();
+        assert!(store.blocklist_freshness_known());
+        assert!(clone.blocklist_freshness_known());
+        let second = clone.begin_blocklist_catchup();
+        assert!(!store.blocklist_freshness_known());
+        first.complete();
+        assert!(!store.blocklist_freshness_known());
+        drop(first);
+        second.complete();
+        assert!(store.blocklist_freshness_known());
+        drop(second);
+        assert!(!clone.blocklist_freshness_known());
+    }
+
+    #[test]
+    fn blocklist_freshness_is_not_restored_from_retained_account_data() {
+        let (directory, mut store) = store();
+        store.set_client_blocklist(7, Vec::new());
+        let catchup = store.begin_blocklist_catchup();
+        catchup.complete();
+        assert!(store.blocklist_freshness_known());
+        let restored = LocalStateStore::with_path(directory.path().join("state.json"));
+        assert_eq!(restored.client_blocklist_revision(), 7);
+        assert!(!restored.blocklist_freshness_known());
+    }
+
+    #[test]
+    fn malformed_blocklist_prevents_catchup_from_authorizing_signals() {
+        let (_directory, mut store) = store();
+        store.set_client_blocklist(7, Vec::new());
+        let catchup = store.begin_blocklist_catchup();
+        let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let entry: arkret_sdk::Event = serde_json::from_value(serde_json::json!({
+            "event_id": "ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
+            "kind": "ak.account_data.set", "realm_id": realm,
+            "scope_ref": {"kind": "realm", "realm_id": realm},
+            "actor_id": crate::test_support::account_actor("did:web:blocklist-holder.example"),
+            "created_at": "2026-09-27T00:00:00.000Z",
+            "payload": {"key": "ak.account.blocklist", "revision": 8, "content": {}}
+        }))
+        .unwrap();
+        crate::sync_engine::apply_account_data_entries(
+            &mut store,
+            &[entry],
+            &crate::test_support::authority("did:web:blocklist-holder.example"),
+        );
+        catchup.complete();
+        assert_eq!(store.client_blocklist_revision(), 7);
+        assert!(!store.blocklist_freshness_known());
+    }
+
+    #[test]
+    fn blocklist_retained_revision_filters_exact_account_and_rebuilds_after_unblock() {
+        let (_directory, mut store) = store();
+        let peer = crate::test_support::account_actor("did:web:blocklist-peer.example");
+        let other_station =
+            arkret_sdk::ActorId::account(crate::test_support::authority_at_station(
+                "did:web:blocklist-peer.example",
+                "did:web:other-station.example",
+            ));
+        let entry = crate::account_data::new_blocklist_entry(
+            crate::account_data::BlocklistUiTargetKind::Actor, &peer.to_string(), None,
+            vec![arkret_models_collaboration::objects::productivity::AccountBlocklistSurface::Messages],
+            None, chrono::Utc::now(),
+        ).unwrap();
+        store.set_client_blocklist(7, vec![entry]);
+        assert!(crate::account_data::is_blocked(
+            &store.client_blocklist_for_actor(&peer.to_string()),
+            &peer.to_string()
+        ));
+        assert!(!crate::account_data::is_blocked(
+            &store.client_blocklist_for_actor(&other_station.to_string()),
+            &other_station.to_string()
+        ));
+        store.set_client_blocklist(6, Vec::new());
+        assert_eq!(store.client_blocklist_revision(), 7);
+        assert!(crate::account_data::is_blocked(
+            &store.client_blocklist_for_actor(&peer.to_string()),
+            &peer.to_string()
+        ));
+        store.set_client_blocklist(8, Vec::new());
+        assert_eq!(store.client_blocklist_revision(), 8);
+        assert!(!crate::account_data::is_blocked(
+            &store.client_blocklist_for_actor(&peer.to_string()),
+            &peer.to_string()
+        ));
     }
 }

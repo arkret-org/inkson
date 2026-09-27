@@ -120,6 +120,8 @@ mod member_identity;
 mod notifications_cursors;
 mod realm_tree_snapshot;
 mod remarks_blocklist;
+pub(crate) use remarks_blocklist::BlocklistCatchup;
+use remarks_blocklist::BlocklistSyncState;
 mod scope;
 mod to_device_raw;
 
@@ -215,6 +217,7 @@ pub struct LocalStateStore {
     /// folds; persisted caches remain rebuildable accelerators.
     sidecar_projection_fold: crate::sidecar::SidecarProjectionFold,
     blocklist_projection_cache: Mutex<BlocklistProjectionCache>,
+    blocklist_sync: Arc<Mutex<BlocklistSyncState>>,
     pending_projection_commands: std::collections::VecDeque<LocalProjectionCommand>,
     #[cfg(not(target_arch = "wasm32"))]
     path: PathBuf,
@@ -249,6 +252,7 @@ impl Clone for LocalStateStore {
             // A clone may hold a different unaccepted local edit. Never share
             // or copy an acceleration cache across that state boundary.
             blocklist_projection_cache: Mutex::new(BlocklistProjectionCache::default()),
+            blocklist_sync: Arc::clone(&self.blocklist_sync),
             pending_projection_commands: self.pending_projection_commands.clone(),
             #[cfg(not(target_arch = "wasm32"))]
             path: self.path.clone(),
@@ -319,6 +323,7 @@ impl Default for LocalStateStore {
             mls_decrypt_serial: Arc::new(Mutex::new(())),
             sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default(),
             blocklist_projection_cache: Mutex::new(BlocklistProjectionCache::default()),
+            blocklist_sync: Arc::new(Mutex::new(BlocklistSyncState::default())),
             pending_projection_commands: std::collections::VecDeque::new(),
             #[cfg(not(target_arch = "wasm32"))]
             path: default_state_path(),
@@ -645,6 +650,7 @@ impl LocalStateStore {
             mls_decrypt_serial: Arc::new(Mutex::new(())),
             sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default(),
             blocklist_projection_cache: Mutex::new(BlocklistProjectionCache::default()),
+            blocklist_sync: Arc::new(Mutex::new(BlocklistSyncState::default())),
             pending_projection_commands: std::collections::VecDeque::new(),
             path: path.into(),
         }
