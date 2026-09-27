@@ -430,21 +430,19 @@ impl LocalStateStore {
         }
         self.clear_current_product_view();
     }
-    /// Already delivered holder-private Events; this clones no Realm/history cache.
-    pub(crate) fn current_account_data_events(&mut self) -> Vec<Event> {
-        self.ensure_cached_loaded();
-        self.cached
+    /// Already delivered holder-private Events from the active Account's state.
+    pub(crate) fn current_account_data_events(&self) -> Vec<Event> {
+        self.load()
             .demand_sync
             .account_events
-            .values()
-            .cloned()
+            .into_values()
             .collect()
     }
-    pub(crate) fn station_cas_account_data_baseline_complete(&self) -> bool {
-        self.cached
+    pub(crate) fn account_data_events_baseline_complete(&self) -> bool {
+        self.load()
             .demand_sync
             .channels
-            .get(&Channel::StationCas)
+            .get(&Channel::AccountDataEvents)
             .is_some_and(|state| state.complete)
     }
     /// Dedicated controller-private Agent draft projection. Values have already

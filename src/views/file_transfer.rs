@@ -369,19 +369,15 @@ fn refresh_items(
         };
         let account_data = state_store
             .read()
-            .load()
-            .station_cas_account_data
-            .values()
-            .filter_map(|row| serde_json::to_value(row).ok())
+            .current_account_data_events()
+            .iter()
+            .filter_map(|event| serde_json::to_value(&event.payload).ok())
             .collect::<Vec<_>>();
         let next = file_transfer_items_from_account_data(&account_data, &crypto);
         let count = next.len();
         items.set(next);
         status.set(if count == 0 {
-            if state_store
-                .read()
-                .station_cas_account_data_baseline_complete()
-            {
+            if state_store.read().account_data_events_baseline_complete() {
                 "Ready".to_owned()
             } else {
                 "Syncing".to_owned()

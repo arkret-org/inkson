@@ -1206,14 +1206,17 @@ mod tests {
         let record = prepared.into_record(blob_ref, blob_size_bytes).unwrap();
         let key = record_account_key(&record, &crypto).unwrap();
         let envelope = seal_record_envelope(&record, &crypto, &key, ACTOR).unwrap();
-        let event_payload = json!({
+        let event_payload: arkret_models_collaboration::events_payloads::account_data::AccountDataSetPayload = serde_json::from_value(json!({
             "key": key,
-            "expected_revision": 0,
+            "expected_server_revision": 0,
             "encrypted_payload": envelope,
             "updated_at": "2026-06-07T00:00:00.000Z",
-        });
+        })).unwrap();
 
-        let items = file_transfer_items_from_account_data(&[event_payload], &crypto);
+        let items = file_transfer_items_from_account_data(
+            &[serde_json::to_value(event_payload).unwrap()],
+            &crypto,
+        );
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].record.filename.as_deref(), Some("restored.txt"));
     }
