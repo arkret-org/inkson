@@ -513,7 +513,7 @@ fn strand_position_update_rejects_incomplete_effect_position() {
     assert!(
         error
             .to_string()
-            .contains("requires effect_position.space_id"),
+            .contains("requires complete effect_position"),
         "{error:#}"
     );
 }
@@ -571,6 +571,30 @@ fn object_patch_family_builders_match_registered_payload_schema() {
 }
 
 #[test]
+fn position_builder_rejects_partial_cas_instead_of_dropping_it() {
+    let list = "ak:space:ASnqpJQi0G5Ljanp7UQXjmcIaFVqDSvBNupH4kpQaTzc";
+    for kind in ["ak.strand.move", "ak.strand.reorder"] {
+        for expected in [json!({"rank":"a1"}), json!({"space_id":list,"rank":"a1"})] {
+            let error = ak_ops::strand_position_update(
+                "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+                "did:web:alice",
+                kind,
+                "ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
+                "ak:strand:AUuXpUO-yBwwyCNB7AS1IIm5_sgsxyEsG7PBmmkXdFog",
+                expected,
+                json!({"list_space_id":list,"rank":"a2"}),
+            )
+            .expect_err("a malformed explicit CAS must not become an unguarded write");
+            assert!(
+                error
+                    .to_string()
+                    .contains("invalid complete expected position")
+            );
+        }
+    }
+}
+
+#[test]
 fn strand_position_update_emits_canonical_move_payload() {
     let op = ak_ops::strand_position_update(
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
@@ -601,7 +625,7 @@ fn strand_position_update_emits_canonical_move_payload() {
     );
     assert_eq!(op.payload()["rank"], "b1");
     assert_eq!(
-        op.payload()["expected_position"]["space_id"],
+        op.payload()["expected_position"]["list_space_id"],
         "ak:space:ASnqpJQi0G5Ljanp7UQXjmcIaFVqDSvBNupH4kpQaTzc"
     );
     assert_eq!(op.payload()["expected_position"]["rank"], "a1");
@@ -639,7 +663,10 @@ fn strand_position_update_emits_canonical_reorder_payload() {
     );
     assert_eq!(op.payload()["rank"], "a2");
     assert_eq!(op.payload()["expected_position"]["rank"], "a1");
-    assert!(op.payload()["expected_position"].get("space_id").is_none());
+    assert_eq!(
+        op.payload()["expected_position"]["list_space_id"],
+        op.payload()["space_id"]
+    );
     assert!(!op.payload().contains_key("target_space_id"));
     assert!(!op.payload().contains_key("position"));
 }

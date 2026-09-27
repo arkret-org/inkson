@@ -156,8 +156,8 @@ pub fn strand_update_patch(
 }
 
 /// Strand position update. The payload retains the optional observed position;
-/// callers must separately put the corresponding position-winner digest in the
-/// Event's `causal_refs` so offline concurrent Moves remain concurrent.
+/// the complete observed value is an explicit CAS guard, while omission
+/// requests no concurrency guard. The Station determines accepted order.
 pub fn strand_position_update(
     realm_id: &str,
     actor: &str,
@@ -167,41 +167,33 @@ pub fn strand_position_update(
     expected_position: Value,
     effect_position: Value,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let position_field = |value: &Value, field: &str| {
-        value
-            .get(field)
-            .or_else(|| match field {
-                "space_id" => value.get("list_space_id"),
-                _ => None,
-            })
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-    };
-    let expected_space = position_field(&expected_position, "space_id");
-    let expected_rank = position_field(&expected_position, "rank");
-    let effect_space = position_field(&effect_position, "space_id");
-    let effect_rank = position_field(&effect_position, "rank");
-
-    let Some(effect_space) = effect_space else {
-        anyhow::bail!("strand position update requires effect_position.space_id");
-    };
-    let Some(effect_rank) = effect_rank else {
-        anyhow::bail!("strand position update requires effect_position.rank");
-    };
+    let expected: Option<arkret_sdk::StrandPositionCurrent> =
+        serde_json::from_value(expected_position)
+            .map_err(|error| anyhow::anyhow!("invalid complete expected position: {error}"))?;
+    let effect: arkret_sdk::StrandPositionCurrent = serde_json::from_value(effect_position)
+        .map_err(|error| anyhow::anyhow!("requires complete effect_position: {error}"))?;
+    let effect_space = effect.list_space_id.as_str();
+    let effect_rank = effect.rank.as_str();
+    let expected_space = expected
+        .as_ref()
+        .map(|position| position.list_space_id.as_str());
+    let expected_pair = expected
+        .as_ref()
+        .map(|position| (position.list_space_id.as_str(), position.rank.as_str()));
 
     // Strong types: strand_reorder_payload / strand_move_payload
     // (additionalProperties:false). The reorder path stays within a
     // single List Space (effect_space == space_id); the move path treats
     // effect_space as the destination target_space_id and carries the
-    // optional from_space_id / expected_position basis diagnostics.
+    // optional source hint and exact whole-value compare-and-set preimage.
     match kind {
         event_kind_str::STRAND_REORDER => {
             let payload = strand_reorder_payload(
                 board_space_id,
                 strand_id,
-                &effect_space,
-                &effect_rank,
-                expected_rank.as_deref(),
+                effect_space,
+                effect_rank,
+                expected_pair,
             )?;
             Ok(
                 TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandReorder>(
@@ -211,19 +203,13 @@ pub fn strand_position_update(
             )
         }
         _ => {
-            // expected_position is only emitted when BOTH a prior
-            // space_id and rank are known.
-            let expected = match (expected_space.as_deref(), expected_rank.as_deref()) {
-                (Some(space), Some(rank)) => Some((Some(space), Some(rank))),
-                _ => None,
-            };
             let payload = strand_move_payload(
                 board_space_id,
                 strand_id,
-                &effect_space,
-                &effect_rank,
-                expected_space.as_deref(),
-                expected,
+                effect_space,
+                effect_rank,
+                expected_space,
+                expected_pair,
             )?;
             Ok(
                 TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandMove>(

@@ -661,7 +661,7 @@ pub(super) fn submit_kanban_card_create(
                     board_space_id: &board_for_position,
                     strand_id: &strand_id,
                     expected_position: serde_json::Value::Null,
-                    target_position: json!({"space_id": list_for_position, "rank": rank_for_position}),
+                    target_position: json!({"list_space_id": list_for_position, "rank": rank_for_position}),
                     body: move_body,
                     write_state: "submitted",
                 }) {
@@ -1286,13 +1286,13 @@ pub(super) fn submit_strand_position_move(
                 list_space_id,
                 rank,
                 ..
-            } => json!({"space_id": list_space_id, "rank": rank}),
+            } => json!({"list_space_id": list_space_id, "rank": rank}),
         },
         target_position: match &effect {
             StrandPositionEffect::SetPosition {
                 list_space_id,
                 rank,
-            } => json!({"space_id": list_space_id, "rank": rank}),
+            } => json!({"list_space_id": list_space_id, "rank": rank}),
             StrandPositionEffect::Remove => serde_json::Value::Null,
         },
         // Canonical move/reorder payload retained in the durable local op log.

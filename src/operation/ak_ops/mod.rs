@@ -178,15 +178,15 @@ pub(super) fn strand_watch_set_payload(
 /// Build the canonical `strand_move_payload` body via the SDK strong type.
 /// `additionalProperties:false` — the destination is single-sourced by
 /// `target_space_id`; the optional `from_space_id` / `expected_position`
-/// (space_id + rank) describe the author's observed causal basis. They may
-/// diagnose a mismatch but do not serialize concurrent Moves into a CAS.
+/// carry the complete observed current value and request an explicit CAS.
+/// Omission leaves concurrent writes serialized by the Station without a CAS.
 pub(super) fn strand_move_payload(
     board_space_id: &str,
     strand_id: &str,
     target_space_id: &str,
     rank: &str,
     from_space_id: Option<&str>,
-    expected: Option<(Option<&str>, Option<&str>)>,
+    expected: Option<(&str, &str)>,
 ) -> anyhow::Result<arkret_sdk::StrandMovePayload> {
     let mut payload = arkret_sdk::StrandMovePayload::new(
         space_id_value(board_space_id)?,
@@ -198,10 +198,9 @@ pub(super) fn strand_move_payload(
         payload = payload.with_from_space_id(space_id_value(from)?);
     }
     if let Some((expected_space, expected_rank)) = expected {
-        payload = payload.with_expected_position(arkret_sdk::StrandMoveExpectedPosition {
-            space_id: expected_space.map(space_id_value).transpose()?,
-            rank: expected_rank.map(ToOwned::to_owned),
-            relation_id: None,
+        payload = payload.with_expected_position(arkret_sdk::StrandPositionCurrent {
+            list_space_id: space_id_value(expected_space)?,
+            rank: expected_rank.to_owned(),
         });
     }
     Ok(payload)
@@ -209,13 +208,13 @@ pub(super) fn strand_move_payload(
 
 /// Build the canonical `strand_reorder_payload` body via the SDK strong
 /// type. Re-ranks within a single List Space (`space_id`); the optional
-/// `expected_position` carries only a rank (no space_id field).
+/// `expected_position` carries the complete observed position current value.
 pub(super) fn strand_reorder_payload(
     board_space_id: &str,
     strand_id: &str,
     space_id: &str,
     rank: &str,
-    expected_rank: Option<&str>,
+    expected: Option<(&str, &str)>,
 ) -> anyhow::Result<arkret_sdk::StrandReorderPayload> {
     let mut payload = arkret_sdk::StrandReorderPayload::new(
         space_id_value(board_space_id)?,
@@ -223,10 +222,10 @@ pub(super) fn strand_reorder_payload(
         space_id_value(space_id)?,
         rank.to_owned(),
     );
-    if let Some(expected_rank) = expected_rank {
-        payload = payload.with_expected_position(arkret_sdk::StrandReorderExpectedPosition {
-            rank: Some(expected_rank.to_owned()),
-            relation_id: None,
+    if let Some((expected_space, expected_rank)) = expected {
+        payload = payload.with_expected_position(arkret_sdk::StrandPositionCurrent {
+            list_space_id: space_id_value(expected_space)?,
+            rank: expected_rank.to_owned(),
         });
     }
     Ok(payload)
