@@ -435,6 +435,34 @@ fn enqueueing_stamps_the_final_event_identity_on_the_optimistic_row() {
 }
 
 #[test]
+fn committed_message_without_an_optimistic_record_projects_before_backfill() {
+    let event = author_and_sign(
+        message_intent(
+            REALM,
+            "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+        ),
+        &test_signer(),
+    );
+    let mut store = local_state_store("committed-without-optimistic-row");
+    let snapshot = snapshot_of(vec![(event.clone(), SendQueueStatus::Committed)]);
+    assert!(reconcile_settled_outbound_item(
+        &mut store,
+        &snapshot.items[0]
+    ));
+    assert!(!reconcile_settled_outbound_item(
+        &mut store,
+        &snapshot.items[0]
+    ));
+    let state = store.load();
+    assert_eq!(state.raw_operations.len(), 1);
+    let projected =
+        crate::views::chat::model::chat_messages_from_local_state_with_sidecar(&state, None, None);
+    assert_eq!(projected.len(), 1);
+    assert_eq!(projected[0].body, "hello");
+    assert_eq!(projected[0].id, event.event_id().as_str());
+}
+
+#[test]
 fn a_committed_item_moves_its_optimistic_row_to_accepted() {
     let signer = test_signer();
     let event = author_and_sign(
@@ -464,6 +492,14 @@ fn a_committed_item_moves_its_optimistic_row_to_accepted() {
     assert_eq!(row.operation_id, local_operation_id);
     assert_eq!(row.payload["write_state"], "committed");
     assert_eq!(row.payload["event_id"], event.event_id().as_str());
+    assert_eq!(
+        row.payload["event"],
+        serde_json::to_value(event.event()).unwrap()
+    );
+    let projected =
+        crate::views::chat::model::chat_messages_from_local_state_with_sidecar(&state, None, None);
+    assert_eq!(projected.len(), 1);
+    assert_eq!(projected[0].body, "hello");
 }
 
 #[test]

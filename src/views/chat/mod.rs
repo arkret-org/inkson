@@ -1653,11 +1653,15 @@ pub fn ChatPanel(
             // settings, presence preferences) as a timeline invalidation.
             let _account_cursor = sync_cursor();
             let _realm_epoch = realm_live_epoch();
+            // Local send completion persists its signed Event and author
+            // sidecar before updating these rows. Observe that edge even when
+            // no account cursor or Realm stream revision has arrived yet.
+            let local_rows = messages.read();
             let store = state_store.peek();
             let snapshot = store.load();
             let decrypt_identity = Some((&authority, principal_id.as_str(), &device_id));
             let mut folded = fold_local_state_into_chat_messages_with_sidecar(
-                verified_scope_timeline_seed(messages.peek().as_slice()),
+                verified_scope_timeline_seed(local_rows.as_slice()),
                 &snapshot,
                 Some(&store),
                 decrypt_identity,

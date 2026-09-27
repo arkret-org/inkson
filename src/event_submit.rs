@@ -462,7 +462,26 @@ fn reconcile_settled_outbound_item(
         ),
         _ => return false,
     };
-    let Some(operation_id) = local_operation_for_event(&state_store.load(), &event_id) else {
+    let operation_id = local_operation_for_event(&state_store.load(), &event_id);
+    let committed_message = item.status == SendQueueStatus::Committed
+        && queued_event(item).kind == arkret_sdk::EventKind::MessageCreate;
+    if committed_message {
+        // Keep the exact signed Event separate from holder-local write metadata.
+        // A committed sender must be able to project its own message before
+        // account or Realm stream backfill echoes it. The queue's committed
+        // transition already checked the covering Commit for these frozen bytes.
+        let event = queued_event(item);
+        return state_store.upsert_raw_operation(
+            operation_id.unwrap_or_else(|| event_id.to_string()),
+            Some(event.realm_id.to_string()),
+            serde_json::json!({
+                "event": event,
+                "event_id": event_id,
+                "write_state": write_state,
+            }),
+        );
+    }
+    let Some(operation_id) = operation_id else {
         return false;
     };
     state_store.update_raw_operation_write_state(
