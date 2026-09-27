@@ -1189,18 +1189,12 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
         vec![encrypted_realm_current()],
     );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    let series = "ak:backup_series:01964137-1000-7000-8000-0000000000a1";
     let payload = serde_json::json!({
-        "active_series": active_secret_storage_series("ak:backup_series:01964137-1000-7000-8000-0000000000a1"),
-        "backups": [{
-            "backup_id": "ak:backup:passphrase",
-            "backup_kind": "secret_storage",
-            "series_id": "ak:backup_series:01964137-1000-7000-8000-0000000000a1",
-            "encryption": { "recipient_method": "passphrase_kdf" },
-            "contents": [{
-                "item_kind": crate::mls::account_recovery::MLS_ACCOUNT_SECRET_ITEM_KIND,
-                "secret_id": crate::mls::account_recovery::MLS_ACCOUNT_SECRET_SECRET_ID,
-            }],
-        }]
+        "active_series": active_secret_storage_series(series),
+        "backups": [crate::test_support::key_backup_envelope_fixture(
+            0, series, "mls_account_secret", "passphrase_kdf",
+        )]
     });
 
     assert!(!mls_recovery_setup_missing(
@@ -1253,18 +1247,12 @@ fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_secret_stor
         .to_string(),
     );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    let series = "ak:backup_series:01964137-1000-7000-8000-0000000000a1";
     let payload = serde_json::json!({
-        "active_series": active_secret_storage_series("ak:backup_series:01964137-1000-7000-8000-0000000000a1"),
-        "backups": [{
-            "backup_id": "ak:backup:secret-storage",
-            "backup_kind": "secret_storage",
-            "series_id": "ak:backup_series:01964137-1000-7000-8000-0000000000a1",
-            "encryption": { "recipient_method": "recovery_public_key" },
-            "contents": [{
-                "item_kind": crate::mls::account_recovery::MLS_ACCOUNT_SECRET_ITEM_KIND,
-                "secret_id": crate::mls::account_recovery::MLS_ACCOUNT_SECRET_SECRET_ID,
-            }],
-        }]
+        "active_series": active_secret_storage_series(series),
+        "backups": [crate::test_support::key_backup_envelope_fixture(
+            0, series, "mls_account_secret", "recovery_public_key",
+        )]
     });
 
     assert!(!mls_recovery_setup_missing(

@@ -233,36 +233,7 @@ mod tests {
     use super::*;
 
     fn body(seq: u64, series: &str, item_kind: &str, recipient_method: &str) -> Value {
-        json!({
-            "backup_id": format!("ak:backup:0196419b-0000-7000-8000-00000000003{seq}"),
-            "actor_id": {
-                "kind": "account",
-                "account_id": {
-                    "principal_id": "ak:did_core:web:alice.example",
-                    "station_id": "ak:did_core:web:station.example"
-                }
-            },
-            "backup_kind": "secret_storage",
-            "backup_version": "kb_test_v1",
-            "series_id": series,
-            "series_seq": seq,
-            "created_at": format!("2026-05-0{}T00:00:00.000Z", seq + 1),
-            "encryption": {
-                "recipient_method": recipient_method,
-                "aead": {"name": "chacha20_poly1305", "nonce": "AAAAAAAAAAAAAAAA"}
-            },
-            "domain_separation": {"subdomain": "key_backup"},
-            "contents": [{"item_kind": item_kind, "secret_id": "test_secret"}],
-            "ciphertext": "AA",
-            "ciphertext_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "auth_data": {
-                "device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
-                "verification_method": "did:web:alice.example#device",
-                "signature_algorithm": "Ed25519",
-                "signature": "AA",
-                "device_authorize_event_id": "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD"
-            }
-        })
+        crate::test_support::key_backup_envelope_fixture(seq, series, item_kind, recipient_method)
     }
 
     fn list(active: Option<&str>, backups: Vec<Value>) -> Value {

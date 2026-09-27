@@ -1013,36 +1013,12 @@ mod tests {
     #[test]
     fn a_recovery_public_key_backup_is_detected_in_any_series() {
         let list = serde_json::json!({
-            "backups": [{
-                "backup_id": "ak:backup:0196419b-0000-7000-8000-00000000003a",
-                "actor_id": {
-                    "kind": "account",
-                    "account_id": {
-                        "principal_id": "ak:did_core:web:alice.example",
-                        "station_id": "ak:did_core:web:station.example"
-                    }
-                },
-                "backup_kind": "secret_storage",
-                "backup_version": "kb_test_v1",
-                "series_id": "ak:backup_series:0196419b-0000-7000-8000-00000000000a",
-                "series_seq": 0,
-                "created_at": "2026-09-27T00:00:00.000Z",
-                "encryption": {
-                    "recipient_method": "recovery_public_key",
-                    "aead": { "name": "chacha20_poly1305", "nonce": "AAAAAAAAAAAAAAAA" }
-                },
-                "domain_separation": { "subdomain": "key_backup" },
-                "contents": [{ "item_kind": "mls_account_secret" }],
-                "ciphertext": "AA",
-                "ciphertext_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "auth_data": {
-                    "device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
-                    "verification_method": "did:web:alice.example#device",
-                    "signature_algorithm": "Ed25519",
-                    "signature": "AA",
-                    "device_authorize_event_id": "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD"
-                }
-            }]
+            "backups": [crate::test_support::key_backup_envelope_fixture(
+                0,
+                "ak:backup_series:0196419b-0000-7000-8000-00000000000a",
+                "mls_account_secret",
+                "recovery_public_key",
+            )]
         });
         assert!(recovery_public_key_secret_storage_backup_present(&list));
         assert!(!recovery_public_key_secret_storage_backup_present(
