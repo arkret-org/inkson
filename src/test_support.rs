@@ -462,7 +462,7 @@ pub(crate) fn key_backup_envelope_fixture(
         "backup_version": "kb_test_v1",
         "series_id": series,
         "series_seq": seq,
-        "created_at": format!("2026-05-0{}T00:00:00.000Z", seq + 1),
+        "created_at": format!("2026-05-{:02}T00:00:00.000Z", seq + 1),
         "encryption": {
             "recipient_method": recipient_method,
             "aead": {"name": "chacha20_poly1305", "nonce": "AAAAAAAAAAAAAAAA"}
