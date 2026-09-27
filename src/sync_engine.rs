@@ -681,10 +681,11 @@ impl InksonAccountProjector {
             .state_store
             .read(LocalStateStore::current_generation);
         let mut current_stage = current_index
-            .stage_verified_frame(
+            .stage_verified_frame_with_snapshots(
                 previous_generation,
                 frame,
                 verified.resolved_preview_streams(),
+                verified.current_snapshots(),
             )
             .await
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;

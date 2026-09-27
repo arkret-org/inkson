@@ -659,6 +659,7 @@ fn require_genesis_readable_floor(outcome: &arkret_sdk::StreamScanOutcome) -> ga
 #[derive(Default)]
 pub struct VerifiedAccountFrame {
     pages: Vec<garth::VerifiedScanPage>,
+    current_snapshots: BTreeMap<String, VerifiedCurrentSnapshot>,
     authority_bases: Vec<crate::state::PersistedRealmAuthorityBasis>,
     /// `preview_only` windows whose whole readable prefix this client
     /// replayed from genesis through a verified scan: exact from here on.
@@ -669,7 +670,23 @@ pub struct VerifiedAccountFrame {
     unresolved_streams: BTreeSet<CommitStreamRef>,
 }
 
+/// Complete current material at a signature-verified head. Only the fetch
+/// below constructs this capability; an Account current subset cannot.
+pub(crate) struct VerifiedCurrentSnapshot {
+    snapshot: arkret_wire::RealmStateSnapshot,
+}
+
+impl VerifiedCurrentSnapshot {
+    pub(crate) fn snapshot(&self) -> &arkret_wire::RealmStateSnapshot {
+        &self.snapshot
+    }
+}
+
 impl VerifiedAccountFrame {
+    pub(crate) fn current_snapshots(&self) -> &BTreeMap<String, VerifiedCurrentSnapshot> {
+        &self.current_snapshots
+    }
+
     pub(crate) fn authority_bases(&self) -> &[crate::state::PersistedRealmAuthorityBasis] {
         &self.authority_bases
     }
@@ -1130,7 +1147,65 @@ pub async fn verify_account_frame_commits(
     http: &arkret_sdk::http_client::Client,
     frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
 ) -> garth::Result<VerifiedAccountFrame> {
-    verify_account_frame_with(&AuthorityClient::new(http.clone()), http, frame).await
+    let authority = AuthorityClient::new(http.clone());
+    let mut verified = verify_account_frame_with(&authority, http, frame).await?;
+    let product = verified.product_frame(frame);
+    for (realm, entry) in product.realms.iter().flat_map(|realms| &realms.entries) {
+        let Some(current) = &entry.current else {
+            continue;
+        };
+        let realm_id = current.realm_id.clone();
+        let (bundle, freshness, mut replica) =
+            fresh_verified_realm(&authority, http, &realm_id).await?;
+        let snapshot = http.realm_state_snapshot_head(&realm_id).await?;
+        let keys =
+            garth::fetch_historical_station_key_directory(http, &bundle, None, Some(&snapshot))
+                .await?;
+        let freshness = arkret_identity::RealmAuthorityFreshness::new(
+            chrono::Utc::now(),
+            freshness.expected_nonce.clone(),
+        );
+        replica.install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)?;
+        if current.governance_generation != snapshot.governance_generation
+            || current.stream_heads.len() != snapshot.visible_stream_heads.len()
+            || !current
+                .stream_heads
+                .iter()
+                .all(|head| snapshot.visible_stream_heads.contains(head))
+        {
+            tracing::warn!("verified current Snapshot differs from Account window cut");
+            continue;
+        }
+        if !current
+            .entries
+            .iter()
+            .all(|row| snapshot.current_state_entries.contains(row))
+        {
+            return Err(garth::Error::Protocol(
+                "Account current row differs from the signed current Snapshot".to_owned(),
+            ));
+        }
+        for row in &snapshot.current_state_entries {
+            if let arkret_wire::TypedCurrentResult::Value {
+                selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref },
+                value,
+                ..
+            } = row
+            {
+                let group: arkret_wire::MlsGroupCurrent = serde_json::from_value(value.clone())
+                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                if &group.effective_scope != scope_ref {
+                    return Err(garth::Error::Protocol(
+                        "Snapshot MLS scope differs from selector".to_owned(),
+                    ));
+                }
+            }
+        }
+        verified
+            .current_snapshots
+            .insert(realm.clone(), VerifiedCurrentSnapshot { snapshot });
+    }
+    Ok(verified)
 }
 
 async fn verify_account_frame_with<T: garth::AuthorityTransport>(
@@ -2298,6 +2373,111 @@ mod tests {
             )),
             device_id: arkret_sdk::DeviceId::new(DEVICE_ID).unwrap(),
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn signed_snapshot_current_staging_is_atomic_and_cut_bound() {
+        use crate::test_support::committed_event::FixtureStation;
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let account = arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        );
+        let creator = arkret_sdk::ActorId::account(account.clone());
+        let station = FixtureStation::did_web();
+        let (bundle, keys, items) =
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &station,
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&creator),
+                "alice.example",
+                DEVICE_ID,
+            );
+        let request = arkret_sdk::AuthorityBundleRequest {
+            realm_id: realm_id.clone(),
+            nonce: bundle.current_assertion.nonce.clone(),
+        };
+        let freshness = arkret_identity::RealmAuthorityFreshness::new(
+            bundle.bundle_issued_at + chrono::Duration::seconds(50),
+            request.nonce.clone(),
+        );
+        let mut snapshot = snapshot_at(&bundle, &items, bundle.bundle_issued_at);
+        station.sign_snapshot(&mut snapshot);
+        let mut replica = RealmReplica::new(realm_id.clone());
+        replica
+            .install_verified_authority(&request, bundle.clone(), &freshness, &keys)
+            .unwrap();
+        replica
+            .install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)
+            .unwrap();
+        let selector = match &snapshot.current_state_entries[0] {
+            arkret_wire::TypedCurrentResult::Value { selector, .. }
+            | arkret_wire::TypedCurrentResult::MessageReactions { selector, .. } => {
+                selector.clone()
+            }
+        };
+        let frame: arkret_sdk::sync::AccountSubscribeFrame = serde_json::from_value(json!({
+            "kind":"delta", "cursor":"ak:cursor:YQ",
+            "realms":{REALM_ID:{"current":{
+                "realm_id":realm_id, "governance_generation":snapshot.governance_generation,
+                "stream_heads":snapshot.visible_stream_heads, "entries":[]
+            }}}
+        }))
+        .unwrap();
+        let proofs = BTreeMap::from([(REALM_ID.to_owned(), VerifiedCurrentSnapshot { snapshot })]);
+        let store = crate::state::isolated_store_for_tests("signed-snapshot-atomic-cut");
+        let index = crate::state::current_index::CurrentIndex::open(
+            &account,
+            0,
+            store.current_index_location(),
+        )
+        .await
+        .unwrap();
+        let stage = index
+            .stage_verified_frame_with_snapshots(0, &frame, &BTreeSet::new(), &proofs)
+            .await
+            .unwrap();
+        drop(stage);
+        assert_eq!(
+            index.read_selector(REALM_ID, &selector).await.unwrap(),
+            None
+        );
+        assert_eq!(index.read_complete_cut(REALM_ID).await.unwrap(), None);
+        let mut wrong_cut = frame.clone();
+        wrong_cut
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(REALM_ID)
+            .unwrap()
+            .current
+            .as_mut()
+            .unwrap()
+            .stream_heads[0]
+            .stream_position += 1;
+        assert!(
+            index
+                .stage_verified_frame_with_snapshots(0, &wrong_cut, &BTreeSet::new(), &proofs,)
+                .await
+                .is_err()
+        );
+        assert_eq!(index.read_complete_cut(REALM_ID).await.unwrap(), None);
+        index
+            .stage_verified_frame_with_snapshots(0, &frame, &BTreeSet::new(), &proofs)
+            .await
+            .unwrap()
+            .finish();
+        assert!(index.read_complete_cut(REALM_ID).await.unwrap().is_some());
+        assert!(
+            index
+                .read_selector(REALM_ID, &selector)
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 
     fn snapshot_at(

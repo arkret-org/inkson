@@ -141,6 +141,14 @@ pub(crate) struct CurrentRealmProgress {
     pub invalidation_revision: u64,
     pub has_invalidation: bool,
     pub needs_refresh: bool,
+    #[serde(default)]
+    pub signed_snapshot: Option<SignedSnapshotCoverage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct SignedSnapshotCoverage {
+    snapshot_id: arkret_wire::RealmSnapshotId,
+    stream_heads: Vec<arkret_wire::CommitStreamHead>,
 }
 
 /// Whether `progress` is a complete verified cut of `realm_id`.
@@ -148,6 +156,18 @@ fn progress_is_complete_cut(
     progress: &CurrentRealmProgress,
     realm_id: &arkret_sdk::RealmId,
 ) -> bool {
+    if !progress.needs_refresh
+        && progress.governance_generation.is_some()
+        && progress.signed_snapshot.as_ref().is_some_and(|cut| {
+            !cut.stream_heads.is_empty()
+                && cut
+                    .stream_heads
+                    .iter()
+                    .all(|head| head.stream_ref.realm_id() == realm_id)
+        })
+    {
+        return true;
+    }
     progress.baseline.as_ref().is_some_and(|baseline| {
         !progress.needs_refresh
             && baseline.complete
@@ -163,6 +183,7 @@ impl CurrentRealmProgress {
             return;
         }
         self.has_invalidation = true;
+        self.signed_snapshot = None;
         self.invalidation_revision = revision;
         self.needs_refresh = true;
         self.invalidated_snapshot = self
@@ -172,6 +193,7 @@ impl CurrentRealmProgress {
     }
 
     fn reset(&mut self) {
+        self.signed_snapshot = None;
         self.needs_refresh = true;
         self.invalidated_snapshot = self
             .baseline
@@ -180,6 +202,7 @@ impl CurrentRealmProgress {
     }
 
     fn begin_governance_generation(&mut self, generation: u64) {
+        self.signed_snapshot = None;
         self.invalidated_snapshot = self
             .baseline
             .as_ref()
@@ -895,7 +918,7 @@ impl CurrentIndex {
         let generation = self.generation.load(Ordering::Acquire);
         let progress = self.progress_at(realm_id.as_str(), generation).await?;
         anyhow::ensure!(
-            progress.baseline.is_some(),
+            progress.baseline.is_some() || progress.signed_snapshot.is_some(),
             "MLS current read requires an installed Realm baseline"
         );
         anyhow::ensure!(
@@ -954,18 +977,25 @@ impl CurrentIndex {
             || row_generation < floor
             || revision_of(&entry).stream_position < progress.invalidation_revision
         {
-            let seen = match &progress.baseline {
-                Some(baseline)
-                    if progress.invalidated_snapshot.as_deref()
-                        != Some(baseline.snapshot_cursor.as_str()) =>
-                {
+            let coverage_key = progress
+                .signed_snapshot
+                .as_ref()
+                .map(|cut| cut.snapshot_id.to_string())
+                .or_else(|| {
+                    progress
+                        .baseline
+                        .as_ref()
+                        .filter(|baseline| {
+                            progress.invalidated_snapshot.as_deref()
+                                != Some(baseline.snapshot_cursor.as_str())
+                        })
+                        .map(|baseline| baseline.snapshot_cursor.clone())
+                });
+            let seen = match coverage_key {
+                Some(coverage_key) => {
                     let seen = self
                         .latest_generation(
-                            &self.seen_prefix(
-                                baseline.snapshot_cursor.as_str(),
-                                realm,
-                                selector,
-                            )?,
+                            &self.seen_prefix(coverage_key.as_str(), realm, selector)?,
                             generation,
                         )
                         .await?;
@@ -1082,6 +1112,22 @@ impl CurrentIndex {
         frame: &AccountSubscribeFrame,
         resolved_preview_streams: &std::collections::BTreeSet<arkret_sdk::CommitStreamRef>,
     ) -> anyhow::Result<CurrentStage> {
+        self.stage_verified_frame_with_snapshots(
+            expected_generation,
+            frame,
+            resolved_preview_streams,
+            &BTreeMap::new(),
+        )
+        .await
+    }
+
+    pub(crate) async fn stage_verified_frame_with_snapshots(
+        &self,
+        expected_generation: u64,
+        frame: &AccountSubscribeFrame,
+        resolved_preview_streams: &std::collections::BTreeSet<arkret_sdk::CommitStreamRef>,
+        snapshots: &BTreeMap<String, crate::realm_events_engine::VerifiedCurrentSnapshot>,
+    ) -> anyhow::Result<CurrentStage> {
         let lease = self.lease.clone().lock_owned().await;
         anyhow::ensure!(
             !self.is_poisoned(),
@@ -1138,6 +1184,23 @@ impl CurrentIndex {
         }
         if let Some(realms) = &mut filtered.realms {
             for (realm, incoming) in &mut realms.entries {
+                let snapshot = snapshots.get(realm).map(|proof| proof.snapshot());
+                if let Some(snapshot) = snapshot {
+                    let current = incoming.current.as_mut().ok_or_else(|| {
+                        anyhow::anyhow!("complete Snapshot has no Account current cut")
+                    })?;
+                    anyhow::ensure!(
+                        current.realm_id == snapshot.realm_id
+                            && current.governance_generation == snapshot.governance_generation
+                            && current.stream_heads.len() == snapshot.visible_stream_heads.len()
+                            && current
+                                .stream_heads
+                                .iter()
+                                .all(|head| snapshot.visible_stream_heads.contains(head)),
+                        "verified Snapshot no longer matches Account cut"
+                    );
+                    current.entries = snapshot.current_state_entries.clone();
+                }
                 let mut previous = match progress_updates.remove(realm) {
                     Some(progress) => progress,
                     None => self.progress_at(realm, expected_generation).await?,
@@ -1161,6 +1224,34 @@ impl CurrentIndex {
                     );
                 }
                 if let Some(current) = &incoming.current {
+                    if snapshot.is_some()
+                        && let Some(installed) = &previous.signed_snapshot
+                    {
+                        for old in &installed.stream_heads {
+                            if let Some(new) = current
+                                .stream_heads
+                                .iter()
+                                .find(|head| head.stream_ref == old.stream_ref)
+                            {
+                                anyhow::ensure!(
+                                    new.stream_position > old.stream_position
+                                        || (new.stream_position == old.stream_position
+                                            && new.commit_id == old.commit_id),
+                                    "signed current Snapshot regresses an installed stream head"
+                                );
+                            }
+                        }
+                    }
+                    if previous.signed_snapshot.as_ref().is_some_and(|cut| {
+                        cut.stream_heads.len() != current.stream_heads.len()
+                            || !current
+                                .stream_heads
+                                .iter()
+                                .all(|head| cut.stream_heads.contains(head))
+                    }) {
+                        previous.signed_snapshot = None;
+                        previous.needs_refresh = true;
+                    }
                     current
                         .validate()
                         .map_err(|error| anyhow::anyhow!("{error}"))?;
@@ -1181,7 +1272,7 @@ impl CurrentIndex {
                         );
                         if current.governance_generation > installed {
                             anyhow::ensure!(
-                                incoming.baseline.is_some(),
+                                incoming.baseline.is_some() || snapshot.is_some(),
                                 "governance generation changed without a fresh baseline"
                             );
                             previous.begin_governance_generation(current.governance_generation);
@@ -1191,6 +1282,22 @@ impl CurrentIndex {
                     }
                 }
                 let mut plan = plan_current_install(&previous, incoming)?;
+                if let Some(snapshot) = snapshot {
+                    anyhow::ensure!(
+                        !plan.discard_frame
+                            && incoming.unavailable.is_none()
+                            && incoming.current.is_some(),
+                        "signed current Snapshot cannot complete a discarded or unavailable cut"
+                    );
+                    plan.progress.signed_snapshot = Some(SignedSnapshotCoverage {
+                        snapshot_id: snapshot.snapshot_id.clone(),
+                        stream_heads: snapshot.visible_stream_heads.clone(),
+                    });
+                    plan.progress.needs_refresh = false;
+                    plan.cleanup = Some(CurrentCoverageCleanup {
+                        snapshot_cursor: snapshot.snapshot_id.to_string(),
+                    });
+                }
                 let baseline = incoming.baseline.clone();
                 let mut accepted = Vec::new();
                 let mut delivered = std::collections::BTreeSet::new();
@@ -1202,7 +1309,10 @@ impl CurrentIndex {
                     .as_ref()
                     .map(|current| current.entries.clone())
                     .unwrap_or_default();
-                anyhow::ensure!(entries.len() <= 100, "current selector limit exceeded");
+                anyhow::ensure!(
+                    snapshot.is_some() || entries.len() <= 100,
+                    "current selector limit exceeded"
+                );
                 for entry in &entries {
                     if plan.discard_frame {
                         break;
@@ -1213,9 +1323,16 @@ impl CurrentIndex {
                     let old = self
                         .raw_selector(realm, selector, expected_generation)
                         .await?;
+                    if snapshot.is_some()
+                        && old.as_ref().is_some_and(|old| {
+                            revision_of(old).stream_position > revision_of(entry).stream_position
+                        })
+                    {
+                        anyhow::bail!("signed current Snapshot predates an installed current row");
+                    }
                     let (write, seen) =
                         plan_current_entry(&previous, baseline.as_ref(), entry, old.as_ref())?;
-                    if seen {
+                    if seen || snapshot.is_some() {
                         plan.seen_selectors.push(key);
                     }
                     if let Some(retired) =
@@ -1256,17 +1373,19 @@ impl CurrentIndex {
                         // entry set is narrowed to what this install accepted.
                         current.entries = plan.writes.clone();
                     }
-                    if let Some(baseline) = &plan.progress.baseline {
+                    let coverage_key = snapshot.map(|s| s.snapshot_id.to_string()).or_else(|| {
+                        plan.progress
+                            .baseline
+                            .as_ref()
+                            .map(|b| b.snapshot_cursor.clone())
+                    });
+                    if let Some(coverage_key) = coverage_key {
                         for selector in &plan.seen_selectors {
                             let selector: CurrentSelector = serde_json::from_str(selector)?;
                             writes.insert(
                                 format!(
                                     "{}{suffix}",
-                                    self.seen_prefix(
-                                        baseline.snapshot_cursor.as_str(),
-                                        realm,
-                                        &selector
-                                    )?
+                                    self.seen_prefix(coverage_key.as_str(), realm, &selector)?
                                 ),
                                 serde_json::to_vec(&true)?,
                             );
@@ -1332,6 +1451,12 @@ impl CurrentIndex {
             }
         }
         for (realm, progress) in progress_updates {
+            if let Some(cut) = &progress.signed_snapshot {
+                unversioned.insert(
+                    self.gc_mark_key(gc.epoch, &snapshot_key(cut.snapshot_id.as_str())?),
+                    serde_json::to_vec(&true)?,
+                );
+            }
             if let Some(baseline) = &progress.baseline {
                 unversioned.insert(
                     self.gc_mark_key(gc.epoch, &snapshot_key(baseline.snapshot_cursor.as_str())?),
@@ -1505,6 +1630,9 @@ impl CurrentIndex {
         for (key, bytes) in rows {
             if MARK_STREAMS[stream] == "progress/" {
                 let progress: CurrentRealmProgress = serde_json::from_slice(&bytes)?;
+                if let Some(cut) = &progress.signed_snapshot {
+                    snapshots.push(snapshot_key(cut.snapshot_id.as_str())?);
+                }
                 if let Some(baseline) = &progress.baseline {
                     snapshots.push(snapshot_key(baseline.snapshot_cursor.as_str())?);
                 }
@@ -1808,6 +1936,38 @@ mod tests {
     static NEXT_TEST_PATH: AtomicU64 = AtomicU64::new(0);
     const REALM: &str = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
     const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq";
+    #[test]
+    fn signed_snapshot_coverage_cannot_survive_invalidation_reset_or_new_authority() {
+        let realm: arkret_sdk::RealmId = REALM.parse().unwrap();
+        let progress = CurrentRealmProgress {
+            governance_generation: Some(1),
+            signed_snapshot: Some(SignedSnapshotCoverage {
+                snapshot_id: arkret_wire::RealmSnapshotId::from_digest([7; 32]),
+                stream_heads: vec![arkret_wire::CommitStreamHead {
+                    stream_ref: arkret_wire::CommitStreamRef::Realm {
+                        realm_id: realm.clone(),
+                    },
+                    stream_position: 8,
+                    commit_id: COMMIT.parse().unwrap(),
+                }],
+            }),
+            ..Default::default()
+        };
+        assert!(progress_is_complete_cut(&progress, &realm));
+        let foreign: arkret_sdk::RealmId = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+            .parse()
+            .unwrap();
+        assert!(!progress_is_complete_cut(&progress, &foreign));
+        let mut invalidated = progress.clone();
+        invalidated.invalidate(9);
+        assert!(!progress_is_complete_cut(&invalidated, &realm));
+        let mut reset = progress.clone();
+        reset.reset();
+        assert!(!progress_is_complete_cut(&reset, &realm));
+        let mut changed = progress;
+        changed.begin_governance_generation(2);
+        assert!(!progress_is_complete_cut(&changed, &realm));
+    }
     #[test]
     fn device_current_families_share_device_page_without_merging_selectors() {
         let device_id =
