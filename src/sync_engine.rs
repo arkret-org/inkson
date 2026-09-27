@@ -380,6 +380,10 @@ impl NativeAccountHost {
         store: LocalStateStore,
         realm_id: arkret_sdk::RealmId,
     ) -> anyhow::Result<Self> {
+        // Issue the registered signed head for this Account before its first
+        // bounded detail request. The Account projector independently verifies
+        // the resulting window basis; this response is never installed here.
+        http.realm_state_snapshot_head(&realm_id).await?;
         Self::new_with_selected_realm(http, authority, device_id, store, realm_id.to_string()).await
     }
 
@@ -578,6 +582,10 @@ impl NativeAccountHost {
     /// Synchronize one validated and durably projected bounded window. The
     /// ordinary account driver owns resume / Station-CAS trace semantics.
     pub async fn catch_up(&self) -> garth::Result<()> {
+        self.catch_up_with_request(self.request.clone()).await
+    }
+
+    async fn catch_up_with_request(&self, request: SyncRequestBody) -> garth::Result<()> {
         struct OneWindow<'a> {
             projector: &'a InksonAccountProjector,
             control: SubscriptionControl,
@@ -615,7 +623,7 @@ impl NativeAccountHost {
                 None,
                 arkret_sdk::ActorId::account(self.projector.ctx.account.authority.clone()),
                 self.projector.ctx.account.device_id.clone(),
-                self.request.clone(),
+                request,
             )
             .await;
         match result {
@@ -641,17 +649,27 @@ impl NativeAccountHost {
                 "selected Realm catch-up was requested for another Realm".to_owned(),
             ));
         }
-        for _ in 0..MAX_WINDOWS {
+        for window in 0..MAX_WINDOWS {
             // Bound a stalled rail as well as a sequence of incomplete but
             // durable windows; this is an operational catch-up limit, not a
             // Signal privacy or latency oracle.
-            tokio::time::timeout(std::time::Duration::from_secs(30), self.catch_up())
-                .await
-                .map_err(|_| {
-                    garth::Error::Protocol(
-                        "selected Realm Account window did not finish within 30 seconds".to_owned(),
-                    )
-                })??;
+            let mut request = self.request.clone();
+            if window > 0 {
+                // The saved detail cursor may already name the head while
+                // its preview-only cut remains unverified. Registered demand
+                // replacement clears detail_positions and refreezes a window.
+                request.replace_filter = Some(true);
+            }
+            tokio::time::timeout(
+                std::time::Duration::from_secs(45),
+                self.catch_up_with_request(request),
+            )
+            .await
+            .map_err(|_| {
+                garth::Error::Protocol(
+                    "selected Realm Account window did not finish within 45 seconds".to_owned(),
+                )
+            })??;
             let index = self.projector.current_index().await?;
             if index
                 .read_complete_cut(realm_id.as_str())
