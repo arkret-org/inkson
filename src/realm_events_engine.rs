@@ -659,6 +659,7 @@ fn require_genesis_readable_floor(outcome: &arkret_sdk::StreamScanOutcome) -> ga
 #[derive(Default)]
 pub struct VerifiedAccountFrame {
     pages: Vec<garth::VerifiedScanPage>,
+    authority_bases: Vec<crate::state::PersistedRealmAuthorityBasis>,
     /// `preview_only` windows whose whole readable prefix this client
     /// replayed from genesis through a verified scan: exact from here on.
     resolved_preview_streams: BTreeSet<CommitStreamRef>,
@@ -669,6 +670,39 @@ pub struct VerifiedAccountFrame {
 }
 
 impl VerifiedAccountFrame {
+    pub(crate) fn authority_bases(&self) -> &[crate::state::PersistedRealmAuthorityBasis] {
+        &self.authority_bases
+    }
+
+    fn retain_verified_authority(
+        &mut self,
+        bundle: &arkret_sdk::RealmAuthorityBundle,
+        freshness: &arkret_identity::RealmAuthorityFreshness,
+        keys: &dyn arkret_identity::RealmAuthorityKeyDirectory,
+    ) -> garth::Result<()> {
+        let verified = arkret_identity::verify_realm_authority_bundle(bundle, freshness, keys)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let committed_ref = |commit: &arkret_wire::RealmCommit| arkret_wire::CommittedEventRef {
+            event_id: commit.event_ref.clone(),
+            commit_id: commit.commit_id.clone(),
+            stream_ref: commit.stream_ref.clone(),
+            stream_position: commit.stream_position,
+        };
+        self.authority_bases
+            .push(crate::state::PersistedRealmAuthorityBasis {
+                realm_id: verified.realm_id().clone(),
+                current_service_id: verified.current_service_id().clone(),
+                current_generation: verified.current_generation(),
+                genesis_ref: committed_ref(&bundle.genesis_commit),
+                last_authority_change_ref: bundle
+                    .authority_transitions
+                    .last()
+                    .map(|transition| committed_ref(&transition.change_commit)),
+                validated_at: freshness.now,
+            });
+        Ok(())
+    }
+
     pub fn pages(&self) -> &[garth::VerifiedScanPage] {
         &self.pages
     }
@@ -1211,7 +1245,6 @@ async fn verify_snapshot_realm<T: garth::AuthorityTransport>(
     let mut unsettled = BTreeSet::new();
     let mut unresolved = BTreeSet::new();
     let mut floor = None;
-    let mut replayed_from_genesis = false;
     for window in entry.streams.iter().flatten() {
         let rows = claimed.remove(&window.stream_ref).unwrap_or_default();
         if let Some(basis) = snapshot_window_basis(window) {
@@ -1272,7 +1305,6 @@ async fn verify_snapshot_realm<T: garth::AuthorityTransport>(
             None,
         )
         .await?;
-        replayed_from_genesis = true;
         match resolve_full_history_window(Some(window), &rows, scan)? {
             WindowResolution::Exact(pages) => {
                 if window.preview_only == Some(true) {
@@ -1316,15 +1348,12 @@ async fn verify_snapshot_realm<T: garth::AuthorityTransport>(
     }
     verified.pages.extend(exact_pages);
     verified.unresolved_streams.extend(unresolved);
-    if replayed_from_genesis {
-        let final_freshness = arkret_identity::RealmAuthorityFreshness::new(
-            chrono::Utc::now(),
-            freshness.expected_nonce.clone(),
-        );
-        let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
-        arkret_identity::verify_realm_authority_bundle(&bundle, &final_freshness, &keys)
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-    }
+    let final_freshness = arkret_identity::RealmAuthorityFreshness::new(
+        chrono::Utc::now(),
+        freshness.expected_nonce.clone(),
+    );
+    let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
+    verified.retain_verified_authority(&bundle, &final_freshness, &keys)?;
     Ok(())
 }
 
@@ -1471,8 +1500,7 @@ async fn verify_full_history_realm<T: garth::AuthorityTransport>(
         freshness.expected_nonce.clone(),
     );
     let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
-    arkret_identity::verify_realm_authority_bundle(&bundle, &final_freshness, &keys)
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    verified.retain_verified_authority(&bundle, &final_freshness, &keys)?;
     Ok(())
 }
 
@@ -3370,6 +3398,15 @@ mod tests {
         .await
         .unwrap();
         assert!(verified.unresolved_streams().is_empty());
+        let basis = verified
+            .authority_bases()
+            .iter()
+            .find(|basis| basis.realm_id == bundle.realm_id)
+            .expect("verified floor retains its nonce-bound authority lineage");
+        assert_eq!(basis.current_service_id, bundle.current_service_id);
+        assert_eq!(basis.current_generation, bundle.current_generation);
+        assert_eq!(basis.genesis_ref.event_id, bundle.genesis_commit.event_ref);
+        assert_eq!(basis.genesis_ref.commit_id, bundle.genesis_commit.commit_id);
         assert_eq!(positions(&verified, &realm_stream), vec![7, 8]);
         assert_eq!(positions(&verified, &sibling_stream), vec![0, 1, 2]);
         assert_eq!(

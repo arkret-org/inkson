@@ -698,6 +698,13 @@ impl InksonAccountProjector {
             .state_store
             .write(|store| {
                 store.verified_projection_transaction(|store| {
+                    for basis in verified.authority_bases() {
+                        if !store.record_realm_authority_basis(basis.clone()) {
+                            return Err(
+                                "verified Account authority generation regressed".to_owned()
+                            );
+                        }
+                    }
                     for page in verified.pages() {
                         store.ingest_verified_message_commits(page)?;
                         crate::identity::agent_signer_evidence::index_verified_committed_page(
