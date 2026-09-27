@@ -381,7 +381,9 @@ fn space_create_payload_matches_spec_schema() {
     // carries, so they have to agree before the identity is derived from both.
     assert_eq!(
         event.payload()["object"]["created_at"],
-        serde_json::to_value(event.created_at()).unwrap()
+        json!(arkret_sdk::canonical::format_timestamp_canonical(
+            event.created_at()
+        ))
     );
     let catalog = arkret_schema_conformance::event_payload_validator_catalog().unwrap();
     if catalog

@@ -24,7 +24,8 @@ pub fn FileTransferPanel(
     };
     let authority = account.authority;
     let mut items = use_signal(Vec::<FileTransferItem>::new);
-    let mut status = use_signal(|| "Ready".to_owned());
+    let mut status = use_signal(String::new);
+    let refresh_status = use_signal(|| "Ready".to_owned());
     let refreshing = use_signal(|| false);
     let mut uploading = use_signal(|| false);
     let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
@@ -44,7 +45,7 @@ pub fn FileTransferPanel(
                 device_id.clone(),
                 state_store,
                 items,
-                status,
+                refresh_status,
                 refreshing,
             );
         });
@@ -56,6 +57,14 @@ pub fn FileTransferPanel(
         .iter()
         .map(|item| item.record.plaintext_size_bytes)
         .sum();
+    // Account refreshes update the list without replacing the result of the
+    // user's latest upload or download. An explicit refresh starts a new action.
+    let action_status = status();
+    let displayed_status = if action_status.is_empty() {
+        refresh_status()
+    } else {
+        action_status
+    };
 
     rsx! {
         section { class: "file-transfer-shell", "data-testid": "file-transfer-panel",
@@ -201,6 +210,7 @@ pub fn FileTransferPanel(
                             let device_id = device_id.clone();
                             let authority = authority.clone();
                             move |_| {
+                                status.set(String::new());
                                 refresh_items(
                                     base_url.clone(),
                                     token(),
@@ -209,7 +219,7 @@ pub fn FileTransferPanel(
                                     device_id.clone(),
                                     state_store,
                                     items,
-                                    status,
+                                    refresh_status,
                                     refreshing,
                                 );
                             }
@@ -221,7 +231,7 @@ pub fn FileTransferPanel(
             }
 
             div { class: "file-transfer-status", "data-testid": "file-transfer-status",
-                span { class: status_class(&status()), "{status()}" }
+                span { class: status_class(&displayed_status), "{displayed_status}" }
             }
 
             if items.read().is_empty() {
