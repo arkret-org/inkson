@@ -584,13 +584,16 @@ impl garth::AuthorityTransport for ScriptedAuthority {
         };
         if let Some(outcome) = &self.unit_outcome {
             assert_eq!(Some(request), self.expected_unit.as_ref());
-            let SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) = request else {
-                panic!("complete unit must reach transport")
+            let key = match request {
+                SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) => {
+                    unit.idempotency_key.as_uuid().to_string()
+                }
+                SelfAuthoritySubmitRequest::DirectConversationFounding(unit) => {
+                    unit.idempotency_key.as_uuid().to_string()
+                }
+                _ => panic!("complete unit must reach transport"),
             };
-            assert_eq!(
-                options.idempotency_key.as_deref(),
-                Some(unit.idempotency_key.as_uuid().to_string().as_str())
-            );
+            assert_eq!(options.idempotency_key.as_deref(), Some(key.as_str()));
             self.submits
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             return Ok(outcome.clone());
@@ -1147,4 +1150,152 @@ async fn realm_bootstrap_queue_restores_the_whole_unit_and_rejects_partial_recei
     let mut corrupt = frozen;
     corrupt["items"][0]["submission"]["event_id"] = json!(events[1].event_id());
     assert!(serde_json::from_value::<garth::SendQueueSnapshot>(corrupt).is_err());
+}
+
+#[tokio::test]
+async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
+    use arkret_models_collaboration::authority_commit::{
+        AggregateAcceptanceStatus, DirectConversationFoundingAcceptanceOutcome,
+        DirectConversationFoundingUnitKind, DirectConversationFoundingUnitSubmission,
+        SelfAuthoritySubmitOutcome,
+    };
+    let evidence = arkret_sdk::DirectConversationFoundingAuthorityEvidence::ControllerAgent {
+        agent_provision_ref: arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [11; 32],
+        ),
+        controller_binding_digest: arkret_sdk::Hash::new(format!("sha256:{}", "22".repeat(32)))
+            .unwrap(),
+    };
+    let signer = test_signer();
+    let mut events = author_event_unit_for_test(
+        crate::event_builders::build_direct_conversation_founding_steps(
+            &test_authority(),
+            &crate::test_support::authority_at_station(
+                "ak:did_core:web:bob.example",
+                crate::test_support::SERVER_STATION_ID,
+            ),
+            arkret_sdk::TrustDomainId::new("ak:trust_domain:did.web.example").unwrap(),
+            &evidence,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    for event in &mut events {
+        signer
+            .sign_sdk_event_with_context(
+                event,
+                crate::event_signer::ProducerProofContext::new()
+                    .with_digest_suite(arkret_sdk::DigestSuite::Sha256),
+            )
+            .unwrap();
+    }
+    let unit = DirectConversationFoundingUnitSubmission {
+        unit_kind: DirectConversationFoundingUnitKind::DirectConversationFounding,
+        idempotency_key: serde_json::from_value(json!("01904100-0000-7000-8000-000000000002"))
+            .unwrap(),
+        events: events
+            .iter()
+            .map(|event| arkret_wire::EventAdmissionSubmission::new(event.event().clone()))
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap(),
+    };
+    let queued = QueuedSubmission::direct_conversation_founding(unit).unwrap();
+    let mut queue = garth::SendQueue::default();
+    queue.enqueue(queued.clone(), chrono::Utc::now()).unwrap();
+    let restored = garth::SendQueue::from_snapshot(
+        serde_json::from_value(serde_json::to_value(queue.snapshot()).unwrap()).unwrap(),
+    );
+    assert_eq!(restored.items().len(), 1);
+    assert_eq!(restored.items()[0].request(), &queued.request);
+    let outcome = DirectConversationFoundingAcceptanceOutcome {
+        unit_kind: DirectConversationFoundingUnitKind::DirectConversationFounding,
+        status: AggregateAcceptanceStatus::Committed,
+        commits: std::array::from_fn(|i| commit_for(events[i].event(), i as u64)),
+    };
+    let mut candidate = queued.clone();
+    let mut wrong_event = outcome.clone();
+    wrong_event.commits[2].event_ref = events[1].event_id().clone();
+    assert!(
+        candidate
+            .apply_self_outcome(SelfAuthoritySubmitOutcome::DirectConversationFounding(
+                wrong_event
+            ))
+            .is_err()
+    );
+    let mut wrong_realm = outcome.clone();
+    for commit in &mut wrong_realm.commits {
+        commit.realm_id = realm_id(OTHER_REALM);
+        commit.stream_ref = arkret_wire::CommitStreamRef::Realm {
+            realm_id: realm_id(OTHER_REALM),
+        };
+    }
+    assert!(
+        candidate
+            .apply_self_outcome(SelfAuthoritySubmitOutcome::DirectConversationFounding(
+                wrong_realm
+            ))
+            .is_err()
+    );
+    let mut reordered = outcome.clone();
+    reordered.commits.swap(1, 2);
+    assert!(
+        candidate
+            .apply_self_outcome(SelfAuthoritySubmitOutcome::DirectConversationFounding(
+                reordered
+            ))
+            .is_err()
+    );
+    assert_eq!(candidate.state, garth::SubmissionState::Queued);
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let authority = garth::AuthorityClient::new(ScriptedAuthority {
+        unit_outcome: Some(SelfAuthoritySubmitOutcome::DirectConversationFounding(
+            outcome.clone(),
+        )),
+        expected_unit: Some(queued.request.clone()),
+        outcome: arkret_wire::AuthoritySubmitOutcome::Rejected {
+            status: arkret_wire::AuthorityRejectionStatus::Rejected,
+            reason_code: "must_not_submit_single_events".to_owned(),
+        },
+        submits: calls.clone(),
+    });
+    let engine = OutboundEngine::new(garth::MemoryOutboundQueueStore::new(), InksonHostClock);
+    engine
+        .enqueue(restored.items()[0].submission.clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        engine
+            .submit_next(
+                &authority,
+                &arkret_sdk::http_client::ClientRequestOptions::new()
+                    .idempotency_key("new-ui-write"),
+            )
+            .await
+            .unwrap(),
+        OutboundEngineOutcome::Committed { .. }
+    ));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let accepted: garth::SendQueueSnapshot =
+        serde_json::from_value(serde_json::to_value(engine.snapshot().await.unwrap()).unwrap())
+            .unwrap();
+    assert!(matches!(&accepted.items[0].submission.state,
+        garth::SubmissionState::UnitCommitted { outcome: stored }
+            if **stored == SelfAuthoritySubmitOutcome::DirectConversationFounding(outcome.clone())));
+    assert!(matches!(
+        engine
+            .submit_next(&authority, &Default::default())
+            .await
+            .unwrap(),
+        OutboundEngineOutcome::Idle
+    ));
+    let mut duplicate = outcome;
+    duplicate.status = AggregateAcceptanceStatus::Duplicate;
+    candidate
+        .apply_self_outcome(SelfAuthoritySubmitOutcome::DirectConversationFounding(
+            duplicate,
+        ))
+        .unwrap();
+    assert_eq!(candidate.request, queued.request);
 }

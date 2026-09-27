@@ -1313,33 +1313,46 @@ impl EventSubmitter {
 
     /// Submit the founding unit of a Direct Conversation.
     ///
-    /// A Direct Conversation Realm is founded exactly like any other Realm:
-    /// its members are ordinary Events committed in order by the governance
-    /// Station named in the genesis payload.
+    /// Freeze all four signed Events in one durable atomic submission. Its
+    /// accepted result contains every original Commit in the submitted order.
     pub(crate) async fn submit_direct_conversation_founding_durable(
         &self,
         events: Vec<arkret_sdk::AuthoredEvent>,
-    ) -> anyhow::Result<arkret_sdk::RealmId> {
-        let realm_id = events
-            .first()
-            .ok_or_else(|| anyhow::anyhow!("Direct Conversation founding unit is empty"))?
-            .realm_id
-            .clone();
+    ) -> anyhow::Result<Vec<SubmitEventResult>> {
         let _single_writer = outbound_submit_lock().lock().await;
-        for event in &events {
-            let submission = event_submission(event)?;
-            let item = self
-                .enqueue_and_drive(QueuedWrite {
-                    lane: OutboundLane::Standard,
-                    submission,
-                    local_operation_id: event.event_id().to_string(),
-                    post_accept: PostAccept::None,
-                    retry_scope: InteractiveRetryScope::Ordinary,
-                })
-                .await?;
+        let idempotency_key = arkret_wire::UuidV7::new(arkret_sdk::identifiers::uuid_v7_at(
+            crate::clock::now_unix_ms(),
+        ))?;
+        let local_operation_id = format!("ak:operation:{}", idempotency_key.as_uuid());
+        let unit = arkret_models_collaboration::authority_commit::DirectConversationFoundingUnitSubmission {
+            unit_kind: arkret_models_collaboration::authority_commit::DirectConversationFoundingUnitKind::DirectConversationFounding,
+            idempotency_key,
+            events: self.prepare_initial_submissions(&events).await?.try_into()
+                .map_err(|_| anyhow::anyhow!("Direct Conversation founding requires exactly four Events"))?,
+        };
+        let item = self
+            .enqueue_and_drive(QueuedWrite {
+                lane: OutboundLane::Standard,
+                submission: QueuedSubmission::direct_conversation_founding(unit)?,
+                local_operation_id,
+                post_accept: PostAccept::None,
+                retry_scope: InteractiveRetryScope::RealmBootstrap,
+            })
+            .await?;
+        let garth::SubmissionState::UnitCommitted { outcome } = &item.submission.state else {
             settled_outbound_result(&item)?;
-        }
-        Ok(realm_id)
+            anyhow::bail!("Direct Conversation founding completed without its aggregate outcome");
+        };
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome::DirectConversationFounding(outcome) = outcome.as_ref() else {
+            anyhow::bail!("Direct Conversation founding returned a different aggregate unit");
+        };
+        Ok(events
+            .iter()
+            .zip(&outcome.commits)
+            .map(|(event, commit)| {
+                SubmitEventResult::committed(event.event_id().to_string(), commit.clone())
+            })
+            .collect())
     }
 
     /// Freeze and durably persist a fully signed scheduled message before any
@@ -1466,6 +1479,17 @@ impl EventSubmitter {
                 item.event_id().clone(),
                 match item.request() {
                     arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) => {
+                        let mut decision = GenerationFenceDecision::Current;
+                        for submission in &unit.events {
+                            let candidate = queued_event_generation_decision(&submission.event)?;
+                            if candidate != GenerationFenceDecision::Current {
+                                decision = candidate;
+                                break;
+                            }
+                        }
+                        decision
+                    }
+                    arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::DirectConversationFounding(unit) => {
                         let mut decision = GenerationFenceDecision::Current;
                         for submission in &unit.events {
                             let candidate = queued_event_generation_decision(&submission.event)?;

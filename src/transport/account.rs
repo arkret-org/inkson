@@ -618,44 +618,9 @@ pub async fn direct_conversation_found(
     ) {
         anyhow::bail!("Direct Conversation resolve state does not permit founding submission");
     }
-    let authority = garth::AuthorityClient::new(submitter.http().clone());
-    let mut results = Vec::with_capacity(authored.len());
-    for event in authored {
-        let event = event.into_event();
-        let mut queued = garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
-            arkret_wire::EventAdmissionSubmission {
-                event,
-                approval_signatures: None,
-            },
-        ))
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        authority
-            .submit(
-                &mut queued,
-                &arkret_sdk::http_client::ClientRequestOptions::new(),
-            )
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let event_id = queued.event_id.to_string();
-        let result = match queued.state {
-            garth::SubmissionState::Committed { commit, .. } => {
-                crate::models::SubmitEventResult::committed(event_id, *commit)
-            }
-            garth::SubmissionState::Rejected { reason_code, .. } => {
-                anyhow::bail!("Direct Conversation founding Event rejected: {reason_code}");
-            }
-            garth::SubmissionState::UnitCommitted { .. } => {
-                anyhow::bail!("ordinary founding Event returned an aggregate outcome")
-            }
-            garth::SubmissionState::Queued => {
-                anyhow::bail!(
-                    "Direct Conversation founding Event was not answered by the authority"
-                )
-            }
-        };
-        results.push(result);
-    }
-    Ok(results)
+    submitter
+        .submit_direct_conversation_founding_durable(authored)
+        .await
 }
 
 /// Author, sign and submit the resolver-authorized founding Events.
