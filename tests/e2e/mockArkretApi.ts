@@ -113,6 +113,8 @@ type MockArkretApiOptions = {
   preseedRecoveryMaterial?: boolean;
   seedDefaultActiveAgent?: boolean;
   emptyBoard?: boolean;
+  invitePreview?: "disclosed" | "restricted" | "retry_once";
+  invitePreviewDelayMs?: number;
 };
 
 type MockAccountDevice = {
@@ -194,6 +196,42 @@ const currentPrincipalServiceResolution = inksonWire<Record<string, any>>(
 );
 export const CURRENT_STATION_ID = String(currentPrincipalServiceResolution.service_id);
 export const CURRENT_STATION_DID = String(currentPrincipalServiceResolution.normalized_did_document.did);
+export const DEMO_INVITE_ID =
+  "ak:invite:AZYDg8DDhw3K_txXc2FaKw9baWMbenl1vvUcRFfpjp3K";
+const INVITED_REALM_FIXTURE: RealmGenesisFixture = {
+  realm_id: "ak:realm:AYfeJXNNbqa_WMO9V5tXqvwbilAqITynwrKacWBybIjb",
+  accepted_events: [
+    {
+      actor_id: {
+        account_id: {
+          principal_id:
+            "ak:did_core:webvh:QmbxBB6f9ppAjv31potzXarSGiCrahRKXPgX3qX5TVco2y",
+          station_id:
+            "ak:did_core:webvh:QmbxBB6f9ppAjv31potzXarSGiCrahRKXPgX3qX5TVco2y",
+        },
+        kind: "account",
+      },
+      created_at: "2026-09-19T00:00:00.000Z",
+      event_id: "ak:event:AYfeJXNNbqa_WMO9V5tXqvwbilAqITynwrKacWBybIjb",
+      kind: "ak.realm.create",
+      payload: {
+        object: {
+          genesis_salt: "CgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo",
+          governance_station_id:
+            "ak:did_core:webvh:QmbxBB6f9ppAjv31potzXarSGiCrahRKXPgX3qX5TVco2y",
+          initial_discoverability: "listed",
+          initial_history_access: "all_history_for_current_members",
+          initial_join_rule: "invite",
+          purpose: "collaboration",
+          schema: "ak.schema.realm_genesis.v1",
+          security_class: "standard",
+          trust_domain: "ak:trust_domain:server.local",
+        },
+      },
+      scope_ref: { kind: "realm_genesis" },
+    },
+  ],
+};
 
 function canonicalJson(value: unknown): string {
   assertJsonTransportable(value, "$");
@@ -610,6 +648,8 @@ export async function mockArkretApi(
     encryption_profile: string;
   }> = [];
   const projectionEvents: Array<Record<string, unknown>> = [];
+  let inviteAuthorityEvents: Array<Record<string, unknown>> = [];
+  let invitedRealmId = DEMO_REALM;
   if (includeDemoRealms) {
     const fixture = inksonWire<RealmGenesisFixture>(
       "demo-realm-genesis",
@@ -630,6 +670,26 @@ export async function mockArkretApi(
         jws: "e30..c2ln",
       },
     })));
+  }
+  if (options.invitePreview !== undefined) {
+    const fixture = INVITED_REALM_FIXTURE;
+    const genesisObject = fixture.accepted_events[0]?.payload as
+      | { object?: { governance_station_id?: string } }
+      | undefined;
+    if (genesisObject?.object?.governance_station_id !== CURRENT_STATION_ID) {
+      throw new Error("invite Realm fixture governance Station drifted");
+    }
+    invitedRealmId = fixture.realm_id;
+    inviteAuthorityEvents = fixture.accepted_events.map((event) => ({
+      ...event,
+      producer_proof: {
+        kind: "detached_jws",
+        verification_method: `${CURRENT_STATION_DID}#mock-producer`,
+        event_digest: canonicalSha256(event),
+        created_at: event.created_at,
+        jws: "e30..c2ln",
+      },
+    }));
   }
   let serverDidDocument: Record<string, unknown> =
     currentPrincipalServiceResolution.normalized_did_document;
@@ -929,6 +989,77 @@ export async function mockArkretApi(
       event,
     };
   };
+  const inviteDeliveryContent = options.invitePreview === undefined
+    ? null
+    : {
+        schema: "ak.schema.invite_delivery.v1",
+        updated_at: "2026-09-27T00:00:00.000Z",
+        delivery_entries: [
+          {
+            invite_id: DEMO_INVITE_ID,
+            realm_id: invitedRealmId,
+            inviter_account_id: {
+              principal_id: "ak:did_core:web:bob.example",
+              station_id: CURRENT_STATION_ID,
+            },
+            authority_locator_hints: [
+              {
+                service_kind: "station",
+                service_id: CURRENT_STATION_ID,
+                source: "invite",
+              },
+            ],
+            received_at: "2026-09-27T00:00:00.000Z",
+            expires_at: "2099-09-27T00:00:00.000Z",
+          },
+        ],
+      };
+  const inviteAuthorityBundle = () => {
+    const genesisEvent = inviteAuthorityEvents.find(
+      (event) => event.kind === "ak.realm.create",
+    );
+    if (!genesisEvent) {
+      throw new Error("invite preview fixture has no Realm genesis Event");
+    }
+    const genesis = committedEventView(genesisEvent, 0);
+    const realmStreamHead = {
+      stream_ref: { kind: "realm", realm_id: invitedRealmId },
+      stream_position: 0,
+      commit_id: genesis.commit.commit_id,
+    };
+    return {
+      realm_id: invitedRealmId,
+      genesis_event: genesis.event,
+      genesis_commit: genesis.commit,
+      authority_transitions: [],
+      current_generation: 0,
+      current_service_id: CURRENT_STATION_ID,
+      current_route_record: currentPrincipalServiceResolution,
+      realm_stream_head: realmStreamHead,
+      bundle_issued_at: "2026-09-27T00:00:00.000Z",
+      current_assertion: {
+        realm_id: invitedRealmId,
+        current_generation: 0,
+        current_service_id: CURRENT_STATION_ID,
+        last_handoff_ref: null,
+        realm_stream_head: realmStreamHead,
+        nonce: "AQEBAQEBAQEBAQEBAQEBAQ",
+        expires_at: "2099-09-27T00:00:00.000Z",
+        signature: {
+          context: "ak.realm_authority_current_assertion_signature.v1",
+          signature_algorithm: "Ed25519",
+          verification_method: `${CURRENT_STATION_DID}#realm-authority`,
+          signed_digest: canonicalSha256({
+            realm_id: invitedRealmId,
+            current_generation: 0,
+          }),
+          created_at: "2026-09-27T00:00:00.000Z",
+          sig: "A".repeat(86),
+        },
+      },
+    };
+  };
+  let invitePreviewAttempts = 0;
   const accountDeviceSummaries = () =>
     Array.from(accountDevices.values()).map((device) => {
       const summary: Record<string, unknown> = {
@@ -2201,6 +2332,55 @@ export async function mockArkretApi(
         status: 200,
         contentType: "application/x-ndjson",
         body: `${canonicalJson(frame)}\n${canonicalJson({ kind: "catchup_complete", cursor: "ak:cursor:e2e-2" })}\n`,
+      });
+    }
+
+    if (
+      url.pathname === "/_arkret/self/realm-joins/preview" &&
+      route.request().method() === "POST" &&
+      options.invitePreview !== undefined
+    ) {
+      const body = await route.request().postDataJSON();
+      expect(body.target.realm_id).toBe(invitedRealmId);
+      expect(body.target.invite_id).toBe(DEMO_INVITE_ID);
+      invitePreviewAttempts += 1;
+      if ((options.invitePreviewDelayMs ?? 0) > 0) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, options.invitePreviewDelayMs),
+        );
+      }
+      if (options.invitePreview === "restricted") {
+        return route.fulfill({ status: 404 });
+      }
+      if (options.invitePreview === "retry_once" && invitePreviewAttempts === 1) {
+        return route.fulfill({ status: 503 });
+      }
+      return json(route, {
+        request_id: body.request_id,
+        authority_bundle: inviteAuthorityBundle(),
+        preview: {
+          realm_id: invitedRealmId,
+          join_rule: "invite",
+          history_access: "since_join",
+          governance_generation: 0,
+          display_name: "Preview-only Realm",
+        },
+      });
+    }
+
+    if (
+      url.pathname === "/_arkret/self/realm-joins/prepare" &&
+      route.request().method() === "POST" &&
+      options.invitePreview !== undefined
+    ) {
+      const body = await route.request().postDataJSON();
+      expect(body.target.realm_id).toBe(invitedRealmId);
+      expect(body.target.invite_id).toBe(DEMO_INVITE_ID);
+      const authorityBundle = inviteAuthorityBundle();
+      return json(route, {
+        request_id: body.request_id,
+        authority_bundle: authorityBundle,
+        realm_stream_head: authorityBundle.realm_stream_head,
       });
     }
 
@@ -3605,10 +3785,14 @@ export async function mockArkretApi(
       /^\/_arkret\/self\/account_data\/([^/]+)$/,
     );
     if (accountDataMatch && route.request().method() === "GET") {
+      const accountDataKey = decodeURIComponent(accountDataMatch[1]);
       return json(route, {
-        account_data_key: decodeURIComponent(accountDataMatch[1]),
+        account_data_key: accountDataKey,
         revision: 0,
-        content: null,
+        content:
+          accountDataKey === "ak.account.invite_delivery"
+            ? inviteDeliveryContent
+            : null,
         updated_at: "2026-04-28T12:00:00.000Z",
       });
     }

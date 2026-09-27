@@ -9,6 +9,107 @@ import {
 
 registerStrandsBeforeEach();
 
+async function openInviteNotification(page: import("@playwright/test").Page) {
+  await dismissBlockingRecoveryModal(page);
+  await page.getByTestId("topbar-notifications-button").click();
+  await expect(page.getByTestId("notifications-drawer")).toBeVisible();
+  const item = page
+    .getByTestId("notification-item")
+    .filter({ has: page.getByTestId("invite-preview") });
+  await expect(item).toBeVisible();
+  return item;
+}
+
+test("invite preview disclosed stays loading then visible and only Accept joins", async ({
+  page,
+}) => {
+  const writes: Array<{ path: string; body: string }> = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (
+      path === "/_arkret/self/realm-joins/prepare" ||
+      path === "/_arkret/self/events"
+    ) {
+      writes.push({ path, body: request.postData() ?? "" });
+    }
+  });
+
+  const item = await openInviteNotification(page);
+  await expect(item.getByTestId("invite-preview-loading")).toBeVisible();
+  await expect(item.getByTestId("invite-preview-disclosed")).toBeVisible();
+  await expect(item.getByTestId("invite-preview-name")).toHaveText(
+    "Preview-only Realm",
+  );
+  await expect(
+    page.getByTestId("realm-tree-node-button").filter({
+      hasText: "Preview-only Realm",
+    }),
+  ).toHaveCount(0);
+  expect(writes).toEqual([]);
+
+  await item.getByTestId("notification-action").click();
+  await expect
+    .poll(() =>
+      writes.some((request) =>
+        request.path.endsWith("/realm-joins/prepare"),
+      ),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      writes.some(
+        (request) =>
+          request.path.endsWith("/events") &&
+          request.body.includes("ak.invite.accept"),
+      ),
+    )
+    .toBe(true);
+  await expect(page.getByTestId("notifications-status")).toContainText(
+    "Joined Realm",
+  );
+});
+
+test("invite preview restricted remains preview-only", async ({ page }) => {
+  let prepareRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith("/realm-joins/prepare")) {
+      prepareRequests += 1;
+    }
+  });
+
+  const item = await openInviteNotification(page);
+  await expect(item.getByTestId("invite-preview-restricted")).toBeVisible();
+  await expect(item.getByTestId("notification-action")).toBeVisible();
+  expect(prepareRequests).toBe(0);
+  await expect(
+    page.getByTestId("realm-tree-node-button").filter({
+      hasText: "Preview-only Realm",
+    }),
+  ).toHaveCount(0);
+});
+
+test("invite preview retries a transient failure without joining", async ({
+  page,
+}) => {
+  let prepareRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith("/realm-joins/prepare")) {
+      prepareRequests += 1;
+    }
+  });
+
+  const item = await openInviteNotification(page);
+  await expect(item.getByTestId("invite-preview-unavailable")).toBeVisible();
+  await item.getByTestId("invite-preview-retry").click();
+  await expect(item.getByTestId("invite-preview-disclosed")).toBeVisible();
+  expect(prepareRequests).toBe(0);
+  await expect(
+    page.getByTestId("realm-tree-node-button").filter({
+      hasText: "Preview-only Realm",
+    }),
+  ).toHaveCount(0);
+});
+
 test("notifications are derived from index projections and respect per-realm mute rules", async ({
   page,
 }) => {

@@ -480,6 +480,16 @@ export function registerStrandsBeforeEach() {
       : DEFAULT_DEVICE_ID;
     const exercisesRecoveryKeySetup =
       testInfo.title.startsWith("new Recovery Key");
+    const invitePreviewTest = testInfo.title.startsWith("invite preview");
+    const invitePreview = testInfo.title.startsWith(
+      "invite preview restricted",
+    )
+      ? "restricted"
+      : testInfo.title.startsWith("invite preview retries")
+        ? "retry_once"
+        : invitePreviewTest
+          ? "disclosed"
+          : undefined;
     await mockArkretApi(page, {
       currentDeviceId: initialDeviceId,
       currentDeviceSigningSeedB64url: DEFAULT_EVENT_SIGNING_SEED_B64URL,
@@ -521,6 +531,12 @@ export function registerStrandsBeforeEach() {
       seedDefaultActiveAgent: !testInfo.title.startsWith(
         "account settings split account/server info",
       ),
+      invitePreview,
+      invitePreviewDelayMs: testInfo.title.startsWith(
+        "invite preview disclosed",
+      )
+        ? 750
+        : undefined,
     });
     if (testInfo.title.startsWith("login page")) {
       return;
