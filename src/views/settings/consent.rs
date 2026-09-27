@@ -66,14 +66,6 @@ fn consent_peer_label(peer: &arkret_sdk::ConsentPeer) -> String {
                 format!("service {}", service_id.as_str())
             }
         },
-        arkret_sdk::ConsentPeer::PairwisePrincipal {
-            realm_id,
-            principal_id,
-        } => format!(
-            "pairwise {} in realm {}",
-            principal_id.as_str(),
-            realm_id.as_str()
-        ),
     }
 }
 

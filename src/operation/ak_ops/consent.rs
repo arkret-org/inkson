@@ -1,9 +1,5 @@
-//! Consent Control Move builders.
-//!
-//! `ak.self.consent.command.{grant,revoke}` take the holder-signed Control Move,
-//! so both are authored here. `consent_id` is producer-allocated (it is the cell
-//! subject, not something derived from an Event), and the or_set add dot falls out
-//! of the Event's own `event_id`, so neither is the server's to pick.
+//! Holder-signed Consent Event builders. Stable consent_id names one PCR
+//! current record; revoke carries its exact RealmCommit revision.
 
 use super::TypedOperationBuilder;
 
@@ -18,13 +14,6 @@ use super::TypedOperationBuilder;
 /// principal together with its Station; there is no fallback to this client's
 /// authoring Station, which is not the counterparty's Station and would name a
 /// different account whenever they differ (account-lifecycle.md §156/§158).
-///
-/// There is deliberately no string-shaped path into the
-/// `{kind:"pairwise_principal"}` branch. That branch names a Realm-local
-/// ephemeral pairwise actor, which only exists as a `(realm_id, principal_id)`
-/// pair inside a minimal-metadata Realm; callers obtain one from a real
-/// pairwise identity or read it back from an existing cell, never by guessing
-/// a kind from the shape of a DID.
 pub fn consent_actor_peer(
     principal_id: &str,
     station_id: Option<&str>,
@@ -40,11 +29,9 @@ pub fn consent_actor_peer(
 /// Build a canonical `ak.consent.grant` Control Move in the holder's principal
 /// control Realm.
 ///
-/// `consent_id` is the cell subject: the same value must be reused by every later
-/// grant or revoke on that cell, so callers pass one they already hold rather than
-/// letting this mint a fresh one per call. `peer` is the exact closed
-/// `consent_peer` this cell freezes; both kinds go through unchanged, because
-/// the two are separate identities and the builder is not allowed to pick one.
+/// A grant creates a new stable consent_id once. Revoke targets that ID and
+/// its exact revision; a revoked ID cannot be granted again. The complete
+/// peer ActorId is frozen by the grant.
 pub fn consent_grant(
     holder_pcr_realm_id: &str,
     holder: &str,
