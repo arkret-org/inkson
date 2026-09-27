@@ -430,6 +430,30 @@ impl LocalStateStore {
             .ok()
     }
 
+    /// Retain locally authored application bytes by their exact ciphertext digest.
+    /// MLS cannot decrypt a normal echo from its own leaf after the send ratchet
+    /// advances. The existing secure cache supplies rendering without ratchet replay.
+    pub(crate) fn retain_authored_mls_plaintext(
+        &mut self,
+        realm_id: &str,
+        payload_digest: &arkret_sdk::Hash,
+        plaintext: &[u8],
+    ) -> anyhow::Result<()> {
+        use base64::Engine as _;
+        self.absorb_mls_receive_overlay();
+        self.cached
+            .mls_decrypted_plaintext
+            .entry(realm_id.to_owned())
+            .or_default()
+            .insert(
+                payload_digest.to_string(),
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(plaintext),
+            );
+        self.flush()?;
+        self.persist_e2ee_plaintext_cache_if_ready();
+        Ok(())
+    }
+
     /// Persist a successful decrypt: the advanced (post-decrypt) snapshot
     /// envelope AND the decrypted plaintext (cached under `payload_digest`).
     /// Both are recorded through the shared overlay and immediately flushed

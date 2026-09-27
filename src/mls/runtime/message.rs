@@ -753,6 +753,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         return Err(MlsRuntimeError::EncryptionTransitionPending);
     }
     let mut encrypted_values = Vec::with_capacity(plaintext_values.len());
+    let mut authored_digests = Vec::with_capacity(plaintext_values.len());
     for plaintext in plaintext_values {
         let sender_domain = group
             .local_content_sender_domain()
@@ -773,6 +774,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         let encrypted = group
             .encrypt_payload(header, plaintext)
             .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
+        authored_digests.push(encrypted.payload_digest.clone());
         encrypted_values.push(
             serde_json::to_value(&encrypted)
                 .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?,
@@ -792,6 +794,11 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         sent,
     )?;
     let _ = new_envelope;
+    for (digest, plaintext) in authored_digests.iter().zip(plaintext_values) {
+        state_store
+            .retain_authored_mls_plaintext(realm_id, digest, plaintext)
+            .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
+    }
     Ok((member_ids, encrypted_values))
 }
 
@@ -826,7 +833,7 @@ fn persist_send_ratchet(
     .with_app_messages_observed(previous.app_messages_observed.saturating_add(sent));
     state_store
         .save_mls_checkpoint_for_scope(effective_scope, new_envelope.clone())
-        .map_err(MlsRuntimeError::Commit)?;
+        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
     Ok(new_envelope)
 }
 
@@ -969,6 +976,14 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         &snapshot,
         sent,
     )?;
+    state_store
+        .retain_authored_mls_plaintext(realm_id, &content.payload_digest, plaintext)
+        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
+    if let (Some(metadata), Some(plaintext)) = (&metadata, metadata_plaintext) {
+        state_store
+            .retain_authored_mls_plaintext(realm_id, &metadata.payload_digest, plaintext)
+            .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
+    }
     Ok(DeviceSnapshotEncryption {
         member_ids,
         content,

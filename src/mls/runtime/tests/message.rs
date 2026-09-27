@@ -249,6 +249,29 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
         None,
     )
     .unwrap();
+    for (payload, plaintext) in [
+        (
+            &encrypted.content,
+            br#"{"kind":"ak.content.text","body":"routed"}"#.as_slice(),
+        ),
+        (
+            encrypted.metadata.as_ref().unwrap(),
+            br#"{"sidecar_exchange_binding":{}}"#.as_slice(),
+        ),
+    ] {
+        let echoed = decrypt_application_payload_for_effective_scope_internal(
+            &state,
+            &secure,
+            realm,
+            &fixture::authority(actor),
+            &fixture::device_id(device),
+            payload,
+            None,
+            None,
+        )
+        .expect("authored content remains readable without decrypting the own-leaf echo");
+        assert_eq!(echoed, plaintext);
+    }
     let metadata_payload = encrypted.metadata.expect("metadata ciphertext");
     assert_eq!(
         encrypted.content.content_type,
@@ -985,12 +1008,9 @@ fn out_of_order_skipped_keys_survive_restart() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
-    // OpenMLS forbids an author from decrypting their own application
-    // message; the receive-chain path must surface that as a soft `None`
-    // without polluting the plaintext cache or regressing the snapshot.
-    // (The author's own visibility keeps flowing through the existing
-    // send-time plaintext sidecar — `mls_private_plaintext`.)
+fn author_own_ciphertext_uses_secure_cache_without_state_regression() {
+    // Own-leaf echoes are not decryptable. Retained send bytes can render
+    // without replaying the ratchet; without that cache the echo stays pending.
     let mut state = temp_state_store("own-ciphertext-soft-fail");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -1032,12 +1052,35 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
         None,
         None,
     );
-    assert!(decrypted.is_none(), "author must not decrypt own message");
-    // No cache entry and no snapshot churn from the failed attempt.
+    assert_eq!(decrypted.as_deref(), Some(br#""mine""#.as_slice()));
+    let mut uncached = temp_state_store("own-ciphertext-no-cache");
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+    };
+    uncached
+        .save_mls_checkpoint_for_scope(&scope, after_send.clone())
+        .unwrap();
     assert!(
-        state
+        decrypt_application_payload_for_effective_scope_internal(
+            &uncached,
+            &secure,
+            realm,
+            &fixture::authority(actor),
+            &fixture::device_id(device),
+            &payload,
+            None,
+            None,
+        )
+        .is_none()
+    );
+    assert!(
+        uncached
             .mls_decrypted_plaintext_for(realm, payload.payload_digest.as_str())
             .is_none()
+    );
+    assert_eq!(
+        uncached.mls_checkpoint_for(realm).unwrap().ciphertext_hex,
+        after_send.ciphertext_hex
     );
     assert_eq!(
         state.mls_checkpoint_for(realm).unwrap().ciphertext_hex,
