@@ -108,32 +108,24 @@ fn backup_created_at(body: &Value) -> &str {
         .unwrap_or_default()
 }
 
-fn backup_item_kind(body: &Value) -> Option<&str> {
-    body.get("contents")
-        .and_then(Value::as_array)
-        .and_then(|contents| contents.first())
-        .and_then(|item| item.get("item_kind"))
-        .and_then(Value::as_str)
-}
-
-fn backup_recipient_method(body: &Value) -> Option<&str> {
-    body.pointer("/encryption/recipient_method")
-        .and_then(Value::as_str)
-}
-
-fn carries_item_kind(body: &Value, item_kind: arkret_sdk::SecretStorageItemKind) -> bool {
-    let expected = serde_json::to_value(item_kind)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned));
-    expected
-        .as_deref()
-        .is_some_and(|expected| backup_item_kind(body) == Some(expected))
+fn typed_backup(body: &Value) -> Option<arkret_sdk::KeyBackup> {
+    // LIST returns the deliberately closed `KeyBackupSummary`, which has no
+    // plaintext content index.  Classification is permitted only after the
+    // caller has fetched the complete signed envelope; parsing the complete
+    // type also prevents a summary (or a hand-built lookalike) from smuggling
+    // an untrusted `contents` member into selection.
+    serde_json::from_value::<arkret_sdk::KeyBackup>(body.clone()).ok()
 }
 
 /// True when `body` is an MLS account-secret envelope under any recipient
 /// method.
 pub(crate) fn is_mls_account_secret_backup(body: &Value) -> bool {
-    carries_item_kind(body, arkret_sdk::SecretStorageItemKind::MlsAccountSecret)
+    typed_backup(body).is_some_and(|backup| {
+        backup
+            .contents
+            .iter()
+            .any(|content| content.item_kind == arkret_sdk::SecretStorageItemKind::MlsAccountSecret)
+    })
 }
 
 /// True when `body` is the passphrase-recoverable account-secret envelope.
@@ -143,19 +135,33 @@ pub(crate) fn is_mls_account_secret_backup(body: &Value) -> bool {
 /// MUST pick only this variant, or it would try to passphrase-decrypt an HPKE
 /// envelope.
 pub(crate) fn is_passphrase_account_secret_backup(body: &Value) -> bool {
-    is_mls_account_secret_backup(body) && backup_recipient_method(body) == Some("passphrase_kdf")
+    typed_backup(body).is_some_and(|backup| {
+        backup.encryption.recipient_method == arkret_sdk::KeyBackupRecipientMethod::PassphraseKdf
+            && backup.contents.iter().any(|content| {
+                content.item_kind == arkret_sdk::SecretStorageItemKind::MlsAccountSecret
+            })
+    })
 }
 
 /// True when `body` is the HPKE `recovery_public_key` account-secret envelope,
 /// the passphrase-free fresh-device recovery path.
 pub(crate) fn is_recovery_public_key_account_secret_backup(body: &Value) -> bool {
-    is_mls_account_secret_backup(body)
-        && backup_recipient_method(body) == Some("recovery_public_key")
+    typed_backup(body).is_some_and(|backup| {
+        backup.encryption.recipient_method
+            == arkret_sdk::KeyBackupRecipientMethod::RecoveryPublicKey
+            && backup.contents.iter().any(|content| {
+                content.item_kind == arkret_sdk::SecretStorageItemKind::MlsAccountSecret
+            })
+    })
 }
 
 /// True when `body` is the encrypted local-plaintext sidecar envelope.
 pub(crate) fn is_mls_private_plaintext_backup(body: &Value) -> bool {
-    carries_item_kind(body, arkret_sdk::SecretStorageItemKind::MlsPrivatePlaintext)
+    typed_backup(body).is_some_and(|backup| {
+        backup.contents.iter().any(|content| {
+            content.item_kind == arkret_sdk::SecretStorageItemKind::MlsPrivatePlaintext
+        })
+    })
 }
 
 fn in_active_series<'a>(
@@ -229,12 +235,33 @@ mod tests {
     fn body(seq: u64, series: &str, item_kind: &str, recipient_method: &str) -> Value {
         json!({
             "backup_id": format!("ak:backup:0196419b-0000-7000-8000-00000000003{seq}"),
+            "actor_id": {
+                "kind": "account",
+                "account_id": {
+                    "principal_id": "ak:did_core:web:alice.example",
+                    "station_id": "ak:did_core:web:station.example"
+                }
+            },
             "backup_kind": "secret_storage",
+            "backup_version": "kb_test_v1",
             "series_id": series,
             "series_seq": seq,
             "created_at": format!("2026-05-0{}T00:00:00.000Z", seq + 1),
-            "encryption": {"recipient_method": recipient_method},
+            "encryption": {
+                "recipient_method": recipient_method,
+                "aead": {"name": "chacha20_poly1305", "nonce": "AAAAAAAAAAAAAAAA"}
+            },
+            "domain_separation": {"subdomain": "key_backup"},
             "contents": [{"item_kind": item_kind, "secret_id": "test_secret"}],
+            "ciphertext": "AA",
+            "ciphertext_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "auth_data": {
+                "device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
+                "verification_method": "did:web:alice.example#device",
+                "signature_algorithm": "Ed25519",
+                "signature": "AA",
+                "device_authorize_event_id": "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD"
+            }
         })
     }
 
@@ -311,6 +338,21 @@ mod tests {
             json!(3)
         );
         assert_eq!(all_secret_storage_backups(&payload).len(), 3);
+    }
+
+    #[test]
+    fn a_summary_cannot_select_itself_by_smuggling_contents() {
+        let summary = json!({
+            "backup_id": "ak:backup:0196419b-0000-7000-8000-00000000003f",
+            "backup_kind": "secret_storage",
+            "series_id": "ak:backup_series:0196419b-0000-7000-8000-00000000000a",
+            "series_seq": 1,
+            "created_at": "2026-09-27T00:00:00.000Z",
+            "contents": [{ "item_kind": "mls_account_secret" }],
+            "encryption": { "recipient_method": "recovery_public_key" }
+        });
+        assert!(!is_mls_account_secret_backup(&summary));
+        assert!(!is_recovery_public_key_account_secret_backup(&summary));
     }
 
     #[test]
