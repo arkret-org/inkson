@@ -278,3 +278,52 @@ pub async fn send_native_automatic_read_receipt(
     )
     .await
 }
+
+/// Feed a genuinely admitted Signal through the production product router.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn observe_native_call_projection(
+    host: &crate::sync_engine::NativeAccountHost,
+    outcome: garth::signal::SignalReceiveOutcome,
+) -> anyhow::Result<usize> {
+    observe_call_projection(host.state_store_handle(), outcome).await
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn observe_call_projection(
+    state_store: crate::runtime::input::StateStoreHandle,
+    outcome: garth::signal::SignalReceiveOutcome,
+) -> anyhow::Result<usize> {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use crate::runtime::projection::{AdmittedSignal, SignalProductRouter, SignalProductSink};
+    struct Calls(Cell<usize>);
+    impl SignalProductSink for Calls {
+        fn call_signal<'a>(
+            &'a self,
+            _: &'a AdmittedSignal,
+            _: serde_json::Value,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>> {
+            self.0.set(self.0.get() + 1);
+            Box::pin(async {})
+        }
+        fn message_stream<'a>(
+            &'a self,
+            _: &'a AdmittedSignal,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>> {
+            Box::pin(async {})
+        }
+        fn read_receipt(&self, _: &AdmittedSignal, _: &arkret_sdk::ReadReceiptPolicy) {}
+        fn advance_clock(&self, _: chrono::DateTime<chrono::Utc>) {}
+    }
+    let calls = Rc::new(Calls(Cell::new(0)));
+    let products = SignalProductRouter::default();
+    products.install(calls.clone());
+    let sink = crate::signal_receive_engine::InksonSignalSink {
+        state_store,
+        products,
+        live: std::sync::Mutex::new(Default::default()),
+    };
+    sink.handle(outcome).await?;
+    Ok(calls.0.get())
+}

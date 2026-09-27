@@ -217,6 +217,17 @@ pub fn message_actor_is_blocked(
     blocked.contains(&actor.to_string())
 }
 
+/// Reject a new call invitation only at the holder's private product surface.
+pub fn blocks_call_invite(list: &[AccountBlocklistEntry], actor: &arkret_sdk::ActorId) -> bool {
+    let now = chrono::Utc::now();
+    list.iter().any(|entry| {
+        entry.mode == AccountBlocklistMode::Block
+            && entry.applies_to.contains(&AccountBlocklistSurface::Calls)
+            && !entry.expires_at.is_some_and(|expiry| expiry <= now)
+            && matches!(&entry.target, AccountBlocklistTarget::Actor(target) if target.actor_id == *actor)
+    })
+}
+
 pub fn is_blocked(list: &[AccountBlocklistEntry], actor_id: &str) -> bool {
     actor_entries_filter_surface(list, actor_id, AccountBlocklistSurface::Messages, false)
 }

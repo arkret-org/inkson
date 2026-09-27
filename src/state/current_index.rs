@@ -102,6 +102,10 @@ fn target_of(selector: &CurrentSelector) -> CurrentTarget {
         CurrentSelector::MessageReactions { event_id } => CurrentTarget::Event {
             event_id: event_id.clone(),
         },
+        CurrentSelector::CallState { call_id } => CurrentTarget::Event {
+            event_id: arkret_sdk::EventId::from_token_bytes(call_id.token_bytes())
+                .expect("validated CallId carries an Event identity token"),
+        },
         CurrentSelector::MlsGroup { scope_ref } => CurrentTarget::MlsGroup {
             scope_ref: scope_ref.clone(),
         },
@@ -948,6 +952,50 @@ impl CurrentIndex {
             Some(_) => anyhow::bail!("MLS current selector returned a mismatched result"),
         }
     }
+    /// A Call selector derives from its accepted create Event. Only the installed
+    /// verified current cut may establish its existence and exact scope.
+    pub(crate) async fn read_call_state_ready(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+        call_id: &arkret_sdk::CallId,
+    ) -> anyhow::Result<
+        Option<arkret_models_collaboration::events_payloads::call::CallStateCurrentValue>,
+    > {
+        let realm = scope.realm_id();
+        let expected_stream = arkret_sdk::CommitStreamRef::from_scope(scope, None)?;
+        let _lease = self.lease.lock().await;
+        let generation = self.generation.load(Ordering::Acquire);
+        let progress = self.progress_at(realm.as_str(), generation).await?;
+        anyhow::ensure!(
+            progress_is_complete_cut(&progress, realm),
+            "Call current requires a complete verified cut"
+        );
+        let selector = CurrentSelector::CallState {
+            call_id: call_id.clone(),
+        };
+        match self
+            .ready_selector(realm.as_str(), &selector, generation)
+            .await?
+        {
+            None => Ok(None),
+            Some(TypedCurrentResult::Value {
+                selector: found,
+                source_stream_ref,
+                value,
+                ..
+            }) if found == selector => {
+                anyhow::ensure!(
+                    source_stream_ref == expected_stream,
+                    "Call current belongs to another scope"
+                );
+                let current:arkret_models_collaboration::events_payloads::call::CallStateCurrentValue=serde_json::from_value(value)?;
+                current.validate().map_err(anyhow::Error::msg)?;
+                Ok(Some(current))
+            }
+            Some(_) => anyhow::bail!("Call current selector returned another family"),
+        }
+    }
+
     async fn ready_selector(
         &self,
         realm: &str,

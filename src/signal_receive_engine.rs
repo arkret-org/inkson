@@ -372,10 +372,10 @@ pub fn live_signal_projection_key(signal: &AdmittedSignal) -> garth::Result<Stri
 }
 
 /// Routes admitted plaintext to the three product consumers.
-struct InksonSignalSink {
-    state_store: crate::runtime::input::StateStoreHandle,
-    products: SignalProductRouter,
-    live: Mutex<LiveSignalProjection>,
+pub(crate) struct InksonSignalSink {
+    pub(crate) state_store: crate::runtime::input::StateStoreHandle,
+    pub(crate) products: SignalProductRouter,
+    pub(crate) live: Mutex<LiveSignalProjection>,
 }
 
 impl InksonSignalSink {
@@ -385,7 +385,7 @@ impl InksonSignalSink {
     /// duplication and reordering, so the receiver's sequence high-water and
     /// TTL gate discarding an envelope is the ordinary path. Only an admitted
     /// plaintext reaches a product consumer.
-    async fn handle(&self, outcome: SignalReceiveOutcome) -> garth::Result<()> {
+    pub(crate) async fn handle(&self, outcome: SignalReceiveOutcome) -> garth::Result<()> {
         let SignalReceiveOutcome::Accepted {
             domain,
             plaintext,
@@ -401,13 +401,10 @@ impl InksonSignalSink {
         };
         match signal.kind() {
             arkret_sdk::SignalPlaintextKind::CallSignal => {
-                // The decrypted body verbatim: `CallSignalPlaintext` is a
-                // closed `deny_unknown_fields` shape, so the
-                // envelope-derived fields the presence projection wants
-                // would make every call signal fail to decode.
-                self.products
-                    .call_signal(&signal, decrypted_body_value(&signal)?)
-                    .await;
+                if !self.call_exists_at_verified_cut(&signal).await? {
+                    return Ok(());
+                }
+                self.dispatch_call_product(&signal).await?;
             }
             arkret_sdk::SignalPlaintextKind::MessageStream => {
                 self.products.message_stream(&signal).await;
@@ -436,7 +433,73 @@ impl InksonSignalSink {
 const SIGNAL_PLAINTEXT_KIND_TYPING: &str = "ak.typing";
 const SIGNAL_PLAINTEXT_KIND_READ_RECEIPT: &str = "ak.receipt.read";
 
+fn call_current_attempt_matches(
+    store: &crate::state::LocalStateStore,
+    authority: &arkret_sdk::AccountId,
+    generation: u64,
+) -> bool {
+    store.active_authority().as_ref() == Some(authority)
+        && store.current_generation() == generation
+        && !store.current_reset_required()
+}
+
 impl InksonSignalSink {
+    async fn call_exists_at_verified_cut(&self, signal: &AdmittedSignal) -> garth::Result<bool> {
+        let arkret_sdk::SignalPlaintext::CallSignal(call) = &signal.payload else {
+            return Ok(false);
+        };
+        let (authority, reset, generation, location) = self.state_store.read(|store| {
+            (
+                store.active_authority(),
+                store.current_reset_required(),
+                store.current_generation(),
+                store.current_index_location(),
+            )
+        });
+        let Some(authority) = authority else {
+            return Ok(false);
+        };
+        if reset {
+            return Ok(false);
+        }
+        let index = crate::state::CurrentIndex::open(&authority, generation, location)
+            .await
+            .map_err(|error| {
+                garth::Error::Protocol(format!("Call current is unavailable: {error}"))
+            })?;
+        let current = index
+            .read_call_state_ready(signal.scope_ref(), &call.call_id)
+            .await
+            .map_err(|error| {
+                garth::Error::Protocol(format!("Call current is not ready: {error}"))
+            })?;
+        // A store await cannot carry the previous account's permission across
+        // an account switch, current reset or a newly installed generation.
+        let same_attempt = self
+            .state_store
+            .read(|store| call_current_attempt_matches(store, &authority, generation));
+        Ok(current.is_some() && same_attempt)
+    }
+
+    /// The product boundary runs only after the accepted Call current gate.
+    async fn dispatch_call_product(&self, signal: &AdmittedSignal) -> garth::Result<()> {
+        if matches!(&signal.payload, arkret_sdk::SignalPlaintext::CallSignal(call)
+            if matches!(&call.signal, arkret_sdk::CallSignalData::Invite(_)))
+            && self.state_store.read(|store| {
+                crate::account_data::blocks_call_invite(
+                    &store.client_blocklist(),
+                    signal.actor_id(),
+                )
+            })
+        {
+            return Ok(());
+        }
+        self.products
+            .call_signal(signal, decrypted_body_value(signal)?)
+            .await;
+        Ok(())
+    }
+
     /// Drop presence/typing bodies whose effective TTL has passed.
     ///
     /// A typing indicator lives five seconds and a presence signal thirty, so
@@ -791,6 +854,218 @@ mod tests {
             },
             payload,
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn blocklist_call_current_await_cannot_survive_account_reset_or_generation_change() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store =
+            crate::LocalStateStore::with_path(directory.path().join("call-attempt.json"));
+        store.promote_accepted_context_for_test(
+            &arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+        );
+        let authority = store.active_authority().unwrap();
+        store.set_current_generation(7);
+        assert!(call_current_attempt_matches(&store, &authority, 7));
+        store.set_current_generation(8);
+        assert!(!call_current_attempt_matches(&store, &authority, 7));
+        store.set_current_generation(7);
+        store.set_current_reset_required(true);
+        assert!(!call_current_attempt_matches(&store, &authority, 7));
+        store.set_current_reset_required(false);
+        assert!(call_current_attempt_matches(&store, &authority, 7));
+        store.promote_accepted_context_for_test(
+            &arkret_sdk::Did::new("did:web:bob.example").unwrap(),
+        );
+        store.set_current_generation(7);
+        assert!(!call_current_attempt_matches(&store, &authority, 7));
+    }
+
+    // These are product-layer regression checks. The already-admitted profile
+    // fixture does not claim transport, producer proof or accepted CallCreate.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn blocklist_call_invite_product_tracks_private_revision_and_exact_actor() {
+        use std::sync::Arc;
+        async fn observe_private_product(
+            state_store: crate::runtime::input::StateStoreHandle,
+            outcome: SignalReceiveOutcome,
+        ) -> anyhow::Result<usize> {
+            use std::cell::Cell;
+            use std::rc::Rc;
+            struct Calls(Cell<usize>);
+            impl SignalProductSink for Calls {
+                fn call_signal<'a>(
+                    &'a self,
+                    _: &'a AdmittedSignal,
+                    _: Value,
+                ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>> {
+                    self.0.set(self.0.get() + 1);
+                    Box::pin(async {})
+                }
+                fn message_stream<'a>(
+                    &'a self,
+                    _: &'a AdmittedSignal,
+                ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>> {
+                    Box::pin(async {})
+                }
+                fn read_receipt(&self, _: &AdmittedSignal, _: &arkret_sdk::ReadReceiptPolicy) {}
+                fn advance_clock(&self, _: DateTime<Utc>) {}
+            }
+            let calls = Rc::new(Calls(Cell::new(0)));
+            let products = SignalProductRouter::default();
+            products.install(calls.clone());
+            let sink = InksonSignalSink {
+                state_store,
+                products,
+                live: Mutex::new(Default::default()),
+            };
+            let SignalReceiveOutcome::Accepted {
+                domain,
+                plaintext,
+                effective_expires_at,
+            } = outcome
+            else {
+                return Ok(0);
+            };
+            let signal = AdmittedSignal {
+                domain: *domain,
+                payload: plaintext,
+                expires_at: effective_expires_at,
+            };
+            // This test isolates the actual private product boundary. Unknown
+            // accepted Call current is independently refused by the full sink.
+            assert!(!sink.call_exists_at_verified_cut(&signal).await?);
+            sink.dispatch_call_product(&signal).await?;
+            Ok(calls.0.get())
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(crate::LocalStateStore::with_path(
+            directory.path().join("call-product.json"),
+        )));
+        let read = store.clone();
+        let write = store.clone();
+        let handle = crate::runtime::input::StateStoreHandle::new(
+            move |consume| consume(&read.lock().unwrap()),
+            move |consume| consume(&mut write.lock().unwrap()),
+        );
+        let call = arkret_sdk::CallSignalPlaintext::new(
+            7,
+            arkret_sdk::CallId::new("ak:call:ASJkvorx6tEzdxoAC5naL70uFcivCk9bMINhB1IWdS80")
+                .unwrap(),
+            7,
+            arkret_sdk::CallSignalData::Invite(arkret_sdk::CallInviteSignalData {
+                lifetime_ms: 30_000,
+                offer: arkret_sdk::SessionDescription {
+                    sdp_type: arkret_sdk::SessionDescriptionType::Offer,
+                    sdp: "v=0".to_owned(),
+                },
+                media: arkret_sdk::CallMediaSelection {
+                    audio: true,
+                    video: false,
+                    screen: None,
+                },
+            }),
+        )
+        .unwrap();
+        let admitted = plaintext_of(
+            arkret_sdk::SignalPlaintextKind::CallSignal.as_str(),
+            serde_json::to_value(call).unwrap(),
+        );
+        let mut entry = crate::account_data::new_blocklist_entry(
+            crate::account_data::BlocklistUiTargetKind::Actor,
+            &admitted.actor_id().to_string(),
+            None,
+            vec![
+                arkret_models_collaboration::objects::productivity::AccountBlocklistSurface::Calls,
+            ],
+            None,
+            chrono::Utc::now() - chrono::Duration::seconds(120),
+        )
+        .unwrap();
+        let outcome = |signal: AdmittedSignal| SignalReceiveOutcome::Accepted {
+            domain: Box::new(signal.domain),
+            plaintext: signal.payload,
+            effective_expires_at: signal.expires_at,
+        };
+        store
+            .lock()
+            .unwrap()
+            .set_client_blocklist(1, vec![entry.clone()]);
+        assert_eq!(
+            observe_private_product(handle.clone(), outcome(admitted.clone()))
+                .await
+                .unwrap(),
+            0
+        );
+        let mut other_station = admitted.clone();
+        other_station.domain.sender_actor_id =
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                admitted
+                    .actor_id()
+                    .as_account_id()
+                    .unwrap()
+                    .principal_id
+                    .clone(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap(),
+            ));
+        assert_eq!(
+            observe_private_product(handle.clone(), outcome(other_station))
+                .await
+                .unwrap(),
+            1
+        );
+        entry.expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
+        store
+            .lock()
+            .unwrap()
+            .set_client_blocklist(2, vec![entry.clone()]);
+        assert_eq!(
+            observe_private_product(handle.clone(), outcome(admitted.clone()))
+                .await
+                .unwrap(),
+            1
+        );
+        entry.expires_at = None;
+        for (revision, mode) in [
+            (
+                3,
+                arkret_models_collaboration::objects::productivity::AccountBlocklistMode::Hide,
+            ),
+            (
+                4,
+                arkret_models_collaboration::objects::productivity::AccountBlocklistMode::Mute,
+            ),
+        ] {
+            entry.mode = mode;
+            store
+                .lock()
+                .unwrap()
+                .set_client_blocklist(revision, vec![entry.clone()]);
+            assert_eq!(
+                observe_private_product(handle.clone(), outcome(admitted.clone()))
+                    .await
+                    .unwrap(),
+                1
+            );
+        }
+        entry.mode =
+            arkret_models_collaboration::objects::productivity::AccountBlocklistMode::Block;
+        store.lock().unwrap().set_client_blocklist(5, vec![entry]);
+        assert_eq!(
+            observe_private_product(handle.clone(), outcome(admitted.clone()))
+                .await
+                .unwrap(),
+            0
+        );
+        store.lock().unwrap().set_client_blocklist(6, Vec::new());
+        assert_eq!(
+            observe_private_product(handle, outcome(admitted))
+                .await
+                .unwrap(),
+            1
+        );
     }
 
     /// `CallSignalPlaintext` is `deny_unknown_fields`, so the call route MUST
