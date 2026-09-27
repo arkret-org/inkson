@@ -81,7 +81,6 @@ fn same_principal_core(left: &str, right: &str) -> bool {
         .is_some_and(|left| principal_core_key(right).as_deref() == Some(left.as_str()))
 }
 
-#[cfg(test)]
 fn watch_level_from_wire(value: arkret_sdk::StrandWatchLevel) -> WatchLevel {
     match value {
         arkret_sdk::StrandWatchLevel::MentionsOnly => WatchLevel::MentionsOnly,
