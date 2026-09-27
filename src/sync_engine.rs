@@ -488,6 +488,71 @@ impl NativeAccountHost {
             .await
     }
 
+    /// Use the same retained-message, visibility and disclosure decision as
+    /// the chat surface before invoking the ordinary encrypted Signal sender.
+    pub async fn send_automatic_read_receipt(
+        &self,
+        realm: &str,
+        strand: &str,
+        latest_cursor: &str,
+    ) -> anyhow::Result<Option<arkret_sdk::SignalSubmitOutcome>> {
+        self.send_automatic_read_receipt_using(
+            &crate::event_submit::EventSubmitter::new(self.http.clone()),
+            realm,
+            strand,
+            latest_cursor,
+        )
+        .await
+    }
+
+    pub(crate) async fn send_automatic_read_receipt_using(
+        &self,
+        submitter: &crate::event_submit::EventSubmitter,
+        realm: &str,
+        strand: &str,
+        latest_cursor: &str,
+    ) -> anyhow::Result<Option<arkret_sdk::SignalSubmitOutcome>> {
+        let account = &self.projector.ctx.account.authority;
+        let device = &self.projector.ctx.account.device_id;
+        let actor = arkret_sdk::ActorId::account(account.clone()).to_string();
+        let plan = self.state_store_handle().read(|store| {
+            let messages = crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
+                &store.load(),
+                Some(store),
+                Some((account, &actor, device)),
+            );
+            crate::views::chat::model::automatic_read_receipt_plan(
+                store,
+                &messages,
+                realm,
+                strand,
+                latest_cursor,
+            )
+        });
+        let Some(plan) = plan else {
+            return Ok(None);
+        };
+        let Some(material) = plan.material else {
+            return Ok(None);
+        };
+        submitter
+            .send_scope_signal(
+                arkret_sdk::ScopeRef::Realm {
+                    realm_id: arkret_sdk::RealmId::new(realm)?,
+                },
+                account,
+                device,
+                &material,
+                &crate::signal::SignalPayload::ReadReceipt {
+                    strand_id: arkret_sdk::StrandId::new(strand)?,
+                    event_id: arkret_sdk::EventId::new(plan.event_id)?,
+                },
+                &self.state_store_handle(),
+            )
+            .await
+            .map(Some)
+    }
+
     /// Synchronize one validated and durably projected bounded window. The
     /// ordinary account driver owns resume / Station-CAS trace semantics.
     pub async fn catch_up(&self) -> garth::Result<()> {

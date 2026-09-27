@@ -259,3 +259,22 @@ mod tests {
         assert!(!StationFeature::Discussion.ready(Some(&description)));
     }
 }
+
+/// Observe the Native host's actual automatic-receipt production path through
+/// an instrumented transport. The ordinary Signal sender remains unchanged.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn send_native_automatic_read_receipt(
+    host: &crate::sync_engine::NativeAccountHost,
+    http: arkret_sdk::http_client::Client,
+    realm: &str,
+    strand: &str,
+    latest_cursor: &str,
+) -> anyhow::Result<Option<arkret_sdk::SignalSubmitOutcome>> {
+    host.send_automatic_read_receipt_using(
+        &crate::event_submit::EventSubmitter::new(http),
+        realm,
+        strand,
+        latest_cursor,
+    )
+    .await
+}
