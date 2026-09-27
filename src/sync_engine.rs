@@ -366,7 +366,29 @@ impl NativeAccountHost {
         http: arkret_sdk::http_client::Client,
         authority: arkret_sdk::AccountId,
         device_id: arkret_sdk::DeviceId,
+        store: LocalStateStore,
+    ) -> anyhow::Result<Self> {
+        Self::new_with_selected_realm(http, authority, device_id, store, String::new()).await
+    }
+
+    /// Open the normal Account rail with a selected Realm detail demand, so
+    /// its signed current baseline is installed by the production projector.
+    pub async fn new_for_realm(
+        http: arkret_sdk::http_client::Client,
+        authority: arkret_sdk::AccountId,
+        device_id: arkret_sdk::DeviceId,
+        store: LocalStateStore,
+        realm_id: arkret_sdk::RealmId,
+    ) -> anyhow::Result<Self> {
+        Self::new_with_selected_realm(http, authority, device_id, store, realm_id.to_string()).await
+    }
+
+    async fn new_with_selected_realm(
+        http: arkret_sdk::http_client::Client,
+        authority: arkret_sdk::AccountId,
+        device_id: arkret_sdk::DeviceId,
         mut store: LocalStateStore,
+        selected_realm_id: String,
     ) -> anyhow::Result<Self> {
         use crate::runtime::input::{StateStoreHandle, ValueCell, ValueReader};
         fn cell<T: Clone + 'static>(value: T) -> ValueCell<T> {
@@ -415,7 +437,7 @@ impl NativeAccountHost {
             account,
             device_id: device_id.to_string(),
             live_device_id: cell(device_id.to_string()),
-            selected_realm_id: ValueReader::new(String::new),
+            selected_realm_id: ValueReader::new(move || selected_realm_id.clone()),
             websocket_rail: crate::transport::websocket_rail::WebSocketRail::default(),
             realm_live_epoch: cell(0),
             session: crate::runtime::session::SessionCoordinator::new(|| {
