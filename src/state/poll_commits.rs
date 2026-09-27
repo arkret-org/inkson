@@ -282,7 +282,7 @@ fn merge_verified_poll_page(
             .and_then(|content| content.get("kind"))
             .and_then(Value::as_str)
             .is_some_and(|kind| matches!(kind, "ak.content.poll" | "ak.content.poll.response"));
-        if !is_poll && !event.payload.contains_key("encrypted_content") {
+        if !is_poll {
             continue;
         }
         let record = VerifiedPollInput {

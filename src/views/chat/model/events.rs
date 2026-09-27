@@ -1566,6 +1566,13 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
     let mut unresolved_inputs = Vec::new();
     for event in &source_events {
         let candidates = message_candidates(event);
+        // v1 poll state accepts only plaintext ContentBlocks visible to admission.
+        if candidates
+            .iter()
+            .any(|candidate| candidate.get("encrypted_content").is_some())
+        {
+            continue;
+        }
         let signed_scope = candidates
             .iter()
             .copied()

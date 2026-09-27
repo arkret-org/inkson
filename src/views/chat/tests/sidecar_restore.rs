@@ -93,7 +93,7 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
 }
 
 #[test]
-fn rebuild_restores_authors_own_encrypted_poll_from_content_sidecar() {
+fn encrypted_poll_sidecar_is_not_a_formal_v1_poll() {
     let temp = std::env::temp_dir().join(format!("inkson-poll-content-sidecar-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     let realm = "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
@@ -138,14 +138,7 @@ fn rebuild_restores_authors_own_encrypted_poll_from_content_sidecar() {
 
     let cards = poll_cards_from_events_with_sidecar(realm, &[event], Some(&store), None);
 
-    assert_eq!(cards.len(), 1);
-    assert_eq!(
-        cards[0].poll_ref.as_ref().unwrap().as_str(),
-        message_id.as_str()
-    );
-    assert_eq!(cards[0].question, "Deploy now?");
-    assert_eq!(cards[0].options.len(), 2);
-    assert_eq!(cards[0].options[1].label, "After backup");
+    assert!(cards.is_empty());
 }
 
 #[test]
