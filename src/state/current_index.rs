@@ -1190,16 +1190,16 @@ impl CurrentIndex {
                         anyhow::anyhow!("complete Snapshot has no Account current cut")
                     })?;
                     anyhow::ensure!(
-                        current.realm_id == snapshot.realm_id
-                            && current.governance_generation == snapshot.governance_generation
-                            && current.stream_heads.len() == snapshot.visible_stream_heads.len()
-                            && current
-                                .stream_heads
-                                .iter()
-                                .all(|head| snapshot.visible_stream_heads.contains(head)),
-                        "verified Snapshot no longer matches Account cut"
+                        crate::realm_events_engine::snapshot_covers_account_cut(snapshot, current),
+                        "verified Snapshot does not cover Account cut"
                     );
+                    // The fresh signed Snapshot is an independent complete cut.
+                    // Account history may lag it; its baseline cannot describe
+                    // these newer rows or turn their installation into a discard.
+                    current.governance_generation = snapshot.governance_generation;
+                    current.stream_heads = snapshot.visible_stream_heads.clone();
                     current.entries = snapshot.current_state_entries.clone();
+                    incoming.baseline = None;
                 }
                 let mut previous = match progress_updates.remove(realm) {
                     Some(progress) => progress,

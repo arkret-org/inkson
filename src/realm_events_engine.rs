@@ -682,6 +682,22 @@ impl VerifiedCurrentSnapshot {
     }
 }
 
+pub(crate) fn snapshot_covers_account_cut(
+    snapshot: &arkret_wire::RealmStateSnapshot,
+    current: &arkret_models_collaboration::sync_frames::current_results::AccountCurrentResult,
+) -> bool {
+    snapshot.realm_id == current.realm_id
+        && snapshot.governance_generation >= current.governance_generation
+        && current.stream_heads.iter().all(|old| {
+            snapshot.visible_stream_heads.iter().any(|new| {
+                new.stream_ref == old.stream_ref
+                    && (new.stream_position > old.stream_position
+                        || (new.stream_position == old.stream_position
+                            && new.commit_id == old.commit_id))
+            })
+        })
+}
+
 impl VerifiedAccountFrame {
     pub(crate) fn current_snapshots(&self) -> &BTreeMap<String, VerifiedCurrentSnapshot> {
         &self.current_snapshots
@@ -1166,25 +1182,27 @@ pub async fn verify_account_frame_commits(
             freshness.expected_nonce.clone(),
         );
         replica.install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)?;
-        if current.governance_generation != snapshot.governance_generation
-            || current.stream_heads.len() != snapshot.visible_stream_heads.len()
-            || !current
-                .stream_heads
-                .iter()
-                .all(|head| snapshot.visible_stream_heads.contains(head))
-        {
-            tracing::warn!("verified current Snapshot differs from Account window cut");
+        if !snapshot_covers_account_cut(&snapshot, current) {
+            tracing::warn!("verified current Snapshot does not cover Account window cut");
             continue;
         }
-        if !current
-            .entries
-            .iter()
-            .all(|row| snapshot.current_state_entries.contains(row))
+        let same_cut = current.governance_generation == snapshot.governance_generation
+            && current.stream_heads.len() == snapshot.visible_stream_heads.len()
+            && current
+                .stream_heads
+                .iter()
+                .all(|head| snapshot.visible_stream_heads.contains(head));
+        if same_cut
+            && !current
+                .entries
+                .iter()
+                .all(|row| snapshot.current_state_entries.contains(row))
         {
             return Err(garth::Error::Protocol(
                 "Account current row differs from the signed current Snapshot".to_owned(),
             ));
         }
+        verified.retain_verified_authority(&bundle, &freshness, &keys)?;
         for row in &snapshot.current_state_entries {
             if let arkret_wire::TypedCurrentResult::Value {
                 selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref },
@@ -2465,8 +2483,23 @@ mod tests {
                 .is_err()
         );
         assert_eq!(index.read_complete_cut(REALM_ID).await.unwrap(), None);
+        let mut lagging = frame.clone();
+        let earlier = &items[items.len() - 2].commit;
+        let lagging_head = &mut lagging
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(REALM_ID)
+            .unwrap()
+            .current
+            .as_mut()
+            .unwrap()
+            .stream_heads[0];
+        lagging_head.stream_position = earlier.stream_position;
+        lagging_head.commit_id = earlier.commit_id.clone();
         index
-            .stage_verified_frame_with_snapshots(0, &frame, &BTreeSet::new(), &proofs)
+            .stage_verified_frame_with_snapshots(0, &lagging, &BTreeSet::new(), &proofs)
             .await
             .unwrap()
             .finish();
