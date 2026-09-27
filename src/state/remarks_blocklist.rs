@@ -735,7 +735,7 @@ mod blocklist_freshness_tests {
             "scope_ref": {"kind": "realm", "realm_id": realm},
             "actor_id": arkret_sdk::ActorId::account(authority.clone()),
             "created_at": "2026-09-27T00:00:00.000Z",
-            "payload": {"key": "ak.account.blocklist", "revision": 8, "content": {}}
+            "payload": {"key": "ak.account.blocklist", "expected_server_revision": 7, "body": {}}
         }))
         .unwrap();
         for repaired in [false, false, true] {
@@ -755,7 +755,7 @@ mod blocklist_freshness_tests {
                 replace_filter: None,
             };
             if repaired {
-                *entry.payload.get_mut("content").unwrap() =
+                *entry.payload.get_mut("body").unwrap() =
                     crate::account_data::encrypt_account_data_value(
                         &authority,
                         "ak.account.blocklist",

@@ -137,6 +137,31 @@ pub fn retained_blocklist_message_projection(
         .collect()
 }
 
+/// Inspect encrypted retained history through the production decrypt-on-read
+/// path using the actual receiving endpoint's identity and MLS checkpoint.
+pub fn retained_blocklist_message_projection_for_account(
+    store: &crate::LocalStateStore,
+    account: &arkret_sdk::AccountId,
+    actor: &str,
+    device: &arkret_sdk::DeviceId,
+) -> Vec<(String, String, bool)> {
+    let messages = crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
+        &store.load(),
+        Some(store),
+        Some((account, actor, device)),
+    );
+    let blocked = crate::account_data::blocked_message_actor_ids(&store.client_blocklist());
+    messages
+        .into_iter()
+        .map(|message| {
+            let hidden = message.actor_id.as_ref().is_some_and(|actor| {
+                crate::account_data::message_actor_is_blocked(actor, &blocked)
+            });
+            (message.id, message.body, hidden)
+        })
+        .collect()
+}
+
 /// Read the production automatic-receipt selector without initiating transport.
 pub fn retained_blocklist_receipt_candidate(
     store: &crate::state::LocalStateStore,

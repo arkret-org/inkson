@@ -135,6 +135,55 @@ impl MemberIdentityStore {
     /// `(realm, actor)`. Applies the SDK's replacement-edge filter and
     /// returns the most recently asserted plaintext identity, or `None`
     /// when every effective event is still `decryption_pending`.
+    /// Consumer verification diagnostics never remove accepted assertions.
+    pub fn verification_issues(
+        &self,
+        realm_id: &str,
+        actor_id: &arkret_sdk::ActorId,
+    ) -> Vec<(String, &'static str)> {
+        let key = ActorKey {
+            realm_id: realm_id.to_owned(),
+            actor_id: actor_id.clone(),
+        };
+        let Some(stored) = self.inner.get(&key) else {
+            return Vec::new();
+        };
+        let candidates = stored
+            .values()
+            .filter(|event| {
+                event.payload.realm_id.as_str() == realm_id && &event.payload.member_id == actor_id
+            })
+            .collect::<Vec<_>>();
+        let mut issues = Vec::new();
+        for event in &candidates {
+            if let IdentityPayloadCarrier::MemberIdentity { member_identity } =
+                &event.payload.identity_payload
+                && (member_identity.realm_id != event.payload.realm_id
+                    || member_identity.actor_id != event.payload.member_id
+                    || !verify_member_identity_proof(member_identity))
+            {
+                issues.push((
+                    event.event_id.clone(),
+                    arkret_sdk::ReasonCode::MEMBER_IDENTITY_PROOF_INVALID,
+                ));
+            }
+            for edge in &event.payload.replaces {
+                let valid = candidates
+                    .iter()
+                    .find(|target| target.event_id == edge.event_id.as_str())
+                    .and_then(|target| target.payload.identity_payload.carrier_sha256().ok())
+                    .is_some_and(|digest| digest == edge.payload_digest.as_str());
+                if !valid {
+                    issues.push((
+                        event.event_id.clone(),
+                        arkret_sdk::ReasonCode::MEMBER_IDENTITY_REPLACEMENT_DIGEST_MISMATCH,
+                    ));
+                }
+            }
+        }
+        issues
+    }
+
     pub fn current_identity(
         &self,
         realm_id: &str,
@@ -155,7 +204,7 @@ impl MemberIdentityStore {
                 // Filter by (realm, actor, segment) per the helper's
                 // contract.
                 if stored_event.payload.realm_id != sdk_realm_id
-                    || &stored_event.payload.actor_id != actor_id
+                    || &stored_event.payload.member_id != actor_id
                     || !matches!(
                         stored_event.payload.segment,
                         MemberIdentitySegment::MemberIdentity
@@ -198,7 +247,7 @@ impl MemberIdentityStore {
             if let IdentityPayloadCarrier::MemberIdentity { member_identity } =
                 &payload.identity_payload
             {
-                if member_identity.actor_id != payload.actor_id
+                if member_identity.actor_id != payload.member_id
                     || member_identity.realm_id != payload.realm_id
                 {
                     continue;
@@ -388,7 +437,7 @@ mod tests {
         identity.proof.signature = arkret_sdk::base64url_encode(signature.to_bytes());
         json!({
             "realm_id": TEST_REALM,
-            "actor_id": actor_id,
+            "member_id": actor_id,
             "segment": "member_identity",
             "identity_payload": { "member_identity": identity },
         })
@@ -551,22 +600,29 @@ mod tests {
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
         ));
         let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let encrypted = arkret_models_crypto::encrypted_envelope::EncryptedEnvelope {
+            version: "1.0".to_owned(),
+            content_type: "application/vnd.arkret.member-identity+json".to_owned(),
+            encryption_context: arkret_models_crypto::encrypted_envelope::EncryptedEnvelopeEncryptionContext::StandardMls {
+                epoch: 7,
+                group_state_ref: arkret_sdk::EventId::new("ak:event:AX9nZ3uX9PVPLzEzy8k3kAa76IhSmQF4MQHNkxYwnI8z").unwrap(),
+                routing_context: None,
+            },
+            ciphertext: "AQID".to_owned(),
+        };
         let event = json!({
             "event_id": "ak:event:ASyFf0qTUQ55a2qZp5fuTXRnIgf3ovKChQZ_XSkxdIPK",
             "kind": "ak.member.identity.update",
             "payload": {
                 "realm_id": realm,
-                "actor_id": actor_id,
+                "member_id": actor_id,
                 "segment": "member_identity",
                 "identity_payload": {
-                    "encrypted_content": {
-                        "group_id": "mls:group:opaque",
-                        "epoch": 7,
-                        "ciphertext": "AAAA"
-                    }
+                    "encrypted_content": encrypted
                 }
             }
         });
+        serde_json::from_value::<MemberIdentityUpdatePayload>(event["payload"].clone()).unwrap();
         store.ingest_inline(realm, &actor_id, &[event]);
         // MID-4: encrypted carrier without a usable MLS group state →
         // decryption_pending. The UI fallback path renders a muted
@@ -638,5 +694,67 @@ mod tests {
             },
         };
         assert!(identity.canonical_payload_sha256().is_ok());
+    }
+    #[test]
+    fn invalid_display_proof_is_retained_and_reported_without_verified_identity() {
+        let principal = "did:web:identity-bad-proof.example";
+        let actor = crate::mls_api_helpers::local_account_actor_id(principal).unwrap();
+        let signer = SigningKey::from_bytes(&[37u8; 32]);
+        seed_directory(&actor.to_string(), TEST_DEVICE, &signer);
+        let mut payload = signed_payload(principal, TEST_DEVICE, "Original", &signer);
+        payload["identity_payload"]["member_identity"]["display_profile"]["display_name"] =
+            json!("tampered");
+        let event = json!({"event_id":"ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ","kind":"ak.member.identity.update","payload":payload});
+        let mut store = MemberIdentityStore::new();
+        store.ingest_inline(TEST_REALM, &actor, std::slice::from_ref(&event));
+        assert!(store.current_identity(TEST_REALM, &actor).is_none());
+        assert_eq!(
+            store.verification_issues(TEST_REALM, &actor),
+            vec![(
+                event["event_id"].as_str().unwrap().to_owned(),
+                arkret_sdk::ReasonCode::MEMBER_IDENTITY_PROOF_INVALID
+            )]
+        );
+        assert_eq!(store.inner.values().next().unwrap().len(), 1);
+        crate::identity::device_directory::invalidate_actor(&actor.to_string());
+    }
+
+    #[test]
+    fn invalid_replacement_digest_keeps_the_prior_verified_identity() {
+        let principal = "did:web:identity-bad-edge.example";
+        let actor = crate::mls_api_helpers::local_account_actor_id(principal).unwrap();
+        let signer = SigningKey::from_bytes(&[38u8; 32]);
+        seed_directory(&actor.to_string(), TEST_DEVICE, &signer);
+        let first_payload = signed_payload(principal, TEST_DEVICE, "Verified original", &signer);
+        let first_id = "ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ";
+        let second_id = "ak:event:AZpUEIyW7TNKR7LXG3WwW7XhlXVKyRQXiuhWXSw19pzj";
+        let mut second_payload =
+            signed_payload(principal, TEST_DEVICE, "tampered replacement", &signer);
+        second_payload["identity_payload"]["member_identity"]["proof"]["signature"] = json!("AAAA");
+        second_payload["replaces"] =
+            json!([{"event_id":first_id,"payload_digest":format!("sha256:{}","1".repeat(64))}]);
+        let mut store = MemberIdentityStore::new();
+        store.ingest_inline(TEST_REALM,&actor,&[
+            json!({"event_id":first_id,"kind":"ak.member.identity.update","payload":first_payload}),
+            json!({"event_id":second_id,"kind":"ak.member.identity.update","payload":second_payload})]);
+        assert_eq!(
+            store
+                .current_identity(TEST_REALM, &actor)
+                .unwrap()
+                .display_profile
+                .display_name,
+            "Verified original"
+        );
+        let issues = store.verification_issues(TEST_REALM, &actor);
+        assert!(issues.contains(&(
+            second_id.to_owned(),
+            arkret_sdk::ReasonCode::MEMBER_IDENTITY_PROOF_INVALID
+        )));
+        assert!(issues.contains(&(
+            second_id.to_owned(),
+            arkret_sdk::ReasonCode::MEMBER_IDENTITY_REPLACEMENT_DIGEST_MISMATCH
+        )));
+        assert_eq!(store.inner.values().next().unwrap().len(), 2);
+        crate::identity::device_directory::invalidate_actor(&actor.to_string());
     }
 }
