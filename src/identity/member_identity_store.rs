@@ -155,7 +155,7 @@ impl MemberIdentityStore {
                 // Filter by (realm, actor, segment) per the helper's
                 // contract.
                 if stored_event.payload.realm_id != sdk_realm_id
-                    || &stored_event.payload.actor_id != actor_id
+                    || &stored_event.payload.member_id != actor_id
                     || !matches!(
                         stored_event.payload.segment,
                         MemberIdentitySegment::MemberIdentity
@@ -198,7 +198,7 @@ impl MemberIdentityStore {
             if let IdentityPayloadCarrier::MemberIdentity { member_identity } =
                 &payload.identity_payload
             {
-                if member_identity.actor_id != payload.actor_id
+                if member_identity.actor_id != payload.member_id
                     || member_identity.realm_id != payload.realm_id
                 {
                     continue;
