@@ -917,9 +917,13 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 // composer in the attachment menu
                                 // pushes a new PollCard here on send.
                                 {
+                                    let poll_content_visible = !msg.redacted
+                                        && (!msg.actor_id.as_ref().is_some_and(|actor| {
+                                            crate::account_data::message_actor_is_blocked(actor, &blocked_actor_id_set)
+                                        }) || blocked_show_anyway.read().contains(&msg.id));
                                     let card_lookup = poll_cards()
                                         .iter()
-                                        .find(|card| card.message_id == msg.id)
+                                        .find(|card| poll_content_visible && card.message_id == msg.id)
                                         .cloned();
                                     match card_lookup {
                                         Some(card) => {
