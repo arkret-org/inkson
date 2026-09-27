@@ -406,7 +406,7 @@ where
         .read(|store| store.verified_commit_stream_cursor(stream_ref))
         .map_err(garth::Error::Protocol)?;
     let (pages, _) = verified_stream_pages(
-        authority, http, replica, bundle, freshness, realm_id, stream_ref, None,
+        authority, http, replica, bundle, freshness, realm_id, stream_ref, None, None,
     )
     .await?
     .into_verified()?;
@@ -517,6 +517,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
     realm_id: &arkret_sdk::RealmId,
     stream_ref: &CommitStreamRef,
     floor_anchor: Option<FloorAnchor<'_>>,
+    window_end: Option<u64>,
 ) -> garth::Result<StreamPages> {
     // A full-history stream starts at genesis. A limited Account window may
     // start only from the exact signed head named by its basis, read by
@@ -543,11 +544,31 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
     let mut pages = Vec::new();
     let mut verified_floor_snapshot = None;
     loop {
+        let next_position = match after_position {
+            Some(position) => position.checked_add(1).ok_or_else(|| {
+                garth::Error::Protocol("verified stream position overflow".to_owned())
+            })?,
+            None => 0,
+        };
+        let remaining = window_end
+            .map(|end| {
+                end.checked_sub(next_position).ok_or_else(|| {
+                    garth::Error::Protocol(
+                        "signed floor lies beyond Account window head".to_owned(),
+                    )
+                })
+            })
+            .transpose()?;
+        // Scan only the frame's prefix. A later committed suffix belongs to
+        // a subsequent frame and cannot change this frame's exact cut.
+        let limit = remaining.map_or(SCAN_LIMIT, |count| {
+            count.min(u64::from(SCAN_LIMIT)).max(1) as u16
+        });
         let request = StreamScanRequest {
             realm_id: realm_id.clone(),
             stream_ref: stream_ref.clone(),
             direction: arkret_wire::StreamScanDirection::After(after_position),
-            limit: SCAN_LIMIT,
+            limit,
         };
         let outcome = authority.scan(&request).await?;
         if let Some(basis) = floor_basis {
@@ -588,6 +609,11 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
             }
             return Err(error);
         }
+        // An empty tail is proved by the exact signed floor itself. The
+        // read supplies its visibility floor, but no later row is installed.
+        if remaining == Some(0) {
+            break;
+        }
         let truncated = outcome.truncated;
         let keys =
             garth::fetch_historical_station_key_directory(http, bundle, Some(&outcome), None)
@@ -604,7 +630,12 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
             &keys,
             &mut pages,
         )?;
-        if empty || !truncated {
+        if empty
+            || !truncated
+            || window_end.is_some_and(|end| {
+                next_position.and_then(|position| position.checked_add(1)) == Some(end)
+            })
+        {
             break;
         }
         after_position = next_position;
@@ -1366,6 +1397,7 @@ async fn verify_snapshot_realm<T: garth::AuthorityTransport>(
                 realm_id,
                 &window.stream_ref,
                 Some(FloorAnchor { basis, describe }),
+                Some(window.next_position),
             )
             .await?
             .into_verified()?;
@@ -1396,6 +1428,7 @@ async fn verify_snapshot_realm<T: garth::AuthorityTransport>(
             realm_id,
             &window.stream_ref,
             None,
+            Some(window.next_position),
         )
         .await?;
         match resolve_full_history_window(Some(window), &rows, scan)? {
@@ -1573,6 +1606,7 @@ async fn verify_full_history_realm<T: garth::AuthorityTransport>(
             realm_id,
             &stream_ref,
             None,
+            window.map(|window| window.next_position),
         )
         .await?;
         let preview = window.is_some_and(|window| window.preview_only == Some(true));
@@ -3060,6 +3094,7 @@ mod tests {
                         position >= realm.readable_floor
                             && after.is_none_or(|after| position > after)
                     })
+                    .take(usize::from(request.limit))
                     .cloned()
                     .collect(),
                 readable_floor: Some(arkret_sdk::ReadableFloor {
@@ -3071,7 +3106,15 @@ mod tests {
                         arkret_sdk::ReadableFloorReason::MembershipJoin
                     },
                 }),
-                truncated: false,
+                truncated: realm
+                    .rows
+                    .iter()
+                    .filter(|row| {
+                        row.commit().stream_position >= realm.readable_floor
+                            && after.is_none_or(|after| row.commit().stream_position > after)
+                    })
+                    .count()
+                    > usize::from(request.limit),
             })
         }
 
@@ -3649,6 +3692,83 @@ mod tests {
         assert_eq!(
             serde_json::to_value(verified.product_frame(&frame)).unwrap(),
             serde_json::to_value(&frame).unwrap()
+        );
+
+        // The Station has a later signed Commit than this Account window.
+        // Verify only the older exact prefix, without adopting the suffix.
+        let (station, bundle, items, snapshot) = station_for(&exact_tail);
+        let prefix = &items[..7];
+        let older_frame = account_frame(vec![(
+            REALM_ID,
+            anchored_entry(
+                &bundle,
+                prefix,
+                &snapshot,
+                soland_bootstrap_rows(&bundle, prefix),
+                false,
+            ),
+        )]);
+        let older_verified = verify_account_frame_described(
+            &AuthorityClient::new(station),
+            &http,
+            Some(&describe),
+            &older_frame,
+        )
+        .await
+        .unwrap();
+        assert_eq!(positions(&older_verified, &realm_stream), vec![7]);
+        assert_eq!(
+            serde_json::to_value(older_verified.product_frame(&older_frame)).unwrap(),
+            serde_json::to_value(&older_frame).unwrap()
+        );
+
+        // The signed anchor itself also proves an empty older window, even
+        // when the Station has already appended a valid suffix.
+        let (station, bundle, items, snapshot) = station_for(&exact_tail);
+        let prefix = &items[..6];
+        let empty_frame = account_frame(vec![(
+            REALM_ID,
+            anchored_entry(
+                &bundle,
+                prefix,
+                &snapshot,
+                soland_bootstrap_rows(&bundle, prefix),
+                false,
+            ),
+        )]);
+        let empty_verified = verify_account_frame_described(
+            &AuthorityClient::new(station),
+            &http,
+            Some(&describe),
+            &empty_frame,
+        )
+        .await
+        .unwrap();
+        assert!(positions(&empty_verified, &realm_stream).is_empty());
+
+        // Bounding the scan never permits a different Commit at that head.
+        let (station, ..) = station_for(&exact_tail);
+        let mut forged_prefix = older_frame.clone();
+        forged_prefix
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(REALM_ID)
+            .unwrap()
+            .streams
+            .as_mut()
+            .unwrap()[0]
+            .head_commit_ref = arkret_sdk::RealmCommitId::from_digest([0x91; 32]);
+        assert!(
+            verify_account_frame_described(
+                &AuthorityClient::new(station),
+                &http,
+                Some(&describe),
+                &forged_prefix,
+            )
+            .await
+            .is_err()
         );
 
         // 2. A different Station current value is not reconstructed from the scan; the client
