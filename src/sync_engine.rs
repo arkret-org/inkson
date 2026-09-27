@@ -1085,8 +1085,11 @@ pub async fn run_sync_engine(
             }
         }
     }
-    ctx.projection_sink
-        .sync_status(terminal.unwrap_or(SyncStatusEvent::Offline));
+    let status = terminal.unwrap_or(SyncStatusEvent::Offline);
+    if let SyncStatusEvent::Terminal { reason } = &status {
+        tracing::warn!(reason, "account subscription stopped at a terminal error");
+    }
+    ctx.projection_sink.sync_status(status);
 }
 
 async fn reconnect_after(

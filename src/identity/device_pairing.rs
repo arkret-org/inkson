@@ -373,14 +373,10 @@ pub async fn approve_device_pairing(
     let authority =
         crate::identity::account_auth::AuthorityResolver::discover(api.base_url().as_str()).await?;
     let authority_base = url::Url::parse(&authority.gate_account_base_url)?;
-    let authority_api = crate::transport::TransportClient::new(
+    let authority_http = http.with_base_url(url::Url::parse(
         &authority_base.origin().ascii_serialization(),
-        api.context().clone(),
-    )?;
-    let outcome = authority_api
-        .sdk_http_client()?
-        .account_device_pair(&body)
-        .await?;
+    )?)?;
+    let outcome = authority_http.account_device_pair(&body).await?;
     if outcome.authorized_event_ref.event_id != authorize_event.event_id {
         anyhow::bail!("device-pair gate returned another authorize Event reference");
     }
