@@ -1,7 +1,7 @@
 //! Fetch + restore flow: the account MLS secret and the private-plaintext
 //! sidecar.
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use garth::mls::backup_series::verify_series_chain;
 use serde_json::{Value, json};
 
@@ -337,7 +337,7 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
                 .await
             }
         }
-        .map_err(|err| anyhow!("fetch key backup {backup_id} with unlock proof: {err}"))?;
+        .with_context(|| format!("fetch key backup {backup_id} with unlock proof"))?;
         full_backups.push(full);
     }
     let full_payload = json!({

@@ -515,13 +515,12 @@ mod retry_tests {
         if let Some(delay) = retry_after_ms {
             problem = problem.with_extension("retry_after_ms", serde_json::json!(delay));
         }
-        ApiCallError::Failed(
-            arkret_sdk::Error::Api {
-                status: 429,
-                error: Box::new(problem),
-            }
-            .into(),
-        )
+        let error = anyhow::Error::from(arkret_sdk::Error::Api {
+            status: 429,
+            error: Box::new(problem),
+        })
+        .context("fetch key backup with unlock proof");
+        ApiCallError::Failed(error)
     }
 
     #[tokio::test]
@@ -545,9 +544,10 @@ mod retry_tests {
         let mut waited = false;
         let rejected = mls_unlock_fetch_with_retry::<(), _, _, _, _>(
             || {
-                std::future::ready(Err(ApiCallError::Failed(anyhow::anyhow!(
-                    "signature invalid"
-                ))))
+                std::future::ready(Err(ApiCallError::Failed(
+                    anyhow::anyhow!("signature invalid")
+                        .context("fetch key backup with unlock proof"),
+                )))
             },
             |_| {
                 waited = true;
