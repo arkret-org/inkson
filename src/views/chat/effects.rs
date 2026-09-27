@@ -214,41 +214,26 @@ pub(super) fn ChatEffects(
         let base = base_url.clone();
         use_effect(move || {
             let strand = selected_channel();
-            let blocked = crate::account_data::blocked_message_actor_ids(
-                &state_store.read().client_blocklist(),
-            );
-            let top_event = super::model::visible_read_receipt_event(
+            let Some(plan) = super::model::automatic_read_receipt_plan(
+                &state_store.read(),
                 &controller.messages.read(),
                 &realm,
                 &strand,
-                &blocked,
-            );
-            let Some(top_event) = top_event else {
+                latest_read_cursor().as_str(),
+            ) else {
                 return;
             };
-            if latest_read_cursor().as_str() == top_event {
-                return;
-            }
+            let top_event = plan.event_id;
             event_sink.emit(ChatProjectionEvent::ReadCursor(top_event.clone()));
-            if !chat_visible_read_receipt_should_send(&state_store.read(), &strand, &realm) {
+            let Some(material) = plan.material else {
                 return;
-            }
-            if strand.trim().is_empty() {
-                return;
-            }
+            };
             let strand_id = strand;
             let api_token = token();
             let base = base.clone();
             let realm = realm.clone();
             let authority = authority_for_receipt.clone();
             let device = device.clone();
-            // No accepted MLS state for the scope means the Signal capability
-            // is withdrawn there. v1 has no plaintext read-receipt branch.
-            let Ok(material) =
-                crate::signal::key_material_for_scope(&state_store.read(), &realm, None)
-            else {
-                return;
-            };
             // The seal burns the SDK-owned nonce counter into the persisted
             // MLS snapshot before submit, so the send path needs the store
             // itself, not just the material descriptor.
