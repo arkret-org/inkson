@@ -863,7 +863,21 @@ impl CurrentIndex {
         let _lease = self.lease.lock().await;
         let generation = self.generation.load(Ordering::Acquire);
         let progress = self.progress_at(realm_id.as_str(), generation).await?;
-        Ok(progress_is_complete_cut(&progress, &realm_id).then_some(generation))
+        let complete = progress_is_complete_cut(&progress, &realm_id);
+        if !complete {
+            tracing::warn!(
+                baseline_present = progress.baseline.is_some(),
+                baseline_complete = progress.baseline.as_ref().is_some_and(|b| b.complete),
+                streams_covered = progress
+                    .baseline
+                    .as_ref()
+                    .is_some_and(|b| b.coverage.complete_for_authorized_streams),
+                generation_known = progress.governance_generation.is_some(),
+                needs_refresh = progress.needs_refresh,
+                "verified current index has no complete Realm cut"
+            );
+        }
+        Ok(complete.then_some(generation))
     }
 
     /// Read the exact MLS group at the installed baseline cut after all
