@@ -128,7 +128,19 @@ pub(crate) fn metadata_subject_for(store: &LocalStateStore, subject_id: &str) ->
     let kind = projection_kind_for_admin(subject_id);
     let (title, summary, avatar_blob_ref) = match kind {
         RealmTreeNodeKind::Realm => {
-            let local_profile = local_realm_profile(body);
+            let local_profile = store
+                .realm_current_view_entries(subject_id)
+                .and_then(|entries| {
+                    entries.into_iter().find_map(|entry| match entry {
+                        arkret_wire::TypedCurrentResult::Value {
+                            selector: arkret_wire::CurrentSelector::RealmProfile,
+                            value,
+                            ..
+                        } => serde_json::from_value::<arkret_sdk::RealmProfile>(value).ok(),
+                        _ => None,
+                    })
+                })
+                .or_else(|| local_realm_profile(body));
             let profile = canonical_realm_profile(body);
             (
                 local_profile
@@ -136,11 +148,13 @@ pub(crate) fn metadata_subject_for(store: &LocalStateStore, subject_id: &str) ->
                     .map(|profile| profile.title.clone())
                     .or_else(|| profile.as_ref().and_then(|profile| profile.title.clone()))
                     .unwrap_or_default(),
-                local_profile
-                    .as_ref()
-                    .and_then(|profile| profile.summary.clone())
-                    .or_else(|| profile.as_ref().and_then(|profile| profile.summary.clone()))
-                    .unwrap_or_default(),
+                match local_profile.as_ref() {
+                    Some(profile) => profile.summary.clone().unwrap_or_default(),
+                    None => profile
+                        .as_ref()
+                        .and_then(|profile| profile.summary.clone())
+                        .unwrap_or_default(),
+                },
                 local_profile
                     .and_then(|profile| profile.avatar_blob_ref)
                     .map(|blob_ref| blob_ref.to_string())
@@ -268,6 +282,46 @@ mod tests {
         assert!(subject.title.is_empty());
         assert!(subject.summary.is_empty());
         assert!(subject.avatar_blob_ref.is_empty());
+    }
+
+    #[test]
+    fn current_profile_clear_does_not_restore_older_window_summary() {
+        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let mut store = crate::state::isolated_store_for_tests("profile-current-clear");
+        let mut accepted = arkret_sdk::RealmProfile::new("Accepted").unwrap();
+        accepted.summary = Some("Accepted summary".to_owned());
+        store.save_realm_tree_projection(
+            realm_id.to_owned(),
+            serde_json::json!({
+                "state_at_window_start": {
+                    "realm_metadata": {"title": "Old", "summary": "Old summary"}
+                },
+                "_inkson_realm_profile_payload": accepted
+            }),
+        );
+        let current = arkret_wire::TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::RealmProfile,
+            source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
+            },
+            revision: arkret_wire::CurrentRevision {
+                commit_id: arkret_wire::RealmCommitId::from_digest([0x33; 32]),
+                stream_position: 3,
+            },
+            value: serde_json::to_value(arkret_sdk::RealmProfile::new("Current").unwrap()).unwrap(),
+        };
+        crate::test_support::install_current_entries(&mut store, realm_id, vec![current]);
+        let subject = metadata_subject_for(&store, realm_id);
+        assert_eq!(subject.title, "Current");
+        assert!(subject.summary.is_empty());
+        store.clear_current_product_view();
+        let mut projection = store.realm_tree_projection(realm_id).unwrap();
+        projection["_inkson_realm_profile_payload"] =
+            serde_json::to_value(arkret_sdk::RealmProfile::new("Accepted clear").unwrap()).unwrap();
+        store.save_realm_tree_projection(realm_id.to_owned(), projection);
+        let subject = metadata_subject_for(&store, realm_id);
+        assert_eq!(subject.title, "Accepted clear");
+        assert!(subject.summary.is_empty());
     }
 
     #[test]
