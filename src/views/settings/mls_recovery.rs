@@ -244,9 +244,14 @@ pub fn SettingsMlsRecoveryPanel(
                         .is_some()
                 };
                 let actor_for_fetch = actor.clone();
+                let device_for_fetch = account.device_id.to_string();
                 match with_authed_api(&base, session, |api| async move {
-                    crate::mls::account_recovery::fetch_mls_restore_payload(&api, &actor_for_fetch)
-                        .await
+                    crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
+                        &api,
+                        &actor_for_fetch,
+                        &device_for_fetch,
+                    )
+                    .await
                 })
                 .await
                 {

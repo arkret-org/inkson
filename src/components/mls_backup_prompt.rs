@@ -456,7 +456,7 @@ pub async fn maybe_auto_backup_mls_after_encrypted_write(
         token,
         authority,
         actor_id,
-        Some((device_id, state_store)),
+        (device_id, state_store),
         needs_mls_backup,
     )
     .await;
@@ -467,7 +467,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     token: String,
     authority: arkret_sdk::AccountId,
     actor_id: String,
-    auto_backup: Option<(String, crate::runtime::input::StateStoreHandle)>,
+    auto_backup: (String, crate::runtime::input::StateStoreHandle),
     needs_mls_backup: Signal<bool>,
 ) {
     if base_url.trim().is_empty() || token.trim().is_empty() || actor_id.trim().is_empty() {
@@ -476,12 +476,9 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     if needs_mls_backup() {
         return;
     }
-    let state_store_for_completion_fence = auto_backup.as_ref().map(|(_, store)| store.clone());
-    let backup_completed_while_probe_was_running = || {
-        state_store_for_completion_fence
-            .as_ref()
-            .is_some_and(|store| store.read(mls_recovery_backup_configured))
-    };
+    let state_store_for_completion_fence = auto_backup.1.clone();
+    let backup_completed_while_probe_was_running =
+        || state_store_for_completion_fence.read(mls_recovery_backup_configured);
     // Local account secret must exist (encryption has been used) — otherwise
     // there's nothing to back up yet.
     let has_local_secret = {
@@ -500,7 +497,8 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     // If this browser already confirmed a Recovery Key, use the cached public
     // key to seal the first account-secret backup without asking for the words
     // again. Missing public key falls through to the explicit prompt below.
-    let auto_backup_inputs = auto_backup.as_ref().and_then(|(device_id, state_store)| {
+    let auto_backup_inputs = {
+        let (device_id, state_store) = &auto_backup;
         state_store.read(|store| {
             let recovery_public_key = crate::views::recovery::local_recovery_public_key(store)?;
             let recovery_material_evidence = store.recovery_material_evidence()?;
@@ -522,13 +520,19 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
                 sidecar_json,
             ))
         })
-    });
+    };
     // Server must NOT already hold an `mls_account_secret` backup. (When it
     // does, the restore/unlock path owns the flow — backup and restore are
     // mutually exclusive by this exact check, so we can't double-prompt.)
     let actor_for_probe = actor_id.clone();
+    let device_for_probe = auto_backup.0.clone();
     let payload = match with_authed_api(&base_url, token.clone(), |api| async move {
-        crate::mls::account_recovery::fetch_mls_restore_payload(&api, &actor_for_probe).await
+        crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
+            &api,
+            &actor_for_probe,
+            &device_for_probe,
+        )
+        .await
     })
     .await
     {

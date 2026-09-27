@@ -224,8 +224,8 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                         let secure_store =
                             crate::secure_key_store::default_secure_key_store("inkson");
                         let configured_backup_id =
-                            crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
-                                &payload,
+                            history_payload_for_local_restore.as_ref().and_then(
+                                crate::mls::account_recovery::select_preferred_mls_account_secret_backup,
                             )
                             .and_then(|backup| {
                                 backup
@@ -285,10 +285,8 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                             }
                         }
                         let should_unlock = {
-                            let store = state_store_for_detection.read();
                             crate::mls::account_recovery::mls_restore_prompt_required(
-                                history_payload_for_local_restore.as_ref().unwrap_or(&payload),
-                                &store,
+                                &payload,
                                 secure_store.as_ref(),
                                 &authority,
                                 &actor,
@@ -318,7 +316,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                             needs_mls_unlock.set(false);
                             let should_backup =
                                 crate::mls::account_recovery::mls_backup_prompt_required(
-                                    &payload,
+                                    history_payload_for_local_restore.as_ref().unwrap_or(&payload),
                                     secure_store.as_ref(),
                                     &authority,
                                 );

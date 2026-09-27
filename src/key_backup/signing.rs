@@ -11,6 +11,37 @@ use super::required_str_anyhow;
 
 const KEY_BACKUP_UNLOCK_BACKOFF_MAX_ENTRIES: usize = 32;
 
+/// Host receipt for one exact holder-bound request. A saved ciphertext is
+/// local material; re-reading it does not consume another server unlock.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredUnlockRequest {
+    proof: arkret_sdk::KeyBackupUnlockProof,
+    backup: Option<arkret_sdk::KeyBackup>,
+}
+
+fn backup_matches_summary(
+    backup: &arkret_sdk::KeyBackup,
+    summary: &arkret_sdk::KeyBackupSummary,
+) -> bool {
+    backup.validate().is_ok()
+        && backup.backup_id == summary.backup_id
+        && backup.actor_id == summary.actor_id
+        && backup.device_id == summary.device_id
+        && backup.backup_kind == summary.backup_kind
+        && backup.backup_version == summary.backup_version.as_str()
+        && backup.series_id == summary.series_id
+        && backup.series_seq == summary.series_seq
+        && backup.ciphertext_digest == summary.ciphertext_digest
+        && backup.supersedes_id == summary.supersedes_id.clone().flatten()
+        && backup.supersedes_digest == summary.supersedes_digest
+        && backup.created_at == summary.created_at
+        && backup.updated_at == summary.updated_at
+        && backup.expires_at == summary.expires_at.flatten()
+        && backup.encryption.recipient_method == summary.encryption.recipient_method
+        && backup.encryption.recipient_key_ref == summary.encryption.recipient_key_ref
+}
+
 thread_local! {
     static KEY_BACKUP_UNLOCK_BACKOFFS: RefCell<crate::keyed_cooldown::KeyedCooldown> = const {
         RefCell::new(crate::keyed_cooldown::KeyedCooldown::new(
@@ -235,9 +266,6 @@ async fn fetch_key_backup_with_unlock_proof(
     signer: Option<&std::sync::Arc<crate::event_signer::InksonEventSigner>>,
 ) -> anyhow::Result<Value> {
     let backoff_scope = key_backup_unlock_backoff_scope(api, principal_id)?;
-    if let Some(retry_after_ms) = key_backup_unlock_backoff_remaining_ms(&backoff_scope) {
-        return Err(KeyBackupUnlockBackoff { retry_after_ms }.into());
-    }
     let request_key = unlock_request_storage_key(
         api,
         backup_metadata,
@@ -254,8 +282,19 @@ async fn fetch_key_backup_with_unlock_proof(
     let request_lock = unlock_request_lock(&request_key);
     let _guard = request_lock.lock().await;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let proof = if let Some(proof) = load_unlock_request(secure_store.as_ref(), &request_key)? {
-        proof
+    let stored = load_unlock_request(secure_store.as_ref(), &request_key)?;
+    if let Some(backup) = stored.as_ref().and_then(|stored| stored.backup.as_ref()) {
+        anyhow::ensure!(
+            backup_matches_summary(backup, &summary),
+            "saved unlock result differs from current metadata"
+        );
+        return Ok(serde_json::to_value(backup)?);
+    }
+    if let Some(retry_after_ms) = key_backup_unlock_backoff_remaining_ms(&backoff_scope) {
+        return Err(KeyBackupUnlockBackoff { retry_after_ms }.into());
+    }
+    let proof = if let Some(stored) = stored {
+        stored.proof
     } else {
         let issued = if recovery_session.is_none() {
             let request = arkret_sdk::KeysBackupsIssueUnlockChallengeRequestBody {
@@ -283,7 +322,7 @@ async fn fetch_key_backup_with_unlock_proof(
         )?;
         // Persist the exact signed request before the first send so process restart
         // and a lost response cannot re-sign an already-consumed recovery allowance.
-        store_unlock_request(secure_store.as_ref(), &request_key, &proof).await?;
+        store_unlock_request(secure_store.as_ref(), &request_key, &proof, None).await?;
         proof
     };
     let backup = match api
@@ -308,6 +347,11 @@ async fn fetch_key_backup_with_unlock_proof(
             return Err(error);
         }
     };
+    anyhow::ensure!(
+        backup_matches_summary(&backup, &summary),
+        "unlock result differs from current metadata"
+    );
+    store_unlock_request(secure_store.as_ref(), &request_key, &proof, Some(&backup)).await?;
     // Callers fold the full backup envelope through lenient `Value` accessors;
     // serialize the typed `KeyBackup` back to its wire JSON.
     let backup = serde_json::to_value(&backup)?;
@@ -395,7 +439,7 @@ fn unlock_request_lock(key: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
 fn load_unlock_request(
     store: &dyn crate::secure_key_store::SecureKeyStore,
     key: &str,
-) -> anyhow::Result<Option<arkret_sdk::KeyBackupUnlockProof>> {
+) -> anyhow::Result<Option<StoredUnlockRequest>> {
     store
         .get_secret(key)?
         .map(|value| serde_json::from_str(&value).map_err(anyhow::Error::from))
@@ -405,9 +449,16 @@ async fn store_unlock_request(
     store: &dyn crate::secure_key_store::SecureKeyStore,
     key: &str,
     proof: &arkret_sdk::KeyBackupUnlockProof,
+    backup: Option<&arkret_sdk::KeyBackup>,
 ) -> anyhow::Result<()> {
     store
-        .store_secret_durable(key, &serde_json::to_string(proof)?)
+        .store_secret_durable(
+            key,
+            &serde_json::to_string(&StoredUnlockRequest {
+                proof: proof.clone(),
+                backup: backup.cloned(),
+            })?,
+        )
         .await?;
     Ok(())
 }
@@ -424,6 +475,40 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn cached_body() -> arkret_sdk::KeyBackup {
+        let mut value = crate::test_support::key_backup_envelope_fixture(
+            0,
+            "ak:backup_series:0196419b-0000-7000-8000-000000000010",
+            "private_account_state",
+            "secret_storage_key",
+        );
+        value["encryption"]["recipient_key_ref"] = json!("local-test-key");
+        let body: arkret_sdk::KeyBackup = serde_json::from_value(value).unwrap();
+        body.validate().unwrap();
+        body
+    }
+
+    #[test]
+    fn cached_ciphertext_requires_the_same_complete_metadata_binding() {
+        let body = cached_body();
+        let summary =
+            crate::test_support::key_backup_summary_fixture(&serde_json::to_value(&body).unwrap());
+        assert!(backup_matches_summary(&body, &summary));
+        let mut changed = summary.clone();
+        changed.ciphertext_digest =
+            arkret_sdk::Hash::new(format!("sha256:{}", "b".repeat(64))).unwrap();
+        assert!(!backup_matches_summary(&body, &changed));
+        let mut changed = summary.clone();
+        changed.actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap(),
+        ));
+        assert!(!backup_matches_summary(&body, &changed));
+        let mut changed = summary;
+        changed.series_seq += 1;
+        assert!(!backup_matches_summary(&body, &changed));
+    }
 
     #[tokio::test]
     async fn unlock_proof_auth_data_matches_sdk_schema_and_survives_retry() {
@@ -502,7 +587,7 @@ mod tests {
             .unwrap();
 
         let store = crate::secure_key_store::MemorySecureKeyStore::default();
-        store_unlock_request(&store, "scoped-unlock-request", &proof)
+        store_unlock_request(&store, "scoped-unlock-request", &proof, None)
             .await
             .unwrap();
         let replay = load_unlock_request(&store, "scoped-unlock-request")
@@ -510,12 +595,26 @@ mod tests {
             .unwrap();
         assert_eq!(
             serde_json::to_vec(&proof).unwrap(),
-            serde_json::to_vec(&replay).unwrap()
+            serde_json::to_vec(&replay.proof).unwrap()
         );
         assert!(
             load_unlock_request(&store, "other-account-request")
                 .unwrap()
                 .is_none()
+        );
+        let mut body = cached_body();
+        body.backup_id = proof.backup_id.clone();
+        body.series_id = proof.series_id.clone();
+        store_unlock_request(&store, "scoped-unlock-request", &proof, Some(&body))
+            .await
+            .unwrap();
+        let receipt = load_unlock_request(&store, "scoped-unlock-request")
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.backup, Some(body));
+        assert_eq!(
+            serde_json::to_vec(&receipt.proof).unwrap(),
+            serde_json::to_vec(&proof).unwrap()
         );
         let proof_value = serde_json::to_value(&proof).unwrap();
         assert!(proof_value["auth_data"].get("device_id").is_none());

@@ -443,6 +443,30 @@ pub(crate) fn install_current_entries(
 }
 
 /// Complete SDK envelope for classification tests; not a signed restore proof.
+pub(crate) fn key_backup_summary_fixture(body: &serde_json::Value) -> arkret_sdk::KeyBackupSummary {
+    let backup: arkret_sdk::KeyBackup = serde_json::from_value(body.clone()).unwrap();
+    arkret_sdk::KeyBackupSummary {
+        backup_id: backup.backup_id,
+        actor_id: backup.actor_id,
+        device_id: backup.device_id,
+        backup_kind: backup.backup_kind,
+        backup_version: arkret_sdk::NonEmptyString::new(backup.backup_version).unwrap(),
+        series_id: backup.series_id,
+        series_seq: backup.series_seq,
+        supersedes_id: backup.supersedes_id.map(Some),
+        supersedes_digest: backup.supersedes_digest,
+        expires_at: backup.expires_at.map(Some),
+        created_at: backup.created_at,
+        updated_at: backup.updated_at,
+        ciphertext_digest: backup.ciphertext_digest,
+        encryption: arkret_sdk::KeyBackupSummaryEncryption {
+            recipient_method: backup.encryption.recipient_method,
+            recipient_key_ref: backup.encryption.recipient_key_ref,
+        },
+        retention: None,
+    }
+}
+
 pub(crate) fn key_backup_envelope_fixture(
     seq: u64,
     series: &str,

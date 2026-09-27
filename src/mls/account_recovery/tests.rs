@@ -690,6 +690,30 @@ fn backup_prompt_not_required_when_no_local_secret() {
 }
 
 #[test]
+fn metadata_recovery_candidate_prompts_only_without_a_verified_local_secret() {
+    let body = recovery_hpke_backup();
+    let summary = crate::test_support::key_backup_summary_fixture(&body);
+    let mut metadata = payload_with_current_series(vec![body]);
+    metadata["backups"] = serde_json::json!([summary]);
+    metadata["has_more"] = serde_json::json!(false);
+    let store = MemorySecureKeyStore::new();
+    let required = || {
+        super::restore::mls_restore_prompt_required(
+            &metadata,
+            &store,
+            &authority(),
+            "ak:did_core:web:alice.example",
+            DEVICE,
+        )
+    };
+    assert!(required());
+    crate::mls::runtime::store_account_mls_secret(&store, &authority(), ACCOUNT_SECRET).unwrap();
+    assert!(required());
+    crate::mls::runtime::mark_account_mls_secret_verified(&store, &authority()).unwrap();
+    assert!(!required());
+}
+
+#[test]
 fn backup_prompt_required_when_local_secret_and_no_server_backup() {
     // User has used encryption (local secret present) but never backed it
     // up to the server -> prompt them to set a recovery passphrase.

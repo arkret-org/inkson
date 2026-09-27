@@ -2511,6 +2511,30 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+        let invalidation = serde_json::from_value(json!({
+            "kind":"delta", "cursor":"ak:cursor:YQ",
+            "realm_invalidations":[{"realm_id":REALM_ID,"revision":1}]
+        }))
+        .unwrap();
+        index
+            .stage_verified_frame(1, &invalidation, &BTreeSet::new())
+            .await
+            .unwrap()
+            .finish();
+        assert_eq!(index.read_complete_cut(REALM_ID).await.unwrap(), None);
+        index
+            .stage_verified_frame_with_snapshots(2, &lagging, &BTreeSet::new(), &proofs)
+            .await
+            .unwrap()
+            .finish();
+        assert!(index.read_complete_cut(REALM_ID).await.unwrap().is_some());
+        assert!(
+            index
+                .read_selector_ready(REALM_ID, &selector)
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 
     fn snapshot_at(

@@ -15,35 +15,32 @@ use crate::mls::runtime::{
     select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
 
-/// Decide whether the app should ask the user for their Recovery Key to unlock
-/// the account MLS secret.
-///
-/// A local account secret alone is not enough readiness proof: an earlier
-/// incomplete bootstrap can leave a stale/random local secret without any
-/// usable per-Realm MLS snapshot. In that state encrypted writes still fail
-/// with `MissingWelcome`, so the prompt must stay available whenever the
-/// server has account-secret recovery material and local history is missing,
-/// stale, or undecryptable.
+/// Offer recovery when the active series has a recoverable metadata candidate
+/// and this device lacks a verified account secret. Discovery does not claim
+/// that the candidate contains MLS material; unlocking its complete body and
+/// validating the item, Account, policy and chain remain mandatory.
 pub fn mls_restore_prompt_required(
     list_payload: &Value,
-    _state_store: &crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &str,
 ) -> bool {
-    let Some(account_secret_backup) = select_preferred_mls_account_secret_backup(list_payload)
+    let Some(candidate) = crate::mls::runtime::select_recovery_backup_candidate(list_payload)
     else {
         tracing::warn!(
             target: "recovery_diag",
             actor_id,
             device_id,
             required = false,
-            reason = "no_account_secret_backup",
+            reason = "no_recovery_backup_candidate",
             "MLS restore prompt decision"
         );
         return false;
     };
+    if candidate.actor_id != arkret_sdk::ActorId::account(authority.clone()) {
+        return false;
+    }
     let account_secret_present =
         crate::mls::runtime::load_account_mls_secret(secure_store, authority)
             .ok()
@@ -56,10 +53,6 @@ pub fn mls_restore_prompt_required(
         target: "recovery_diag",
         actor_id,
         device_id,
-        account_backup_id = account_secret_backup
-            .get("backup_id")
-            .and_then(|value| value.as_str())
-            .unwrap_or("<missing>"),
         account_secret_present,
         account_secret_verified,
         required,
@@ -156,18 +149,6 @@ fn backup_actor(body: &Value) -> Result<arkret_sdk::ActorId> {
     .map_err(|error| anyhow!("invalid backup actor_id: {error}"))
 }
 
-/// Pure-fetch helper: list the server's key backups and return the
-/// preferred `mls_account_secret` body if one is present (None if absent). No
-/// Recovery Key is required — this is the SAFE half that can run at silent boot
-/// to *detect* whether account-secret recovery is available.
-pub async fn fetch_mls_account_secret_backup(
-    api: &crate::transport::TransportClient,
-    actor_id: &str,
-) -> Result<Option<Value>> {
-    let payload = fetch_mls_restore_payload(api, actor_id).await?;
-    Ok(select_preferred_mls_account_secret_backup(&payload))
-}
-
 /// Fetch metadata only for the two currently active series. Each page is
 /// bounded by the wire contract; the aggregate has a separate client budget.
 /// An interrupted or changing listing is never returned as a complete restore.
@@ -225,7 +206,12 @@ pub async fn fetch_mls_restore_payload(
             query.cursor = Some(cursor);
         }
     }
-    Ok(json!({"backups": backups, "active_series": current}))
+    Ok(serde_json::to_value(arkret_sdk::KeysBackupsList {
+        backups,
+        active_series: current,
+        next_cursor: None,
+        has_more: false,
+    })?)
 }
 
 /// Fresh-device discovery can race the projection of backups uploaded moments
@@ -237,7 +223,7 @@ pub async fn fetch_mls_restore_payload_after_projection(
 ) -> Result<Value> {
     let mut payload = fetch_mls_restore_payload(api, actor_id).await?;
     for _ in 0..5 {
-        if select_preferred_mls_account_secret_backup(&payload).is_some() {
+        if crate::mls::runtime::select_recovery_backup_candidate(&payload).is_some() {
             break;
         }
         crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(1)).await;
@@ -246,26 +232,16 @@ pub async fn fetch_mls_restore_payload_after_projection(
     Ok(payload)
 }
 
-pub(super) fn encrypted_restore_projection_complete(payload: &Value) -> bool {
-    select_preferred_mls_account_secret_backup(payload).is_some()
-}
-
-/// First-Realm creation publishes the account-secret backup and the first
-/// `mls_history` backup through separate server projections. When this browser
-/// already has encrypted local state, seeing only the account backup is not a
-/// complete recovery view: classifying that half-projected payload can
-/// transiently report that the creator device needs to restore its own keys.
-///
-/// Give both projections the same bounded convergence window before the UI is
-/// allowed to classify the result. A genuinely incomplete recovery set still
-/// returns after five retries and therefore remains fail-closed.
+/// An encrypted projection can arrive before its portable backup metadata.
+/// Wait briefly for an active recoverable candidate. This metadata probe
+/// never establishes the candidate's contents or decryptability.
 pub async fn fetch_mls_restore_payload_after_encrypted_projection(
     api: &crate::transport::TransportClient,
     actor_id: &str,
 ) -> Result<Value> {
     let mut payload = fetch_mls_restore_payload(api, actor_id).await?;
     for _ in 0..5 {
-        if encrypted_restore_projection_complete(&payload) {
+        if crate::mls::runtime::select_recovery_backup_candidate(&payload).is_some() {
             break;
         }
         crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(1)).await;

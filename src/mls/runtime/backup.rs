@@ -18,6 +18,24 @@
 
 use serde_json::Value;
 
+/// Metadata discovers a recovery candidate, never its plaintext item kind.
+/// Only complete, closed LIST results from the active Account series qualify.
+pub(crate) fn select_recovery_backup_candidate(
+    payload: &Value,
+) -> Option<arkret_sdk::KeyBackupSummary> {
+    let mut list: arkret_sdk::KeysBackupsList = serde_json::from_value(payload.clone()).ok()?;
+    if list.has_more || list.next_cursor.is_some() {
+        return None;
+    }
+    let actor = arkret_sdk::ActorId::account(list.active_series.account_id.clone());
+    list.backups.retain(|summary| summary.actor_id == actor);
+    garth::mls::backup_selection::select_active_series_tail_for_recipient_method(
+        &list,
+        arkret_sdk::KeyBackupRecipientMethod::RecoveryPublicKey,
+    )
+    .cloned()
+}
+
 /// The epoch a locally stored MLS checkpoint must be at or above before this
 /// device restores it.
 ///
@@ -261,6 +279,29 @@ mod tests {
 
     const SERIES: &str = "ak:backup_series:0196419b-0000-7000-8000-000000000010";
     const OTHER: &str = "ak:backup_series:0196419b-0000-7000-8000-000000000011";
+
+    #[test]
+    fn recovery_discovery_uses_closed_metadata_without_claiming_mls_contents() {
+        let envelope = body(1, SERIES, "mls_account_secret", "recovery_public_key");
+        let summary = crate::test_support::key_backup_summary_fixture(&envelope);
+        let mut metadata = list(Some(SERIES), vec![serde_json::to_value(summary).unwrap()]);
+        metadata["has_more"] = json!(false);
+        assert!(select_recovery_backup_candidate(&metadata).is_some());
+        assert!(select_preferred_mls_account_secret_backup(&metadata).is_none());
+        let mut partial = metadata.clone();
+        partial["has_more"] = json!(true);
+        assert!(select_recovery_backup_candidate(&partial).is_none());
+        let mut foreign = metadata.clone();
+        foreign["backups"][0]["actor_id"]["account_id"]["station_id"] =
+            json!("ak:did_core:web:other.example");
+        assert!(select_recovery_backup_candidate(&foreign).is_none());
+        let mut stale = metadata.clone();
+        stale["backups"][0]["series_id"] = json!(OTHER);
+        assert!(select_recovery_backup_candidate(&stale).is_none());
+        let mut injected = metadata;
+        injected["backups"][0]["contents"] = envelope["contents"].clone();
+        assert!(select_recovery_backup_candidate(&injected).is_none());
+    }
 
     #[test]
     fn an_absent_active_series_pointer_selects_nothing() {
