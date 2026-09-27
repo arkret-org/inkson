@@ -101,6 +101,12 @@ pub struct PollCard {
     pub votes: Vec<Vec<arkret_sdk::ActorId>>,
     pub max_selections: u64,
     pub closed: bool,
+    /// Exact accepted response identity per complete ActorId, never a local
+    /// arrival-order winner. Unknown or incomplete verified input stays provisional.
+    pub response_heads:
+        std::collections::BTreeMap<arkret_sdk::ActorId, arkret_sdk::PollResponseHead>,
+    pub provisional: bool,
+    pub verified_scope: Option<arkret_sdk::ScopeRef>,
 }
 
 impl PollCard {
@@ -124,6 +130,9 @@ impl PollCard {
             votes,
             max_selections: u64::from(draft.max_selections.max(1)),
             closed: false,
+            response_heads: Default::default(),
+            provisional: true,
+            verified_scope: None,
         }
     }
 
@@ -176,6 +185,9 @@ impl PollCard {
             options,
             max_selections: definition.poll.max_selections,
             closed: false,
+            response_heads: Default::default(),
+            provisional: true,
+            verified_scope: None,
         }
     }
 }

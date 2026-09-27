@@ -141,7 +141,7 @@ impl FixtureStation {
         .unwrap()
     }
 
-    fn seal_commit(&self, mut commit: RealmCommit) -> RealmCommit {
+    pub(crate) fn seal_commit(&self, mut commit: RealmCommit) -> RealmCommit {
         let unsigned =
             arkret_sdk::canonical::canonical::unsigned_value(&commit, &["signature"]).unwrap();
         commit.signature = sign_detached_object(

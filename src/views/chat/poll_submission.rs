@@ -9,10 +9,8 @@ pub(super) struct PollSubmissionContext {
     pub circle_id: Option<String>,
 }
 
-/// Until the verified response projection retains accepted response Event ids,
-/// this producer can only author a first vote. A known re-vote needs the exact
-/// pairwise declaration required by content-types §4.9.1.
-pub(super) fn ensure_first_poll_vote(
+/// Replacement declarations are derived only from the verified SDK projection.
+pub(super) fn verified_poll_response_heads(
     card: &crate::messaging::polls::PollCard,
     poll_ref: &arkret_sdk::MessageId,
     actor: &arkret_sdk::ActorId,
@@ -22,10 +20,22 @@ pub(super) fn ensure_first_poll_vote(
         "poll is not an accepted message"
     );
     anyhow::ensure!(
-        !card.actor_has_voted(actor),
-        "cannot change a poll vote until the accepted response Event reference is available"
+        !card.provisional,
+        "poll stream prefix or decrypted inputs are incomplete"
     );
-    Ok(Vec::new())
+    if let Some(head) = card.response_heads.get(actor) {
+        anyhow::ensure!(
+            arkret_sdk::MessageId::from_event_id(&head.poll_event_ref) == *poll_ref,
+            "poll response head belongs to another poll"
+        );
+        Ok(vec![head.clone()])
+    } else {
+        anyhow::ensure!(
+            !card.actor_has_voted(actor),
+            "verified response Event identity is unavailable"
+        );
+        Ok(Vec::new())
+    }
 }
 
 fn ensure_response_heads_match_operation(
@@ -152,7 +162,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn first_vote_allowed_but_known_revote_requires_accepted_head() {
+    fn votes_and_revotes_require_a_complete_verified_head_projection() {
         let poll_ref = arkret_sdk::MessageId::new(
             "ak:message:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu".to_owned(),
         )
@@ -164,12 +174,31 @@ mod tests {
         draft.set_option(1, "no".to_owned());
         let mut card = crate::messaging::polls::PollCard::from_draft("accepted".to_owned(), &draft);
         card.poll_ref = Some(poll_ref.clone());
-        assert!(ensure_first_poll_vote(&card, &poll_ref, &actor).is_ok());
+        assert!(verified_poll_response_heads(&card, &poll_ref, &actor).is_err());
+        card.provisional = false;
+        assert!(verified_poll_response_heads(&card, &poll_ref, &actor).is_ok());
         card.votes[0].push(actor.clone());
-        assert!(ensure_first_poll_vote(&card, &poll_ref, &actor).is_err());
+        assert!(verified_poll_response_heads(&card, &poll_ref, &actor).is_err());
+        let head = arkret_sdk::PollResponseHead {
+            poll_event_ref: arkret_sdk::EventId::new(poll_ref.as_str().replacen(
+                "ak:message:",
+                "ak:event:",
+                1,
+            ))
+            .unwrap(),
+            response_event_ref: arkret_sdk::EventId::new(
+                "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
+            )
+            .unwrap(),
+        };
+        card.response_heads.insert(actor.clone(), head.clone());
+        assert_eq!(
+            verified_poll_response_heads(&card, &poll_ref, &actor).unwrap(),
+            vec![head]
+        );
         card.votes[0].clear();
         card.poll_ref = None;
-        assert!(ensure_first_poll_vote(&card, &poll_ref, &actor).is_err());
+        assert!(verified_poll_response_heads(&card, &poll_ref, &actor).is_err());
     }
 
     #[test]

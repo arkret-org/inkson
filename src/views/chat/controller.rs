@@ -1203,6 +1203,13 @@ impl ChatController {
         option_id: String,
     ) {
         let actor = arkret_sdk::ActorId::account(context.authority.clone());
+        let selected_circle = self
+            .channels
+            .read()
+            .iter()
+            .find(|channel| channel.strand_id == context.selected_channel_id)
+            .and_then(|channel| channel.scope_circle.as_ref())
+            .map(|scope| scope.circle_id.clone());
         let vote_check = self
             .poll_cards
             .read()
@@ -1210,7 +1217,19 @@ impl ChatController {
             .find(|card| card.message_id == message_id)
             .ok_or_else(|| anyhow::anyhow!("poll projection is unavailable"))
             .and_then(|card| {
-                super::poll_submission::ensure_first_poll_vote(card, &poll_ref, &actor)
+                let realm_id = arkret_sdk::RealmId::new(context.selected_realm_id.clone())?;
+                let scope = match &selected_circle {
+                    Some(circle_id) => arkret_sdk::ScopeRef::Circle {
+                        realm_id,
+                        circle_id: arkret_sdk::CircleId::new(circle_id.clone())?,
+                    },
+                    None => arkret_sdk::ScopeRef::Realm { realm_id },
+                };
+                anyhow::ensure!(
+                    card.verified_scope.as_ref() == Some(&scope),
+                    "poll belongs to another Realm or Circle scope"
+                );
+                super::poll_submission::verified_poll_response_heads(card, &poll_ref, &actor)
             });
         let response_heads = match vote_check {
             Ok(heads) => heads,

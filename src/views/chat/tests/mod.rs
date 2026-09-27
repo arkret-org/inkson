@@ -18,6 +18,7 @@ mod merge_alignment;
 mod message_fold;
 mod operations;
 mod participation;
+mod poll_reduction;
 mod presence;
 mod read_receipts;
 mod sender_display;

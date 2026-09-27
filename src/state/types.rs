@@ -104,6 +104,21 @@ pub(crate) struct VerifiedMessageCommit {
     pub scope_ref: arkret_sdk::ScopeRef,
 }
 
+/// Original accepted poll input; encrypted Messages remain candidates until
+/// the existing verified decrypt path identifies their Content Block.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct VerifiedPollInput {
+    pub accepted_ref: arkret_wire::CommittedEventRef,
+    pub event: arkret_sdk::Event,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct VerifiedPollPrefix {
+    pub head: arkret_sdk::CommitStreamHead,
+    pub start_position: u64,
+    pub contiguous: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceMessageReceipt {
     pub canonical_digest: String,
@@ -935,6 +950,10 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub(crate) verified_message_commits: Vec<VerifiedMessageCommit>,
     #[serde(default)]
+    pub(crate) verified_poll_inputs: Vec<VerifiedPollInput>,
+    #[serde(default)]
+    pub(crate) verified_poll_prefixes: BTreeMap<String, VerifiedPollPrefix>,
+    #[serde(default)]
     pub realm_destroy_receipts: BTreeMap<String, RealmDestroyReceipt>,
     pub realm_tree_projections: BTreeMap<String, Value>,
     #[serde(default)]
@@ -1499,6 +1518,8 @@ impl Default for ClientLocalState {
             client_core_seen_event_ids: VecDeque::new(),
             raw_operations: Vec::new(),
             verified_message_commits: Vec::new(),
+            verified_poll_inputs: Vec::new(),
+            verified_poll_prefixes: BTreeMap::new(),
             realm_destroy_receipts: BTreeMap::new(),
             realm_tree_projections: BTreeMap::new(),
             realm_collaboration_roles: BTreeMap::new(),

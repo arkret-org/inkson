@@ -2872,4 +2872,5 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("manage.contact_no_scopes", "无共享范围");
     dict.set("manage.contact_dm", "私聊 {state}");
     dict.set("manage.contact_no_dm", "无私聊");
+    dict.set("poll_provisional", "投票等待已验证历史");
 }

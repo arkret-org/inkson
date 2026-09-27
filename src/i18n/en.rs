@@ -3438,4 +3438,5 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("manage.contact_no_scopes", "No shared scopes");
     dict.set("manage.contact_dm", "DM {state}");
     dict.set("manage.contact_no_dm", "No DM");
+    dict.set("poll_provisional", "Votes pending verified history");
 }

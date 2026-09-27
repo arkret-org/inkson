@@ -1,11 +1,8 @@
 //! Durable MessageCreate coordinates from a cryptographically verified scan.
 //!
-//! The ordinary Realm scanner currently uses Garth's shape-only `apply_scan`.
-//! Its `ClientEvent::Committed` values are not admitted here. Once that scanner
-//! installs a fresh authority bundle and calls `apply_verified_scan`, its
-//! unforgeable `VerifiedScanPage` can feed this index. Poll plaintext still
-//! needs an exact per-partition reducer before a stored coordinate can author
-//! a replacement declaration.
+//! Only Garth's unforgeable `VerifiedScanPage` supplies original poll inputs.
+//! The bounded message-coordinate cache is independent from the poll archive:
+//! response history is retained so replay can rebuild the SDK partition reducer.
 
 use super::*;
 
@@ -127,7 +124,22 @@ impl LocalStateStore {
                 scope_ref: event.scope_ref.clone(),
             });
         }
-        self.persist_verified_message_commits(pending)
+        self.ensure_cached_loaded();
+        let prior_inputs = self.cached.verified_poll_inputs.clone();
+        let prior_prefixes = self.cached.verified_poll_prefixes.clone();
+        merge_verified_poll_page(
+            &mut self.cached.verified_poll_inputs,
+            &mut self.cached.verified_poll_prefixes,
+            page.rows(),
+        )?;
+        match self.persist_verified_message_commits(pending) {
+            Ok(changed) => Ok(changed),
+            Err(error) => {
+                self.cached.verified_poll_inputs = prior_inputs;
+                self.cached.verified_poll_prefixes = prior_prefixes;
+                Err(error)
+            }
+        }
     }
 
     fn persist_verified_message_commits(
@@ -162,6 +174,125 @@ impl LocalStateStore {
             .into_iter()
             .find(|entry| &entry.accepted_ref.event_id == event_id)
     }
+
+    pub(crate) fn verified_poll_inputs(&self) -> Vec<VerifiedPollInput> {
+        self.load().verified_poll_inputs
+    }
+
+    pub(crate) fn verified_poll_partition_complete(
+        &self,
+        stream: &arkret_sdk::CommitStreamRef,
+        poll_position: u64,
+    ) -> bool {
+        serde_json::to_string(stream)
+            .ok()
+            .and_then(|key| self.load().verified_poll_prefixes.get(&key).cloned())
+            .is_some_and(|prefix| {
+                prefix.contiguous
+                    && prefix.start_position <= poll_position
+                    && poll_position <= prefix.head.stream_position
+            })
+    }
+}
+
+// Private to the verified carrier adapter above. Tests exercise durable replay
+// and conflict handling without constructing a public trust-token shortcut.
+fn merge_verified_poll_page(
+    inputs: &mut Vec<VerifiedPollInput>,
+    prefixes: &mut BTreeMap<String, VerifiedPollPrefix>,
+    rows: &[arkret_sdk::CommittedEventView],
+) -> Result<(), String> {
+    let mut next_inputs = inputs.clone();
+    let mut next_prefixes = prefixes.clone();
+    for view in rows {
+        let commit = view.commit();
+        if matches!(
+            commit.stream_ref,
+            arkret_sdk::CommitStreamRef::Sidecar { .. }
+        ) {
+            continue;
+        }
+        let key = serde_json::to_string(&commit.stream_ref).map_err(|error| error.to_string())?;
+        let full = matches!(view, arkret_sdk::CommittedEventView::Full(_));
+        if !full {
+            next_inputs.retain(|input| input.accepted_ref.event_id != commit.event_ref);
+        }
+        let previous = next_prefixes.get(&key);
+        let extends = previous.is_some_and(|prefix| {
+            prefix.contiguous
+                && prefix.head.stream_position.checked_add(1) == Some(commit.stream_position)
+                && commit.previous_commit_ref.as_ref() == Some(&prefix.head.commit_id)
+        });
+        let start_position = if extends && full {
+            previous.expect("extended range").start_position
+        } else {
+            commit.stream_position
+        };
+        // A verified re-scan starts at genesis and rebuilds continuity. Late
+        // individual rows do not turn a newer verified prefix into a gap.
+        if commit.stream_position == 0
+            || previous.is_none_or(|prefix| commit.stream_position > prefix.head.stream_position)
+        {
+            next_prefixes.insert(
+                key,
+                VerifiedPollPrefix {
+                    head: arkret_sdk::CommitStreamHead {
+                        stream_ref: commit.stream_ref.clone(),
+                        commit_id: commit.commit_id.clone(),
+                        stream_position: commit.stream_position,
+                    },
+                    start_position,
+                    contiguous: full,
+                },
+            );
+        } else if !full && let Some(prefix) = next_prefixes.get_mut(&key) {
+            prefix.contiguous = false;
+        }
+        let arkret_sdk::CommittedEventView::Full(full) = view else {
+            continue;
+        };
+        let event = &full.event;
+        if event.kind != arkret_sdk::EventKind::MessageCreate {
+            continue;
+        }
+        let is_poll = event
+            .payload
+            .get("content")
+            .and_then(|content| content.get("kind"))
+            .and_then(Value::as_str)
+            .is_some_and(|kind| matches!(kind, "ak.content.poll" | "ak.content.poll.response"));
+        if !is_poll && !event.payload.contains_key("encrypted_content") {
+            continue;
+        }
+        let record = VerifiedPollInput {
+            accepted_ref: arkret_sdk::CommittedEventRef {
+                event_id: event.event_id.clone(),
+                commit_id: commit.commit_id.clone(),
+                stream_ref: commit.stream_ref.clone(),
+                stream_position: commit.stream_position,
+            },
+            event: event.clone(),
+        };
+        if let Some(previous) = next_inputs
+            .iter()
+            .find(|entry| entry.accepted_ref.event_id == record.accepted_ref.event_id)
+        {
+            if previous != &record {
+                return Err("conflicting verified poll input".to_owned());
+            }
+        } else {
+            if next_inputs.iter().any(|entry| {
+                entry.accepted_ref.stream_ref == record.accepted_ref.stream_ref
+                    && entry.accepted_ref.stream_position == record.accepted_ref.stream_position
+            }) {
+                return Err("conflicting verified poll Commit position".to_owned());
+            }
+            next_inputs.push(record);
+        }
+    }
+    *inputs = next_inputs;
+    *prefixes = next_prefixes;
+    Ok(())
 }
 
 #[cfg(test)]

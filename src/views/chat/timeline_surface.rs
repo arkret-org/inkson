@@ -926,6 +926,13 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                             let poll_id = card.poll_ref.as_ref().map_or_else(|| card.message_id.clone(), ToString::to_string);
                                             let total = card.total_votes();
                                             let voted = card.actor_has_voted(&arkret_sdk::ActorId::account(command_context.authority.clone()));
+                                            let poll_state_label = if card.provisional {
+                                                crate::i18n::tr("poll_provisional")
+                                            } else if card.closed {
+                                                "closed".to_owned()
+                                            } else {
+                                                "open".to_owned()
+                                            };
                                             rsx! {
                                                 div {
                                                     class: "poll-card message-event-poll",
@@ -939,7 +946,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                     div {
                                                         class: "poll-state",
                                                         "data-testid": "poll-state",
-                                                        if card.closed { "closed" } else { "open" }
+                                                        "{poll_state_label}"
                                                     }
                                                     for (idx, option) in card.options.iter().enumerate() {
                                                         {
@@ -950,6 +957,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                             let card_poll_ref = card.poll_ref.clone();
                                                             let card_message_id = card.message_id.clone();
                                                             let card_closed = card.closed;
+                                                            let card_provisional = card.provisional;
                                                             rsx! {
                                                                 div {
                                                                     class: "poll-result-row",
@@ -961,7 +969,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                                             variant: ButtonVariant::Secondary,
                                                                             class: "poll-option poll-vote-button",
                                                                             "data-testid": "poll-option",
-                                                                            disabled: card_closed || card_poll_ref.is_none(),
+                                                                            disabled: card_closed || card_provisional || card_poll_ref.is_none(),
                                                                             onclick: {
                                                                                 let context = command_context.clone();
                                                                                 let message_id = card_message_id.clone();

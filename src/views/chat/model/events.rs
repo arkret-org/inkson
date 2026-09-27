@@ -1520,13 +1520,51 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<crate::messaging::polls::PollCard> {
     let mut cards = Vec::<crate::messaging::polls::PollCard>::new();
-    // One responder's answer to one poll is a single typed target updated in
-    // Commit order (`authz/event-auth-state-resolution.md` section 6), so the
-    // last accepted response this client folded is that responder's answer.
-    // Earlier responses stay in the log and never add a second vote.
-    let mut responses: Vec<(PollPartitionKey, arkret_sdk::ActorId, Vec<String>)> = Vec::new();
+    use arkret_models_collaboration::poll::{PollPartition, PollResponseSet, VerifiedPollResponse};
+    let verified_inputs = state_store
+        .map(LocalStateStore::verified_poll_inputs)
+        .unwrap_or_default();
+    let visible_ids = events
+        .iter()
+        .flat_map(|event| message_candidates(event).into_iter())
+        .filter_map(|candidate| {
+            candidate
+                .get("event_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    // Trusted original Events replace any enriched or altered timeline copy.
+    // All retained responses participate, even when the visible timeline window
+    // no longer contains the earlier vote.
+    let mut source_events = events
+        .iter()
+        .filter(|event| {
+            let candidates = message_candidates(event);
+            let id = candidates
+                .iter()
+                .find_map(|candidate| candidate.get("event_id").and_then(Value::as_str));
+            !verified_inputs
+                .iter()
+                .any(|input| Some(input.event.event_id.as_str()) == id)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    source_events.extend(
+        verified_inputs
+            .iter()
+            .filter(|input| realm_id.is_empty() || input.event.realm_id.as_str() == realm_id)
+            .filter_map(|input| serde_json::to_value(&input.event).ok()),
+    );
+    let mut responses = Vec::<(
+        PollPartition,
+        arkret_sdk::CommittedEventRef,
+        Vec<String>,
+        Vec<arkret_sdk::PollResponseHead>,
+    )>::new();
     let mut card_scopes = std::collections::BTreeMap::new();
-    for event in events {
+    let mut unresolved_inputs = Vec::new();
+    for event in &source_events {
         let candidates = message_candidates(event);
         let signed_scope = candidates
             .iter()
@@ -1544,6 +1582,11 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
         let proof_verdict =
             verify_chat_envelope_proof_for_realm(realm_id, event, state_store, decrypt_identity);
         if proof_verdict == ChatProofVerdict::Rejected {
+            if let Ok(original) = serde_json::from_value::<arkret_sdk::Event>(event.clone())
+                && let Some(input) = verified_inputs.iter().find(|input| input.event == original)
+            {
+                unresolved_inputs.push(input.accepted_ref.clone());
+            }
             continue;
         }
         let verified_sender_domain = (proof_verdict == ChatProofVerdict::Verified)
@@ -1598,6 +1641,22 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
         let envelope = candidates.iter().copied().find(|candidate| {
             candidate.get("actor_id").is_some() && candidate.get("producer_proof").is_some()
         });
+        let verified_input = envelope
+            .and_then(|envelope| envelope.get("event_id"))
+            .and_then(Value::as_str)
+            .and_then(|id| {
+                verified_inputs
+                    .iter()
+                    .find(|input| input.event.event_id.as_str() == id)
+            })
+            .filter(|input| {
+                envelope
+                    .and_then(|envelope| {
+                        serde_json::from_value::<arkret_sdk::Event>(envelope.clone()).ok()
+                    })
+                    .as_ref()
+                    == Some(&input.event)
+            });
         let identity = (proof_verdict == ChatProofVerdict::Verified)
             .then(|| {
                 envelope.and_then(|envelope| {
@@ -1610,6 +1669,9 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
             })
             .flatten();
         let Some(content) = content else {
+            if let Some(input) = verified_input {
+                unresolved_inputs.push(input.accepted_ref.clone());
+            }
             continue;
         };
         let scope = signed_scope.clone().and_then(|scope| match scope {
@@ -1630,22 +1692,47 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
         }
         let definition = match block {
             arkret_models_collaboration::events_payloads::PollContentBlock::Response(block) => {
-                if let (Some((_, actor_id, _)), Some((realm_id, scope_circle_id))) =
-                    (identity, scope)
-                {
-                    responses.push((
-                        PollPartitionKey {
-                            realm_id,
-                            scope_circle_id,
-                            poll_ref: block.poll_response.poll_ref,
-                        },
-                        actor_id,
-                        block.poll_response.selections,
-                    ));
+                if let (Some((_, actor_id, _)), Some(input)) = (identity, verified_input) {
+                    let original_poll = verified_inputs.iter().find(|poll| {
+                        arkret_sdk::MessageId::from_event_id(&poll.event.event_id)
+                            == block.poll_response.poll_ref
+                            && poll.accepted_ref.stream_ref == input.accepted_ref.stream_ref
+                            && poll.accepted_ref.stream_position
+                                < input.accepted_ref.stream_position
+                    });
+                    let heads = input
+                        .event
+                        .payload
+                        .get("poll_response_heads")
+                        .map(|value| {
+                            serde_json::from_value::<Vec<arkret_sdk::PollResponseHead>>(
+                                value.clone(),
+                            )
+                        })
+                        .transpose();
+                    if let (Some(poll), Ok(heads)) = (original_poll, heads) {
+                        responses.push((
+                            PollPartition {
+                                realm_id: input.event.realm_id.clone(),
+                                stream_ref: input.accepted_ref.stream_ref.clone(),
+                                poll_ref: block.poll_response.poll_ref,
+                                poll_event_ref: poll.event.event_id.clone(),
+                                actor_id,
+                            },
+                            input.accepted_ref.clone(),
+                            block.poll_response.selections,
+                            heads.unwrap_or_default(),
+                        ));
+                    }
                 }
                 continue;
             }
             arkret_models_collaboration::events_payloads::PollContentBlock::Definition(block) => {
+                if verified_input
+                    .is_some_and(|input| !visible_ids.contains(input.event.event_id.as_str()))
+                {
+                    continue;
+                }
                 block
             }
         };
@@ -1664,11 +1751,23 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
         else {
             continue;
         };
-        let card = crate::messaging::polls::PollCard::from_definition(
+        let mut card = crate::messaging::polls::PollCard::from_definition(
             message.id.clone(),
             &poll_ref,
             &definition,
         );
+        card.provisional = identity.is_none()
+            || !verified_input.is_some_and(|input| {
+                state_store.is_some_and(|store| {
+                    store.verified_poll_partition_complete(
+                        &input.accepted_ref.stream_ref,
+                        input.accepted_ref.stream_position,
+                    )
+                })
+            });
+        if identity.is_some() {
+            card.verified_scope = verified_input.map(|input| input.event.scope_ref.clone());
+        }
         if identity.is_some()
             && let Some((realm_id, circle_id)) = scope
         {
@@ -1676,14 +1775,22 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
         }
         cards.push(card);
     }
-    let mut settled = std::collections::BTreeMap::new();
-    for (partition, actor_id, selections) in responses {
-        settled.insert((partition, actor_id), selections);
-    }
-    for ((partition, actor), selections) in settled {
+    // Ascending Commit position is only for resolving signed predecessor
+    // declarations. The SDK reducer itself selects max position, not arrival order.
+    responses.sort_by(|left, right| {
+        (&left.0.stream_ref, left.1.stream_position)
+            .cmp(&(&right.0.stream_ref, right.1.stream_position))
+    });
+    let mut accepted_responses = std::collections::BTreeMap::new();
+    let mut reduced = PollResponseSet::default();
+    for (partition, accepted_ref, selections, heads) in responses {
+        let circle = match &partition.stream_ref {
+            arkret_sdk::CommitStreamRef::Circle { circle_id, .. } => Some(circle_id.clone()),
+            _ => None,
+        };
         let key = (
             partition.realm_id.clone(),
-            partition.scope_circle_id.clone(),
+            circle,
             partition.poll_ref.clone(),
         );
         let Some(index) = card_scopes.get(&key).copied() else {
@@ -1695,37 +1802,73 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
             .map(|option| option.id.clone())
             .collect::<std::collections::BTreeSet<_>>();
         let max_selections = usize::try_from(cards[index].max_selections).unwrap_or(usize::MAX);
-        let mut chosen = std::collections::BTreeSet::new();
-        for selection in &selections {
-            if !answers.contains(selection) {
-                chosen.clear();
-                break;
-            }
-            chosen.insert(selection.clone());
-        }
-        if chosen.len() != selections.len() || chosen.len() > max_selections {
+        let Ok(response) = VerifiedPollResponse::new(
+            partition.clone(),
+            accepted_ref.clone(),
+            &selections,
+            &answers,
+            max_selections,
+            heads,
+            |id| accepted_responses.get(id).cloned(),
+        ) else {
+            continue;
+        };
+        if reduced.insert(response).is_err() {
+            cards[index].provisional = true;
             continue;
         }
+        accepted_responses.insert(accepted_ref.event_id.clone(), (partition, accepted_ref));
+    }
+    for (partition, projection) in reduced.project(true) {
+        let circle = match &partition.stream_ref {
+            arkret_sdk::CommitStreamRef::Circle { circle_id, .. } => Some(circle_id.clone()),
+            _ => None,
+        };
+        let Some(index) = card_scopes
+            .get(&(
+                partition.realm_id.clone(),
+                circle,
+                partition.poll_ref.clone(),
+            ))
+            .copied()
+        else {
+            continue;
+        };
         let card = &mut cards[index];
+        if let Some(winner) = projection.winner {
+            card.response_heads.insert(
+                partition.actor_id.clone(),
+                arkret_sdk::PollResponseHead {
+                    poll_event_ref: partition.poll_event_ref,
+                    response_event_ref: winner.event_id,
+                },
+            );
+        }
         for (option, voters) in card.options.iter().zip(card.votes.iter_mut()) {
-            if chosen.contains(&option.id) {
-                voters.push(actor.clone());
+            if projection.selections.contains(&option.id) {
+                voters.push(partition.actor_id.clone());
             }
         }
     }
+    for ((realm_id, circle_id, poll_ref), index) in card_scopes {
+        let stream = match circle_id {
+            Some(circle_id) => arkret_sdk::CommitStreamRef::Circle {
+                realm_id,
+                circle_id,
+            },
+            None => arkret_sdk::CommitStreamRef::Realm { realm_id },
+        };
+        if let Some(poll) = verified_inputs
+            .iter()
+            .find(|input| arkret_sdk::MessageId::from_event_id(&input.event.event_id) == poll_ref)
+        {
+            cards[index].provisional |= unresolved_inputs.iter().any(|input| {
+                input.stream_ref == stream
+                    && input.stream_position >= poll.accepted_ref.stream_position
+            });
+        }
+    }
     cards
-}
-
-/// The `(Realm, Circle scope, poll)` a response belongs to.
-///
-/// A poll tallies inside exactly one effective scope, so the scope is part of
-/// the key: a response signed in a Circle never counts toward the Realm-scoped
-/// card of the same poll.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct PollPartitionKey {
-    realm_id: arkret_sdk::RealmId,
-    scope_circle_id: Option<arkret_sdk::CircleId>,
-    poll_ref: arkret_sdk::MessageId,
 }
 
 pub(crate) fn shared_message_pins_from_raw_operations(
