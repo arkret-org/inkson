@@ -241,11 +241,13 @@ pub fn MlsUnlockPrompt(
                         if restore_result.is_ok() {
                             store_handle.write(|store| {
                                 let account_data = store.current_account_data_events();
-                                crate::sync_engine::apply_account_data_entries(
+                                if let Err(error) = crate::sync_engine::apply_account_data_entries(
                                     store,
                                     &account_data,
                                     &authority,
-                                );
+                                ) {
+                                    tracing::warn!(%error, "account data remains unavailable after MLS unlock");
+                                }
                             });
                             if store_handle
                                 .write(|store| {

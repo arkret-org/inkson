@@ -1394,13 +1394,8 @@ pub fn ChatPanel(
         mut sidecar_publish_pending,
         member_handle_fetching: _,
     } = controller;
-    let blocked_actor_id_set: std::collections::BTreeSet<String> = state_store
-        .read()
-        .client_blocklist()
-        .into_iter()
-        .filter(crate::account_data::hides_actor_messages)
-        .map(|entry| crate::account_data::blocklist_target_value(&entry.target).to_owned())
-        .collect();
+    let blocked_actor_id_set =
+        crate::account_data::blocked_message_actor_ids(&state_store.read().client_blocklist());
     let sidecar_mode = sidecar_session.is_some();
     let mut right_panel = use_signal(move || {
         if sidecar_mode {

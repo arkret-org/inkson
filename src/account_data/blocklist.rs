@@ -192,6 +192,31 @@ pub fn new_blocklist_entry(
     Ok(entry)
 }
 
+/// The exact actor set used by the timeline and its automatic receipt selector.
+/// Retained canonical content is never mutated by this holder-private view.
+pub fn blocked_message_actor_ids(
+    entries: &[AccountBlocklistEntry],
+) -> std::collections::BTreeSet<String> {
+    entries
+        .iter()
+        .filter(|entry| hides_actor_messages(entry))
+        .filter_map(|entry| {
+            if let AccountBlocklistTarget::Actor(target) = &entry.target {
+                Some(target.actor_id.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+pub fn message_actor_is_blocked(
+    actor: &arkret_sdk::ActorId,
+    blocked: &std::collections::BTreeSet<String>,
+) -> bool {
+    blocked.contains(&actor.to_string())
+}
+
 pub fn is_blocked(list: &[AccountBlocklistEntry], actor_id: &str) -> bool {
     actor_entries_filter_surface(list, actor_id, AccountBlocklistSurface::Messages, false)
 }

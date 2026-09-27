@@ -333,6 +333,7 @@ impl AccountTransportProvider {
 /// deliveries and Station-CAS Account Data that inkson's product projections
 /// read directly.
 struct InksonAccountProjector {
+    blocklist_catchup: crate::state::BlocklistCatchup,
     ctx: SyncEngineContext,
     generation: crate::runtime::input::ValueReader<u64>,
     start_generation: u64,
@@ -571,6 +572,9 @@ impl InksonAccountProjector {
     /// catch-up. The subscription driver clears its own cursor for the same
     /// frame, so the two never disagree.
     async fn reset_account_context(&self) -> garth::Result<()> {
+        self.ctx
+            .state_store
+            .read(LocalStateStore::invalidate_blocklist_freshness);
         let (generation, location) = self
             .ctx
             .state_store
@@ -707,7 +711,7 @@ impl InksonAccountProjector {
                         }
                     }
                     for page in verified.pages() {
-                        store.ingest_verified_message_commits(page)?;
+                        store.ingest_verified_message_history(page)?;
                         crate::identity::agent_signer_evidence::index_verified_committed_page(
                             store, page,
                         )?;
@@ -932,17 +936,25 @@ impl AccountBatchProjector for InksonAccountProjector {
         checkpoint: garth::AccountCursorCheckpoint,
         cursors: &C,
     ) -> garth::Result<()> {
-        if batch.frames.is_empty()
-            || batch
-                .frames
-                .iter()
-                .any(|frame| frame.kind == AccountSubscribeFrameKind::ResyncRequired)
-        {
-            self.project(batch).await?;
-            return garth::CursorStore::save_account_checkpoint(cursors, scope, checkpoint).await;
+        let reset = batch
+            .frames
+            .iter()
+            .any(|frame| frame.kind == AccountSubscribeFrameKind::ResyncRequired);
+        let durable = async {
+            if batch.frames.is_empty() || reset {
+                self.project(batch).await?;
+                garth::CursorStore::save_account_checkpoint(cursors, scope, checkpoint).await?;
+            } else {
+                self.project_verified_batch(batch, Some((scope, checkpoint)))
+                    .await?;
+            }
+            Ok(())
         }
-        self.project_verified_batch(batch, Some((scope, checkpoint)))
-            .await
+        .await;
+        // The SDK consumes catchup_complete/checkpoint control frames. The
+        // validated batch reaches this boundary after its checkpoint is durable.
+        self.blocklist_catchup
+            .finish_checkpoint(durable, reset, self.fence())
     }
 }
 
@@ -1009,6 +1021,9 @@ pub async fn run_sync_engine(
     ));
 
     while provider.is_active() {
+        let blocklist_catchup = ctx
+            .state_store
+            .read(LocalStateStore::begin_blocklist_catchup);
         let transport = match provider.provide().await {
             Ok(transport) => transport,
             Err(error) => {
@@ -1022,6 +1037,7 @@ pub async fn run_sync_engine(
         let subscription =
             AccountSubscription::new(ctx.client_runtime.executor(), ctx.client_runtime.cursors());
         let projector = InksonAccountProjector {
+            blocklist_catchup,
             ctx: ctx.clone(),
             generation: generation.clone(),
             start_generation,
@@ -1059,6 +1075,7 @@ pub async fn run_sync_engine(
                 }
             }
         };
+        drop(projector);
         match result {
             Ok(garth::SubscriptionStopReason::Cancelled) => {
                 backoff.reset();
@@ -2492,7 +2509,7 @@ fn apply_account_data(
     store: &mut LocalStateStore,
     response: &AccountFrameStep,
     authority: &arkret_sdk::AccountId,
-) -> Option<String> {
+) -> anyhow::Result<Option<String>> {
     apply_account_data_entries(store, response.account_data(), authority)
 }
 
@@ -2500,7 +2517,7 @@ pub(crate) fn apply_account_data_entries(
     store: &mut LocalStateStore,
     entries: &[arkret_sdk::Event],
     authority: &arkret_sdk::AccountId,
-) -> Option<String> {
+) -> anyhow::Result<Option<String>> {
     let mut synced_theme = None;
     for entry in entries {
         let Some(account_data_key) = entry.payload.get("key").and_then(Value::as_str) else {
@@ -2632,8 +2649,9 @@ pub(crate) fn apply_account_data_entries(
                     store.set_client_blocklist(revision, entries);
                 }
                 Err(error) => {
-                    tracing::warn!(
-                        "sync engine: ignoring malformed ak.account.blocklist account_data: {error}",
+                    store.invalidate_blocklist_freshness();
+                    return Err(
+                        error.context("blocklist catch-up cannot commit an undecryptable revision")
                     );
                 }
             }
@@ -2700,7 +2718,7 @@ pub(crate) fn apply_account_data_entries(
             }
         }
     }
-    synced_theme
+    Ok(synced_theme)
 }
 
 #[cfg(test)]
@@ -2775,6 +2793,124 @@ mod tests {
                 .as_nanos(),
         ));
         LocalStateStore::with_path(path)
+    }
+
+    #[test]
+    fn blocklist_folder_checkpoint_requires_durable_valid_batch() {
+        use arkret_models_collaboration::sync_frames::account_subscribe::{
+            AccountSubscribeSnapshotResult, SyncRequestBody,
+        };
+        let request = SyncRequestBody {
+            after: None,
+            catchup: Some(true),
+            filter: None,
+            realm_list: None,
+            replace_filter: None,
+        };
+        let mut folder = arkret_sdk::AccountSubscribeFolder::for_request(&request);
+        folder
+            .push(
+                serde_json::from_value(
+                    json!({"kind":"delta","cursor":"ak:cursor:blocklist-delta","partial":false}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        folder
+            .push(
+                serde_json::from_value(
+                    json!({"kind":"catchup_complete","cursor":"ak:cursor:blocklist-complete"}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let AccountSubscribeSnapshotResult::Batch(batch) = folder.finish().unwrap() else {
+            panic!("validated batch required")
+        };
+        assert_eq!(batch.frames.len(), 1);
+        assert!(
+            batch
+                .frames
+                .iter()
+                .all(|frame| frame.kind == AccountSubscribeFrameKind::Delta)
+        );
+        let path = std::env::temp_dir().join(format!(
+            "blocklist-folder-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        let mut store = LocalStateStore::with_path(&path);
+        let scope = garth::CursorScope::Account {
+            service_id: None,
+            actor_id: crate::test_support::account_actor("did:web:blocklist-holder.example"),
+            device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
+                .unwrap(),
+        };
+        let checkpoint = garth::AccountCursorCheckpoint {
+            cursor: batch.cursor.clone(),
+            station_cas: garth::StationCasProjection::default(),
+        };
+        let catchup = store.begin_blocklist_catchup();
+        assert!(!store.blocklist_freshness_known());
+        let durable = store
+            .verified_projection_transaction(|store| {
+                store
+                    .save_account_checkpoint(&scope, checkpoint.clone())
+                    .map_err(|error| error.to_string())
+            })
+            .map_err(garth::Error::Protocol);
+        catchup.finish_checkpoint(durable, false, true).unwrap();
+        assert!(store.blocklist_freshness_known());
+        assert_eq!(
+            LocalStateStore::with_path(&path)
+                .load_account_checkpoint(&scope)
+                .unwrap(),
+            Some(checkpoint.clone())
+        );
+        drop(catchup);
+        assert!(!store.blocklist_freshness_known());
+        let old = store.begin_blocklist_catchup();
+        let current = store.begin_blocklist_catchup();
+        old.finish_checkpoint(Ok(()), false, true).unwrap();
+        assert!(!store.blocklist_freshness_known());
+        current.finish_checkpoint(Ok(()), true, true).unwrap();
+        assert!(!store.blocklist_freshness_known());
+        let blocked_path = std::env::temp_dir().join(format!(
+            "blocklist-unwritable-{}",
+            crate::operation::uuid_v7()
+        ));
+        std::fs::write(&blocked_path, b"not a directory").unwrap();
+        let mut unwritable = LocalStateStore::with_path(blocked_path.join("state.json"));
+        let failed = unwritable.begin_blocklist_catchup();
+        let persisted = unwritable
+            .verified_projection_transaction(|store| {
+                store
+                    .save_account_checkpoint(&scope, checkpoint.clone())
+                    .map_err(|error| error.to_string())
+            })
+            .map_err(garth::Error::Protocol);
+        assert!(persisted.is_err());
+        failed
+            .finish_checkpoint(persisted, false, true)
+            .unwrap_err();
+        assert!(!unwritable.blocklist_freshness_known());
+        assert!(
+            unwritable
+                .load_account_checkpoint(&scope)
+                .unwrap()
+                .is_none()
+        );
+        let failed = store.begin_blocklist_catchup();
+        failed
+            .finish_checkpoint(
+                Err(garth::Error::Protocol("durable write failed".into())),
+                false,
+                true,
+            )
+            .unwrap_err();
+        assert!(!store.blocklist_freshness_known());
+        let fenced = store.begin_blocklist_catchup();
+        fenced.finish_checkpoint(Ok(()), false, false).unwrap();
+        assert!(!store.blocklist_freshness_known());
     }
 
     #[test]
@@ -3489,7 +3625,7 @@ fn apply_account_frame_payload(
         // surface needs to resolve a display identity.
         ingest_member_identity_events_from_projection(store, id, &projection);
     }
-    let synced_theme = apply_account_data(store, response, &ctx.account.authority);
+    let synced_theme = apply_account_data(store, response, &ctx.account.authority)?;
     store.apply_station_cas_account_data(&response.station_cas_account_data());
     // Fold holder-private delivery cells before Realm membership
     // adjudicates the inbox. If a frame carries both an older full

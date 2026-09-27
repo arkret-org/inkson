@@ -1452,3 +1452,82 @@ pub(crate) fn queue_message_operation_for_test(operation: &LocalOperation) -> Qu
     assert_eq!(restored.items[0].status, SendQueueStatus::Queued);
     queued
 }
+
+#[tokio::test]
+async fn blocklist_unknown_freshness_withholds_privacy_signals_before_transport() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = crate::state::LocalStateStore::with_path(directory.path().join("state.json"));
+    let shared = std::sync::Arc::new(std::sync::Mutex::new(store));
+    let read = shared.clone();
+    let write = shared.clone();
+    let handle = crate::runtime::input::StateStoreHandle::new(
+        move |callback| callback(&read.lock().unwrap()),
+        move |callback| callback(&mut write.lock().unwrap()),
+    );
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let http = arkret_sdk::http_client::Client::builder(
+        format!("http://{}/", listener.local_addr().unwrap())
+            .parse()
+            .unwrap(),
+    )
+    .allow_insecure_localhost()
+    .build()
+    .unwrap();
+    let submitter = EventSubmitter::new(http);
+    let authority = test_authority();
+    let device = crate::test_support::device_id("ak:device:0196419b-0000-7000-8000-000000000001");
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+    };
+    let strand =
+        arkret_sdk::StrandId::new("ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h")
+            .unwrap();
+    let material = crate::signal::SignalKeyMaterial {
+        group_state_ref: "unreached".to_owned(),
+        epoch: 0,
+        aead_profile: "unreached".to_owned(),
+    };
+    for payload in [
+        crate::signal::SignalPayload::Presence {
+            state: "online".to_owned(),
+            status_message: None,
+            last_active_at: None,
+        },
+        crate::signal::SignalPayload::ReadReceipt {
+            strand_id: strand.clone(),
+            event_id: arkret_sdk::EventId::new(
+                "ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
+            )
+            .unwrap(),
+        },
+        crate::signal::SignalPayload::Typing {
+            strand_id: strand,
+            typing: true,
+        },
+    ] {
+        let before = shared.lock().unwrap().load();
+        let error = submitter
+            .send_scope_signal(
+                scope.clone(),
+                &authority,
+                &device,
+                &material,
+                &payload,
+                &handle,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("blocklist freshness is unknown"));
+        assert_eq!(
+            shared.lock().unwrap().load(),
+            before,
+            "refusal must not allocate a nonce or change retained state"
+        );
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock,
+            "privacy refusal must precede every HTTP lookup"
+        );
+    }
+}

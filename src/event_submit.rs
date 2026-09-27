@@ -2108,6 +2108,7 @@ impl EventSubmitter {
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+        state_store.read(|store| store.require_blocklist_signal_freshness(payload))?;
         let stream_head_ref = self.current_stream_head_for(&scope_ref).await?;
         let header = crate::signal::SignalHeader::new(
             scope_ref,
@@ -2134,6 +2135,7 @@ impl EventSubmitter {
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+        state_store.read(|store| store.require_blocklist_signal_freshness(payload))?;
         if header.sender_actor_id.as_account_id() != Some(authority) {
             anyhow::bail!("Signal sender does not match the encryption authority");
         }

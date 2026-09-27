@@ -214,18 +214,15 @@ pub(super) fn ChatEffects(
         let base = base_url.clone();
         use_effect(move || {
             let strand = selected_channel();
-            let top_event = controller
-                .messages
-                .read()
-                .iter()
-                .rev()
-                .find(|message| {
-                    message.strand_id == strand
-                        && (realm.trim().is_empty() || message.realm_id == realm)
-                        && !message.id.is_empty()
-                        && !message.pending
-                })
-                .map(|message| message.id.clone());
+            let blocked = crate::account_data::blocked_message_actor_ids(
+                &state_store.read().client_blocklist(),
+            );
+            let top_event = super::model::visible_read_receipt_event(
+                &controller.messages.read(),
+                &realm,
+                &strand,
+                &blocked,
+            );
             let Some(top_event) = top_event else {
                 return;
             };

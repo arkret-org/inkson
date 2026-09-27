@@ -36,6 +36,27 @@ fn merge_verified_message_commits(
 }
 
 impl LocalStateStore {
+    /// Retain a cryptographically verified shared page before any private
+    /// timeline filtering. The caller owns the stream checkpoint transaction.
+    pub fn ingest_verified_message_history(
+        &mut self,
+        page: &garth::VerifiedScanPage,
+    ) -> Result<usize, String> {
+        self.ingest_verified_message_commits(page)?;
+        let events = page
+            .rows()
+            .iter()
+            .filter_map(|view| {
+                if let arkret_sdk::CommittedEventView::Full(full) = view {
+                    Some(garth::ClientEvent::Event(Box::new(full.event.clone())))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        Ok(crate::sync_engine::ingest_message_events(self, "", &events))
+    }
+
     pub(crate) fn verified_commit_stream_cursor(
         &self,
         stream_ref: &arkret_sdk::CommitStreamRef,
