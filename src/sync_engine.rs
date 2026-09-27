@@ -627,6 +627,50 @@ impl NativeAccountHost {
             }
         }
     }
+
+    /// Consume bounded production Account windows until the selected Realm's
+    /// signed current index covers every authorized stream. A completed
+    /// Account window alone is not evidence that Realm detail is complete.
+    pub async fn catch_up_selected_realm_until_complete(
+        &self,
+        realm_id: &arkret_sdk::RealmId,
+    ) -> garth::Result<()> {
+        const MAX_WINDOWS: usize = 32;
+        if self.projector.ctx.selected_realm_id.get() != realm_id.as_str() {
+            return Err(garth::Error::Protocol(
+                "selected Realm catch-up was requested for another Realm".to_owned(),
+            ));
+        }
+        for _ in 0..MAX_WINDOWS {
+            // Bound a stalled rail as well as a sequence of incomplete but
+            // durable windows; this is an operational catch-up limit, not a
+            // Signal privacy or latency oracle.
+            tokio::time::timeout(std::time::Duration::from_secs(30), self.catch_up())
+                .await
+                .map_err(|_| {
+                    garth::Error::Protocol(
+                        "selected Realm Account window did not finish within 30 seconds".to_owned(),
+                    )
+                })??;
+            let index = self.projector.current_index().await?;
+            if index
+                .read_complete_cut(realm_id.as_str())
+                .await
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?
+                .is_some()
+                && !self
+                    .projector
+                    .ctx
+                    .state_store
+                    .read(LocalStateStore::current_reset_required)
+            {
+                return Ok(());
+            }
+        }
+        Err(garth::Error::Protocol(format!(
+            "selected Realm current cut stayed incomplete after {MAX_WINDOWS} durable Account windows"
+        )))
+    }
 }
 
 /// One committed frame: the Station's batch containers plus the decoded Realm
