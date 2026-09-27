@@ -318,40 +318,21 @@ impl LocalStateStore {
         )
     }
 
-    /// Joined-actor projection hint when account sync explicitly says the
-    /// roster is complete. A missing/limited roster is `None`. This is useful
+    /// Joined-actor hint from one complete installed verified current cut.
+    /// A missing or incomplete cut is `None`. This is useful
     /// for conservative mismatch detection and reconciliation wakeups, but it
     /// never replaces verified membership Events or MLS governance proofs.
     pub fn complete_joined_member_hint_for_realm(
         &self,
         realm_id: &str,
     ) -> anyhow::Result<Option<std::collections::BTreeSet<arkret_sdk::ActorId>>> {
-        let state = self.load();
-        let Some(projection) = state.realm_tree_projections.get(realm_id.trim()) else {
+        let Some(view) = self.current_product_view() else {
             return Ok(None);
         };
-        if projection
-            .get("member_roster_entries_limited")
-            .and_then(Value::as_bool)
-            != Some(false)
-        {
+        if view.realm_id != realm_id.trim() {
             return Ok(None);
         }
-        let members = projection
-            .get("member_roster_entries")
-            .and_then(Value::as_array)
-            .ok_or_else(|| anyhow::anyhow!("complete Realm roster omits member entries"))?;
-        Ok(Some(
-            members
-                .iter()
-                .filter(|member| member.get("membership").and_then(Value::as_str) == Some("join"))
-                .map(|member| {
-                    serde_json::from_value::<arkret_sdk::ActorId>(
-                        member.get("actor_id").cloned().unwrap_or(Value::Null),
-                    )
-                })
-                .collect::<Result<_, _>>()?,
-        ))
+        view.complete_joined_members()
     }
 
     /// Detect the retired minimal-metadata marker in a locally cached Realm

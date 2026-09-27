@@ -90,6 +90,20 @@ impl RealmCurrentView {
     ) -> anyhow::Result<Self> {
         let realm = RealmId::new(realm_id.to_owned())?;
         for entry in &entries {
+            if let TypedCurrentResult::Value {
+                selector: CurrentSelector::MemberState { .. },
+                source_stream_ref,
+                ..
+            } = entry
+            {
+                anyhow::ensure!(
+                    source_stream_ref
+                        == &arkret_wire::CommitStreamRef::Realm {
+                            realm_id: realm.clone()
+                        },
+                    "current member state belongs to another Realm stream"
+                );
+            }
             // Only the scope-carrying selectors can name another Realm at all;
             // the rest are Realm-singletons of the index region they came from.
             if let CurrentSelector::MlsGroup { scope_ref } = selector_of(entry) {
@@ -127,6 +141,31 @@ impl RealmCurrentView {
     /// Realm. `None` is "not installed", never an empty current set.
     pub(crate) fn entries_for(&self, realm_id: &str) -> Option<&[TypedCurrentResult]> {
         (self.realm_id == realm_id.trim()).then_some(self.entries.as_slice())
+    }
+
+    /// Reconciliation may infer absent members only from the complete
+    /// authority-verified cut, never from a partial roster display page.
+    pub(crate) fn complete_joined_members(
+        &self,
+    ) -> anyhow::Result<Option<std::collections::BTreeSet<arkret_sdk::ActorId>>> {
+        if !self.complete_cut {
+            return Ok(None);
+        }
+        let mut joined = std::collections::BTreeSet::new();
+        for entry in &self.entries {
+            if let TypedCurrentResult::Value {
+                selector: CurrentSelector::MemberState { actor_id },
+                value,
+                ..
+            } = entry
+            {
+                let state: arkret_wire::MemberStateCurrent = serde_json::from_value(value.clone())?;
+                if state.membership == arkret_wire::MembershipState::Join {
+                    joined.insert(actor_id.clone());
+                }
+            }
+        }
+        Ok(Some(joined))
     }
 }
 
@@ -221,6 +260,46 @@ mod tests {
     use super::*;
 
     const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+
+    #[test]
+    fn membership_reconciliation_requires_a_complete_verified_cut() {
+        let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:member.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let rows = vec![entry(
+            CurrentSelector::MemberState {
+                actor_id: actor.clone(),
+            },
+            1,
+            serde_json::json!({"membership":"join","joined_at":"2026-09-27T00:00:00.000Z"}),
+        )];
+        assert_eq!(
+            RealmCurrentView::new(REALM, rows.clone(), false)
+                .unwrap()
+                .complete_joined_members()
+                .unwrap(),
+            None,
+        );
+        assert_eq!(
+            RealmCurrentView::new(REALM, rows.clone(), true)
+                .unwrap()
+                .complete_joined_members()
+                .unwrap(),
+            Some(std::collections::BTreeSet::from([actor])),
+        );
+        let mut stale = rows;
+        if let TypedCurrentResult::Value {
+            source_stream_ref, ..
+        } = &mut stale[0]
+        {
+            *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
+                realm_id: RealmId::new("ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM")
+                    .unwrap(),
+            };
+        }
+        assert!(RealmCurrentView::new(REALM, stale, true).is_err());
+    }
 
     fn revision(position: u64) -> CurrentRevision {
         let mut digest = [0; 32];

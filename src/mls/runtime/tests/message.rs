@@ -34,13 +34,7 @@ fn seed_complete_rfc9420_projection(
     actor: &str,
 ) {
     let actor_id = arkret_sdk::ActorId::account(fixture::authority(actor));
-    state.save_realm_tree_projection(
-        realm,
-        json!({
-            "member_roster_entries_limited": false,
-            "member_roster_entries": [{ "actor_id": actor_id, "membership": "join" }]
-        }),
-    );
+    fixture::install_complete_joined_members(state, realm, vec![actor_id]);
     seed_accepted_rfc9420_binding(state, realm);
 }
 
@@ -91,15 +85,10 @@ fn creator_realm_state_snapshot_bootstrap_makes_space_encryptable() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     super::seed_human_creator_authorization(actor, device);
-    state.save_realm_tree_projection(
+    fixture::install_complete_joined_members(
+        &mut state,
         realm,
-        json!({
-            "member_roster_entries_limited": false,
-            "member_roster_entries": [{
-                "actor_id": arkret_sdk::ActorId::account(fixture::authority(actor)),
-                "membership": "join"
-            }]
-        }),
+        vec![arkret_sdk::ActorId::account(fixture::authority(actor))],
     );
     seed_accepted_rfc9420_binding(&mut state, realm);
     let summary = ensure_creator_mls_checkpoint(
@@ -168,13 +157,7 @@ fn complete_membership_hint_does_not_alias_same_principal_at_another_station() {
         authority.principal_id.clone(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap(),
     ));
-    state.save_realm_tree_projection(
-        realm,
-        json!({
-            "member_roster_entries_limited": false,
-            "member_roster_entries": [{ "actor_id": foreign, "membership": "join" }],
-        }),
-    );
+    fixture::install_complete_joined_members(&mut state, realm, vec![foreign.clone()]);
     assert_eq!(
         realm_mls_roster_matches_complete_membership_hint(
             &state, &secure, realm, &authority, &device,
@@ -194,13 +177,11 @@ fn complete_membership_hint_does_not_alias_same_principal_at_another_station() {
         Err(MlsRuntimeError::EncryptionTransitionPending)
     ));
 
-    state.save_realm_tree_projection(realm, json!({
-        "member_roster_entries_limited": false,
-        "member_roster_entries": [
-            { "actor_id": arkret_sdk::ActorId::account(authority.clone()), "membership": "join" },
-            { "actor_id": foreign, "membership": "join" },
-        ],
-    }));
+    fixture::install_complete_joined_members(
+        &mut state,
+        realm,
+        vec![arkret_sdk::ActorId::account(authority.clone()), foreign],
+    );
     assert_eq!(
         state
             .complete_joined_member_hint_for_realm(realm)
@@ -209,19 +190,11 @@ fn complete_membership_hint_does_not_alias_same_principal_at_another_station() {
             .len(),
         2
     );
-    state.save_realm_tree_projection(
-        realm,
-        json!({
-            "member_roster_entries_limited": false,
-            "member_roster_entries": [{ "actor_id": principal, "membership": "join" }],
-        }),
-    );
-    assert!(state.complete_joined_member_hint_for_realm(realm).is_err());
-    assert_eq!(
-        realm_mls_roster_matches_complete_membership_hint(
-            &state, &secure, realm, &authority, &device,
-        ),
-        Some(false)
+    assert!(
+        serde_json::from_value::<arkret_wire::CurrentSelector>(json!({
+            "kind": "member_state", "actor_id": principal,
+        }))
+        .is_err()
     );
 }
 
@@ -381,19 +354,13 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
     .unwrap()
     .expect("creator snapshot");
     super::seed_current_group_state_ref(&mut state, realm);
-    state.save_realm_tree_projection(
+    fixture::install_complete_joined_members(
+        &mut state,
         realm,
-        json!({
-            "encrypted": true,
-            "member_roster_entries_limited": false,
-            "member_roster_entries": [
-                {
-                    "actor_id": arkret_sdk::ActorId::account(fixture::authority(actor)),
-                    "membership": "join"
-                },
-                { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join" }
-            ]
-        }),
+        vec![
+            arkret_sdk::ActorId::account(fixture::authority(actor)),
+            arkret_sdk::ActorId::account(fixture::authority("did:web:bob.example")),
+        ],
     );
 
     let error = encrypt_values_with_device_snapshot(
@@ -436,15 +403,10 @@ fn encrypted_write_uses_accepted_mls_group_without_legacy_scheme_projection() {
     .unwrap()
     .expect("creator snapshot");
     super::seed_current_group_state_ref(&mut state, realm);
-    state.save_realm_tree_projection(
+    fixture::install_complete_joined_members(
+        &mut state,
         realm,
-        json!({
-            "member_roster_entries_limited": false,
-            "member_roster_entries": [{
-                "actor_id": arkret_sdk::ActorId::account(fixture::authority(actor)),
-                "membership": "join"
-            }]
-        }),
+        vec![arkret_sdk::ActorId::account(fixture::authority(actor))],
     );
 
     let (_, encrypted_values) = encrypt_values_with_device_snapshot(

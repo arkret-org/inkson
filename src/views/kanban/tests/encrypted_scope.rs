@@ -95,6 +95,11 @@ fn seed_ready_creator_snapshot(
     device: &str,
 ) -> arkret_sdk::EventId {
     seed_device_authorization(actor, device);
+    fixture::install_complete_joined_members(
+        state,
+        realm,
+        vec![arkret_sdk::ActorId::account(fixture::authority(actor))],
+    );
     crate::mls::runtime::ensure_creator_mls_checkpoint(
         state,
         secure,
@@ -749,6 +754,11 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
         }),
     );
     fixture::install_accepted_mls_group(&mut state, &scope);
+    fixture::install_complete_joined_members(
+        &mut state,
+        realm,
+        vec![arkret_sdk::ActorId::account(fixture::authority(actor))],
+    );
     let governance_binding = crate::mls::governance_proof::genesis_binding(&scope).unwrap();
     let mut group = identity
         .create_group_with_governance_binding(&scope, &governance_binding)

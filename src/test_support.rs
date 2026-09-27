@@ -374,6 +374,48 @@ pub(crate) fn install_accepted_mls_group_at_epoch(
     install_current_entries(state, &realm_id, vec![entry]);
 }
 
+/// Install a complete typed membership cut, replacing its previous member rows.
+pub(crate) fn install_complete_joined_members(
+    state: &mut crate::state::LocalStateStore,
+    realm_id: &str,
+    members: Vec<arkret_sdk::ActorId>,
+) {
+    let mut entries = state
+        .realm_current_view_entries(realm_id)
+        .unwrap_or_default();
+    entries.retain(|entry| {
+        !matches!(
+            entry,
+            arkret_wire::TypedCurrentResult::Value {
+                selector: arkret_wire::CurrentSelector::MemberState { .. },
+                ..
+            }
+        )
+    });
+    for actor_id in members {
+        entries.push(arkret_wire::TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::MemberState { actor_id },
+            source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
+            },
+            revision: arkret_wire::CurrentRevision {
+                commit_id: arkret_wire::RealmCommitId::from_digest([0x32; 32]),
+                stream_position: 2,
+            },
+            value: serde_json::to_value(arkret_wire::MemberStateCurrent {
+                membership: arkret_wire::MembershipState::Join,
+                joined_at: Some("2026-09-27T00:00:00.000Z".parse().unwrap()),
+            })
+            .unwrap(),
+        });
+    }
+    state
+        .install_current_product_view(
+            crate::current_projection::RealmCurrentView::new(realm_id, entries, true).unwrap(),
+        )
+        .unwrap();
+}
+
 /// Merge typed current rows into the store's installed product view of
 /// `realm_id`, replacing any row with the same selector. This is the view the
 /// sync engine installs from the durable current index.
