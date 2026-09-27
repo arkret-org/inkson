@@ -25,6 +25,39 @@ where
     }
 }
 
+/// Each fetch has its own network deadline. Rate-limit waits occur between
+/// attempts, while exact unlock requests and successful ciphertext receipts
+/// remain owned by the key-backup layer.
+async fn mls_unlock_fetch_with_retry<T, F, R, W, S>(
+    mut fetch: F,
+    mut wait: W,
+) -> Result<T, ApiCallError>
+where
+    F: FnMut() -> R,
+    R: Future<Output = Result<T, ApiCallError>>,
+    W: FnMut(Duration) -> S,
+    S: Future<Output = ()>,
+{
+    loop {
+        let error = match mls_unlock_fetch_with_timeout(fetch()).await {
+            Ok(value) => return Ok(value),
+            Err(error) => error,
+        };
+        let delay = error
+            .inner()
+            .downcast_ref::<crate::key_backup::KeyBackupUnlockBackoff>()
+            .map(|backoff| backoff.retry_after_ms())
+            .or_else(|| crate::api_error::rate_limited_retry_after(error.inner()));
+        let Some(delay) = delay else {
+            return Err(error);
+        };
+        // A Station may omit Retry-After. Use the ordinary minute window
+        // instead of a tight loop; explicit server delays remain authoritative.
+        let delay = if delay == 0 { 60_000 } else { delay };
+        wait(Duration::from_millis(delay)).await;
+    }
+}
+
 /// Account-MLS-secret auto-unlock prompt (step 3 of the recovery flow).
 ///
 /// Mounted once near the app shell and rendered ONLY when `needs_mls_unlock`
@@ -52,6 +85,7 @@ pub fn MlsUnlockPrompt(
     let mut passphrase = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut busy = use_signal(|| false);
+    let mut unlock_task = use_signal(|| None::<dioxus::core::Task>);
     let mut dismissed = use_signal(|| false);
     let mut recovery_key_open = use_signal(|| false);
 
@@ -109,7 +143,7 @@ pub fn MlsUnlockPrompt(
         let authority = authority.clone();
         busy.set(true);
         status.set(crate::i18n::tr("mls_unlock.status.fetching"));
-        spawn(async move {
+        let task = spawn(async move {
             tracing::warn!(
                 target: "mls_unlock",
                 %actor,
@@ -121,20 +155,23 @@ pub fn MlsUnlockPrompt(
             // SEC-05: fetch the restore payload AND the actor's currently-accepted
             // recovery policy in the same authed session, so the HPKE account-secret
             // backup's `recovery_policy_ref` can be verified before import.
-            let payload_result =
-                mls_unlock_fetch_with_timeout(with_authed_api(&base, session, |api| async move {
-                    let payload =
-                        crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
-                            &api,
-                            &fetch_actor,
-                            &fetch_device,
-                        )
-                        .await?;
-                    let active_policy =
-                        crate::recovery_flow::fetch_active_recovery_policy(&api).await?;
-                    Ok::<_, anyhow::Error>((payload, active_policy))
-                }))
-                .await;
+            let payload_result = mls_unlock_fetch_with_retry(
+                || {
+                    let fetch_actor = fetch_actor.clone();
+                    let fetch_device = fetch_device.clone();
+                    with_authed_api(&base, session.clone(), |api| async move {
+                        let payload = crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
+                            &api, &fetch_actor, &fetch_device,
+                        ).await?;
+                        let active_policy = crate::recovery_flow::fetch_active_recovery_policy(&api).await?;
+                        Ok::<_, anyhow::Error>((payload, active_policy))
+                    })
+                },
+                |delay| {
+                    try_set_signal(status, crate::i18n::tr("error.rate_limited"));
+                    crate::runtime_helpers::sleep_for(delay)
+                },
+            ).await;
             let result = match payload_result {
                 Ok((payload, active_policy)) => {
                     // The restorable set is the account's own key-backup
@@ -284,13 +321,16 @@ pub fn MlsUnlockPrompt(
                 }
             }
         });
+        unlock_task.set(Some(task));
     };
 
     rsx! {
         Dialog {
             open: true,
             on_open_change: move |open: bool| {
-                if !open && !busy() {
+                if !open {
+                    if let Some(task) = unlock_task.take() { task.cancel(); }
+                    busy.set(false);
                     dismissed.set(true);
                 }
             },
@@ -310,8 +350,11 @@ pub fn MlsUnlockPrompt(
                     "data-testid": "mls-unlock-dismiss",
                     title: crate::i18n::tr("mls_unlock.dismiss"),
                     "aria-label": crate::i18n::tr("mls_unlock.dismiss"),
-                    disabled: busy(),
-                    onclick: move |_| dismissed.set(true),
+                    onclick: move |_| {
+                        if let Some(task) = unlock_task.take() { task.cancel(); }
+                        busy.set(false);
+                        dismissed.set(true);
+                    },
                     UiIcon { name: "x" }
                 }
             }
@@ -460,5 +503,59 @@ pub fn MlsRecoverySetupMissingBanner(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+
+    fn rate_limit(retry_after_ms: Option<u64>) -> ApiCallError {
+        let mut problem = arkret_sdk::Problem::new("rate_limited", 429, "slow down");
+        if let Some(delay) = retry_after_ms {
+            problem = problem.with_extension("retry_after_ms", serde_json::json!(delay));
+        }
+        ApiCallError::Failed(
+            arkret_sdk::Error::Api {
+                status: 429,
+                error: Box::new(problem),
+            }
+            .into(),
+        )
+    }
+
+    #[tokio::test]
+    async fn rate_limit_waits_then_resumes_but_terminal_errors_stop() {
+        for (hint, expected) in [(Some(250), 250), (None, 60_000)] {
+            let mut results = std::collections::VecDeque::from([Err(rate_limit(hint)), Ok(7_u32)]);
+            let mut delays = Vec::new();
+            let restored = mls_unlock_fetch_with_retry(
+                || std::future::ready(results.pop_front().unwrap()),
+                |delay| {
+                    delays.push(delay);
+                    std::future::ready(())
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(restored, 7);
+            assert_eq!(delays, vec![Duration::from_millis(expected)]);
+            assert!(results.is_empty());
+        }
+        let mut waited = false;
+        let rejected = mls_unlock_fetch_with_retry::<(), _, _, _, _>(
+            || {
+                std::future::ready(Err(ApiCallError::Failed(anyhow::anyhow!(
+                    "signature invalid"
+                ))))
+            },
+            |_| {
+                waited = true;
+                std::future::ready(())
+            },
+        )
+        .await;
+        assert!(rejected.is_err());
+        assert!(!waited);
     }
 }
