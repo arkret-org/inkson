@@ -1037,7 +1037,13 @@ pub async fn run_sync_engine(
             futures_util::pin_mut!(run, maintenance);
             match futures_util::future::select(run, maintenance).await {
                 futures_util::future::Either::Left((result, _)) => result,
-                futures_util::future::Either::Right(((), _)) => break,
+                futures_util::future::Either::Right(((), _)) => {
+                    if provider.is_active() {
+                        backoff.reset();
+                        continue;
+                    }
+                    break;
+                }
             }
         };
         match result {
@@ -1125,7 +1131,10 @@ async fn current_index_maintenance(
     let mut delay = Duration::from_secs(1);
     loop {
         crate::runtime_helpers::sleep_for(delay).await;
-        if !provider.is_active() {
+        // Navigation can change the demand while the old subscription is
+        // idle. Fence it here instead of waiting for another server frame;
+        // dropping the run lets the outer loop subscribe with the new filter.
+        if !provider.is_active() || !projector.fence() {
             break;
         }
         let index = projector.current_index.lock().await.clone();
