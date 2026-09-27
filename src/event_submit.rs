@@ -38,7 +38,11 @@ mod message_authoring;
 pub(crate) use authoring_unit::author_event_unit_for_test;
 use authoring_unit::{UnitAuthoringChain, validate_authored_unit_shape};
 use authority::*;
+#[cfg(test)]
+pub(crate) use message_authoring::retry_frozen_message;
 pub(crate) use message_authoring::{MessageSendAttempt, drive_message_send};
+#[cfg(test)]
+pub(crate) use tests::queue_message_operation_for_test;
 
 /// Largest page one stream scan asks for. The wire ceiling is 1000.
 const STREAM_SCAN_PAGE: u16 = 500;
@@ -442,6 +446,11 @@ fn reconcile_settled_outbound_item(
 ) -> bool {
     let event_id = item.event_id().clone();
     let (write_state, error) = match item.status {
+        SendQueueStatus::Committed
+            if queued_event(item).kind == arkret_sdk::EventKind::MessageCreate =>
+        {
+            ("committed", None)
+        }
         SendQueueStatus::Committed => ("accepted", None),
         SendQueueStatus::Rejected => (
             "rejected",
@@ -1077,8 +1086,10 @@ impl EventSubmitter {
                 );
             }
         }
-        crate::event_signer::sign_sdk_event_with_active_context(event, proof_context)
-            .map_err(|error| anyhow::anyhow!("sign SDK Event: {error}"))
+        sign_event_through_message_seam(event, |unsigned| {
+            crate::event_signer::sign_sdk_event_with_active_context(unsigned, proof_context)
+                .map_err(|error| anyhow::anyhow!("sign SDK Event: {error}"))
+        })
     }
 
     /// Author and sign one write for a protocol endpoint that carries the
@@ -1361,10 +1372,14 @@ impl EventSubmitter {
     pub(crate) async fn submit_scheduled_send_event(
         &self,
         scheduled_send_id: arkret_identifiers::ScheduledSendId,
-        signed_event: arkret_sdk::AuthoredEvent,
+        submission: QueuedSubmission,
     ) -> anyhow::Result<SubmitEventResult> {
         let _single_writer = outbound_submit_lock().lock().await;
-        let submission = event_submission(&signed_event)?;
+        let submission = self
+            .outbound(OutboundLane::Standard)?
+            .store()
+            .freeze_scheduled_dispatch(scheduled_send_id.clone(), submission)
+            .await?;
         let item = self
             .enqueue_and_drive(QueuedWrite {
                 lane: OutboundLane::Standard,
@@ -1556,11 +1571,17 @@ impl EventSubmitter {
             .items
             .into_iter()
             .find(|item| item.event_id() == &event_id);
+        if let Some(item) = &existing {
+            ensure_exact_queued_request(&item.submission, &submission)?;
+            if is_retryable_authority_item(item) {
+                reopen_retryable_submission(&outbound, item, Duration::from_millis(1_025)).await?;
+            }
+        }
         match existing {
             // The Station already answered for these exact bytes. Authoring is
             // one-shot, so a repeat call for the same operation is the same
             // Event, and its committed answer is the answer.
-            Some(item) if item.status.is_terminal() => {
+            Some(item) if item.status.is_terminal() && !is_retryable_authority_item(&item) => {
                 if let Some(state_store) = self.state_store.as_ref() {
                     state_store.write(|store| {
                         reconcile_settled_outbound_item(store, &item);
@@ -1608,7 +1629,6 @@ impl EventSubmitter {
                 }
                 OutboundEngineOutcome::Rejected { item, .. }
                     if item.event_id() == &event_id
-                        && retry_scope == InteractiveRetryScope::RealmBootstrap
                         && matches!(
                             &item.submission.state,
                             garth::SubmissionState::Rejected {
@@ -1617,7 +1637,12 @@ impl EventSubmitter {
                             }
                         ) =>
                 {
-                    let retry_budget_exhausted = interactive_retries >= 4;
+                    let max_retries = if retry_scope == InteractiveRetryScope::RealmBootstrap {
+                        4
+                    } else {
+                        1
+                    };
+                    let retry_budget_exhausted = interactive_retries >= max_retries;
                     if !retry_budget_exhausted {
                         interactive_retries = interactive_retries.saturating_add(1);
                     }
@@ -2253,16 +2278,95 @@ fn local_detail_blocks_authoring(
         && invalidated_without_projection
 }
 
+fn is_retryable_authority_item(item: &garth::SendQueueItem) -> bool {
+    matches!(
+        &item.submission.state,
+        garth::SubmissionState::Rejected {
+            status: arkret_wire::AuthorityRejectionStatus::RetryableUnavailable,
+            ..
+        }
+    )
+}
+
+async fn reopen_retryable_submission(
+    outbound: &OutboundEngine<InksonOutboundStore, InksonHostClock>,
+    item: &garth::SendQueueItem,
+    delay: Duration,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        is_retryable_authority_item(item),
+        "authority refusal is terminal"
+    );
+    outbound
+        .store()
+        .requeue_retryable_unavailable(
+            item.event_id(),
+            i64::try_from(crate::clock::now_unix_ms())
+                .unwrap_or(i64::MAX)
+                .saturating_add(i64::try_from(delay.as_millis()).unwrap_or(i64::MAX)),
+        )
+        .await?;
+    crate::runtime_helpers::sleep_for(delay).await;
+    Ok(())
+}
+
+fn ensure_exact_queued_request(
+    existing: &QueuedSubmission,
+    attempted: &QueuedSubmission,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        arkret_sdk::canonical::canonical_json_bytes(&existing.request)?
+            == arkret_sdk::canonical::canonical_json_bytes(&attempted.request)?,
+        "local dispatch invariant: an existing Event identity has different signed submission bytes"
+    );
+    Ok(())
+}
+
+/// Every message producer, including poll, scheduled and confirmed Sidecar
+/// writes, enters the same consuming proof-only session. Other Event kinds
+/// retain their domain-specific signing path.
+fn sign_event_through_message_seam(
+    event: &mut arkret_sdk::AuthoredEvent,
+    sign: impl FnOnce(&mut arkret_sdk::AuthoredEvent) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    if event.kind != arkret_sdk::EventKind::MessageCreate {
+        return sign(event);
+    }
+    let frozen = garth::MessageAuthoringSession::from_authored_event(event.clone())?.sign_with(
+        |unsigned| sign(unsigned).map_err(|error| garth::Error::Protocol(error.to_string())),
+    )?;
+    event.attach_proof(
+        frozen
+            .request()
+            .submission
+            .event
+            .producer_proof
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("message signer produced no producer proof"))?,
+    );
+    Ok(())
+}
+
 /// Freeze one signed producer Event as an authority submission.
-fn event_submission(event: &arkret_sdk::AuthoredEvent) -> anyhow::Result<QueuedSubmission> {
+pub(crate) fn event_submission(
+    event: &arkret_sdk::AuthoredEvent,
+) -> anyhow::Result<QueuedSubmission> {
     validate_signed_sdk_event_for_submit(event.event(), event.digest_suite())?;
-    QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
-        arkret_wire::EventAdmissionSubmission {
-            event: event.event().clone(),
-            approval_signatures: None,
-        },
-    ))
-    .map_err(anyhow::Error::from)
+    let request = arkret_wire::EventAdmissionSubmission {
+        event: event.event().clone(),
+        approval_signatures: None,
+    };
+    if event.kind == arkret_sdk::EventKind::MessageCreate {
+        return garth::FrozenMessageSubmission::from_signed_request(
+            garth::MessageSubmitRequestBody {
+                submission: request,
+            },
+        )
+        .map(garth::FrozenMessageSubmission::into_queued_submission)
+        .map_err(anyhow::Error::from);
+    }
+    QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(request))
+        .map_err(anyhow::Error::from)
 }
 
 fn account_authority_http_client(

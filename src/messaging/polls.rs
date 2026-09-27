@@ -347,6 +347,7 @@ mod tests {
             operation.payload()["poll_response_heads"],
             serde_json::json!(heads)
         );
+        crate::event_submit::queue_message_operation_for_test(&operation);
         assert!(!operation.payload().contains_key("causal_refs"));
         assert!(
             build_poll_vote_op_with_heads(
@@ -406,6 +407,7 @@ mod tests {
             &draft,
         )
         .expect("builds");
+        crate::event_submit::queue_message_operation_for_test(&op);
         assert_eq!(op.kind().as_str(), "ak.message.create");
         assert!(!op.payload().contains_key("encrypted"));
         // Canonical poll_block: nested `poll` object, no flat fields.

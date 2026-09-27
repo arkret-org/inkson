@@ -170,7 +170,6 @@ pub(super) fn test_encrypted_content_envelope(
         1,
         group_state_ref,
         "ak:device:fixture",
-        None,
         arkret_sdk::EventContentRoutingContext::None,
     )
     .expect("fixture pre-encryption header");
@@ -185,7 +184,6 @@ pub(super) fn test_encrypted_content_envelope(
         epoch: 1,
         content_type: KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE.to_owned(),
         ciphertext: ciphertext.to_owned(),
-        counter: None,
         pre_encryption_header: header,
         payload_digest,
     };

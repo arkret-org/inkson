@@ -173,7 +173,6 @@ pub fn encrypt_reaction_with_device_snapshot(
         group.epoch(),
         group_state_ref,
         sender_domain,
-        None,
         arkret_sdk::EventContentRoutingContext::Reaction {
             target_ref: target_ref.clone(),
             routing_window,

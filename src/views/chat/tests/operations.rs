@@ -715,6 +715,15 @@ fn every_send_failure_has_its_own_message() {
         garth::MessageAuthoringFailure::SubmissionOutcomeUnknown {
             detail: String::new(),
         },
+        garth::MessageAuthoringFailure::RevisionConflict {
+            detail: String::new(),
+        },
+        garth::MessageAuthoringFailure::PermissionRevoked {
+            detail: String::new(),
+        },
+        garth::MessageAuthoringFailure::PreconditionFailed {
+            detail: String::new(),
+        },
         garth::MessageAuthoringFailure::Refused {
             code: "policy_denied".to_owned(),
             detail: String::new(),

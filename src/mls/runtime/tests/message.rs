@@ -69,7 +69,6 @@ fn test_message_header(
         )
         .unwrap(),
         group.local_content_sender_domain().unwrap(),
-        None,
         arkret_sdk::EventContentRoutingContext::None,
     )
     .unwrap()
@@ -1294,3 +1293,123 @@ fn retired_minimal_metadata_marker_blocks_encryption_before_checkpoint_access() 
 }
 
 // ── accepted MLS binding (`ak.component.mls.epoch.v1`) ─────────────────
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn frozen_message_real_mls_retry_and_durable_reopen_preserve_sender_state() {
+    let mut state = temp_state_store("frozen-message-real-mls-retry");
+    let secure = MemorySecureKeyStore::new();
+    let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
+    let (mut alice, endpoints) =
+        two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
+    // The accepted add/Welcome fixture installs Bob's complete binding map.
+    // Install the same exact active endpoints on Alice for this isolated
+    // cryptographic composition; this does not claim production device admission.
+    alice.install_test_leaf_bindings(endpoints).unwrap();
+    assert_eq!(alice.verified_leaf_bindings().unwrap().len(), 2);
+    let before_encryption = alice.export_state_record().unwrap().serialized_state;
+    let header = test_message_header(&alice, realm);
+    let encrypted = alice
+        .encrypt_payload(header.clone(), b"once encrypted retry")
+        .unwrap();
+    let after_encryption = alice.export_state_record().unwrap().serialized_state;
+    assert_ne!(
+        before_encryption, after_encryption,
+        "real encryption must advance sender state"
+    );
+    let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(&encrypted).unwrap();
+    let unsigned = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+        arkret_sdk::EventKind::MessageCreate.as_str(),
+        header.effective_scope.clone(),
+        fixture::account_actor("did:web:alice.example"),
+        json!({
+            "strand_id": "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
+            "track_name": "discussion", "encrypted_content": envelope,
+        }),
+    )
+    .build_unsigned()
+    .unwrap();
+    let authored = arkret_sdk::AuthoredEvent::finalize_with_digest_suite(
+        unsigned,
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap();
+    let signer = arkret_test_kit::keys::seeded_signer(
+        arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+        arkret_sdk::DidUrl::new(
+            "did:web:alice.example#ak:device:01904100-0000-7000-8000-0000000000a1",
+        )
+        .unwrap(),
+    );
+    let frozen = garth::MessageAuthoringSession::from_authored_event(authored)
+        .unwrap()
+        .sign(&signer, arkret_sdk::signatures::SignEventOptions::new())
+        .unwrap();
+    let exact_bytes = frozen.canonical_submission_bytes().to_vec();
+    let saved = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(saved.path(), serde_json::to_vec(&frozen).unwrap()).unwrap();
+    drop(frozen);
+    let reopened: garth::FrozenMessageSubmission =
+        serde_json::from_slice(&std::fs::read(saved.path()).unwrap()).unwrap();
+    assert_eq!(reopened.canonical_submission_bytes(), exact_bytes);
+    assert_eq!(
+        alice.export_state_record().unwrap().serialized_state,
+        after_encryption
+    );
+    let frozen_event = reopened.request().submission.event.clone();
+    let mut attempts = 0;
+    let result =
+        crate::event_submit::retry_frozen_message(reopened.into_queued_submission(), |queued| {
+            attempts += 1;
+            assert_eq!(
+                arkret_sdk::canonical::canonical_json_bytes(&queued.request).unwrap(),
+                exact_bytes
+            );
+            assert_eq!(
+                alice.export_state_record().unwrap().serialized_state,
+                after_encryption
+            );
+            let result = if attempts == 1 {
+                Err(garth::MessageAuthoringFailure::SubmissionOutcomeUnknown {
+                    detail: "transport response lost after sending frozen ciphertext".to_owned(),
+                })
+            } else {
+                Ok(crate::models::SubmitEventResult::queued(
+                    queued.event_id.to_string(),
+                ))
+            };
+            std::future::ready(result)
+        })
+        .await
+        .unwrap();
+    assert_eq!(attempts, 2);
+    assert_eq!(result.status, garth::SendQueueStatus::Queued);
+    assert!(result.commit.is_none());
+    assert_eq!(
+        alice.export_state_record().unwrap().serialized_state,
+        after_encryption
+    );
+    let delivered: arkret_sdk::EncryptedEnvelope =
+        serde_json::from_value(frozen_event.payload["encrypted_content"].clone()).unwrap();
+    let payload =
+        arkret_sdk::mls::encrypted_envelope_to_payload_with_verified_header(&delivered, header)
+            .unwrap();
+    let secret = load_device_checkpoint_secret(
+        &secure,
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
+    )
+    .unwrap();
+    let mut bob = crate::mls::persistence::restore_envelope(
+        &state.mls_checkpoint_for(realm).unwrap(),
+        &secret,
+        0,
+    )
+    .unwrap();
+    assert_eq!(
+        bob.decrypt_payload(&payload).unwrap(),
+        b"once encrypted retry"
+    );
+}

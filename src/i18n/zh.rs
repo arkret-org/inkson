@@ -1297,6 +1297,15 @@ pub fn chinese_translations() -> TranslationDict {
         "发送结果尚未确认，消息仍在队列中，不会产生重复副本。",
     );
     dict.set(
+        "chat.send.failed.revision",
+        "消息目标已更改，请刷新后重新发送。",
+    );
+    dict.set("chat.send.failed.permission", "你发送此消息的权限已撤销。");
+    dict.set(
+        "chat.send.failed.precondition",
+        "此消息已不满足目标的提交条件。",
+    );
+    dict.set(
         "chat.send.failed.refused",
         "本条消息被会话规则拒绝，未发送。",
     );

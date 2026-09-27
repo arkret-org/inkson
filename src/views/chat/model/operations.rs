@@ -550,6 +550,11 @@ pub(crate) fn chat_authoring_failure_message(
         garth::MessageAuthoringFailure::SubmissionOutcomeUnknown { .. } => {
             "chat.send.pending.unknown"
         }
+        garth::MessageAuthoringFailure::RevisionConflict { .. } => "chat.send.failed.revision",
+        garth::MessageAuthoringFailure::PermissionRevoked { .. } => "chat.send.failed.permission",
+        garth::MessageAuthoringFailure::PreconditionFailed { .. } => {
+            "chat.send.failed.precondition"
+        }
         garth::MessageAuthoringFailure::Refused { .. } => "chat.send.failed.refused",
     }
 }

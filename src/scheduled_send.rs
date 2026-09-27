@@ -277,26 +277,13 @@ async fn dispatch_due_plan(
     plan: &DueScheduledSendPlan,
 ) -> anyhow::Result<bool> {
     let scheduled_send_id = plan.value.scheduled_send_id.clone();
-    let state = state_store.read(|store| store.load());
-    let Some(realm_id) = scheduled_send_target_realm(&state, &plan.value) else {
-        tracing::warn!(
-            scheduled_send_id = %scheduled_send_id,
-            strand_id = %plan.value.message_payload.strand_id,
-            "scheduled-send dispatch cannot resolve the target Strand's home Realm yet"
-        );
-        return Ok(false);
-    };
-    // The dispatch Event is authored at the plan's own `send_at`, not at the
-    // wall-clock instant the tick happened to run. A producer Event derives
-    // its identity from exactly its content, so pinning the authoring time to
-    // the plan makes the dispatch identity a pure function of the plan: a tick
-    // after a crash re-derives the same `event_id` and therefore recognises
-    // the frozen queue item instead of authoring a second message.
-    let signed = submitter
-        .author_for_direct_submission(&scheduled_send_operation(&plan.value, &realm_id, actor_id)?)
-        .await?;
-    let event_id = signed.event_id().clone();
-
+    // Serialize dispatch authoring in this holder runtime. The durable store
+    // also atomically arbitrates a binding before any network I/O.
+    static DISPATCH_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let _dispatch_guard = DISPATCH_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
     let outbound = garth::OutboundEngine::new(
         crate::outbound_store::InksonOutboundStore::open(
             authority,
@@ -305,11 +292,9 @@ async fn dispatch_due_plan(
         crate::event_submit::InksonHostClock,
     );
     let existing = outbound
-        .snapshot()
-        .await?
-        .items
-        .into_iter()
-        .find(|item| item.event_id() == &event_id);
+        .store()
+        .scheduled_dispatch(&scheduled_send_id)
+        .await?;
     if let Some(existing) = existing {
         if existing.status == garth::SendQueueStatus::Committed {
             retire_scheduled_send_plan(
@@ -320,6 +305,31 @@ async fn dispatch_due_plan(
             )
             .await?;
             return Ok(true);
+        }
+        if matches!(
+            &existing.submission.state,
+            garth::SubmissionState::Rejected {
+                status: arkret_wire::AuthorityRejectionStatus::RetryableUnavailable,
+                ..
+            }
+        ) {
+            // A retryable Station answer reopens the same binding; it never
+            // sends this tick's possibly edited plan to the authoring engine.
+            if submitter
+                .submit_scheduled_send_event(scheduled_send_id.clone(), existing.submission)
+                .await
+                .is_ok()
+            {
+                retire_scheduled_send_plan(
+                    submitter,
+                    state_store,
+                    &plan.account_data_key,
+                    scheduled_send_id.as_str(),
+                )
+                .await?;
+                return Ok(true);
+            }
+            return Ok(false);
         }
         if existing.status.is_terminal() {
             tracing::warn!(
@@ -334,8 +344,25 @@ async fn dispatch_due_plan(
         return Ok(false);
     }
 
+    let state = state_store.read(|store| store.load());
+    let Some(realm_id) = scheduled_send_target_realm(&state, &plan.value) else {
+        tracing::warn!(scheduled_send_id = %scheduled_send_id, "scheduled-send target Realm is not resolved");
+        return Ok(false);
+    };
+    let operation = scheduled_send_operation(&plan.value, &realm_id, actor_id)?;
+    let submission = outbound
+        .store()
+        .resolve_scheduled_dispatch(scheduled_send_id.clone(), || async {
+            let signed = submitter
+                .author_for_direct_submission(&operation)
+                .await
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+            crate::event_submit::event_submission(&signed)
+                .map_err(|error| garth::Error::Protocol(error.to_string()))
+        })
+        .await?;
     match submitter
-        .submit_scheduled_send_event(scheduled_send_id.clone(), signed)
+        .submit_scheduled_send_event(scheduled_send_id.clone(), submission)
         .await
     {
         Ok(_) => {
@@ -403,6 +430,145 @@ mod tests {
             "01970e589d21-0000-a13f9c2e",
         )
         .expect("plan")
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn edited_plan_after_restart_reuses_the_atomic_frozen_dispatch_without_authoring() {
+        use garth::OutboundQueueStore as _;
+        let directory = std::env::temp_dir().join(format!(
+            "inkson-scheduled-binding-{}",
+            crate::operation::uuid_v7()
+        ));
+        let path = directory.join("standard.json");
+        let original = plan("2026-08-19T00:00:00.000Z");
+        let id = original.scheduled_send_id.clone();
+        let operation = scheduled_send_operation(
+            &original,
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            "did:web:alice.example",
+        )
+        .unwrap();
+        let store = crate::outbound_store::InksonOutboundStore::for_test_path(path.clone());
+        let mut author_calls = 0;
+        let first = store
+            .resolve_scheduled_dispatch(id.clone(), || async {
+                author_calls += 1;
+                Ok(crate::event_submit::queue_message_operation_for_test(
+                    &operation,
+                ))
+            })
+            .await
+            .unwrap();
+        let expected = arkret_sdk::canonical::canonical_json_bytes(&first.request).unwrap();
+        let mut edited = plan("2026-08-20T00:00:00.000Z");
+        edited.message_payload.content =
+            Some(arkret_sdk::ContentBlock::text("edited after dispatch"));
+        let edited_operation = scheduled_send_operation(
+            &edited,
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            "did:web:alice.example",
+        )
+        .unwrap();
+        assert_ne!(operation.payload(), edited_operation.payload());
+        let resumed = crate::outbound_store::InksonOutboundStore::for_test_path(path.clone());
+        let after_crash = resumed
+            .resolve_scheduled_dispatch(id.clone(), || async {
+                author_calls += 1;
+                Ok(crate::event_submit::queue_message_operation_for_test(
+                    &edited_operation,
+                ))
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            author_calls, 1,
+            "recovery must not reach signing or encryption/authoring"
+        );
+        assert_eq!(first.event_id, after_crash.event_id);
+        assert_eq!(
+            expected,
+            arkret_sdk::canonical::canonical_json_bytes(&after_crash.request).unwrap()
+        );
+        assert_eq!(
+            resumed
+                .scheduled_dispatch(&id)
+                .await
+                .unwrap()
+                .unwrap()
+                .event_id(),
+            &first.event_id
+        );
+        // Compaction must not turn a frozen plan back into an unbound plan.
+        let durable = std::fs::read(&path).unwrap();
+        assert!(
+            resumed
+                .mutate_outbound(|queue| {
+                    *queue = garth::SendQueue::default();
+                    Ok(())
+                })
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), durable);
+        assert_eq!(
+            resumed
+                .scheduled_dispatch(&id)
+                .await
+                .unwrap()
+                .unwrap()
+                .event_id(),
+            &first.event_id
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn concurrent_scheduled_dispatches_author_and_sign_once() {
+        let directory = std::env::temp_dir().join(format!(
+            "inkson-scheduled-race-{}",
+            crate::operation::uuid_v7()
+        ));
+        let store = crate::outbound_store::InksonOutboundStore::for_test_path(
+            directory.join("standard.json"),
+        );
+        let value = plan("2026-08-19T00:00:00.000Z");
+        let operation = scheduled_send_operation(
+            &value,
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            "did:web:alice.example",
+        )
+        .unwrap();
+        let calls = std::cell::Cell::new(0);
+        let first = store.resolve_scheduled_dispatch(value.scheduled_send_id.clone(), || async {
+            calls.set(calls.get() + 1);
+            tokio::task::yield_now().await;
+            Ok(crate::event_submit::queue_message_operation_for_test(
+                &operation,
+            ))
+        });
+        let second = store.resolve_scheduled_dispatch(value.scheduled_send_id.clone(), || async {
+            calls.set(calls.get() + 1);
+            Ok(crate::event_submit::queue_message_operation_for_test(
+                &operation,
+            ))
+        });
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(calls.get(), 1);
+        assert_eq!(first.unwrap().request, second.unwrap().request);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn scheduled_message_dispatch_enters_the_shared_proof_and_durable_queue_seam() {
+        let operation = scheduled_send_operation(
+            &plan("2026-08-19T00:00:00.000Z"),
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            "did:web:alice.example",
+        )
+        .unwrap();
+        crate::event_submit::queue_message_operation_for_test(&operation);
     }
 
     #[test]

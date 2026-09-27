@@ -311,7 +311,6 @@ impl LocalMlsDevice {
             EventId::new("ak:event:ARKEyrg59dN-i97Pleo3vwwRkZomIcqPiuK9PtjzGLdh".to_owned())
                 .unwrap(),
             group.local_content_sender_domain().unwrap(),
-            None,
             arkret_sdk::EventContentRoutingContext::None,
         )
         .unwrap();

@@ -45,16 +45,60 @@ fn outbound_write_gate() -> &'static tokio::sync::Mutex<()> {
     GATE.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-fn decode_snapshot(raw: Option<&str>) -> garth::Result<garth::SendQueueSnapshot> {
-    match raw {
-        Some(raw) => serde_json::from_str(raw)
-            .map_err(|error| garth::Error::Protocol(format!("decode outbound queue: {error}"))),
-        None => Ok(garth::SendQueueSnapshot::default()),
+type ScheduledDispatches =
+    std::collections::BTreeMap<arkret_identifiers::ScheduledSendId, arkret_sdk::EventId>;
+
+/// Holder-private dispatch identities share the queue's single durable write.
+/// This adds no protocol wire field or second storage key.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableOutboundState {
+    items: Vec<garth::SendQueueItem>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    scheduled_dispatches: ScheduledDispatches,
+}
+
+impl DurableOutboundState {
+    fn validate(&self) -> garth::Result<()> {
+        for event_id in self.scheduled_dispatches.values() {
+            let item = self
+                .items
+                .iter()
+                .find(|item| item.event_id() == event_id)
+                .ok_or_else(|| {
+                    garth::Error::Storage(
+                        "scheduled dispatch lost its frozen queue item".to_owned(),
+                    )
+                })?;
+            let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(
+                event,
+            ) = &item.submission.request
+            else {
+                return Err(garth::Error::Protocol(
+                    "scheduled dispatch requires an ordinary message".to_owned(),
+                ));
+            };
+            garth::FrozenMessageSubmission::from_signed_request(garth::MessageSubmitRequestBody {
+                submission: event.clone(),
+            })?;
+        }
+        Ok(())
     }
 }
 
-fn encode_snapshot(queue: &garth::SendQueue) -> garth::Result<String> {
-    serde_json::to_string(&queue.snapshot())
+fn decode_snapshot(raw: Option<&str>) -> garth::Result<DurableOutboundState> {
+    let state: DurableOutboundState = match raw {
+        Some(raw) => serde_json::from_str(raw)
+            .map_err(|error| garth::Error::Protocol(format!("decode outbound queue: {error}")))?,
+        None => DurableOutboundState::default(),
+    };
+    state.validate()?;
+    Ok(state)
+}
+
+fn encode_snapshot(state: &DurableOutboundState) -> garth::Result<String> {
+    state.validate()?;
+    serde_json::to_string(state)
         .map_err(|error| garth::Error::Protocol(format!("encode outbound queue: {error}")))
 }
 
@@ -69,12 +113,25 @@ async fn mutate_queue_in_store<R>(
     storage_key: &str,
     mutation: impl FnOnce(&mut garth::SendQueue) -> garth::Result<R>,
 ) -> garth::Result<R> {
+    mutate_dispatches_in_store(store, storage_key, |queue, _| mutation(queue)).await
+}
+
+#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
+async fn mutate_dispatches_in_store<R>(
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+    storage_key: &str,
+    mutation: impl FnOnce(&mut garth::SendQueue, &mut ScheduledDispatches) -> garth::Result<R>,
+) -> garth::Result<R> {
     let stored = store
         .get_secret(storage_key)
         .map_err(|error| garth::Error::Protocol(format!("read outbound queue: {error}")))?;
-    let mut queue = garth::SendQueue::from_snapshot(decode_snapshot(stored.as_deref())?);
-    let result = mutation(&mut queue)?;
-    let encoded = encode_snapshot(&queue)?;
+    let mut state = decode_snapshot(stored.as_deref())?;
+    let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
+        items: std::mem::take(&mut state.items),
+    });
+    let result = mutation(&mut queue, &mut state.scheduled_dispatches)?;
+    state.items = queue.snapshot().items;
+    let encoded = encode_snapshot(&state)?;
     // `OutboundQueueStore` exposes reads through the same mutation closure as
     // writes. In particular, `OutboundEngine::snapshot()` lands here. Do not
     // turn an unchanged read into a full AES-GCM + IndexedDB commit while the
@@ -107,6 +164,14 @@ async fn mutate_queue_in_file<R>(
     path: &std::path::Path,
     mutation: impl FnOnce(&mut garth::SendQueue) -> garth::Result<R>,
 ) -> garth::Result<R> {
+    mutate_dispatches_in_file(path, |queue, _| mutation(queue)).await
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn mutate_dispatches_in_file<R>(
+    path: &std::path::Path,
+    mutation: impl FnOnce(&mut garth::SendQueue, &mut ScheduledDispatches) -> garth::Result<R>,
+) -> garth::Result<R> {
     let stored = match std::fs::read_to_string(path) {
         Ok(raw) => Some(raw),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -117,9 +182,13 @@ async fn mutate_queue_in_file<R>(
             )));
         }
     };
-    let mut queue = garth::SendQueue::from_snapshot(decode_snapshot(stored.as_deref())?);
-    let result = mutation(&mut queue)?;
-    let encoded = encode_snapshot(&queue)?;
+    let mut state = decode_snapshot(stored.as_deref())?;
+    let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
+        items: std::mem::take(&mut state.items),
+    });
+    let result = mutation(&mut queue, &mut state.scheduled_dispatches)?;
+    state.items = queue.snapshot().items;
+    let encoded = encode_snapshot(&state)?;
     if stored.as_deref() == Some(encoded.as_str()) || (stored.is_none() && queue.items().is_empty())
     {
         return Ok(result);
@@ -133,7 +202,13 @@ async fn mutate_queue_in_file<R>(
         })?;
     }
     let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, encoded.as_bytes()).map_err(|error| {
+    let write_result = (|| -> std::io::Result<()> {
+        use std::io::Write as _;
+        let mut staged = std::fs::File::create(&temporary)?;
+        staged.write_all(encoded.as_bytes())?;
+        staged.sync_all()
+    })();
+    write_result.map_err(|error| {
         garth::Error::Protocol(format!(
             "stage outbound queue {}: {error}",
             temporary.display()
@@ -190,6 +265,11 @@ fn outbound_storage_scope(
 }
 
 impl InksonOutboundStore {
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn for_test_path(path: std::path::PathBuf) -> Self {
+        Self { path }
+    }
+
     pub(crate) fn open(
         authority: &arkret_sdk::AccountId,
         lane: OutboundLane,
@@ -211,12 +291,95 @@ impl InksonOutboundStore {
         }
     }
 
+    async fn mutate_dispatches<R>(
+        &self,
+        mutation: impl FnOnce(&mut garth::SendQueue, &mut ScheduledDispatches) -> garth::Result<R>,
+    ) -> garth::Result<R> {
+        let _write_guard = outbound_write_gate().lock().await;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            mutate_dispatches_in_file(&self.path, mutation).await
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let store = secure_outbound_store()?;
+            mutate_dispatches_in_store(store.as_ref(), &self.storage_key, mutation).await
+        }
+    }
+
+    pub(crate) async fn scheduled_dispatch(
+        &self,
+        id: &arkret_identifiers::ScheduledSendId,
+    ) -> garth::Result<Option<garth::SendQueueItem>> {
+        self.mutate_dispatches(|queue, dispatches| {
+            let Some(event_id) = dispatches.get(id) else {
+                return Ok(None);
+            };
+            queue
+                .items()
+                .iter()
+                .find(|item| item.event_id() == event_id)
+                .cloned()
+                .map(Some)
+                .ok_or_else(|| {
+                    garth::Error::Storage("scheduled dispatch lost its frozen Event".to_owned())
+                })
+        })
+        .await
+    }
+
+    pub(crate) async fn resolve_scheduled_dispatch<F, Fut>(
+        &self,
+        id: arkret_identifiers::ScheduledSendId,
+        author: F,
+    ) -> garth::Result<garth::QueuedSubmission>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = garth::Result<garth::QueuedSubmission>>,
+    {
+        // Keep the first lookup, one-shot host authoring and the atomic bind
+        // together across every scheduled producer in this holder runtime.
+        static AUTHORING_GATE: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+            std::sync::OnceLock::new();
+        let _authoring_guard = AUTHORING_GATE
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        if let Some(existing) = self.scheduled_dispatch(&id).await? {
+            return Ok(existing.submission);
+        }
+        self.freeze_scheduled_dispatch(id, author().await?).await
+    }
+
+    pub(crate) async fn freeze_scheduled_dispatch(
+        &self,
+        id: arkret_identifiers::ScheduledSendId,
+        submission: garth::QueuedSubmission,
+    ) -> garth::Result<garth::QueuedSubmission> {
+        self.mutate_dispatches(|queue, dispatches| {
+            if let Some(event_id) = dispatches.get(&id) {
+                return queue
+                    .items()
+                    .iter()
+                    .find(|item| item.event_id() == event_id)
+                    .map(|item| item.submission.clone())
+                    .ok_or_else(|| {
+                        garth::Error::Storage("scheduled dispatch lost its frozen Event".to_owned())
+                    });
+            }
+            let event_id = submission.event_id.clone();
+            queue.enqueue(submission.clone(), crate::clock::now_utc())?;
+            dispatches.insert(id, event_id);
+            Ok(submission)
+        })
+        .await
+    }
+
     /// Restore an exact authority submission to the durable queued state when
     /// the governance Station explicitly returned `retryable_unavailable`.
     ///
-    /// Garth deliberately treats every authority rejection as settled. Realm
-    /// founding is the one workflow whose closed authority result vocabulary
-    /// makes `retryable_unavailable` non-terminal: the producer must resend
+    /// Garth deliberately records every authority rejection as settled. An
+    /// explicitly retryable authority answer lets the producer resend
     /// the byte-identical Event, never author a replacement. Re-opening the
     /// existing frozen submission here preserves that identity across both the
     /// retry and a browser/process restart.

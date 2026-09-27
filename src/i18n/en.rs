@@ -1279,6 +1279,18 @@ pub fn english_translations() -> TranslationDict {
         "The send result is not confirmed yet. It stays queued and will be resolved without creating a duplicate.",
     );
     dict.set(
+        "chat.send.failed.revision",
+        "The message target changed. Refresh it before sending again.",
+    );
+    dict.set(
+        "chat.send.failed.permission",
+        "Your permission to send this message was revoked.",
+    );
+    dict.set(
+        "chat.send.failed.precondition",
+        "This message no longer meets the target requirements.",
+    );
+    dict.set(
         "chat.send.failed.refused",
         "This message was refused by the conversation's rules and was not sent.",
     );

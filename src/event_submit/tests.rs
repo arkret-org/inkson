@@ -77,13 +77,16 @@ fn author_and_sign(
     let mut event = intent
         .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
         .unwrap();
-    signer
-        .sign_sdk_event_with_context(
-            &mut event,
-            crate::event_signer::ProducerProofContext::new()
-                .with_digest_suite(arkret_sdk::DigestSuite::Sha256),
-        )
-        .unwrap();
+    sign_event_through_message_seam(&mut event, |unsigned| {
+        signer
+            .sign_sdk_event_with_context(
+                unsigned,
+                crate::event_signer::ProducerProofContext::new()
+                    .with_digest_suite(arkret_sdk::DigestSuite::Sha256),
+            )
+            .map_err(anyhow::Error::from)
+    })
+    .unwrap();
     event
 }
 
@@ -459,7 +462,7 @@ fn a_committed_item_moves_its_optimistic_row_to_accepted() {
     let state = store.load();
     let row = &state.raw_operations[0];
     assert_eq!(row.operation_id, local_operation_id);
-    assert_eq!(row.payload["write_state"], "accepted");
+    assert_eq!(row.payload["write_state"], "committed");
     assert_eq!(row.payload["event_id"], event.event_id().as_str());
 }
 
@@ -1298,4 +1301,154 @@ async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
         ))
         .unwrap();
     assert_eq!(candidate.request, queued.request);
+}
+
+#[test]
+fn message_seam_rejects_a_proof_callback_that_changes_the_body() {
+    let mut event = message_intent(
+        REALM,
+        "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+    )
+    .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+    .unwrap();
+    let original = event.event().clone();
+    let signer = test_signer();
+    let result = sign_event_through_message_seam(&mut event, |unsigned| {
+        let mut rewritten = unsigned.event().clone();
+        rewritten.payload.insert(
+            "content".to_owned(),
+            json!({"kind":"ak.content.text","body":"changed"}),
+        );
+        *unsigned = arkret_sdk::AuthoredEvent::finalize_with_digest_suite(
+            rewritten,
+            unsigned.digest_suite(),
+        )?;
+        signer
+            .sign_sdk_event_with_context(unsigned, crate::event_signer::ProducerProofContext::new())
+            .map_err(anyhow::Error::from)
+    });
+    assert!(result.is_err());
+    assert_eq!(event.event(), &original);
+}
+
+#[test]
+fn exact_message_retry_rejects_changed_proof_even_with_the_same_event_id() {
+    let intent = message_intent(
+        REALM,
+        "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+    );
+    let first = author_and_sign(intent.clone(), &test_signer());
+    let mut second = intent
+        .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+        .unwrap();
+    test_signer()
+        .sign_sdk_event_with_context_at(
+            &mut second,
+            crate::event_signer::ProducerProofContext::new(),
+            chrono::DateTime::parse_from_rfc3339("2026-05-20T00:00:00.000Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        )
+        .unwrap();
+    assert_eq!(first.event_id(), second.event_id());
+    let frozen = event_submission(&first).unwrap();
+    assert!(ensure_exact_queued_request(&frozen, &frozen).is_ok());
+    assert!(ensure_exact_queued_request(&frozen, &event_submission(&second).unwrap()).is_err());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn retryable_authority_answer_reopens_the_durable_bytes_and_really_resubmits() {
+    let event = author_and_sign(
+        message_intent(
+            REALM,
+            "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+        ),
+        &test_signer(),
+    );
+    let frozen = event_submission(&event).unwrap();
+    let expected = arkret_sdk::canonical::canonical_json_bytes(&frozen.request).unwrap();
+    let directory = std::env::temp_dir().join(format!("inkson-message-retry-{}", uuid_v7()));
+    let store = InksonOutboundStore::for_test_path(directory.join("standard.json"));
+    let engine = OutboundEngine::new(store.clone(), InksonHostClock);
+    engine.enqueue(frozen).await.unwrap();
+    let (unused, refusing, refused_calls) =
+        scripted_engine(arkret_wire::AuthoritySubmitOutcome::Rejected {
+            status: arkret_wire::AuthorityRejectionStatus::RetryableUnavailable,
+            reason_code: "backend_unavailable".to_owned(),
+        });
+    drop(unused);
+    let rejected = engine
+        .submit_next(
+            &refusing,
+            &arkret_sdk::http_client::ClientRequestOptions::new(),
+        )
+        .await
+        .unwrap();
+    let OutboundEngineOutcome::Rejected { item, .. } = rejected else {
+        panic!("expected unavailable refusal")
+    };
+    assert_eq!(refused_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // Re-open the adapter to exercise the actual restart/durable queue path.
+    let resumed = OutboundEngine::new(store, InksonHostClock);
+    reopen_retryable_submission(&resumed, &item, Duration::ZERO)
+        .await
+        .unwrap();
+    let snapshot = resumed.snapshot().await.unwrap();
+    assert_eq!(snapshot.items[0].status, SendQueueStatus::Queued);
+    assert_eq!(
+        arkret_sdk::canonical::canonical_json_bytes(&snapshot.items[0].submission.request).unwrap(),
+        expected
+    );
+    let commit = commit_for(event.event(), 0);
+    let (unused, accepting, accepted_calls) =
+        scripted_engine(arkret_wire::AuthoritySubmitOutcome::Accepted {
+            status: arkret_wire::AuthorityCommitStatus::Committed,
+            commit,
+        });
+    drop(unused);
+    assert!(matches!(
+        resumed
+            .submit_next(
+                &accepting,
+                &arkret_sdk::http_client::ClientRequestOptions::new()
+            )
+            .await
+            .unwrap(),
+        OutboundEngineOutcome::Committed { .. }
+    ));
+    assert_eq!(accepted_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(resumed.snapshot().await.unwrap().items[0].attempts, 2);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+pub(crate) fn queue_message_operation_for_test(operation: &LocalOperation) -> QueuedSubmission {
+    let expected = operation.payload().clone();
+    let mut event = operation
+        .intent()
+        .clone()
+        .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+        .unwrap();
+    let mut sign_count = 0;
+    sign_event_through_message_seam(&mut event, |unsigned| {
+        sign_count += 1;
+        test_signer()
+            .sign_sdk_event_with_context(unsigned, crate::event_signer::ProducerProofContext::new())
+            .map_err(anyhow::Error::from)
+    })
+    .unwrap();
+    assert_eq!(sign_count, 1);
+    assert_eq!(event.payload, expected);
+    let queued = event_submission(&event).unwrap();
+    let bytes = arkret_sdk::canonical::canonical_json_bytes(&queued.request).unwrap();
+    let mut queue = garth::SendQueue::default();
+    queue.enqueue(queued.clone(), chrono::Utc::now()).unwrap();
+    let restored: garth::SendQueueSnapshot =
+        serde_json::from_slice(&serde_json::to_vec(&queue.snapshot()).unwrap()).unwrap();
+    assert_eq!(
+        arkret_sdk::canonical::canonical_json_bytes(&restored.items[0].submission.request).unwrap(),
+        bytes
+    );
+    assert_eq!(restored.items[0].status, SendQueueStatus::Queued);
+    queued
 }

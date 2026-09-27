@@ -117,17 +117,7 @@ pub(crate) fn encrypted_payload_from_verified_event_context(
             reason,
         );
     };
-    // The minimal wire envelope self-describes its scheme through the shape of
-    // its own `encryption_context`, so reconstruction never has to consult a
-    // per-Realm selector.
-    let scheme = match &envelope.encryption_context {
-        arkret_sdk::EncryptedEnvelopeEncryptionContext::StandardMls { .. } => {
-            arkret_sdk::EncryptedPayloadScheme::MlsRfc9420
-        }
-        arkret_sdk::EncryptedEnvelopeEncryptionContext::ExporterMls { .. } => {
-            arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
-        }
-    };
+    let scheme = arkret_sdk::EncryptedPayloadScheme::MlsRfc9420;
     if !matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. })
         && matches!(
             state_store.installed_scope_mls_current(effective_scope),
@@ -767,7 +757,6 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
             group.epoch(),
             group_state_ref.clone(),
             sender_domain,
-            None,
             arkret_sdk::EventContentRoutingContext::None,
         )
         .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
@@ -945,7 +934,6 @@ pub(crate) fn encrypt_message_with_device_snapshot(
                 group.epoch(),
                 group_state_ref.clone(),
                 sender_domain,
-                None,
                 arkret_sdk::EventContentRoutingContext::None,
             )
             .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
