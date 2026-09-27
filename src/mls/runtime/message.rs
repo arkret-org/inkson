@@ -592,9 +592,25 @@ pub(crate) fn mls_group_member_actor_ids_for_effective_scope(
     device_id: &DeviceId,
 ) -> Option<Vec<arkret_sdk::ActorId>> {
     let snapshot = state_store.mls_checkpoint_for_effective_scope(realm_id, circle_id)?;
-    let secret = load_device_checkpoint_secret(secure_store, authority, device_id).ok()?;
-    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
-    group.member_actor_ids().ok()
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
+        .map_err(|error| {
+            tracing::warn!("MLS reconciliation checkpoint key is unavailable");
+            error
+        })
+        .ok()?;
+    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+        .map_err(|error| {
+            tracing::warn!("MLS reconciliation checkpoint restore failed");
+            error
+        })
+        .ok()?;
+    group
+        .member_actor_ids()
+        .map_err(|error| {
+            tracing::warn!("MLS reconciliation verified leaf bindings are unavailable");
+            error
+        })
+        .ok()
 }
 
 /// Active human-device leaves for one effective MLS scope. Realm membership is

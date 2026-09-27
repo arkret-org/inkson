@@ -1365,6 +1365,14 @@ fn removal_scope_stamp(
         || current.current_mls_commit_event_ref != base
         || current.current_key_access_revision != current.covered_key_access_revision
     {
+        tracing::warn!(
+            scope_matches = current.effective_scope == *scope,
+            epoch_matches = current.epoch == checkpoint.epoch,
+            commit_matches = current.current_mls_commit_event_ref == base,
+            key_access_covered =
+                current.current_key_access_revision == current.covered_key_access_revision,
+            "MLS reconciliation current result does not match local checkpoint"
+        );
         return None;
     }
     arkret_sdk::canonical::canonical_sha256(&(
@@ -1517,6 +1525,9 @@ async fn run_circle_scope_rotate_pass(
         let realm_desired_members = ctx
             .state_store
             .read(|store| store.complete_joined_member_hint_for_realm(realm.as_str()));
+        if !matches!(realm_desired_members, Ok(Some(_))) {
+            tracing::warn!("MLS reconciliation requires a complete verified membership cut");
+        }
         let mut scopes = Vec::new();
         if let Ok(Some(desired_members)) = realm_desired_members.as_ref() {
             scopes.push((
