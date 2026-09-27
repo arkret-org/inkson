@@ -30,3 +30,25 @@ pub(crate) use types::*;
 
 #[cfg(test)]
 mod tests;
+
+/// Choose an automatic receipt only from a holder-visible retained message.
+pub(crate) fn visible_read_receipt_event(
+    messages: &[ChatMessage],
+    realm: &str,
+    strand: &str,
+    blocked: &std::collections::BTreeSet<String>,
+) -> Option<String> {
+    messages
+        .iter()
+        .rev()
+        .find(|message| {
+            message.strand_id == strand
+                && (realm.trim().is_empty() || message.realm_id == realm)
+                && !message.id.is_empty()
+                && !message.pending
+                && !message.actor_id.as_ref().is_some_and(|actor| {
+                    crate::account_data::message_actor_is_blocked(actor, blocked)
+                })
+        })
+        .map(|message| message.id.clone())
+}

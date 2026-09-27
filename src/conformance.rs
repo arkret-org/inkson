@@ -114,6 +114,44 @@ impl StationFeature {
     }
 }
 
+/// Native projection inspection for the same retained store and exact actor
+/// visibility selector consumed by the production chat timeline. The booleans
+/// describe holder visibility; the canonical body remains in local history.
+pub fn retained_blocklist_message_projection(
+    store: &crate::state::LocalStateStore,
+) -> Vec<(String, String, bool)> {
+    let messages = crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
+        &store.load(),
+        Some(store),
+        None,
+    );
+    let blocked = crate::account_data::blocked_message_actor_ids(&store.client_blocklist());
+    messages
+        .into_iter()
+        .map(|message| {
+            let hidden = message.actor_id.as_ref().is_some_and(|actor| {
+                crate::account_data::message_actor_is_blocked(actor, &blocked)
+            });
+            (message.id, message.body, hidden)
+        })
+        .collect()
+}
+
+/// Read the production automatic-receipt selector without initiating transport.
+pub fn retained_blocklist_receipt_candidate(
+    store: &crate::state::LocalStateStore,
+    realm: &str,
+    strand: &str,
+) -> Option<String> {
+    let messages = crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
+        &store.load(),
+        Some(store),
+        None,
+    );
+    let blocked = crate::account_data::blocked_message_actor_ids(&store.client_blocklist());
+    crate::views::chat::model::visible_read_receipt_event(&messages, realm, strand, &blocked)
+}
+
 #[cfg(test)]
 mod tests {
     use arkret_models_discovery::TransportBinding;

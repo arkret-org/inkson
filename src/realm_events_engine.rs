@@ -458,7 +458,7 @@ where
         .write(|store| {
             store.verified_projection_transaction(|store| {
                 for page in &pages {
-                    store.ingest_verified_message_commits(page)?;
+                    store.ingest_verified_message_history(page)?;
                     crate::identity::agent_signer_evidence::index_verified_committed_page(
                         store, page,
                     )?;

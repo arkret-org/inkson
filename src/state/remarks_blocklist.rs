@@ -19,6 +19,24 @@ pub struct BlocklistCatchup {
 }
 
 impl BlocklistCatchup {
+    pub(crate) fn finish_checkpoint(
+        &self,
+        durable: garth::Result<()>,
+        reset: bool,
+        active: bool,
+    ) -> garth::Result<()> {
+        if durable.is_err() || reset {
+            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            if state.scope == self.scope && state.attempt == self.attempt {
+                state.valid = false;
+                state.caught_up = false;
+            }
+        } else if active {
+            self.complete();
+        }
+        durable
+    }
+
     pub(crate) fn complete(&self) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.scope == self.scope && state.attempt == self.attempt && state.valid {
@@ -682,27 +700,108 @@ mod blocklist_freshness_tests {
 
     #[test]
     fn malformed_blocklist_prevents_catchup_from_authorizing_signals() {
-        let (_directory, mut store) = store();
+        use arkret_models_collaboration::sync_frames::account_subscribe::{
+            AccountSubscribeSnapshotResult, SyncRequestBody,
+        };
+        use base64::Engine as _;
+        let (directory, mut store) = store();
         store.set_client_blocklist(7, Vec::new());
-        let catchup = store.begin_blocklist_catchup();
+        let authority = crate::test_support::authority(&format!(
+            "did:web:blocklist-{}.example",
+            crate::operation::uuid_v7()
+        ));
+        let secure = crate::secure_key_store::default_secure_key_store("inkson");
+        crate::mls::runtime::store_account_mls_secret(
+            secure.as_ref(),
+            &authority,
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7u8; 32]),
+        )
+        .unwrap();
+        let scope = garth::CursorScope::Account {
+            service_id: None,
+            actor_id: arkret_sdk::ActorId::account(authority.clone()),
+            device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
+                .unwrap(),
+        };
+        let old = garth::AccountCursorCheckpoint {
+            cursor: "ak:cursor:before-malformed".into(),
+            station_cas: garth::StationCasProjection::default(),
+        };
+        store.save_account_checkpoint(&scope, old.clone()).unwrap();
         let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-        let entry: arkret_sdk::Event = serde_json::from_value(serde_json::json!({
+        let mut entry: arkret_sdk::Event = serde_json::from_value(serde_json::json!({
             "event_id": "ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
             "kind": "ak.account_data.set", "realm_id": realm,
             "scope_ref": {"kind": "realm", "realm_id": realm},
-            "actor_id": crate::test_support::account_actor("did:web:blocklist-holder.example"),
+            "actor_id": arkret_sdk::ActorId::account(authority.clone()),
             "created_at": "2026-09-27T00:00:00.000Z",
             "payload": {"key": "ak.account.blocklist", "revision": 8, "content": {}}
         }))
         .unwrap();
-        crate::sync_engine::apply_account_data_entries(
-            &mut store,
-            &[entry],
-            &crate::test_support::authority("did:web:blocklist-holder.example"),
-        );
-        catchup.complete();
-        assert_eq!(store.client_blocklist_revision(), 7);
-        assert!(!store.blocklist_freshness_known());
+        for repaired in [false, false, true] {
+            // Reload/reconnect uses the previous durable cursor. A rejected
+            // Delta cannot turn into an empty resumed catch-up after restart.
+            store = LocalStateStore::with_path(directory.path().join("state.json"));
+            assert_eq!(
+                store.load_account_checkpoint(&scope).unwrap(),
+                Some(old.clone())
+            );
+            let catchup = store.begin_blocklist_catchup();
+            let request = SyncRequestBody {
+                after: Some(old.cursor.clone()),
+                catchup: Some(true),
+                filter: None,
+                realm_list: None,
+                replace_filter: None,
+            };
+            if repaired {
+                *entry.payload.get_mut("content").unwrap() =
+                    crate::account_data::encrypt_account_data_value(
+                        &authority,
+                        "ak.account.blocklist",
+                        &serde_json::json!({"entries":[]}),
+                    )
+                    .unwrap();
+            }
+            let mut folder = arkret_sdk::AccountSubscribeFolder::for_request(&request);
+            folder.push(serde_json::from_value(serde_json::json!({"kind":"delta","cursor":"ak:cursor:repair-delta","partial":false,"account_data":{"events":[entry.clone()]}})).unwrap()).unwrap();
+            folder.push(serde_json::from_value(serde_json::json!({"kind":"catchup_complete","cursor":"ak:cursor:repair-complete"})).unwrap()).unwrap();
+            let AccountSubscribeSnapshotResult::Batch(batch) = folder.finish().unwrap() else {
+                panic!("validated batch required")
+            };
+            let checkpoint = garth::AccountCursorCheckpoint {
+                cursor: batch.cursor.clone(),
+                station_cas: garth::StationCasProjection::default(),
+            };
+            let durable = store
+                .verified_projection_transaction(|store| {
+                    for frame in &batch.frames {
+                        crate::sync_engine::apply_account_data_entries(
+                            store,
+                            &frame.account_data.as_ref().unwrap().events,
+                            &authority,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    }
+                    store
+                        .save_account_checkpoint(&scope, checkpoint.clone())
+                        .map_err(|error| error.to_string())
+                })
+                .map_err(garth::Error::Protocol);
+            let result = catchup.finish_checkpoint(durable, false, true);
+            assert_eq!(result.is_ok(), repaired);
+            assert_eq!(store.blocklist_freshness_known(), repaired);
+            assert_eq!(
+                store.client_blocklist_revision(),
+                if repaired { 8 } else { 7 }
+            );
+            assert_eq!(
+                LocalStateStore::with_path(directory.path().join("state.json"))
+                    .load_account_checkpoint(&scope)
+                    .unwrap(),
+                Some(if repaired { checkpoint } else { old.clone() })
+            );
+        }
     }
 
     #[test]
