@@ -814,6 +814,7 @@ impl InksonAccountProjector {
         // outbound work. Its empty business delta must not suppress a due
         // RetryAt item; projection work below still remains delta-driven.
         if response.is_empty() {
+            self.reconcile_mls_scopes(response).await;
             if agent_evidence_changed {
                 refresh_projection_events_from_sync_response(response, &self.ctx);
             }
@@ -831,6 +832,11 @@ impl InksonAccountProjector {
             return self.defer(error);
         }
 
+        self.reconcile_mls_scopes(response).await;
+        Ok(())
+    }
+
+    async fn reconcile_mls_scopes(&self, response: &AccountFrameStep) {
         // Momentary Signal deltas cannot create MLS removal obligations. A
         // previously discovered PendingMlsBinding does need a retry on a later
         // bounded poll, however, even when that poll carries no new durable
@@ -853,7 +859,6 @@ impl InksonAccountProjector {
             run_idle_self_update_pass(self.start_generation, self.generation.clone(), &self.ctx)
                 .await;
         }
-        Ok(())
     }
 
     /// `Ok(false)` means the run is no longer current and the caller returns.
