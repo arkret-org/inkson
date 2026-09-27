@@ -1356,10 +1356,20 @@ fn removal_scope_stamp(
     desired_members: &BTreeSet<arkret_sdk::ActorId>,
 ) -> Option<String> {
     let checkpoint = store.mls_checkpoint_for_scope(scope)?;
-    let base = store
-        .mls_group_state_ref_for_scope(scope, &checkpoint.group_id, checkpoint.epoch)
-        .ok()?;
-    let current = store.current_mls_group_for_scope(scope)?;
+    let base =
+        match store.mls_group_state_ref_for_scope(scope, &checkpoint.group_id, checkpoint.epoch) {
+            Ok(base) => base,
+            Err(_) => {
+                tracing::warn!(
+                    "MLS reconciliation checkpoint has no accepted group-state reference"
+                );
+                return None;
+            }
+        };
+    let Some(current) = store.current_mls_group_for_scope(scope) else {
+        tracing::warn!("MLS reconciliation verified current group result is unavailable");
+        return None;
+    };
     if current.effective_scope != *scope
         || current.epoch != checkpoint.epoch
         || current.current_mls_commit_event_ref != base
