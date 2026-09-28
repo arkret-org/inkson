@@ -134,6 +134,26 @@ impl MlsEndpoints<'_> {
             .map_err(anyhow::Error::from)
     }
 
+    /// Fetch one unverified historical roster page from this member's Account
+    /// Station. The caller must verify the complete signed page set, each
+    /// attestor and the RFC public tree before binding any MLS leaf.
+    pub async fn unverified_member_roster_authority_page(
+        &self,
+        request: &arkret_sdk::MlsRosterAuthorityReadRequestBody,
+    ) -> anyhow::Result<arkret_sdk::MlsRosterAuthorityReadOutcome> {
+        request.validate().map_err(anyhow::Error::from)?;
+        let page = self
+            .transport
+            .http()
+            .self_mls_roster_authority(request)
+            .await
+            .map_err(anyhow::Error::from)?;
+        page.manifest
+            .validate_for_request(request)
+            .map_err(anyhow::Error::from)?;
+        Ok(page)
+    }
+
     pub async fn publish_key_packages(
         &self,
         device_id: &str,
