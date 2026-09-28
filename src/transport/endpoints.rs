@@ -154,6 +154,47 @@ impl MlsEndpoints<'_> {
         Ok(page)
     }
 
+    /// Follow the opaque cursor to collect the complete unverified roster.
+    /// The caller must verify the signed manifest, all pages, Add attestations
+    /// and public MLS tree before using any record as a leaf authority.
+    pub async fn unverified_member_roster_authority_pages(
+        &self,
+        request: &arkret_sdk::MlsRosterAuthorityReadRequestBody,
+    ) -> anyhow::Result<Vec<arkret_sdk::MlsRosterAuthorityReadOutcome>> {
+        let mut next_request = request.clone();
+        let mut seen_cursors = std::collections::HashSet::new();
+        let mut pages = Vec::new();
+        loop {
+            let page = self
+                .unverified_member_roster_authority_page(&next_request)
+                .await?;
+            let page_number = u64::try_from(pages.len())?;
+            if page.page_index != page_number
+                || page_number >= page.manifest.page_count
+                || pages
+                    .first()
+                    .is_some_and(|first: &arkret_sdk::MlsRosterAuthorityReadOutcome| {
+                        first.manifest.page_count != page.manifest.page_count
+                    })
+            {
+                anyhow::bail!("MLS roster page order or count is inconsistent");
+            }
+            let page_count = page.manifest.page_count;
+            let next_cursor = page.next_cursor.clone();
+            pages.push(page);
+            match next_cursor {
+                Some(cursor) if u64::try_from(pages.len())? < page_count => {
+                    if !seen_cursors.insert(cursor.clone()) {
+                        anyhow::bail!("MLS roster cursor repeats");
+                    }
+                    next_request.cursor = Some(cursor);
+                }
+                None if u64::try_from(pages.len())? == page_count => return Ok(pages),
+                _ => anyhow::bail!("MLS roster pagination is incomplete"),
+            }
+        }
+    }
+
     pub async fn publish_key_packages(
         &self,
         device_id: &str,

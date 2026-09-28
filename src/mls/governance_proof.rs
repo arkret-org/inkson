@@ -103,7 +103,9 @@ pub(crate) fn current_key_access_revision(
         .ok_or_else(|| "MLS authoring requires the scope's current key-access revision".to_owned())
 }
 
-/// The verified authority a newly occupied MLS leaf binds to.
+/// The verified authority a newly occupied MLS leaf binds to. The signature
+/// key identifies the exact claimed leaf when one Actor has multiple devices
+/// or a removed leaf index is reused by a later Add.
 ///
 /// A human device leaf binds to its accepted `ak.device.authorize` Event; an
 /// Agent runtime leaf binds to its endpoint identity, which already carries the
@@ -111,6 +113,7 @@ pub(crate) fn current_key_access_revision(
 #[derive(Clone, Debug)]
 pub(crate) struct MlsLeafAuthorityHint {
     pub(crate) actor_id: arkret_sdk::ActorId,
+    pub(crate) signature_key: arkret_sdk::Base64UrlString,
     pub(crate) endpoint: arkret_sdk::MlsEndpointIdentity,
     pub(crate) device_authorize_event_id: Option<arkret_sdk::EventId>,
 }
@@ -124,8 +127,21 @@ pub(crate) fn leaf_authority_hint_from_claim(
     let endpoint = crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim)
         .map_err(|error| format!("invalid claimed MLS endpoint: {error}"))?
         .endpoint;
+    let keypackage = arkret_sdk::base64url_decode(claim.keypackage.as_bytes())
+        .map_err(|error| format!("invalid claimed MLS KeyPackage: {error}"))?;
+    let leaf = arkret_sdk::mls::author_leaf_from_key_package_bytes(&keypackage, 0)
+        .map_err(|error| format!("invalid claimed MLS leaf: {error}"))?;
+    let signature_key: [u8; 32] = leaf
+        .signature_key
+        .as_slice()
+        .try_into()
+        .map_err(|_| "claimed MLS leaf key is not Ed25519".to_owned())?;
+    let signature_key =
+        arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(signature_key))
+            .map_err(|error| format!("invalid claimed MLS leaf key: {error}"))?;
     Ok(MlsLeafAuthorityHint {
         actor_id: claim.actor_id.clone(),
+        signature_key,
         endpoint,
         device_authorize_event_id: claim.device_authorize_event_id.clone(),
     })
@@ -193,9 +209,9 @@ pub(crate) fn install_post_transition_leaf_bindings(
             continue;
         }
 
-        let mut matches = authority_hints
-            .iter()
-            .filter(|hint| hint.actor_id == credential_actor);
+        let mut matches = authority_hints.iter().filter(|hint| {
+            hint.actor_id == credential_actor && hint.signature_key == signature_key_b64
+        });
         let hint = matches
             .next()
             .ok_or_else(|| "new MLS leaf has no verified Add authority".to_owned())?;
