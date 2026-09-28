@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use super::{TypedOperationBuilder, realm_id_value, strand_create_payload, trim_realm_id};
+use super::{TypedOperationBuilder, realm_id_value, strand_create_operation, trim_realm_id};
 
 /// Build a `ak.strand.create` for a Kanban card Strand.
 ///
@@ -28,7 +28,5 @@ pub fn kanban_card_strand_create(
             .with_profile("kanban_card"),
     )
     .with_track("discussion", arkret_sdk::StrandTrack::discussion());
-    Ok(TypedOperationBuilder::new::<
-        arkret_sdk::event_spec::StrandCreate,
-    >(&realm_id, actor, strand_create_payload(object)?))
+    strand_create_operation(&realm_id, actor, object)
 }

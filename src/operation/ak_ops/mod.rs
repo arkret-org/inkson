@@ -115,6 +115,24 @@ pub(crate) fn strand_create_payload(
     })
 }
 
+pub(super) fn strand_create_operation(
+    realm_id: &str,
+    actor: &str,
+    object: arkret_sdk::StrandCreateObject,
+) -> anyhow::Result<TypedOperationBuilder> {
+    // The service derives the initial Strand from the authored Event. Its
+    // created_at must be the exact same canonical instant as the Event clock.
+    let created_at = object.created_at;
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandCreate>(
+            realm_id,
+            actor,
+            strand_create_payload(object)?,
+        )
+        .created_at(created_at),
+    )
+}
+
 pub(super) fn strand_object_patch_payload(
     strand_id: &str,
     patch: arkret_sdk::Patch,

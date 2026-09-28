@@ -1,7 +1,7 @@
 //! Discussion Strand / Circle builders.
 
 use super::{
-    TypedOperationBuilder, circle_id_value, realm_id_value, strand_create_payload, trim_realm_id,
+    TypedOperationBuilder, circle_id_value, realm_id_value, strand_create_operation, trim_realm_id,
 };
 
 /// Build a canonical `ak.strand.create` discussion operation with the full
@@ -63,9 +63,7 @@ pub fn discussion_strand_create(
                 .map_err(|e| anyhow::anyhow!("invalid scope circle_id: {e:?}"))?,
         );
     }
-    Ok(TypedOperationBuilder::new::<
-        arkret_sdk::event_spec::StrandCreate,
-    >(realm_id, actor, strand_create_payload(strand)?))
+    strand_create_operation(realm_id, actor, strand)
 }
 
 /// Build the metadata-free discussion Strand used as a newly-created Realm's
@@ -81,9 +79,7 @@ pub fn initial_default_discussion_strand_create(
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
     let strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, actor_id)
         .with_track("discussion", arkret_sdk::StrandTrack::discussion_primary());
-    Ok(TypedOperationBuilder::new::<
-        arkret_sdk::event_spec::StrandCreate,
-    >(realm_id, actor, strand_create_payload(strand)?))
+    strand_create_operation(realm_id, actor, strand)
 }
 
 pub fn realm_set_default_strand(
@@ -149,14 +145,7 @@ pub fn scoped_discussion_strand_create(
         .with_metadata_title(title)
         .with_track("discussion", arkret_sdk::StrandTrack::discussion_primary());
     strand.scope_circle_id = Some(circle_id_value(circle_id)?);
-    Ok(
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandCreate>(
-            realm_id,
-            actor,
-            strand_create_payload(strand)?,
-        )
-        .circle_id(circle_id),
-    )
+    Ok(strand_create_operation(realm_id, actor, strand)?.circle_id(circle_id))
 }
 
 /// Build the private-side relation from a Circle-scoped discussion Strand
