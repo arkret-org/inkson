@@ -38,6 +38,38 @@ fn op_body(record: &RawOperationRecord) -> Option<&Value> {
         .or_else(|| record.payload.get("payload"))
 }
 
+fn accepted_schedule_source(record: &RawOperationRecord) -> Option<String> {
+    if let Some(write_state) = record.payload.get("write_state").and_then(Value::as_str)
+        && !matches!(write_state, "accepted" | "synced")
+    {
+        return None;
+    }
+    let event_id = record
+        .payload
+        .get("event_id")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            record
+                .operation_id
+                .starts_with("ak:event:")
+                .then_some(record.operation_id.as_str())
+        })?;
+    arkret_sdk::EventId::new(event_id.to_owned())
+        .ok()
+        .map(|event_id| event_id.event_digest().to_string())
+}
+
+fn patch_touches_calendar_schedule(patch: &Value) -> bool {
+    patch.as_object().is_some_and(|entries| {
+        entries.keys().any(|path| {
+            path == "metadata"
+                || path == "metadata.fields"
+                || path == "metadata.fields.calendar"
+                || path.starts_with("metadata.fields.calendar.")
+        })
+    })
+}
+
 /// Strand id a move / reorder / archive / restore op targets.
 fn op_strand_target_id(record: &RawOperationRecord) -> Option<String> {
     let body = op_body(record);
@@ -143,6 +175,7 @@ fn strand_view_from_create_op(
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    let has_calendar_schedule = fields.contains_key("calendar");
     // Both slots decode to their authoritative SDK type here. A create payload
     // that carries something else on them violates `strand.schema.json`, and
     // dropping it is the fail-closed read: the card renders with no synthesis
@@ -190,12 +223,13 @@ fn strand_view_from_create_op(
         assigned_actor_ids: Vec::new(),
         assigned_to_relations: Vec::new(),
         fields,
-        // Locally folded board rows carry no activation axis or schedule
-        // winner; the projection read supplies it, and until it does RSVP
-        // authoring stays fail-closed rather than signing an unobserved basis.
+        // The accepted Event establishes the schedule source. A queued draft
+        // has no authoritative basis and must keep RSVP authoring closed.
         schema_refs: Vec::new(),
         rsvps: Vec::new(),
-        schedule_revision_source: None,
+        schedule_revision_source: has_calendar_schedule
+            .then(|| accepted_schedule_source(record))
+            .flatten(),
         state: arkret_sdk::ObjectState::Active,
         created_by,
         created_at,
@@ -401,6 +435,9 @@ pub(crate) fn strand_views_from_projection_and_ops(
                         if current.fields.is_empty() {
                             current.fields = view.fields;
                         }
+                        if current.schedule_revision_source.is_none() {
+                            current.schedule_revision_source = view.schedule_revision_source;
+                        }
                         continue;
                     } else {
                         order.push(view.strand_id.clone());
@@ -454,6 +491,18 @@ pub(crate) fn strand_views_from_projection_and_ops(
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     view.state = arkret_sdk::ObjectState::Active;
+                }
+            }
+            event_kind_str::STRAND_UPDATE => {
+                if let Some(id) = op_strand_target_id(record)
+                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+                    && let Some(view) = by_id.get_mut(&id)
+                    && op_body(record)
+                        .and_then(|body| body.get("patch"))
+                        .is_some_and(patch_touches_calendar_schedule)
+                    && let Some(source) = accepted_schedule_source(record)
+                {
+                    view.schedule_revision_source = Some(source);
                 }
             }
             event_kind_str::RSVP_SET => {

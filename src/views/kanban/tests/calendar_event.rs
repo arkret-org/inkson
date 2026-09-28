@@ -441,6 +441,27 @@ fn locally_accepted_rsvp_does_not_supply_missing_schedule_current() {
     let views = strand_views_from_projection_and_ops(&projected, &[accepted]);
     assert!(views[0].schedule_revision_source.is_none());
     assert_eq!(views[0].rsvps.len(), 1);
+
+    let schedule_event_id = schedule_event(SCHEDULE_SOURCE);
+    let schedule_update = RawOperationRecord {
+        operation_id: schedule_event_id.to_string(),
+        realm_id: Some(TEST_REALM_ID.to_owned()),
+        received_at: chrono::Utc::now(),
+        payload: json!({
+            "kind": "ak.strand.update",
+            "event_id": schedule_event_id,
+            "write_state": "synced",
+            "body": {
+                "target_ref": TEST_CALENDAR_STRAND_ID,
+                "patch": {"metadata.fields.calendar": {"$op": "set", "value": {"start": "2026-06-20T09:00:00"}}}
+            }
+        }),
+    };
+    let views = strand_views_from_projection_and_ops(&projected, &[schedule_update]);
+    assert_eq!(
+        views[0].schedule_revision_source.as_deref(),
+        Some(SCHEDULE_SOURCE)
+    );
 }
 
 #[test]
