@@ -271,7 +271,9 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
         endpoint,
         keypackage: claim.keypackage.clone(),
         keypackage_ref,
-        cipher_suites: Vec::new(),
+        cipher_suites: vec![
+            arkret_sdk::mls::keypackage_ciphersuite_canonical_id(&keypackage)?.to_owned(),
+        ],
         capabilities: claim.capabilities.clone(),
         state: arkret_sdk::MlsKeyPackageState::Claimed,
         claim_id: Some(claim.claim_id.clone()),
@@ -565,6 +567,7 @@ mod tests {
         assert_eq!(claimed.state, arkret_sdk::MlsKeyPackageState::Claimed);
         assert_eq!(claimed.claim_id.as_deref(), Some(claim.claim_id.as_str()));
         assert_eq!(claimed.keypackage, published.keypackage);
+        assert_eq!(claimed.cipher_suites, published.cipher_suites);
         let scope = arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
                 arkret_sdk::DigestSuite::Sha256,

@@ -188,10 +188,10 @@ fn unread_notification_count_ignores_read_and_archived_items() {
             )
         })
         .collect::<Vec<_>>();
-    if let crate::state::StoredNotification::Event { notification } = &mut projection[1] {
+    if let crate::state::StoredNotification::Event { notification, .. } = &mut projection[1] {
         notification.state = arkret_sdk::NotificationState::Read;
     }
-    if let crate::state::StoredNotification::Event { notification } = &mut projection[4] {
+    if let crate::state::StoredNotification::Event { notification, .. } = &mut projection[4] {
         notification.state = arkret_sdk::NotificationState::Archived;
     }
     let mut snapshot = ClientLocalState {
@@ -238,7 +238,7 @@ fn unread_notification_count_excludes_contact_attention_for_all_three_modes() {
         serde_json::json!({"event_kind": "ak.message.create"}),
     );
     let actor = match &contact_notification {
-        crate::state::StoredNotification::Event { notification } => &notification.actor_id,
+        crate::state::StoredNotification::Event { notification, .. } => &notification.actor_id,
         _ => unreachable!(),
     };
     let mut entry = crate::account_data::new_blocklist_entry(

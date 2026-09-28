@@ -25,7 +25,7 @@ pub(crate) use crate::state::projection::notifications::raw_notifications_from_s
 // crate-level `views::notifications::*` re-export keep resolving unchanged.
 pub(crate) use crate::state::projection::notifications::{
     JoinedRealmIds, default_notification_title, invite_notification_target_for_dedupe,
-    notification_id_for_dedupe, notification_kind_wire,
+    notification_kind_wire,
 };
 use crate::state::{ClientLocalState, StoredNotification};
 
@@ -219,7 +219,7 @@ fn notification_blocklist_suppressed_for_context(
     if eval_ctx.event_kind.starts_with("ak.applet.") {
         surfaces.push(AccountBlocklistSurface::Applets);
     }
-    let StoredNotification::Event { notification } = value else {
+    let StoredNotification::Event { notification, .. } = value else {
         return false;
     };
     crate::account_data::suppresses_notifications(
@@ -499,7 +499,7 @@ pub(crate) fn notification_scope_kind(notification: &UiNotification) -> &'static
 
 fn notification_preview(value: &StoredNotification) -> Option<&BTreeMap<String, Value>> {
     match value {
-        StoredNotification::Event { notification } => notification.preview.as_ref(),
+        StoredNotification::Event { notification, .. } => notification.preview.as_ref(),
         StoredNotification::Invite { .. } => None,
     }
 }
@@ -534,7 +534,7 @@ pub(crate) fn notification_eval_context(value: &StoredNotification) -> Notificat
         .or_else(|| preview_bool(value, "encrypted"))
         .unwrap_or(false);
     let priority = match value {
-        StoredNotification::Event { notification } => Some(
+        StoredNotification::Event { notification, .. } => Some(
             match notification.priority {
                 arkret_sdk::NotificationPriority::Low => "low",
                 arkret_sdk::NotificationPriority::Normal => "normal",
@@ -560,7 +560,7 @@ pub(crate) fn notification_eval_context(value: &StoredNotification) -> Notificat
             None
         } else {
             match value {
-                StoredNotification::Event { notification } => Some(
+                StoredNotification::Event { notification, .. } => Some(
                     notification
                         .actor_id
                         .signing_principal_id()
@@ -632,7 +632,7 @@ fn notification_realm_label(value: &StoredNotification) -> Option<String> {
 
 pub(crate) fn notification_wire_state(value: &StoredNotification) -> (bool, bool) {
     match value {
-        StoredNotification::Event { notification } => match notification.state {
+        StoredNotification::Event { notification, .. } => match notification.state {
             arkret_sdk::NotificationState::Unread => (false, false),
             arkret_sdk::NotificationState::Read => (true, false),
             arkret_sdk::NotificationState::Dismissed | arkret_sdk::NotificationState::Archived => {

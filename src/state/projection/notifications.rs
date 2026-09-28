@@ -190,28 +190,31 @@ pub(crate) fn upsert_invite_delivery_notification(
 fn notification_from_upsert(
     delta: &NotificationDelta,
     recipient_actor: &arkret_sdk::ActorId,
-) -> arkret_sdk::Result<Notification> {
+) -> arkret_sdk::Result<(Notification, Option<arkret_sdk::DidCoreId>)> {
     delta.validate_shape()?;
     let recipient = recipient_actor.as_account_id().ok_or_else(|| {
         arkret_sdk::Error::Protocol(
             "notification recipient must be a complete account ActorId".to_owned(),
         )
     })?;
-    let notification = match (&delta.id, delta.data.as_ref()) {
+    let (notification, agent_id) = match (&delta.id, delta.data.as_ref()) {
         (
             arkret_sdk::NotificationIdentity::Projection(delivered_id),
             Some(NotificationData::OrdinaryProjection(content)),
-        ) => content.clone().into_notification(
-            recipient,
-            delivered_id.clone(),
-            arkret_sdk::NotificationState::Unread,
-        )?,
+        ) => (
+            content.clone().into_notification(
+                recipient,
+                delivered_id.clone(),
+                arkret_sdk::NotificationState::Unread,
+            )?,
+            None,
+        ),
         (
             arkret_sdk::NotificationIdentity::AgentApproval(_),
             Some(NotificationData::AgentRuntimeApproval(data)),
         ) => {
             data.validate()?;
-            Notification {
+            (Notification {
                 id: delta.id.clone(),
                 schema: arkret_sdk::NotificationSchema::V1,
                 actor_id: recipient_actor.clone(),
@@ -232,7 +235,7 @@ fn notification_from_upsert(
                 preview: None,
                 created_at: data.requested_at,
                 updated_at: None,
-            }
+            }, Some(data.agent_id.clone()))
         }
         _ => {
             return Err(arkret_sdk::Error::Protocol(
@@ -241,7 +244,7 @@ fn notification_from_upsert(
         }
     };
     notification.validate()?;
-    Ok(notification)
+    Ok((notification, agent_id))
 }
 
 /// Fold all notification sources into one current projection.
@@ -258,7 +261,10 @@ pub(crate) fn apply_notification_projection(
         let id = delta.id.as_str();
         match delta.action {
             NotificationDeltaAction::Upsert => {
-                let notification = match notification_from_upsert(delta, recipient_actor) {
+                let (notification, agent_id) = match notification_from_upsert(
+                    delta,
+                    recipient_actor,
+                ) {
                     Ok(notification) => notification,
                     Err(error) => {
                         tracing::error!(
@@ -269,7 +275,10 @@ pub(crate) fn apply_notification_projection(
                         continue;
                     }
                 };
-                let replacement = StoredNotification::Event { notification };
+                let replacement = StoredNotification::Event {
+                    notification,
+                    agent_id,
+                };
                 if let Some(existing) = current
                     .iter_mut()
                     .find(|candidate| candidate.notification_id() == id)
@@ -305,10 +314,6 @@ pub(crate) fn raw_notifications_from_sources(
         &JoinedRealmIds::default(),
     );
     projection
-}
-
-pub(crate) fn notification_id_for_dedupe(value: &StoredNotification) -> Option<String> {
-    Some(value.notification_id())
 }
 
 pub(crate) fn invite_notification_target_for_dedupe(value: &StoredNotification) -> Option<String> {
@@ -355,6 +360,7 @@ pub(crate) fn test_event_notification(
             .to_string()
     });
     StoredNotification::Event {
+        agent_id: None,
         notification: Notification {
             id: arkret_sdk::derive_notification_projection_id(
                 crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")

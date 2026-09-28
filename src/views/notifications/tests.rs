@@ -30,7 +30,7 @@ fn blocklist_revision_rehydrates_retained_contact_notification() {
         json!({"event_kind": "ak.contact.request"}),
     );
     let sender = match &raw {
-        StoredNotification::Event { notification } => notification.actor_id.to_string(),
+        StoredNotification::Event { notification, .. } => notification.actor_id.to_string(),
         _ => unreachable!(),
     };
     store.save_notification_projection(vec![raw]);
@@ -179,7 +179,7 @@ fn notification_baseline_segments_preserve_previous_segment_and_upsert_by_id() {
         json!({}),
     );
     let mut current = vec![first.clone()];
-    let StoredNotification::Event { notification } = second.clone() else {
+    let StoredNotification::Event { notification, .. } = second.clone() else {
         unreachable!()
     };
     let arkret_sdk::NotificationSource::Event(source) = &notification.source else {
@@ -828,7 +828,7 @@ fn notification_sources_use_typed_subscribe_deltas_only() {
         Some("ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"),
         json!({"body": "hello"}),
     );
-    let crate::state::StoredNotification::Event { notification } = stored else {
+    let crate::state::StoredNotification::Event { notification, .. } = stored else {
         unreachable!("test fixture is Event notification");
     };
     let arkret_sdk::NotificationSource::Event(source) = &notification.source else {
@@ -901,6 +901,13 @@ fn notification_sources_use_typed_subscribe_deltas_only() {
         .iter()
         .find(|item| item.agent_runtime_approval().is_some())
         .expect("runtime approval notification");
+    assert_eq!(
+        runtime_approval
+            .agent_runtime_approval_agent_id()
+            .expect("approval Agent id")
+            .as_str(),
+        "ak:did_core:web:agent.example"
+    );
     assert!(
         runtime_approval
             .agent_runtime_approval()

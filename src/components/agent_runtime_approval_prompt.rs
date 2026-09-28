@@ -522,6 +522,7 @@ pub fn AgentRuntimeApprovalPrompt(
 struct AgentRuntimeApprovalNotification {
     notification_id: NotificationId,
     approval_request_id: OpaqueLocalId,
+    agent_id: DidCoreId,
 }
 
 fn agent_runtime_approval_notification(
@@ -532,9 +533,11 @@ fn agent_runtime_approval_notification(
     else {
         return None;
     };
+    let agent_id = value.agent_runtime_approval_agent_id()?;
     Some(AgentRuntimeApprovalNotification {
         notification_id: notification_id.clone(),
         approval_request_id: data.id.clone(),
+        agent_id: agent_id.clone(),
     })
 }
 
@@ -544,19 +547,15 @@ async fn fetch_agent_runtime_approval(
     notification: AgentRuntimeApprovalNotification,
 ) -> Result<Option<PendingAgentRuntimeApproval>, crate::transport::auth::ApiCallError> {
     with_authed_sdk_client(base_url, token, move |http| async move {
-        let list = http.agent_list().await?;
-        for row in list.agents {
-            let view = http.agent_get(row.agent_id.as_str()).await?;
-            let Some(mut request) = pending_runtime_approval_from_view(&view) else {
-                continue;
-            };
-            if request.request_key != notification.approval_request_id {
-                continue;
-            }
-            request.notification_id = Some(notification.notification_id);
-            return Ok(Some(request));
+        let view = http.agent_get(notification.agent_id.as_str()).await?;
+        let Some(mut request) = pending_runtime_approval_from_view(&view) else {
+            return Ok(None);
+        };
+        if request.request_key != notification.approval_request_id {
+            return Ok(None);
         }
-        Ok(None)
+        request.notification_id = Some(notification.notification_id);
+        Ok(Some(request))
     })
     .await
 }

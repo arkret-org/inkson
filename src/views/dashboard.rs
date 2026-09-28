@@ -622,7 +622,7 @@ fn dashboard_notification_summaries(
                 Some("Agent runtime approval".to_owned())
             } else {
                 match value {
-                    crate::state::StoredNotification::Event { notification } => {
+                    crate::state::StoredNotification::Event { notification, .. } => {
                         crate::state::projection::notifications::event_preview_string(
                             notification,
                             &["title"],
@@ -636,7 +636,7 @@ fn dashboard_notification_summaries(
                 Some("Review the pending Agent runtime key request.".to_owned())
             } else {
                 match value {
-                    crate::state::StoredNotification::Event { notification } => {
+                    crate::state::StoredNotification::Event { notification, .. } => {
                         crate::state::projection::notifications::event_preview_string(
                             notification,
                             &["body", "summary"],

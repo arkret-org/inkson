@@ -7,7 +7,7 @@ use dioxus::prelude::*;
 
 use super::model::{
     UiNotification, UiNotificationAction, hydrate_notifications_with_privacy_gate,
-    notification_id_for_dedupe, read_cursor_targets,
+    read_cursor_targets,
 };
 use crate::notification_rules::{dnd_settings_from_account_data, push_rules_from_account_data};
 use crate::state::LocalStateStore;
@@ -513,14 +513,7 @@ fn accept_invite_notification(
                         store.save_invite_delivery_cell(content);
                     }
 
-                    let raw_notifications =
-                        store.notification_projection();
-                    if raw_notifications.iter().all(|notification| {
-                        notification_id_for_dedupe(notification).as_deref()
-                            != Some(&notification_id)
-                    }) {
-                        store.set_notification_archived(notification_id.clone(), true);
-                    }
+                    let raw_notifications = store.notification_projection();
                     let local_state = store.load();
                     let effective_dnd = local_state
                         .notification_dnd_settings
@@ -539,6 +532,12 @@ fn accept_invite_notification(
                     )
                 };
                 notifications.set(hydrated);
+                hide_accepted_invite_notification(
+                    &mut state_store,
+                    &mut notifications,
+                    &notification_id,
+                    &accepted_realm,
+                );
                 status_msg.set(format!(
                     "Joined Realm {}.",
                     short_protocol_id(&accepted_realm)

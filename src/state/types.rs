@@ -170,6 +170,7 @@ pub struct NotificationClientState {
 pub enum StoredNotification {
     Event {
         notification: arkret_sdk::Notification,
+        agent_id: Option<arkret_sdk::DidCoreId>,
     },
     Invite {
         invite: StoredInviteNotification,
@@ -206,21 +207,21 @@ pub struct StoredInviteCredential {
 impl StoredNotification {
     pub fn notification_id(&self) -> String {
         match self {
-            Self::Event { notification } => notification.id.as_str().to_owned(),
+            Self::Event { notification, .. } => notification.id.as_str().to_owned(),
             Self::Invite { invite } => format!("invite:{}", invite.invite_id.as_str()),
         }
     }
 
     pub fn notification_kind(&self) -> arkret_sdk::NotificationKind {
         match self {
-            Self::Event { notification } => notification.notification_kind.clone(),
+            Self::Event { notification, .. } => notification.notification_kind.clone(),
             Self::Invite { .. } => arkret_sdk::NotificationKind::Invite,
         }
     }
 
     pub fn realm_id(&self) -> Option<&str> {
         match self {
-            Self::Event { notification } => match &notification.source {
+            Self::Event { notification, .. } => match &notification.source {
                 arkret_sdk::NotificationSource::Event(source) => {
                     source.realm_id.as_ref().map(arkret_sdk::RealmId::as_str)
                 }
@@ -232,7 +233,7 @@ impl StoredNotification {
 
     pub fn source_event_id(&self) -> Option<&str> {
         match self {
-            Self::Event { notification } => match &notification.source {
+            Self::Event { notification, .. } => match &notification.source {
                 arkret_sdk::NotificationSource::Event(source) => {
                     Some(source.source_event_id.as_str())
                 }
@@ -244,7 +245,7 @@ impl StoredNotification {
 
     pub fn strand_id(&self) -> Option<&str> {
         match self {
-            Self::Event { notification } => match &notification.source {
+            Self::Event { notification, .. } => match &notification.source {
                 arkret_sdk::NotificationSource::Event(source) => {
                     source.strand_id.as_ref().map(arkret_sdk::StrandId::as_str)
                 }
@@ -256,17 +257,17 @@ impl StoredNotification {
 
     pub fn created_at(&self) -> DateTime<Utc> {
         match self {
-            Self::Event { notification } => notification.created_at,
+            Self::Event { notification, .. } => notification.created_at,
             Self::Invite { invite } => invite.created_at,
         }
     }
 
     /// Account-artifact coordinate of an open Agent runtime-key approval.
     ///
-    /// The wire notification carries only the artifact kind and the
-    /// account-private approval id; the Agent, its requested scope and the
-    /// pairing expiry are read from the authenticated Agent view keyed by that
-    /// id, never from the notification row.
+    /// The display notification retains the artifact kind and account-private
+    /// approval id. Account subscribe also supplies the Agent id for a direct
+    /// authenticated view read; requested scope and pairing expiry come from
+    /// that view.
     pub fn agent_runtime_approval(
         &self,
     ) -> Option<(
@@ -274,13 +275,22 @@ impl StoredNotification {
         &arkret_sdk::NotificationAccountArtifact,
     )> {
         match self {
-            Self::Event { notification } => match &notification.source {
+            Self::Event { notification, .. } => match &notification.source {
                 arkret_sdk::NotificationSource::AccountArtifact(source) => {
                     Some((&notification.id, &source.source_account_artifact))
                 }
                 arkret_sdk::NotificationSource::Event(_) => None,
             },
             Self::Invite { .. } => None,
+        }
+    }
+
+    pub fn agent_runtime_approval_agent_id(&self) -> Option<&arkret_sdk::DidCoreId> {
+        match self {
+            Self::Event { agent_id, .. } if self.agent_runtime_approval().is_some() => {
+                agent_id.as_ref()
+            }
+            _ => None,
         }
     }
 
