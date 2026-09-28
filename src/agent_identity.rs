@@ -6,6 +6,7 @@ use arkret_sdk::webvh::{
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use chrono::{DateTime, Duration, Utc};
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -113,15 +114,43 @@ pub(crate) fn prepare_binding_update(
 ) -> anyhow::Result<PreparedPrincipalRotation> {
     let binding_seed = keys.binding_seed()?;
     let next_public_key = keys.next_public_key()?;
+    let version_time = binding_version_time(&inception.version_time, crate::clock::now_utc())?;
     Ok(prepare_agent_binding_update(&AgentBindingUpdateInput {
         did: &inception.did,
         local_id: &keys.local_id,
         previous_entries: std::slice::from_ref(&inception.log_entry),
-        version_time: crate::clock::now_utc(),
+        version_time,
         current_root_seed: &binding_seed,
         next_root_public_key_multibase: &next_public_key,
         controller_principal_id,
         principal_control_realm_id,
         requested_scope_digest,
     })?)
+}
+
+fn binding_version_time(
+    inception_version_time: &str,
+    now: DateTime<Utc>,
+) -> anyhow::Result<DateTime<Utc>> {
+    let inception = DateTime::parse_from_rfc3339(inception_version_time)?.with_timezone(&Utc);
+    Ok(now.max(inception + Duration::seconds(1)))
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{DateTime, Duration, Utc};
+
+    use super::binding_version_time;
+
+    #[test]
+    fn binding_version_time_advances_when_inception_and_binding_share_a_second() {
+        let inception = DateTime::parse_from_rfc3339("2026-09-28T06:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let now = inception + Duration::milliseconds(250);
+        assert_eq!(
+            binding_version_time("2026-09-28T06:00:00Z", now).unwrap(),
+            inception + Duration::seconds(1)
+        );
+    }
 }
