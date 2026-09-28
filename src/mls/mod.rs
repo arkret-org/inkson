@@ -19,6 +19,7 @@ pub(crate) mod governance_proof;
 /// with governance bindings; moved out of `views/kanban`.
 pub(crate) mod group_events;
 pub mod persistence;
+pub(crate) mod roster_install;
 pub mod runtime;
 /// The durable MLS send gate of one effective scope.
 pub(crate) mod send_gate;
