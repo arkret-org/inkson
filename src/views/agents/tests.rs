@@ -499,6 +499,21 @@ mod agent_tests {
             disclosure.payload_digest().unwrap()
         );
         assert!(disclosure.proofs[0].validate_production().is_ok());
+        let proof_binding = disclosure
+            .canonical_proof_binding_bytes(&disclosure.proofs[0])
+            .unwrap();
+        let controller_key = arkret_sdk::signatures::proof::PublicKeyMaterial::Ed25519Raw {
+            bytes: ed25519_dalek::SigningKey::from_bytes(&[41u8; 32])
+                .verifying_key()
+                .to_bytes()
+                .to_vec(),
+        };
+        arkret_sdk::signatures::proof::verify_ed25519_detached_jws_payload_proof(
+            &disclosure.proofs[0],
+            &proof_binding,
+            &controller_key,
+        )
+        .unwrap();
         assert!(
             serde_json::to_value(&disclosure.proofs[0])
                 .unwrap()

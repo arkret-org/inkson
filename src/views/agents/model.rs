@@ -534,8 +534,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
     };
     disclosure.proofs[0].payload_digest = disclosure.payload_digest()?;
     let binding = disclosure.canonical_proof_binding_bytes(&disclosure.proofs[0])?;
-    disclosure.proofs[0].jws =
-        signer.detached_jws_over_payload_with_kid(&verification_method, &binding)?;
+    disclosure.proofs[0].jws = signer.detached_jws_over_payload(&binding)?;
     disclosure.validate()?;
     Ok(disclosure)
 }
