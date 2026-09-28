@@ -37,13 +37,15 @@ pub fn space_create(
     if let Some(rank) = rank {
         object.rank = Some(rank.to_owned());
     }
-    Ok(TypedOperationBuilder::new::<
-        arkret_sdk::event_spec::SpaceCreate,
-    >(
-        realm_id,
-        actor,
-        arkret_sdk::SpaceCreatePayload::new(object),
-    ))
+    let created_at = object.created_at;
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::SpaceCreate>(
+            realm_id,
+            actor,
+            arkret_sdk::SpaceCreatePayload::new(object),
+        )
+        .created_at(created_at),
+    )
 }
 
 /// Build a `ak.space.restore` operation. Reverses `realm_archive`
