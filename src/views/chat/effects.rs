@@ -809,7 +809,7 @@ pub(super) fn ChatEffects(
                 return;
             }
             local_timeline_sync_key_seen.set(sync_key);
-            let (next_messages, next_poll_cards) = {
+            let (next_channels, next_messages, next_poll_cards) = {
                 let store = state_store.read();
                 let snapshot = store.load();
                 let decrypt_identity = Some((
@@ -830,8 +830,13 @@ pub(super) fn ChatEffects(
                     Some(&store),
                     decrypt_identity,
                 );
-                (messages, poll_cards)
+                let channels =
+                    channels_from_current_view(store.current_product_view().as_ref(), &realm);
+                (channels, messages, poll_cards)
             };
+            if !next_channels.is_empty() {
+                event_sink.emit(ChatProjectionEvent::MergeChannels(next_channels));
+            }
             if !next_messages.is_empty() {
                 event_sink.emit(ChatProjectionEvent::MergeMessages(next_messages));
             }

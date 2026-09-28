@@ -78,3 +78,38 @@ fn channel_restore_is_isolated_to_selected_realm() {
     }
     assert!(channels_from_current_view(None, CHANNEL_REALM).is_empty());
 }
+
+#[test]
+fn late_verified_circle_current_adds_channel_after_initial_empty_view() {
+    let circle_event =
+        arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [0x43; 32]);
+    let circle_id = arkret_sdk::CircleId::from_event_id(&circle_event);
+    let mut current = current_strand(CHANNEL_REALM, "Circle poll", false);
+    if let arkret_wire::TypedCurrentResult::Value {
+        source_stream_ref,
+        value,
+        ..
+    } = &mut current
+    {
+        *source_stream_ref = arkret_wire::CommitStreamRef::Circle {
+            realm_id: arkret_sdk::RealmId::new(CHANNEL_REALM).unwrap(),
+            circle_id: circle_id.clone(),
+        };
+        value["scope_circle_id"] = json!(circle_id);
+    }
+    let mut channels = channels_from_current_view(None, CHANNEL_REALM);
+    assert!(channels.is_empty());
+    merge_channels(
+        &mut channels,
+        channels_from_current_view(Some(&view(CHANNEL_REALM, vec![current])), CHANNEL_REALM),
+    );
+    assert_eq!(channels.len(), 1);
+    assert_eq!(channels[0].name, "Circle poll");
+    assert_eq!(
+        channels[0]
+            .scope_circle
+            .as_ref()
+            .map(|scope| scope.circle_id.as_str()),
+        Some(circle_id.as_str()),
+    );
+}
