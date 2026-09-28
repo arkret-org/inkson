@@ -6,7 +6,7 @@ use super::*;
 #[component]
 pub(super) fn SyncEffects(
     sync_generation: Signal<u64>,
-    mut sync_engine_active_generation: Signal<Option<u64>>,
+    mut sync_engine_active_generation: Signal<Option<String>>,
     mut realm_events_engine_active_key: Signal<Option<String>>,
     mut signal_receive_engine_active_generation: Signal<Option<u64>>,
     mut websocket_rail_active_generation: Signal<Option<u64>>,
@@ -35,6 +35,7 @@ pub(super) fn SyncEffects(
     let sync_websocket_rail = runtime_services.websocket_rail.clone();
     use_effect(move || {
         let current_gen = sync_generation();
+        let selected_realm = selected_realm_id();
         let Some(account) = active_account() else {
             return;
         };
@@ -43,10 +44,11 @@ pub(super) fn SyncEffects(
         if base.trim().is_empty() || session.trim().is_empty() || !sync_bootstrap_complete() {
             return;
         }
-        if *sync_engine_active_generation.peek() == Some(current_gen) {
+        let active_key = format!("{current_gen}|{selected_realm}");
+        if sync_engine_active_generation.peek().as_deref() == Some(active_key.as_str()) {
             return;
         }
-        sync_engine_active_generation.set(Some(current_gen));
+        sync_engine_active_generation.set(Some(active_key.clone()));
         let effect = sync_effects.register(crate::runtime::effects::EffectKey {
             owner: crate::runtime::effects::EffectOwner::Account(
                 account.principal_id().to_string(),
@@ -79,7 +81,7 @@ pub(super) fn SyncEffects(
             )
             .await;
             completion_effects.complete(&effect);
-            if *active_generation.peek() == Some(current_gen) {
+            if active_generation.peek().as_deref() == Some(active_key.as_str()) {
                 active_generation.set(None);
             }
         });

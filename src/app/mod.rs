@@ -683,7 +683,7 @@ fn AppBootstrap() -> Element {
     // SyncEngine generation counter. Declared up front so bootstrap connect()
     // and the session-owned `SyncEffects` component share one liveness axis.
     let mut sync_generation = use_signal(|| 0u64);
-    let sync_engine_active_generation = use_signal(|| Option::<u64>::None);
+    let sync_engine_active_generation = use_signal(|| Option::<String>::None);
     // Dedup key (`<generation>|<realm_id>`) for the per-realm events engine, so
     // a base_url/token re-render doesn't stack a second loop on the same realm.
     let realm_events_engine_active_key = use_signal(|| Option::<String>::None);
