@@ -512,6 +512,14 @@ impl LocalStateStore {
             .is_some_and(|state| state.invalidated)
     }
 
+    pub(crate) fn realm_detail_invalidation_revision(&self, realm_id: &str) -> u64 {
+        self.cached
+            .demand_sync
+            .details
+            .get(realm_id)
+            .map_or(0, |state| state.invalidation_revision)
+    }
+
     /// Runs inside the caller's cursor transaction before derived projection reducers.
     /// It never installs a cursor and never flushes independently.
     pub(crate) fn prepare_account_demand_frame(

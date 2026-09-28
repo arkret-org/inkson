@@ -340,6 +340,7 @@ struct InksonAccountProjector {
     /// The demand this run subscribed with. A navigation that changes it ends
     /// the run so the next attempt resubscribes with the current demand.
     request_filter: Option<AccountFilter>,
+    selected_detail_invalidation_revision: u64,
     control: SubscriptionControl,
     current_index: tokio::sync::Mutex<Option<crate::state::CurrentIndex>>,
     station_cas_projection: std::sync::Arc<tokio::sync::Mutex<garth::StationCasProjection>>,
@@ -458,12 +459,16 @@ impl NativeAccountHost {
             realm_list: None,
             replace_filter: None,
         };
+        let selected_detail_invalidation_revision = ctx
+            .state_store
+            .read(|store| store.realm_detail_invalidation_revision(&ctx.selected_realm_id.get()));
         let projector = InksonAccountProjector {
             blocklist_catchup,
             ctx,
             generation: ValueReader::new(|| 1),
             start_generation: 1,
             request_filter: request.filter.clone(),
+            selected_detail_invalidation_revision,
             control: SubscriptionControl::default(),
             current_index: tokio::sync::Mutex::new(None),
             station_cas_projection: std::sync::Arc::new(tokio::sync::Mutex::new(
@@ -1296,8 +1301,29 @@ impl AccountBatchProjector for InksonAccountProjector {
         .await;
         // The SDK consumes catchup_complete/checkpoint control frames. The
         // validated batch reaches this boundary after its checkpoint is durable.
-        self.blocklist_catchup
-            .finish_checkpoint(durable, reset, self.fence())
+        let result = self
+            .blocklist_catchup
+            .finish_checkpoint(durable, reset, self.fence());
+        // Garth keeps the request's demand fixed for this subscription. Once
+        // a newly invalidated detail frame is durable, the next request must
+        // replace that detail baseline; the current long-poll cannot do it.
+        if result.is_ok()
+            && self
+                .request_filter
+                .as_ref()
+                .and_then(|filter| filter.realm_ids.as_ref())
+                .and_then(|realms| realms.first())
+                .is_some_and(|realm_id| {
+                    self.ctx.state_store.read(|store| {
+                        store.realm_detail_requires_replacement(realm_id.as_str())
+                            && store.realm_detail_invalidation_revision(realm_id.as_str())
+                                > self.selected_detail_invalidation_revision
+                    })
+                })
+        {
+            self.control.cancel();
+        }
+        result
     }
 }
 
@@ -1377,6 +1403,15 @@ pub async fn run_sync_engine(
             }
         };
         let request = provider.account_request();
+        let selected_detail_invalidation_revision = request
+            .filter
+            .as_ref()
+            .and_then(|filter| filter.realm_ids.as_ref())
+            .and_then(|realms| realms.first())
+            .map_or(0, |realm_id| {
+                ctx.state_store
+                    .read(|store| store.realm_detail_invalidation_revision(realm_id.as_str()))
+            });
         let subscription =
             AccountSubscription::new(ctx.client_runtime.executor(), ctx.client_runtime.cursors());
         let projector = InksonAccountProjector {
@@ -1385,6 +1420,7 @@ pub async fn run_sync_engine(
             generation: generation.clone(),
             start_generation,
             request_filter: request.filter.clone(),
+            selected_detail_invalidation_revision,
             control: subscription.control(),
             current_index: tokio::sync::Mutex::new(None),
             station_cas_projection: station_cas_projection.clone(),
