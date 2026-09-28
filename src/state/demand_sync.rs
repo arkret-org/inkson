@@ -501,7 +501,7 @@ impl LocalStateStore {
             .demand_sync
             .details
             .get(realm_id)
-            .is_some_and(|state| state.invalidated || !state.complete)
+            .is_none_or(|state| state.invalidated || !state.complete)
     }
 
     pub(crate) fn realm_detail_requires_replacement(&self, realm_id: &str) -> bool {
@@ -509,7 +509,7 @@ impl LocalStateStore {
             .demand_sync
             .details
             .get(realm_id)
-            .is_some_and(|state| state.invalidated)
+            .is_none_or(|state| state.invalidated || !state.complete)
     }
 
     pub(crate) fn realm_detail_invalidation_revision(&self, realm_id: &str) -> u64 {
@@ -1562,6 +1562,8 @@ mod tests {
     #[test]
     fn completed_detail_is_current_before_optional_product_cells_exist() {
         let mut store = store();
+        assert!(store.realm_detail_invalidated(REALM));
+        assert!(store.realm_detail_requires_replacement(REALM));
         apply(
             &mut store,
             &frame(
@@ -1570,6 +1572,7 @@ mod tests {
         );
 
         assert!(!store.realm_detail_invalidated(REALM));
+        assert!(!store.realm_detail_requires_replacement(REALM));
         // Baseline completion is delivery progress, not a verified current
         // value or an authoring decision by the governing Station.
         assert!(store.realm_current_state_entries(REALM).is_empty());
