@@ -232,125 +232,12 @@ fn sort_reactions(reactions: &mut Vec<(String, Vec<String>)>) {
     reactions.sort_by(|left, right| left.0.cmp(&right.0));
 }
 
-fn reaction_actor_from_value(value: &Value) -> Option<String> {
-    value
-        .as_str()
-        .map(ToOwned::to_owned)
-        .or_else(|| value.get("actor_id").and_then(actor_principal_from_value))
-}
-
-fn push_reaction_summary_value(reactions: &mut Vec<(String, Vec<String>)>, value: &Value) {
-    if let Some(object) = value.as_object() {
-        for (key, members_value) in object {
-            let members = members_value
-                .as_array()
-                .or_else(|| members_value.get("members").and_then(Value::as_array));
-            let Some(members) = members else {
-                continue;
-            };
-            for member in members {
-                if let Some(actor) = reaction_actor_from_value(member) {
-                    push_reaction_member(reactions, key, &actor);
-                }
-            }
-        }
-        return;
-    }
-
-    if let Some(items) = value.as_array() {
-        for item in items {
-            let Some(key) = value_string_at(item, &["key", "reaction", "reaction_key"]) else {
-                continue;
-            };
-            let Some(members) = item.get("members").and_then(Value::as_array) else {
-                continue;
-            };
-            for member in members {
-                if let Some(actor) = reaction_actor_from_value(member) {
-                    push_reaction_member(reactions, key, &actor);
-                }
-            }
-        }
-    }
-}
-
-fn push_reaction_list_value(reactions: &mut Vec<(String, Vec<String>)>, value: &Value) {
-    let Some(items) = value.as_array() else {
-        return;
-    };
-    for item in items {
-        if item.get("active").and_then(Value::as_bool) == Some(false) {
-            continue;
-        }
-        let Some(key) = value_string_at(item, &["key", "reaction", "reaction_key"]) else {
-            continue;
-        };
-        let Some(actor) = value_string_at(item, &["actor_id"]) else {
-            continue;
-        };
-        push_reaction_member(reactions, key, actor);
-    }
-}
-
-fn reactions_from_candidates(candidates: &[&Value]) -> Vec<(String, Vec<String>)> {
-    let mut reactions = Vec::new();
-    for candidate in candidates {
-        if let Some(summary) = candidate.get("reaction_summary") {
-            push_reaction_summary_value(&mut reactions, summary);
-        }
-        if let Some(items) = candidate.get("reactions") {
-            push_reaction_list_value(&mut reactions, items);
-        }
-    }
-    sort_reactions(&mut reactions);
-    reactions
-}
-
 #[derive(Clone, Debug)]
 struct ReactionMarker {
     target_ref: String,
     key: String,
     actor: String,
     active: bool,
-}
-
-fn reaction_marker_from_event(event: &Value) -> Option<ReactionMarker> {
-    let candidates = message_candidates(event);
-    let kind = candidates
-        .iter()
-        .find_map(|candidate| value_string_at(candidate, &["kind", "event_kind", "type"]))?;
-    let active = match kind {
-        event_kind_str::REACTION_ADD => true,
-        event_kind_str::REACTION_REMOVE => false,
-        _ => return None,
-    };
-    let target_ref = first_string_in_candidates(
-        &candidates,
-        &[
-            "target_ref",
-            "target_event_id",
-            "target",
-            "target_message_id",
-        ],
-    )?
-    .trim();
-    if target_ref.is_empty() {
-        return None;
-    }
-    let key = first_string_in_candidates(&candidates, &["key", "reaction", "reaction_key"])?.trim();
-    if key.is_empty() {
-        return None;
-    }
-    let actor = message_actor_from_candidates(&candidates)?;
-    if actor.trim().is_empty() {
-        return None;
-    }
-    Some(ReactionMarker {
-        target_ref: target_ref.to_owned(),
-        key: key.to_owned(),
-        actor,
-        active,
-    })
 }
 
 fn apply_reaction_marker_to_messages(messages: &mut [ChatMessage], marker: &ReactionMarker) {
@@ -371,8 +258,86 @@ fn apply_reaction_marker_to_messages(messages: &mut [ChatMessage], marker: &Reac
     sort_reactions(&mut message.reactions);
 }
 
-fn apply_reaction_markers(messages: &mut [ChatMessage], events: &[Value]) {
-    for marker in events.iter().filter_map(reaction_marker_from_event) {
+fn apply_verified_reaction_assertions(
+    messages: &mut [ChatMessage],
+    state: Option<&ClientLocalState>,
+    state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
+) {
+    // A signed Event alone has no ordering authority. In particular, account
+    // timeline rows and raw-operation arrival order cannot resurrect an older
+    // add after a later accepted remove.
+    for message in messages.iter_mut() {
+        message.reactions.clear();
+    }
+    let Some(state) = state else {
+        return;
+    };
+    for assertion in &state.verified_reaction_assertions {
+        let accepted = &assertion.accepted_ref;
+        let Some(prefix_key) = serde_json::to_string(&accepted.stream_ref).ok() else {
+            continue;
+        };
+        let Some(prefix) = state.verified_poll_prefixes.get(&prefix_key) else {
+            continue;
+        };
+        if !prefix.contiguous
+            || prefix.start_position != 0
+            || prefix.head.stream_ref != accepted.stream_ref
+            || prefix.head.stream_position < accepted.stream_position
+            || (prefix.head.stream_position == accepted.stream_position
+                && prefix.head.commit_id != accepted.commit_id)
+        {
+            continue;
+        }
+        let event = &assertion.event;
+        if accepted.event_id != event.event_id
+            || accepted.stream_ref.realm_id() != &event.realm_id
+            || !matches!(
+                event.kind,
+                arkret_sdk::EventKind::ReactionAdd | arkret_sdk::EventKind::ReactionRemove
+            )
+        {
+            continue;
+        }
+        let Ok(event_value) = serde_json::to_value(event) else {
+            continue;
+        };
+        if !verified_ordinary_chat_event_scope(
+            event.realm_id.as_str(),
+            &event_value,
+            state_store,
+            decrypt_identity,
+        ) {
+            continue;
+        }
+        let Ok(payload) = serde_json::to_value(&event.payload)
+            .and_then(serde_json::from_value::<arkret_sdk::ReactionPayload>)
+        else {
+            continue;
+        };
+        let Ok(target) = arkret_sdk::MessageId::new(payload.target_ref.clone()) else {
+            continue;
+        };
+        let Some(target_create) = state.verified_message_commits.iter().find(|create| {
+            arkret_sdk::MessageId::from_event_id(&create.accepted_ref.event_id) == target
+        }) else {
+            // A visible controller seed or bare Event does not establish a
+            // committed target or its effective security scope.
+            continue;
+        };
+        if target_create.scope_ref != event.scope_ref
+            || target_create.accepted_ref.stream_ref != accepted.stream_ref
+            || target_create.accepted_ref.stream_position >= accepted.stream_position
+        {
+            continue;
+        }
+        let marker = ReactionMarker {
+            target_ref: payload.target_ref.to_string(),
+            key: payload.key,
+            actor: event.actor_id.to_string(),
+            active: event.kind == arkret_sdk::EventKind::ReactionAdd,
+        };
         apply_reaction_marker_to_messages(messages, &marker);
     }
 }
@@ -642,7 +607,14 @@ fn chat_messages_from_event_list_with_sidecar(
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
-    fold_event_list_into_chat_messages(Vec::new(), realm_id, events, state_store, decrypt_identity)
+    fold_event_list_into_chat_messages(
+        Vec::new(),
+        realm_id,
+        events,
+        None,
+        state_store,
+        decrypt_identity,
+    )
 }
 
 fn canonical_message_revision_target(target_ref: &str) -> String {
@@ -778,6 +750,7 @@ fn fold_event_list_into_chat_messages(
     mut messages: Vec<ChatMessage>,
     realm_id: &str,
     events: &[Value],
+    verified_reactions: Option<&ClientLocalState>,
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
@@ -826,7 +799,12 @@ fn fold_event_list_into_chat_messages(
         }
     }
     apply_message_redactions(&mut messages, &ordinary_events);
-    apply_reaction_markers(&mut messages, &ordinary_events);
+    apply_verified_reaction_assertions(
+        &mut messages,
+        verified_reactions,
+        state_store,
+        decrypt_identity,
+    );
     messages.retain(|message| {
         let target_ref = message
             .protocol_message_id
@@ -1411,11 +1389,10 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     } else {
         MessageCryptoState::Plaintext
     };
-    let reactions = if is_redaction_tombstone {
-        Vec::new()
-    } else {
-        reactions_from_candidates(&candidates)
-    };
+    // Projection summaries do not carry the signed actor and covering Commit
+    // needed to decide the authority-ordered keyed set. The verified scan
+    // supplies reaction members after message construction.
+    let reactions = Vec::new();
     let sender = message_actor_from_candidates(&candidates)?;
     Some(ChatMessage {
         realm_id: first_string_in_candidates(&candidates, &["realm_id"])
@@ -2228,7 +2205,14 @@ pub(crate) fn chat_messages_from_local_state_with_sidecar(
             payload
         })
         .collect::<Vec<_>>();
-    chat_messages_from_event_list_with_sidecar("", &events, state_store, decrypt_identity)
+    fold_event_list_into_chat_messages(
+        Vec::new(),
+        "",
+        &events,
+        Some(state),
+        state_store,
+        decrypt_identity,
+    )
 }
 
 /// Fold durable lifecycle events onto an existing optimistic projection.
@@ -2258,7 +2242,14 @@ pub(crate) fn fold_local_state_into_chat_messages_with_sidecar(
             payload
         })
         .collect::<Vec<_>>();
-    fold_event_list_into_chat_messages(seed, "", &events, state_store, decrypt_identity)
+    fold_event_list_into_chat_messages(
+        seed,
+        "",
+        &events,
+        Some(state),
+        state_store,
+        decrypt_identity,
+    )
 }
 
 pub(crate) fn poll_cards_from_local_state_with_sidecar(

@@ -14,8 +14,34 @@ use super::model::{
     notification_overrides_realm_mute, notification_scope_kind, realm_is_muted,
 };
 use crate::components::{EmptyState, EmptyStateKind, UiIcon};
+use crate::notification_rules::{dnd_settings_from_account_data, push_rules_from_account_data};
+use crate::state::LocalStateStore;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::views::helpers::short_protocol_id;
+
+pub(super) fn rehydrate_notifications_for_blocklist_revision(
+    store: &LocalStateStore,
+    authority: &arkret_sdk::AccountId,
+    principal_id: &str,
+) -> Vec<super::model::UiNotification> {
+    let local_state = store.load();
+    let account_data = store.current_account_data_events();
+    let push_rules = push_rules_from_account_data(authority, &account_data);
+    let account_dnd = dnd_settings_from_account_data(authority, &account_data);
+    let effective_dnd = local_state
+        .notification_dnd_settings
+        .as_ref()
+        .or(account_dnd.as_ref());
+    let privacy_gate = crate::sidecar::SidecarPrivacyGate::from_store(store, principal_id);
+    hydrate_notifications_with_privacy_gate(
+        local_state.notification_projection.clone(),
+        &local_state,
+        Some(&arkret_sdk::ActorId::account(authority.clone())),
+        push_rules.as_ref(),
+        effective_dnd,
+        &privacy_gate,
+    )
+}
 
 #[component]
 pub fn NotificationsPanel(
@@ -27,13 +53,6 @@ pub fn NotificationsPanel(
     let base_url = crate::app::SessionContext::base_url_string();
     let session = crate::app::SessionContext::get();
     let contact_inbox = use_context::<crate::app::ContactInbox>();
-    let pending_contacts = contact_inbox
-        .0
-        .read()
-        .iter()
-        .filter(|row| row.state == arkret_sdk::ContactState::PendingIncoming)
-        .cloned()
-        .collect::<Vec<_>>();
     let mut state_store = session.state_store;
     let Some(account) = session.active_account() else {
         return rsx! { div { class: "event error-banner", "Active account context is unavailable." } };
@@ -56,6 +75,7 @@ pub fn NotificationsPanel(
     );
 
     let notifications = use_signal(move || initial_notifications.clone());
+    let mut hydrated_blocklist_revision = use_signal(|| initial_state.client_blocklist_revision);
     let mut group_by = use_signal(|| UiNotificationGroup::Latest);
     let mut show_archived = use_signal(|| false);
     let mut did_bootstrap = use_signal(|| false);
@@ -73,7 +93,27 @@ pub fn NotificationsPanel(
         );
     }
 
+    let authority_for_revision = authority.clone();
+    let principal_for_revision = principal_id.clone();
+    let mut notifications_for_revision = notifications;
+    use_effect(move || {
+        let store = state_store.read();
+        let revision = store.client_blocklist_revision();
+        if revision == hydrated_blocklist_revision() {
+            return;
+        }
+        let hydrated = rehydrate_notifications_for_blocklist_revision(
+            &store,
+            &authority_for_revision,
+            &principal_for_revision,
+        );
+        drop(store);
+        hydrated_blocklist_revision.set(revision);
+        notifications_for_revision.set(hydrated);
+    });
+
     let local_state = state_store.read().load();
+    let pending_contacts = contact_inbox.visible_pending(&local_state);
     let mut visible_notifications = notifications()
         .into_iter()
         .filter(|notification| {

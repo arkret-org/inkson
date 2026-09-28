@@ -249,11 +249,10 @@ mod merge_duplicate_create_message_alignment_tests {
         );
     }
 
-    // The retained (events) `push_reaction_member` trims whitespace on both the
-    // reaction key and the actor — the divergence that the deleted strands twin
-    // did NOT apply. Exercised through the real construction path.
+    // A projection summary cannot establish the signed actor or covering
+    // Commit position for a reaction member.
     #[test]
-    fn reactions_from_summary_trim_whitespace_in_key_and_actor() {
+    fn reactions_from_summary_without_verified_commit_are_hidden() {
         let event = signed_chat_event(
             "ak.message.create",
             "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
@@ -275,13 +274,7 @@ mod merge_duplicate_create_message_alignment_tests {
             None,
         );
         assert_eq!(messages.len(), 1);
-        assert_eq!(
-            messages[0].reactions,
-            vec![(
-                "+1".to_owned(),
-                vec!["ak:did_core:web:carol.example".to_owned()]
-            )]
-        );
+        assert!(messages[0].reactions.is_empty());
     }
 
     // Folded-in strands improvement: a redaction tombstone that arrives without

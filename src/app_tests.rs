@@ -216,6 +216,60 @@ fn unread_notification_count_ignores_read_and_archived_items() {
     assert_eq!(unread_notification_count(&snapshot), 1);
 }
 
+#[test]
+fn unread_notification_count_excludes_contact_attention_for_all_three_modes() {
+    use arkret_models_collaboration::objects::productivity::{
+        AccountBlocklistMode, AccountBlocklistSurface,
+    };
+
+    let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+    let contact_notification = crate::state::projection::notifications::test_event_notification(
+        1,
+        arkret_sdk::NotificationKind::Message,
+        realm_id,
+        None,
+        serde_json::json!({"event_kind": "ak.contact.request"}),
+    );
+    let message_notification = crate::state::projection::notifications::test_event_notification(
+        2,
+        arkret_sdk::NotificationKind::Message,
+        realm_id,
+        None,
+        serde_json::json!({"event_kind": "ak.message.create"}),
+    );
+    let actor = match &contact_notification {
+        crate::state::StoredNotification::Event { notification } => &notification.actor_id,
+        _ => unreachable!(),
+    };
+    let mut entry = crate::account_data::new_blocklist_entry(
+        crate::account_data::BlocklistUiTargetKind::Actor,
+        &actor.to_string(),
+        None,
+        vec![AccountBlocklistSurface::Contacts],
+        None,
+        chrono::Utc::now(),
+    )
+    .unwrap();
+    let mut snapshot = ClientLocalState {
+        notification_projection: vec![contact_notification, message_notification],
+        client_blocklist_revision: 7,
+        ..ClientLocalState::default()
+    };
+    assert_eq!(unread_notification_count(&snapshot), 2);
+    for mode in [
+        AccountBlocklistMode::Block,
+        AccountBlocklistMode::Hide,
+        AccountBlocklistMode::Mute,
+    ] {
+        entry.mode = mode;
+        snapshot.client_blocklist = vec![entry.clone()];
+        assert_eq!(unread_notification_count(&snapshot), 1);
+    }
+    snapshot.client_blocklist_revision = 8;
+    snapshot.client_blocklist.clear();
+    assert_eq!(unread_notification_count(&snapshot), 2);
+}
+
 fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
     let now = chrono::Utc::now();
     PersistedSessionGrant {

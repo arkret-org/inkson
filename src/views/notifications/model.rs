@@ -189,6 +189,46 @@ pub(crate) fn hydrate_notifications_with_privacy_gate(
     notifications
 }
 
+pub(crate) fn notification_blocklist_suppressed(
+    value: &StoredNotification,
+    local_state: &ClientLocalState,
+) -> bool {
+    let eval_ctx = notification_eval_context(value);
+    notification_blocklist_suppressed_for_context(value, local_state, &eval_ctx)
+}
+
+fn notification_blocklist_suppressed_for_context(
+    value: &StoredNotification,
+    local_state: &ClientLocalState,
+    eval_ctx: &NotificationEvalContext,
+) -> bool {
+    use arkret_models_collaboration::objects::productivity::AccountBlocklistSurface;
+    let mut surfaces = vec![AccountBlocklistSurface::Notifications];
+    if eval_ctx.mentions_actor.unwrap_or(false) {
+        surfaces.push(AccountBlocklistSurface::Mentions);
+    }
+    if eval_ctx.is_direct_message {
+        surfaces.push(AccountBlocklistSurface::Dm);
+    }
+    if eval_ctx.event_kind.starts_with("ak.contact.") {
+        surfaces.push(AccountBlocklistSurface::Contacts);
+    }
+    if eval_ctx.event_kind.starts_with("ak.call.") {
+        surfaces.push(AccountBlocklistSurface::Calls);
+    }
+    if eval_ctx.event_kind.starts_with("ak.applet.") {
+        surfaces.push(AccountBlocklistSurface::Applets);
+    }
+    let StoredNotification::Event { notification } = value else {
+        return false;
+    };
+    crate::account_data::suppresses_notifications(
+        &local_state.client_blocklist,
+        &notification.actor_id.to_string(),
+        &surfaces,
+    )
+}
+
 fn notification_from_stored(
     _index: usize,
     value: StoredNotification,
@@ -209,34 +249,7 @@ fn notification_from_stored(
         return None;
     }
     let mut eval_ctx = notification_eval_context(&value);
-    use arkret_models_collaboration::objects::productivity::AccountBlocklistSurface;
-    let mut blocklist_surfaces = vec![AccountBlocklistSurface::Notifications];
-    if eval_ctx.mentions_actor.unwrap_or(false) {
-        blocklist_surfaces.push(AccountBlocklistSurface::Mentions);
-    }
-    if eval_ctx.is_direct_message {
-        blocklist_surfaces.push(AccountBlocklistSurface::Dm);
-    }
-    if eval_ctx.event_kind.starts_with("ak.contact.") {
-        blocklist_surfaces.push(AccountBlocklistSurface::Contacts);
-    }
-    if eval_ctx.event_kind.starts_with("ak.call.") {
-        blocklist_surfaces.push(AccountBlocklistSurface::Calls);
-    }
-    if eval_ctx.event_kind.starts_with("ak.applet.") {
-        blocklist_surfaces.push(AccountBlocklistSurface::Applets);
-    }
-    let full_sender = match &value {
-        StoredNotification::Event { notification } => Some(notification.actor_id.to_string()),
-        _ => None,
-    };
-    if full_sender.as_deref().is_some_and(|sender| {
-        crate::account_data::suppresses_notifications(
-            &local_state.client_blocklist,
-            sender,
-            &blocklist_surfaces,
-        )
-    }) {
+    if notification_blocklist_suppressed_for_context(&value, local_state, &eval_ctx) {
         return None;
     }
     // Apply the receiver's per-realm watch override (None when unconfigured).

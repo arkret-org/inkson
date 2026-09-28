@@ -104,6 +104,15 @@ pub(crate) struct VerifiedMessageCommit {
     pub scope_ref: arkret_sdk::ScopeRef,
 }
 
+/// A reaction assertion admitted from a signature-verified Commit scan.
+/// The signed Event is retained with its exact covering coordinate so the
+/// product view never has to infer authority order from raw arrival order.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct VerifiedReactionAssertion {
+    pub accepted_ref: arkret_wire::CommittedEventRef,
+    pub event: arkret_sdk::Event,
+}
+
 /// Original accepted poll input; encrypted Messages remain candidates until
 /// the existing verified decrypt path identifies their Content Block.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -952,6 +961,8 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub(crate) verified_poll_inputs: Vec<VerifiedPollInput>,
     #[serde(default)]
+    pub(crate) verified_reaction_assertions: Vec<VerifiedReactionAssertion>,
+    #[serde(default)]
     pub(crate) verified_poll_prefixes: BTreeMap<String, VerifiedPollPrefix>,
     #[serde(default)]
     pub realm_destroy_receipts: BTreeMap<String, RealmDestroyReceipt>,
@@ -1519,6 +1530,7 @@ impl Default for ClientLocalState {
             raw_operations: Vec::new(),
             verified_message_commits: Vec::new(),
             verified_poll_inputs: Vec::new(),
+            verified_reaction_assertions: Vec::new(),
             verified_poll_prefixes: BTreeMap::new(),
             realm_destroy_receipts: BTreeMap::new(),
             realm_tree_projections: BTreeMap::new(),

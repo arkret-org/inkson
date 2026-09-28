@@ -531,6 +531,52 @@ fn typed_blocklist_entries_filter_by_closed_mode_surface_and_expiry() {
 }
 
 #[test]
+fn contact_rules_distinguish_default_visibility_from_attention() {
+    use arkret_models_collaboration::objects::productivity::{
+        AccountBlocklistMode, AccountBlocklistSurface,
+    };
+
+    let actor: arkret_sdk::ActorId =
+        serde_json::from_str(&blocklist_test_actor("ak:did_core:web:station-a.example")).unwrap();
+    let other_station: arkret_sdk::ActorId =
+        serde_json::from_str(&blocklist_test_actor("ak:did_core:web:station-b.example")).unwrap();
+    let mut entry = new_blocklist_entry(
+        BlocklistUiTargetKind::Actor,
+        &actor.to_string(),
+        None,
+        vec![AccountBlocklistSurface::Contacts],
+        None,
+        chrono::Utc::now(),
+    )
+    .unwrap();
+
+    for mode in [AccountBlocklistMode::Block, AccountBlocklistMode::Hide] {
+        entry.mode = mode;
+        assert!(hides_contact_request(&[entry.clone()], &actor));
+        assert!(suppresses_contact_attention(&[entry.clone()], &actor));
+        assert!(!hides_contact_request(&[entry.clone()], &other_station));
+        assert!(!suppresses_contact_attention(
+            &[entry.clone()],
+            &other_station
+        ));
+    }
+
+    entry.mode = AccountBlocklistMode::Mute;
+    assert!(!hides_contact_request(&[entry.clone()], &actor));
+    assert!(suppresses_contact_attention(&[entry.clone()], &actor));
+
+    entry.applies_to = vec![AccountBlocklistSurface::Dm];
+    assert!(!hides_contact_request(&[entry.clone()], &actor));
+    assert!(!suppresses_contact_attention(&[entry.clone()], &actor));
+
+    entry.mode = AccountBlocklistMode::Block;
+    entry.applies_to = vec![AccountBlocklistSurface::Contacts];
+    entry.expires_at = Some("2020-01-01T00:00:00.000Z".parse().unwrap());
+    assert!(!hides_contact_request(&[entry.clone()], &actor));
+    assert!(!suppresses_contact_attention(&[entry], &actor));
+}
+
+#[test]
 fn typed_blocklist_mutators_dedupe_and_unblock_exact_targets() {
     use arkret_models_collaboration::objects::productivity::AccountBlocklistSurface;
 

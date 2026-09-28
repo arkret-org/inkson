@@ -12,6 +12,70 @@ use crate::state::{
     ReadMarkerRecord, StoredInviteNotification, StoredNotification, read_scope_for_cursor,
 };
 
+#[test]
+fn blocklist_revision_rehydrates_retained_contact_notification() {
+    use arkret_models_collaboration::objects::productivity::AccountBlocklistSurface;
+
+    let path = std::env::temp_dir().join(format!(
+        "inkson-contact-notification-revision-{}.json",
+        crate::operation::uuid_v7()
+    ));
+    let mut store = LocalStateStore::with_path(path.clone());
+    let authority = crate::test_support::authority("ak:did_core:web:alice.example");
+    let raw = test_event_notification(
+        1,
+        arkret_sdk::NotificationKind::Message,
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+        None,
+        json!({"event_kind": "ak.contact.request"}),
+    );
+    let sender = match &raw {
+        StoredNotification::Event { notification } => notification.actor_id.to_string(),
+        _ => unreachable!(),
+    };
+    store.save_notification_projection(vec![raw]);
+    assert_eq!(
+        super::panel::rehydrate_notifications_for_blocklist_revision(
+            &store,
+            &authority,
+            "ak:did_core:web:alice.example",
+        )
+        .len(),
+        1
+    );
+
+    let entry = crate::account_data::new_blocklist_entry(
+        crate::account_data::BlocklistUiTargetKind::Actor,
+        &sender,
+        None,
+        vec![AccountBlocklistSurface::Contacts],
+        None,
+        chrono::Utc::now(),
+    )
+    .unwrap();
+    store.set_client_blocklist(7, vec![entry]);
+    assert!(
+        super::panel::rehydrate_notifications_for_blocklist_revision(
+            &store,
+            &authority,
+            "ak:did_core:web:alice.example",
+        )
+        .is_empty()
+    );
+
+    store.set_client_blocklist(8, Vec::new());
+    assert_eq!(
+        super::panel::rehydrate_notifications_for_blocklist_revision(
+            &store,
+            &authority,
+            "ak:did_core:web:alice.example",
+        )
+        .len(),
+        1
+    );
+    let _ = std::fs::remove_file(path);
+}
+
 fn push_test_invite_projection(
     notifications: &mut Vec<StoredNotification>,
     invites: Vec<arkret_models_collaboration::governance::operation_wire::Invite>,

@@ -164,7 +164,7 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
 }
 
 #[test]
-fn chat_messages_read_projected_reaction_summary() {
+fn chat_messages_do_not_trust_projected_reaction_summary_without_commit() {
     let mut event = json!({
         "event_id": "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc",
         "kind": "ak.message.create",
@@ -193,20 +193,11 @@ fn chat_messages_read_projected_reaction_summary() {
     );
 
     assert_eq!(messages.len(), 1);
-    assert_eq!(
-        messages[0].reactions,
-        vec![(
-            "+1".to_owned(),
-            vec![
-                "ak:did_core:web:bob.example".to_owned(),
-                "ak:did_core:web:carol.example".to_owned()
-            ],
-        )]
-    );
+    assert!(messages[0].reactions.is_empty());
 }
 
 #[test]
-fn chat_messages_fold_reaction_events_by_target_ref() {
+fn chat_messages_keep_bare_reaction_events_without_promoting_membership() {
     let mut events = vec![
         json!({
             "event_id": "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc",
@@ -255,13 +246,7 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
     );
 
     assert_eq!(messages.len(), 1);
-    assert_eq!(
-        messages[0].reactions,
-        vec![(
-            "+1".to_owned(),
-            vec!["ak:did_core:web:carol.example".to_owned()]
-        )]
-    );
+    assert!(messages[0].reactions.is_empty());
 
     let records = message_operations_from_events(
         "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
@@ -278,17 +263,11 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
     };
     let restored = chat_messages_from_local_state_with_sidecar(&state, None, None);
     assert_eq!(restored.len(), 1);
-    assert_eq!(
-        restored[0].reactions,
-        vec![(
-            "+1".to_owned(),
-            vec!["ak:did_core:web:carol.example".to_owned()]
-        )]
-    );
+    assert!(restored[0].reactions.is_empty());
 }
 
 #[test]
-fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() {
+fn chat_messages_do_not_promote_projection_reaction_without_verified_scan() {
     let realm = arkret_sdk::RealmId::new(
         "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI".to_owned(),
     )
@@ -337,13 +316,7 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
         messages[0].protocol_message_id.as_deref(),
         Some(message_id.as_str())
     );
-    assert_eq!(
-        messages[0].reactions,
-        vec![(
-            "+1".to_owned(),
-            vec!["ak:did_core:web:bob.example".to_owned()]
-        )]
-    );
+    assert!(messages[0].reactions.is_empty());
 
     let records = message_operations_from_events(realm.as_str(), &events);
     assert_eq!(
@@ -361,17 +334,11 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
         restored[0].protocol_message_id.as_deref(),
         Some(message_id.as_str())
     );
-    assert_eq!(
-        restored[0].reactions,
-        vec![(
-            "+1".to_owned(),
-            vec!["ak:did_core:web:bob.example".to_owned()]
-        )]
-    );
+    assert!(restored[0].reactions.is_empty());
 }
 
 #[test]
-fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
+fn chat_messages_keep_streamed_reaction_envelope_provisional_without_commit() {
     let mut events = vec![
         json!({
             "event_id": "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
@@ -416,17 +383,11 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
         messages[0].protocol_message_id.as_deref(),
         Some("ak:message:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z")
     );
-    assert_eq!(
-        messages[0].reactions,
-        vec![(
-            "👍".to_owned(),
-            vec!["ak:did_core:web:bob.example".to_owned()]
-        )]
-    );
+    assert!(messages[0].reactions.is_empty());
 }
 
 #[test]
-fn durable_reaction_folds_onto_controller_only_create() {
+fn bare_reaction_does_not_fold_onto_controller_only_create() {
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let message_id = "ak:message:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z";
     let mut events = vec![
@@ -465,13 +426,7 @@ fn durable_reaction_folds_onto_controller_only_create() {
     let messages = fold_local_state_into_chat_messages_with_sidecar(seed, &state, None, None);
 
     assert_eq!(messages.len(), 1);
-    assert_eq!(
-        messages[0].reactions,
-        vec![(
-            "👍".to_owned(),
-            vec!["ak:did_core:web:bob.example".to_owned()]
-        )]
-    );
+    assert!(messages[0].reactions.is_empty());
 }
 
 #[test]

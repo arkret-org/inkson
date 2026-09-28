@@ -359,13 +359,94 @@ fn contact_inbox_badge_tracks_only_pending_incoming_requests() {
                 })
                 .collect()
             });
-            count.set(crate::app::ContactInbox(rows).pending_count());
+            count.set(
+                crate::app::ContactInbox(rows)
+                    .pending_count(&crate::state::ClientLocalState::default()),
+            );
             dioxus::prelude::rsx! {}
         },
         count.clone(),
     );
     dom.rebuild_in_place();
     assert_eq!(count.get(), 1);
+}
+
+#[test]
+fn contact_inbox_uses_one_revision_for_visible_rows_and_attention() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use arkret_models_collaboration::objects::productivity::{
+        AccountBlocklistMode, AccountBlocklistSurface,
+    };
+    use dioxus::prelude::*;
+
+    let result = Rc::new(RefCell::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        |result: Rc<RefCell<Vec<(u64, usize, Vec<String>)>>>| {
+            let rows = use_signal(|| {
+                [
+                    "block.example",
+                    "hide.example",
+                    "mute.example",
+                    "clear.example",
+                ]
+                .into_iter()
+                .map(|station| {
+                    let mut row = contact_row(&format!("ak:did_core:web:{station}"));
+                    row.state = arkret_sdk::ContactState::PendingIncoming;
+                    row
+                })
+                .collect()
+            });
+            let mut snapshot = crate::state::ClientLocalState::default();
+            snapshot.client_blocklist_revision = 7;
+            snapshot.client_blocklist = [
+                ("block.example", AccountBlocklistMode::Block),
+                ("hide.example", AccountBlocklistMode::Hide),
+                ("mute.example", AccountBlocklistMode::Mute),
+            ]
+            .into_iter()
+            .map(|(station, mode)| {
+                let actor = contact_row(&format!("ak:did_core:web:{station}"))
+                    .peer
+                    .contact_actor_id();
+                let mut entry = crate::account_data::new_blocklist_entry(
+                    crate::account_data::BlocklistUiTargetKind::Actor,
+                    &actor.to_string(),
+                    None,
+                    vec![AccountBlocklistSurface::Contacts],
+                    None,
+                    chrono::Utc::now(),
+                )
+                .unwrap();
+                entry.mode = mode;
+                entry
+            })
+            .collect();
+            let inbox = crate::app::ContactInbox(rows);
+            let visible = inbox
+                .visible_pending(&snapshot)
+                .into_iter()
+                .map(|row| row.peer.contact_actor_id().to_string())
+                .collect();
+            result.borrow_mut().push((
+                snapshot.client_blocklist_revision,
+                inbox.pending_count(&snapshot),
+                visible,
+            ));
+            rsx! {}
+        },
+        result.clone(),
+    );
+    dom.rebuild_in_place();
+    let observed = result.borrow();
+    let (revision, attention, visible) = &observed[0];
+    assert_eq!(*revision, 7);
+    assert_eq!(*attention, 1);
+    assert_eq!(visible.len(), 2);
+    assert!(visible.iter().any(|actor| actor.contains("mute.example")));
+    assert!(visible.iter().any(|actor| actor.contains("clear.example")));
 }
 
 fn pinned_remark(principal: &str) -> ContactRemark {
