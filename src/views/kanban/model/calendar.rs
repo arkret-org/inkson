@@ -843,6 +843,24 @@ pub(crate) fn calendar_rsvp_display(
     occurrence: Option<&str>,
     self_actor_id: &str,
 ) -> CalendarRsvpDisplay {
+    calendar_rsvp_display_with_decrypt(
+        cells,
+        schedule_revision_basis,
+        occurrence,
+        self_actor_id,
+        None,
+        "",
+    )
+}
+
+pub(crate) fn calendar_rsvp_display_with_decrypt(
+    cells: &[crate::state::projection_views::RsvpCellProjectionView],
+    schedule_revision_basis: &[String],
+    occurrence: Option<&str>,
+    self_actor_id: &str,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+    strand_id: &str,
+) -> CalendarRsvpDisplay {
     let mut display = CalendarRsvpDisplay::default();
     let Some(schedule_source) = schedule_revision_basis
         .iter()
@@ -871,7 +889,12 @@ pub(crate) fn calendar_rsvp_display(
         let Some(winner) = &cell.winner else {
             continue;
         };
-        let Some(classified) = classify_rsvp_winner(winner, &schedule, is_instance) else {
+        let Some(classified) = classify_rsvp_winner(
+            winner,
+            &schedule,
+            is_instance,
+            decrypt_ctx.and_then(|ctx| decrypt_rsvp_winner(ctx, strand_id, cell, winner)),
+        ) else {
             continue;
         };
         if is_instance {
@@ -911,6 +934,7 @@ fn classify_rsvp_winner(
     winner: &crate::state::projection_views::RsvpWinnerProjectionView,
     schedule: &arkret_sdk::CalendarScheduleProjection,
     is_instance: bool,
+    decrypted_response: Option<arkret_sdk::RsvpResponse>,
 ) -> Option<arkret_sdk::CalendarRsvpWinner> {
     let source_event_digest = arkret_sdk::Hash::new(winner.source_event_digest.clone()).ok()?;
     let entry = serde_json::from_value::<arkret_sdk::RsvpEntry>(winner.entry.clone()).ok()?;
@@ -921,7 +945,10 @@ fn classify_rsvp_winner(
             Some(response.clone()),
             arkret_sdk::RsvpResponseClass::Resolved,
         ),
-        (None, Some(_)) => (None, arkret_sdk::RsvpResponseClass::EncryptedUnresolved),
+        (None, Some(_)) => match decrypted_response {
+            Some(response) => (Some(response), arkret_sdk::RsvpResponseClass::Resolved),
+            None => (None, arkret_sdk::RsvpResponseClass::EncryptedUnresolved),
+        },
         _ => (None, arkret_sdk::RsvpResponseClass::ResponseInvalid),
     };
     let basis_class = arkret_sdk::CalendarRsvpWinner::classify_basis(
@@ -938,6 +965,92 @@ fn classify_rsvp_winner(
         basis_class,
         response_class,
     })
+}
+
+fn decrypt_rsvp_winner(
+    ctx: &MlsDecryptCtx<'_>,
+    strand_id: &str,
+    cell: &crate::state::projection_views::RsvpCellProjectionView,
+    winner: &crate::state::projection_views::RsvpWinnerProjectionView,
+) -> Option<arkret_sdk::RsvpResponse> {
+    let (authority, device_id) = ctx.identity?;
+    let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?;
+    let current = ctx.state_store.current_product_view()?;
+    if current.realm_id != ctx.realm_id {
+        return None;
+    }
+    let strand = arkret_sdk::StrandId::new(strand_id.to_owned()).ok()?;
+    let strand_value = current.entries.iter().find_map(|row| match row {
+        arkret_wire::TypedCurrentResult::Value {
+            selector:
+                arkret_wire::CurrentSelector::Strand {
+                    strand_id: selected,
+                },
+            value,
+            ..
+        } if selected == &strand => Some(value),
+        _ => None,
+    })?;
+    let current_strand: arkret_models_collaboration::objects::strand::Strand =
+        serde_json::from_value(strand_value.clone()).ok()?;
+    if current_strand.id.as_ref() != Some(&strand)
+        || current_strand.realm_id.as_str() != ctx.realm_id
+        || current_strand.scope_circle_id.is_some()
+    {
+        return None;
+    }
+    let record = ctx
+        .state_store
+        .load()
+        .raw_operations
+        .into_iter()
+        .find(|record| {
+            record.operation_id == winner.source_event_id
+                && record.realm_id.as_deref() == Some(ctx.realm_id)
+        })?;
+    let event_value = record.payload.get("event")?;
+    let event: arkret_sdk::Event = serde_json::from_value(event_value.clone()).ok()?;
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(ctx.realm_id.to_owned()).ok()?,
+    };
+    let cell_actor = serde_json::from_str::<arkret_sdk::ActorId>(&cell.actor_id)
+        .ok()
+        .map(|actor| actor.signing_principal_id().to_string())
+        .unwrap_or_else(|| cell.actor_id.clone());
+    if event.kind != arkret_sdk::EventKind::RsvpSet
+        || event.realm_id.as_str() != ctx.realm_id
+        || event.scope_ref != scope
+        || event.event_id.as_str() != winner.source_event_id
+        || event.event_id.event_digest().as_str() != winner.source_event_digest
+        || event.actor_id.signing_principal_id().as_str() != cell_actor
+        || event.payload.get("event_ref")?.as_str()? != strand_id
+        || event.payload.get("occurrence")?.as_str() != cell.occurrence.as_deref()
+        || event.payload.get("entry")? != &winner.entry
+    {
+        return None;
+    }
+    let sender = crate::views::chat::verified_chat_sender_domain_for_realm(
+        ctx.realm_id,
+        event_value,
+        Some(ctx.state_store),
+        Some((authority, authority.principal_id.as_str(), &device_id)),
+    )?;
+    let ciphertext = winner.entry.get("encrypted_response")?;
+    let plaintext =
+        crate::state::projection::try_local_mls_decrypt_core_for_scope_from_verified_sender(
+            ctx.state_store,
+            ctx.realm_id,
+            authority,
+            &device_id,
+            ciphertext,
+            &scope,
+            event.kind.as_str(),
+            &sender,
+            None,
+        )?;
+    let response: arkret_sdk::RsvpResponse = serde_json::from_slice(&plaintext).ok()?;
+    response.validate().ok()?;
+    Some(response)
 }
 
 fn rsvp_status_text(status: arkret_sdk::RsvpStatus) -> String {
