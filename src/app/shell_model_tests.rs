@@ -464,6 +464,48 @@ const CONTACT_B: &str = "ak:did_core:web:bbb.example";
 const CONTACT_C: &str = "ak:did_core:web:ccc.example";
 
 #[test]
+fn blocked_pending_contact_is_hidden_from_default_sidebar_without_removing_accepted_rows() {
+    use arkret_models_collaboration::objects::productivity::AccountBlocklistSurface;
+
+    let mut store = crate::state::isolated_store_for_tests("shell-model-blocked-pending-contact");
+    let mut blocked_pending = contact_row(CONTACT_A);
+    blocked_pending.state = arkret_sdk::ContactState::PendingIncoming;
+    let mut visible_pending = contact_row(CONTACT_B);
+    visible_pending.state = arkret_sdk::ContactState::PendingIncoming;
+    let accepted = contact_row(CONTACT_C);
+    let blocked_actor = blocked_pending.peer.contact_actor_id();
+    let entry = crate::account_data::new_blocklist_entry(
+        crate::account_data::BlocklistUiTargetKind::Actor,
+        &blocked_actor.to_string(),
+        None,
+        vec![AccountBlocklistSurface::Contacts],
+        None,
+        chrono::Utc::now(),
+    )
+    .unwrap();
+    let rows = [blocked_pending, visible_pending, accepted];
+    let remarks = BTreeMap::new();
+    store.set_client_blocklist(1, vec![entry]);
+    let filtered = filter_and_sort_direct_contacts(&rows, "", &store, &remarks);
+    assert_eq!(filtered.len(), 2);
+    assert!(
+        filtered
+            .iter()
+            .any(|row| row.peer.contact_actor_id() == rows[1].peer.contact_actor_id())
+    );
+    assert!(
+        filtered
+            .iter()
+            .any(|row| row.peer.contact_actor_id() == rows[2].peer.contact_actor_id())
+    );
+    store.set_client_blocklist(2, Vec::new());
+    assert_eq!(
+        filter_and_sort_direct_contacts(&rows, "", &store, &remarks).len(),
+        3
+    );
+}
+
+#[test]
 fn pinned_direct_contacts_sort_ahead_of_the_rest() {
     let store = crate::state::isolated_store_for_tests("shell-model-contacts-pin");
     let rows = vec![

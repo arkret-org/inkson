@@ -1149,10 +1149,18 @@ pub fn ContactsPanel(token: Signal<String>, #[props(default)] advanced: bool) ->
     }
 
     let is_loading = status() == "loading";
+    let blocklist = state_store.read().client_blocklist();
     let contact_rows = contacts
         .read()
         .iter()
         .filter(|row| !advanced || row.state == arkret_sdk::ContactState::Accepted)
+        .filter(|row| {
+            row.state != arkret_sdk::ContactState::PendingIncoming
+                || !crate::account_data::hides_contact_request(
+                    &blocklist,
+                    &row.peer.contact_actor_id(),
+                )
+        })
         .cloned()
         .collect::<Vec<_>>();
 

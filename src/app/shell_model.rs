@@ -266,8 +266,16 @@ pub(super) fn filter_and_sort_direct_contacts(
     store: &LocalStateStore,
     contact_remarks: &BTreeMap<String, ContactRemark>,
 ) -> Vec<crate::models::ContactListRow> {
+    let blocklist = store.client_blocklist();
     let mut filtered: Vec<crate::models::ContactListRow> = rows
         .iter()
+        .filter(|contact| {
+            contact.state != arkret_sdk::ContactState::PendingIncoming
+                || !crate::account_data::hides_contact_request(
+                    &blocklist,
+                    &contact.peer.contact_actor_id(),
+                )
+        })
         .filter(|contact| {
             let peer_id = crate::models::contact_peer_id(contact);
             let display_name = crate::views::helpers::contact_peer_label(store, contact);
