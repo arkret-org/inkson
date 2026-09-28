@@ -1274,10 +1274,11 @@ impl ChatController {
         spawn(async move {
             let result =
                 crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
-                    let operation = crate::messaging::polls::build_poll_vote_op_with_heads(
+                    let operation = crate::messaging::polls::build_poll_vote_op_with_heads_scoped(
                         &realm_id,
                         actor.as_str(),
                         &strand_id,
+                        protection.circle_id.as_deref(),
                         poll_ref.as_str(),
                         &[option_id],
                         response_heads.clone(),

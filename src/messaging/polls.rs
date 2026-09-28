@@ -203,6 +203,16 @@ pub fn build_poll_create_op(
     strand_id: &str,
     draft: &PollDraft,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
+    build_poll_create_op_scoped(realm_id, actor, strand_id, None, draft)
+}
+
+pub fn build_poll_create_op_scoped(
+    realm_id: &str,
+    actor: &str,
+    strand_id: &str,
+    circle_id: Option<&str>,
+    draft: &PollDraft,
+) -> anyhow::Result<crate::operation::LocalOperation> {
     let answers: Vec<arkret_models_collaboration::events_payloads::PollAnswer> = draft
         .options
         .iter()
@@ -239,11 +249,14 @@ pub fn build_poll_create_op(
                 .map_err(|err| anyhow::anyhow!("poll create content serialize: {err}"))?,
         )?,
     );
-    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
-        realm_id, actor, payload,
-    )
-    .target_ref(strand_id)
-    .build_sdk_event("inkson")
+    let mut builder = crate::operation::TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::MessageCreate,
+    >(realm_id, actor, payload)
+    .target_ref(strand_id);
+    if let Some(circle_id) = circle_id {
+        builder = builder.circle_id(circle_id);
+    }
+    builder.build_sdk_event("inkson")
 }
 
 /// Derive the wire message id from a freshly built poll-create Event.
@@ -289,6 +302,26 @@ pub fn build_poll_vote_op_with_heads(
     selections: &[String],
     response_heads: Vec<arkret_sdk::PollResponseHead>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
+    build_poll_vote_op_with_heads_scoped(
+        realm_id,
+        actor,
+        strand_id,
+        None,
+        poll_ref,
+        selections,
+        response_heads,
+    )
+}
+
+pub fn build_poll_vote_op_with_heads_scoped(
+    realm_id: &str,
+    actor: &str,
+    strand_id: &str,
+    circle_id: Option<&str>,
+    poll_ref: &str,
+    selections: &[String],
+    response_heads: Vec<arkret_sdk::PollResponseHead>,
+) -> anyhow::Result<crate::operation::LocalOperation> {
     if selections.is_empty() {
         anyhow::bail!("poll response requires at least one selection");
     }
@@ -314,11 +347,14 @@ pub fn build_poll_vote_op_with_heads(
         )?,
     )
     .with_poll_response_heads(response_heads)?;
-    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
-        realm_id, actor, payload,
-    )
-    .target_ref(strand_id)
-    .build_sdk_event("inkson")
+    let mut builder = crate::operation::TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::MessageCreate,
+    >(realm_id, actor, payload)
+    .target_ref(strand_id);
+    if let Some(circle_id) = circle_id {
+        builder = builder.circle_id(circle_id);
+    }
+    builder.build_sdk_event("inkson")
 }
 
 /// Generate a fresh local poll id (`poll-<uuid>`), used only as the
@@ -331,6 +367,41 @@ pub fn new_poll_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn circle_poll_create_and_vote_keep_the_exact_circle_scope() {
+        let realm = "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q";
+        let circle = "ak:circle:AVBgYTmzSkzTSd1dlFH4ZADaQRkVcx_iTAvXdxlTfxrg";
+        let strand = "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
+        let mut draft = PollDraft::new();
+        draft.set_question("ship?".to_owned());
+        draft.set_option(0, "yes".to_owned());
+        draft.set_option(1, "no".to_owned());
+        let create = build_poll_create_op_scoped(
+            realm,
+            "ak:did_core:web:alice.example",
+            strand,
+            Some(circle),
+            &draft,
+        )
+        .unwrap();
+        let expected = arkret_sdk::ScopeRef::Circle {
+            realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+            circle_id: arkret_sdk::CircleId::new(circle).unwrap(),
+        };
+        assert_eq!(create.intent().scope_ref(), &expected);
+        let vote = build_poll_vote_op_with_heads_scoped(
+            realm,
+            "ak:did_core:web:alice.example",
+            strand,
+            Some(circle),
+            "ak:message:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu",
+            &["opt-0".to_owned()],
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(vote.intent().scope_ref(), &expected);
+    }
 
     #[test]
     fn replacement_vote_authors_typed_response_heads_without_causal_refs() {

@@ -31,6 +31,21 @@ fn encryption_label(mls_group_id: Option<&str>) -> &'static str {
     }
 }
 
+fn preview_member_count(bucket: arkret_sdk::CircleMemberCountBucket) -> &'static str {
+    use arkret_sdk::CircleMemberCountBucket::*;
+    match bucket {
+        Zero => "0",
+        One => "1",
+        TwoToThree => "2–3",
+        FourToSeven => "4–7",
+        EightToFifteen => "8–15",
+        SixteenToThirtyOne => "16–31",
+        ThirtyTwoToSixtyThree => "32–63",
+        SixtyFourToOneHundredTwentySeven => "64–127",
+        OneHundredTwentyEightPlus => "128+",
+    }
+}
+
 #[component]
 pub fn CirclesPanel(
     realm_id: String,
@@ -41,6 +56,7 @@ pub fn CirclesPanel(
     let base_url = crate::app::SessionContext::base_url_string();
     let navigator = dioxus_router::hooks::use_navigator();
     let mut circles = use_signal(Vec::<arkret_sdk::CircleView>::new);
+    let mut previews = use_signal(Vec::<arkret_sdk::CirclePreview>::new);
     let mut loading = use_signal(|| true);
     let mut status = use_signal(String::new);
     let mut refresh = use_signal(|| 0_u64);
@@ -70,11 +86,14 @@ pub fn CirclesPanel(
                 .await;
                 match outcome {
                     Ok(list) => {
-                        circles.set(crate::circle::ordinary_circle_views(list));
+                        let (full, directory) = crate::circle::split_ordinary_circle_reads(list);
+                        circles.set(full);
+                        previews.set(directory);
                         status.set(String::new());
                     }
                     Err(error) => {
                         circles.set(Vec::new());
+                        previews.set(Vec::new());
                         status.set(format!("Could not load Circles: {}", error.display()));
                     }
                 }
@@ -87,6 +106,11 @@ pub fn CirclesPanel(
         circles()
             .into_iter()
             .find(|circle| circle.circle_id.as_str() == id)
+    });
+    let selected_preview = selected_circle_id.as_deref().and_then(|id| {
+        previews()
+            .into_iter()
+            .find(|preview| preview.circle_id.as_str() == id)
     });
     let create_disabled = busy() || create_title().trim().is_empty();
 
@@ -120,7 +144,7 @@ pub fn CirclesPanel(
                 nav { class: "circle-list", "aria-label": "Ordinary Circles",
                     if loading() {
                         p { class: "muted", "Loading Circles…" }
-                    } else if circles().is_empty() {
+                    } else if circles().is_empty() && previews().is_empty() {
                         div { class: "circle-empty",
                             h2 { "No ordinary Circles" }
                             p { class: "muted", "Create a Circle for a smaller collaboration boundary. Agent Sidecars never appear here." }
@@ -143,6 +167,22 @@ pub fn CirclesPanel(
                                     "{circle.display.short_name} · {circle.member_ids.len()} members"
                                 }
                                 span { class: "muted", "{encryption_label(circle.mls_group_id.as_deref())}" }
+                            }
+                        }
+                        for preview in previews() {
+                            Link {
+                                class: if selected_circle_id.as_deref() == Some(preview.circle_id.as_str()) { "circle-list-item is-active" } else { "circle-list-item" },
+                                key: "{preview.circle_id}",
+                                "data-testid": "circle-preview-item",
+                                to: Route::CircleDetail {
+                                    realm_id: realm_id.clone(),
+                                    circle_id: preview.circle_id.to_string(),
+                                },
+                                div { class: "circle-list-item-head",
+                                    strong { "Circle preview" }
+                                    span { class: "pill", "Directory" }
+                                }
+                                span { class: "muted", "{preview_member_count(preview.member_count_bucket)} members · {preview.join_rule:?}" }
                             }
                         }
                     }
@@ -355,6 +395,18 @@ pub fn CirclesPanel(
                                     "Restore"
                                 }
                             }
+                        }
+                    } else if let Some(preview) = selected_preview {
+                        div { class: "circle-detail-heading",
+                            div {
+                                p { class: "eyebrow", "Directory preview" }
+                                h2 { "Circle preview" }
+                                p { class: "muted", "Private details are visible after joining this Circle." }
+                            }
+                        }
+                        div { class: "circle-boundary-grid",
+                            div { strong { "Members" } span { "{preview_member_count(preview.member_count_bucket)} (approximate)" } }
+                            div { strong { "Join rule" } span { "{preview.join_rule:?}" } }
                         }
                     } else {
                         div { class: "circle-empty",

@@ -1932,7 +1932,12 @@ async fn run_circle_scope_rotate_pass(
         let mut all_reconciled = circles.is_ok() && matches!(realm_desired_members, Ok(Some(_)));
 
         if let Ok(circles) = circles {
-            for circle in circles.circle_views {
+            for circle in circles.circles {
+                let arkret_sdk::CircleReadView::Full(circle) = circle else {
+                    // A directory preview has no verified member set and
+                    // cannot drive an MLS membership reconciliation.
+                    continue;
+                };
                 if circle.state != arkret_sdk::CircleState::Active {
                     continue;
                 }

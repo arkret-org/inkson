@@ -837,10 +837,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         let poll_id = crate::messaging::polls::new_poll_id();
                                         // Build the content draft; the accepted Event receipt
                                         // will supply the Message identity used by responses.
-                                        let op = match crate::messaging::polls::build_poll_create_op(
+                                        let op = match crate::messaging::polls::build_poll_create_op_scoped(
                                             &realm,
                                             &actor,
                                             &selected_strand,
+                                            protection.circle_id.as_deref(),
                                             &draft_snapshot,
                                         ) {
                                             Ok(op) => op.with_local_operation_id(

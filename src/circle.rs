@@ -33,7 +33,21 @@ pub fn is_ordinary_circle_profile(profile_ref: Option<&str>) -> bool {
 }
 
 pub fn ordinary_circle_views(list: arkret_sdk::CircleList) -> Vec<arkret_sdk::CircleView> {
-    list.circle_views
+    split_ordinary_circle_reads(list).0
+}
+
+pub fn split_ordinary_circle_reads(
+    list: arkret_sdk::CircleList,
+) -> (Vec<arkret_sdk::CircleView>, Vec<arkret_sdk::CirclePreview>) {
+    let mut full = Vec::new();
+    let mut previews = Vec::new();
+    for read in list.circles {
+        match read {
+            arkret_sdk::CircleReadView::Full(circle) => full.push(circle),
+            arkret_sdk::CircleReadView::Preview(preview) => previews.push(preview),
+        }
+    }
+    let full = full
         .into_iter()
         .filter(|circle| {
             let ordinary = is_ordinary_circle_profile(circle.profile_ref.as_deref());
@@ -46,7 +60,8 @@ pub fn ordinary_circle_views(list: arkret_sdk::CircleList) -> Vec<arkret_sdk::Ci
             }
             ordinary
         })
-        .collect()
+        .collect();
+    (full, previews)
 }
 
 /// The scope a composer / Strand-create form is actively writing into.
@@ -208,6 +223,27 @@ mod tests {
         assert!(!is_ordinary_circle_profile(Some(
             "ak.profile.future_private_circle.v1"
         )));
+    }
+
+    #[test]
+    fn directory_preview_never_becomes_a_writable_circle_scope() {
+        let list: arkret_sdk::CircleList = serde_json::from_value(serde_json::json!({
+            "realm_id":"ak:realm:Ac1aCK8aQdnkYImvdH3DFjq4jDCP198pXYWCGzGuVyj5",
+            "circles":[{
+                "circle_id":"ak:circle:AdP2S6y0Ms7yp9-GNvXZ3sVfvTEo8mtnV3G_RfApIOn0",
+                "realm_id":"ak:realm:Ac1aCK8aQdnkYImvdH3DFjq4jDCP198pXYWCGzGuVyj5",
+                "visibility":"realm_members",
+                "display":{"color_token":"blue","symbol":{"glyph":"lock"}},
+                "member_count_bucket":"2-3","join_rule":"public",
+                "opaque_commitment":"0000000000000000000000000000000000000000000000000000000000000000"
+            }]
+        })).unwrap();
+        let (full, previews) = split_ordinary_circle_reads(list);
+        assert!(
+            full.is_empty(),
+            "directory previews carry no full member set"
+        );
+        assert_eq!(previews.len(), 1);
     }
 
     #[test]
