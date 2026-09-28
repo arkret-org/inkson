@@ -1,7 +1,7 @@
 use super::model::*;
 use super::{
-    CardAuthorDisplayContext, card_author_display_label, dispatch_card_detail_update,
-    json_path_string,
+    CardAuthorDisplayContext, calendar_event_fields_from_draft, card_author_display_label,
+    dispatch_card_detail_update, json_path_string,
 };
 use crate::routes::Route;
 use crate::state::{LocalStateStore, RawOperationRecord};
@@ -723,12 +723,6 @@ pub(super) fn dispatch_calendar_rsvp(
     mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
-    if card.security_encrypted == Some(true) {
-        board_status.set(
-            "cannot build RSVP: encrypted calendar responses require the Realm MLS key".to_owned(),
-        );
-        return;
-    }
     if card.state != CardState::Synced {
         board_status.set("cannot build RSVP: resolve the current Card first".to_owned());
         return;
@@ -752,15 +746,31 @@ pub(super) fn dispatch_calendar_rsvp(
     let build_realm_id = realm_id.clone();
     let build_actor_id = actor_id.clone();
     spawn(async move {
-        let built = calendar_rsvp_operation(
-            &build_realm_id,
-            &build_actor_id,
-            &strand_id,
-            status,
-            &occurrence,
-            &calendar,
-            schedule_basis_refs,
-        );
+        let built = (|| {
+            let [schedule_basis_event] = schedule_basis_refs.as_slice() else {
+                anyhow::bail!(
+                    "calendar_schedule_unavailable - expected exactly one schedule Event"
+                );
+            };
+            let fields = calendar_event_fields_from_draft(&calendar).map_err(anyhow::Error::msg)?;
+            let actor = crate::mls_api_helpers::local_account_actor_id(&build_actor_id)?;
+            let active = crate::secure_key_store::active_device_seed_scope()
+                .ok_or_else(|| anyhow::anyhow!("active RSVP device is unavailable"))?;
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            crate::calendar::build_encrypted_calendar_rsvp_event(
+                &mut state_store.write(),
+                secure_store.as_ref(),
+                &build_realm_id,
+                &actor,
+                &active.device_id,
+                &strand_id,
+                status,
+                (!occurrence.trim().is_empty() && !calendar.recurrence_frequency.trim().is_empty())
+                    .then_some(occurrence.trim()),
+                &fields,
+                schedule_basis_event.clone(),
+            )
+        })();
         match built {
             Ok(event) => {
                 let operation_id = event.local_operation_id().to_string();

@@ -273,7 +273,7 @@ pub(crate) fn card_from_strand_projection_for_actor(
             .unwrap_or_else(|| "—".to_owned()),
         // Fold the projected RSVP winner for the card's base occurrence. The
         // self actor is filled in by the view layer, which knows the session.
-        calendar_rsvp: calendar_rsvp_display(
+        calendar_rsvp: calendar_rsvp_display_with_decrypt(
             &strand.rsvps,
             &strand
                 .schedule_revision_source
@@ -282,6 +282,8 @@ pub(crate) fn card_from_strand_projection_for_actor(
                 .collect::<Vec<_>>(),
             None,
             self_actor_id,
+            decrypt_ctx,
+            &strand.strand_id,
         ),
         calendar_rsvp_cells: strand.rsvps.clone(),
         authoring_basis: None,

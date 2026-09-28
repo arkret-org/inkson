@@ -194,7 +194,10 @@ fn kanban_operation_from_typed(event: &arkret_sdk::Event) -> Option<RawOperation
     let mut payload = local_event.record_value(&metadata)?;
     // Keep the signed envelope for authenticated decryption. Reduced patch
     // values alone cannot establish the sender, scope or ciphertext binding.
-    if event.kind == arkret_sdk::EventKind::StrandUpdate {
+    if matches!(
+        event.kind,
+        arkret_sdk::EventKind::StrandUpdate | arkret_sdk::EventKind::RsvpSet
+    ) {
         payload
             .as_object_mut()?
             .insert("event".to_owned(), serde_json::to_value(event).ok()?);
