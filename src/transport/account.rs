@@ -1499,9 +1499,7 @@ where
                 .http()
                 .account_data_delete(
                     type_key,
-                    &arkret_sdk::AccountDataDeleteRequestBody {
-                        set_event: arkret_wire::EventAdmissionSubmission::new(set_event),
-                    },
+                    &arkret_sdk::AccountDataDeleteRequestBody { set_event },
                 )
                 .await
                 .map(|_| None)
@@ -1510,9 +1508,7 @@ where
                 .http()
                 .account_data_replace(
                     type_key,
-                    &arkret_sdk::AccountDataReplaceRequestBody {
-                        set_event: arkret_wire::EventAdmissionSubmission::new(set_event),
-                    },
+                    &arkret_sdk::AccountDataReplaceRequestBody { set_event },
                 )
                 .await
                 .map(Some)
@@ -1657,9 +1653,8 @@ pub async fn delete_account_data(submitter: &EventSubmitter, type_key: &str) -> 
     let mut snapshot = account_data_snapshot(submitter.http(), type_key).await?;
     for attempt in 1..=MAX_ACCOUNT_DATA_CAS_ATTEMPTS {
         let body = arkret_sdk::AccountDataDeleteRequestBody {
-            set_event: arkret_wire::EventAdmissionSubmission::new(
-                account_data_set_submission(submitter, type_key, None, snapshot.revision).await?,
-            ),
+            set_event: account_data_set_submission(submitter, type_key, None, snapshot.revision)
+                .await?,
         };
         match submitter.http().account_data_delete(type_key, &body).await {
             Ok(_) => return Ok(()),
