@@ -882,21 +882,28 @@ impl EventSubmitter {
             .map_err(|error| anyhow::anyhow!("server describe: {error}"))
     }
 
-    fn ensure_realm_detail_current(&self, realm_id: &str) -> anyhow::Result<()> {
-        let invalidated_without_projection = self
-            .state_store
-            .as_ref()
-            .is_some_and(|store| store.read(|store| store.realm_detail_invalidated(realm_id)));
-        if local_detail_blocks_authoring(
-            self.founding_realm.as_ref(),
-            realm_id,
-            invalidated_without_projection,
-        ) {
-            return Err(anyhow::Error::new(arkret_sdk::Error::Http(
-                "Realm current state is refreshing after an account invalidation".to_owned(),
-            )));
+    async fn ensure_realm_detail_current(&self, realm_id: &str) -> anyhow::Result<()> {
+        // A fresh Realm selection or Account invalidation can temporarily
+        // remove the verified current view. Keep the authoring gate closed
+        // while the account subscription replaces that bounded baseline, then
+        // submit the original intent without asking the user to retry it.
+        for _ in 0..60 {
+            let invalidated_without_projection = self
+                .state_store
+                .as_ref()
+                .is_some_and(|store| store.read(|store| store.realm_detail_invalidated(realm_id)));
+            if !local_detail_blocks_authoring(
+                self.founding_realm.as_ref(),
+                realm_id,
+                invalidated_without_projection,
+            ) {
+                return Ok(());
+            }
+            crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
         }
-        Ok(())
+        Err(anyhow::Error::new(arkret_sdk::Error::Http(
+            "Realm current state is refreshing after an account invalidation".to_owned(),
+        )))
     }
 
     // ---------------------------------------------------------------- reads
@@ -1074,7 +1081,7 @@ impl EventSubmitter {
         intent: &EventIntent,
     ) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
         if let Some(realm_id) = intent.realm_id_opt() {
-            self.ensure_realm_detail_current(realm_id.as_str())?;
+            self.ensure_realm_detail_current(realm_id.as_str()).await?;
         }
         self.verify_actor_authority(intent).await?;
         validate_capability_grant_payload(intent)?;
@@ -1269,7 +1276,8 @@ impl EventSubmitter {
         let _single_writer = outbound_submit_lock().lock().await;
         let mut results = Vec::with_capacity(sdk_events.len());
         for event in sdk_events {
-            self.ensure_realm_detail_current(event.realm_id.as_str())?;
+            self.ensure_realm_detail_current(event.realm_id.as_str())
+                .await?;
             let submission = event_submission(event)?;
             let item = self
                 .enqueue_and_drive(QueuedWrite {
