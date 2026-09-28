@@ -176,6 +176,203 @@ fn verified_page_variant(
     (page, visible)
 }
 
+fn verified_circle_page() -> (garth::VerifiedScanPage, Value) {
+    use arkret_sdk::{
+        ActorId, CircleId, CommitStreamRef, CommittedEventFullView, Did, DidCoreId, DidUrl,
+        RealmCommit, RealmCommitId, ScopeRef,
+    };
+
+    let realm = arkret_sdk::RealmId::new(REALM).unwrap();
+    let (bundle, keys, created) = verified_realm_fixture_as(
+        realm.clone(),
+        vec![(
+            "ak.circle.create".to_owned(),
+            json!({"object":{"schema":"ak.schema.circle.v1","realm_id":realm,
+                "title":"Poll circle","display":{"short_name":"Polls","color_token":"blue",
+                    "symbol":{"glyph":"vote"}},"directory_visibility":"members",
+                "join_rule":"public","history_access":"all_history_for_current_members",
+                "state":"active","created_by":{"kind":"account","principal_id":
+                    "ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"},
+                "created_at":arkret_sdk::canonical::format_timestamp_canonical(fixture_time(2))}}),
+        )],
+        "alice.example",
+        DEVICE,
+    );
+    let circle_id = CircleId::from_event_id(&created[0].event.event_id);
+    let scope = ScopeRef::Circle {
+        realm_id: realm.clone(),
+        circle_id: circle_id.clone(),
+    };
+    let stream = CommitStreamRef::Circle {
+        realm_id: realm.clone(),
+        circle_id: circle_id.clone(),
+    };
+    let actor = ActorId::account(arkret_sdk::AccountId::new(
+        DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+        DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+    ));
+    let signer = arkret_test_kit::keys::seeded_signer(
+        Did::new("did:web:alice.example").unwrap(),
+        DidUrl::new(format!("did:web:alice.example#{DEVICE}")).unwrap(),
+    );
+    let signed = |kind: &str, payload, seconds| {
+        arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+            kind,
+            scope.clone(),
+            actor.clone(),
+            payload,
+        )
+        .with_created_at(fixture_time(seconds))
+        .sign_verifiable(&signer)
+        .unwrap()
+        .expect_verifiable()
+    };
+    let membership = signed(
+        "ak.circle.member.state",
+        json!({"circle_id":circle_id,"member_id":actor,"membership":"join",
+            "expected_membership":null}),
+        9,
+    );
+    let poll = signed("ak.message.create", definition_payload(), 10);
+    let first = signed(
+        "ak.message.create",
+        response_payload(&poll.event_id, "yes", None),
+        11,
+    );
+    let changed = signed(
+        "ak.message.create",
+        response_payload(&poll.event_id, "no", Some(&first.event_id)),
+        12,
+    );
+    let visible_poll = serde_json::to_value(&poll).unwrap();
+    let mut previous = None;
+    let rows = [membership, poll, first, changed]
+        .into_iter()
+        .enumerate()
+        .map(|(position, event)| {
+            let commit = FixtureStation::did_web().seal_commit(RealmCommit {
+                commit_id: RealmCommitId::from_digest([0x80 + position as u8; 32]),
+                realm_id: realm.clone(),
+                stream_ref: stream.clone(),
+                stream_position: position as u64,
+                previous_commit_ref: previous.clone(),
+                event_ref: event.event_id.clone(),
+                governance_generation: 0,
+                authority_ref: bundle.genesis_commit.authority_ref.clone(),
+                committed_at: fixture_time(60 + position as i64),
+                signature: bundle.genesis_commit.signature.clone(),
+            });
+            previous = Some(commit.commit_id.clone());
+            CommittedEventView::Full(CommittedEventFullView { commit, event })
+        })
+        .collect::<Vec<_>>();
+    let floor_commit_id = rows[0].commit().commit_id.clone();
+    let freshness =
+        RealmAuthorityFreshness::new(fixture_time(100), bundle.current_assertion.nonce.clone());
+    let mut replica = garth::RealmReplica::new(realm.clone());
+    replica
+        .install_verified_authority(
+            &arkret_sdk::AuthorityBundleRequest {
+                realm_id: realm.clone(),
+                nonce: bundle.current_assertion.nonce.clone(),
+            },
+            bundle,
+            &freshness,
+            &keys,
+        )
+        .unwrap();
+    let page = replica
+        .apply_verified_scan(
+            &StreamScanRequest {
+                realm_id: realm,
+                stream_ref: stream,
+                direction: StreamScanDirection::After(None),
+                limit: 100,
+            },
+            StreamScanOutcome {
+                committed_events: rows,
+                readable_floor: Some(ReadableFloor {
+                    oldest_position: 0,
+                    floor_commit_id,
+                    floor_reason: ReadableFloorReason::StreamStart,
+                }),
+                truncated: false,
+            },
+            &freshness,
+            &keys,
+        )
+        .unwrap();
+    (page, visible_poll)
+}
+
+#[test]
+fn verified_circle_poll_revote_survives_durable_reopen_and_retains_circle_heads() {
+    let (page, visible_poll) = verified_circle_page();
+    let path = std::env::temp_dir().join(format!("inkson-circle-poll-replay-{}.json", uuid_v7()));
+    let mut store = LocalStateStore::with_path(&path);
+    store.ingest_verified_message_commits(&page).unwrap();
+    store.ingest_verified_message_commits(&page).unwrap();
+    let cards =
+        poll_cards_from_events_with_sidecar(REALM, &[visible_poll.clone()], Some(&store), None);
+    assert_eq!(cards.len(), 1);
+    assert!(!cards[0].provisional);
+    assert_eq!(
+        (
+            cards[0].votes_for(0),
+            cards[0].votes_for(1),
+            cards[0].total_votes()
+        ),
+        (0, 1, 1)
+    );
+    assert!(matches!(
+        cards[0].verified_scope,
+        Some(arkret_sdk::ScopeRef::Circle { .. })
+    ));
+    let winner = page.rows().last().unwrap();
+    let actor = winner.reducer_input().unwrap().actor_id.clone();
+    assert_eq!(
+        cards[0].response_heads[&actor].response_event_ref,
+        winner.commit().event_ref
+    );
+    let heads = super::super::poll_submission::verified_poll_response_heads(
+        &cards[0],
+        cards[0].poll_ref.as_ref().unwrap(),
+        &actor,
+    )
+    .unwrap();
+    assert_eq!(heads[0].response_event_ref, winner.commit().event_ref);
+    let arkret_sdk::ScopeRef::Circle { circle_id, .. } = cards[0].verified_scope.as_ref().unwrap()
+    else {
+        unreachable!("the verified poll came from the Circle stream")
+    };
+    let next_vote = crate::messaging::polls::build_poll_vote_op_with_heads_scoped(
+        REALM,
+        actor.signing_principal_id().as_str(),
+        STRAND,
+        Some(circle_id.as_str()),
+        cards[0].poll_ref.as_ref().unwrap().as_str(),
+        &["yes".to_owned()],
+        heads.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        next_vote.intent().scope_ref(),
+        cards[0].verified_scope.as_ref().unwrap()
+    );
+    assert_eq!(next_vote.payload()["poll_response_heads"], json!(heads));
+    let mut state = store.load();
+    assert_eq!(state.verified_poll_inputs.len(), 3);
+    state.verified_poll_inputs.reverse();
+    store.save(state);
+    drop(store);
+    let reopened = LocalStateStore::with_path(&path);
+    assert_eq!(
+        poll_cards_from_events_with_sidecar(REALM, &[visible_poll], Some(&reopened), None),
+        cards
+    );
+    std::fs::remove_file(path).ok();
+}
+
 #[test]
 fn verified_poll_revote_survives_reverse_replay_and_durable_reopen() {
     let (page, visible) = verified_page(false, false);
