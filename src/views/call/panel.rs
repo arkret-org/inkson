@@ -160,7 +160,6 @@ pub fn CallPanel(
                 status,
                 last_error,
                 participants,
-                mic_muted,
                 signal_store.clone(),
             );
         });

@@ -4,23 +4,6 @@ use super::signaling::emit_async;
 use super::types::CallParticipantView;
 use crate::ui::button::{Button, ButtonVariant};
 
-fn moderator_mute_signal(
-    target_actor_id: String,
-    target_device_id: String,
-) -> Option<arkret_sdk::CallSignalData> {
-    Some(arkret_sdk::CallSignalData::MuteState(
-        arkret_sdk::CallMuteStateSignalData {
-            audio_muted: true,
-            video_muted: false,
-            changed_by: arkret_sdk::MuteChangedBy::Moderator,
-            target_actor_id: Some(
-                crate::mls_api_helpers::principal_core_id(&target_actor_id).ok()?,
-            ),
-            target_device_id: Some(arkret_sdk::DeviceId::new(target_device_id).ok()?),
-        },
-    ))
-}
-
 fn moderation_signal(
     action: arkret_sdk::CallModerationAction,
     target_actor_id: Option<String>,
@@ -43,11 +26,8 @@ fn moderation_signal(
     ))
 }
 
-/// Moderator controls (kick / ban / mute-all / end-for-all). Rendered inside
-/// the active call panel. Per `webrtc-signaling.md` §3a / §6.1: kick / ban /
-/// end-for-all ride `ak.call.signal{signal_kind=moderation}` with a
-/// `data.action`; moderator-forced mute rides `mute_state{by=moderator}` (it
-/// is NOT a moderation action). All frames require `ak.call.moderate`.
+/// Moderator controls (kick / ban / end-for-all). Moderator force-mute is
+/// deferred in v1; these controls use the existing moderation signal.
 #[component]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn ModeratorControls(
@@ -70,47 +50,9 @@ pub(super) fn ModeratorControls(
         div { class: "event", "data-testid": "call-moderator-controls",
             div { class: "event-head",
                 span { "Moderator" }
-                span { class: "muted", "mute all / kick / ban / end" }
+                span { class: "muted", "kick / ban / end" }
             }
             div { class: "actions",
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    "data-testid": "call-mute-all-button",
-                    onclick: {
-                        let base = base_url.clone();
-                        let actor = actor.clone();
-                        let device = device.clone();
-                        let realm_id = realm_id.clone();
-                        let call_id = call_id.clone();
-                        let signal_store = signal_store.clone();
-                        move |_| {
-                            // §6.1 — moderator-forced mute is a `mute_state`
-                            // frame per target, not a `moderation` action.
-                            for p in participants().iter() {
-                                if p.actor_id == actor {
-                                    continue;
-                                }
-                                let target_actor_id = p.actor_id.clone();
-                                let Some(target_device_id) = p.device_id.clone() else {
-                                    continue;
-                                };
-                                let Some(signal) = moderator_mute_signal(
-                                    target_actor_id,
-                                    target_device_id,
-                                ) else {
-                                    continue;
-                                };
-                                emit_async(
-                                    &base, &token(), &realm_id, &call_id, &actor, &device,
-                                    signal,
-                                    call_seq,
-                                    signal_store.clone(),
-                                );
-                            }
-                        }
-                    },
-                    "Mute all"
-                }
                 Button {
                     variant: ButtonVariant::Destructive,
                     "data-testid": "call-end-for-all-button",

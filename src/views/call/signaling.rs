@@ -116,7 +116,6 @@ pub(super) fn apply_inbox_items(
     mut status: Signal<String>,
     mut last_error: Signal<String>,
     mut participants: Signal<Vec<CallParticipantView>>,
-    mut mic_muted: Signal<bool>,
     relay_store: crate::runtime::input::StateStoreHandle,
 ) {
     // Items that need an async relay (offer → answer) defer to a single
@@ -181,16 +180,11 @@ pub(super) fn apply_inbox_items(
                 status.set(format!("call ended: {}", data.reason.as_str()));
             }
             arkret_sdk::CallSignalData::MuteState(data) => {
-                if moderator_mute_targets_this_device(&item, &actor, &device) {
-                    mic_muted.set(data.audio_muted);
-                    if let Some(t) = transport() {
-                        let _ = t.borrow_mut().set_audio_muted(data.audio_muted);
-                    }
-                    status.set(if data.audio_muted {
-                        format!("muted by moderator ({})", item.sender_actor)
-                    } else {
-                        format!("unmuted by moderator ({})", item.sender_actor)
-                    });
+                if data.changed_by == arkret_sdk::MuteChangedBy::Moderator {
+                    last_error.set(
+                        "unsupported_feature: moderator force-mute is deferred in v1".to_owned(),
+                    );
+                    continue;
                 }
                 apply_peer_state(&mut participants, &item);
             }
@@ -297,29 +291,6 @@ fn apply_peer_state(
     if changed {
         participants.set(roster);
     }
-}
-
-fn moderator_mute_targets_this_device(
-    item: &CallSignalInboxItem,
-    actor: &str,
-    device: &str,
-) -> bool {
-    let Ok(actor) = crate::mls_api_helpers::principal_core_id(actor) else {
-        return false;
-    };
-    matches!(
-        &item.signal,
-        arkret_sdk::CallSignalData::MuteState(data)
-            if data.changed_by == arkret_sdk::MuteChangedBy::Moderator
-                && data
-                    .target_actor_id
-                    .as_ref()
-                    .is_some_and(|target| target == &actor)
-                && data
-                    .target_device_id
-                    .as_ref()
-                    .is_some_and(|target| target.as_str() == device)
-    )
 }
 
 /// Fire-and-forget signal emit (non-SDP control signals).
@@ -492,46 +463,4 @@ pub(super) fn end_call(
         call_seq,
         state_store,
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn inbox_item() -> CallSignalInboxItem {
-        CallSignalInboxItem {
-            realm_id: "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
-            call_id: "ak:call:Ae5vV8Lwlft2Dp8x2y6Dv4NysvsHJwrADG-6PXdUz1Sl".to_owned(),
-            seq: 1,
-            sender_actor: "did:web:moderator.example".to_owned(),
-            sender_device: "ak:device:01904100-0000-7000-8000-000000000003".to_owned(),
-            signal: arkret_sdk::CallSignalData::MuteState(arkret_sdk::CallMuteStateSignalData {
-                audio_muted: true,
-                video_muted: false,
-                changed_by: arkret_sdk::MuteChangedBy::Moderator,
-                target_actor_id: Some(
-                    crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
-                ),
-                target_device_id: Some(
-                    arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000004")
-                        .unwrap(),
-                ),
-            }),
-        }
-    }
-
-    #[test]
-    fn moderator_mute_targets_exact_actor_device() {
-        let item = inbox_item();
-        assert!(moderator_mute_targets_this_device(
-            &item,
-            "did:web:alice.example",
-            "ak:device:01904100-0000-7000-8000-000000000004"
-        ));
-        assert!(!moderator_mute_targets_this_device(
-            &item,
-            "did:web:alice.example",
-            "ak:device:01904100-0000-7000-8000-000000000005"
-        ));
-    }
 }
