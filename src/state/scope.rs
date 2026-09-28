@@ -318,7 +318,7 @@ impl LocalStateStore {
             // if even this replacement write fails.
             let result = self.write_account_state(
                 ANONYMOUS_ACCOUNT_NAMESPACE,
-                &self.effective_state_for_persist(),
+                self.effective_state_for_persist(),
             );
             if result.is_ok() {
                 self.corrupt_account_scopes

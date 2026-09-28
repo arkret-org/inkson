@@ -476,7 +476,7 @@ impl LocalStateStore {
         let result = self
             .cached_account_key_for_persist()
             .and_then(|account_key| {
-                self.write_account_state(&account_key, &self.effective_state_for_persist())
+                self.write_account_state(&account_key, self.effective_state_for_persist())
             });
         self.record_persist_result(&result);
         result
@@ -501,7 +501,7 @@ impl LocalStateStore {
         #[cfg(target_arch = "wasm32")]
         let inner = {
             let account_key = self.cached_account_key_for_persist()?;
-            let state = e2ee_safe_persist_state(&self.effective_state_for_persist());
+            let state = e2ee_safe_persist_state_owned(self.effective_state_for_persist());
             let json = serde_json::to_string(&state)?;
             match account_persist::enqueue_account_state_persist_barrier(
                 account_state_key(&account_key),
@@ -594,7 +594,7 @@ impl LocalStateStore {
             let persisted = self
                 .cached_account_key_for_persist()
                 .and_then(|account_key| {
-                    self.write_account_state(&account_key, &self.effective_state_for_persist())
+                    self.write_account_state(&account_key, self.effective_state_for_persist())
                 });
             self.record_persist_result(&persisted);
         }
@@ -933,14 +933,14 @@ impl LocalStateStore {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn write_account_state(&self, did: &str, state: &ClientLocalState) -> anyhow::Result<()> {
+    fn write_account_state(&self, did: &str, state: ClientLocalState) -> anyhow::Result<()> {
         use std::io::Write;
 
         let path = self.account_state_path(did);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let persisted = e2ee_safe_persist_state(state);
+        let persisted = e2ee_safe_persist_state_owned(state);
         let bytes = serde_json::to_vec_pretty(&persisted)?;
         let tmp_path = path.with_extension("json.tmp");
         {
@@ -953,11 +953,11 @@ impl LocalStateStore {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn write_account_state(&self, did: &str, state: &ClientLocalState) -> anyhow::Result<()> {
+    fn write_account_state(&self, did: &str, state: ClientLocalState) -> anyhow::Result<()> {
         // E2EE-at-rest: never persist raw history key material or decrypted MLS
         // plaintext in the account-state blob — those live in their own hardened
         // secure entries (`e2ee_plaintext_cache` / `mls_history_secret`).
-        let to_persist = e2ee_safe_persist_state(state);
+        let to_persist = e2ee_safe_persist_state_owned(state);
         let json = serde_json::to_string(&to_persist)?;
         // Route the blob through the durable single-writer queue into the
         // IndexedDB encrypted entries store. Before the IndexedDB tier is ready
@@ -1054,15 +1054,27 @@ fn sanitize_storage_scope_for_filename(storage_scope: &str) -> String {
     storage_scope.to_owned()
 }
 
+#[cfg(test)]
 fn e2ee_safe_persist_state(state: &ClientLocalState) -> ClientLocalState {
-    e2ee_safe_persist_state_with_policy(state, !cfg!(test))
+    e2ee_safe_persist_state_owned(state.clone())
 }
 
+fn e2ee_safe_persist_state_owned(stripped: ClientLocalState) -> ClientLocalState {
+    e2ee_safe_persist_state_owned_with_policy(stripped, !cfg!(test))
+}
+
+#[cfg(test)]
 fn e2ee_safe_persist_state_with_policy(
     state: &ClientLocalState,
     strip_credentials: bool,
 ) -> ClientLocalState {
-    let mut stripped = state.clone();
+    e2ee_safe_persist_state_owned_with_policy(state.clone(), strip_credentials)
+}
+
+fn e2ee_safe_persist_state_owned_with_policy(
+    mut stripped: ClientLocalState,
+    strip_credentials: bool,
+) -> ClientLocalState {
     // Credentials and private signing material are secure-store-only. Keep
     // them in the live cache, never in cursor/projection/account JSON.
     if strip_credentials {

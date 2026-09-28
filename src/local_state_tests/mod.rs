@@ -14,6 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(super) use super::*;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod account_blob_capacity;
 mod identity;
 mod mls_local_checkpoint;
 mod move_submission;
