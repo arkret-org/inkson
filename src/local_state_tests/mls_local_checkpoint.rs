@@ -32,6 +32,46 @@ fn mls_snapshot_persists_and_round_trips_through_store() {
 }
 
 #[test]
+fn receive_ratchet_preserves_exact_accepted_group_state_event() {
+    use crate::mls::persistence::encrypt_state;
+
+    let path = temp_state_path("mls-receive-accepted-ref");
+    let realm = "ak:realm:AR9U75vD82XqGon9r2GYv6cwT3_W8U4BtjeOCoODErj_";
+    let event =
+        arkret_sdk::EventId::new("ak:event:AapALysveT_m0ubp6kTGkXSK9371_ilR-kAJwNFmxyjr").unwrap();
+    let mut initial = encrypt_state(realm, "abcd", 1, b"initial", "secret", b"initial-salt");
+    initial.group_state_event_id = Some(event.clone());
+    let mut store = LocalStateStore::with_path(path.clone());
+    store.switch_test_account("did:web:alice.example");
+    store.save_mls_checkpoint(realm, initial).unwrap();
+
+    let advanced = encrypt_state(realm, "abcd", 1, b"advanced", "secret", b"advanced-salt");
+    assert!(advanced.group_state_event_id.is_none());
+    store.advance_mls_receive_chain(
+        realm,
+        advanced,
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        b"received",
+    );
+    assert_eq!(
+        store
+            .mls_group_state_ref_for_effective_scope(realm, None, "abcd", 1)
+            .unwrap(),
+        event
+    );
+    store.set_read_receipt_default_send(true);
+    drop(store);
+
+    let restored = LocalStateStore::with_path(path);
+    assert_eq!(
+        restored
+            .mls_group_state_ref_for_effective_scope(realm, None, "abcd", 1)
+            .unwrap(),
+        event
+    );
+}
+
+#[test]
 fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
     use crate::mls::persistence::encrypt_state;
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};

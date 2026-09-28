@@ -492,7 +492,7 @@ impl LocalStateStore {
     pub fn advance_mls_receive_chain_for_scope(
         &self,
         effective_scope: &arkret_sdk::ScopeRef,
-        envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+        mut envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
         payload_digest: &str,
         plaintext: &[u8],
     ) {
@@ -504,6 +504,17 @@ impl LocalStateStore {
         };
         let previous_snapshot =
             self.mls_checkpoint_for_scope_and_group(effective_scope, &envelope.group_id);
+        if previous_snapshot
+            .as_ref()
+            .is_some_and(|previous| previous.epoch == envelope.epoch)
+        {
+            // Application decrypt advances only the receive ratchet. Keep the
+            // already verified Event anchor for this exact group and epoch;
+            // encrypt_state() creates a new envelope with that field empty.
+            envelope.group_state_event_id = self
+                .mls_group_state_ref_for_scope(effective_scope, &envelope.group_id, envelope.epoch)
+                .ok();
+        }
         let Some(realm_id) = effective_scope.realm_id_opt().map(ToString::to_string) else {
             return;
         };
