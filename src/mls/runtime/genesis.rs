@@ -18,6 +18,67 @@ pub struct InitialMlsCheckpointSummary {
     pub ratchet_tree_bytes: Vec<u8>,
     /// String form of the MLS ciphersuite the group was created with.
     pub cipher_suite: String,
+    /// The sole epoch-0 leaf's verified MLS public key and accepted endpoint
+    /// authorization. This is read from the occupied leaf binding, never the
+    /// Event signing key.
+    pub creator_leaf_authority: arkret_sdk::MlsGenesisCreatorLeafAuthority,
+}
+
+fn creator_leaf_authority_from_group(
+    group: &arkret_sdk::mls::ArkretMlsGroup,
+    authority: &arkret_sdk::AccountId,
+) -> Result<arkret_sdk::MlsGenesisCreatorLeafAuthority, MlsRuntimeError> {
+    let bindings = group.verified_leaf_bindings().map_err(|error| {
+        MlsRuntimeError::Genesis(format!("read verified creator leaf binding: {error}"))
+    })?;
+    let [creator] = bindings.as_slice() else {
+        return Err(MlsRuntimeError::Genesis(
+            "MLS Genesis requires exactly one verified epoch-0 creator leaf".to_owned(),
+        ));
+    };
+    if creator.leaf_index != 0
+        || creator.actor_id != arkret_sdk::ActorId::account(authority.clone())
+    {
+        return Err(MlsRuntimeError::Genesis(
+            "MLS Genesis creator leaf differs from the local account".to_owned(),
+        ));
+    }
+    let (endpoint, authorization_event_ref) = match &creator.endpoint {
+        arkret_sdk::MlsEndpointIdentity::HumanDevice { device_id, .. } => (
+            arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+                device_id: device_id.clone(),
+            },
+            creator.device_authorize_event_id.clone().ok_or_else(|| {
+                MlsRuntimeError::Genesis(
+                    "verified creator device leaf has no accepted authorization Event".to_owned(),
+                )
+            })?,
+        ),
+        arkret_sdk::MlsEndpointIdentity::AgentRuntime {
+            verification_method,
+            agent_key_authorize_event_id,
+            ..
+        } => (
+            arkret_sdk::MlsWelcomeRecipientEndpoint::AgentRuntime {
+                verification_method: verification_method.clone(),
+            },
+            agent_key_authorize_event_id.clone(),
+        ),
+        arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
+            return Err(MlsRuntimeError::Genesis(
+                "retired pairwise endpoint cannot bind an MLS Genesis leaf".to_owned(),
+            ));
+        }
+    };
+    let result = arkret_sdk::MlsGenesisCreatorLeafAuthority {
+        leaf_signature_key_b64u: creator.signature_key.clone(),
+        endpoint,
+        authorization_event_ref,
+    };
+    result.validate().map_err(|error| {
+        MlsRuntimeError::Genesis(format!("invalid verified creator leaf authority: {error}"))
+    })?;
+    Ok(result)
 }
 
 /// Ensure a Realm creator has the initial local MLS group snapshot.
@@ -250,6 +311,7 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
         group_info_bytes,
         ratchet_tree_bytes,
         cipher_suite,
+        creator_leaf_authority: creator_leaf_authority_from_group(&group, authority)?,
     };
     state_store
         .save_mls_checkpoint_for_scope(&effective_scope, snapshot)
@@ -374,6 +436,7 @@ pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope_with_bin
         group_info_bytes,
         ratchet_tree_bytes,
         cipher_suite: arkret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned(),
+        creator_leaf_authority: creator_leaf_authority_from_group(&group, authority)?,
     }))
 }
 
@@ -418,6 +481,7 @@ pub fn build_mls_genesis_payload(
         ratchet_tree_ref: arkret_sdk::BlobRef::new(ratchet_tree_ref).map_err(|error| {
             MlsRuntimeError::Genesis(format!("invalid ratchet-tree blob ref: {error}"))
         })?,
+        creator_leaf_authority: summary.creator_leaf_authority.clone(),
         governance_binding: governance_binding.clone(),
         created_at: crate::clock::now_utc_canonical(),
     };

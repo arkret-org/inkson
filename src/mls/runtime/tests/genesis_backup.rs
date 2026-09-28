@@ -40,6 +40,34 @@ fn build_mls_genesis_payload_has_required_fields() {
         typed_payload.mls_group_id().unwrap().as_str(),
         summary.group_id
     );
+    assert_eq!(
+        typed_payload.creator_leaf_authority,
+        summary.creator_leaf_authority
+    );
+    assert_eq!(
+        arkret_sdk::base64url_decode(
+            typed_payload
+                .creator_leaf_authority
+                .leaf_signature_key_b64u
+                .as_str()
+        )
+        .unwrap()
+        .len(),
+        32
+    );
+    assert_eq!(
+        typed_payload.creator_leaf_authority.endpoint,
+        arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+            device_id: fixture::device_id(device),
+        }
+    );
+    assert_eq!(
+        typed_payload
+            .creator_leaf_authority
+            .authorization_event_ref
+            .as_str(),
+        "ak:event:AdU2TJKBkRBC1Jk1dY8ExFkUgDvhnVG8jmKT5BdWMeYp"
+    );
     assert!(payload.get("epoch").is_none());
     assert!(payload.get("mls_group_id").is_none());
     // cipher_suite is the SDK ciphersuite string form — non-empty.
@@ -122,6 +150,10 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
     assert_eq!(restored.epoch, 0);
     assert_eq!(restored.group_info_bytes, fresh.group_info_bytes);
     assert_eq!(restored.ratchet_tree_bytes, fresh.ratchet_tree_bytes);
+    assert_eq!(
+        restored.creator_leaf_authority,
+        fresh.creator_leaf_authority
+    );
 }
 
 #[test]
