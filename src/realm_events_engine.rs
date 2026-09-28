@@ -4185,14 +4185,11 @@ mod tests {
             );
         }
         let multi_frame = account_frame(vec![(REALM_ID, multi_entry)]);
-        let multi_verified = verify_account_frame_described(
-            &AuthorityClient::new(station),
-            &http,
-            Some(&describe),
-            &multi_frame,
-        )
-        .await
-        .unwrap();
+        let multi_authority = AuthorityClient::new(station);
+        let multi_verified =
+            verify_account_frame_described(&multi_authority, &http, Some(&describe), &multi_frame)
+                .await
+                .unwrap();
         assert!(multi_verified.preview_streams().is_empty());
         assert_eq!(positions(&multi_verified, &realm_stream), vec![7, 8]);
         assert_eq!(
@@ -4211,6 +4208,36 @@ mod tests {
                 .entries[REALM_ID]
                 .current
                 .is_some()
+        );
+        let mut invented_dependency = multi_frame.clone();
+        invented_dependency
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(REALM_ID)
+            .unwrap()
+            .streams
+            .as_mut()
+            .unwrap()[1]
+            .window_start_basis
+            .as_mut()
+            .unwrap()
+            .accepted_dependency_refs = Some(vec![arkret_wire::CommittedEventRef {
+            event_id: bundle.genesis_event.event_id.clone(),
+            commit_id: arkret_sdk::RealmCommitId::from_digest([0xee; 32]),
+            stream_ref: realm_stream.clone(),
+            stream_position: 999,
+        }]);
+        assert!(
+            verify_account_frame_described(
+                &multi_authority,
+                &http,
+                Some(&describe),
+                &invented_dependency,
+            )
+            .await
+            .is_err()
         );
         let (station, ..) = station_for(&exact_tail);
         let mut forged_generation = frame.clone();
