@@ -697,8 +697,6 @@ pub struct VerifiedAccountFrame {
     resolved_preview_streams: BTreeSet<CommitStreamRef>,
     /// `preview_only` windows that stay display-only in this frame.
     preview_streams: BTreeSet<CommitStreamRef>,
-    /// Non-preview windows this client cannot settle as exact in this frame.
-    unresolved_streams: BTreeSet<CommitStreamRef>,
 }
 
 /// Complete current material at a signature-verified head. Only the fetch
@@ -781,12 +779,6 @@ impl VerifiedAccountFrame {
         &self.preview_streams
     }
 
-    /// Non-preview windows left display-only by a per-stream fail-closed
-    /// verdict in this frame.
-    pub fn unresolved_streams(&self) -> &BTreeSet<CommitStreamRef> {
-        &self.unresolved_streams
-    }
-
     /// The frame the product layer may consume. An entry whose current cut,
     /// rows or baseline coverage read a still-preview stream loses its
     /// current and baseline, so nothing downstream (durable current index,
@@ -798,13 +790,11 @@ impl VerifiedAccountFrame {
     ) -> arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame {
         let mut product = frame.clone();
         if let Some(realms) = product.realms.as_mut() {
-            let unresolved = self.unresolved_streams.iter().collect::<BTreeSet<_>>();
             for entry in realms.entries.values_mut() {
                 if crate::state::current_index::current_reads_preview_stream(
                     entry,
                     &self.resolved_preview_streams,
-                ) || crate::state::current_index::current_reads_any_stream(entry, &unresolved)
-                {
+                ) {
                     entry.current = None;
                     entry.baseline = None;
                 }
@@ -1344,8 +1334,9 @@ fn validate_signed_floor_rows(
 ///   start is no longer unknown and the stream is exact; when the caller's readable history starts
 ///   above genesis, the stream stays preview: its rows remain display rows only, and neither its
 ///   current nor any verified index or checkpoint advances.
-/// - A snapshot slice of a non-Realm stream stays unresolved without failing the frame until this
-///   client can verify its required context.
+/// - A snapshot slice of any stream uses that stream's signed predecessor and verified tail.
+///   Sibling heads in the same snapshot do not become replay predecessors for the stream being
+///   checked.
 ///
 /// A verified row that contradicts the frame or a snapshot that fails
 /// verification still fails the whole frame closed.
@@ -1505,11 +1496,10 @@ fn claimed_rows_by_stream<'a>(
 }
 
 /// Verify one Realm entry that names a signed snapshot basis on at least one
-/// stream window. Each window is settled on its own stream: the Realm-stream
-/// snapshot window through the exact by-ref snapshot, its verified tail and
-/// the typed reducers; every other window through a verified replay from
-/// genesis (or as preview). The Account current is installed only when the
-/// snapshot stream folds exactly and the cut reads no unsettled stream.
+/// stream window. Each basis names its own exact signed predecessor and
+/// verified tail; other windows use a verified replay from genesis (or stay
+/// preview). The Account current is installed only when every stream read by
+/// its cut has settled independently.
 async fn verify_snapshot_realm<T: garth::AuthorityTransport>(
     authority: &AuthorityClient<T>,
     http: &arkret_sdk::http_client::Client,
@@ -1526,17 +1516,10 @@ async fn verify_snapshot_realm<T: garth::AuthorityTransport>(
     let mut exact_pages = Vec::new();
     let mut exact_streams = BTreeSet::new();
     let mut unsettled = BTreeSet::new();
-    let mut unresolved = BTreeSet::new();
-    let mut floor = None;
+    let mut floors = Vec::new();
     for window in entry.streams.iter().flatten() {
         let rows = claimed.remove(&window.stream_ref).unwrap_or_default();
         if let Some(basis) = snapshot_window_basis(window) {
-            if window.stream_ref != realm_stream {
-                // Typed floor reducers exist for the Realm stream only; a
-                // Circle or Sidecar slice stays unresolved on its own.
-                unresolved.insert(window.stream_ref.clone());
-                continue;
-            }
             let fetched;
             let describe = match describe {
                 Some(describe) => describe,
@@ -1575,7 +1558,7 @@ async fn verify_snapshot_realm<T: garth::AuthorityTransport>(
             let floor_snapshot = floor_snapshot.ok_or_else(|| {
                 garth::Error::Protocol("floor snapshot did not pass Garth".to_owned())
             })?;
-            floor = Some((floor_snapshot, pages));
+            floors.push((floor_snapshot, pages));
             continue;
         }
         let scan = verified_stream_pages(
@@ -1606,33 +1589,33 @@ async fn verify_snapshot_realm<T: garth::AuthorityTransport>(
             }
         }
     }
-    // Without a Realm-stream floor (only a non-Realm slice named a basis)
-    // the entry is settled per stream like full history; its current reads
-    // the unresolved slice and stays out of the product current.
-    if let Some((floor_snapshot, floor_pages)) = floor {
+    if !floors.is_empty() {
         let current = entry.current.as_ref().ok_or_else(|| {
             garth::Error::Protocol("floor snapshot has no Account current cut".to_owned())
         })?;
         require_floor_current_cut(
             current,
-            &floor_snapshot,
+            &floors.iter().map(|(floor, _)| floor).collect::<Vec<_>>(),
+            bundle.current_generation,
             &replica,
             entry,
             &exact_streams,
             &unsettled,
-            &unresolved,
         )?;
-        validate_signed_floor_rows(
-            realm_id,
-            &bundle,
-            floor_snapshot.head(),
-            floor_snapshot.history_access(),
-            floor_snapshot.rows(),
-        )?;
-        verified.pages.extend(floor_pages);
+        for (floor_snapshot, floor_pages) in floors {
+            if floor_snapshot.head().stream_ref == realm_stream {
+                validate_signed_floor_rows(
+                    realm_id,
+                    &bundle,
+                    floor_snapshot.head(),
+                    floor_snapshot.history_access(),
+                    floor_snapshot.rows(),
+                )?;
+            }
+            verified.pages.extend(floor_pages);
+        }
     }
     verified.pages.extend(exact_pages);
-    verified.unresolved_streams.extend(unresolved);
     let final_freshness = arkret_identity::RealmAuthorityFreshness::new(
         chrono::Utc::now(),
         freshness.expected_nonce.clone(),
@@ -1663,20 +1646,24 @@ fn require_verified_window_head(
 }
 
 /// The Account current cut of a snapshot-anchored Realm: the signed floor's
-/// governance generation, one head per stream window, the snapshot stream at
-/// its verified head, every exactly replayed stream at its verified head, and
+/// governance generation no older than any signed floor, one head per stream
+/// window, each signed floor stream at its own verified head, every exactly
+/// replayed stream at its verified head, and
 /// every row sourced from a stream the frame settles (exact, or explicitly
-/// preview / unresolved so the cut stays out of the product current).
+/// preview so the cut stays out of the product current).
 fn require_floor_current_cut(
     current: &arkret_models_collaboration::sync_frames::current_results::AccountCurrentResult,
-    floor_snapshot: &garth::VerifiedFloorSnapshot,
+    floor_snapshots: &[&garth::VerifiedFloorSnapshot],
+    current_generation: u64,
     replica: &RealmReplica,
     entry: &arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry,
     exact_streams: &BTreeSet<CommitStreamRef>,
     unsettled: &BTreeSet<CommitStreamRef>,
-    unresolved: &BTreeSet<CommitStreamRef>,
 ) -> garth::Result<()> {
-    let floor_stream = &floor_snapshot.head().stream_ref;
+    let floor_streams = floor_snapshots
+        .iter()
+        .map(|floor| &floor.head().stream_ref)
+        .collect::<BTreeSet<_>>();
     let windows = entry
         .streams
         .iter()
@@ -1684,20 +1671,23 @@ fn require_floor_current_cut(
         .map(|window| &window.stream_ref)
         .collect::<BTreeSet<_>>();
     let mut heads = BTreeSet::new();
-    let mismatch = current.governance_generation != floor_snapshot.governance_generation()
+    let mismatch = current.governance_generation != current_generation
+        || floor_snapshots
+            .iter()
+            .any(|floor| current.governance_generation < floor.governance_generation())
         || current.stream_heads.iter().any(|head| {
             !heads.insert(&head.stream_ref)
                 || !windows.contains(&head.stream_ref)
-                || ((&head.stream_ref == floor_stream || exact_streams.contains(&head.stream_ref))
+                || ((floor_streams.contains(&head.stream_ref)
+                    || exact_streams.contains(&head.stream_ref))
                     && replica.verified_head(&head.stream_ref) != Some(head))
         })
-        || !heads.contains(floor_stream)
+        || floor_streams.iter().any(|stream| !heads.contains(*stream))
         || current.entries.iter().any(|row| {
             let source = row_source(row);
-            source != floor_stream
+            !floor_streams.contains(source)
                 && !exact_streams.contains(source)
                 && !unsettled.contains(source)
-                && !unresolved.contains(source)
         });
     if mismatch {
         return Err(garth::Error::Protocol(
@@ -1750,6 +1740,15 @@ async fn verify_full_history_realm<T: garth::AuthorityTransport>(
         return Ok(());
     }
     let (bundle, freshness, mut replica) = fresh_verified_realm(authority, http, realm_id).await?;
+    if entry
+        .current
+        .as_ref()
+        .is_some_and(|current| current.governance_generation != bundle.current_generation)
+    {
+        return Err(garth::Error::Protocol(
+            "Account current generation differs from fresh verified authority".to_owned(),
+        ));
+    }
     for (stream_ref, claimed_rows) in by_stream {
         let window = entry.streams.as_ref().and_then(|windows| {
             windows
@@ -3722,6 +3721,28 @@ mod tests {
             .allow_insecure_localhost()
             .build()
             .unwrap();
+        let forged_station = station(0);
+        let mut forged_generation = batch(&forged_station);
+        forged_generation
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(OTHER_REALM_ID)
+            .unwrap()
+            .current
+            .as_mut()
+            .unwrap()
+            .governance_generation = 99;
+        assert!(
+            verify_account_frame_with(
+                &AuthorityClient::new(forged_station),
+                &http,
+                &forged_generation,
+            )
+            .await
+            .is_err()
+        );
         let mut store = crate::state::isolated_store_for_tests("account-frame-preview-sibling");
         store.switch_test_account("did:web:reader.example");
         let scope = account_scope();
@@ -3859,9 +3880,9 @@ mod tests {
 
     /// A Realm whose issued `/head` anchors a limited Realm-stream window,
     /// beside a full-history sibling Realm: the snapshot window's tail runs
-    /// the typed reducers; an unregistered tail kind leaves only that stream
-    /// unresolved (no current, page or cursor of it) without failing the
-    /// frame; another stream window of the same Realm is settled on its own
+    /// the signed predecessor and verified tail; an unregistered tail kind
+    /// does not become a local typed-current reducer; another stream window
+    /// of the same Realm is settled on its own
     /// stream; a contradicting Account current still fails the frame.
     #[tokio::test]
     async fn snapshot_window_tail_and_sibling_windows_settle_per_stream() {
@@ -3885,6 +3906,13 @@ mod tests {
             circle_id: arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
                 arkret_sdk::DigestSuite::Sha256,
                 [0x6e; 32],
+            )),
+        };
+        let sidecar_stream = CommitStreamRef::Sidecar {
+            realm_id: realm_id.clone(),
+            sidecar_id: arkret_sdk::SidecarId::from_event_id(&arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [0x6f; 32],
             )),
         };
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
@@ -4085,7 +4113,6 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(verified.unresolved_streams().is_empty());
         let basis = verified
             .authority_bases()
             .iter()
@@ -4100,6 +4127,113 @@ mod tests {
         assert_eq!(
             serde_json::to_value(verified.product_frame(&frame)).unwrap(),
             serde_json::to_value(&frame).unwrap()
+        );
+        // A single signed snapshot can bind three independent predecessors.
+        // Empty Circle and Sidecar tails still need their own signed heads;
+        // the Realm head cannot stand in for either stream.
+        let (mut station, bundle, items, mut multi_snapshot) = station_for(&exact_tail);
+        let scoped_head = arkret_sdk::RealmCommitId::from_digest([0x6c; 32]);
+        for stream_ref in [&circle_stream, &sidecar_stream] {
+            multi_snapshot
+                .visible_stream_heads
+                .push(arkret_wire::CommitStreamHead {
+                    stream_ref: stream_ref.clone(),
+                    stream_position: 1,
+                    commit_id: scoped_head.clone(),
+                });
+            multi_snapshot
+                .retention_and_history_floor
+                .stream_floors
+                .push(arkret_wire::StreamHistoryFloor {
+                    stream_ref: stream_ref.clone(),
+                    oldest_position: 1,
+                });
+        }
+        fixture_station().sign_snapshot(&mut multi_snapshot);
+        station.snapshots =
+            BTreeMap::from([(multi_snapshot.snapshot_id.clone(), multi_snapshot.clone())]);
+        let mut multi_entry =
+            anchored_entry(&bundle, &items, &multi_snapshot, exact_rows.clone(), false);
+        for stream_ref in [&circle_stream, &sidecar_stream] {
+            multi_entry
+                .streams
+                .as_mut()
+                .unwrap()
+                .push(RealmStreamWindow {
+                    stream_ref: stream_ref.clone(),
+                    head_commit_ref: scoped_head.clone(),
+                    next_position: 2,
+                    limited: true,
+                    window_limit: 0,
+                    complete: true,
+                    preview_only: None,
+                    window_start_basis: Some(StreamWindowStartBasis {
+                        anchor_position: 1,
+                        anchor_commit_ref: scoped_head.clone(),
+                        snapshot_ref: multi_snapshot.snapshot_id.clone(),
+                        governance_generation: 0,
+                        accepted_dependency_refs: None,
+                    }),
+                    e2ee_epoch: None,
+                });
+            multi_entry.current.as_mut().unwrap().stream_heads.push(
+                arkret_wire::CommitStreamHead {
+                    stream_ref: stream_ref.clone(),
+                    stream_position: 1,
+                    commit_id: scoped_head.clone(),
+                },
+            );
+        }
+        let multi_frame = account_frame(vec![(REALM_ID, multi_entry)]);
+        let multi_verified = verify_account_frame_described(
+            &AuthorityClient::new(station),
+            &http,
+            Some(&describe),
+            &multi_frame,
+        )
+        .await
+        .unwrap();
+        assert!(multi_verified.preview_streams().is_empty());
+        assert_eq!(positions(&multi_verified, &realm_stream), vec![7, 8]);
+        assert_eq!(
+            positions(&multi_verified, &circle_stream),
+            Vec::<u64>::new()
+        );
+        assert_eq!(
+            positions(&multi_verified, &sidecar_stream),
+            Vec::<u64>::new()
+        );
+        assert!(
+            multi_verified
+                .product_frame(&multi_frame)
+                .realms
+                .unwrap()
+                .entries[REALM_ID]
+                .current
+                .is_some()
+        );
+        let (station, ..) = station_for(&exact_tail);
+        let mut forged_generation = frame.clone();
+        forged_generation
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(REALM_ID)
+            .unwrap()
+            .current
+            .as_mut()
+            .unwrap()
+            .governance_generation = 99;
+        assert!(
+            verify_account_frame_described(
+                &AuthorityClient::new(station),
+                &http,
+                Some(&describe),
+                &forged_generation,
+            )
+            .await
+            .is_err()
         );
 
         // The Station has a later signed Commit than this Account window.
@@ -4232,7 +4366,6 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(verified.unresolved_streams().is_empty());
         assert_eq!(positions(&verified, &realm_stream), vec![7, 8]);
         assert_eq!(positions(&verified, &sibling_stream), vec![0, 1, 2]);
         let product = verified.product_frame(&frame);
@@ -4303,7 +4436,6 @@ mod tests {
                 verified.preview_streams(),
                 &BTreeSet::from([circle_stream.clone()])
             );
-            assert!(verified.unresolved_streams().is_empty());
             assert_eq!(positions(&verified, &realm_stream), vec![7, 8]);
             let product = verified.product_frame(&frame);
             let installed = product.realms.as_ref().unwrap().entries[REALM_ID]
