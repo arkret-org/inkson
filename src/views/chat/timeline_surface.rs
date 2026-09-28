@@ -923,7 +923,14 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         }) || blocked_show_anyway.read().contains(&msg.id));
                                     let card_lookup = poll_cards()
                                         .iter()
-                                        .find(|card| poll_content_visible && card.message_id == msg.id)
+                                        .find(|card| {
+                                            poll_content_visible
+                                                && poll_card_matches_render_ids(
+                                                    card,
+                                                    &msg.id,
+                                                    msg.protocol_message_id.as_deref(),
+                                                )
+                                        })
                                         .cloned();
                                     match card_lookup {
                                         Some(card) => {

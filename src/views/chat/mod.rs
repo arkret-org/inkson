@@ -2109,7 +2109,7 @@ pub fn ChatPanel(
                                 oninput: move |event: FormEvent| new_channel_topic.set(event.value()),
                             }
                             CircleScopePicker {
-                                selected: new_channel_scope(),
+                                selected: new_channel_scope,
                                 circles: eligible_circle_scopes(),
                                 test_id: Some("new-channel-circle-scope".to_owned()),
                                 onchange: move |scope| new_channel_scope.set(scope),

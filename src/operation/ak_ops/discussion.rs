@@ -54,16 +54,20 @@ pub fn discussion_strand_create(
     if let Some(summary) = summary.map(str::trim).filter(|value| !value.is_empty()) {
         strand = strand.with_metadata_summary(summary);
     }
-    if let Some(circle_id) = scope_circle_id
+    let circle_id = scope_circle_id
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+        .filter(|value| !value.is_empty());
+    if let Some(circle_id) = circle_id {
         strand = strand.with_scope_circle_id(
             arkret_sdk::CircleId::new(circle_id.to_owned())
                 .map_err(|e| anyhow::anyhow!("invalid scope circle_id: {e:?}"))?,
         );
     }
-    strand_create_operation(realm_id, actor, strand)
+    let builder = strand_create_operation(realm_id, actor, strand)?;
+    Ok(match circle_id {
+        Some(circle_id) => builder.circle_id(circle_id),
+        None => builder,
+    })
 }
 
 /// Build the metadata-free discussion Strand used as a newly-created Realm's

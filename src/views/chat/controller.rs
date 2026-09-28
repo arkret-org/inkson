@@ -99,13 +99,16 @@ impl ChatProjectionSink {
     pub fn emit(mut self, event: ChatProjectionEvent) {
         match event {
             ChatProjectionEvent::EnsureChannel(channel) => {
-                if (self.0.selected_channel)() != channel.strand_id {
+                // EnsureChannel runs in the route-derived effect. An observed
+                // read here would subscribe that effect to user selection and
+                // reset every newly selected Strand back to the route default.
+                if self.0.selected_channel.peek().as_str() != channel.strand_id.as_str() {
                     self.0.selected_channel.set(channel.strand_id.clone());
                 }
                 if !self
                     .0
                     .channels
-                    .read()
+                    .peek()
                     .iter()
                     .any(|current| current.strand_id == channel.strand_id)
                 {

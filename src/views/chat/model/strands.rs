@@ -266,3 +266,14 @@ pub(crate) fn replace_poll_projection(
         }
     }
 }
+
+pub(crate) fn poll_card_matches_render_ids(
+    card: &crate::messaging::polls::PollCard,
+    message_id: &str,
+    protocol_message_id: Option<&str>,
+) -> bool {
+    card.message_id == message_id
+        || card.poll_ref.as_ref().is_some_and(|poll_ref| {
+            protocol_message_id.is_some_and(|message_ref| poll_ref.as_str() == message_ref)
+        })
+}

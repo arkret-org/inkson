@@ -405,6 +405,13 @@ fn discussion_strand_create_emits_discussion_track() {
         true
     );
     assert_eq!(op.payload()["object"]["metadata"]["title"], "Ops");
+    assert_eq!(
+        serde_json::to_value(event.event()).unwrap()["scope_ref"],
+        json!({
+            "kind": "realm",
+            "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk"
+        })
+    );
     assert!(op.payload()["object"].get("title").is_none());
     assert!(op.payload()["object"].get("stage").is_none());
     // `metadata.fields.rank` is a forbidden Strand member; placement lives in
@@ -416,6 +423,30 @@ fn discussion_strand_create_emits_discussion_track() {
     );
     assert_registered_payload_valid(&op);
     assert!(op.payload()["object"].get("kind").is_none());
+}
+
+#[test]
+fn discussion_strand_create_signs_the_selected_circle_scope() {
+    let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
+    let circle_id = "ak:circle:ARXbvtRVuDBYaF4WF9z-UaI6zlszC0W60gTZIVJDcvFR";
+    let op = ak_ops::discussion_strand_create(
+        realm_id,
+        "did:web:alice.example",
+        "Private discussion",
+        "general",
+        None,
+        Some(circle_id),
+        false,
+    )
+    .unwrap()
+    .build("node");
+    let signed_event = serde_json::to_value(authored(&op).event()).unwrap();
+    assert_eq!(op.payload()["object"]["scope_circle_id"], circle_id);
+    assert_eq!(
+        signed_event["scope_ref"],
+        json!({ "kind": "circle", "realm_id": realm_id, "circle_id": circle_id })
+    );
+    assert_registered_payload_valid(&op);
 }
 
 #[test]

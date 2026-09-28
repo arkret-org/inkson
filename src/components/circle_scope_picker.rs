@@ -21,7 +21,7 @@ use crate::ui::select::{Select, SelectOption};
 pub fn CircleScopePicker(
     /// Currently selected scope. Defaults to `CircleScope::Realm` when
     /// the picker first mounts.
-    selected: CircleScope,
+    selected: Signal<CircleScope>,
     /// Eligible Circles. May be empty — the picker renders the
     /// Realm-only option in that case.
     circles: Vec<CircleSummary>,
@@ -36,13 +36,11 @@ pub fn CircleScopePicker(
     // strings resolve here instead.
     let everyone_label = crate::i18n::tr("circle.scope.realm_everyone");
     let scope_help = crate::i18n::tr("circle.scope.help");
-    let current_id = match &selected {
-        CircleScope::Realm => String::from("__realm__"),
-        CircleScope::Circle { circle_id, .. } => circle_id.clone(),
-    };
-    let current_id_selected = use_memo({
-        let current_id = current_id.clone();
-        move || Some(current_id.clone())
+    let current_id_selected = use_memo(move || {
+        Some(match selected() {
+            CircleScope::Realm => String::from("__realm__"),
+            CircleScope::Circle { circle_id, .. } => circle_id,
+        })
     });
     let circles_for_handler = circles.clone();
 

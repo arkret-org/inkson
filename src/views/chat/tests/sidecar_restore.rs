@@ -164,6 +164,16 @@ fn poll_projection_merge_preserves_optimistic_message_render_id() {
     assert_eq!(cards.len(), 1);
     assert_eq!(cards[0].message_id, "poll-local");
     assert_eq!(cards[0].votes_for(1), 1);
+    assert!(poll_card_matches_render_ids(
+        &cards[0],
+        "ak:event:AZfLd21JpG9eFxiZSOjnlVNQnQV8Bu7OP_TAtMdAAa30",
+        Some(wire_poll_id),
+    ));
+    assert!(!poll_card_matches_render_ids(
+        &cards[0],
+        "ak:event:AZfLd21JpG9eFxiZSOjnlVNQnQV8Bu7OP_TAtMdAAa30",
+        None,
+    ));
     let pending = crate::messaging::polls::PollCard::from_draft("pending-local".to_owned(), &draft);
     cards.push(pending);
     replace_poll_projection(&mut cards, Vec::new());
