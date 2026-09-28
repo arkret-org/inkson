@@ -309,7 +309,11 @@ fn project_member_roster_from_sdk_entry(
     projection: &mut Value,
     entry: &RealmSyncEntry,
 ) -> serde_json::Result<()> {
-    let Some(roster) = entry.member_roster.as_ref().and_then(Value::as_object) else {
+    let roster = match &entry.member_roster {
+        Some(roster) => Some(roster.clone()),
+        None => member_roster_from_current(entry)?,
+    };
+    let Some(roster) = roster.as_ref().and_then(Value::as_object) else {
         return Ok(());
     };
     let Some(object) = projection.as_object_mut() else {
@@ -342,6 +346,40 @@ fn project_member_roster_from_sdk_entry(
         }
     }
     Ok(())
+}
+
+/// A complete account current cut already carries effective member state.
+/// Some Stations omit the optional roster convenience projection; use only
+/// those authority-committed current rows in that case, never message authors
+/// or mention metadata.
+fn member_roster_from_current(entry: &RealmSyncEntry) -> serde_json::Result<Option<Value>> {
+    use arkret_wire::{CurrentSelector, MemberStateCurrent, MembershipState, TypedCurrentResult};
+
+    let Some(current) = entry.current.as_ref() else {
+        return Ok(None);
+    };
+    let mut entries = Vec::new();
+    for row in &current.entries {
+        let TypedCurrentResult::Value {
+            selector: CurrentSelector::MemberState { actor_id },
+            value,
+            ..
+        } = row
+        else {
+            continue;
+        };
+        let state: MemberStateCurrent = serde_json::from_value(value.clone())?;
+        match state.membership {
+            MembershipState::Join | MembershipState::Knock => entries.push(serde_json::json!({
+                    "actor_id": actor_id,
+                    "membership": state.membership,
+            })),
+            MembershipState::Leave | MembershipState::Ban => {}
+        }
+    }
+    Ok(Some(
+        serde_json::json!({"entries": entries, "limited": false}),
+    ))
 }
 
 // `resolve-realm` decodes into the canonical SDK wire types so the client stays
@@ -526,7 +564,10 @@ mod tests {
     use arkret_sdk::contact_operations::ContactScope;
     use arkret_wire::SchemaId;
 
-    use super::{AccountSyncStep, projection_realm_id_for_known_node, service_supports_operation};
+    use super::{
+        AccountSyncStep, RealmSyncEntry, project_member_roster_from_sdk_entry,
+        projection_realm_id_for_known_node, service_supports_operation,
+    };
 
     #[test]
     fn since_join_member_roster_uses_authoritative_typed_projection_without_state_event() {
@@ -599,6 +640,46 @@ mod tests {
                 )
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn missing_wire_roster_uses_only_current_member_state() {
+        let actor = serde_json::json!({"kind":"account","account_id":{
+            "principal_id":"ak:did_core:web:bob.example",
+            "station_id":"ak:did_core:web:station.example"
+        }});
+        let current_row = |membership: &str| {
+            serde_json::json!({
+                "selector":{"kind":"member_state","actor_id":actor},
+                "source_stream_ref":{"kind":"realm","realm_id":"ak:realm:AYlS_mnxn8_f65A0YrWEeLzd0F1vnM347xZzMSQEcrlz"},
+                "revision":{"commit_id":"ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq","stream_position":1},
+                "value":{"membership":membership}
+            })
+        };
+        let entry: RealmSyncEntry = serde_json::from_value(serde_json::json!({
+            "current":{
+                "realm_id":"ak:realm:AYlS_mnxn8_f65A0YrWEeLzd0F1vnM347xZzMSQEcrlz",
+                "governance_generation":1,
+                "stream_heads":[],
+                "entries":[current_row("join")]
+            }
+        }))
+        .unwrap();
+        let mut projection = serde_json::to_value(&entry).unwrap();
+        project_member_roster_from_sdk_entry(&mut projection, &entry).unwrap();
+        let rows = crate::views::member_display::realm_member_roster(Some(&projection));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].actor_id,
+            serde_json::from_value(actor.clone()).unwrap()
+        );
+
+        let mut left = entry;
+        left.current.as_mut().unwrap().entries =
+            vec![serde_json::from_value(current_row("leave")).unwrap()];
+        let mut projection = serde_json::to_value(&left).unwrap();
+        project_member_roster_from_sdk_entry(&mut projection, &left).unwrap();
+        assert!(crate::views::member_display::realm_member_roster(Some(&projection)).is_empty());
     }
 
     #[test]
