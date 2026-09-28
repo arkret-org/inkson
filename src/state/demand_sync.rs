@@ -497,11 +497,16 @@ impl LocalStateStore {
         if self.current_product_view_ready(realm_id) {
             return false;
         }
-        self.cached
-            .demand_sync
-            .details
-            .get(realm_id)
-            .is_none_or(|state| state.invalidated || !state.complete)
+        match self.cached.demand_sync.details.get(realm_id) {
+            Some(state) => state.invalidated || !state.complete,
+            None => self
+                .cached
+                .demand_sync
+                .filter
+                .as_ref()
+                .and_then(|filter| filter.realm_ids.as_ref())
+                .is_some_and(|realms| realms.iter().any(|realm| realm.as_str() == realm_id)),
+        }
     }
 
     pub(crate) fn realm_detail_requires_replacement(&self, realm_id: &str) -> bool {
@@ -1562,7 +1567,17 @@ mod tests {
     #[test]
     fn completed_detail_is_current_before_optional_product_cells_exist() {
         let mut store = store();
+        let unrelated_realm = arkret_sdk::RealmId::from_event_id(
+            &arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x31; 32]),
+        );
+        assert!(!store.realm_detail_invalidated(REALM));
+        assert!(!store.realm_detail_invalidated(unrelated_realm.as_str()));
+        store.cached.demand_sync.filter = Some(AccountFilter {
+            realm_ids: Some(vec![arkret_sdk::RealmId::new(REALM).unwrap()]),
+            ..Default::default()
+        });
         assert!(store.realm_detail_invalidated(REALM));
+        assert!(!store.realm_detail_invalidated(unrelated_realm.as_str()));
         assert!(store.realm_detail_requires_replacement(REALM));
         apply(
             &mut store,
