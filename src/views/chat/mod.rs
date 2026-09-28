@@ -1527,7 +1527,7 @@ pub fn ChatPanel(
     let mut selected_realm_pending_mls_binding_reason = state_store
         .read()
         .realm_pending_mls_binding_reason(&selected_realm_id);
-    if (selected_realm_security_encrypted || direct_mode)
+    if (selected_channel_security_encrypted || direct_mode)
         && !sidecar_mode
         && selected_realm_pending_mls_binding_reason.is_none()
     {
