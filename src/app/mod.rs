@@ -947,8 +947,11 @@ fn AppBootstrap() -> Element {
         });
     let topbar_search_is_open =
         palette_open() || topbar_search_expanded() || !global_query().is_empty();
-    let topbar_unread_notifications = unread_notification_count(&state_store.read().load())
-        + ContactInbox(direct_contact_rows).pending_count();
+    let topbar_unread_notifications = {
+        let snapshot = state_store.read().load();
+        unread_notification_count(&snapshot)
+            + ContactInbox(direct_contact_rows).pending_count(&snapshot)
+    };
     let has_topbar_unread_notifications = topbar_unread_notifications > 0;
     let document_title = if matches!(&route, Route::Dashboard) {
         "Inkson | Arkret".to_owned()

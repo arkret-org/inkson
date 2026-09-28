@@ -23,12 +23,36 @@ pub(super) struct AppStateStore(pub SyncSignal<LocalStateStore>);
 pub(crate) struct ContactInbox(pub Signal<Vec<crate::models::ContactListRow>>);
 
 impl ContactInbox {
-    pub(crate) fn pending_count(self) -> usize {
+    pub(crate) fn pending_count(self, snapshot: &crate::state::ClientLocalState) -> usize {
         self.0
             .read()
             .iter()
             .filter(|row| row.state == arkret_sdk::ContactState::PendingIncoming)
+            .filter(|row| {
+                !crate::account_data::suppresses_contact_attention(
+                    &snapshot.client_blocklist,
+                    &row.peer.contact_actor_id(),
+                )
+            })
             .count()
+    }
+
+    pub(crate) fn visible_pending(
+        self,
+        snapshot: &crate::state::ClientLocalState,
+    ) -> Vec<crate::models::ContactListRow> {
+        self.0
+            .read()
+            .iter()
+            .filter(|row| row.state == arkret_sdk::ContactState::PendingIncoming)
+            .filter(|row| {
+                !crate::account_data::hides_contact_request(
+                    &snapshot.client_blocklist,
+                    &row.peer.contact_actor_id(),
+                )
+            })
+            .cloned()
+            .collect()
     }
 }
 

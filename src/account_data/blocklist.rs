@@ -228,6 +228,29 @@ pub fn blocks_call_invite(list: &[AccountBlocklistEntry], actor: &arkret_sdk::Ac
     })
 }
 
+/// A holder-private Contact rule hides the request from the default inbox.
+/// `mute` still leaves the request visible; it only suppresses attention.
+pub fn hides_contact_request(list: &[AccountBlocklistEntry], actor: &arkret_sdk::ActorId) -> bool {
+    actor_entries_filter_surface(
+        list,
+        &actor.to_string(),
+        AccountBlocklistSurface::Contacts,
+        false,
+    )
+}
+
+pub fn suppresses_contact_attention(
+    list: &[AccountBlocklistEntry],
+    actor: &arkret_sdk::ActorId,
+) -> bool {
+    actor_entries_filter_surface(
+        list,
+        &actor.to_string(),
+        AccountBlocklistSurface::Contacts,
+        true,
+    )
+}
+
 pub fn is_blocked(list: &[AccountBlocklistEntry], actor_id: &str) -> bool {
     actor_entries_filter_surface(list, actor_id, AccountBlocklistSurface::Messages, false)
 }

@@ -188,6 +188,9 @@ pub(super) fn unread_notification_count(snapshot: &ClientLocalState) -> usize {
         .iter()
         .enumerate()
         .filter(|(index, value)| {
+            if crate::views::notifications::notification_blocklist_suppressed(value, snapshot) {
+                return false;
+            }
             let id = value.notification_id();
             let client_state = snapshot.notification_client_state.get(&id);
             let (projection_read, projection_archived) =
