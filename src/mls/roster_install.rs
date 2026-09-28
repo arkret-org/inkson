@@ -188,11 +188,12 @@ fn match_occupied_leaf_authorities(
     authorities: &[MlsVerifiedLeafBinding],
 ) -> Result<Vec<MlsVerifiedLeafBinding>, String> {
     let mut exact = BTreeMap::new();
+    // Every record was independently verified in signed Commit order. A
+    // Remove+Add may reuse even the same Actor/key/index tuple; its later Add
+    // is a new provenance event and supplies the current endpoint authority.
     for authority in authorities {
         let key = (authority.actor_id.clone(), authority.signature_key.clone());
-        if exact.insert(key, authority).is_some() {
-            return Err("MLS roster repeats one Actor and leaf signature key".to_owned());
-        }
+        exact.insert(key, authority);
     }
     let mut bindings = Vec::with_capacity(occupied.len());
     let mut occupied_indices = BTreeSet::new();
@@ -280,18 +281,8 @@ mod tests {
     }
 
     #[test]
-    fn missing_or_ambiguous_historical_leaf_authority_fails_closed() {
+    fn missing_or_wrong_historical_leaf_authority_fails_closed() {
         assert!(match_occupied_leaf_authorities(&[leaf(4, "AQ")], &[]).is_err());
-        assert!(
-            match_occupied_leaf_authorities(
-                &[leaf(4, "AQ")],
-                &[
-                    authority("AQ", "ak:device:0196419b-0000-7000-8000-000000000001"),
-                    authority("AQ", "ak:device:0196419b-0000-7000-8000-000000000002")
-                ],
-            )
-            .is_err()
-        );
         assert!(
             match_occupied_leaf_authorities(
                 &[leaf(4, "AQ")],
@@ -311,6 +302,20 @@ mod tests {
                 ],
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn identical_leaf_tuple_readd_uses_later_signed_history() {
+        let first = authority("AQ", "ak:device:0196419b-0000-7000-8000-000000000001");
+        let mut readded = first.clone();
+        readded.device_authorize_event_id =
+            Some(EventId::new("ak:event:ARELvWOpF6BRhrks3DlbQy-9XIE6aAQQumDQp7fA4Ape").unwrap());
+        let bindings =
+            match_occupied_leaf_authorities(&[leaf(2, "AQ")], &[first, readded.clone()]).unwrap();
+        assert_eq!(
+            bindings[0].device_authorize_event_id,
+            readded.device_authorize_event_id
         );
     }
 }
