@@ -1253,11 +1253,11 @@ impl CurrentIndex {
                     Some(progress) => progress,
                     None => self.progress_at(realm, expected_generation).await?,
                 };
-                if current_reads_preview_stream(incoming, resolved_preview_streams) {
-                    // A preview-only window has no verified start basis, so
-                    // its stream carries no exact current: neither the rows
-                    // it sources nor a cut or baseline coverage over it are
-                    // installed, and later readers never see them.
+                if snapshot.is_none()
+                    && current_reads_preview_stream(incoming, resolved_preview_streams)
+                {
+                    // Without a verified Snapshot, a preview-only window
+                    // cannot supply exact current or baseline coverage.
                     incoming.current = None;
                     incoming.baseline = None;
                 }

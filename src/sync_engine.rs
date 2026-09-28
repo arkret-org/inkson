@@ -1030,9 +1030,8 @@ impl InksonAccountProjector {
         if !self.fence() {
             return Ok(());
         }
-        // A still-preview stream window keeps its committed rows as display
-        // rows only; its Realm entry's current and baseline never reach the
-        // durable index or the Realm projection.
+        // Preview committed rows stay display-only. Current can cross this
+        // boundary only with an independently verified signed Snapshot.
         let frame = &verified.product_frame(frame);
         if !verified.preview_streams().is_empty() {
             tracing::info!(
@@ -1040,8 +1039,6 @@ impl InksonAccountProjector {
                 "Account stream windows stay preview only until a verified basis exists"
             );
         }
-        let response = AccountFrameStep::new(frame.clone(), cursor.to_owned())
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let current_index = self.current_index().await?;
         let previous_generation = self
             .ctx
@@ -1056,6 +1053,9 @@ impl InksonAccountProjector {
             )
             .await
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let response =
+            AccountFrameStep::new(current_stage.filtered_frame().clone(), cursor.to_owned())
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         if !self.fence() {
             return Ok(());
         }

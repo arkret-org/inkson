@@ -638,6 +638,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
                     chrono::Utc::now(),
                     freshness.expected_nonce.clone(),
                 );
+                // Every declared dependency has an exact verified scan.
                 verified_floor_snapshot = Some(replica.install_verified_floor_predecessor(
                     stream_ref,
                     basis,
@@ -828,20 +829,21 @@ impl VerifiedAccountFrame {
 
     /// The frame the product layer may consume. An entry whose current cut,
     /// rows or baseline coverage read a still-preview stream loses its
-    /// current and baseline, so nothing downstream (durable current index,
-    /// Realm projection, product view) can take them as exact; the preview
-    /// stream's committed rows stay as display rows.
+    /// current and baseline unless a separately verified signed Snapshot
+    /// covers that cut. Preview committed rows remain display-only.
     pub fn product_frame(
         &self,
         frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
     ) -> arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame {
         let mut product = frame.clone();
         if let Some(realms) = product.realms.as_mut() {
-            for entry in realms.entries.values_mut() {
-                if crate::state::current_index::current_reads_preview_stream(
-                    entry,
-                    &self.resolved_preview_streams,
-                ) {
+            for (realm, entry) in &mut realms.entries {
+                if !self.current_snapshots.contains_key(realm)
+                    && crate::state::current_index::current_reads_preview_stream(
+                        entry,
+                        &self.resolved_preview_streams,
+                    )
+                {
                     entry.current = None;
                     entry.baseline = None;
                 }
@@ -1393,8 +1395,7 @@ pub async fn verify_account_frame_commits(
 ) -> garth::Result<VerifiedAccountFrame> {
     let authority = AuthorityClient::new(http.clone());
     let mut verified = verify_account_frame_with(&authority, http, frame).await?;
-    let product = verified.product_frame(frame);
-    for (realm, entry) in product.realms.iter().flat_map(|realms| &realms.entries) {
+    for (realm, entry) in frame.realms.iter().flat_map(|realms| &realms.entries) {
         let Some(current) = &entry.current else {
             continue;
         };
@@ -2924,7 +2925,7 @@ mod tests {
                 selector.clone()
             }
         };
-        let frame: arkret_sdk::sync::AccountSubscribeFrame = serde_json::from_value(json!({
+        let mut frame: arkret_sdk::sync::AccountSubscribeFrame = serde_json::from_value(json!({
             "kind":"delta", "cursor":"ak:cursor:YQ",
             "realms":{REALM_ID:{"current":{
                 "realm_id":realm_id, "governance_generation":snapshot.governance_generation,
@@ -2932,7 +2933,47 @@ mod tests {
             }}}
         }))
         .unwrap();
+        let head = &snapshot.visible_stream_heads[0];
+        frame
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(REALM_ID)
+            .unwrap()
+            .streams = Some(vec![
+            serde_json::from_value(json!({
+                "stream_ref": head.stream_ref,
+                "head_commit_ref": head.commit_id,
+                "next_position": head.stream_position + 1,
+                "limited": true,
+                "window_limit": 1,
+                "complete": true,
+                "preview_only": true
+            }))
+            .unwrap(),
+        ]);
         let proofs = BTreeMap::from([(REALM_ID.to_owned(), VerifiedCurrentSnapshot { snapshot })]);
+        let unresolved = VerifiedAccountFrame::default();
+        assert!(
+            unresolved.product_frame(&frame).realms.unwrap().entries[REALM_ID]
+                .current
+                .is_none()
+        );
+        let proven = VerifiedAccountFrame {
+            current_snapshots: BTreeMap::from([(
+                REALM_ID.to_owned(),
+                VerifiedCurrentSnapshot {
+                    snapshot: proofs[REALM_ID].snapshot().clone(),
+                },
+            )]),
+            ..Default::default()
+        };
+        assert!(
+            proven.product_frame(&frame).realms.unwrap().entries[REALM_ID]
+                .current
+                .is_some()
+        );
         let store = crate::state::isolated_store_for_tests("signed-snapshot-atomic-cut");
         let index = crate::state::current_index::CurrentIndex::open(
             &account,
