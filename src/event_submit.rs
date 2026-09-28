@@ -2135,6 +2135,31 @@ impl EventSubmitter {
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+        self.send_scope_signal_with_transport_observation(
+            scope_ref,
+            authority,
+            device_id,
+            material,
+            payload,
+            state_store,
+        )
+        .await
+        .map(|(outcome, _observation)| outcome)
+    }
+
+    /// Identical producer path with metadata from the actual HTTP response.
+    pub async fn send_scope_signal_with_transport_observation(
+        &self,
+        scope_ref: arkret_sdk::ScopeRef,
+        authority: &arkret_sdk::AccountId,
+        device_id: &arkret_sdk::DeviceId,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+        state_store: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<(
+        arkret_sdk::SignalSubmitOutcome,
+        arkret_sdk::http_client::SignalSendTransportObservation,
+    )> {
         state_store.read(|store| store.require_blocklist_signal_freshness(payload))?;
         let stream_head_ref = self.current_stream_head_for(&scope_ref).await?;
         let header = crate::signal::SignalHeader::new(
@@ -2145,8 +2170,14 @@ impl EventSubmitter {
             payload.signal_class(),
             crate::clock::now_utc(),
         );
-        self.send_signal(authority, header, material, payload, state_store)
-            .await
+        self.send_signal_with_transport_observation(
+            authority,
+            header,
+            material,
+            payload,
+            state_store,
+        )
+        .await
     }
 
     /// Seal and submit one Signal.
@@ -2162,6 +2193,28 @@ impl EventSubmitter {
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+        self.send_signal_with_transport_observation(
+            authority,
+            header,
+            material,
+            payload,
+            state_store,
+        )
+        .await
+        .map(|(outcome, _observation)| outcome)
+    }
+
+    pub async fn send_signal_with_transport_observation(
+        &self,
+        authority: &arkret_sdk::AccountId,
+        header: crate::signal::SignalHeader,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+        state_store: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<(
+        arkret_sdk::SignalSubmitOutcome,
+        arkret_sdk::http_client::SignalSendTransportObservation,
+    )> {
         state_store.read(|store| store.require_blocklist_signal_freshness(payload))?;
         if header.sender_actor_id.as_account_id() != Some(authority) {
             anyhow::bail!("Signal sender does not match the encryption authority");
@@ -2203,7 +2256,8 @@ impl EventSubmitter {
             )
         })?;
         let envelope = crate::signal::seal_signal_envelope(header, encrypted_payload)?;
-        self.submit_signal_envelope(&envelope).await
+        self.submit_signal_envelope_with_transport_observation(&envelope)
+            .await
     }
 
     /// `POST /_arkret/self/signal` — `ak.self.signal.command.send.v1`.
@@ -2211,11 +2265,23 @@ impl EventSubmitter {
         &self,
         envelope: &arkret_wire::SignalEnvelope,
     ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+        self.submit_signal_envelope_with_transport_observation(envelope)
+            .await
+            .map(|(outcome, _observation)| outcome)
+    }
+
+    pub async fn submit_signal_envelope_with_transport_observation(
+        &self,
+        envelope: &arkret_wire::SignalEnvelope,
+    ) -> anyhow::Result<(
+        arkret_sdk::SignalSubmitOutcome,
+        arkret_sdk::http_client::SignalSendTransportObservation,
+    )> {
         envelope
             .validate_structural()
             .map_err(|error| anyhow::anyhow!("signal submit rejected locally: {error}"))?;
         self.http
-            .signal_send(envelope)
+            .signal_send_with_transport_observation(envelope)
             .await
             .map_err(anyhow::Error::from)
     }

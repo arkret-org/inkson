@@ -528,8 +528,24 @@ impl NativeAccountHost {
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
     ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+        self.send_scope_signal_with_transport_observation(scope, material, payload)
+            .await
+            .map(|(outcome, _observation)| outcome)
+    }
+
+    /// The ordinary Native sender plus metadata from its actual Signal HTTP
+    /// request. The observation contains no ciphertext or credentials.
+    pub async fn send_scope_signal_with_transport_observation(
+        &self,
+        scope: arkret_sdk::ScopeRef,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+    ) -> anyhow::Result<(
+        arkret_sdk::SignalSubmitOutcome,
+        arkret_sdk::http_client::SignalSendTransportObservation,
+    )> {
         crate::event_submit::EventSubmitter::new(self.http.clone())
-            .send_scope_signal(
+            .send_scope_signal_with_transport_observation(
                 scope,
                 &self.projector.ctx.account.authority,
                 &self.projector.ctx.account.device_id,
