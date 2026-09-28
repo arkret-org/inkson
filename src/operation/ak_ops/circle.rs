@@ -61,9 +61,12 @@ pub fn circle_member_state_with_expected(
         effective_at: None,
         expected_membership,
     };
-    Ok(TypedOperationBuilder::new::<
-        arkret_sdk::event_spec::CircleMemberState,
-    >(realm_id, actor, payload))
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::CircleMemberState>(
+            realm_id, actor, payload,
+        )
+        .circle_id(circle_id),
+    )
 }
 
 /// Build one of the three canonical Circle lifecycle Control Moves.
@@ -193,6 +196,19 @@ mod member_actor_tests {
                 assert_eq!(
                     builder.intent().unwrap().payload().get("member_id"),
                     Some(&serde_json::to_value(&target).unwrap())
+                );
+                assert_eq!(
+                    builder.intent().unwrap().scope_ref(),
+                    &arkret_sdk::ScopeRef::Circle {
+                        realm_id: arkret_sdk::RealmId::new(
+                            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+                        )
+                        .unwrap(),
+                        circle_id: arkret_sdk::CircleId::new(
+                            "ak:circle:AcsXlJSItqSzy43Swu0nFz2ijj4Yaf0RgjmoTeivRt8M",
+                        )
+                        .unwrap(),
+                    }
                 );
             }
         }
