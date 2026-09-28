@@ -229,23 +229,32 @@ impl AccountTransportProvider {
     /// durable cursor store and advances it only after the projector committed.
     fn account_request(&self) -> SyncRequestBody {
         let filter = Some(selected_account_filter(&self.ctx));
-        let (previous, selected_detail_invalidated) = self.ctx.state_store.read(|store| {
-            let invalidated = filter
-                .as_ref()
-                .and_then(|filter| filter.realm_ids.as_ref())
-                .is_some_and(|realms| {
-                    realms
-                        .iter()
-                        .any(|realm| store.realm_detail_requires_replacement(realm.as_str()))
-                });
-            (store.sync_demand_filter(), invalidated)
-        });
+        let (previous, selected_detail_invalidated, selected_current_pending) =
+            self.ctx.state_store.read(|store| {
+                let invalidated = filter
+                    .as_ref()
+                    .and_then(|filter| filter.realm_ids.as_ref())
+                    .is_some_and(|realms| {
+                        realms
+                            .iter()
+                            .any(|realm| store.realm_detail_requires_replacement(realm.as_str()))
+                    });
+                let current_pending = filter
+                    .as_ref()
+                    .and_then(|filter| filter.realm_ids.as_ref())
+                    .is_some_and(|realms| {
+                        realms
+                            .iter()
+                            .any(|realm| !store.current_product_view_ready(realm.as_str()))
+                    });
+                (store.sync_demand_filter(), invalidated, current_pending)
+            });
         // An invalidation makes the detail baseline stale even when navigation
         // (and therefore the filter value) did not change. Explicit replacement
         // asks the server to resend that bounded baseline instead of entering
         // another idle long-poll with the same demand.
         let replace_filter = (previous.is_some()
-            && (previous != filter || selected_detail_invalidated))
+            && (previous != filter || selected_detail_invalidated || selected_current_pending))
             .then_some(true);
         SyncRequestBody {
             after: None,
@@ -277,20 +286,32 @@ impl AccountTransportProvider {
         crate::transport::websocket_rail::StreamRail<crate::client_core::InksonAccountTransport>,
     > {
         let session_generation = self.ctx.session.generation();
-        let transport = crate::identity::session_refresh::provide_authenticated_sdk_client(
+        let http = crate::identity::session_refresh::provide_authenticated_sdk_client(
             self.ctx.account.server_url.as_str(),
         )
         .await
-        .map(crate::client_core::InksonAccountTransport::new)
-        .map(|http| {
-            crate::transport::websocket_rail::StreamRail::select(&self.ctx.websocket_rail, http)
-        })
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let selected_realm_id = self.ctx.selected_realm_id.get();
+        if let Ok(realm_id) = arkret_sdk::RealmId::new(selected_realm_id.clone())
+            && !self
+                .ctx
+                .state_store
+                .read(|store| store.current_product_view_ready(&selected_realm_id))
+            && let Err(error) = http.realm_state_snapshot_head(&realm_id).await
+        {
+            // A new invite may be selected before membership is committed.
+            // Keep the Account rail available, then retry on its next attempt.
+            tracing::debug!(%realm_id, %error, "selected Realm snapshot head is not ready");
+        }
         if self.ctx.session.generation() != session_generation || !self.is_active() {
             return Err(garth::Error::Protocol(
                 "session changed while preparing account transport".to_owned(),
             ));
         }
+        let transport = crate::transport::websocket_rail::StreamRail::select(
+            &self.ctx.websocket_rail,
+            crate::client_core::InksonAccountTransport::new(http),
+        );
         Ok(transport)
     }
 
