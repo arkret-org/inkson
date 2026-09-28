@@ -1021,8 +1021,11 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                             let capability_revoke_events = submitter
                                                                 .prepare_initial_submissions(&authored_revokes)
                                                                 .await?;
+                                                            let revoke_plan_digest = arkret_sdk::Hash::new(
+                                                                arkret_sdk::canonical::canonical_sha256(&preview.revoke_plan)?,
+                                                            )?;
                                                             let body = AppletRevokeRequestBody {
-                                                                revoke_plan_digest: preview.revoke_plan_digest,
+                                                                revoke_plan_digest,
                                                                 effective_scope,
                                                                 reason_code,
                                                                 revoke_mode,
