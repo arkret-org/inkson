@@ -543,6 +543,52 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
     let mut after_position = snapshot.as_ref().map(|(_, position)| *position);
     let mut pages = Vec::new();
     let mut verified_floor_snapshot = None;
+    let mut dependency_pages = BTreeMap::new();
+    if let (Some(basis), Some((signed_snapshot, _))) = (floor_basis, snapshot.as_ref()) {
+        for dependency in basis.accepted_dependency_refs.iter().flatten() {
+            if dependency.stream_ref == *stream_ref || dependency.stream_ref.realm_id() != realm_id
+            {
+                return Err(garth::Error::Protocol(
+                    "floor dependency names the wrong stream or Realm".to_owned(),
+                ));
+            }
+            if dependency_pages.contains_key(&dependency.stream_ref) {
+                continue;
+            }
+            let head = signed_snapshot
+                .visible_stream_heads
+                .iter()
+                .find(|head| head.stream_ref == dependency.stream_ref)
+                .ok_or_else(|| {
+                    garth::Error::Protocol("floor dependency has no signed stream head".to_owned())
+                })?;
+            let end = head.stream_position.checked_add(1).ok_or_else(|| {
+                garth::Error::Protocol("floor dependency head overflows".to_owned())
+            })?;
+            let mut dependency_replica = replica.fork_verified_authority()?;
+            let (proof, predecessor) = Box::pin(verified_stream_pages(
+                authority,
+                http,
+                &mut dependency_replica,
+                bundle,
+                freshness,
+                realm_id,
+                &dependency.stream_ref,
+                None,
+                Some(end),
+            ))
+            .await?
+            .into_verified()?;
+            if predecessor.is_some()
+                || dependency_replica.verified_head(&dependency.stream_ref) != Some(head)
+            {
+                return Err(garth::Error::Protocol(
+                    "floor dependency scan does not reach signed head".to_owned(),
+                ));
+            }
+            dependency_pages.insert(dependency.stream_ref.clone(), proof);
+        }
+    }
     loop {
         let next_position = match after_position {
             Some(position) => position.checked_add(1).ok_or_else(|| {
@@ -599,6 +645,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
                     snapshot,
                     &snapshot_freshness,
                     &snapshot_keys,
+                    &dependency_pages,
                 )?);
             }
         } else if let Err(error) = require_genesis_readable_floor(&outcome) {
@@ -4209,6 +4256,36 @@ mod tests {
                 .current
                 .is_some()
         );
+        let mut accepted_dependency = multi_frame.clone();
+        accepted_dependency
+            .realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(REALM_ID)
+            .unwrap()
+            .streams
+            .as_mut()
+            .unwrap()[1]
+            .window_start_basis
+            .as_mut()
+            .unwrap()
+            .accepted_dependency_refs = Some(vec![arkret_wire::CommittedEventRef {
+            event_id: items[5].event.event_id.clone(),
+            commit_id: items[5].commit.commit_id.clone(),
+            stream_ref: realm_stream.clone(),
+            stream_position: 6,
+        }]);
+        let accepted_verified = verify_account_frame_described(
+            &multi_authority,
+            &http,
+            Some(&describe),
+            &accepted_dependency,
+        )
+        .await
+        .unwrap();
+        assert!(accepted_verified.preview_streams().is_empty());
+        assert_eq!(positions(&accepted_verified, &realm_stream), vec![7, 8]);
         let mut invented_dependency = multi_frame.clone();
         invented_dependency
             .realms
