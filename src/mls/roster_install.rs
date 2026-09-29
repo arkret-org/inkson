@@ -2,7 +2,7 @@
 //! leaf bindings. The service roster is data until every signature, public
 //! Genesis byte and occupied leaf has been checked against the accepted cut.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
 use arkret_sdk::{
     ActorId, AuthenticatedServiceResolution, DidCoreId, EventId, MlsEndpointIdentity,
@@ -22,7 +22,6 @@ pub(crate) fn install_signed_roster_bindings(
     expected_governance: &DidCoreId,
     expected_head: &EventId,
     governance_resolution: &AuthenticatedServiceResolution,
-    attestor_resolutions: &HashMap<DidCoreId, AuthenticatedServiceResolution>,
     material: &MlsGroupStateMaterialOutcome,
 ) -> Result<(), String> {
     arkret_sdk::verify_mls_roster_authority_pages(
@@ -31,7 +30,6 @@ pub(crate) fn install_signed_roster_bindings(
         expected_governance,
         expected_head,
         governance_resolution,
-        attestor_resolutions,
     )
     .map_err(|error| format!("verify signed MLS roster: {error}"))?;
     if group.scope() != &request.effective_scope
