@@ -43,9 +43,7 @@ pub(super) fn rehydrate_notifications_for_blocklist_revision(
     )
 }
 
-fn notification_projection_ids(
-    projection: &[crate::state::StoredNotification],
-) -> Vec<String> {
+fn notification_projection_ids(projection: &[crate::state::StoredNotification]) -> Vec<String> {
     projection
         .iter()
         .map(|notification| notification.notification_id())
@@ -85,9 +83,8 @@ pub fn NotificationsPanel(
 
     let notifications = use_signal(move || initial_notifications.clone());
     let mut hydrated_blocklist_revision = use_signal(|| initial_state.client_blocklist_revision);
-    let mut hydrated_projection_ids = use_signal(|| {
-        notification_projection_ids(&initial_state.notification_projection)
-    });
+    let mut hydrated_projection_ids =
+        use_signal(|| notification_projection_ids(&initial_state.notification_projection));
     let mut group_by = use_signal(|| UiNotificationGroup::Latest);
     let mut show_archived = use_signal(|| false);
     let mut did_bootstrap = use_signal(|| false);

@@ -205,7 +205,6 @@ pub(crate) fn schedule_mls_recovery_backups_after_encrypted_write(
     {
         return;
     }
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let (sidecar_json, principal_control_realm_id) = {
         let store = state_store.read();
         if !mls_recovery_backup_configured(&store) {

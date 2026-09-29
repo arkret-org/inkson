@@ -11,11 +11,15 @@ use super::*;
 /// Authority facts pinned by a Realm's committed `ak.realm.create`.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum RealmCreateAuthority {
-    Root { controller: arkret_sdk::ActorId },
+    Root {
+        controller: arkret_sdk::ActorId,
+    },
     /// A Direct Conversation grants its founder no ordinary Realm-owner
     /// authority; the founder only authors the bootstrap actions of
     /// `identity/contact-and-direct-conversation.md` 7.2.
-    DirectConversation { founder: arkret_sdk::ActorId },
+    DirectConversation {
+        founder: arkret_sdk::ActorId,
+    },
 }
 
 pub(super) fn realm_create_authority_cache()

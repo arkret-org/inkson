@@ -2567,7 +2567,7 @@ mod tests {
                 assert!(!admitted, "{purpose:?} genesis must be constructible");
                 continue;
             };
-            let (bundle, _, _) =
+            let (bundle, ..) =
                 crate::test_support::committed_event::verified_realm_fixture_signed_by(
                     &crate::test_support::committed_event::FixtureStation::did_web(),
                     realm_id.clone(),

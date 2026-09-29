@@ -436,8 +436,7 @@ fn local_operation_for_event(
             // A signed Event row names its own id but is not a holder-local
             // operation row.
             record.payload.get("producer_proof").is_none()
-                && record.payload.get("event_id").and_then(Value::as_str)
-                    == Some(event_id.as_str())
+                && record.payload.get("event_id").and_then(Value::as_str) == Some(event_id.as_str())
         })
         .map(|record| record.operation_id.clone())
 }
@@ -989,11 +988,21 @@ impl EventSubmitter {
         {
             return Ok(Some(cached.clone()));
         }
-        let stream_ref = arkret_wire::CommitStreamRef::Realm {
-            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
-        };
-        let genesis = self.scan_stream(&stream_ref, None, 1).await?;
-        let resolved = realm_create_authority_from_events(&genesis.events(), realm_id);
+        // The nonce-bound, Station-signed authority bundle carries the exact
+        // genesis Event of the Realm's verified chain. A readable-history scan
+        // is not the source: its first row need not be position 0.
+        let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
+        let (bundle, ..) = crate::realm_events_engine::fresh_verified_realm(
+            &garth::AuthorityClient::new(self.http.clone()),
+            &self.http,
+            &realm,
+        )
+        .await
+        .map_err(anyhow::Error::from)?;
+        let resolved = realm_create_authority_from_events(
+            std::slice::from_ref(&bundle.genesis_event),
+            realm_id,
+        );
         if let Some(authority) = &resolved {
             realm_create_authority_cache()
                 .lock()
