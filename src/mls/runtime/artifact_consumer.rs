@@ -144,10 +144,10 @@ pub(crate) async fn install_accepted_transition(
 /// Join this device's endpoint into a group from one accepted Welcome delivery.
 ///
 /// The SDK verifies the delivery against the accepted Commit it names, so this
-/// only supplies the two host-held inputs: the KeyPackage private identity
-/// state of the exact claim `claim` names -- already read from this device's
-/// own Station and verified ([`verified_welcome_claim`]) -- and the verified
-/// leaf attribution for the joined roster.
+/// supplies the KeyPackage private identity state of the exact claim `claim`
+/// names -- already read from this device's own Station and verified
+/// ([`verified_welcome_claim`]). Historical leaf authority is independently
+/// fetched and verified against the accepted current before persistence.
 pub(crate) async fn install_accepted_welcome(
     api: &crate::transport::TransportClient,
     state: &StateStoreHandle,
@@ -208,69 +208,15 @@ pub(crate) async fn install_accepted_welcome(
         accepted_commit,
     )
     .map_err(describe)?;
-    let current = state
-        .read(|store| store.current_mls_group_for_scope(&transition.effective_scope))
-        .ok_or_else(|| "accepted MLS Welcome has no pinned Station group current".to_owned())?;
-    if current.effective_scope != transition.effective_scope
-        || current.epoch < transition.next_epoch
-    {
-        return Err("pinned Station MLS current precedes the accepted Welcome".to_owned());
-    }
-    let governance = state
-        .read(|store| store.realm_authority_basis(delivery.realm_id.as_str()))
-        .ok_or_else(|| "accepted MLS Welcome has no verified Realm authority basis".to_owned())?;
-    let request = arkret_sdk::MlsRosterAuthorityReadRequestBody {
-        realm_id: delivery.realm_id.clone(),
-        effective_scope: transition.effective_scope.clone(),
-        mls_group_id: transition.mls_group_id.clone(),
-        genesis_event_ref: current.genesis_event_ref.clone(),
-        target_commit_event_ref: transition.event().event_id.clone(),
-        target_epoch: transition.next_epoch,
-        caller_actor_id: delivery.recipient_actor_id.clone(),
-        cursor: None,
-    };
-    let clients = crate::transport::EndpointClients::new(api.clone());
-    let pages = clients
-        .mls()
-        .unverified_member_roster_authority_pages(&request)
-        .await
-        .map_err(|error| format!("read accepted MLS roster: {error}"))?;
-    let manifest = &pages
-        .first()
-        .ok_or_else(|| "accepted MLS roster has no pages".to_owned())?
-        .manifest;
-    let material_request = arkret_sdk::MlsMemberGroupStateMaterialReadRequestBody {
-        realm_id: request.realm_id.clone(),
-        effective_scope: request.effective_scope.clone(),
-        mls_group_id: request.mls_group_id.clone(),
-        epoch: Default::default(),
-        group_state_event_id: request.genesis_event_ref.clone(),
-        caller_actor_id: request.caller_actor_id.clone(),
-        target_commit_event_ref: request.target_commit_event_ref.clone(),
-        target_epoch: request.target_epoch,
-        group_info_ref: manifest.group_info_ref.clone(),
-        ratchet_tree_ref: manifest.ratchet_tree_ref.clone(),
-        max_response_bytes: None,
-    };
-    let material = api
-        .http()
-        .self_mls_group_state_material(&material_request)
-        .await
-        .map_err(|error| format!("read accepted MLS Genesis material: {error}"))?;
-    let resolution = api
-        .http()
-        .open_service_resolution(&governance.current_service_id)
-        .await
-        .map_err(|error| format!("resolve MLS governance Station: {error}"))?;
-    crate::mls::roster_install::install_signed_roster_bindings(
+
+    crate::mls::roster_install::install_welcome_roster_from_service(
+        api,
+        state,
         &mut group,
-        &pages,
-        &request,
-        &governance.current_service_id,
-        &current.current_mls_commit_event_ref,
-        &resolution,
-        &material,
-    )?;
+        accepted_commit,
+        authority,
+    )
+    .await?;
     // device-lifecycle.md §9: the consume this endpoint owes is signed now
     // and becomes durable with the joined group; it is sent only after both
     // are durable.
