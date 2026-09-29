@@ -149,13 +149,13 @@ pub(crate) async fn install_accepted_transition(
 /// own Station and verified ([`verified_welcome_claim`]) -- and the verified
 /// leaf attribution for the joined roster.
 pub(crate) async fn install_accepted_welcome(
+    api: &crate::transport::TransportClient,
     state: &StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     delivery: &arkret_wire::MlsWelcomeDelivery,
     accepted_commit: &CommittedEventFullView,
     claim: &VerifiedWelcomeClaim,
-    authority_hints: &[MlsLeafAuthorityHint],
 ) -> Result<MlsInstallOutcome, String> {
     let transition = accepted_mls_transition(accepted_commit)?;
     if state.read(|store| {
@@ -208,10 +208,68 @@ pub(crate) async fn install_accepted_welcome(
         accepted_commit,
     )
     .map_err(describe)?;
-    crate::mls::governance_proof::install_post_transition_leaf_bindings(
+    let current = state
+        .read(|store| store.current_mls_group_for_scope(&transition.effective_scope))
+        .ok_or_else(|| "accepted MLS Welcome has no pinned Station group current".to_owned())?;
+    if current.effective_scope != transition.effective_scope
+        || current.epoch < transition.next_epoch
+    {
+        return Err("pinned Station MLS current precedes the accepted Welcome".to_owned());
+    }
+    let governance = state
+        .read(|store| store.realm_authority_basis(delivery.realm_id.as_str()))
+        .ok_or_else(|| "accepted MLS Welcome has no verified Realm authority basis".to_owned())?;
+    let request = arkret_sdk::MlsRosterAuthorityReadRequestBody {
+        realm_id: delivery.realm_id.clone(),
+        effective_scope: transition.effective_scope.clone(),
+        mls_group_id: transition.mls_group_id.clone(),
+        genesis_event_ref: current.genesis_event_ref.clone(),
+        target_commit_event_ref: transition.event().event_id.clone(),
+        target_epoch: transition.next_epoch,
+        caller_actor_id: delivery.recipient_actor_id.clone(),
+        cursor: None,
+    };
+    let clients = crate::transport::EndpointClients::new(api.clone());
+    let pages = clients
+        .mls()
+        .unverified_member_roster_authority_pages(&request)
+        .await
+        .map_err(|error| format!("read accepted MLS roster: {error}"))?;
+    let manifest = &pages
+        .first()
+        .ok_or_else(|| "accepted MLS roster has no pages".to_owned())?
+        .manifest;
+    let material_request = arkret_sdk::MlsMemberGroupStateMaterialReadRequestBody {
+        realm_id: request.realm_id.clone(),
+        effective_scope: request.effective_scope.clone(),
+        mls_group_id: request.mls_group_id.clone(),
+        epoch: Default::default(),
+        group_state_event_id: request.genesis_event_ref.clone(),
+        caller_actor_id: request.caller_actor_id.clone(),
+        target_commit_event_ref: request.target_commit_event_ref.clone(),
+        target_epoch: request.target_epoch,
+        group_info_ref: manifest.group_info_ref.clone(),
+        ratchet_tree_ref: manifest.ratchet_tree_ref.clone(),
+        max_response_bytes: None,
+    };
+    let material = api
+        .http()
+        .self_mls_group_state_material(&material_request)
+        .await
+        .map_err(|error| format!("read accepted MLS Genesis material: {error}"))?;
+    let resolution = api
+        .http()
+        .open_service_resolution(&governance.current_service_id)
+        .await
+        .map_err(|error| format!("resolve MLS governance Station: {error}"))?;
+    crate::mls::roster_install::install_signed_roster_bindings(
         &mut group,
-        &[],
-        authority_hints,
+        &pages,
+        &request,
+        &governance.current_service_id,
+        &current.current_mls_commit_event_ref,
+        &resolution,
+        &material,
     )?;
     // device-lifecycle.md §9: the consume this endpoint owes is signed now
     // and becomes durable with the joined group; it is sent only after both
@@ -375,13 +433,13 @@ pub(crate) async fn converge_accepted_mls_artifacts(
                 }
             };
         match install_accepted_welcome(
+            api,
             state,
             authority,
             device_id,
             &delivery,
             &accepted_commit,
             &claim,
-            &[],
         )
         .await
         {
