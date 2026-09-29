@@ -17,6 +17,11 @@ pub async fn list_circles(
 
 /// Add or move a Circle member by submitting the caller-signed
 /// `ak.circle.member.state`. Spec OpenAPI `ak.self.circle.member.command.add.v1`.
+///
+/// A `join` signs `parent_membership_revision`, read from the target's parent
+/// Realm `member_state` typed current in the governing Station's Realm State
+/// Snapshot (`circle.md` §9.1); a target that is not a current parent Realm
+/// member has no such revision and the join is not authored.
 pub async fn add_circle_member(
     submitter: &EventSubmitter,
     realm_id: &str,
@@ -25,12 +30,33 @@ pub async fn add_circle_member(
     target_actor: &arkret_sdk::ActorId,
     membership: arkret_sdk::CircleMembership,
 ) -> anyhow::Result<arkret_sdk::CircleMembershipOutcome> {
+    let parent_membership_revision = if membership == arkret_sdk::CircleMembership::Join {
+        let realm = arkret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))
+            .map_err(|err| anyhow::anyhow!("invalid realm id {realm_id:?}: {err:?}"))?;
+        let snapshot = submitter
+            .http()
+            .realm_state_snapshot_head(&realm)
+            .await
+            .map_err(anyhow::Error::from)?;
+        Some(
+            snapshot
+                .parent_membership_revision(target_actor)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "the Circle join target is not a current member of its parent Realm"
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
     let event = crate::operation::ak_ops::circle_member_state(
         realm_id,
         actor,
         circle_id,
         target_actor,
         membership,
+        parent_membership_revision,
     )?
     .build_sdk_event("inkson")?;
     let body = arkret_sdk::CircleMemberRequestBody {
@@ -64,6 +90,7 @@ pub async fn remove_circle_member(
         target_actor,
         arkret_sdk::CircleMembership::Leave,
         arkret_wire::WirePresence::Value(arkret_sdk::CircleMembership::Join),
+        None,
     )?
     .build_sdk_event("inkson")?;
     let body = arkret_sdk::CircleMemberDeleteRequestBody {

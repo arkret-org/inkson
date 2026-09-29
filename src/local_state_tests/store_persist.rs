@@ -124,6 +124,39 @@ fn raw_operation_upsert_reports_real_payload_changes() {
 }
 
 #[test]
+fn raw_operation_upsert_keeps_the_verified_envelope_under_a_later_holder_receipt() {
+    let path = temp_state_path("raw-op-upsert-envelope");
+    let mut store = LocalStateStore::with_path(path);
+    let realm = Some("ak:realm:ANoIW62UhXZPVnYmlcWdw9pgsz6DguGcC8BtiQ5cPCW0".to_owned());
+    let event_id = "ak:event:A4IDUD8Q8tl7ewzlG-L4VcakuszIKLzt14jlk_iVbMlo";
+    store.append_raw_operation(
+        "op-rsvp-local",
+        realm.clone(),
+        serde_json::json!({"kind": "ak.rsvp.set", "operation_id": "op-rsvp-local",
+            "write_state": "queued", "body": {"event_ref": "s"}}),
+    );
+    store.upsert_raw_operation(
+        event_id,
+        realm.clone(),
+        serde_json::json!({"kind": "ak.rsvp.set", "operation_id": event_id,
+            "event_id": event_id, "local_operation_idempotency_alias": "op-rsvp-local",
+            "write_state": "synced", "body": {"event_ref": "s"},
+            "event": {"event_id": event_id, "kind": "ak.rsvp.set"}}),
+    );
+    store.upsert_raw_operation(
+        event_id,
+        realm,
+        serde_json::json!({"kind": "ak.rsvp.set", "operation_id": event_id,
+            "event_id": event_id, "local_operation_idempotency_alias": "op-rsvp-local",
+            "write_state": "synced", "body": {"event_ref": "s"}}),
+    );
+    let state = store.load();
+    assert_eq!(state.raw_operations.len(), 1);
+    assert_eq!(state.raw_operations[0].operation_id, "op-rsvp-local");
+    assert_eq!(state.raw_operations[0].payload["event"]["event_id"], event_id);
+}
+
+#[test]
 fn raw_operation_upsert_keeps_redaction_tombstone_over_plaintext_create() {
     let path = temp_state_path("raw-op-upsert-redacted");
     let mut store = LocalStateStore::with_path(path);

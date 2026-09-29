@@ -85,18 +85,16 @@ fn late_verified_circle_current_adds_channel_after_initial_empty_view() {
         arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [0x43; 32]);
     let circle_id = arkret_sdk::CircleId::from_event_id(&circle_event);
     let mut current = current_strand(CHANNEL_REALM, "Circle poll", false);
-    if let arkret_wire::TypedCurrentResult::Value {
+    let arkret_wire::TypedCurrentResult::Value {
         source_stream_ref,
         value,
         ..
-    } = &mut current
-    {
-        *source_stream_ref = arkret_wire::CommitStreamRef::Circle {
-            realm_id: arkret_sdk::RealmId::new(CHANNEL_REALM).unwrap(),
-            circle_id: circle_id.clone(),
-        };
-        value["scope_circle_id"] = json!(circle_id);
-    }
+    } = &mut current;
+    *source_stream_ref = arkret_wire::CommitStreamRef::Circle {
+        realm_id: arkret_sdk::RealmId::new(CHANNEL_REALM).unwrap(),
+        circle_id: circle_id.clone(),
+    };
+    value["scope_circle_id"] = json!(circle_id);
     let mut channels = channels_from_current_view(None, CHANNEL_REALM);
     assert!(channels.is_empty());
     merge_channels(

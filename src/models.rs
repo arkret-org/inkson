@@ -309,14 +309,20 @@ fn project_member_roster_from_sdk_entry(
     projection: &mut Value,
     entry: &RealmSyncEntry,
 ) -> serde_json::Result<()> {
-    let roster = match &entry.member_roster {
-        Some(roster) => Some(roster.clone()),
-        None => member_roster_from_current(entry)?,
-    };
-    let Some(roster) = roster.as_ref().and_then(Value::as_object) else {
+    let Some(object) = projection.as_object_mut() else {
         return Ok(());
     };
-    let Some(object) = projection.as_object_mut() else {
+    let Some(roster) = entry.member_roster.as_ref().and_then(Value::as_object) else {
+        // Some Stations omit the optional roster convenience projection. The
+        // entry's current then carries only the member rows this frame
+        // changed, never a complete roster, so they are merged into the
+        // stored roster instead of replacing it.
+        if let Some(changes) = member_state_changes_from_current(entry)? {
+            object.insert(
+                MEMBER_ROSTER_CURRENT_CHANGES.to_owned(),
+                Value::Array(changes),
+            );
+        }
         return Ok(());
     };
     let entries = roster.get("entries").cloned().unwrap_or(Value::Null);
@@ -348,17 +354,25 @@ fn project_member_roster_from_sdk_entry(
     Ok(())
 }
 
-/// A complete account current cut already carries effective member state.
-/// Some Stations omit the optional roster convenience projection; use only
-/// those authority-committed current rows in that case, never message authors
-/// or mention metadata.
-fn member_roster_from_current(entry: &RealmSyncEntry) -> serde_json::Result<Option<Value>> {
-    use arkret_wire::{CurrentSelector, MemberStateCurrent, MembershipState, TypedCurrentResult};
+/// Local projection key carrying the member rows one frame's current changed.
+/// It never persists: [`merge_member_roster_current_changes`] folds it into
+/// the stored `member_roster_entries` before the projection is saved.
+pub(crate) const MEMBER_ROSTER_CURRENT_CHANGES: &str = "member_roster_current_changes";
+
+/// The authority-committed member rows of an entry's current, never message
+/// authors or mention metadata. The durable current index narrows a staged
+/// frame's current to the rows it changed, so the result is a set of changes,
+/// not a roster: a member absent from it keeps its stored row
+/// (`sync/client-sync.md` 8).
+fn member_state_changes_from_current(
+    entry: &RealmSyncEntry,
+) -> serde_json::Result<Option<Vec<Value>>> {
+    use arkret_wire::{CurrentSelector, MemberStateCurrent, TypedCurrentResult};
 
     let Some(current) = entry.current.as_ref() else {
         return Ok(None);
     };
-    let mut entries = Vec::new();
+    let mut changes = Vec::new();
     for row in &current.entries {
         let TypedCurrentResult::Value {
             selector: CurrentSelector::MemberState { actor_id },
@@ -369,17 +383,65 @@ fn member_roster_from_current(entry: &RealmSyncEntry) -> serde_json::Result<Opti
             continue;
         };
         let state: MemberStateCurrent = serde_json::from_value(value.clone())?;
-        match state.membership {
-            MembershipState::Join | MembershipState::Knock => entries.push(serde_json::json!({
-                    "actor_id": actor_id,
-                    "membership": state.membership,
-            })),
-            MembershipState::Leave | MembershipState::Ban => {}
+        changes.push(serde_json::json!({
+            "actor_id": actor_id,
+            "membership": state.membership,
+        }));
+    }
+    Ok((!changes.is_empty()).then_some(changes))
+}
+
+/// Fold the member rows a frame's current changed into the stored roster: a
+/// `join` or `knock` row inserts or updates its member, a `leave` or `ban`
+/// row removes it, and every member the frame did not mention is kept.
+pub(crate) fn merge_member_roster_current_changes(
+    existing: Option<&Value>,
+    body: &mut Value,
+) -> serde_json::Result<()> {
+    use arkret_wire::MembershipState;
+
+    let Some(object) = body.as_object_mut() else {
+        return Ok(());
+    };
+    let Some(changes) = object.remove(MEMBER_ROSTER_CURRENT_CHANGES) else {
+        return Ok(());
+    };
+    let mut entries = existing
+        .and_then(|projection| projection.get("member_roster_entries"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for change in changes.as_array().into_iter().flatten() {
+        let actor_id: arkret_sdk::ActorId = serde_json::from_value(change["actor_id"].clone())?;
+        let membership: MembershipState = serde_json::from_value(change["membership"].clone())?;
+        let position = entries.iter().position(|entry| {
+            serde_json::from_value::<arkret_sdk::ActorId>(entry["actor_id"].clone())
+                .is_ok_and(|existing| existing == actor_id)
+        });
+        match (membership, position) {
+            (MembershipState::Join | MembershipState::Knock, Some(position)) => {
+                entries[position]["membership"] = serde_json::to_value(membership)?;
+            }
+            (MembershipState::Join | MembershipState::Knock, None) => {
+                entries.push(change.clone());
+            }
+            (MembershipState::Leave | MembershipState::Ban, Some(position)) => {
+                entries.remove(position);
+            }
+            (MembershipState::Leave | MembershipState::Ban, None) => {}
         }
     }
-    Ok(Some(
-        serde_json::json!({"entries": entries, "limited": false}),
-    ))
+    object.insert("member_roster_entries".to_owned(), Value::Array(entries));
+    if existing
+        .and_then(|projection| projection.get("member_roster_entries_limited"))
+        .is_none()
+    {
+        object.insert(
+            "member_roster_entries_limited".to_owned(),
+            Value::Bool(false),
+        );
+    }
+    Ok(())
 }
 
 // `resolve-realm` decodes into the canonical SDK wire types so the client stays
@@ -565,7 +627,8 @@ mod tests {
     use arkret_wire::SchemaId;
 
     use super::{
-        AccountSyncStep, RealmSyncEntry, project_member_roster_from_sdk_entry,
+        AccountSyncStep, MEMBER_ROSTER_CURRENT_CHANGES, RealmSyncEntry,
+        merge_member_roster_current_changes, project_member_roster_from_sdk_entry,
         projection_realm_id_for_known_node, service_supports_operation,
     };
 
@@ -643,12 +706,16 @@ mod tests {
     }
 
     #[test]
-    fn missing_wire_roster_uses_only_current_member_state() {
-        let actor = serde_json::json!({"kind":"account","account_id":{
-            "principal_id":"ak:did_core:web:bob.example",
-            "station_id":"ak:did_core:web:station.example"
-        }});
-        let current_row = |membership: &str| {
+    fn missing_wire_roster_merges_current_member_changes() {
+        let actor = |principal: &str| {
+            serde_json::json!({"kind":"account","account_id":{
+                "principal_id":principal,
+                "station_id":"ak:did_core:web:station.example"
+            }})
+        };
+        let bob = actor("ak:did_core:web:bob.example");
+        let carol = actor("ak:did_core:web:carol.example");
+        let current_row = |actor: &serde_json::Value, membership: &str| {
             serde_json::json!({
                 "selector":{"kind":"member_state","actor_id":actor},
                 "source_stream_ref":{"kind":"realm","realm_id":"ak:realm:AYlS_mnxn8_f65A0YrWEeLzd0F1vnM347xZzMSQEcrlz"},
@@ -656,30 +723,46 @@ mod tests {
                 "value":{"membership":membership}
             })
         };
-        let entry: RealmSyncEntry = serde_json::from_value(serde_json::json!({
-            "current":{
-                "realm_id":"ak:realm:AYlS_mnxn8_f65A0YrWEeLzd0F1vnM347xZzMSQEcrlz",
-                "governance_generation":1,
-                "stream_heads":[],
-                "entries":[current_row("join")]
-            }
-        }))
-        .unwrap();
-        let mut projection = serde_json::to_value(&entry).unwrap();
-        project_member_roster_from_sdk_entry(&mut projection, &entry).unwrap();
-        let rows = crate::views::member_display::realm_member_roster(Some(&projection));
-        assert_eq!(rows.len(), 1);
-        assert_eq!(
-            rows[0].actor_id,
-            serde_json::from_value(actor.clone()).unwrap()
-        );
+        // One staged frame: its current carries only the rows it changed.
+        let apply = |stored: Option<&serde_json::Value>, rows: Vec<serde_json::Value>| {
+            let entry: RealmSyncEntry = serde_json::from_value(serde_json::json!({
+                "current":{
+                    "realm_id":"ak:realm:AYlS_mnxn8_f65A0YrWEeLzd0F1vnM347xZzMSQEcrlz",
+                    "governance_generation":1,
+                    "stream_heads":[],
+                    "entries":rows
+                }
+            }))
+            .unwrap();
+            let mut body = serde_json::to_value(&entry).unwrap();
+            project_member_roster_from_sdk_entry(&mut body, &entry).unwrap();
+            assert!(body.get("member_roster_entries").is_none());
+            merge_member_roster_current_changes(stored, &mut body).unwrap();
+            assert!(body.get(MEMBER_ROSTER_CURRENT_CHANGES).is_none());
+            garth::reconcile_realm_projection(
+                stored,
+                garth::RealmProjectionFrame::Incremental(&body),
+            )
+        };
+        let members = |projection: &serde_json::Value| {
+            crate::views::member_display::realm_member_roster(Some(projection))
+                .into_iter()
+                .map(|row| serde_json::to_value(row.actor_id).unwrap())
+                .collect::<Vec<_>>()
+        };
 
-        let mut left = entry;
-        left.current.as_mut().unwrap().entries =
-            vec![serde_json::from_value(current_row("leave")).unwrap()];
-        let mut projection = serde_json::to_value(&left).unwrap();
-        project_member_roster_from_sdk_entry(&mut projection, &left).unwrap();
-        assert!(crate::views::member_display::realm_member_roster(Some(&projection)).is_empty());
+        let stored = apply(None, vec![current_row(&bob, "join")]);
+        assert_eq!(members(&stored), vec![bob.clone()]);
+        assert_eq!(stored["member_roster_entries_limited"], false);
+        // A later change names only the new member; the stored one stays.
+        let stored = apply(Some(&stored), vec![current_row(&carol, "join")]);
+        assert_eq!(members(&stored), vec![bob.clone(), carol.clone()]);
+        // A frame whose current changed no member row leaves the roster alone.
+        let stored = apply(Some(&stored), Vec::new());
+        assert_eq!(members(&stored), vec![bob.clone(), carol.clone()]);
+        // Only an explicit terminal membership removes a member.
+        let stored = apply(Some(&stored), vec![current_row(&bob, "leave")]);
+        assert_eq!(members(&stored), vec![carol]);
     }
 
     #[test]

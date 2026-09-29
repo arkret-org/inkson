@@ -903,6 +903,11 @@ fn update_operation_write_state_payload(
     let Some(payload) = payload.as_object_mut() else {
         return false;
     };
+    // Holder-local write metadata never enters a signed Event row: any extra
+    // member makes it fail closed Event verification.
+    if raw_payload_is_signed_event(payload) {
+        return false;
+    }
     payload.insert(
         "write_state".to_owned(),
         Value::String(write_state.to_owned()),
@@ -924,6 +929,12 @@ fn update_operation_write_state_payload(
         }
     }
     true
+}
+
+/// A row whose top level is the producer-signed Event itself, as a verified
+/// scan or Realm stream stores it.
+fn raw_payload_is_signed_event(payload: &serde_json::Map<String, Value>) -> bool {
+    payload.get("producer_proof").is_some_and(Value::is_object)
 }
 
 fn raw_payload_string(payload: &Value, key: &str) -> Option<String> {
@@ -976,6 +987,21 @@ fn merge_synced_raw_operation_payload(existing: &Value, mut incoming: Value) -> 
         {
             incoming_object.insert(key.to_owned(), value.clone());
         }
+    }
+    // A verified backfill stores the signed envelope, the only input for
+    // authenticated decryption. A holder-local receipt of the same Event that
+    // lands afterwards does not carry it and must not erase it. An incoming
+    // row that is itself the signed Event already is that envelope; grafting
+    // a second copy onto it would make it no longer a closed Event.
+    if !raw_payload_is_signed_event(incoming_object)
+        && incoming_object.get("event").is_none_or(Value::is_null)
+        && let Some(event) = existing_object.get("event").filter(|event| {
+            event
+                .get("event_id")
+                .is_some_and(|id| Some(id) == incoming_object.get("event_id"))
+        })
+    {
+        incoming_object.insert("event".to_owned(), event.clone());
     }
     // An event-derived create's optimistic row is keyed by the DRAFT object id
     // (`local_target_ref` = retype(draft event_id)); the canonical row that
@@ -1143,6 +1169,43 @@ mod durable_inbox_tests {
         assert_eq!(rows[0].payload["write_state"], json!("synced"));
         assert_eq!(rows[0].payload["event_id"], json!(event_id));
         assert_eq!(rows[0].payload["local_target_ref"], json!(canonical_target));
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// A signed Event row stays a closed Event: a later committed receipt and
+    /// a later stream copy of the same Event never graft holder-local members
+    /// (or a second nested envelope) onto it.
+    #[test]
+    fn signed_event_rows_stay_closed_across_receipt_and_stream_merges() {
+        let path = temp_path();
+        let realm_id = "ak:realm:AeEFmfOZxsx5kLi2kpOJu8m7TFXZ_G8E4019rUp4wmT6";
+        let event_id = "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let signed = json!({
+            "event_id": event_id,
+            "kind": "ak.message.create",
+            "realm_id": realm_id,
+            "payload": { "strand_id": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1" },
+            "producer_proof": { "kid": "k" },
+        });
+        let mut store = LocalStateStore::with_path(&path);
+
+        store.upsert_raw_operation(
+            event_id,
+            Some(realm_id.to_owned()),
+            json!({ "event": signed, "event_id": event_id, "write_state": "committed" }),
+        );
+        store.upsert_raw_operation(event_id, Some(realm_id.to_owned()), signed.clone());
+        let rows = store.load().raw_operations;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].payload, signed, "the stream copy is the whole row");
+
+        assert!(!store.update_raw_operation_write_state(
+            event_id,
+            "accepted",
+            Some(event_id.to_owned()),
+            None,
+        ));
+        assert_eq!(store.load().raw_operations[0].payload, signed);
         let _ = std::fs::remove_file(path);
     }
 

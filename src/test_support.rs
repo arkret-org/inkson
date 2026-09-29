@@ -425,8 +425,7 @@ pub(crate) fn install_current_entries(
     rows: Vec<arkret_wire::TypedCurrentResult>,
 ) {
     let selector = |entry: &arkret_wire::TypedCurrentResult| match entry {
-        arkret_wire::TypedCurrentResult::Value { selector, .. }
-        | arkret_wire::TypedCurrentResult::MessageReactions { selector, .. } => selector.clone(),
+        arkret_wire::TypedCurrentResult::Value { selector, .. } => selector.clone(),
     };
     let mut entries = state
         .realm_current_view_entries(realm_id)

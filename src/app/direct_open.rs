@@ -112,14 +112,16 @@ pub(super) fn open_direct_conversation(
                                 &submitter, &outcome, &founder, peer,
                             )
                             .await?;
-                            return crate::transport::account::direct_conversation_resolve(
+                            let founded = crate::transport::account::direct_conversation_resolve(
                                 &api,
                                 &state_store,
                                 &agent_actor.to_string(),
                                 Some(&serde_json::to_string(&authority)?),
                                 true,
                             )
-                            .await;
+                            .await?;
+                            start_founder_genesis(&api, &state_store, &founder, &founded).await;
+                            return Ok(founded);
                         }
                         Ok(outcome)
                     }
@@ -159,14 +161,16 @@ pub(super) fn open_direct_conversation(
                                 &submitter, &outcome, &founder, peer,
                             )
                             .await?;
-                            return crate::transport::account::direct_conversation_resolve(
+                            let founded = crate::transport::account::direct_conversation_resolve(
                                 &api,
                                 &state_store,
                                 &peer_id,
                                 None,
                                 false,
                             )
-                            .await;
+                            .await?;
+                            start_founder_genesis(&api, &state_store, &founder, &founded).await;
+                            return Ok(founded);
                         }
                         Ok(outcome)
                     }
@@ -222,4 +226,43 @@ pub(super) fn open_direct_conversation(
             let _ = navigator.push(route);
         }
     });
+}
+
+/// The founder authors the Direct Conversation's one scope-derived MLS Genesis
+/// right after its founding unit is accepted: the bootstrap send and Add
+/// phases both require that accepted Genesis
+/// (`identity/contact-and-direct-conversation.md` 7.2 / 7.3). A failure here
+/// does not block opening the conversation; the background creator bootstrap
+/// resumes the founder's outstanding Genesis.
+async fn start_founder_genesis(
+    api: &crate::transport::TransportClient,
+    state_store: &crate::runtime::input::StateStoreHandle,
+    founder: &arkret_sdk::AccountId,
+    founded: &arkret_sdk::DirectConversationResolveOutcome,
+) {
+    let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(founded)
+    else {
+        return;
+    };
+    let Some(account) = crate::app::SessionContext::get().active_account() else {
+        return;
+    };
+    if &account.authority != founder {
+        return;
+    }
+    if let Err(error) = crate::mls::creator_bootstrap::start_creator_realm_mls_genesis(
+        api,
+        state_store,
+        coordinates.realm_id.as_str(),
+        founder,
+        &account.device_id,
+    )
+    .await
+    {
+        tracing::warn!(
+            realm = %coordinates.realm_id,
+            %error,
+            "Direct Conversation founder Genesis is pending"
+        );
+    }
 }

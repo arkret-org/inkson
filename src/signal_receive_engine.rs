@@ -448,11 +448,10 @@ impl InksonSignalSink {
         let arkret_sdk::SignalPlaintext::CallSignal(call) = &signal.payload else {
             return Ok(false);
         };
-        let (authority, reset, generation, location) = self.state_store.read(|store| {
+        let (authority, reset, location) = self.state_store.read(|store| {
             (
                 store.active_authority(),
                 store.current_reset_required(),
-                store.current_generation(),
                 store.current_index_location(),
             )
         });
@@ -462,11 +461,13 @@ impl InksonSignalSink {
         if reset {
             return Ok(false);
         }
-        let index = crate::state::CurrentIndex::open(&authority, generation, location)
-            .await
-            .map_err(|error| {
-                garth::Error::Protocol(format!("Call current is unavailable: {error}"))
-            })?;
+        let mut generation = 0;
+        let index = crate::state::CurrentIndex::open_committed(&authority, location, || {
+            generation = self.state_store.read(|store| store.current_generation());
+            Ok(generation)
+        })
+        .await
+        .map_err(|error| garth::Error::Protocol(format!("Call current is unavailable: {error}")))?;
         let current = index
             .read_call_state_ready(signal.scope_ref(), &call.call_id)
             .await

@@ -12,7 +12,10 @@ use super::*;
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum RealmCreateAuthority {
     Root { controller: arkret_sdk::ActorId },
-    DirectConversation,
+    /// A Direct Conversation grants its founder no ordinary Realm-owner
+    /// authority; the founder only authors the bootstrap actions of
+    /// `identity/contact-and-direct-conversation.md` 7.2.
+    DirectConversation { founder: arkret_sdk::ActorId },
 }
 
 pub(super) fn realm_create_authority_cache()
@@ -36,7 +39,9 @@ pub(super) fn realm_create_authority_from_events(
             .and_then(serde_json::Value::as_str)
             == Some("direct_conversation")
         {
-            return Some(RealmCreateAuthority::DirectConversation);
+            return Some(RealmCreateAuthority::DirectConversation {
+                founder: event.actor_id.clone(),
+            });
         }
         Some(RealmCreateAuthority::Root {
             controller: event.actor_id.clone(),
@@ -107,9 +112,10 @@ mod tests {
             json!({ "purpose": "direct_conversation" }),
         );
 
+        let founder = create.actor_id.clone();
         assert_eq!(
             realm_create_authority_from_events(&[create], realm_id().as_str()),
-            Some(RealmCreateAuthority::DirectConversation)
+            Some(RealmCreateAuthority::DirectConversation { founder })
         );
     }
 }

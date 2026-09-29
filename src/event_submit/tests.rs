@@ -1220,6 +1220,22 @@ async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
         .unwrap(),
     )
     .unwrap();
+    // Only the genesis carries the branch-selecting founding ref; no unit
+    // Event names another (contact-and-direct-conversation.md 6.1).
+    assert_eq!(
+        events[0]
+            .event()
+            .semantic_refs
+            .iter()
+            .map(|reference| reference.role.as_str())
+            .collect::<Vec<_>>(),
+        vec!["direct_conversation_agent_provision"]
+    );
+    assert!(
+        events[1..]
+            .iter()
+            .all(|event| event.event().semantic_refs.is_empty())
+    );
     for event in &mut events {
         signer
             .sign_sdk_event_with_context(

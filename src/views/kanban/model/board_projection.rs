@@ -749,26 +749,19 @@ pub(crate) fn strand_current_basis(
     let selector = arkret_wire::CurrentSelector::Strand {
         strand_id: strand_id.clone(),
     };
-    let mut matching = entries.iter().filter(|entry| match entry {
-        arkret_wire::TypedCurrentResult::Value {
+    let mut matching = entries.iter().filter(|entry| {
+        let arkret_wire::TypedCurrentResult::Value {
             selector: found, ..
-        }
-        | arkret_wire::TypedCurrentResult::MessageReactions {
-            selector: found, ..
-        } => *found == selector,
+        } = entry;
+        *found == selector
     });
-    let Some(entry) = matching.next() else {
+    let Some(arkret_wire::TypedCurrentResult::Value { revision, .. }) = matching.next() else {
         return StrandCurrentBasis::Missing;
     };
     if matching.next().is_some() {
         return StrandCurrentBasis::Unavailable;
     }
-    match entry {
-        arkret_wire::TypedCurrentResult::Value { revision, .. } => {
-            StrandCurrentBasis::Revision(revision.clone())
-        }
-        arkret_wire::TypedCurrentResult::MessageReactions { .. } => StrandCurrentBasis::Unavailable,
-    }
+    StrandCurrentBasis::Revision(revision.clone())
 }
 
 fn clear_unavailable_card_content(card: &mut KanbanCard) {

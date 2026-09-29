@@ -394,6 +394,19 @@ pub(crate) fn local_card_update_from_raw_operation(
             arkret_wire::patch::PatchOpKind::Set => {
                 let value = op.value()?;
                 if value_is_mls_envelope(value) {
+                    if decrypt_ctx.is_none() || event.is_none() {
+                        crate::mls::runtime::warn_mls_decrypt_once(
+                            "",
+                            strand_id,
+                            0,
+                            None,
+                            &format!(
+                                "TEMPDIAG overlay ctx={} event={}",
+                                decrypt_ctx.is_some(),
+                                event.is_some()
+                            ),
+                        );
+                    }
                     if let (Some(ctx), Some(event)) = (decrypt_ctx, event)
                         && let Some((authority, _)) = ctx.identity
                     {

@@ -433,7 +433,11 @@ fn local_operation_for_event(
         .raw_operations
         .iter()
         .find(|record| {
-            record.payload.get("event_id").and_then(Value::as_str) == Some(event_id.as_str())
+            // A signed Event row names its own id but is not a holder-local
+            // operation row.
+            record.payload.get("producer_proof").is_none()
+                && record.payload.get("event_id").and_then(Value::as_str)
+                    == Some(event_id.as_str())
         })
         .map(|record| record.operation_id.clone())
 }
@@ -730,25 +734,21 @@ impl EventSubmitter {
         let state_store = self.state_store.as_ref().ok_or_else(|| {
             anyhow::anyhow!("exact current read requires the active account state store")
         })?;
-        let (active_authority, reset_required, committed_generation, location) =
+        let location = state_store.read(|store| store.current_index_location());
+        let index = crate::state::CurrentIndex::open_committed(&authority, location, || {
             state_store.read(|store| {
-                (
-                    store.active_authority(),
-                    store.current_reset_required(),
-                    store.current_generation(),
-                    store.current_index_location(),
-                )
-            });
-        anyhow::ensure!(
-            active_authority.as_ref() == Some(&authority),
-            "exact current read account changed before authorization"
-        );
-        anyhow::ensure!(
-            !reset_required,
-            "exact current read requires a fresh account current baseline"
-        );
-        let index =
-            crate::state::CurrentIndex::open(&authority, committed_generation, location).await?;
+                anyhow::ensure!(
+                    store.active_authority().as_ref() == Some(&authority),
+                    "exact current read account changed before authorization"
+                );
+                anyhow::ensure!(
+                    !store.current_reset_required(),
+                    "exact current read requires a fresh account current baseline"
+                );
+                Ok(store.current_generation())
+            })
+        })
+        .await?;
         let progress = index.read_progress(request.realm_id.as_str()).await?;
         anyhow::ensure!(
             !progress.needs_refresh,
@@ -1004,12 +1004,16 @@ impl EventSubmitter {
         Ok(resolved)
     }
 
-    /// Confirm the immutable creator of an already-committed Realm.
-    pub(crate) async fn accepted_realm_creator_matches_account(
+    /// Whether this account authors the Realm's first `ak.mls.genesis`, and
+    /// whether the Realm is a Direct Conversation. An ordinary Realm's genesis
+    /// belongs to its root controller; a Direct Conversation's to its founder,
+    /// whose one scope-derived Genesis both bootstrap phases require
+    /// (`identity/contact-and-direct-conversation.md` 7.2 / 7.3).
+    pub(crate) async fn accepted_scope_genesis_author(
         &self,
         realm_id: &str,
         authority: &arkret_sdk::AccountId,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<(bool, bool)> {
         let actor = arkret_sdk::ActorId::account(authority.clone());
         let founding = self
             .realm_create_authority(realm_id)
@@ -1017,7 +1021,10 @@ impl EventSubmitter {
             .ok_or_else(|| {
                 anyhow::anyhow!("committed Realm founding authority is not available")
             })?;
-        Ok(matches!(founding, RealmCreateAuthority::Root { controller } if controller == actor))
+        Ok(match founding {
+            RealmCreateAuthority::Root { controller } => (controller == actor, false),
+            RealmCreateAuthority::DirectConversation { founder } => (founder == actor, true),
+        })
     }
 
     // ------------------------------------------------------------ authoring
@@ -1956,9 +1963,9 @@ impl EventSubmitter {
         &self,
         scope: &arkret_sdk::ScopeRef,
     ) -> Option<crate::mls::send_gate::MlsSendGateInput> {
-        self.state_store.as_ref().map(|store| {
-            store.read(|state| crate::mls::send_gate::MlsSendGateInput::capture(state, scope))
-        })
+        self.state_store
+            .as_ref()
+            .map(|store| crate::mls::send_gate::MlsSendGateInput::capture(store, scope))
     }
 
     /// Refuse an application body the durable accepted MLS current of its
@@ -2222,9 +2229,7 @@ impl EventSubmitter {
         // A Signal is sealed under the scope's accepted current group only;
         // the durable send gate decides, and the sealing material must name
         // exactly that current epoch and group-state reference.
-        let input = state_store.read(|store| {
-            crate::mls::send_gate::MlsSendGateInput::capture(store, &header.scope_ref)
-        });
+        let input = crate::mls::send_gate::MlsSendGateInput::capture(state_store, &header.scope_ref);
         match crate::mls::send_gate::resolve_mls_send_gate(&input, &header.scope_ref).await? {
             crate::mls::send_gate::MlsSendGate::Encrypted(current) => anyhow::ensure!(
                 current.epoch == material.epoch

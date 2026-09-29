@@ -495,11 +495,13 @@ pub fn build_agent_pcr_bootstrap_steps(
 /// belongs to the submission carrier; these Events contain only their own
 /// creation and membership data. Identifiers derive from finalized Event bytes.
 ///
-/// Each member descends from the one before it (`prev_refs`) and every follow-up
-/// is scoped to the Realm the create Event derives, so the unit can only be
-/// built forward from real identities. Returning steps rather than Events is
-/// what enforces that: there is no point at which a member exists carrying an id
-/// that the next authoring pass would have to rewrite.
+/// Only the genesis carries the branch-selecting critical founding ref
+/// (contact-and-direct-conversation.md 6.1). No unit Event names another: the
+/// relative order is the wire order alone. Every follow-up is scoped to the
+/// Realm the create Event derives, so the unit can only be built forward from
+/// real identities. Returning steps rather than Events is what enforces that:
+/// there is no point at which a member exists carrying an id that the next
+/// authoring pass would have to rewrite.
 pub fn build_direct_conversation_founding_steps(
     founder_actor: &arkret_sdk::AccountId,
     peer_actor: &arkret_sdk::AccountId,
@@ -549,7 +551,6 @@ pub fn build_direct_conversation_founding_steps(
 
     let member_step: crate::event_submit::EventUnitStep = {
         let founder = founder.clone();
-        let founding_ref = founding_ref.clone();
         let founder_actor = founder_actor.clone();
         let peer_actor = peer_actor.clone();
         Box::new(move |authored| {
@@ -578,7 +579,6 @@ pub fn build_direct_conversation_founding_steps(
                     membership,
                 )
                 .target_ref(member_cell_subject)
-                .semantic_refs(vec![founding_ref.clone()])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
                 .into_intent(),
@@ -588,7 +588,6 @@ pub fn build_direct_conversation_founding_steps(
 
     let strand_step: crate::event_submit::EventUnitStep = {
         let founder = founder.clone();
-        let founding_ref = founding_ref.clone();
         let founder_actor = founder_actor.clone();
         Box::new(move |authored| {
             let create = &authored[0];
@@ -604,7 +603,6 @@ pub fn build_direct_conversation_founding_steps(
                     founder.station_id.clone(),
                     strand_payload,
                 )
-                .semantic_refs(vec![founding_ref.clone()])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
                 .into_intent(),
@@ -614,7 +612,6 @@ pub fn build_direct_conversation_founding_steps(
 
     let founder_member_step: crate::event_submit::EventUnitStep = {
         let founder = founder.clone();
-        let founding_ref = founding_ref.clone();
         let founder_actor = founder_actor.clone();
         Box::new(move |authored| {
             let create = &authored[0];
@@ -633,7 +630,6 @@ pub fn build_direct_conversation_founding_steps(
                     founder_membership,
                 )
                 .target_ref(founder_member_cell_subject)
-                .semantic_refs(vec![founding_ref.clone()])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
                 .into_intent(),

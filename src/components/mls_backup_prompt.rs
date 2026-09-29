@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
@@ -171,48 +170,24 @@ fn mark_mls_backup_after_write_probe_started(key: String) -> bool {
     }
 }
 
-fn sole_projected_principal_control_realm_id(
-    projections: &BTreeMap<String, serde_json::Value>,
-) -> anyhow::Result<arkret_sdk::RealmId> {
-    let candidates = projections
-        .iter()
-        .filter(|(_, projection)| {
-            crate::realm_tree::realm_projection_control_purpose(projection)
-                == Some("principal_control")
-        })
-        .map(|(realm_id, _)| realm_id)
-        .collect::<Vec<_>>();
-    let [realm_id] = candidates.as_slice() else {
-        anyhow::bail!(
-            "expected one accepted principal-control Realm projection, found {}",
-            candidates.len()
-        );
-    };
-    arkret_sdk::RealmId::new((*realm_id).clone()).map_err(|error| {
-        anyhow::anyhow!("projected principal-control Realm id is invalid: {error}")
-    })
-}
-
+/// The PCR this device's frozen recovery evidence names, when it holds one.
+///
+/// A paired or recovered sibling device does not inherit the founding
+/// device's frozen evidence; the backup job then asks its own Station for the
+/// authenticated account's accepted PCR (`ak.self.identity.read.current_principal`)
+/// instead of classifying cached Realm projections.
 fn recovery_backup_control_realm_id(
     store: &LocalStateStore,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
-) -> anyhow::Result<arkret_sdk::RealmId> {
-    if let Some(evidence) = store.recovery_material_evidence() {
-        if evidence.account_id != *authority
-            || evidence.account_id.principal_id.as_str() != actor_id
-        {
-            anyhow::bail!("frozen recovery evidence belongs to a different account");
-        }
-        return Ok(evidence.principal_control_realm_id);
+) -> anyhow::Result<Option<arkret_sdk::RealmId>> {
+    let Some(evidence) = store.recovery_material_evidence() else {
+        return Ok(None);
+    };
+    if evidence.account_id != *authority || evidence.account_id.principal_id.as_str() != actor_id {
+        anyhow::bail!("frozen recovery evidence belongs to a different account");
     }
-
-    // A paired sibling device does not inherit the founding device's frozen
-    // PCR genesis evidence. Its account-scoped sync does carry accepted Realm
-    // projections, so use the sole create-locked principal-control Realm. The
-    // registered purpose + profile check is performed by the projection
-    // classifier; zero or multiple candidates remain fail-closed.
-    sole_projected_principal_control_realm_id(&store.load().realm_tree_projections)
+    Ok(Some(evidence.principal_control_realm_id))
 }
 
 pub(crate) fn schedule_mls_recovery_backups_after_encrypted_write(
@@ -270,7 +245,7 @@ pub(crate) fn schedule_mls_recovery_backups_after_encrypted_write(
         payload.base_url = base_url;
         payload.token = token;
         payload.authority = Some(authority);
-        payload.principal_control_realm_id = Some(principal_control_realm_id);
+        payload.principal_control_realm_id = principal_control_realm_id;
         payload.actor_id = actor_id;
         payload.device_id = device_id;
         payload.latest_sidecar_json = Some(sidecar_json);
@@ -350,9 +325,17 @@ async fn upload_mls_recovery_backup_job_snapshot(
     } = job.payload;
     let authority =
         authority.ok_or_else(|| anyhow::anyhow!("MLS backup job omitted the active authority"))?;
-    let principal_control_realm_id = principal_control_realm_id
-        .ok_or_else(|| anyhow::anyhow!("MLS backup job omitted frozen PCR authority"))?;
     with_authed_api(&base_url, token, |api| async move {
+        let principal_control_realm_id = match principal_control_realm_id {
+            Some(realm_id) => realm_id,
+            None => {
+                crate::identity::principal_control::resolve_accepted_for_authority(
+                    &api.sdk_http_client()?,
+                    &authority,
+                )
+                .await?
+            }
+        };
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let sidecar = if let Some(latest_sidecar_json) = latest_sidecar_json {
             let previous_body = match cached_previous_body {
@@ -1166,42 +1149,7 @@ mod tests {
     use super::{
         BackupJob, MLS_RECOVERY_BACKUP_MIN_INTERVAL, MLS_RECOVERY_BACKUP_SCHEDULER,
         recovery_key_filename, recovery_key_filename_from_handles, recovery_localpart_from_handles,
-        sole_projected_principal_control_realm_id,
     };
-
-    /// The accepted create-locked genesis is the only authority for control purpose.
-    fn principal_control_projection() -> serde_json::Value {
-        serde_json::json!({
-            "genesis": {
-                "schema": arkret_wire::SchemaId::REALM_GENESIS_V1,
-                "purpose": "principal_control",
-                "schema_refs": [arkret_wire::ProfileId::PRINCIPAL_CONTROL_REALM_V1]
-            }
-        })
-    }
-
-    #[test]
-    fn sibling_device_uses_the_only_projected_principal_control_realm() {
-        let realm_id = "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc".to_owned();
-        let projections =
-            std::collections::BTreeMap::from([(realm_id.clone(), principal_control_projection())]);
-
-        let selected = sole_projected_principal_control_realm_id(&projections)
-            .expect("one accepted principal-control projection is authoritative");
-        assert_eq!(selected.as_str(), realm_id);
-    }
-
-    #[test]
-    fn sibling_device_rejects_ambiguous_projected_principal_control_realms() {
-        let first = "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc";
-        let second = "ak:realm:AdM0E7Gz4z3xDbVnW7yQcEJnaVeXjYprj0Fb4b4kFXR0";
-        let projections = std::collections::BTreeMap::from([
-            (first.to_owned(), principal_control_projection()),
-            (second.to_owned(), principal_control_projection()),
-        ]);
-
-        assert!(sole_projected_principal_control_realm_id(&projections).is_err());
-    }
 
     #[test]
     fn changed_recovery_backup_reruns_after_success_interval() {

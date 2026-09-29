@@ -114,8 +114,9 @@ pub(crate) async fn authenticated_account_is_realm_creator(
 ) -> Result<bool, String> {
     api.event_submitter()
         .map_err(|error| format!("MLS creator classification client: {error}"))?
-        .accepted_realm_creator_matches_account(realm_id, authority)
+        .accepted_scope_genesis_author(realm_id, authority)
         .await
+        .map(|(genesis_author, _)| genesis_author)
         .map_err(|error| format!("resolve accepted Realm creator: {error}"))
 }
 
@@ -153,10 +154,21 @@ pub(crate) async fn should_resume_creator_genesis(
             .await
             .map_err(|e| e.to_string())?
     };
-    if !creator_genesis_has_resume_evidence(false, staged_checkpoint, durable_queued_genesis) {
+    // A Direct Conversation is MLS-backed from its founding: its founder
+    // authors the one scope-derived Genesis the bootstrap phases require
+    // (`identity/contact-and-direct-conversation.md` 7.2 / 7.3). Unlike an
+    // ordinary plaintext Realm, the absence of an accepted Genesis there is
+    // outstanding founder work, not a declined MLS activation.
+    let (genesis_author, direct_conversation) = submitter
+        .accepted_scope_genesis_author(realm_id, authority)
+        .await
+        .map_err(|error| format!("resolve accepted Realm creator: {error}"))?;
+    if !direct_conversation
+        && !creator_genesis_has_resume_evidence(false, staged_checkpoint, durable_queued_genesis)
+    {
         return Ok(false);
     }
-    authenticated_account_is_realm_creator(api, state_store, realm_id, authority).await
+    Ok(genesis_author)
 }
 
 async fn converge_accepted_creator_genesis(
@@ -209,8 +221,22 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<(), String> {
-    bootstrap_creator_realm_mls_genesis(api, state_store, realm_id, authority, device_id, false)
+    let founder_genesis = api
+        .event_submitter()
+        .map_err(|error| format!("MLS genesis Event submitter: {error}"))?
+        .accepted_scope_genesis_author(realm_id, authority)
         .await
+        .map_err(|error| format!("resolve accepted Realm creator: {error}"))?
+        .1;
+    bootstrap_creator_realm_mls_genesis(
+        api,
+        state_store,
+        realm_id,
+        authority,
+        device_id,
+        founder_genesis,
+    )
+    .await
 }
 
 async fn bootstrap_creator_realm_mls_genesis(

@@ -16,17 +16,13 @@ pub(crate) const REQUIRED_REALM_SELECTORS: [CurrentSelector; 2] = [
 ];
 
 fn selector_of(entry: &TypedCurrentResult) -> &CurrentSelector {
-    match entry {
-        TypedCurrentResult::Value { selector, .. }
-        | TypedCurrentResult::MessageReactions { selector, .. } => selector,
-    }
+    let TypedCurrentResult::Value { selector, .. } = entry;
+    selector
 }
 
-fn value_of(entry: &TypedCurrentResult) -> Option<&Value> {
-    match entry {
-        TypedCurrentResult::Value { value, .. } => Some(value),
-        TypedCurrentResult::MessageReactions { .. } => None,
-    }
+fn value_of(entry: &TypedCurrentResult) -> &Value {
+    let TypedCurrentResult::Value { value, .. } = entry;
+    value
 }
 
 fn entry_for<'a>(
@@ -39,7 +35,7 @@ fn entry_for<'a>(
 pub(crate) fn required_realm_values_ready(entries: &[TypedCurrentResult]) -> bool {
     REQUIRED_REALM_SELECTORS
         .iter()
-        .all(|selector| entry_for(entries, selector).and_then(value_of).is_some())
+        .all(|selector| entry_for(entries, selector).is_some())
 }
 
 /// The typed current results of one Realm as the product reads them.
@@ -177,7 +173,7 @@ pub(crate) fn apply_profile_summary(
     entries: &[TypedCurrentResult],
 ) -> anyhow::Result<()> {
     let Some(profile) = entry_for(entries, &CurrentSelector::RealmProfile)
-        .and_then(value_of)
+        .map(value_of)
         .and_then(|value| serde_json::from_value::<arkret_sdk::RealmProfile>(value.clone()).ok())
     else {
         return Ok(());
@@ -211,7 +207,7 @@ pub(crate) fn current_strand(
         strand_id: strand_id.clone(),
     };
     entry_for(entries, &selector)
-        .and_then(value_of)
+        .map(value_of)
         .and_then(|value| serde_json::from_value(value.clone()).ok())
 }
 
@@ -225,7 +221,7 @@ pub(crate) fn current_mls_group(
         scope_ref: scope_ref.clone(),
     };
     entry_for(entries, &selector)
-        .and_then(value_of)
+        .map(value_of)
         .and_then(|value| serde_json::from_value(value.clone()).ok())
         .filter(|group: &arkret_wire::MlsGroupCurrent| group.effective_scope == *scope_ref)
 }
@@ -233,7 +229,7 @@ pub(crate) fn current_mls_group(
 /// The Station-selected current `ak.realm.policy_bundle` value.
 pub(crate) fn current_realm_policy_bundle_value(entries: &[TypedCurrentResult]) -> Option<Value> {
     entry_for(entries, &CurrentSelector::RealmPolicyBundle)
-        .and_then(value_of)
+        .map(value_of)
         .cloned()
 }
 
@@ -247,9 +243,9 @@ pub(crate) fn current_revision_for(
     entries: &[TypedCurrentResult],
     selector: &CurrentSelector,
 ) -> Option<arkret_wire::CurrentRevision> {
-    entry_for(entries, selector).map(|entry| match entry {
-        TypedCurrentResult::Value { revision, .. }
-        | TypedCurrentResult::MessageReactions { revision, .. } => revision.clone(),
+    entry_for(entries, selector).map(|entry| {
+        let TypedCurrentResult::Value { revision, .. } = entry;
+        revision.clone()
     })
 }
 
@@ -289,15 +285,13 @@ mod tests {
             Some(std::collections::BTreeSet::from([actor])),
         );
         let mut stale = rows;
-        if let TypedCurrentResult::Value {
+        let TypedCurrentResult::Value {
             source_stream_ref, ..
-        } = &mut stale[0]
-        {
-            *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
-                realm_id: RealmId::new("ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM")
-                    .unwrap(),
-            };
-        }
+        } = &mut stale[0];
+        *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
+            realm_id: RealmId::new("ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM")
+                .unwrap(),
+        };
         assert!(RealmCurrentView::new(REALM, stale, true).is_err());
     }
 

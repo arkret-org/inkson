@@ -999,16 +999,26 @@ fn decrypt_rsvp_winner(
     {
         return None;
     }
-    let record = ctx
+    // The row that carries the signed envelope keeps whatever key it was first
+    // recorded under: an RSVP authored here stays keyed by its holder-local
+    // operation id after acceptance. Match the embedded Event identity instead.
+    let event_value = ctx
         .state_store
         .load()
         .raw_operations
         .into_iter()
-        .find(|record| {
-            record.operation_id == winner.source_event_id
-                && record.realm_id.as_deref() == Some(ctx.realm_id)
+        .filter(|record| record.realm_id.as_deref() == Some(ctx.realm_id))
+        .find_map(|record| {
+            record
+                .payload
+                .get("event")
+                .filter(|event| {
+                    event.get("event_id").and_then(Value::as_str)
+                        == Some(winner.source_event_id.as_str())
+                })
+                .cloned()
         })?;
-    let event_value = record.payload.get("event")?;
+    let event_value = &event_value;
     let event: arkret_sdk::Event = serde_json::from_value(event_value.clone()).ok()?;
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(ctx.realm_id.to_owned()).ok()?,

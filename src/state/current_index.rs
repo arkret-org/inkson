@@ -99,9 +99,6 @@ fn target_of(selector: &CurrentSelector) -> CurrentTarget {
         CurrentSelector::Strand { strand_id } => CurrentTarget::Strand {
             strand_id: strand_id.clone(),
         },
-        CurrentSelector::MessageReactions { event_id } => CurrentTarget::Event {
-            event_id: event_id.clone(),
-        },
         CurrentSelector::CallState { call_id } => CurrentTarget::Event {
             event_id: arkret_sdk::EventId::from_token_bytes(call_id.token_bytes())
                 .expect("validated CallId carries an Event identity token"),
@@ -117,15 +114,13 @@ fn target_of(selector: &CurrentSelector) -> CurrentTarget {
 
 fn selector_of(entry: &TypedCurrentResult) -> &CurrentSelector {
     match entry {
-        TypedCurrentResult::Value { selector, .. }
-        | TypedCurrentResult::MessageReactions { selector, .. } => selector,
+        TypedCurrentResult::Value { selector, .. } => selector,
     }
 }
 
 fn revision_of(entry: &TypedCurrentResult) -> &CurrentRevision {
     match entry {
-        TypedCurrentResult::Value { revision, .. }
-        | TypedCurrentResult::MessageReactions { revision, .. } => revision,
+        TypedCurrentResult::Value { revision, .. } => revision,
     }
 }
 
@@ -309,12 +304,9 @@ pub(crate) fn current_reads_any_stream(
             .iter()
             .any(|head| preview.contains(&head.stream_ref))
             || current.entries.iter().any(|row| {
-                let (TypedCurrentResult::Value {
+                let TypedCurrentResult::Value {
                     source_stream_ref, ..
-                }
-                | TypedCurrentResult::MessageReactions {
-                    source_stream_ref, ..
-                }) = row;
+                } = row;
                 preview.contains(source_stream_ref)
             })
     });
@@ -591,6 +583,20 @@ impl CurrentIndex {
         committed_generation: u64,
         location: CurrentIndexLocation,
     ) -> anyhow::Result<Self> {
+        Self::open_committed(authority, location, move || Ok(committed_generation)).await
+    }
+
+    /// Open the index with the account store's committed generation read only
+    /// once the staging lease is held. A frame staged while this opener waits
+    /// has by then either finished or poisoned the index, so the pointer read
+    /// here is the one the lease holder left behind. A generation captured
+    /// before waiting for the lease can be exactly one commit old and would
+    /// refuse a perfectly consistent index.
+    pub(crate) async fn open_committed(
+        authority: &AccountId,
+        location: CurrentIndexLocation,
+        committed_generation: impl FnOnce() -> anyhow::Result<u64>,
+    ) -> anyhow::Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
         let location =
             tokio::task::spawn_blocking(move || -> anyhow::Result<CurrentIndexLocation> {
@@ -616,7 +622,8 @@ impl CurrentIndex {
         #[cfg(target_arch = "wasm32")]
         let storage_id = "inkson.secret.inkson/entries".to_owned();
         let registry_key = format!("{storage_id}/{prefix}");
-        let shared = {
+        let mut read_committed = Some(committed_generation);
+        let (shared, fresh) = {
             let mut registry = SHARED_INDICES
                 .get_or_init(Default::default)
                 .lock()
@@ -625,20 +632,36 @@ impl CurrentIndex {
                 Arc::strong_count(value) > 1 || value.poisoned.load(Ordering::Acquire)
             });
             match registry.get(&registry_key).cloned() {
-                Some(shared) => shared,
+                Some(shared) => (shared, None),
                 None => {
+                    // The entry is invisible until inserted, and its lease is
+                    // taken before that, so no other opener can stage between
+                    // this pointer read and this opener's own check.
+                    let committed = match read_committed.take() {
+                        Some(read) => read()?,
+                        None => unreachable!("committed generation read twice"),
+                    };
+                    let lease = Arc::new(Mutex::new(()));
+                    let guard = lease.clone().try_lock_owned()?;
                     let shared = Arc::new(SharedGeneration {
-                        generation: Arc::new(AtomicU64::new(committed_generation)),
-                        lease: Arc::new(Mutex::new(())),
+                        generation: Arc::new(AtomicU64::new(committed)),
+                        lease,
                         poisoned: AtomicBool::new(false),
                         pending: AtomicU64::new(0),
                     });
                     registry.insert(registry_key, shared.clone());
-                    shared
+                    (shared, Some((guard, committed)))
                 }
             }
         };
-        let _lease = shared.lease.lock().await;
+        let (_lease, committed_generation) = match (fresh, read_committed) {
+            (Some(fresh), _) => fresh,
+            (None, Some(read)) => {
+                let guard = shared.lease.clone().lock_owned().await;
+                (guard, read()?)
+            }
+            (None, None) => unreachable!("committed generation was never read"),
+        };
         anyhow::ensure!(
             shared.generation.load(Ordering::Acquire) == committed_generation
                 || (shared.poisoned.load(Ordering::Acquire)
@@ -3004,12 +3027,9 @@ mod tests {
         assert_eq!(read.len(), 151);
         assert_eq!(selectors.len(), 151, "a row was read twice");
         assert!(read.iter().all(|entry| {
-            let (TypedCurrentResult::Value {
+            let TypedCurrentResult::Value {
                 source_stream_ref, ..
-            }
-            | TypedCurrentResult::MessageReactions {
-                source_stream_ref, ..
-            }) = entry;
+            } = entry;
             source_stream_ref
                 == &arkret_sdk::CommitStreamRef::Realm {
                     realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
@@ -3265,6 +3285,46 @@ mod tests {
                 .await
                 .unwrap(),
             Some(row(1, false))
+        );
+    }
+
+    #[tokio::test]
+    async fn an_opener_queued_behind_a_commit_reads_the_pointer_that_commit_leaves() {
+        let location = CurrentIndexLocation { path: path() };
+        let authority = AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        );
+        let pointer = Arc::new(AtomicU64::new(0));
+        let writer = CurrentIndex::open(&authority, 0, location.clone())
+            .await
+            .unwrap();
+        let mut stage = writer
+            .stage_frame(0, &frame(vec![row(1, false)], None))
+            .await
+            .unwrap();
+        stage.arm_account_commit();
+        let captured_before_commit = pointer.load(Ordering::Acquire);
+        let reader = tokio::spawn({
+            let (authority, location, pointer) =
+                (authority.clone(), location.clone(), pointer.clone());
+            async move {
+                CurrentIndex::open_committed(&authority, location, || {
+                    Ok(pointer.load(Ordering::Acquire))
+                })
+                .await
+                .map(|_| ())
+            }
+        });
+        tokio::task::yield_now().await;
+        pointer.store(1, Ordering::Release);
+        stage.finish();
+        reader.await.unwrap().unwrap();
+        assert!(
+            CurrentIndex::open(&authority, captured_before_commit, location)
+                .await
+                .is_err(),
+            "a pointer read before the lease was held names the superseded generation"
         );
     }
 

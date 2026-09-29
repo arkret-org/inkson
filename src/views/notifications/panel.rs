@@ -43,6 +43,15 @@ pub(super) fn rehydrate_notifications_for_blocklist_revision(
     )
 }
 
+fn notification_projection_ids(
+    projection: &[crate::state::StoredNotification],
+) -> Vec<String> {
+    projection
+        .iter()
+        .map(|notification| notification.notification_id())
+        .collect()
+}
+
 #[component]
 pub fn NotificationsPanel(
     principal_id: String,
@@ -76,6 +85,9 @@ pub fn NotificationsPanel(
 
     let notifications = use_signal(move || initial_notifications.clone());
     let mut hydrated_blocklist_revision = use_signal(|| initial_state.client_blocklist_revision);
+    let mut hydrated_projection_ids = use_signal(|| {
+        notification_projection_ids(&initial_state.notification_projection)
+    });
     let mut group_by = use_signal(|| UiNotificationGroup::Latest);
     let mut show_archived = use_signal(|| false);
     let mut did_bootstrap = use_signal(|| false);
@@ -96,10 +108,16 @@ pub fn NotificationsPanel(
     let authority_for_revision = authority.clone();
     let principal_for_revision = principal_id.clone();
     let mut notifications_for_revision = notifications;
+    // The account stream saves each delivered notification into the durable
+    // projection (`sync/client-sync.md` 3); a new row or a blocklist revision
+    // re-evaluates the feed without waiting for a manual refresh.
     use_effect(move || {
         let store = state_store.read();
         let revision = store.client_blocklist_revision();
-        if revision == hydrated_blocklist_revision() {
+        let projection_ids = notification_projection_ids(&store.notification_projection());
+        if revision == *hydrated_blocklist_revision.peek()
+            && projection_ids == *hydrated_projection_ids.peek()
+        {
             return;
         }
         let hydrated = rehydrate_notifications_for_blocklist_revision(
@@ -109,6 +127,7 @@ pub fn NotificationsPanel(
         );
         drop(store);
         hydrated_blocklist_revision.set(revision);
+        hydrated_projection_ids.set(projection_ids);
         notifications_for_revision.set(hydrated);
     });
 

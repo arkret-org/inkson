@@ -1031,7 +1031,6 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                                 revoke_mode,
                                                                 capability_revoke_events,
                                                                 membership_state_events: Vec::new(),
-                                                                proof: None,
                                                             };
                                                             let idempotency_key = crate::operation::uuid_v7();
                                                             submitter.http().applet_revoke(

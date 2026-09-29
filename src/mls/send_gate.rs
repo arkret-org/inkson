@@ -8,6 +8,7 @@
 //! from Realm stream Events, an in-memory view or a local default: an
 //! incomplete cut is "not ready", never "plaintext".
 
+use crate::runtime::input::StateStoreHandle;
 use crate::state::current_index::CurrentIndexLocation;
 use crate::state::{CurrentIndex, LocalStateStore};
 
@@ -63,35 +64,37 @@ pub(crate) struct LocalMlsGroup {
     pub group_state_ref: Option<arkret_sdk::EventId>,
 }
 
-/// Everything the gate needs from the account store, captured synchronously
-/// so the durable read can run without holding the store.
+/// Everything the gate needs from the account store. The installed group is
+/// captured synchronously; the committed current generation is read again
+/// under the index lease, because a frame committed while the gate waits for
+/// that lease moves it.
 #[derive(Clone)]
 pub(crate) struct MlsSendGateInput {
+    store: StateStoreHandle,
     authority: Option<arkret_sdk::AccountId>,
-    reset_required: bool,
-    generation: u64,
     location: CurrentIndexLocation,
     local: Option<LocalMlsGroup>,
 }
 
 impl MlsSendGateInput {
-    pub(crate) fn capture(store: &LocalStateStore, scope: &arkret_sdk::ScopeRef) -> Self {
-        let local = store.mls_checkpoint_for_scope(scope).map(|checkpoint| {
-            let group_state_ref = store
-                .mls_group_state_ref_for_scope(scope, &checkpoint.group_id, checkpoint.epoch)
-                .ok();
-            LocalMlsGroup {
-                epoch: checkpoint.epoch,
-                group_state_ref,
+    pub(crate) fn capture(store: &StateStoreHandle, scope: &arkret_sdk::ScopeRef) -> Self {
+        store.read(|state: &LocalStateStore| {
+            let local = state.mls_checkpoint_for_scope(scope).map(|checkpoint| {
+                let group_state_ref = state
+                    .mls_group_state_ref_for_scope(scope, &checkpoint.group_id, checkpoint.epoch)
+                    .ok();
+                LocalMlsGroup {
+                    epoch: checkpoint.epoch,
+                    group_state_ref,
+                }
+            });
+            Self {
+                store: store.clone(),
+                authority: state.active_authority(),
+                location: state.current_index_location(),
+                local,
             }
-        });
-        Self {
-            authority: store.active_authority(),
-            reset_required: store.current_reset_required(),
-            generation: store.current_generation(),
-            location: store.current_index_location(),
-            local,
-        }
+        })
     }
 }
 
@@ -106,11 +109,20 @@ async fn read_durable_mls_current(
         .authority
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("no active account current index"))?;
-    anyhow::ensure!(
-        !input.reset_required,
-        "the account current index awaits a fresh baseline"
-    );
-    let index = CurrentIndex::open(authority, input.generation, input.location.clone()).await?;
+    let index = CurrentIndex::open_committed(authority, input.location.clone(), || {
+        input.store.read(|state| {
+            anyhow::ensure!(
+                state.active_authority().as_ref() == Some(authority),
+                "the active account changed before the send gate read its current"
+            );
+            anyhow::ensure!(
+                !state.current_reset_required(),
+                "the account current index awaits a fresh baseline"
+            );
+            Ok(state.current_generation())
+        })
+    })
+    .await?;
     index.read_mls_group_ready(scope).await
 }
 

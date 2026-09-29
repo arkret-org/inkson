@@ -55,9 +55,15 @@ pub(crate) fn private_strand_event_field_text(
     field_path: &str,
     value: &Value,
 ) -> Option<String> {
-    let (authority, device_id) = ctx.identity?;
+    let tempdiag = |reason: &str| {
+        crate::mls::runtime::warn_mls_decrypt_once(ctx.realm_id, strand_id, 0, None, &format!("TEMPDIAG {reason}"))
+    };
+    let Some((authority, device_id)) = ctx.identity else { tempdiag("no identity"); return None; };
     let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?;
-    let event: arkret_sdk::Event = serde_json::from_value(event_value.clone()).ok()?;
+    let event: arkret_sdk::Event = match serde_json::from_value(event_value.clone()) {
+        Ok(event) => event,
+        Err(error) => { tempdiag(&format!("event parse {error}")); return None; }
+    };
     if event.kind != arkret_sdk::EventKind::StrandUpdate
         || event.realm_id.as_str() != ctx.realm_id
         || event.scope_ref.realm_id_opt() != Some(&event.realm_id)
@@ -70,6 +76,7 @@ pub(crate) fn private_strand_event_field_text(
     let signed_op: arkret_wire::patch::PatchOp =
         serde_json::from_value(signed_op.into_owned()).ok()?;
     if signed_op.op() != arkret_wire::patch::PatchOpKind::Set || signed_op.value() != Some(value) {
+        tempdiag("signed op differs");
         return None;
     }
     let warn_pending = |reason: &str| {

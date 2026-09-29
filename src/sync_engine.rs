@@ -1922,9 +1922,7 @@ mod removal_schedule_tests {
         assert!(removal_scope_stamp(&store, &scope, &desired).is_some());
 
         let mut entries = store.realm_current_state_entries(REALM);
-        let arkret_wire::TypedCurrentResult::Value { value, .. } = &mut entries[0] else {
-            panic!("fixture installs a value row");
-        };
+        let arkret_wire::TypedCurrentResult::Value { value, .. } = &mut entries[0];
         value["covered_key_access_revision"] = serde_json::json!(6);
         crate::test_support::install_current_entries(&mut store, REALM, entries);
         assert!(removal_scope_stamp(&store, &scope, &desired).is_none());
@@ -4025,6 +4023,7 @@ fn apply_account_frame_payload(
             object.remove("baseline");
         }
         let existing = store.realm_tree_projection(id);
+        crate::models::merge_member_roster_current_changes(existing.as_ref(), &mut body)?;
         let frame = RealmProjectionFrame::Incremental(&body);
         let projection = reconcile_realm_projection(existing.as_ref(), frame);
         store.save_realm_tree_projection(id.to_owned(), projection.clone());

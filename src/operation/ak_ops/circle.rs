@@ -26,13 +26,16 @@ pub struct CircleCreateOptions<'a> {
 /// Everything the operation acts on is in the payload: the Circle, the target
 /// actor and the membership value. Nothing asserts the caller's capability —
 /// `circle_member_state_payload` is closed, and the `ak.circle.member.manage`
-/// decision is made by admission against projected grants.
+/// decision is made by admission against projected grants. A `join` signs the
+/// target's exact current parent Realm join revision (`circle.md` §9.1); every
+/// other transition carries none.
 pub fn circle_member_state(
     realm_id: &str,
     actor: &str,
     circle_id: &str,
     target_actor: &arkret_sdk::ActorId,
     membership: arkret_sdk::CircleMembership,
+    parent_membership_revision: Option<arkret_sdk::CurrentRevision>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     circle_member_state_with_expected(
         realm_id,
@@ -41,6 +44,7 @@ pub fn circle_member_state(
         target_actor,
         membership,
         arkret_wire::WirePresence::Missing,
+        parent_membership_revision,
     )
 }
 
@@ -52,15 +56,18 @@ pub fn circle_member_state_with_expected(
     target_actor: &arkret_sdk::ActorId,
     membership: arkret_sdk::CircleMembership,
     expected_membership: arkret_wire::WirePresence<arkret_sdk::CircleMembership>,
+    parent_membership_revision: Option<arkret_sdk::CurrentRevision>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::CircleMemberStatePayload {
         circle_id: circle_id_value(circle_id)?,
         member_id: target_actor.clone(),
         membership,
+        parent_membership_revision,
         reason: None,
         effective_at: None,
         expected_membership,
     };
+    payload.validate()?;
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::CircleMemberState>(
             realm_id, actor, payload,
@@ -191,6 +198,7 @@ mod member_actor_tests {
                     &target,
                     membership,
                     arkret_wire::WirePresence::Value(arkret_sdk::CircleMembership::Join),
+                    None,
                 )
                 .unwrap();
                 assert_eq!(
