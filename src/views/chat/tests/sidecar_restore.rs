@@ -236,6 +236,34 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
         &sidecar_content,
     );
 
+    let mut missing_scope = messages.clone();
+    missing_scope[0].realm_id.clear();
+    assert!(
+        !pending_messages_have_private_plaintext_sidecar(&missing_scope, &store, realm),
+        "a message without its own Realm cannot borrow the selected Realm's private plaintext"
+    );
+    assert!(!restore_pending_messages_from_private_plaintext_sidecar(
+        &mut missing_scope,
+        &store,
+        realm
+    ));
+    assert!(missing_scope[0].body.is_empty());
+    let mut foreign_scope = messages.clone();
+    foreign_scope[0].realm_id = arkret_sdk::RealmId::from_event_id(
+        &arkret_sdk::EventId::new(messages[0].id.clone()).unwrap(),
+    )
+    .to_string();
+    assert!(!pending_messages_have_private_plaintext_sidecar(
+        &foreign_scope,
+        &store,
+        realm
+    ));
+    assert!(!restore_pending_messages_from_private_plaintext_sidecar(
+        &mut foreign_scope,
+        &store,
+        realm
+    ));
+
     assert!(pending_messages_have_private_plaintext_sidecar(
         &messages, &store, realm
     ));

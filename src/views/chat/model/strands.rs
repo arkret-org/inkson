@@ -168,7 +168,7 @@ pub(crate) fn merge_chat_messages(target: &mut Vec<ChatMessage>, incoming: Vec<C
 fn pending_message_private_plaintext_sidecar_body(
     message: &ChatMessage,
     store: &LocalStateStore,
-    default_realm_id: &str,
+    selected_realm_id: &str,
 ) -> Option<(String, Option<arkret_sdk::TextFormat>)> {
     if !message.crypto_state.is_pending() || message.redacted {
         return None;
@@ -186,46 +186,43 @@ fn pending_message_private_plaintext_sidecar_body(
     if strand_id.is_empty() {
         return None;
     }
-    let default_realm_id = default_realm_id.trim();
+    let selected_realm_id = selected_realm_id.trim();
     let message_realm_id = message.realm_id.trim();
-    if !default_realm_id.is_empty()
+    if !selected_realm_id.is_empty()
         && !message_realm_id.is_empty()
-        && message_realm_id != default_realm_id
+        && message_realm_id != selected_realm_id
     {
         return None;
     }
-    let lookup_realm_id = if message_realm_id.is_empty() {
-        default_realm_id
-    } else {
-        message_realm_id
-    };
-    if lookup_realm_id.is_empty() {
-        return None;
-    }
+    let lookup_realm_id = arkret_sdk::RealmId::new(message_realm_id.to_owned()).ok()?;
     store
-        .private_plaintext_for(lookup_realm_id, strand_id, &format!("message:{message_id}"))
+        .private_plaintext_for(
+            lookup_realm_id.as_str(),
+            strand_id,
+            &format!("message:{message_id}"),
+        )
         .map(super::events::content_from_private_sidecar)
 }
 
 pub(crate) fn pending_messages_have_private_plaintext_sidecar(
     messages: &[ChatMessage],
     store: &LocalStateStore,
-    default_realm_id: &str,
+    selected_realm_id: &str,
 ) -> bool {
     messages.iter().any(|message| {
-        pending_message_private_plaintext_sidecar_body(message, store, default_realm_id).is_some()
+        pending_message_private_plaintext_sidecar_body(message, store, selected_realm_id).is_some()
     })
 }
 
 pub(crate) fn restore_pending_messages_from_private_plaintext_sidecar(
     messages: &mut [ChatMessage],
     store: &LocalStateStore,
-    default_realm_id: &str,
+    selected_realm_id: &str,
 ) -> bool {
     let mut changed = false;
     for message in messages.iter_mut() {
         let Some((body, content_format)) =
-            pending_message_private_plaintext_sidecar_body(message, store, default_realm_id)
+            pending_message_private_plaintext_sidecar_body(message, store, selected_realm_id)
         else {
             continue;
         };
