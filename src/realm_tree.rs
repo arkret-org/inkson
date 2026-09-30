@@ -600,14 +600,51 @@ pub fn realm_tree_nodes_from_sync_realms(realms: &BTreeMap<String, Value>) -> Ve
     realm_tree_nodes_from_sync_realms_with_roles(realms, &BTreeMap::new())
 }
 
+/// A missing or terminal parent cannot produce a navigation edge. The
+/// canonical projection remains intact so an explicit reparent can use it.
+fn unavailable_space_navigation_ids(realms: &BTreeMap<String, Value>) -> BTreeSet<String> {
+    let spaces = realms
+        .iter()
+        .filter(|(id, body)| {
+            is_realm_or_space_projection_id(id)
+                && projection_tree_node_kind(id, body) == RealmTreeNodeKind::Space
+                && !projection_looks_like_strand(body)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut unavailable = spaces
+        .iter()
+        .filter_map(|(id, body)| {
+            let state = body.get("state").and_then(|value| {
+                serde_json::from_value::<arkret_sdk::SpaceState>(value.clone()).ok()
+            });
+            (state == Some(arkret_sdk::SpaceState::Tombstoned)).then(|| (*id).clone())
+        })
+        .collect::<BTreeSet<_>>();
+    loop {
+        let mut changed = false;
+        for (id, body) in &spaces {
+            if let Some(parent) = extract_parent_space_id(id, body)
+                && (!spaces.contains_key(&parent) || unavailable.contains(&parent))
+            {
+                changed |= unavailable.insert((*id).clone());
+            }
+        }
+        if !changed {
+            return unavailable;
+        }
+    }
+}
+
 pub fn realm_tree_nodes_from_sync_realms_with_roles(
     realms: &BTreeMap<String, Value>,
     collaboration_roles: &BTreeMap<String, arkret_sdk::CollaborationRealmRole>,
 ) -> Vec<RealmTreeNode> {
+    let unavailable = unavailable_space_navigation_ids(realms);
     let mut previews: Vec<RealmTreeNode> = realms
         .iter()
         .filter(|(id, body)| {
             is_realm_or_space_projection_id(id)
+                && !unavailable.contains(*id)
                 && !projection_looks_like_strand(body)
                 && !realm_projection_is_principal_control(body)
                 && collaboration_roles.get(*id)
@@ -1229,6 +1266,69 @@ mod tests {
         assert_eq!(child.parent_space_id, None);
         assert_eq!(root.kind, RealmTreeNodeKind::Realm);
         assert_eq!(child.kind, RealmTreeNodeKind::Space);
+    }
+
+    #[test]
+    fn terminal_or_unavailable_parent_never_creates_a_root_navigation_entry() {
+        let realm = "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY";
+        let id = |seed| {
+            arkret_sdk::SpaceId::from_event_id(&arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [seed; 32],
+            ))
+            .to_string()
+        };
+        let parent = id(11);
+        let child = id(12);
+        let missing_parent = id(13);
+        let descendant = id(14);
+        let mut projections = BTreeMap::from([
+            (
+                realm.to_owned(),
+                json!({"schema": "ak.schema.realm.v1", "summary": {"title": "Home"}}),
+            ),
+            (
+                parent.clone(),
+                json!({"schema": "ak.schema.space.v1", "realm_id": realm, "state": "active", "summary": {"title": "Parent"}}),
+            ),
+            (
+                child.clone(),
+                json!({"schema": "ak.schema.space.v1", "realm_id": realm, "state": "active", "parent_space_id": parent, "summary": {"title": "Child"}}),
+            ),
+        ]);
+        projections.insert(descendant.clone(), json!({"schema": "ak.schema.space.v1", "realm_id": realm, "state": "active", "parent_space_id": child, "summary": {"title": "Descendant"}}));
+        let active = realm_tree_nodes_from_sync_realms(&projections);
+        assert_eq!(active.len(), 4);
+        assert!(
+            realm_tree_items(&active)
+                .iter()
+                .any(|item| item.node.id == child && item.depth == 2)
+        );
+        projections.get_mut(&parent).unwrap()["state"] = json!("archived");
+        assert_eq!(realm_tree_nodes_from_sync_realms(&projections).len(), 4);
+        projections.get_mut(&parent).unwrap()["state"] = json!("tombstoned");
+        let canonical = projections.clone();
+        let navigation = realm_tree_nodes_from_sync_realms(&projections);
+        assert!(
+            !navigation
+                .iter()
+                .any(|node| node.id == parent || node.id == child || node.id == descendant),
+            "confirmed terminal parent must suppress its structural navigation rather than promote children to root"
+        );
+        assert_eq!(
+            projections, canonical,
+            "navigation must not erase canonical current facts"
+        );
+        assert_eq!(projections[&child]["parent_space_id"], parent);
+        projections.get_mut(&parent).unwrap()["state"] = json!("active");
+        projections.get_mut(&child).unwrap()["parent_space_id"] = json!(missing_parent);
+        let navigation = realm_tree_nodes_from_sync_realms(&projections);
+        assert!(
+            !navigation
+                .iter()
+                .any(|node| node.id == child || node.id == descendant),
+            "missing parent is unavailable, never root placement"
+        );
     }
 
     #[test]
