@@ -172,6 +172,36 @@ async fn mutate_dispatches_in_file<R>(
     path: &std::path::Path,
     mutation: impl FnOnce(&mut garth::SendQueue, &mut ScheduledDispatches) -> garth::Result<R>,
 ) -> garth::Result<R> {
+    // Reload and replace under one OS lock shared by independent processes.
+    // Locking the data file itself would release protection after its rename.
+    let mut lock_name = path.as_os_str().to_owned();
+    lock_name.push(".lock");
+    let lock_path = std::path::PathBuf::from(lock_name);
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            garth::Error::Storage(format!(
+                "create outbound queue directory {}: {error}",
+                parent.display()
+            ))
+        })?;
+    }
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|error| {
+            garth::Error::Storage(format!(
+                "open outbound lock {}: {error}",
+                lock_path.display()
+            ))
+        })?;
+    lock.lock().map_err(|error| {
+        garth::Error::Storage(format!("lock outbound queue {}: {error}", path.display()))
+    })?;
     let stored = match std::fs::read_to_string(path) {
         Ok(raw) => Some(raw),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -439,6 +469,69 @@ mod tests {
     use super::*;
     use crate::operation::AuthoredEventExt as _;
     use crate::test_support as fixture;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn independent_native_queue_handles_serialize_the_whole_durable_mutation() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let directory = std::env::temp_dir().join(format!(
+            "inkson-outbound-lock-{}",
+            arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms())
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("queue.json");
+        let (first_entered, observe_first) = mpsc::channel();
+        let (release_first, first_release) = mpsc::channel();
+        let (second_started, observe_second_start) = mpsc::channel();
+        let (second_entered, observe_second) = mpsc::channel();
+        let first_path = path.clone();
+        let first = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(mutate_queue_in_file(&first_path, |queue| {
+                    first_entered.send(()).unwrap();
+                    first_release.recv_timeout(Duration::from_secs(10)).unwrap();
+                    queue.enqueue(fixture_submission(0), crate::clock::now_utc())?;
+                    Ok(())
+                }))
+        });
+        observe_first.recv_timeout(Duration::from_secs(10)).unwrap();
+        let second_path = path.clone();
+        let second = std::thread::spawn(move || {
+            second_started.send(()).unwrap();
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(mutate_queue_in_file(&second_path, |queue| {
+                    second_entered.send(()).unwrap();
+                    queue.enqueue(fixture_submission(1), crate::clock::now_utc())?;
+                    Ok(())
+                }))
+        });
+        observe_second_start
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
+        let entered_before_first_commit = observe_second
+            .recv_timeout(Duration::from_millis(500))
+            .is_ok();
+        release_first.send(()).unwrap();
+        first.join().unwrap().unwrap();
+        second.join().unwrap().unwrap();
+        let reloaded = decode_snapshot(Some(&std::fs::read_to_string(&path).unwrap())).unwrap();
+        std::fs::remove_dir_all(&directory).unwrap();
+        assert!(
+            !entered_before_first_commit,
+            "a second independent handle entered before the first durable commit"
+        );
+        assert_eq!(
+            reloaded.items.len(),
+            2,
+            "both frozen Events survive reopening"
+        );
+    }
 
     #[test]
     fn same_principal_on_different_servers_has_distinct_outbound_scope() {
