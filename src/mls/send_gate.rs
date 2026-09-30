@@ -162,10 +162,26 @@ pub(crate) async fn resolve_mls_send_gate(
     input: &MlsSendGateInput,
     scope: &arkret_sdk::ScopeRef,
 ) -> Result<MlsSendGate, MlsSendGateBlocked> {
-    decide_mls_send_gate(
+    let gate = decide_mls_send_gate(
         read_durable_mls_current(input, scope).await,
         input.local.as_ref(),
-    )
+    )?;
+    if let MlsSendGate::Encrypted(current) = &gate {
+        let durable = input
+            .store
+            .read(|state| state.durable_mls_checkpoint_for_scope(scope))
+            .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
+        if durable.is_none_or(|snapshot| {
+            snapshot.epoch != current.epoch
+                || snapshot.group_state_event_id.as_ref()
+                    != Some(&current.current_mls_commit_event_ref)
+        }) {
+            return Err(MlsSendGateBlocked::NotReady(
+                "private MLS publication is not durably committed".into(),
+            ));
+        }
+    }
+    Ok(gate)
 }
 
 /// Readiness also requires that this endpoint can restore its private group.
@@ -188,6 +204,10 @@ pub(crate) async fn resolve_restorable_mls_send_gate(
             !state.current_reset_required() && state.active_authority() == input.authority,
             "the account current changed"
         );
+        anyhow::ensure!(
+            state.persist_error().is_none(),
+            "local persistence has failed"
+        );
         Ok::<_, anyhow::Error>(())
     })?;
     if let MlsSendGate::Encrypted(current) = &gate {
@@ -201,7 +221,7 @@ pub(crate) async fn resolve_restorable_mls_send_gate(
                 "active account changed"
             );
             state
-                .mls_checkpoint_for_scope(scope)
+                .durable_mls_checkpoint_for_scope(scope)?
                 .ok_or_else(|| anyhow::anyhow!("private MLS group is not installed"))
         })?;
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");

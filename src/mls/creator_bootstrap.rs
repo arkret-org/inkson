@@ -69,6 +69,9 @@ pub(crate) fn creator_mls_bootstrap_pending(
 /// authority-root cell. In that gap the asynchronous entry point verifies the
 /// exact accepted founding Event directly with the Station.
 fn creator_mls_bootstrap_incomplete(store: &LocalStateStore, realm_id: &str) -> bool {
+    if store.persist_error().is_some() {
+        return true;
+    }
     let Some(snapshot) = store.mls_checkpoint_for(realm_id) else {
         return true;
     };
@@ -84,9 +87,41 @@ fn creator_mls_bootstrap_incomplete(store: &LocalStateStore, realm_id: &str) -> 
     // flow can be unmounted right after the submit succeeds. Bootstrap is
     // complete only once the epoch-zero checkpoint names the accepted Genesis
     // Event that materialized it.
-    store
+    let accepted = store
         .mls_group_state_ref_for_effective_scope(realm_id, None, &snapshot.group_id, 0)
-        .is_err()
+        .ok();
+    let scope =
+        arkret_sdk::RealmId::new(realm_id).map(|realm_id| arkret_sdk::ScopeRef::Realm { realm_id });
+    let durable = scope.ok().and_then(|scope| {
+        store
+            .durable_mls_checkpoint_for_scope(&scope)
+            .ok()
+            .flatten()
+    });
+    accepted.is_none()
+        || durable.is_none_or(|durable| {
+            durable.epoch != 0
+                || durable.group_id != snapshot.group_id
+                || durable.group_state_event_id.as_ref() != accepted.as_ref()
+        })
+}
+
+async fn publish_accepted_creator_genesis(
+    state: &StateStoreHandle,
+    realm_id: &str,
+    accepted_event_id: &arkret_sdk::EventId,
+) -> Result<(), String> {
+    let barrier = state.write(|store| {
+        store.mark_mls_genesis_emitted_for_effective_scope_with_event(
+            realm_id,
+            None,
+            accepted_event_id,
+        )
+    })?;
+    let result = barrier.wait().await.map_err(|error| error.to_string());
+    // Re-evaluate durable readiness after the commit or its failure is visible.
+    state.write(|_| {});
+    result
 }
 
 fn has_staged_creator_genesis(store: &LocalStateStore, realm_id: &str) -> bool {
@@ -184,13 +219,7 @@ async fn converge_accepted_creator_genesis(
             "accepted MLS genesis exists for {realm_id}, but the local snapshot is missing; restore this device before retrying creator bootstrap"
         ));
     }
-    state_store.write(|store| {
-        store.mark_mls_genesis_emitted_for_effective_scope_with_event(
-            realm_id,
-            None,
-            accepted_event_id,
-        )
-    })?;
+    publish_accepted_creator_genesis(state_store, realm_id, accepted_event_id).await?;
     // Genesis carries no MLS message, so nothing has to be merged: the accepted
     // Event id recorded above is what makes the epoch-zero group usable.
     let _ = (api, authority, device_id);
@@ -383,13 +412,7 @@ async fn bootstrap_creator_realm_mls_genesis(
                     "accepted MLS genesis exists for {realm_id}, but the local snapshot is missing; restore this device before retrying creator bootstrap"
                 ));
             }
-            state_store.write(|store| {
-                store.mark_mls_genesis_emitted_for_effective_scope_with_event(
-                    realm_id,
-                    None,
-                    accepted_event_id,
-                )
-            })?;
+            publish_accepted_creator_genesis(state_store, realm_id, accepted_event_id).await?;
         }
         CreatorGenesisResumeAction::Author => {
             // encryption-and-audit.md \u00a75.1 requires creator bootstrap to
@@ -523,11 +546,7 @@ async fn bootstrap_creator_realm_mls_genesis(
             };
             match accepted {
                 Ok(event_id) => {
-                    state_store.write(|store| {
-                        store.mark_mls_genesis_emitted_for_effective_scope_with_event(
-                            realm_id, None, &event_id,
-                        )
-                    })?;
+                    publish_accepted_creator_genesis(state_store, realm_id, &event_id).await?;
                     accepted_event_id = Some(event_id);
                 }
                 Err(error) => {
@@ -760,6 +779,113 @@ mod tests {
         );
         assert!(!store.mls_genesis_emitted_for(REALM));
         assert!(creator_mls_bootstrap_pending(&store, REALM, ACTOR));
+    }
+
+    #[tokio::test]
+    async fn accepted_genesis_publication_failure_never_completes_bootstrap() {
+        let directory = std::env::temp_dir().join(format!(
+            "inkson-genesis-publication-failure-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path = directory.join("state.json");
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+        };
+        let mut store = LocalStateStore::with_path(path.clone());
+        store
+            .save_mls_checkpoint(
+                REALM,
+                epoch_zero_snapshot(scope.canonical_mls_group_id().unwrap().to_string()),
+            )
+            .unwrap();
+        let account_path = std::fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .unwrap();
+        std::fs::remove_file(&account_path).unwrap();
+        std::fs::create_dir(&account_path).unwrap();
+        let accepted =
+            arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
+                .unwrap();
+        let result = store.mark_mls_genesis_emitted_for_scope_with_event(&scope, &accepted);
+        std::fs::remove_dir(&account_path).unwrap();
+        assert!(
+            result.is_err(),
+            "failed durable publication cannot acknowledge accepted Genesis locally"
+        );
+        assert!(
+            creator_mls_bootstrap_incomplete(&store, REALM),
+            "a failed publication remains pending even if its cache was updated"
+        );
+        assert!(
+            store
+                .durable_mls_checkpoint_for_scope(&scope)
+                .unwrap()
+                .is_none()
+        );
+        store
+            .mark_mls_genesis_emitted_for_scope_with_event(&scope, &accepted)
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        let reopened = LocalStateStore::with_path(path);
+        assert!(!creator_mls_bootstrap_incomplete(&reopened, REALM));
+        assert_eq!(
+            reopened
+                .durable_mls_checkpoint_for_scope(&scope)
+                .unwrap()
+                .unwrap()
+                .group_state_event_id
+                .as_ref(),
+            Some(&accepted)
+        );
+    }
+
+    #[tokio::test]
+    async fn accepted_genesis_publication_preserves_an_installed_later_epoch() {
+        let mut store = temp_store("genesis-preserves-later-epoch");
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+        };
+        let mut snapshot = epoch_zero_snapshot(scope.canonical_mls_group_id().unwrap().to_string());
+        snapshot.epoch = 1;
+        let current = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x51; 32]);
+        store
+            .install_accepted_mls_transition(&scope, snapshot, &current)
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        let canonical = store
+            .durable_mls_checkpoint_for_scope(&scope)
+            .unwrap()
+            .unwrap();
+        let genesis = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x50; 32]);
+        store
+            .mark_mls_genesis_emitted_for_scope_with_event(&scope, &genesis)
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        assert_eq!(
+            store.durable_mls_checkpoint_for_scope(&scope).unwrap(),
+            Some(canonical)
+        );
+        assert_eq!(
+            store
+                .mls_group_state_ref_for_scope(
+                    &scope,
+                    &scope.canonical_mls_group_id().unwrap().to_string(),
+                    1
+                )
+                .unwrap(),
+            current
+        );
     }
 
     #[test]

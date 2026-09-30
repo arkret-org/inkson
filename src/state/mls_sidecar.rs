@@ -314,6 +314,52 @@ impl LocalStateStore {
         }
     }
 
+    /// Read committed provider state, excluding the live cache and queued writes.
+    pub(crate) fn durable_mls_checkpoint_for_scope(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>> {
+        let namespace = self.effective_account_key();
+        anyhow::ensure!(
+            self.cached_account_key
+                .as_deref()
+                .is_none_or(|cached| cached == namespace),
+            "active account changed before the durable MLS checkpoint read"
+        );
+        #[cfg(not(target_arch = "wasm32"))]
+        let bytes = match std::fs::read(self.account_state_path(&namespace)) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        #[cfg(target_arch = "wasm32")]
+        let bytes = {
+            anyhow::ensure!(
+                crate::secure_key_store::wasm_secure_store_ready(),
+                "secure account-state store is not ready"
+            );
+            let store = crate::secure_key_store::default_secure_key_store("inkson");
+            let Some(bytes) = store.get_secret_bytes(&account_state_key(&namespace))? else {
+                return Ok(None);
+            };
+            bytes.as_ref().to_vec()
+        };
+        let state: ClientLocalState = serde_json::from_slice(&bytes)?;
+        let key = mls_scope_checkpoint_key(scope).map_err(anyhow::Error::msg)?;
+        Ok(match scope {
+            arkret_sdk::ScopeRef::Sidecar { .. } => {
+                let prefix = format!("{key}\u{1f}");
+                state
+                    .mls_local_checkpoints
+                    .iter()
+                    .filter(|(key, _)| key.starts_with(&prefix))
+                    .max_by_key(|(_, snapshot)| snapshot.epoch)
+                    .map(|(_, snapshot)| snapshot.clone())
+            }
+            _ => state.mls_local_checkpoints.get(&key).cloned(),
+        })
+    }
+
     pub fn mls_checkpoint_for_scope_and_group(
         &self,
         effective_scope: &arkret_sdk::ScopeRef,
@@ -583,11 +629,11 @@ impl LocalStateStore {
     /// local MLS group-state frontier with that accepted Event id. This lets an
     /// immediately-following self-update or AddMember commit cite a real
     /// `ak:event:*` base group-state ref before the next sync response arrives.
-    pub fn mark_mls_genesis_emitted_with_event(
+    pub(crate) fn mark_mls_genesis_emitted_with_event(
         &mut self,
         realm_id: impl Into<String>,
         genesis_event_id: &arkret_sdk::EventId,
-    ) -> Result<(), String> {
+    ) -> Result<LocalStatePersistBarrier, String> {
         self.mark_mls_genesis_emitted_for_effective_scope_with_event(
             realm_id,
             None,
@@ -609,22 +655,22 @@ impl LocalStateStore {
         Ok(())
     }
 
-    pub fn mark_mls_genesis_emitted_for_effective_scope_with_event(
+    pub(crate) fn mark_mls_genesis_emitted_for_effective_scope_with_event(
         &mut self,
         realm_id: impl Into<String>,
         circle_id: Option<&str>,
         genesis_event_id: &arkret_sdk::EventId,
-    ) -> Result<(), String> {
+    ) -> Result<LocalStatePersistBarrier, String> {
         let realm_id = realm_id.into();
         let scope = mls_realm_or_circle_scope(&realm_id, circle_id)?;
         self.mark_mls_genesis_emitted_for_scope_with_event(&scope, genesis_event_id)
     }
 
-    pub fn mark_mls_genesis_emitted_for_scope_with_event(
+    pub(crate) fn mark_mls_genesis_emitted_for_scope_with_event(
         &mut self,
         effective_scope: &arkret_sdk::ScopeRef,
         genesis_event_id: &arkret_sdk::EventId,
-    ) -> Result<(), String> {
+    ) -> Result<LocalStatePersistBarrier, String> {
         self.ensure_cached_loaded();
         let scope_key = mls_scope_checkpoint_key(effective_scope)?;
         // A Sidecar scope keys its state per group, and the accepted genesis
@@ -644,25 +690,52 @@ impl LocalStateStore {
         let scoped_key = scoped_key.ok_or_else(|| {
             "Sidecar MLS genesis persistence requires an existing group snapshot".to_owned()
         })?;
-        let mut changed = self.cached.mls_genesis_emitted.insert(scoped_key.clone());
-        if let Some(snapshot) = self.cached.mls_local_checkpoints.get(&scoped_key) {
+        let snapshot = self
+            .cached
+            .mls_local_checkpoints
+            .get(&scoped_key)
+            .cloned()
+            .ok_or_else(|| {
+                "accepted MLS Genesis publication requires its private checkpoint".to_owned()
+            })?;
+        if snapshot.epoch > 0 {
+            let current = self
+                .cached
+                .mls_group_state_refs
+                .get(&scoped_key)
+                .ok_or_else(|| "later MLS epoch has no accepted state reference".to_owned())?;
+            if current.group_id != snapshot.group_id
+                || current.epoch != snapshot.epoch
+                || snapshot.group_state_event_id.as_ref() != Some(&current.event_id)
+            {
+                return Err("later MLS epoch is not bound to its accepted state reference".into());
+            }
+        } else {
             let record = MlsGroupStateRefRecord {
                 group_id: snapshot.group_id.clone(),
                 epoch: 0,
                 event_id: genesis_event_id.clone(),
             };
+            if self
+                .cached
+                .mls_group_state_refs
+                .get(&scoped_key)
+                .is_some_and(|current| current != &record)
+            {
+                return Err(
+                    "accepted MLS Genesis conflicts with the installed state reference".into(),
+                );
+            }
             if self.cached.mls_group_state_refs.get(&scoped_key) != Some(&record) {
                 self.cached
                     .mls_group_state_refs
                     .insert(scoped_key.clone(), record.clone());
-                changed = true;
             }
-            changed |= attach_group_state_ref_to_snapshot(&mut self.cached, &scoped_key, &record);
+            attach_group_state_ref_to_snapshot(&mut self.cached, &scoped_key, &record);
         }
-        if changed {
-            let _ = self.flush();
-        }
-        Ok(())
+        self.cached.mls_genesis_emitted.insert(scoped_key);
+        self.begin_durable_flush()
+            .map_err(|error| error.to_string())
     }
 
     /// Remove a creator-side Genesis completion marker after the authenticated

@@ -35,6 +35,7 @@ struct SendReadinessKey {
     generation: u64,
     reset_required: bool,
     detail_invalidated: bool,
+    persistence_healthy: bool,
     checkpoint: Option<(
         u64,
         Option<arkret_sdk::EventId>,
@@ -52,7 +53,7 @@ pub(crate) fn use_scope_send_ready(
         let state = state_store.read();
         let checkpoint = scope
             .as_ref()
-            .and_then(|scope| state.mls_checkpoint_for_scope(scope))
+            .and_then(|scope| state.durable_mls_checkpoint_for_scope(scope).ok().flatten())
             .map(|snapshot| {
                 (
                     snapshot.epoch,
@@ -71,6 +72,7 @@ pub(crate) fn use_scope_send_ready(
             generation: state.current_generation(),
             reset_required: state.current_reset_required(),
             detail_invalidated,
+            persistence_healthy: state.persist_error().is_none(),
             checkpoint,
         }
     }));
@@ -78,11 +80,11 @@ pub(crate) fn use_scope_send_ready(
     use_effect(move || {
         let captured = key();
         spawn(async move {
-            let ready = if let Some(scope) = captured
-                .scope
-                .as_ref()
-                .filter(|_| !captured.reset_required && !captured.detail_invalidated)
-            {
+            let ready = if let Some(scope) = captured.scope.as_ref().filter(|_| {
+                !captured.reset_required
+                    && !captured.detail_invalidated
+                    && captured.persistence_healthy
+            }) {
                 let store = crate::app::runtime_adapter::state_store_handle(state_store);
                 let input = crate::mls::send_gate::MlsSendGateInput::capture(&store, scope);
                 crate::mls::send_gate::resolve_restorable_mls_send_gate(

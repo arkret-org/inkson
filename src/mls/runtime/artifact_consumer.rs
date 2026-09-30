@@ -683,7 +683,9 @@ async fn persist_installed_group(
     let barrier = state.write(|store| {
         store.install_accepted_mls_transition(&scope, envelope, &accepted_event_id)
     })?;
-    barrier.wait().await.map_err(describe)?;
+    let published = barrier.wait().await.map_err(describe);
+    state.write(|_| {});
+    published?;
     Ok(MlsInstallOutcome::Applied)
 }
 
@@ -723,7 +725,9 @@ async fn record_joined_welcome(
     let barrier = state.write(|store| {
         store.install_accepted_mls_welcome(scope, envelope, accepted_event_id, consume)
     })?;
-    if let Err(error) = barrier.wait().await {
+    let published = barrier.wait().await;
+    state.write(|_| {});
+    if let Err(error) = published {
         let claim_id = consume.claim_id.as_str().to_owned();
         let _ = state.write(|store| store.forget_pending_keypackage_consume(&claim_id));
         return Err(describe(error));
