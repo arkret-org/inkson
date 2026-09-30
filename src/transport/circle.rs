@@ -19,8 +19,8 @@ pub async fn list_circles(
 /// `ak.circle.member.state`. Spec OpenAPI `ak.self.circle.member.command.add.v1`.
 ///
 /// A `join` signs `parent_membership_revision`, read from the target's parent
-/// Realm `member_state` typed current in the governing Station's Realm State
-/// Snapshot (`circle.md` §9.1); a target that is not a current parent Realm
+/// Realm `member_state` at a complete verified durable cut (`circle.md` §9.1);
+/// a target that is not a current parent Realm
 /// member has no such revision and the join is not authored.
 pub async fn add_circle_member(
     submitter: &EventSubmitter,
@@ -33,23 +33,35 @@ pub async fn add_circle_member(
     let parent_membership_revision = if membership == arkret_sdk::CircleMembership::Join {
         let realm = arkret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))
             .map_err(|err| anyhow::anyhow!("invalid realm id {realm_id:?}: {err:?}"))?;
-        let snapshot = submitter
-            .http()
-            .realm_state_snapshot_head(&realm)
-            .await
-            .map_err(anyhow::Error::from)?;
         Some(
-            snapshot
-                .parent_membership_revision(target_actor)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "the Circle join target is not a current member of its parent Realm"
-                    )
-                })?,
+            submitter
+                .read_parent_membership_revision(&realm, target_actor)
+                .await?,
         )
     } else {
         None
     };
+    submit_circle_member_with_parent_revision(
+        submitter,
+        realm_id,
+        actor,
+        circle_id,
+        target_actor,
+        membership,
+        parent_membership_revision,
+    )
+    .await
+}
+
+pub(crate) async fn submit_circle_member_with_parent_revision(
+    submitter: &EventSubmitter,
+    realm_id: &str,
+    actor: &str,
+    circle_id: &str,
+    target_actor: &arkret_sdk::ActorId,
+    membership: arkret_sdk::CircleMembership,
+    parent_membership_revision: Option<arkret_wire::CurrentRevision>,
+) -> anyhow::Result<arkret_sdk::CircleMembershipOutcome> {
     let event = crate::operation::ak_ops::circle_member_state(
         realm_id,
         actor,

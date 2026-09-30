@@ -2045,6 +2045,43 @@ impl EventSubmitter {
             .map(|store| crate::mls::send_gate::MlsSendGateInput::capture(store, scope))
     }
 
+    pub(crate) async fn read_parent_membership_revision(
+        &self,
+        realm: &arkret_sdk::RealmId,
+        member: &arkret_sdk::ActorId,
+    ) -> anyhow::Result<arkret_wire::CurrentRevision> {
+        let authority = self.authority()?.clone();
+        let store = self
+            .state_store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Circle join requires an account current index"))?;
+        for _ in 0..60 {
+            let location = store.read(|state| state.current_index_location());
+            let index = crate::state::CurrentIndex::open_committed(&authority, location, || {
+                store.read(|state| {
+                    anyhow::ensure!(
+                        state.active_authority().as_ref() == Some(&authority),
+                        "the active account changed before the Circle join current read"
+                    );
+                    anyhow::ensure!(
+                        !state.current_reset_required(),
+                        "Circle join awaits a fresh account baseline"
+                    );
+                    Ok(state.current_generation())
+                })
+            })
+            .await?;
+            if let Some(revision) = index
+                .read_parent_membership_revision_at_complete_cut(realm, member)
+                .await?
+            {
+                return Ok(revision);
+            }
+            crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
+        }
+        anyhow::bail!("Circle join requires a complete verified parent Realm cut")
+    }
+
     /// Refuse an application body the durable accepted MLS current of its
     /// scope does not admit (encryption-and-audit §2.5.2).
     ///

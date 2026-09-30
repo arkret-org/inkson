@@ -975,6 +975,42 @@ impl CurrentIndex {
             Some(_) => anyhow::bail!("MLS current selector returned a mismatched result"),
         }
     }
+    /// Circle join authoring uses a parent row at one complete durable cut.
+    pub(crate) async fn read_parent_membership_revision_ready(
+        &self,
+        realm: &arkret_sdk::RealmId,
+        member: &arkret_sdk::ActorId,
+    ) -> anyhow::Result<arkret_wire::CurrentRevision> {
+        self.read_parent_membership_revision_at_complete_cut(realm, member)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!("Circle join requires a complete verified parent Realm cut")
+            })
+    }
+
+    pub(crate) async fn read_parent_membership_revision_at_complete_cut(
+        &self,
+        realm: &arkret_sdk::RealmId,
+        member: &arkret_sdk::ActorId,
+    ) -> anyhow::Result<Option<arkret_wire::CurrentRevision>> {
+        let _lease = self.lease.lock().await;
+        let generation = self.generation.load(Ordering::Acquire);
+        let progress = self.progress_at(realm.as_str(), generation).await?;
+        if !progress_is_complete_cut(&progress, realm) {
+            return Ok(None);
+        }
+        let selector = CurrentSelector::MemberState {
+            actor_id: member.clone(),
+        };
+        self.ready_selector(realm.as_str(), &selector, generation)
+            .await?
+            .and_then(|entry| entry.parent_membership_revision(realm, member))
+            .map(Some)
+            .ok_or_else(|| {
+                anyhow::anyhow!("the Circle join target has no verified current parent Realm join")
+            })
+    }
+
     /// A Call selector derives from its accepted create Event. Only the installed
     /// verified current cut may establish its existence and exact scope.
     pub(crate) async fn read_call_state_ready(
@@ -2465,6 +2501,76 @@ mod tests {
         assert_eq!(
             index.read_selector(REALM, &profile).await.unwrap(),
             Some(row(1, false))
+        );
+    }
+
+    #[tokio::test]
+    async fn circle_parent_revision_requires_complete_durable_cut_and_current_join() {
+        let path = path();
+        let index = index(&path, 0).await;
+        let realm = arkret_sdk::RealmId::new(REALM).unwrap();
+        let row = member_row(REALM, "ak:did_core:web:parent-member.example", 1);
+        let TypedCurrentResult::Value {
+            selector: CurrentSelector::MemberState { actor_id: member },
+            revision,
+            ..
+        } = &row
+        else {
+            panic!("member fixture has another family")
+        };
+        let member = member.clone();
+        let expected = revision.clone();
+        assert!(
+            index
+                .read_parent_membership_revision_ready(&realm, &member)
+                .await
+                .is_err()
+        );
+        index
+            .stage_frame(0, &frame(vec![row], Some(baseline(CURSORS[0], 1, false))))
+            .await
+            .unwrap()
+            .finish();
+        assert!(
+            index
+                .read_parent_membership_revision_ready(&realm, &member)
+                .await
+                .is_err()
+        );
+        index
+            .stage_frame(1, &frame(vec![], Some(baseline(CURSORS[0], 1, true))))
+            .await
+            .unwrap()
+            .finish();
+        assert_eq!(
+            index
+                .read_parent_membership_revision_ready(&realm, &member)
+                .await
+                .unwrap(),
+            expected
+        );
+        assert!(
+            index
+                .read_parent_membership_revision_ready(
+                    &arkret_sdk::RealmId::new(OTHER_REALM).unwrap(),
+                    &member
+                )
+                .await
+                .is_err()
+        );
+        let mut left = member_row(REALM, "ak:did_core:web:parent-member.example", 2);
+        let TypedCurrentResult::Value { value, .. } = &mut left;
+        *value = json!({"membership":"leave"});
+        index
+            .stage_frame(2, &frame(vec![left], None))
+            .await
+            .unwrap()
+            .finish();
+        assert!(
+            index
+                .read_parent_membership_revision_ready(&realm, &member)
+                .await
+                .is_err()
         );
     }
 

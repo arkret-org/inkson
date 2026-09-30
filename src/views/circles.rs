@@ -493,6 +493,9 @@ pub fn CirclesPanel(
                                         spawn(async move {
                                             let outcome = with_authed_api(&base, credential, |api| async move {
                                                 let submitter = api.event_submitter()?;
+                                                let parent_revision = submitter
+                                                    .read_parent_membership_revision(&realm_id, &creator_actor)
+                                                    .await?;
                                                 let request = arkret_sdk::CircleCreateRequestBody {
                                                     create_event: arkret_wire::EventAdmissionSubmission::new(
                                                         submitter
@@ -504,13 +507,14 @@ pub fn CirclesPanel(
                                                 let created = api.http().circle_create(&request).await?;
                                                 // The Circle id only exists once the create Event is
                                                 // accepted, so the join Event is authored after it.
-                                                crate::transport::circle::add_circle_member(
+                                                crate::transport::circle::submit_circle_member_with_parent_revision(
                                                     &submitter,
                                                     created.realm_id.as_str(),
                                                     actor_id.as_str(),
                                                     created.circle_id.as_str(),
                                                     &creator_actor,
                                                     arkret_sdk::CircleMembership::Join,
+                                                    Some(parent_revision),
                                                 ).await?;
                                                 Ok::<_, anyhow::Error>(created.circle_id.to_string())
                                             }).await;
