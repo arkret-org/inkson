@@ -148,10 +148,12 @@ pub(super) fn KanbanEffects(
         let realm = local_realm_id.clone();
         use_effect(move || {
             let raw_operations = state_store.read().load().raw_operations;
+            let entries = state_store.read().realm_current_state_entries(&realm);
             let containers = space_container_views_from_projection_and_ops(
                 &lifecycle_container_projection(),
                 &raw_operations,
                 &realm,
+                &entries,
             );
             // `board_space_options_from_projection` fails closed on non-SpaceId
             // rows, so a pending Board create never enters the confirmed option

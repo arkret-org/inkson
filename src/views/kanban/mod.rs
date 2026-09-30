@@ -928,8 +928,15 @@ pub fn KanbanPanel(
     let (initial_board_options, initial_board_pending_create) = {
         let seed_options = initial_board_space_options(seed_fallback_allowed);
         let state = state_store.read().load();
-        let options =
-            overlay_local_board_space_options(seed_options, &state.raw_operations, &local_realm_id);
+        let entries = state_store
+            .read()
+            .realm_current_state_entries(&local_realm_id);
+        let options = overlay_local_board_space_options(
+            seed_options,
+            &state.raw_operations,
+            &local_realm_id,
+            &entries,
+        );
         // A pending create outlives a refresh via the durable op log. While
         // one exists, cold start must NOT seed the first confirmed Board —
         // the pending surface (title + creating state) owns the view until
@@ -1059,6 +1066,7 @@ pub fn KanbanPanel(
                     overlay_local_card_update_records(cols, &raw_operations, decrypt_ctx.as_ref());
                 return overlay_local_card_assignment_records(cols, &raw_operations);
             }
+            let entries = decrypt_store.realm_current_state_entries(&seed_realm_id);
             let (mut cols, ..) = project_board_with_projection_for_actor(
                 &raw_operations,
                 &projected_containers,
@@ -1067,8 +1075,8 @@ pub fn KanbanPanel(
                 &seed_realm_id,
                 decrypt_ctx.as_ref(),
                 &self_actor_id,
+                &entries,
             );
-            let entries = decrypt_store.realm_current_state_entries(&seed_realm_id);
             install_current_card_sources(
                 &mut cols,
                 &entries,

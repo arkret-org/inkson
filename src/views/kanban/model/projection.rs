@@ -125,7 +125,10 @@ pub(crate) fn overlay_local_board_space_options(
     mut options: Vec<BoardSpaceOption>,
     raw_operations: &[RawOperationRecord],
     realm_id: &str,
+    current_entries: &[arkret_wire::TypedCurrentResult],
 ) -> Vec<BoardSpaceOption> {
+    let terminal_ids = terminal_space_ids_from_current(current_entries, realm_id);
+    options.retain(|option| !terminal_ids.contains(option.id.as_str()));
     for local_create in local_space_create_records(raw_operations, realm_id)
         .into_iter()
         .filter(|local_create| local_create.kind == "board")
@@ -136,12 +139,12 @@ pub(crate) fn overlay_local_board_space_options(
         let Ok(local_id) = arkret_sdk::SpaceId::new(local_create.id.clone()) else {
             continue;
         };
+        if terminal_ids.contains(local_id.as_str()) {
+            continue;
+        }
         if let Some(existing) = options.iter_mut().find(|option| option.id == local_id) {
             if should_replace_projected_container_title(&existing.title, existing.id.as_str()) {
                 existing.title = local_create.title;
-            }
-            if existing.state == SpaceContainerLifecycleState::Tombstoned {
-                existing.state = SpaceContainerLifecycleState::Active;
             }
             continue;
         }
@@ -153,6 +156,37 @@ pub(crate) fn overlay_local_board_space_options(
     }
     sort_board_space_options(&mut options);
     options
+}
+
+/// Read only negative lifecycle facts from the installed verified current index.
+/// This never grants visibility or reconstructs a missing container from history.
+pub(crate) fn terminal_space_ids_from_current(
+    entries: &[arkret_wire::TypedCurrentResult],
+    realm_id: &str,
+) -> std::collections::BTreeSet<String> {
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let arkret_wire::TypedCurrentResult::Value {
+                selector: arkret_wire::CurrentSelector::Space { space_id },
+                source_stream_ref:
+                    arkret_wire::CommitStreamRef::Realm {
+                        realm_id: source_realm,
+                    },
+                value,
+                ..
+            } = entry
+            else {
+                return None;
+            };
+            let space: arkret_sdk::Space = serde_json::from_value(value.clone()).ok()?;
+            (source_realm.as_str() == realm_id
+                && space.realm_id.as_str() == realm_id
+                && space.id.as_ref() == Some(space_id)
+                && space.state == Some(arkret_sdk::SpaceState::Tombstoned))
+            .then(|| space_id.to_string())
+        })
+        .collect()
 }
 
 /// Default-actor form of [`columns_from_lifecycle_projection_for_actor`].

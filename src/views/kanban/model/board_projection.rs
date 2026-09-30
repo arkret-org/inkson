@@ -532,7 +532,7 @@ pub(crate) fn space_container_views_from_ops(
     ops: &[RawOperationRecord],
     realm_id: &str,
 ) -> Vec<crate::state::projection_views::SpaceContainerProjectionView> {
-    space_container_views_from_projection_and_ops(&[], ops, realm_id)
+    space_container_views_from_projection_and_ops(&[], ops, realm_id, &[])
 }
 
 /// Merge the current Space projection baseline with visible/local Events.
@@ -542,7 +542,9 @@ pub(crate) fn space_container_views_from_projection_and_ops(
     projected: &[crate::state::projection_views::SpaceContainerProjectionView],
     ops: &[RawOperationRecord],
     realm_id: &str,
+    current_entries: &[arkret_wire::TypedCurrentResult],
 ) -> Vec<crate::state::projection_views::SpaceContainerProjectionView> {
+    let terminal_ids = terminal_space_ids_from_current(current_entries, realm_id);
     let aliases = event_derived_target_aliases(ops);
     let mut order = projected
         .iter()
@@ -568,6 +570,9 @@ pub(crate) fn space_container_views_from_projection_and_ops(
                 continue;
             }
             local.id = resolve_event_derived_target_alias(&aliases, &local.id);
+            if terminal_ids.contains(&local.id) {
+                continue;
+            }
             local.parent_space_id = local
                 .parent_space_id
                 .as_deref()
@@ -603,6 +608,7 @@ pub(crate) fn space_container_views_from_projection_and_ops(
                 if let Some(id) = op_space_target_id(record)
                     .map(|id| resolve_event_derived_target_alias(&aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
+                    && view.state != arkret_sdk::SpaceState::Tombstoned
                 {
                     apply_space_update_to_view(view, record);
                 }
@@ -611,6 +617,7 @@ pub(crate) fn space_container_views_from_projection_and_ops(
                 if let Some(id) = op_space_target_id(record)
                     .map(|id| resolve_event_derived_target_alias(&aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
+                    && view.state != arkret_sdk::SpaceState::Tombstoned
                 {
                     view.state = arkret_sdk::SpaceState::Archived;
                 }
@@ -619,6 +626,7 @@ pub(crate) fn space_container_views_from_projection_and_ops(
                 if let Some(id) = op_space_target_id(record)
                     .map(|id| resolve_event_derived_target_alias(&aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
+                    && view.state != arkret_sdk::SpaceState::Tombstoned
                 {
                     view.state = arkret_sdk::SpaceState::Active;
                 }
@@ -628,6 +636,7 @@ pub(crate) fn space_container_views_from_projection_and_ops(
     }
     order
         .into_iter()
+        .filter(|id| !terminal_ids.contains(id))
         .filter_map(|id| by_id.remove(&id))
         .collect()
 }
@@ -666,6 +675,7 @@ pub(crate) fn project_board_with_projection(
         realm_id,
         decrypt_ctx,
         "",
+        &[],
     )
 }
 
@@ -677,11 +687,16 @@ pub(crate) fn project_board_with_projection_for_actor(
     realm_id: &str,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
     self_actor_id: &str,
+    current_entries: &[arkret_wire::TypedCurrentResult],
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
     let aliases = event_derived_target_aliases(ops);
     let preferred_board_id = resolve_event_derived_target_alias(&aliases, preferred_board_id);
-    let containers =
-        space_container_views_from_projection_and_ops(projected_containers, ops, realm_id);
+    let containers = space_container_views_from_projection_and_ops(
+        projected_containers,
+        ops,
+        realm_id,
+        current_entries,
+    );
     let strands = strand_views_from_projection_and_ops(projected_strands, ops);
     let (columns, board_options, board_id) = columns_from_lifecycle_projection_for_actor(
         &containers,
@@ -1151,7 +1166,8 @@ mod tests {
             }),
         )];
 
-        let containers = space_container_views_from_projection_and_ops(&projected, &ops, REALM);
+        let containers =
+            space_container_views_from_projection_and_ops(&projected, &ops, REALM, &[]);
         let options = board_space_options_from_projection(&containers);
         assert_eq!(options.len(), 1);
         assert_eq!(options[0].id.as_str(), BOARD);

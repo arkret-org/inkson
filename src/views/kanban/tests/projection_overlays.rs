@@ -94,7 +94,7 @@ fn pending_board_create_never_enters_confirmed_board_options() {
         "a pending create keyed by its holder-local handle is not a Board option"
     );
     let overlaid =
-        overlay_local_board_space_options(Vec::new(), &raw_operations, PENDING_TEST_REALM);
+        overlay_local_board_space_options(Vec::new(), &raw_operations, PENDING_TEST_REALM, &[]);
     assert!(
         overlaid.is_empty(),
         "the local overlay must not promote a pending create into the confirmed option set"
@@ -277,6 +277,122 @@ fn missing_or_terminal_board_metadata_cannot_be_recreated_from_a_list_parent() {
         list, canonical,
         "derived options cannot clear a canonical parent reference"
     );
+}
+
+#[test]
+fn historical_create_or_restore_cannot_reactivate_a_terminal_board() {
+    let raw = vec![accepted_board_create_record()];
+    let terminal = BoardSpaceOption {
+        id: arkret_sdk::SpaceId::new(PENDING_TEST_SPACE).unwrap(),
+        title: "Terminal board".to_owned(),
+        state: SpaceContainerLifecycleState::Tombstoned,
+    };
+    let overlaid = overlay_local_board_space_options(vec![terminal], &raw, PENDING_TEST_REALM, &[]);
+    assert_eq!(
+        overlaid[0].state,
+        SpaceContainerLifecycleState::Tombstoned,
+        "an old accepted create cannot reopen a confirmed terminal target"
+    );
+    let metadata = crate::state::projection_views::SpaceContainerProjectionView {
+        space_id: PENDING_TEST_SPACE.to_owned(),
+        realm_id: PENDING_TEST_REALM.to_owned(),
+        kind: "board".to_owned(),
+        title: "Terminal board".to_owned(),
+        state: arkret_sdk::SpaceState::Tombstoned,
+        rank: None,
+        parent_space_id: None,
+    };
+    let mut restore = raw[0].clone();
+    restore.payload = json!({"kind": "ak.space.restore", "body": {"space_id": PENDING_TEST_SPACE}});
+    let views = space_container_views_from_projection_and_ops(
+        &[metadata],
+        &[raw[0].clone(), restore],
+        PENDING_TEST_REALM,
+        &[],
+    );
+    assert_eq!(
+        views[0].state,
+        arkret_sdk::SpaceState::Tombstoned,
+        "confirmed terminal metadata dominates an old restore annotation"
+    );
+}
+
+#[test]
+fn terminal_current_suppresses_history_when_projection_omits_the_board() {
+    let raw = vec![accepted_board_create_record()];
+    let mut space = arkret_sdk::Space::new(
+        arkret_sdk::SpaceId::new(PENDING_TEST_SPACE).unwrap(),
+        arkret_sdk::RealmId::new(PENDING_TEST_REALM).unwrap(),
+        "board",
+        "Terminal board",
+        serde_json::from_value(json!({"kind":"account","account_id":{
+            "principal_id":"ak:did_core:web:alice.example",
+            "station_id":"ak:did_core:web:station.example"}}))
+        .unwrap(),
+    );
+    space.state = Some(arkret_sdk::SpaceState::Tombstoned);
+    let entry = arkret_wire::TypedCurrentResult::Value {
+        selector: arkret_wire::CurrentSelector::Space {
+            space_id: space.id.clone().unwrap(),
+        },
+        source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+            realm_id: space.realm_id.clone(),
+        },
+        revision: arkret_wire::CurrentRevision {
+            commit_id: arkret_wire::RealmCommitId::from_digest([9; 32]),
+            stream_position: 9,
+        },
+        value: serde_json::to_value(&space).unwrap(),
+    };
+    let entries = vec![entry];
+    let canonical = entries.clone();
+    assert!(
+        overlay_local_board_space_options(Vec::new(), &raw, PENDING_TEST_REALM, &entries)
+            .is_empty()
+    );
+    assert!(
+        space_container_views_from_projection_and_ops(&[], &raw, PENDING_TEST_REALM, &entries)
+            .is_empty()
+    );
+    let (columns, options, selected) = project_board_with_projection_for_actor(
+        &raw,
+        &[],
+        &[],
+        PENDING_TEST_SPACE,
+        PENDING_TEST_REALM,
+        None,
+        "",
+        &entries,
+    );
+    assert!(columns.is_empty());
+    assert!(options.is_empty());
+    assert!(selected.is_none());
+    assert_eq!(
+        entries, canonical,
+        "derived suppression preserves canonical current and revision"
+    );
+
+    let mut foreign = entries.clone();
+    let arkret_wire::TypedCurrentResult::Value {
+        source_stream_ref, ..
+    } = &mut foreign[0]
+    else {
+        unreachable!()
+    };
+    *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
+        realm_id: arkret_sdk::RealmId::new("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-")
+            .unwrap(),
+    };
+    assert!(terminal_space_ids_from_current(&foreign, PENDING_TEST_REALM).is_empty());
+    foreign = entries.clone();
+    let arkret_wire::TypedCurrentResult::Value { selector, .. } = &mut foreign[0] else {
+        unreachable!()
+    };
+    *selector = arkret_wire::CurrentSelector::Space {
+        space_id: arkret_sdk::SpaceId::new("ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-")
+            .unwrap(),
+    };
+    assert!(terminal_space_ids_from_current(&foreign, PENDING_TEST_REALM).is_empty());
 }
 
 #[test]
