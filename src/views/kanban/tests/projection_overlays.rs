@@ -280,6 +280,25 @@ fn missing_or_terminal_board_metadata_cannot_be_recreated_from_a_list_parent() {
 }
 
 #[test]
+fn space_create_without_its_own_realm_cannot_borrow_the_page_realm() {
+    let mut raw = accepted_board_create_record();
+    raw.realm_id = None;
+    raw.payload["body"]["object"]
+        .as_object_mut()
+        .unwrap()
+        .remove("realm_id");
+    assert!(local_space_create_records(&[raw.clone()], PENDING_TEST_REALM).is_empty());
+    assert!(
+        space_container_views_from_projection_and_ops(&[], &[raw], PENDING_TEST_REALM, &[])
+            .is_empty()
+    );
+    let mut foreign = accepted_board_create_record();
+    foreign.payload["body"]["object"]["realm_id"] =
+        json!("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-");
+    assert!(local_space_create_records(&[foreign], PENDING_TEST_REALM).is_empty());
+}
+
+#[test]
 fn historical_create_or_restore_cannot_reactivate_a_terminal_board() {
     let raw = vec![accepted_board_create_record()];
     let terminal = BoardSpaceOption {

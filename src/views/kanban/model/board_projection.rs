@@ -569,6 +569,9 @@ pub(crate) fn space_container_views_from_projection_and_ops(
             if !local_space_create_matches_realm(&local, realm_id) {
                 continue;
             }
+            let Some(local_realm_id) = local.realm_id.take() else {
+                continue;
+            };
             local.id = resolve_event_derived_target_alias(&aliases, &local.id);
             if terminal_ids.contains(&local.id) {
                 continue;
@@ -590,7 +593,7 @@ pub(crate) fn space_container_views_from_projection_and_ops(
                 local.id.clone(),
                 crate::state::projection_views::SpaceContainerProjectionView {
                     space_id: local.id,
-                    realm_id: local.realm_id.unwrap_or_else(|| trim_realm_id(realm_id)),
+                    realm_id: local_realm_id,
                     kind: local.kind,
                     title: local.title,
                     state: arkret_sdk::SpaceState::Active,

@@ -103,11 +103,11 @@ pub(crate) fn local_space_create_matches_realm(
     realm_id: &str,
 ) -> bool {
     let realm_id = realm_id.trim();
-    realm_id.is_empty()
-        || local_create
+    !realm_id.is_empty()
+        && local_create
             .realm_id
             .as_deref()
-            .is_none_or(|local_realm_id| trim_realm_id(local_realm_id) == trim_realm_id(realm_id))
+            .is_some_and(|local_realm_id| trim_realm_id(local_realm_id) == trim_realm_id(realm_id))
 }
 
 pub(crate) fn local_space_create_records(
