@@ -160,6 +160,17 @@ pub async fn upload_actor_private_file(
     let account_data_key = prepared.account_data_key.clone();
     let ciphertext_len = prepared.ciphertext.len();
     let content_digest = prepared.content_digest.clone();
+    let encryption = arkret_models_collaboration::objects::blob::BlobStorageEncryption {
+        scheme: match prepared.encryption.scheme.as_str() {
+            arkret_sdk::BLOB_SCHEME_STREAM_AEAD_V1 => {
+                arkret_models_collaboration::objects::blob::BlobStorageEncryptionScheme::StreamV1
+            }
+            FILE_TRANSFER_BLOB_SCHEME => {
+                arkret_models_collaboration::objects::blob::BlobStorageEncryptionScheme::WholeFileV1
+            }
+            _ => anyhow::bail!("unsupported file-transfer storage encryption scheme"),
+        },
+    };
     let ciphertext = std::mem::take(&mut prepared.ciphertext);
     // Auto-dispatch: large ciphertexts take the resumable (tus) binding
     // when the server advertises it in /_arkret/describe, with automatic
@@ -172,6 +183,7 @@ pub async fn upload_actor_private_file(
             ciphertext,
             &content_digest,
             principal_control_realm_id.as_str(),
+            encryption,
         )
         .await?;
     if upload.size_bytes != ciphertext_len as u64 {

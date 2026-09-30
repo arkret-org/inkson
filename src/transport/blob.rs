@@ -18,7 +18,7 @@ impl<'a> BlobEndpoints<'a> {
         realm_id: Option<&str>,
         content_digest: Option<&str>,
         filename: Option<&str>,
-        purpose: Option<&str>,
+        encryption: Option<arkret_models_collaboration::objects::blob::BlobStorageEncryption>,
     ) -> anyhow::Result<arkret_models_collaboration::objects::blob::BlobUploadMetadata> {
         let realm_id = realm_id
             .map(str::trim)
@@ -46,7 +46,7 @@ impl<'a> BlobEndpoints<'a> {
                 size_bytes: size_bytes as u64,
                 media_type,
                 filename: filename.map(ToOwned::to_owned),
-                purpose: purpose.map(ToOwned::to_owned),
+                encryption,
             },
         )
     }
@@ -104,7 +104,7 @@ impl<'a> BlobEndpoints<'a> {
             Some(realm_id),
             Some(&digest),
             None,
-            Some("long_text"),
+            None,
         )?;
         let outcome = self
             .transport
@@ -174,15 +174,14 @@ impl<'a> BlobEndpoints<'a> {
         ciphertext: Vec<u8>,
         content_digest: &str,
         principal_control_realm_id: &str,
+        encryption: arkret_models_collaboration::objects::blob::BlobStorageEncryption,
     ) -> anyhow::Result<crate::models::BlobUploadOutcome> {
         if ciphertext.len() >= RESUMABLE_UPLOAD_THRESHOLD_BYTES
             && let Some(base_url) = self.resumable_upload_base_url().await
         {
-            // Private/E2EE resumable uploads intentionally omit Upload-Metadata.
-            // Upload-Length carries the byte count, and the authenticated
-            // service binds ownership without exposing transfer descriptors in
-            // a transport header (media-and-blob.md section 2.1).
-            let options = arkret_sdk::http_client::BlobResumableUploadOptions::new();
+            // Only the storage classification is disclosed for private ciphertext.
+            let options =
+                arkret_sdk::http_client::BlobResumableUploadOptions::new(Some(encryption));
             match self
                 .transport
                 .http()
@@ -204,7 +203,7 @@ impl<'a> BlobEndpoints<'a> {
             Some(principal_control_realm_id),
             Some(content_digest),
             None,
-            Some("file_transfer"),
+            Some(encryption),
         )?;
         self.transport
             .http()
