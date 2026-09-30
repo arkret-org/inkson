@@ -166,6 +166,13 @@ pub(crate) async fn should_resume_creator_genesis(
     authority: &arkret_sdk::AccountId,
 ) -> Result<bool, String> {
     let submitter = api.event_submitter().map_err(|e| e.to_string())?;
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id).map_err(|e| e.to_string())?,
+    };
+    let durable_intent = submitter
+        .creator_bootstrap_intent(&scope)
+        .await
+        .map_err(|e| format!("read durable creator intent: {e}"))?;
     let accepted = submitter
         .find_mls_genesis_event_id(realm_id)
         .await
@@ -199,6 +206,7 @@ pub(crate) async fn should_resume_creator_genesis(
         .await
         .map_err(|error| format!("resolve accepted Realm creator: {error}"))?;
     if !direct_conversation
+        && durable_intent.is_none()
         && !creator_genesis_has_resume_evidence(false, staged_checkpoint, durable_queued_genesis)
     {
         return Ok(false);
@@ -292,6 +300,20 @@ async fn bootstrap_creator_realm_mls_genesis(
     let submitter = api
         .event_submitter()
         .map_err(|error| format!("MLS genesis Event submitter: {error}"))?;
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id).map_err(|e| e.to_string())?,
+    };
+    let durable_intent = submitter
+        .creator_bootstrap_intent(&scope)
+        .await
+        .map_err(|e| format!("read durable creator intent: {e}"))?;
+    if let Some(intent) = &durable_intent
+        && intent.creator_device_id() != device_id
+    {
+        return Err(
+            "creator intent belongs to another device; use Welcome or device recovery".into(),
+        );
+    }
     // Resolve exact accepted authority; a local presentation row is not evidence.
     if !authenticated_account_is_realm_creator(api, state_store, realm_id, authority).await? {
         return Err("the authenticated actor is not the accepted Realm creator".to_owned());
@@ -337,7 +359,10 @@ async fn bootstrap_creator_realm_mls_genesis(
         )
         .await;
     }
-    if !explicit_start && !state_store.read(|store| has_staged_creator_genesis(store, realm_id)) {
+    if !explicit_start
+        && durable_intent.is_none()
+        && !state_store.read(|store| has_staged_creator_genesis(store, realm_id))
+    {
         return Err(
             "creator MLS resume has no accepted Genesis or staged local checkpoint".to_owned(),
         );
@@ -470,35 +495,6 @@ async fn bootstrap_creator_realm_mls_genesis(
                     });
                     match restored_summary {
                         Ok(summary) => summary,
-                        Err(crate::mls::runtime::MlsRuntimeError::Genesis(reason))
-                            if reason
-                                == crate::mls::runtime::EPOCH_ZERO_SNAPSHOT_GOVERNANCE_BINDING_MISMATCH =>
-                        {
-                            // The server has just confirmed that no Genesis is
-                            // accepted. The persisted epoch-0 group is therefore
-                            // staged authoring state, not history. Recreate it
-                            // under the now-current verified proof; the runtime
-                            // additionally refuses this replacement if any local
-                            // accepted/emitted marker exists.
-                            Some(
-                                state_store
-                                    .write(|store| {
-                                        crate::mls::runtime::recreate_unaccepted_creator_mls_checkpoint(
-                                            store,
-                                            secure_store.as_ref(),
-                                            realm_id,
-                                            authority,
-                                            device_id,
-                                        )
-                                    })
-                                    .map_err(|error| {
-                                        format!(
-                                            "rebasing the unaccepted epoch-0 MLS snapshot failed: {}",
-                                            error.user_message()
-                                        )
-                                    })?,
-                            )
-                        }
                         Err(error) => {
                             return Err(format!(
                                 "restoring the epoch-0 MLS summary failed: {}",

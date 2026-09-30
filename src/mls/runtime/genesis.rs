@@ -3,7 +3,7 @@
 use super::{MlsRuntimeError, load_device_checkpoint_secret, load_or_create_account_mls_secret};
 use crate::secure_key_store::SecureKeyStore;
 
-pub(crate) const EPOCH_ZERO_SNAPSHOT_GOVERNANCE_BINDING_MISMATCH: &str = "epoch-0 snapshot governance binding differs from the verified Genesis Seal proof; recreate local MLS state";
+pub(crate) const EPOCH_ZERO_SNAPSHOT_GOVERNANCE_BINDING_MISMATCH: &str = "epoch-0 snapshot differs from the immutable Genesis scope or group; recover the original material";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InitialMlsCheckpointSummary {
@@ -131,82 +131,6 @@ pub fn ensure_creator_mls_checkpoint_for_effective_scope_with_binding(
     device_id: &arkret_sdk::DeviceId,
     sidecar_id: Option<arkret_sdk::SidecarId>,
 ) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
-    create_creator_mls_checkpoint_for_effective_scope_with_binding(
-        state_store,
-        secure_store,
-        realm_id,
-        circle_id,
-        authority,
-        device_id,
-        sidecar_id,
-        false,
-    )
-}
-
-/// Replace an epoch-0 creator snapshot that never became an accepted Genesis.
-///
-/// The caller must have independently established that the server has no
-/// accepted `ak.mls.genesis`. The local guards below additionally refuse to
-/// overwrite any snapshot carrying an accepted transition reference or an
-/// emitted marker. This is the recovery path for a create task interrupted
-/// after the staged snapshot was persisted but before Genesis submission,
-/// while the verified Realm checkpoint subsequently moved forward.
-pub(crate) fn recreate_unaccepted_creator_mls_checkpoint(
-    state_store: &mut crate::state::LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    authority: &arkret_sdk::AccountId,
-    device_id: &arkret_sdk::DeviceId,
-) -> Result<InitialMlsCheckpointSummary, MlsRuntimeError> {
-    let snapshot = state_store.mls_checkpoint_for(realm_id).ok_or_else(|| {
-        MlsRuntimeError::Genesis(
-            "cannot rebase an unaccepted creator snapshot that is missing".to_owned(),
-        )
-    })?;
-    if snapshot.epoch != 0
-        || snapshot.group_state_event_id.is_some()
-        || state_store.mls_genesis_emitted_for(realm_id)
-        || state_store
-            .mls_group_state_ref_for_effective_scope(
-                realm_id,
-                None,
-                &snapshot.group_id,
-                snapshot.epoch,
-            )
-            .is_ok()
-    {
-        return Err(MlsRuntimeError::Genesis(
-            "refusing to replace creator MLS state that may already be accepted".to_owned(),
-        ));
-    }
-
-    create_creator_mls_checkpoint_for_effective_scope_with_binding(
-        state_store,
-        secure_store,
-        realm_id,
-        None,
-        authority,
-        device_id,
-        None,
-        true,
-    )?
-    .ok_or_else(|| {
-        MlsRuntimeError::Genesis(
-            "recreating the unaccepted creator snapshot produced no epoch-0 material".to_owned(),
-        )
-    })
-}
-
-fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
-    state_store: &mut crate::state::LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    circle_id: Option<&str>,
-    authority: &arkret_sdk::AccountId,
-    device_id: &arkret_sdk::DeviceId,
-    sidecar_id: Option<arkret_sdk::SidecarId>,
-    replace_unaccepted_epoch_zero: bool,
-) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
     let realm = realm_id.trim();
     if realm.is_empty() {
         return Err(MlsRuntimeError::Genesis(
@@ -240,11 +164,17 @@ fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
         .canonical_mls_group_id()
         .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
         .to_string();
-    if state_store
-        .mls_checkpoint_for_scope_and_group(&effective_scope, &group_id)
-        .is_some()
-        && !replace_unaccepted_epoch_zero
-    {
+    let existing = if matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
+        state_store.mls_checkpoint_for_scope_and_group(&effective_scope, &group_id)
+    } else {
+        state_store.mls_checkpoint_for_scope(&effective_scope)
+    };
+    if let Some(snapshot) = existing {
+        if snapshot.group_id != group_id {
+            return Err(MlsRuntimeError::Genesis(
+                EPOCH_ZERO_SNAPSHOT_GOVERNANCE_BINDING_MISMATCH.to_owned(),
+            ));
+        }
         return Ok(None);
     }
 

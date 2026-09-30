@@ -221,6 +221,144 @@ async fn account_state_fault_injection_contract_holds_in_browser() {
 
 const CONTRACT_REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
+fn creator_submission(
+    device: &str,
+) -> (
+    arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
+    garth::QueuedSubmission,
+) {
+    use inkson::operation::AuthoredEventExt as _;
+    let station = arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap();
+    let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+        station.clone(),
+    ));
+    let payload = arkret_sdk::RealmCreatePayload::new(
+        arkret_sdk::RealmGenesis::new(
+            arkret_sdk::RealmPurpose::Collaboration,
+            arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
+            arkret_sdk::TrustDomainId::new("ak:trust_domain:did.web.example").unwrap(),
+            arkret_sdk::SecurityClass::Standard,
+            station,
+            arkret_sdk::JoinRule::Invite,
+            arkret_sdk::HistoryAccess::SinceJoin,
+            arkret_sdk::Discoverability::InviteOnly,
+            None,
+            None,
+        )
+        .unwrap(),
+    );
+    let mut create = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::RealmCreate>::new(
+        arkret_sdk::ScopeRef::RealmGenesis,
+        actor.clone(),
+        payload,
+    )
+    .unwrap()
+    .author_with_digest_suite(
+        chrono::DateTime::from_timestamp_millis(1_760_000_000_000).unwrap(),
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap();
+    let method = format!("did:web:alice.example#{device}");
+    create
+        .sign_ed25519(
+            "did:web:alice.example",
+            &method,
+            &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
+        )
+        .unwrap();
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: create.realm_id.clone(),
+    };
+    let submission = garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
+        arkret_wire::EventAdmissionSubmission::new(create.into_event()),
+    ))
+    .unwrap();
+    let intent =
+        arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent::new(
+            actor,
+            scope.clone(),
+            arkret_sdk::DeviceId::new(device).unwrap(),
+            arkret_sdk::DidUrl::new(method).unwrap(),
+            arkret_sdk::MlsGovernanceBindingPayload::new(scope, None, 0, 0, 0).unwrap(),
+            submission.request.clone(),
+        )
+        .unwrap();
+    (intent, submission)
+}
+
+#[wasm_bindgen_test(async)]
+async fn creator_intent_cas_preserves_the_single_winner_across_reopen() {
+    let service_name = format!("creator-intent-{}", js_sys::Date::now());
+    let key = inkson::outbound_store_test_api::outbound_queue_key("nsCreator", "standard");
+    let first = IndexedDbSecureKeyStore::new_async(&service_name)
+        .await
+        .unwrap();
+    let second = IndexedDbSecureKeyStore::new_async(&service_name)
+        .await
+        .unwrap();
+    let left = creator_submission("ak:device:01904100-0000-7000-8000-000000000001");
+    let right = creator_submission("ak:device:01904100-0000-7000-8000-000000000002");
+    assert_eq!(left.0.effective_scope(), right.0.effective_scope());
+    let outcomes = tokio::join!(
+        inkson::outbound_store_test_api::freeze_creator_intent(
+            &first,
+            &key,
+            left.0.clone(),
+            left.1.clone()
+        ),
+        inkson::outbound_store_test_api::freeze_creator_intent(
+            &second,
+            &key,
+            right.0.clone(),
+            right.1.clone()
+        ),
+    );
+    assert_ne!(outcomes.0.is_ok(), outcomes.1.is_ok());
+    let (winner, loser) = if outcomes.0.is_ok() {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    let reopened = IndexedDbSecureKeyStore::new_async(&service_name)
+        .await
+        .unwrap();
+    assert_eq!(
+        inkson::outbound_store_test_api::creator_intents(&reopened, &key)
+            .await
+            .unwrap(),
+        vec![winner.0.clone()]
+    );
+    inkson::outbound_store_test_api::mutate_outbound_queue(&reopened, &key, |queue| {
+        assert_eq!(queue.items().len(), 1);
+        assert_eq!(queue.items()[0].request(), &winner.1.request);
+        queue.enqueue(contract_submission(0), chrono::Utc::now())?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(
+        inkson::outbound_store_test_api::freeze_creator_intent(&reopened, &key, loser.0, loser.1)
+            .await
+            .is_err()
+    );
+    inkson::outbound_store_test_api::freeze_creator_intent(
+        &reopened,
+        &key,
+        winner.0.clone(),
+        winner.1,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        inkson::outbound_store_test_api::creator_intents(&reopened, &key)
+            .await
+            .unwrap(),
+        vec![winner.0]
+    );
+    assert!(browser_local_storage().get_item(&key).unwrap().is_none());
+}
+
 /// One ordinary, structurally valid submission. These contracts are about the
 /// storage tier, so the item only has to be something `SendQueue::enqueue`
 /// accepts and `from_snapshot` reads back.

@@ -881,6 +881,7 @@ pub(super) fn RealmsSection(
                                                         &trust_domain,
                                                         plaintext_services.clone(),
                                                         (!alias.trim().is_empty()).then(|| alias.trim()),
+                                                        request_mls_genesis.then_some(&account_device_id),
                                                     ).await {
                                                     Ok(realm) => {
                                                         // R15: ak.realm.create now returns

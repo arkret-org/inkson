@@ -216,6 +216,39 @@ pub(crate) struct CommittedRealmBootstrap {
     pub(crate) first_commit: arkret_wire::RealmCommit,
 }
 
+/// The closed local selector is derived before any scope-create write. It never
+/// becomes a field of the Realm-create payload or an authority assertion.
+pub(crate) fn creator_intent_for_submission(
+    submission: &garth::QueuedSubmission,
+    device_id: arkret_sdk::DeviceId,
+) -> anyhow::Result<arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent> {
+    let create = submission.primary_event();
+    let scope = match create.kind {
+        arkret_sdk::EventKind::RealmCreate => arkret_sdk::ScopeRef::Realm {
+            realm_id: create.realm_id.clone(),
+        },
+        arkret_sdk::EventKind::CircleCreate => arkret_sdk::ScopeRef::Circle {
+            realm_id: create.realm_id.clone(),
+            circle_id: arkret_sdk::CircleId::from_event_id(&create.event_id),
+        },
+        _ => anyhow::bail!("creator intent requires a Realm or Circle create"),
+    };
+    let proof = create
+        .producer_proof
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("creator intent requires a signed scope-create unit"))?;
+    Ok(
+        arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent::new(
+            create.actor_id.clone(),
+            scope.clone(),
+            device_id,
+            proof.verification_method.clone(),
+            arkret_sdk::MlsGovernanceBindingPayload::new(scope, None, 0, 0, 0)?,
+            submission.request.clone(),
+        )?,
+    )
+}
+
 /// A browser runtime has multiple outbound triggers: the foreground writer and
 /// the account-sync drain. Engines opened on the same durable store do not
 /// share an in-memory lease, so without a runtime single-writer gate both can
@@ -1331,6 +1364,7 @@ impl EventSubmitter {
         &self,
         steps: Vec<EventUnitStep>,
         local_operation_id: String,
+        mls_creator_device: Option<&arkret_sdk::DeviceId>,
     ) -> anyhow::Result<CommittedRealmBootstrap> {
         let _single_writer = outbound_submit_lock().lock().await;
         let events = self.author_event_unit(steps).await?;
@@ -1345,6 +1379,13 @@ impl EventSubmitter {
             events: self.prepare_initial_submissions(&events).await?,
         };
         let submission = QueuedSubmission::realm_bootstrap(unit)?;
+        if let Some(device_id) = mls_creator_device {
+            let intent = creator_intent_for_submission(&submission, device_id.clone())?;
+            self.outbound(OutboundLane::Standard)?
+                .store()
+                .freeze_creator_intent(intent, submission.clone())
+                .await?;
+        }
         let item = self
             .enqueue_and_drive(QueuedWrite {
                 lane: OutboundLane::Standard,
@@ -1366,6 +1407,22 @@ impl EventSubmitter {
             realm_id,
             first_commit: outcome.commits[0].clone(),
         })
+    }
+
+    pub(crate) async fn creator_bootstrap_intent(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<
+        Option<arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent>,
+    > {
+        Ok(self
+            .outbound(OutboundLane::Standard)?
+            .store()
+            .creator_intent(
+                &arkret_sdk::ActorId::account(self.authority()?.clone()),
+                scope,
+            )
+            .await?)
     }
 
     /// Submit the founding unit of a Direct Conversation.

@@ -12,6 +12,7 @@
 //! Events is ciphertext at rest and is not charged against the ~5 MB
 //! localStorage per-origin quota that a single queue can exhaust on its own.
 
+use arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent;
 use garth::OutboundQueueStore;
 use garth::outbound::BoxOutboundFuture;
 
@@ -56,10 +57,37 @@ struct DurableOutboundState {
     items: Vec<garth::SendQueueItem>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     scheduled_dispatches: ScheduledDispatches,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    creator_bootstrap_intents: Vec<MlsCreatorBootstrapIntent>,
 }
 
 impl DurableOutboundState {
     fn validate(&self) -> garth::Result<()> {
+        for (index, intent) in self.creator_bootstrap_intents.iter().enumerate() {
+            intent.validate()?;
+            if self.creator_bootstrap_intents[..index]
+                .iter()
+                .any(|other| other.effective_scope() == intent.effective_scope())
+            {
+                return Err(garth::Error::Storage(
+                    "duplicate creator bootstrap logical key in authoring vault".into(),
+                ));
+            }
+            let item = self
+                .items
+                .iter()
+                .find(|item| item.event_id() == intent.scope_create_event_id())
+                .ok_or_else(|| {
+                    garth::Error::Storage(
+                        "creator intent lost its frozen scope-create queue item".into(),
+                    )
+                })?;
+            if item.request() != intent.signed_scope_create_unit() {
+                return Err(garth::Error::Storage(
+                    "creator intent disagrees with its frozen scope-create queue item".into(),
+                ));
+            }
+        }
         for event_id in self.scheduled_dispatches.values() {
             let item = self
                 .items
@@ -82,6 +110,49 @@ impl DurableOutboundState {
                 submission: event.clone(),
             })?;
         }
+        Ok(())
+    }
+
+    /// First registry cut: retain the whole closed intent and the exact create
+    /// queue item in the same durable unit. A second holder can only join it.
+    fn freeze_creator_intent(
+        &mut self,
+        intent: MlsCreatorBootstrapIntent,
+        submission: garth::QueuedSubmission,
+    ) -> garth::Result<()> {
+        intent.validate()?;
+        if &submission.request != intent.signed_scope_create_unit() {
+            return Err(garth::Error::Protocol(
+                "creator intent does not name the exact frozen create submission".into(),
+            ));
+        }
+        if let Some(existing) = self
+            .creator_bootstrap_intents
+            .iter()
+            .find(|existing| existing.effective_scope() == intent.effective_scope())
+        {
+            if existing != &intent {
+                return Err(garth::Error::Protocol(
+                    "creator bootstrap already belongs to another immutable intent or holder"
+                        .into(),
+                ));
+            }
+        } else {
+            self.creator_bootstrap_intents.push(intent);
+        }
+        let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
+            items: std::mem::take(&mut self.items),
+        });
+        if let Some(existing) = queue.get(&submission.event_id) {
+            if existing.request() != &submission.request {
+                return Err(garth::Error::Protocol(
+                    "creator create identity has different frozen request bytes".into(),
+                ));
+            }
+        } else {
+            queue.enqueue(submission, crate::clock::now_utc())?;
+        }
+        self.items = queue.snapshot().items;
         Ok(())
     }
 }
@@ -122,6 +193,23 @@ async fn mutate_dispatches_in_store<R>(
     storage_key: &str,
     mutation: impl FnOnce(&mut garth::SendQueue, &mut ScheduledDispatches) -> garth::Result<R>,
 ) -> garth::Result<R> {
+    mutate_state_in_store(store, storage_key, |state| {
+        let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
+            items: std::mem::take(&mut state.items),
+        });
+        let result = mutation(&mut queue, &mut state.scheduled_dispatches)?;
+        state.items = queue.snapshot().items;
+        Ok(result)
+    })
+    .await
+}
+
+#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
+async fn mutate_state_in_store<R>(
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+    storage_key: &str,
+    mutation: impl FnOnce(&mut DurableOutboundState) -> garth::Result<R>,
+) -> garth::Result<R> {
     let stored_bytes = store
         .read_secret_bytes_durable(storage_key)
         .await
@@ -134,18 +222,16 @@ async fn mutate_dispatches_in_store<R>(
         .transpose()
         .map_err(|error| garth::Error::Storage(format!("decode outbound queue bytes: {error}")))?;
     let mut state = decode_snapshot(stored)?;
-    let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
-        items: std::mem::take(&mut state.items),
-    });
-    let result = mutation(&mut queue, &mut state.scheduled_dispatches)?;
-    state.items = queue.snapshot().items;
+    let result = mutation(&mut state)?;
     let encoded = encode_snapshot(&state)?;
     // `OutboundQueueStore` exposes reads through the same mutation closure as
     // writes. In particular, `OutboundEngine::snapshot()` lands here. Do not
     // turn an unchanged read into a full AES-GCM + IndexedDB commit while the
     // process-wide outbound gate is held: besides being unnecessary, that can
     // serialize an ordinary Event behind unrelated secure-store maintenance.
-    if stored == Some(encoded.as_str()) || (stored.is_none() && queue.items().is_empty()) {
+    if stored == Some(encoded.as_str())
+        || (stored.is_none() && encoded == encode_snapshot(&DurableOutboundState::default())?)
+    {
         return Ok(result);
     }
     let committed = store
@@ -158,7 +244,7 @@ async fn mutate_dispatches_in_store<R>(
         .map_err(|error| {
             garth::Error::Protocol(format!(
                 "persist outbound queue ({} item(s), {} encoded bytes): {error}",
-                queue.items().len(),
+                state.items.len(),
                 encoded.len(),
             ))
         })?;
@@ -187,6 +273,22 @@ async fn mutate_queue_in_file<R>(
 async fn mutate_dispatches_in_file<R>(
     path: &std::path::Path,
     mutation: impl FnOnce(&mut garth::SendQueue, &mut ScheduledDispatches) -> garth::Result<R>,
+) -> garth::Result<R> {
+    mutate_state_in_file(path, |state| {
+        let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
+            items: std::mem::take(&mut state.items),
+        });
+        let result = mutation(&mut queue, &mut state.scheduled_dispatches)?;
+        state.items = queue.snapshot().items;
+        Ok(result)
+    })
+    .await
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn mutate_state_in_file<R>(
+    path: &std::path::Path,
+    mutation: impl FnOnce(&mut DurableOutboundState) -> garth::Result<R>,
 ) -> garth::Result<R> {
     // Reload and replace under one OS lock shared by independent processes.
     // Locking the data file itself would release protection after its rename.
@@ -229,13 +331,10 @@ async fn mutate_dispatches_in_file<R>(
         }
     };
     let mut state = decode_snapshot(stored.as_deref())?;
-    let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
-        items: std::mem::take(&mut state.items),
-    });
-    let result = mutation(&mut queue, &mut state.scheduled_dispatches)?;
-    state.items = queue.snapshot().items;
+    let result = mutation(&mut state)?;
     let encoded = encode_snapshot(&state)?;
-    if stored.as_deref() == Some(encoded.as_str()) || (stored.is_none() && queue.items().is_empty())
+    if stored.as_deref() == Some(encoded.as_str())
+        || (stored.is_none() && encoded == encode_snapshot(&DurableOutboundState::default())?)
     {
         return Ok(result);
     }
@@ -335,6 +434,48 @@ impl InksonOutboundStore {
                 storage_key: format!("{OUTBOUND_QUEUE_KEY_PREFIX}{scope}"),
             })
         }
+    }
+
+    async fn mutate_state<R>(
+        &self,
+        mutation: impl FnOnce(&mut DurableOutboundState) -> garth::Result<R>,
+    ) -> garth::Result<R> {
+        let _write_guard = outbound_write_gate().lock().await;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            mutate_state_in_file(&self.path, mutation).await
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let store = secure_outbound_store()?;
+            mutate_state_in_store(store.as_ref(), &self.storage_key, mutation).await
+        }
+    }
+
+    pub(crate) async fn freeze_creator_intent(
+        &self,
+        intent: MlsCreatorBootstrapIntent,
+        submission: garth::QueuedSubmission,
+    ) -> garth::Result<()> {
+        self.mutate_state(|state| state.freeze_creator_intent(intent, submission))
+            .await
+    }
+
+    pub(crate) async fn creator_intent(
+        &self,
+        owner: &arkret_sdk::ActorId,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> garth::Result<Option<MlsCreatorBootstrapIntent>> {
+        self.mutate_state(|state| {
+            Ok(state
+                .creator_bootstrap_intents
+                .iter()
+                .find(|intent| {
+                    intent.owner_actor_id() == owner && intent.effective_scope() == scope
+                })
+                .cloned())
+        })
+        .await
     }
 
     async fn mutate_dispatches<R>(
@@ -462,6 +603,29 @@ impl OutboundQueueStore for InksonOutboundStore {
 #[cfg(target_arch = "wasm32")]
 #[doc(hidden)]
 pub mod test_api {
+    pub async fn freeze_creator_intent(
+        store: &dyn crate::secure_key_store::SecureKeyStore,
+        storage_key: &str,
+        intent: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
+        submission: garth::QueuedSubmission,
+    ) -> garth::Result<()> {
+        super::mutate_state_in_store(store, storage_key, |state| {
+            state.freeze_creator_intent(intent, submission)
+        })
+        .await
+    }
+
+    pub async fn creator_intents(
+        store: &dyn crate::secure_key_store::SecureKeyStore,
+        storage_key: &str,
+    ) -> garth::Result<
+        Vec<arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent>,
+    > {
+        super::mutate_state_in_store(store, storage_key, |state| {
+            Ok(state.creator_bootstrap_intents.clone())
+        })
+        .await
+    }
     pub async fn mutate_outbound_queue<R>(
         store: &dyn crate::secure_key_store::SecureKeyStore,
         storage_key: &str,
@@ -485,6 +649,196 @@ mod tests {
     use super::*;
     use crate::operation::AuthoredEventExt as _;
     use crate::test_support as fixture;
+
+    fn creator_fixture(device: &str) -> (MlsCreatorBootstrapIntent, garth::QueuedSubmission) {
+        let mut events = crate::event_submit::author_event_unit_for_test(
+            crate::event_builders::build_realm_bootstrap_steps_for_station(
+                fixture::core_id(fixture::STATION_ID),
+                arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+                    .unwrap(),
+                "did:web:alice.example",
+                "did:web:principal.example",
+                "https://principal.example",
+                "Creator intent",
+                None,
+                "invite_only",
+                "invite",
+                "since_join",
+                "standard",
+                "closed",
+                "sha256",
+                "ak:trust_domain:did.web.example",
+                &[],
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        for event in &mut events {
+            event
+                .sign_ed25519(
+                    "did:web:alice.example",
+                    &format!("did:web:alice.example#{device}"),
+                    &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
+                )
+                .unwrap();
+        }
+        let submission = garth::QueuedSubmission::realm_bootstrap(
+            arkret_models_collaboration::authority_commit::OrdinaryRealmBootstrapUnitSubmission {
+                unit_kind: arkret_models_collaboration::authority_commit::OrdinaryRealmBootstrapUnitKind::OrdinaryRealmBootstrap,
+                idempotency_key: serde_json::from_value(serde_json::json!("01904100-0000-7000-8000-000000000001")).unwrap(),
+                events: events.into_iter().map(|event| arkret_wire::EventAdmissionSubmission::new(event.into_event())).collect(),
+            },
+        ).unwrap();
+        let intent = crate::event_submit::creator_intent_for_submission(
+            &submission,
+            fixture::device_id(device),
+        )
+        .unwrap();
+        (intent, submission)
+    }
+
+    const CREATOR_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
+
+    #[tokio::test]
+    async fn creator_intent_and_create_queue_survive_reopen_together() {
+        let directory = std::env::temp_dir().join(format!(
+            "inkson-creator-intent-{}",
+            arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms())
+        ));
+        let path = directory.join("standard.json");
+        let (intent, submission) = creator_fixture(CREATOR_DEVICE);
+        InksonOutboundStore::for_test_path(path.clone())
+            .freeze_creator_intent(intent.clone(), submission.clone())
+            .await
+            .unwrap();
+        let reopened = InksonOutboundStore::for_test_path(path.clone());
+        assert_eq!(
+            reopened
+                .creator_intent(intent.owner_actor_id(), intent.effective_scope())
+                .await
+                .unwrap(),
+            Some(intent.clone())
+        );
+        reopened
+            .freeze_creator_intent(intent.clone(), submission.clone())
+            .await
+            .unwrap();
+        // Generic queue writes must preserve the closed selector even when they
+        // only know the retry ledger, and must not create a second create unit.
+        reopened
+            .mutate_outbound(|queue| {
+                queue.enqueue(fixture_submission(0), crate::clock::now_utc())?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let snapshot = decode_snapshot(Some(&std::fs::read_to_string(&path).unwrap())).unwrap();
+        assert_eq!(snapshot.creator_bootstrap_intents, vec![intent]);
+        assert_eq!(snapshot.items.len(), 2);
+        assert_eq!(snapshot.items[0].request(), &submission.request);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn independent_native_creator_holders_keep_one_immutable_intent() {
+        let directory = std::env::temp_dir().join(format!(
+            "inkson-creator-race-{}",
+            arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms())
+        ));
+        let path = directory.join("standard.json");
+        let (left_intent, left_submission) = creator_fixture(CREATOR_DEVICE);
+        let (right_intent, right_submission) =
+            creator_fixture("ak:device:01904100-0000-7000-8000-000000000002");
+        assert_eq!(
+            left_intent.effective_scope(),
+            right_intent.effective_scope()
+        );
+        let contenders = [
+            (left_intent, left_submission),
+            (right_intent, right_submission),
+        ];
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let threads = contenders.clone().map(|(intent, submission)| {
+            let path = path.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap()
+                    .block_on(mutate_state_in_file(&path, |state| {
+                        state.freeze_creator_intent(intent, submission)
+                    }))
+            })
+        });
+        let outcomes = threads.map(|thread| thread.join().unwrap());
+        assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+        let reopened = decode_snapshot(Some(&std::fs::read_to_string(&path).unwrap())).unwrap();
+        assert_eq!(reopened.creator_bootstrap_intents.len(), 1);
+        assert_eq!(reopened.items.len(), 1);
+        let winner = outcomes.iter().position(|result| result.is_ok()).unwrap();
+        assert_eq!(reopened.creator_bootstrap_intents[0], contenders[winner].0);
+        assert_eq!(reopened.items[0].request(), &contenders[winner].1.request);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn creator_intent_failure_never_publishes_half_a_create() {
+        let (intent, submission) = creator_fixture(CREATOR_DEVICE);
+        assert!(
+            mutate_state_in_store(
+                &RefusingStore,
+                "inkson.outbound.v1::creator.standard",
+                |state| state.freeze_creator_intent(intent.clone(), submission.clone())
+            )
+            .await
+            .is_err()
+        );
+        let directory = std::env::temp_dir().join(format!(
+            "inkson-creator-fault-{}",
+            arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms())
+        ));
+        let path = directory.join("standard.json");
+        mutate_queue_in_file(&path, |queue| {
+            queue.enqueue(fixture_submission(0), crate::clock::now_utc())?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let committed = std::fs::read_to_string(&path).unwrap();
+        std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+        assert!(
+            mutate_state_in_file(&path, |state| state
+                .freeze_creator_intent(intent, submission))
+            .await
+            .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), committed);
+        let reopened = decode_snapshot(Some(&committed)).unwrap();
+        assert!(reopened.creator_bootstrap_intents.is_empty());
+        assert_eq!(reopened.items.len(), 1);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn creator_intent_rejects_substituted_queue_and_duplicate_key() {
+        let (intent, submission) = creator_fixture(CREATOR_DEVICE);
+        let mut snapshot = DurableOutboundState::default();
+        assert!(
+            snapshot
+                .freeze_creator_intent(intent.clone(), fixture_submission(0))
+                .is_err()
+        );
+        snapshot
+            .freeze_creator_intent(intent.clone(), submission)
+            .unwrap();
+        snapshot.creator_bootstrap_intents.push(intent);
+        assert!(encode_snapshot(&snapshot).is_err());
+        snapshot.creator_bootstrap_intents.pop();
+        snapshot.items.clear();
+        assert!(encode_snapshot(&snapshot).is_err());
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     type StoreFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;

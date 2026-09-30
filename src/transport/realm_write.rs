@@ -58,6 +58,7 @@ pub async fn create_realm(
     trust_domain: &str,
     plaintext_visible_services: Vec<String>,
     alias: Option<&str>,
+    mls_creator_device: Option<&arkret_sdk::DeviceId>,
 ) -> anyhow::Result<RealmCreateResult> {
     let actor_id = actor_id.trim();
     if actor_id.is_empty() {
@@ -81,9 +82,8 @@ pub async fn create_realm(
         );
     }
     let notary_service_origin = submitter.http().base_url().origin().ascii_serialization();
-    // One CSPRNG salt belongs to this creation intent. The complete unsigned
-    // unit is durably queued before prepare/sign; Garth then persists the
-    // exact signed unit before the first HTTP write.
+    // One CSPRNG salt belongs to this creation intent. The signed unit and an
+    // explicitly selected MLS intent are committed before the first create write.
     let genesis_salt = arkret_sdk::GenesisSalt::generate()?;
     // The Realm id is not minted here: it is derived from the genesis Event
     // the builder produces (spec realm-and-space.md section 2.5.0).
@@ -111,7 +111,7 @@ pub async fn create_realm(
     let idempotency_key =
         arkret_sdk::OperationId::new_v7_at(crate::clock::now_unix_ms()).into_string();
     let committed = submitter
-        .submit_realm_bootstrap_durable(steps, idempotency_key)
+        .submit_realm_bootstrap_durable(steps, idempotency_key, mls_creator_device)
         .await?;
     let realm_id = committed.realm_id.to_string();
 

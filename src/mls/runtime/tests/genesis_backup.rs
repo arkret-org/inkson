@@ -157,13 +157,12 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
 }
 
 #[test]
-fn only_unaccepted_epoch_zero_snapshot_can_be_recreated() {
-    let mut state = temp_state_store("genesis-unaccepted-recreate");
+fn persisted_creator_epoch_zero_is_reused_and_never_recreated() {
+    let mut state = temp_state_store("genesis-no-recreate");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-
     super::seed_human_creator_authorization(actor, device);
     ensure_creator_mls_checkpoint(
         &mut state,
@@ -175,36 +174,43 @@ fn only_unaccepted_epoch_zero_snapshot_can_be_recreated() {
     .unwrap()
     .expect("creator snapshot should be created");
     let staged = state.mls_checkpoint_for(realm).unwrap();
-
-    let recreated = recreate_unaccepted_creator_mls_checkpoint(
-        &mut state,
-        &secure,
-        realm,
-        &fixture::authority(actor),
-        &fixture::device_id(device),
-    )
-    .expect("unaccepted epoch-0 state may be safely recreated");
-    let replacement = state.mls_checkpoint_for(realm).unwrap();
-    assert_eq!(recreated.epoch, 0);
-    assert_eq!(replacement.epoch, 0);
-    assert_eq!(replacement.group_id, staged.group_id);
-    assert_ne!(replacement.salt_hex, staged.salt_hex);
-    assert!(replacement.group_state_event_id.is_none());
-
-    let accepted =
-        arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk").unwrap();
-    state
-        .mark_mls_genesis_emitted_with_event(realm, &accepted)
-        .unwrap();
     assert!(
-        recreate_unaccepted_creator_mls_checkpoint(
+        ensure_creator_mls_checkpoint(
             &mut state,
             &secure,
             realm,
             &fixture::authority(actor),
-            &fixture::device_id(device),
+            &fixture::device_id(device)
+        )
+        .unwrap()
+        .is_none()
+    );
+    assert_eq!(state.mls_checkpoint_for(realm), Some(staged.clone()));
+    let mut corrupt = staged;
+    corrupt.group_id = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [0x73; 32],
+        )),
+    }
+    .canonical_mls_group_id()
+    .unwrap()
+    .to_string();
+    state.save_mls_checkpoint(realm, corrupt.clone()).unwrap();
+    assert!(
+        ensure_creator_mls_checkpoint(
+            &mut state,
+            &secure,
+            realm,
+            &fixture::authority(actor),
+            &fixture::device_id(device)
         )
         .is_err()
+    );
+    assert_eq!(
+        state.mls_checkpoint_for(realm),
+        Some(corrupt),
+        "inconsistent persisted material must never be replaced with new randomness"
     );
 }
 
