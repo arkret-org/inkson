@@ -1683,7 +1683,11 @@ impl EventSubmitter {
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             self.quarantine_superseded_items(&outbound, &fence).await?;
             match outbound
-                .submit_next(&authority_client, &options)
+                .submit_next_checked(&authority_client, &options, |request| async move {
+                    self.ensure_queued_circle_send_gate(&request)
+                        .await
+                        .map_err(|error| error.to_string())
+                })
                 .await
                 .map_err(anyhow::Error::from)?
             {
@@ -1961,7 +1965,11 @@ impl EventSubmitter {
                 .saturating_add(self.quarantine_superseded_items(&outbound, &fence).await?);
             let options = arkret_sdk::http_client::ClientRequestOptions::new();
             match outbound
-                .submit_next(&authority_client, &options)
+                .submit_next_checked(&authority_client, &options, |request| async move {
+                    self.ensure_queued_circle_send_gate(&request)
+                        .await
+                        .map_err(|error| error.to_string())
+                })
                 .await
                 .map_err(anyhow::Error::from)?
             {
@@ -2080,6 +2088,31 @@ impl EventSubmitter {
             crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
         }
         anyhow::bail!("Circle join requires a complete verified parent Realm cut")
+    }
+
+    async fn ensure_queued_circle_send_gate(
+        &self,
+        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+    ) -> anyhow::Result<()> {
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(
+            submission,
+        ) = request
+        else {
+            return Ok(());
+        };
+        let event = &submission.event;
+        if matches!(event.scope_ref, arkret_sdk::ScopeRef::Circle { .. })
+            && crate::mls::send_gate::ApplicationBody::of_event(&event.kind, &event.payload)?
+                .is_some()
+        {
+            let input = self.mls_send_gate_input(&event.scope_ref).ok_or_else(|| {
+                anyhow::anyhow!("Circle outbound send requires an account current index")
+            })?;
+            crate::mls::send_gate::check_circle_send_membership(&input, &event.scope_ref)
+                .await
+                .map_err(anyhow::Error::new)?;
+        }
+        Ok(())
     }
 
     /// Refuse an application body the durable accepted MLS current of its

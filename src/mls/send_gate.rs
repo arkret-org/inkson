@@ -168,6 +168,18 @@ pub(crate) async fn resolve_mls_send_gate(
     )
 }
 
+/// A retry keeps its original ciphertext and epoch. Recheck current Circle
+/// qualification locally; the authority decides acceptance or exact replay.
+pub(crate) async fn check_circle_send_membership(
+    input: &MlsSendGateInput,
+    scope: &arkret_sdk::ScopeRef,
+) -> Result<(), MlsSendGateBlocked> {
+    read_durable_mls_current(input, scope)
+        .await
+        .map(|_| ())
+        .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))
+}
+
 /// The encryption shape of one already built application body.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ApplicationBody {
