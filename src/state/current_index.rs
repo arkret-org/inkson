@@ -937,6 +937,7 @@ impl CurrentIndex {
     pub(crate) async fn read_mls_group_ready(
         &self,
         scope_ref: &arkret_sdk::ScopeRef,
+        actor: &arkret_sdk::ActorId,
     ) -> anyhow::Result<Option<arkret_wire::MlsGroupCurrent>> {
         let realm_id = scope_ref
             .realm_id_opt()
@@ -952,6 +953,62 @@ impl CurrentIndex {
             progress_is_complete_cut(&progress, realm_id),
             "MLS current read requires complete authorized-stream coverage"
         );
+        if let arkret_sdk::ScopeRef::Circle { circle_id, .. } = scope_ref {
+            let parent = self
+                .ready_selector(
+                    realm_id.as_str(),
+                    &CurrentSelector::MemberState {
+                        actor_id: actor.clone(),
+                    },
+                    generation,
+                )
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Circle send requires a verified parent member current")
+                })?;
+            let parent_revision = parent
+                .parent_membership_revision(realm_id, actor)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Circle send requires an effective parent Realm join")
+                })?;
+            let TypedCurrentResult::Value {
+                source_stream_ref: parent_source,
+                ..
+            } = &parent;
+            let circle_selector = CurrentSelector::CircleMemberState {
+                circle_id: circle_id.clone(),
+                member_actor_id: actor.clone(),
+            };
+            let circle = self
+                .ready_selector(realm_id.as_str(), &circle_selector, generation)
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Circle send requires a verified Circle member current")
+                })?;
+            let TypedCurrentResult::Value {
+                source_stream_ref,
+                value,
+                ..
+            } = circle;
+            anyhow::ensure!(
+                source_stream_ref
+                    == arkret_wire::CommitStreamRef::Circle {
+                        realm_id: realm_id.clone(),
+                        circle_id: circle_id.clone(),
+                    },
+                "Circle member current belongs to another stream"
+            );
+            let membership: arkret_wire::CircleMemberStateCurrent = serde_json::from_value(value)?;
+            anyhow::ensure!(
+                membership.is_effective_under_parent(
+                    realm_id,
+                    parent_source,
+                    &parent_revision,
+                    arkret_sdk::MembershipState::Join,
+                ),
+                "Circle join no longer binds the current parent Realm membership"
+            );
+        }
         let selector = CurrentSelector::MlsGroup {
             scope_ref: scope_ref.clone(),
         };
@@ -2043,6 +2100,12 @@ mod tests {
     static NEXT_TEST_PATH: AtomicU64 = AtomicU64::new(0);
     const REALM: &str = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
     const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq";
+    fn mls_gate_actor() -> arkret_sdk::ActorId {
+        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            "ak:did_core:web:member.example".parse().unwrap(),
+            "ak:did_core:web:station.example".parse().unwrap(),
+        ))
+    }
     #[test]
     fn signed_snapshot_coverage_cannot_survive_invalidation_reset_or_new_authority() {
         let realm: arkret_sdk::RealmId = REALM.parse().unwrap();
@@ -2575,13 +2638,157 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn circle_send_gate_rejects_parent_leave_ban_and_rejoin_without_new_circle_join() {
+        let path = path();
+        let index = index(&path, 0).await;
+        let realm = arkret_sdk::RealmId::new(REALM).unwrap();
+        let circle_id = arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [9; 32],
+        ));
+        let scope = arkret_sdk::ScopeRef::Circle {
+            realm_id: realm.clone(),
+            circle_id: circle_id.clone(),
+        };
+        let circle_stream = arkret_wire::CommitStreamRef::Circle {
+            realm_id: realm.clone(),
+            circle_id: circle_id.clone(),
+        };
+        let mut parent = member_row(REALM, "ak:did_core:web:member.example", 1);
+        let member = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            "ak:did_core:web:member.example".parse().unwrap(),
+            "ak:did_core:web:station.example".parse().unwrap(),
+        ));
+        let TypedCurrentResult::Value {
+            selector,
+            revision: parent_revision,
+            ..
+        } = &mut parent;
+        *selector = CurrentSelector::MemberState {
+            actor_id: member.clone(),
+        };
+        let parent_revision = parent_revision.clone();
+        let circle_revision = arkret_wire::CurrentRevision {
+            commit_id: arkret_sdk::RealmCommitId::from_digest([8; 32]),
+            stream_position: 1,
+        };
+        let circle_member = TypedCurrentResult::Value {
+            selector: CurrentSelector::CircleMemberState {
+                circle_id,
+                member_actor_id: member.clone(),
+            },
+            source_stream_ref: circle_stream.clone(),
+            revision: circle_revision.clone(),
+            value: json!({"membership":"join", "parent_membership_revision":parent_revision, "effective_at":"2026-09-30T00:00:00.000Z"}),
+        };
+        let mut group = mls_group_row(REALM, 1);
+        let TypedCurrentResult::Value {
+            selector,
+            source_stream_ref,
+            revision,
+            value,
+        } = &mut group;
+        *selector = CurrentSelector::MlsGroup {
+            scope_ref: scope.clone(),
+        };
+        *source_stream_ref = circle_stream.clone();
+        *revision = circle_revision.clone();
+        value["effective_scope"] = serde_json::to_value(&scope).unwrap();
+        let mut coverage = baseline(CURSORS[0], 1, true);
+        coverage["coverage"]["stream_heads"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "stream_ref":circle_stream,
+                "stream_position":circle_revision.stream_position,
+                "commit_id":circle_revision.commit_id,
+            }));
+        index
+            .stage_frame(
+                0,
+                &frame(
+                    vec![parent.clone(), circle_member.clone(), group.clone()],
+                    Some(coverage),
+                ),
+            )
+            .await
+            .unwrap()
+            .finish();
+        assert!(
+            index
+                .read_mls_group_ready(&scope, &mls_gate_actor())
+                .await
+                .unwrap()
+                .is_some()
+        );
+        for (generation, membership) in [(1, "leave"), (2, "ban"), (3, "join")] {
+            let mut changed_parent = parent.clone();
+            let TypedCurrentResult::Value {
+                revision, value, ..
+            } = &mut changed_parent;
+            revision.commit_id =
+                arkret_sdk::RealmCommitId::from_digest([generation as u8 + 10; 32]);
+            revision.stream_position = generation + 1;
+            *value = json!({"membership":membership});
+            index
+                .stage_frame(generation, &frame(vec![changed_parent], None))
+                .await
+                .unwrap()
+                .finish();
+            assert!(
+                index
+                    .read_mls_group_ready(&scope, &mls_gate_actor())
+                    .await
+                    .is_err(),
+                "old Circle join must not authorize sends after parent {membership}"
+            );
+            assert_eq!(
+                index
+                    .read_selector(REALM, &selector_of(&circle_member))
+                    .await
+                    .unwrap(),
+                Some(circle_member.clone())
+            );
+        }
+        let mut renewed = circle_member.clone();
+        let TypedCurrentResult::Value {
+            revision, value, ..
+        } = &mut renewed;
+        revision.commit_id = arkret_sdk::RealmCommitId::from_digest([20; 32]);
+        revision.stream_position = 2;
+        value["parent_membership_revision"] = serde_json::to_value(arkret_wire::CurrentRevision {
+            commit_id: arkret_sdk::RealmCommitId::from_digest([13; 32]),
+            stream_position: 4,
+        })
+        .unwrap();
+        index
+            .stage_frame(4, &frame(vec![renewed], None))
+            .await
+            .unwrap()
+            .finish();
+        assert!(
+            index
+                .read_mls_group_ready(&scope, &member)
+                .await
+                .unwrap()
+                .is_some(),
+            "only an explicit new Circle join can restore qualification"
+        );
+    }
+
+    #[tokio::test]
     async fn mls_group_reader_requires_complete_coverage_and_exact_scope() {
         let path = path();
         let index = index(&path, 0).await;
         let scope = arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
         };
-        assert!(index.read_mls_group_ready(&scope).await.is_err());
+        assert!(
+            index
+                .read_mls_group_ready(&scope, &mls_gate_actor())
+                .await
+                .is_err()
+        );
         index
             .stage_frame(
                 0,
@@ -2593,7 +2800,11 @@ mod tests {
             .await
             .unwrap()
             .finish();
-        let current = index.read_mls_group_ready(&scope).await.unwrap().unwrap();
+        let current = index
+            .read_mls_group_ready(&scope, &mls_gate_actor())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(current.effective_scope, scope);
         assert_eq!(current.epoch, 1);
         let circle_scope = arkret_sdk::ScopeRef::Circle {
@@ -2605,17 +2816,21 @@ mod tests {
         };
         assert!(
             index
-                .read_mls_group_ready(&circle_scope)
+                .read_mls_group_ready(&circle_scope, &mls_gate_actor())
                 .await
-                .unwrap()
-                .is_none(),
-            "a Realm group cannot activate its sibling Circle"
+                .is_err(),
+            "a Realm group cannot authorize a nonmember's sibling Circle"
         );
 
         let other_scope = arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(OTHER_REALM).unwrap(),
         };
-        assert!(index.read_mls_group_ready(&other_scope).await.is_err());
+        assert!(
+            index
+                .read_mls_group_ready(&other_scope, &mls_gate_actor())
+                .await
+                .is_err()
+        );
         index
             .stage_frame(
                 1,
@@ -2626,7 +2841,7 @@ mod tests {
             .finish();
         assert!(
             index
-                .read_mls_group_ready(&other_scope)
+                .read_mls_group_ready(&other_scope, &mls_gate_actor())
                 .await
                 .unwrap()
                 .is_none()
@@ -2651,19 +2866,35 @@ mod tests {
             .await
             .unwrap()
             .finish();
-        assert!(index.read_mls_group_ready(&scope).await.is_err());
+        assert!(
+            index
+                .read_mls_group_ready(&scope, &mls_gate_actor())
+                .await
+                .is_err()
+        );
         assert_eq!(index.read_complete_cut(REALM).await.unwrap(), None);
         index
             .stage_frame(1, &frame(vec![], Some(baseline(CURSORS[0], 1, true))))
             .await
             .unwrap()
             .finish();
-        assert!(index.read_mls_group_ready(&scope).await.unwrap().is_some());
+        assert!(
+            index
+                .read_mls_group_ready(&scope, &mls_gate_actor())
+                .await
+                .unwrap()
+                .is_some()
+        );
         assert!(index.read_complete_cut(REALM).await.unwrap().is_some());
         assert_eq!(index.read_complete_cut(OTHER_REALM).await.unwrap(), None);
         let reset = serde_json::from_value(json!({"kind":"resync_required"})).unwrap();
         index.stage_frame(2, &reset).await.unwrap().finish();
-        assert!(index.read_mls_group_ready(&scope).await.is_err());
+        assert!(
+            index
+                .read_mls_group_ready(&scope, &mls_gate_actor())
+                .await
+                .is_err()
+        );
         assert_eq!(index.read_complete_cut(REALM).await.unwrap(), None);
     }
 
@@ -2682,7 +2913,12 @@ mod tests {
             .await
             .unwrap()
             .finish();
-        assert!(index.read_mls_group_ready(&scope).await.is_err());
+        assert!(
+            index
+                .read_mls_group_ready(&scope, &mls_gate_actor())
+                .await
+                .is_err()
+        );
     }
     #[tokio::test]
     async fn cancelled_caller_cannot_release_an_inflight_transaction_lease() {

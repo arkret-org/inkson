@@ -123,7 +123,9 @@ async fn read_durable_mls_current(
         })
     })
     .await?;
-    index.read_mls_group_ready(scope).await
+    index
+        .read_mls_group_ready(scope, &arkret_sdk::ActorId::account(authority.clone()))
+        .await
 }
 
 /// Decide the gate from the durable read and this device's installed group.
