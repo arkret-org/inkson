@@ -726,7 +726,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     // Encrypt under the accepted epoch floor so authoring from a stale local
     // checkpoint is rejected as an outdated checkpoint rather than producing
     // ciphertext on a forked ratchet.
-    let epoch_floor = super::accepted_mls_epoch_floor(state_store, realm_id);
+    let epoch_floor = super::accepted_mls_epoch_floor_for_scope(state_store, &effective_scope);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
     if sidecar_id.is_none() {
@@ -898,7 +898,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     // Encrypt under the accepted epoch floor so authoring from a stale local
     // checkpoint is rejected as an outdated checkpoint rather than producing
     // ciphertext on a forked ratchet.
-    let epoch_floor = super::accepted_mls_epoch_floor(state_store, realm_id);
+    let epoch_floor = super::accepted_mls_epoch_floor_for_scope(state_store, &effective_scope);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
     if let Some(expected_sender_domain) = expected_sender_domain {

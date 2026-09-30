@@ -66,7 +66,7 @@ fn restore_for_commit(
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // Bind the commit to the accepted epoch floor so a stale or rolled-back
     // local checkpoint cannot silently fork the group from an outdated epoch.
-    let epoch_floor = super::accepted_mls_epoch_floor(state_store, realm_id);
+    let epoch_floor = super::accepted_mls_epoch_floor_for_scope(state_store, effective_scope);
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
     Ok((group, secret))

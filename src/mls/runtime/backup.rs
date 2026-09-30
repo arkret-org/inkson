@@ -70,8 +70,16 @@ pub fn accepted_mls_epoch_floor(
     let Ok(realm_id) = arkret_sdk::RealmId::new(realm_id.trim().to_owned()) else {
         return 0;
     };
+    accepted_mls_epoch_floor_for_scope(state_store, &arkret_sdk::ScopeRef::Realm { realm_id })
+}
+
+/// An independent group's restore floor comes only from that exact scope.
+pub(crate) fn accepted_mls_epoch_floor_for_scope(
+    state_store: &crate::state::LocalStateStore,
+    effective_scope: &arkret_sdk::ScopeRef,
+) -> u64 {
     state_store
-        .current_mls_group_for_scope(&arkret_sdk::ScopeRef::Realm { realm_id })
+        .current_mls_group_for_scope(effective_scope)
         .map(|current| current.epoch)
         .unwrap_or(0)
 }

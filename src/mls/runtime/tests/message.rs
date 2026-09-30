@@ -28,6 +28,109 @@ fn accepted_mls_base_current(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn circle_commit_restoration_uses_only_its_own_accepted_epoch() {
+    let mut state = temp_state_store("circle-own-commit-floor");
+    let secure = MemorySecureKeyStore::new();
+    let actor = "did:web:alice.example";
+    let device = fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001");
+    let authority = fixture::authority(actor);
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let circle = "ak:circle:AZSmUwZFkNevUaVm0adiKDKw0OuAQqfAX6DFwhnIqF9I";
+    let realm_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+    };
+    let circle_scope = arkret_sdk::ScopeRef::Circle {
+        realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+        circle_id: arkret_sdk::CircleId::new(circle).unwrap(),
+    };
+    super::seed_human_creator_authorization(actor, device.as_str());
+    ensure_creator_mls_checkpoint_for_effective_scope(
+        &mut state,
+        &secure,
+        realm,
+        Some(circle),
+        &authority,
+        &device,
+    )
+    .unwrap();
+    fixture::install_accepted_mls_group_at_epoch(&mut state, &realm_scope, 7, 0);
+    fixture::install_accepted_mls_group(&mut state, &circle_scope);
+    let before = state.mls_checkpoint_for_scope(&circle_scope).unwrap();
+    let staged = force_epoch_rotation_commit_for_effective_scope(
+        &state,
+        &secure,
+        realm,
+        Some(circle),
+        &authority,
+        &device,
+    )
+    .expect("the Circle's epoch-zero private state must not inherit the Realm's epoch-seven floor");
+    assert_eq!(staged.staged_checkpoint.epoch, 0);
+    assert_eq!(
+        state.mls_checkpoint_for_scope(&circle_scope),
+        Some(before.clone())
+    );
+    let state_ref = state
+        .current_mls_group_for_scope(&circle_scope)
+        .unwrap()
+        .current_mls_commit_event_ref;
+    let plaintext = arkret_sdk::canonical::canonical_json_bytes(&arkret_sdk::ContentBlock::text(
+        "independent Circle",
+    ))
+    .unwrap();
+    let (_, values) = encrypt_values_with_device_snapshot_for_effective_scope(
+        &mut state,
+        &secure,
+        realm,
+        &authority,
+        &device,
+        "application/vnd.arkret.message+json",
+        &[plaintext.clone()],
+        arkret_sdk::EventKind::MessageCreate.as_str(),
+        state_ref.clone(),
+        Some(circle),
+        None,
+    )
+    .unwrap();
+    assert_eq!(values.len(), 1);
+    encrypt_message_with_device_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &authority,
+        &device,
+        "application/vnd.arkret.message+json",
+        arkret_sdk::EventKind::MessageCreate.as_str(),
+        state_ref,
+        &plaintext,
+        None,
+        None,
+        None,
+        Some(circle),
+        None,
+    )
+    .unwrap();
+    let before = state.mls_checkpoint_for_scope(&circle_scope).unwrap();
+    fixture::install_accepted_mls_group_at_epoch(&mut state, &circle_scope, 2, 0);
+    assert!(
+        matches!(
+            force_epoch_rotation_commit_for_effective_scope(
+                &state,
+                &secure,
+                realm,
+                Some(circle),
+                &authority,
+                &device
+            ),
+            Err(MlsRuntimeError::CheckpointRestore(_))
+        ),
+        "the same private state is stale under its own accepted Circle epoch"
+    );
+    assert_eq!(state.mls_checkpoint_for_scope(&circle_scope), Some(before));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn seed_complete_rfc9420_projection(
     state: &mut crate::state::LocalStateStore,
     realm: &str,
