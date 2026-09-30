@@ -55,9 +55,7 @@ pub(crate) fn board_space_options_from_projection(
 ) -> Vec<BoardSpaceOption> {
     let mut options = containers
         .iter()
-        .filter(|view| {
-            view.kind == "board" || (view.kind.trim().is_empty() && view.parent_space_id.is_none())
-        })
+        .filter(|view| view.kind == "board" && view.state != arkret_sdk::SpaceState::Tombstoned)
         // Fail closed: only a canonical `ak:space:` id may become a Board
         // option. A pending create still keyed by its holder-local handle is
         // surfaced by `pending_board_creates_from_ops` instead.
@@ -74,29 +72,6 @@ pub(crate) fn board_space_options_from_projection(
             })
         })
         .collect::<Vec<_>>();
-    let mut seen = options
-        .iter()
-        .map(|option| option.id.clone())
-        .collect::<BTreeSet<_>>();
-    for parent_space_id in containers
-        .iter()
-        .filter(|view| view.kind == "list")
-        .filter_map(|view| view.parent_space_id.as_deref())
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-    {
-        let Ok(parent_space_id) = arkret_sdk::SpaceId::new(parent_space_id) else {
-            continue;
-        };
-        if !seen.insert(parent_space_id.clone()) {
-            continue;
-        }
-        options.push(BoardSpaceOption {
-            title: generated_board_fallback_title(parent_space_id.as_str()),
-            id: parent_space_id,
-            state: SpaceContainerLifecycleState::Active,
-        });
-    }
     sort_board_space_options(&mut options);
     options
 }

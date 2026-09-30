@@ -240,6 +240,46 @@ fn board_space_options_pick_board_spaces_from_projection() {
 }
 
 #[test]
+fn missing_or_terminal_board_metadata_cannot_be_recreated_from_a_list_parent() {
+    let board = "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+    let list = crate::state::projection_views::SpaceContainerProjectionView {
+        space_id: "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL".to_owned(),
+        realm_id: PENDING_TEST_REALM.to_owned(),
+        kind: "list".to_owned(),
+        title: "List".to_owned(),
+        state: arkret_sdk::SpaceState::Active,
+        rank: None,
+        parent_space_id: Some(board.to_owned()),
+    };
+    let canonical = list.clone();
+    assert!(
+        board_space_options_from_projection(&[list.clone()]).is_empty(),
+        "a List parent ref is not evidence that its unavailable Board is active"
+    );
+    let mut metadata = list.clone();
+    metadata.space_id = board.to_owned();
+    metadata.kind = "board".to_owned();
+    metadata.parent_space_id = None;
+    metadata.state = arkret_sdk::SpaceState::Tombstoned;
+    assert!(board_space_options_from_projection(&[metadata.clone(), list.clone()]).is_empty());
+    metadata.state = arkret_sdk::SpaceState::Archived;
+    assert_eq!(
+        board_space_options_from_projection(&[metadata.clone(), list.clone()]).len(),
+        1
+    );
+    metadata.state = arkret_sdk::SpaceState::Active;
+    metadata.kind.clear();
+    assert!(
+        board_space_options_from_projection(&[metadata, list.clone()]).is_empty(),
+        "a missing kind cannot infer Board semantics from root placement"
+    );
+    assert_eq!(
+        list, canonical,
+        "derived options cannot clear a canonical parent reference"
+    );
+}
+
+#[test]
 fn local_space_create_state_becomes_synced_once_projection_contains_target() {
     let board_id = "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let raw_operations = vec![RawOperationRecord {
@@ -382,7 +422,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
 }
 
 #[test]
-fn lifecycle_projection_infers_board_from_list_parent() {
+fn lifecycle_projection_requires_board_metadata_for_list_parent() {
     let board_id = "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let list_id = "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
     let containers = vec![
@@ -400,12 +440,10 @@ fn lifecycle_projection_infers_board_from_list_parent() {
     let (columns, options, selected_board) =
         columns_from_lifecycle_projection(&containers, &[], "", None);
 
-    assert_eq!(selected_board.as_deref(), Some(board_id));
-    assert_eq!(options.len(), 1);
-    assert_eq!(options[0].id.as_str(), board_id);
-    assert_eq!(columns.len(), 1);
-    assert_eq!(columns[0].id, list_id);
-    assert_eq!(columns[0].title, "Todo");
+    assert!(selected_board.is_none());
+    assert!(options.is_empty());
+    assert!(columns.is_empty());
+    assert_eq!(containers[0].parent_space_id.as_deref(), Some(board_id));
 }
 
 #[test]
