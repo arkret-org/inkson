@@ -514,8 +514,34 @@ fn two_member_group_with_bob_snapshot(
         &accepted_commit,
         1_760_000_000_012,
     );
-    let base_current =
-        accepted_mls_base_current(&effective_scope, base_event_ref.clone(), base_event_ref, 0);
+    let base_current = accepted_mls_base_current(
+        &effective_scope,
+        base_event_ref.clone(),
+        base_event_ref.clone(),
+        0,
+    );
+    // Recovery must merge the exact staged own Commit after serialization,
+    // without a moving current result or a new Add/KeyPackage claim.
+    let staged = alice_group.export_state_record().unwrap();
+    let mut recovered = arkret_sdk::ArkretMlsGroup::restore_from_state_record(&staged).unwrap();
+    let wrong_base = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x53; 32]);
+    assert!(
+        recovered
+            .install_recovered_own_commit(&accepted_commit, &wrong_base)
+            .is_err()
+    );
+    assert_eq!(recovered.epoch(), 0);
+    assert_eq!(
+        recovered
+            .install_recovered_own_commit(&accepted_commit, &base_event_ref)
+            .unwrap(),
+        1
+    );
+    assert!(
+        recovered
+            .install_recovered_own_commit(&accepted_commit, &base_event_ref)
+            .is_err()
+    );
     alice_group
         .install_accepted_commit(&accepted_commit, &base_current)
         .unwrap();

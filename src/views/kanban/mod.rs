@@ -1064,6 +1064,7 @@ pub fn KanbanPanel(
                 &mut cols,
                 &entries,
                 &projected_strands,
+                &raw_operations,
                 decrypt_ctx.as_ref(),
                 &self_actor_id,
             );

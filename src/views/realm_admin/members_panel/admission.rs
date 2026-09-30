@@ -211,10 +211,14 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     // atomic authority submission so a page close after Station acceptance can
     // still merge the exact accepted epoch; the durable outbound item freezes
     // both the authored Commit and all producer-signed Welcome deliveries.
-    state_store
-        .write()
-        .save_mls_checkpoint(realm_id.clone(), admission.staged_checkpoint)
-        .map_err(anyhow::Error::msg)?;
+    let staged_barrier = {
+        let mut store = state_store.write();
+        store
+            .save_mls_checkpoint(realm_id.clone(), admission.staged_checkpoint)
+            .map_err(anyhow::Error::msg)?;
+        store.begin_durable_flush()?
+    };
+    staged_barrier.wait().await?;
     submitter
         .submit_mls_commit(
             authored_commit,

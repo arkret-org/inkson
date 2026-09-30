@@ -379,11 +379,14 @@ pub(crate) async fn pending_chat_outbound_local_operation_ids(
 fn pending_mls_commit_for_realm_from_snapshot(
     snapshot: &garth::SendQueueSnapshot,
     realm_id: &str,
+    installed: impl Fn(&arkret_sdk::Event) -> bool,
 ) -> bool {
-    snapshot
-        .items
-        .iter()
-        .any(|item| is_unsettled(item.status) && queued_event(item).realm_id.as_str() == realm_id)
+    snapshot.items.iter().any(|item| {
+        let event = queued_event(item);
+        event.realm_id.as_str() == realm_id
+            && (is_unsettled(item.status)
+                || (item.status == SendQueueStatus::Committed && !installed(event)))
+    })
 }
 
 fn durable_mls_genesis_for_realm_from_snapshot(
@@ -1499,7 +1502,32 @@ impl EventSubmitter {
     ) -> anyhow::Result<bool> {
         let snapshot = self.outbound(OutboundLane::MlsCommit)?.snapshot().await?;
         Ok(pending_mls_commit_for_realm_from_snapshot(
-            &snapshot, realm_id,
+            &snapshot,
+            realm_id,
+            |event| {
+                self.state_store.as_ref().is_some_and(|state| {
+                    state.read(|store| {
+                        let Ok(payload) = serde_json::from_value::<arkret_sdk::MlsCommitPayload>(
+                            Value::Object(event.payload.clone().into_iter().collect()),
+                        ) else {
+                            return false;
+                        };
+                        let binding = payload.governance_binding();
+                        let Ok(group_id) = binding.mls_group_id() else {
+                            return false;
+                        };
+                        store
+                            .mls_checkpoint_for_scope_and_group(
+                                binding.effective_scope(),
+                                group_id.as_str(),
+                            )
+                            .is_some_and(|checkpoint| {
+                                checkpoint.epoch >= binding.next_epoch()
+                                    && checkpoint.group_state_event_id.is_some()
+                            })
+                    })
+                })
+            },
         ))
     }
 
@@ -1864,11 +1892,51 @@ impl EventSubmitter {
 
     /// Resume queued `ak.mls.commit` submissions.
     ///
-    /// A commit resumed here is installed by the scope's own stream installer
-    /// rather than in this pass: the leaf attribution evidence a membership
-    /// change needs is not part of the frozen submission.
+    /// Once authority acceptance is durable, merge the exact staged own
+    /// Commit and recover leaf attribution from the signed historical roster.
     pub(crate) async fn drain_mls_outbound(&self) -> anyhow::Result<usize> {
-        self.drain_lane(OutboundLane::MlsCommit).await
+        let completed = self.drain_lane(OutboundLane::MlsCommit).await?;
+        self.recover_committed_mls_outbound().await?;
+        Ok(completed)
+    }
+
+    async fn recover_committed_mls_outbound(&self) -> anyhow::Result<()> {
+        let Some(state) = self.state_store.as_ref() else {
+            return Ok(());
+        };
+        let Some(endpoint) = crate::secure_key_store::active_device_seed_scope() else {
+            return Ok(());
+        };
+        anyhow::ensure!(
+            &endpoint.authority == self.authority()?,
+            "MLS recovery endpoint belongs to another Account"
+        );
+        let api = crate::transport::TransportClient::from_http(
+            self.http.clone(),
+            crate::transport::RequestContext::new(""),
+        );
+        let snapshot = self.outbound(OutboundLane::MlsCommit)?.snapshot().await?;
+        for item in snapshot.items {
+            let garth::SubmissionState::Committed { commit, .. } = &item.submission.state else {
+                continue;
+            };
+            let accepted = arkret_wire::CommittedEventFullView {
+                commit: (**commit).clone(),
+                event: queued_event(&item).clone(),
+            };
+            if let Err(error) = crate::mls::runtime::install_recovered_outbound_commit(
+                &api,
+                state,
+                &endpoint.authority,
+                &endpoint.device_id,
+                &accepted,
+            )
+            .await
+            {
+                tracing::warn!(event = %accepted.event.event_id, %error, "accepted outbound MLS Commit remains pending local installation");
+            }
+        }
+        Ok(())
     }
 
     async fn drain_lane(&self, lane: OutboundLane) -> anyhow::Result<usize> {
@@ -2238,7 +2306,8 @@ impl EventSubmitter {
         // A Signal is sealed under the scope's accepted current group only;
         // the durable send gate decides, and the sealing material must name
         // exactly that current epoch and group-state reference.
-        let input = crate::mls::send_gate::MlsSendGateInput::capture(state_store, &header.scope_ref);
+        let input =
+            crate::mls::send_gate::MlsSendGateInput::capture(state_store, &header.scope_ref);
         match crate::mls::send_gate::resolve_mls_send_gate(&input, &header.scope_ref).await? {
             crate::mls::send_gate::MlsSendGate::Encrypted(current) => anyhow::ensure!(
                 current.epoch == material.epoch

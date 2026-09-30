@@ -44,6 +44,7 @@ pub(crate) async fn install_accepted_transition(
     item: &CommittedEventFullView,
     authority_hints: &[MlsLeafAuthorityHint],
 ) -> Result<MlsInstallOutcome, String> {
+    let _install = welcome_install_lock().lock().await;
     let transition = accepted_mls_transition(item)?;
     if state.read(|store| {
         store.realm_projection_has_retired_minimal_metadata_marker(
@@ -141,6 +142,64 @@ pub(crate) async fn install_accepted_transition(
     .await
 }
 
+fn welcome_install_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// Complete a sender's exact accepted queue item after a runtime restart.
+/// The staged provider checkpoint and its accepted base survive independently
+/// of the moving Station current. Historical roster evidence restores leaf
+/// attribution only after the exact own pending RFC Commit has been merged.
+pub(crate) async fn install_recovered_outbound_commit(
+    api: &crate::transport::TransportClient,
+    state: &StateStoreHandle,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    item: &CommittedEventFullView,
+) -> Result<MlsInstallOutcome, String> {
+    let _install = welcome_install_lock().lock().await;
+    let transition = accepted_mls_transition(item)?;
+    let base = state
+        .read(|store| {
+            store.mls_checkpoint_for_scope_and_group(
+                &transition.effective_scope,
+                transition.mls_group_id.as_str(),
+            )
+        })
+        .ok_or_else(|| "recovered MLS Commit has no staged checkpoint".to_owned())?;
+    if base.epoch >= transition.next_epoch && base.group_state_event_id.is_some() {
+        return Ok(MlsInstallOutcome::AlreadyCurrent);
+    }
+    if base.epoch != transition.previous_epoch {
+        return Ok(MlsInstallOutcome::BaseEpochMissing);
+    }
+    let base_ref = base
+        .group_state_event_id
+        .as_ref()
+        .ok_or_else(|| "recovered MLS Commit has no accepted base Event".to_owned())?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let secret = super::load_device_checkpoint_secret(secure_store.as_ref(), authority, device_id)
+        .map_err(describe)?;
+    let mut group =
+        crate::mls::persistence::restore_envelope(&base, &secret, base.epoch).map_err(describe)?;
+    group
+        .install_recovered_own_commit(item, base_ref)
+        .map_err(describe)?;
+    crate::mls::roster_install::install_welcome_roster_from_service(
+        api, state, &mut group, item, authority,
+    )
+    .await?;
+    persist_installed_group(
+        state,
+        &transition,
+        &group,
+        &secret,
+        item.event.event_id.clone(),
+    )
+    .await
+}
+
 /// Join this device's endpoint into a group from one accepted Welcome delivery.
 ///
 /// The SDK verifies the delivery against the accepted Commit it names, so this
@@ -158,6 +217,12 @@ pub(crate) async fn install_accepted_welcome(
     claim: &VerifiedWelcomeClaim,
 ) -> Result<MlsInstallOutcome, String> {
     let transition = accepted_mls_transition(accepted_commit)?;
+    // Bootstrap and stream convergence can observe the same delivery while
+    // the first installer awaits roster evidence or its durable flush. Hold
+    // this asynchronous lock through persistence, then recheck the checkpoint
+    // below so only one installer signs the immutable consume command and no
+    // later installer replaces an already advanced receive ratchet.
+    let _welcome_install = welcome_install_lock().lock().await;
     if state.read(|store| {
         store.realm_projection_has_retired_minimal_metadata_marker(
             transition.effective_scope.realm_id().as_str(),
@@ -254,6 +319,9 @@ pub(crate) async fn deliver_owed_keypackage_consumes(
     api: &crate::transport::TransportClient,
     state: &StateStoreHandle,
 ) {
+    // Pending intents become visible in memory before their durable barrier
+    // resolves. Another convergence pass must not send one during installation.
+    let _welcome_install = welcome_install_lock().lock().await;
     let owed = state.read(|store| store.pending_keypackage_consumes());
     if owed.is_empty() {
         return;

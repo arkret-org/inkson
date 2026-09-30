@@ -820,6 +820,7 @@ pub(crate) fn install_current_card_sources(
     columns: &mut [KanbanColumn],
     entries: &[arkret_wire::TypedCurrentResult],
     projected: &[crate::state::projection_views::StrandProjectionView],
+    operations: &[RawOperationRecord],
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
     actor: &str,
 ) {
@@ -867,6 +868,40 @@ pub(crate) fn install_current_card_sources(
             view.tracks = strand.tracks;
             view.schema_refs = strand.schema_refs.unwrap_or_default();
             let mut complete = card_from_strand_projection_for_actor(&view, decrypt_ctx, actor);
+            // Current supplies the selected value and revision. Decryption still
+            // requires the original authenticated Event carrying that exact
+            // value; replaying whole historical patches here would replace newer
+            // current fields with stale content.
+            if let Some(ctx) = decrypt_ctx {
+                for (field, text, locked) in [
+                    (
+                        strand_projection_description_content(&view),
+                        &mut complete.description_body,
+                        &mut complete.description_locked,
+                    ),
+                    (
+                        strand_projection_synthesis_content(&view),
+                        &mut complete.synthesis,
+                        &mut complete.synthesis_locked,
+                    ),
+                ] {
+                    if let Some((value, path)) = field
+                        && value_is_mls_envelope(&value)
+                        && let Some(plaintext) = operations.iter().rev().find_map(|record| {
+                            private_strand_event_field_text(
+                                ctx,
+                                record.payload.get("event")?,
+                                &card.id,
+                                path,
+                                &value,
+                            )
+                        })
+                    {
+                        *text = plaintext;
+                        *locked = false;
+                    }
+                }
+            }
             complete.rank = card.rank.clone();
             complete.state = card.state;
             if complete.calendar == card.calendar {

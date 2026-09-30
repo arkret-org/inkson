@@ -361,6 +361,28 @@ fn the_genesis_lane_projection_counts_committed_and_unsettled_attempts() {
 }
 
 #[test]
+fn accepted_mls_submission_owns_transition_until_private_state_is_installed() {
+    let signer = test_signer();
+    let commit = mls_commit_event(&signer);
+    let snapshot = snapshot_of(vec![(commit, SendQueueStatus::Committed)]);
+    assert!(pending_mls_commit_for_realm_from_snapshot(
+        &snapshot,
+        REALM,
+        |_| false
+    ));
+    assert!(!pending_mls_commit_for_realm_from_snapshot(
+        &snapshot,
+        REALM,
+        |_| true
+    ));
+    assert!(!pending_mls_commit_for_realm_from_snapshot(
+        &snapshot,
+        "another-realm",
+        |_| false
+    ));
+}
+
+#[test]
 fn mls_genesis_event_lookup_filters_kind_and_realm() {
     let expected =
         arkret_sdk::EventId::new("ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy").unwrap();
@@ -821,12 +843,30 @@ fn welcome_delivery(commit_event: &arkret_sdk::Event, nth: u64) -> arkret_wire::
 }
 
 fn mls_commit_event(signer: &crate::event_signer::InksonEventSigner) -> arkret_sdk::AuthoredEvent {
+    let base = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x22; 32]);
+    let binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
+        realm_id(REALM),
+        Some(base.clone()),
+        0,
+        1,
+        0,
+    )
+    .unwrap();
+    let bytes = b"queued-commit-transport-fixture";
+    let envelope = arkret_sdk::MlsCommitEnvelope {
+        group_id: binding.mls_group_id().unwrap(),
+        epoch: 1,
+        commit: arkret_sdk::base64url_encode(bytes),
+        commit_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(bytes)).unwrap(),
+        ratchet_tree: None,
+    };
+    let payload = arkret_sdk::MlsCommitPayload::new(base, 0, &envelope, binding).unwrap();
     let intent: EventIntent = serde_json::from_value(json!({
         "kind": "ak.mls.commit",
         "scope_ref": {"kind": "realm", "realm_id": REALM},
         "actor_id": account_actor(),
         "created_at": "2026-05-19T00:00:00.000Z",
-        "payload": {}
+        "payload": payload
     }))
     .unwrap();
     author_and_sign(intent, signer)
