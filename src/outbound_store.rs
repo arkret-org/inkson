@@ -374,55 +374,6 @@ impl InksonOutboundStore {
         })
         .await
     }
-
-    /// Restore an exact authority submission to the durable queued state when
-    /// the governance Station explicitly returned `retryable_unavailable`.
-    ///
-    /// Garth deliberately records every authority rejection as settled. An
-    /// explicitly retryable authority answer lets the producer resend
-    /// the byte-identical Event, never author a replacement. Re-opening the
-    /// existing frozen submission here preserves that identity across both the
-    /// retry and a browser/process restart.
-    pub(crate) async fn requeue_retryable_unavailable(
-        &self,
-        event_id: &arkret_sdk::EventId,
-        next_attempt_at_ms: i64,
-    ) -> garth::Result<garth::SendQueueItem> {
-        self.mutate_outbound(|queue| {
-            let mut snapshot = queue.snapshot();
-            let item = snapshot
-                .items
-                .iter_mut()
-                .find(|item| item.event_id() == event_id)
-                .ok_or_else(|| {
-                    garth::Error::Storage(
-                        "retryable authority submission disappeared from the outbound queue"
-                            .to_owned(),
-                    )
-                })?;
-            match &item.submission.state {
-                garth::SubmissionState::Rejected { status, .. }
-                    if *status == arkret_wire::AuthorityRejectionStatus::RetryableUnavailable =>
-                {
-                    item.submission.state = garth::SubmissionState::Queued;
-                    item.status = garth::SendQueueStatus::Queued;
-                    item.next_attempt_at_ms = next_attempt_at_ms;
-                    item.last_error = Some("retryable_unavailable".to_owned());
-                    item.settled_at = None;
-                }
-                _ => {
-                    return Err(garth::Error::Protocol(
-                        "only retryable_unavailable may be restored to the outbound queue"
-                            .to_owned(),
-                    ));
-                }
-            }
-            let restored = item.clone();
-            *queue = garth::SendQueue::from_snapshot(snapshot);
-            Ok(restored)
-        })
-        .await
-    }
 }
 
 impl OutboundQueueStore for InksonOutboundStore {
@@ -621,55 +572,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(reloaded, 3, "a persisted queue must reload with every item");
-    }
-
-    #[tokio::test]
-    async fn retryable_unavailable_restores_the_same_frozen_event() {
-        let directory = std::env::temp_dir().join(format!(
-            "inkson-outbound-retry-{}",
-            arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms())
-        ));
-        let path = directory.join("standard.json");
-        let store = InksonOutboundStore { path: path.clone() };
-        let mut submission = fixture_submission(17);
-        let event_id = submission.event_id.clone();
-        submission.state = garth::SubmissionState::Rejected {
-            status: arkret_wire::AuthorityRejectionStatus::RetryableUnavailable,
-            reason_code: "dependency_missing".to_owned(),
-        };
-        let now = chrono::Utc::now();
-        mutate_queue_in_file(&path, |queue| {
-            *queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
-                items: vec![garth::SendQueueItem {
-                    submission,
-                    status: garth::SendQueueStatus::Rejected,
-                    attempts: 1,
-                    next_attempt_at_ms: now.timestamp_millis(),
-                    last_error: None,
-                    enqueued_at: now,
-                    settled_at: Some(now),
-                }],
-            });
-            Ok(())
-        })
-        .await
-        .unwrap();
-
-        let restored = store
-            .requeue_retryable_unavailable(&event_id, now.timestamp_millis() + 1_000)
-            .await
-            .unwrap();
-        assert_eq!(restored.event_id(), &event_id);
-        assert_eq!(restored.status, garth::SendQueueStatus::Queued);
-        assert_eq!(restored.submission.state, garth::SubmissionState::Queued);
-        assert_eq!(restored.attempts, 1, "retry keeps the existing ledger");
-        assert!(restored.settled_at.is_none());
-
-        let persisted = mutate_queue_in_file(&path, |queue| Ok(queue.snapshot()))
-            .await
-            .unwrap();
-        assert_eq!(persisted.items, vec![restored]);
-        std::fs::remove_dir_all(directory).ok();
     }
 
     #[tokio::test]

@@ -1644,15 +1644,12 @@ impl EventSubmitter {
             .find(|item| item.event_id() == &event_id);
         if let Some(item) = &existing {
             ensure_exact_queued_request(&item.submission, &submission)?;
-            if is_retryable_authority_item(item) {
-                reopen_retryable_submission(&outbound, item, Duration::from_millis(1_025)).await?;
-            }
         }
         match existing {
             // The Station already answered for these exact bytes. Authoring is
             // one-shot, so a repeat call for the same operation is the same
             // Event, and its committed answer is the answer.
-            Some(item) if item.status.is_terminal() && !is_retryable_authority_item(&item) => {
+            Some(item) if item.status.is_terminal() => {
                 if let Some(state_store) = self.state_store.as_ref() {
                     state_store.write(|store| {
                         reconcile_settled_outbound_item(store, &item);
@@ -1702,47 +1699,6 @@ impl EventSubmitter {
                     }
                     return Ok(*item);
                 }
-                OutboundEngineOutcome::Rejected { item, .. }
-                    if item.event_id() == &event_id
-                        && matches!(
-                            &item.submission.state,
-                            garth::SubmissionState::Rejected {
-                                status: arkret_wire::AuthorityRejectionStatus::RetryableUnavailable,
-                                ..
-                            }
-                        ) =>
-                {
-                    let max_retries = if retry_scope == InteractiveRetryScope::RealmBootstrap {
-                        4
-                    } else {
-                        1
-                    };
-                    let retry_budget_exhausted = interactive_retries >= max_retries;
-                    if !retry_budget_exhausted {
-                        interactive_retries = interactive_retries.saturating_add(1);
-                    }
-                    let delay = Duration::from_millis(1_025);
-                    outbound
-                        .store()
-                        .requeue_retryable_unavailable(
-                            &event_id,
-                            i64::try_from(crate::clock::now_unix_ms())
-                                .unwrap_or(i64::MAX)
-                                .saturating_add(
-                                    i64::try_from(delay.as_millis()).unwrap_or(i64::MAX),
-                                ),
-                        )
-                        .await
-                        .map_err(anyhow::Error::from)?;
-                    if retry_budget_exhausted {
-                        return Err(DurablyQueuedError {
-                            operation_id: local_operation_id,
-                            reason: Some("retryable_unavailable".to_owned()),
-                        }
-                        .into());
-                    }
-                    crate::runtime_helpers::sleep_for(delay).await;
-                }
                 OutboundEngineOutcome::Rejected { item, .. } if item.event_id() == &event_id => {
                     if let Some(state_store) = self.state_store.as_ref() {
                         state_store.write(|store| {
@@ -1768,6 +1724,7 @@ impl EventSubmitter {
                 }
                 OutboundEngineOutcome::Retry { item, delay } if item.event_id() == &event_id => {
                     if retry_scope == InteractiveRetryScope::RealmBootstrap
+                        && !is_retryable_authority_item(&item)
                         && !crate::api_error::is_realm_bootstrap_temporarily_unavailable_detail(
                             item.last_error.as_deref(),
                         )
@@ -1809,6 +1766,7 @@ impl EventSubmitter {
                 }
                 OutboundEngineOutcome::Retry { item, delay } => {
                     if retry_scope == InteractiveRetryScope::RealmBootstrap
+                        && !is_retryable_authority_item(&item)
                         && !crate::api_error::is_realm_bootstrap_temporarily_unavailable_detail(
                             item.last_error.as_deref(),
                         )
@@ -2526,6 +2484,8 @@ fn local_detail_blocks_authoring(
         && invalidated_without_projection
 }
 
+// The queue lifecycle is nonterminal even while retaining the authority's
+// exact typed retryable outcome for diagnosis and interactive retry policy.
 fn is_retryable_authority_item(item: &garth::SendQueueItem) -> bool {
     matches!(
         &item.submission.state,
@@ -2534,28 +2494,6 @@ fn is_retryable_authority_item(item: &garth::SendQueueItem) -> bool {
             ..
         }
     )
-}
-
-async fn reopen_retryable_submission(
-    outbound: &OutboundEngine<InksonOutboundStore, InksonHostClock>,
-    item: &garth::SendQueueItem,
-    delay: Duration,
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        is_retryable_authority_item(item),
-        "authority refusal is terminal"
-    );
-    outbound
-        .store()
-        .requeue_retryable_unavailable(
-            item.event_id(),
-            i64::try_from(crate::clock::now_unix_ms())
-                .unwrap_or(i64::MAX)
-                .saturating_add(i64::try_from(delay.as_millis()).unwrap_or(i64::MAX)),
-        )
-        .await?;
-    crate::runtime_helpers::sleep_for(delay).await;
-    Ok(())
 }
 
 fn ensure_exact_queued_request(

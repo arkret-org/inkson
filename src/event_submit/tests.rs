@@ -325,6 +325,21 @@ fn the_genesis_lane_projection_counts_committed_and_unsettled_attempts() {
     let signer = test_signer();
     let binding =
         arkret_sdk::MlsGovernanceBindingPayload::realm(realm_id(REALM), None, 0, 0, 0).unwrap();
+    let creator = arkret_sdk::MlsGenesisCreatorLeafAuthority {
+        leaf_signature_key_b64u: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+            ed25519_dalek::SigningKey::from_bytes(&[73; 32])
+                .verifying_key()
+                .as_bytes(),
+        ))
+        .unwrap(),
+        endpoint: arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+            device_id: arkret_sdk::DeviceId::new(DEVICE).unwrap(),
+        },
+        authorization_event_ref: arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [74; 32],
+        ),
+    };
     let genesis_intent: EventIntent = serde_json::from_value(json!({
         "kind": "ak.mls.genesis",
         "scope_ref": {"kind": "realm", "realm_id": REALM},
@@ -335,6 +350,7 @@ fn the_genesis_lane_projection_counts_committed_and_unsettled_attempts() {
             "group_info_ref": format!("ak:blob:sha256:{}", "11".repeat(32)),
             "ratchet_tree_ref": format!("ak:blob:sha256:{}", "22".repeat(32)),
             "governance_binding": binding,
+            "creator_leaf_authority": creator,
             "created_at": "2026-05-19T00:00:00.000Z"
         }
     }))
@@ -1450,7 +1466,7 @@ fn exact_message_retry_rejects_changed_proof_even_with_the_same_event_id() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
-async fn retryable_authority_answer_reopens_the_durable_bytes_and_really_resubmits() {
+async fn retryable_authority_answer_is_durable_and_really_resubmits_after_restart() {
     let event = author_and_sign(
         message_intent(
             REALM,
@@ -1477,17 +1493,23 @@ async fn retryable_authority_answer_reopens_the_durable_bytes_and_really_resubmi
         )
         .await
         .unwrap();
-    let OutboundEngineOutcome::Rejected { item, .. } = rejected else {
-        panic!("expected unavailable refusal")
+    let OutboundEngineOutcome::Retry { item, delay } = rejected else {
+        panic!("expected a nonterminal retry")
     };
+    assert_eq!(item.status, SendQueueStatus::Queued);
+    assert!(is_retryable_authority_item(&item));
+    assert!(item.settled_at.is_none());
     assert_eq!(refused_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     // Re-open the adapter to exercise the actual restart/durable queue path.
-    let resumed = OutboundEngine::new(store, InksonHostClock);
-    reopen_retryable_submission(&resumed, &item, Duration::ZERO)
-        .await
-        .unwrap();
+    drop(engine);
+    drop(store);
+    let resumed = OutboundEngine::new(
+        InksonOutboundStore::for_test_path(directory.join("standard.json")),
+        InksonHostClock,
+    );
     let snapshot = resumed.snapshot().await.unwrap();
     assert_eq!(snapshot.items[0].status, SendQueueStatus::Queued);
+    assert_eq!(snapshot.items[0].submission.state, item.submission.state);
     assert_eq!(
         arkret_sdk::canonical::canonical_json_bytes(&snapshot.items[0].submission.request).unwrap(),
         expected
@@ -1499,6 +1521,7 @@ async fn retryable_authority_answer_reopens_the_durable_bytes_and_really_resubmi
             commit,
         });
     drop(unused);
+    crate::runtime_helpers::sleep_for(delay.saturating_add(Duration::from_millis(25))).await;
     assert!(matches!(
         resumed
             .submit_next(
