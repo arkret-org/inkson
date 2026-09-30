@@ -389,9 +389,6 @@ pub(crate) async fn converge_accepted_mls_artifacts(
     let deliveries = state.read(|store| {
         crate::mls::welcome_delivery::pending_welcome_deliveries(&store.to_device_inbox())
     });
-    if deliveries.is_empty() {
-        return Ok(0);
-    }
     let actor_id = arkret_sdk::ActorId::account(authority.clone());
     let mut applied = 0;
     for delivery in deliveries {
@@ -470,6 +467,101 @@ pub(crate) async fn converge_accepted_mls_artifacts(
     }
     if applied > 0 {
         deliver_owed_keypackage_consumes(api, state).await;
+    }
+    let scopes = state.read(|store| store.mls_scopes_needing_tail_recovery());
+    for scope in scopes {
+        applied += recover_remote_tail(api, state, authority, device_id, &scope).await?;
+    }
+    Ok(applied)
+}
+
+async fn recover_remote_tail(
+    api: &crate::transport::TransportClient,
+    state: &StateStoreHandle,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    scope: &arkret_sdk::ScopeRef,
+) -> Result<usize, String> {
+    let rows = crate::realm_events_engine::verified_mls_recovery_tail(api, scope)
+        .await
+        .map_err(describe)?;
+    let _install = welcome_install_lock().lock().await;
+    let current = state
+        .read(|store| store.current_mls_group_for_scope(scope))
+        .ok_or_else(|| "MLS recovery has no verified current".to_owned())?;
+    let group_id = scope.canonical_mls_group_id().map_err(describe)?;
+    let base = state
+        .read(|store| store.mls_checkpoint_for_scope_and_group(scope, group_id.as_str()))
+        .ok_or_else(|| "MLS recovery has no local checkpoint".to_owned())?;
+    if base.epoch >= current.epoch {
+        return Ok(0);
+    }
+    let mut base_ref = base
+        .group_state_event_id
+        .clone()
+        .ok_or_else(|| "MLS recovery has no accepted local base".to_owned())?;
+    let base_position = rows
+        .iter()
+        .position(|row| row.event.event_id == base_ref)
+        .ok_or_else(|| "authorized MLS tail does not disclose the installed base".to_owned())?;
+    let base_transition = accepted_mls_transition(&rows[base_position])?;
+    if base_transition.effective_scope != *scope
+        || base_transition.next_epoch != base.epoch
+        || base_transition.mls_group_id != group_id
+    {
+        return Err("verified MLS base differs from the local checkpoint".to_owned());
+    }
+    let target_position = rows
+        .iter()
+        .position(|row| row.event.event_id == current.current_mls_commit_event_ref)
+        .ok_or_else(|| "authorized MLS tail does not reach verified current".to_owned())?;
+    if target_position <= base_position {
+        return Err("MLS recovery current precedes its base".to_owned());
+    }
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    let secret = super::load_device_checkpoint_secret(secure.as_ref(), authority, device_id)
+        .map_err(describe)?;
+    let mut group =
+        crate::mls::persistence::restore_envelope(&base, &secret, base.epoch).map_err(describe)?;
+    if group.scope() != scope
+        || group.identity().actor_id != arkret_sdk::ActorId::account(authority.clone())
+        || group.identity().endpoint
+            != (arkret_sdk::MlsEndpointIdentity::HumanDevice {
+                principal_id: authority.principal_id.clone(),
+                device_id: device_id.clone(),
+            })
+    {
+        return Err("MLS recovery checkpoint belongs to another endpoint".to_owned());
+    }
+    let mut applied = 0;
+    for item in &rows[base_position + 1..=target_position] {
+        if item.event.kind != arkret_sdk::EventKind::MlsCommit {
+            continue;
+        }
+        let transition = accepted_mls_transition(item)?;
+        if transition.effective_scope != *scope || transition.previous_epoch != group.epoch() {
+            return Err("MLS recovery tail is not a continuous epoch lineage".to_owned());
+        }
+        group
+            .install_recovered_remote_commit(item, &base_ref)
+            .map_err(describe)?;
+        crate::mls::roster_install::install_welcome_roster_from_service(
+            api, state, &mut group, item, authority,
+        )
+        .await?;
+        persist_installed_group(
+            state,
+            &transition,
+            &group,
+            &secret,
+            item.event.event_id.clone(),
+        )
+        .await?;
+        base_ref = item.event.event_id.clone();
+        applied += 1;
+    }
+    if group.epoch() != current.epoch || base_ref != current.current_mls_commit_event_ref {
+        return Err("MLS recovery tail did not materialize verified current".to_owned());
     }
     Ok(applied)
 }

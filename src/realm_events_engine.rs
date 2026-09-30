@@ -339,6 +339,48 @@ where
     Ok(())
 }
 
+/// Recover only disclosed rows of an independently verified authorized stream.
+/// Reuse the same authority, historical key and continuous-chain verifier as
+/// live projection; a shape-only scan cannot authorize private MLS mutation.
+pub(crate) async fn verified_mls_recovery_tail(
+    api: &crate::transport::TransportClient,
+    scope: &arkret_sdk::ScopeRef,
+) -> garth::Result<Vec<arkret_sdk::CommittedEventFullView>> {
+    let realm = scope
+        .realm_id_opt()
+        .ok_or_else(|| garth::Error::Protocol("MLS recovery scope has no Realm".to_owned()))?;
+    let stream = CommitStreamRef::from_scope(scope, Some(realm.clone()))?;
+    let http = api.http();
+    let authority = AuthorityClient::new(http.clone());
+    let (bundle, freshness, mut replica) = fresh_verified_realm(&authority, http, realm).await?;
+    let (pages, _) = verified_stream_pages(
+        &authority,
+        http,
+        &mut replica,
+        &bundle,
+        &freshness,
+        realm,
+        &stream,
+        ReplayStart::ReadableFloor,
+        None,
+    )
+    .await?
+    .into_verified()?;
+    let final_freshness =
+        arkret_identity::RealmAuthorityFreshness::new(chrono::Utc::now(), freshness.expected_nonce);
+    let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
+    arkret_identity::verify_realm_authority_bundle(&bundle, &final_freshness, &keys)
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    Ok(pages
+        .iter()
+        .flat_map(|page| page.rows())
+        .filter_map(|row| match row {
+            CommittedEventView::Full(full) => Some(full.clone()),
+            _ => None,
+        })
+        .collect())
+}
+
 pub(crate) async fn fresh_verified_realm<T: garth::AuthorityTransport>(
     authority: &AuthorityClient<T>,
     http: &arkret_sdk::http_client::Client,

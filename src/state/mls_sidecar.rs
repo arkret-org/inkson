@@ -804,12 +804,34 @@ impl LocalStateStore {
             .unwrap_or(crate::current_projection::ScopeMlsCurrent::Unknown)
     }
 
-    /// Every effective scope inside `realm_id` this client holds MLS state for,
-    /// the enclosing Realm first.
-    ///
-    /// This is the bounded set of MLS groups the current view has a reason to
-    /// carry: a scope with no local group and no accepted current MLS group
-    /// cannot send or decrypt in the first place.
+    /// Installed groups behind their own verified public current. Unknown
+    /// scopes remain pending; enumeration grants no membership or send right.
+    pub(crate) fn mls_scopes_needing_tail_recovery(&self) -> Vec<arkret_sdk::ScopeRef> {
+        let realms = self
+            .load()
+            .mls_local_checkpoints
+            .values()
+            .map(|checkpoint| checkpoint.realm_id.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        realms
+            .iter()
+            .flat_map(|realm| self.local_mls_scopes_in_realm(realm))
+            .filter(|scope| {
+                let Some(current) = self.current_mls_group_for_scope(scope) else {
+                    return false;
+                };
+                let Ok(group_id) = scope.canonical_mls_group_id() else {
+                    return false;
+                };
+                self.mls_checkpoint_for_scope_and_group(scope, group_id.as_str())
+                    .is_some_and(|base| {
+                        base.group_state_event_id.is_some() && base.epoch < current.epoch
+                    })
+            })
+            .collect()
+    }
+
+    /// Every local effective scope inside this Realm, the Realm first.
     pub(crate) fn local_mls_scopes_in_realm(&self, realm_id: &str) -> Vec<arkret_sdk::ScopeRef> {
         let Ok(realm) = arkret_sdk::RealmId::new(realm_id.trim().to_owned()) else {
             return Vec::new();
