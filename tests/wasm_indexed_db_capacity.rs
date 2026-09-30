@@ -6,6 +6,94 @@ use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
 
 #[wasm_bindgen_test(async)]
+async fn default_product_store_delegates_atomic_queue_writes_to_indexeddb() {
+    inkson::secure_key_store::ensure_wasm_secure_key_store_ready("inkson")
+        .await
+        .unwrap();
+    let store = inkson::secure_key_store::default_secure_key_store("inkson");
+    let key = inkson::outbound_store_test_api::outbound_queue_key(
+        &format!("nsProduct{}", js_sys::Date::now()),
+        "standard",
+    );
+    inkson::outbound_store_test_api::mutate_outbound_queue(store.as_ref(), &key, |queue| {
+        queue.enqueue(contract_submission(0), chrono::Utc::now())?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let reopened_holder = inkson::secure_key_store::default_secure_key_store("inkson");
+    let count = inkson::outbound_store_test_api::mutate_outbound_queue(
+        reopened_holder.as_ref(),
+        &key,
+        |queue| Ok(queue.items().len()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(count, 1);
+    assert!(browser_local_storage().get_item(&key).unwrap().is_none());
+}
+
+#[wasm_bindgen_test(async)]
+async fn independent_holders_compare_exchange_only_the_committed_winner() {
+    let service_name = format!("atomic-secret-test-{}", js_sys::Date::now());
+    let first = IndexedDbSecureKeyStore::new_async(&service_name)
+        .await
+        .unwrap();
+    let second = IndexedDbSecureKeyStore::new_async(&service_name)
+        .await
+        .unwrap();
+    let (left, right) = tokio::join!(
+        first.compare_exchange_secret_bytes_durable("queue", None, b"first"),
+        second.compare_exchange_secret_bytes_durable("queue", None, b"second"),
+    );
+    let (left, right) = (left.unwrap(), right.unwrap());
+    assert_ne!(left, right, "exactly one absent-entry contender commits");
+    let expected = if left {
+        b"first".as_slice()
+    } else {
+        b"second".as_slice()
+    };
+    assert_eq!(
+        first
+            .read_secret_bytes_durable("queue")
+            .await
+            .unwrap()
+            .unwrap()
+            .as_slice(),
+        expected,
+    );
+    assert_eq!(
+        second
+            .read_secret_bytes_durable("queue")
+            .await
+            .unwrap()
+            .unwrap()
+            .as_slice(),
+        expected,
+        "an independent holder reads the backend winner even with a stale cache",
+    );
+    assert!(
+        !second
+            .compare_exchange_secret_bytes_durable("queue", None, b"stale")
+            .await
+            .unwrap()
+    );
+    assert!(
+        second
+            .compare_exchange_secret_bytes_durable("queue", Some(expected), b"next")
+            .await
+            .unwrap()
+    );
+    let reopened = IndexedDbSecureKeyStore::new_async(&service_name)
+        .await
+        .unwrap();
+    assert_eq!(
+        reopened.get_secret("queue").unwrap().as_deref(),
+        Some("next")
+    );
+}
+
+#[wasm_bindgen_test(async)]
 async fn binary_secret_and_text_round_trip_across_reopen() {
     let service_name = format!("binary-secret-test-{}", js_sys::Date::now());
     let secret = (0_u8..=255).collect::<Vec<_>>();
@@ -92,6 +180,10 @@ async fn failed_durable_write_does_not_publish_a_phantom_cache_value() {
         .store_secret_durable(key, "phantom")
         .await
         .expect_err("write against a closed database must fail");
+    store
+        .compare_exchange_secret_bytes_durable(key, Some(b"committed"), b"phantom")
+        .await
+        .expect_err("compare exchange against a closed database must fail");
     assert_eq!(
         store.get_secret(key).expect("read cache").as_deref(),
         Some("committed"),
@@ -184,6 +276,63 @@ fn fill_queue(queue: &mut garth::SendQueue, count: usize) {
             .enqueue(contract_submission(index), now)
             .expect("enqueue contract item");
     }
+}
+
+#[wasm_bindgen_test(async)]
+async fn independent_queue_holders_retry_the_original_frozen_items_after_conflict() {
+    let service_name = format!("outbound-atomic-{}", js_sys::Date::now());
+    let key = inkson::outbound_store_test_api::outbound_queue_key("nsAtomic", "standard");
+    let first = IndexedDbSecureKeyStore::new_async(&service_name)
+        .await
+        .unwrap();
+    let second = IndexedDbSecureKeyStore::new_async(&service_name)
+        .await
+        .unwrap();
+    let left = contract_submission(0);
+    let right = contract_submission(1);
+    let (left_result, right_result) = tokio::join!(
+        inkson::outbound_store_test_api::mutate_outbound_queue(&first, &key, |queue| {
+            queue.enqueue(left.clone(), chrono::Utc::now())?;
+            Ok(())
+        }),
+        inkson::outbound_store_test_api::mutate_outbound_queue(&second, &key, |queue| {
+            queue.enqueue(right.clone(), chrono::Utc::now())?;
+            Ok(())
+        }),
+    );
+    assert!(left_result.is_ok() || right_result.is_ok());
+    for (store, result, original) in [
+        (&first, left_result, &left),
+        (&second, right_result, &right),
+    ] {
+        if let Err(error) = result {
+            assert!(error.to_string().contains("changed in another holder"));
+            inkson::outbound_store_test_api::mutate_outbound_queue(store, &key, |queue| {
+                queue.enqueue(original.clone(), chrono::Utc::now())?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        }
+    }
+    let reopened = IndexedDbSecureKeyStore::new_async(&service_name)
+        .await
+        .unwrap();
+    inkson::outbound_store_test_api::mutate_outbound_queue(&reopened, &key, |queue| {
+        assert_eq!(queue.items().len(), 2);
+        for original in [&left, &right] {
+            let expected = serde_json::to_vec(&original.request).unwrap();
+            assert!(
+                queue
+                    .items()
+                    .iter()
+                    .any(|item| serde_json::to_vec(&item.submission.request).unwrap() == expected)
+            );
+        }
+        Ok(())
+    })
+    .await
+    .unwrap();
 }
 
 fn browser_local_storage() -> web_sys::Storage {

@@ -117,6 +117,29 @@ impl SecureKeyStore for FallbackSecureKeyStore {
         }
     }
 
+    fn read_secret_bytes_durable<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Option<KeyBytes>, SecureKeyStoreError>> + 'a>,
+    > {
+        // A cache or localStorage mirror cannot establish the committed value.
+        self.primary.read_secret_bytes_durable(key)
+    }
+
+    fn compare_exchange_secret_bytes_durable<'a>(
+        &'a self,
+        key: &'a str,
+        expected: Option<&'a [u8]>,
+        replacement: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, SecureKeyStoreError>> + 'a>>
+    {
+        // Atomic authoring stays wholly in the primary backend. Never mirror
+        // or fall back after a conflict or an unavailable transaction.
+        self.primary
+            .compare_exchange_secret_bytes_durable(key, expected, replacement)
+    }
+
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
         let primary = self.primary.delete_secret(key);
         let _ = self.fallback.delete_secret(key);

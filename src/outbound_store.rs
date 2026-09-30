@@ -122,10 +122,18 @@ async fn mutate_dispatches_in_store<R>(
     storage_key: &str,
     mutation: impl FnOnce(&mut garth::SendQueue, &mut ScheduledDispatches) -> garth::Result<R>,
 ) -> garth::Result<R> {
-    let stored = store
-        .get_secret(storage_key)
-        .map_err(|error| garth::Error::Protocol(format!("read outbound queue: {error}")))?;
-    let mut state = decode_snapshot(stored.as_deref())?;
+    let stored_bytes = store
+        .read_secret_bytes_durable(storage_key)
+        .await
+        .map_err(|error| {
+            garth::Error::Storage(format!("read committed outbound queue: {error}"))
+        })?;
+    let stored = stored_bytes
+        .as_ref()
+        .map(|bytes| std::str::from_utf8(bytes.as_slice()))
+        .transpose()
+        .map_err(|error| garth::Error::Storage(format!("decode outbound queue bytes: {error}")))?;
+    let mut state = decode_snapshot(stored)?;
     let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
         items: std::mem::take(&mut state.items),
     });
@@ -137,12 +145,15 @@ async fn mutate_dispatches_in_store<R>(
     // turn an unchanged read into a full AES-GCM + IndexedDB commit while the
     // process-wide outbound gate is held: besides being unnecessary, that can
     // serialize an ordinary Event behind unrelated secure-store maintenance.
-    if stored.as_deref() == Some(encoded.as_str()) || (stored.is_none() && queue.items().is_empty())
-    {
+    if stored == Some(encoded.as_str()) || (stored.is_none() && queue.items().is_empty()) {
         return Ok(result);
     }
-    store
-        .store_secret_durable(storage_key, &encoded)
+    let committed = store
+        .compare_exchange_secret_bytes_durable(
+            storage_key,
+            stored_bytes.as_ref().map(arkret_sdk::KeyBytes::as_slice),
+            encoded.as_bytes(),
+        )
         .await
         .map_err(|error| {
             garth::Error::Protocol(format!(
@@ -151,6 +162,11 @@ async fn mutate_dispatches_in_store<R>(
                 encoded.len(),
             ))
         })?;
+    if !committed {
+        return Err(garth::Error::Storage(
+            "outbound queue changed in another holder; retry from its committed snapshot".into(),
+        ));
+    }
     Ok(result)
 }
 
@@ -471,6 +487,11 @@ mod tests {
     use crate::test_support as fixture;
 
     #[cfg(not(target_arch = "wasm32"))]
+    type StoreFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+    #[cfg(target_arch = "wasm32")]
+    type StoreFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
+
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn independent_native_queue_handles_serialize_the_whole_durable_mutation() {
         use std::sync::mpsc;
@@ -626,6 +647,27 @@ mod tests {
             _key: &str,
         ) -> Result<Option<arkret_sdk::KeyBytes>, garth::SecureKeyStoreError> {
             Ok(None)
+        }
+
+        fn read_secret_bytes_durable<'a>(
+            &'a self,
+            _key: &'a str,
+        ) -> StoreFuture<'a, Result<Option<arkret_sdk::KeyBytes>, garth::SecureKeyStoreError>>
+        {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn compare_exchange_secret_bytes_durable<'a>(
+            &'a self,
+            _key: &'a str,
+            _expected: Option<&'a [u8]>,
+            _replacement: &'a [u8],
+        ) -> StoreFuture<'a, Result<bool, garth::SecureKeyStoreError>> {
+            Box::pin(async {
+                Err(garth::SecureKeyStoreError::Backend(
+                    "entries store unavailable".into(),
+                ))
+            })
         }
 
         fn delete_secret(&self, _key: &str) -> Result<(), garth::SecureKeyStoreError> {

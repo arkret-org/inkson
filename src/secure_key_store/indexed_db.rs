@@ -758,6 +758,162 @@ impl IndexedDbSecureKeyStore {
         }
     }
 
+    fn packed_entry(value: &wasm_bindgen::JsValue) -> Result<Vec<u8>, SecureKeyStoreError> {
+        use js_sys::{Reflect, Uint8Array};
+        use wasm_bindgen::{JsCast, JsValue};
+        let component = |name| {
+            Reflect::get(value, &JsValue::from_str(name))
+                .map_err(|error| SecureKeyStoreError::Backend(format!("entry {name}: {error:?}")))?
+                .dyn_into::<Uint8Array>()
+                .map(|array| array.to_vec())
+                .map_err(|_| SecureKeyStoreError::Backend(format!("invalid entry {name}")))
+        };
+        let mut packed = component("iv")?;
+        let ciphertext = component("ct")?;
+        if packed.len() != 12 || ciphertext.len() < 16 {
+            return Err(SecureKeyStoreError::Backend(
+                "invalid encrypted entry length".into(),
+            ));
+        }
+        packed.extend(ciphertext);
+        Ok(packed)
+    }
+
+    async fn compare_exchange_entry(
+        &self,
+        key: &str,
+        expected: Option<&[u8]>,
+        replacement: &[u8],
+    ) -> Result<bool, SecureKeyStoreError> {
+        use js_sys::{Object, Reflect, Uint8Array};
+        use wasm_bindgen::closure::Closure;
+        use wasm_bindgen::{JsCast, JsValue};
+
+        let snapshot = Self::idb_get_value(&self.db.0, Self::OBJECT_STORE_ENTRIES, key)
+            .await?
+            .as_ref()
+            .map(Self::packed_entry)
+            .transpose()?;
+        let plain = match &snapshot {
+            Some(packed) => Some(Self::subtle_decrypt(&self.crypto_key.0, packed).await?),
+            None => None,
+        };
+        if plain.as_deref() != expected {
+            return Ok(false);
+        }
+        // WebCrypto finishes before opening the readwrite transaction. Its
+        // callback then compares exact ciphertext and queues put without await.
+        let (iv, ciphertext) = Self::subtle_encrypt(&self.crypto_key.0, replacement).await?;
+        let entry = Object::new();
+        for (name, bytes) in [("iv", iv.as_slice()), ("ct", ciphertext.as_slice())] {
+            Reflect::set(&entry, &JsValue::from_str(name), &Uint8Array::from(bytes)).map_err(
+                |error| SecureKeyStoreError::Backend(format!("entry {name}: {error:?}")),
+            )?;
+        }
+        let tx = self
+            .db
+            .0
+            .transaction_with_str_and_mode(
+                Self::OBJECT_STORE_ENTRIES,
+                web_sys::IdbTransactionMode::Readwrite,
+            )
+            .map_err(|error| {
+                SecureKeyStoreError::Backend(format!("compare exchange tx: {error:?}"))
+            })?;
+        let store = tx
+            .object_store(Self::OBJECT_STORE_ENTRIES)
+            .map_err(|error| {
+                SecureKeyStoreError::Backend(format!("compare exchange store: {error:?}"))
+            })?;
+        let request = store.get(&JsValue::from_str(key)).map_err(|error| {
+            SecureKeyStoreError::Backend(format!("compare exchange get: {error:?}"))
+        })?;
+        let changed = std::rc::Rc::new(std::cell::Cell::new(false));
+        let callback_changed = changed.clone();
+        let callback_request = request.clone();
+        let callback_tx = tx.clone();
+        let callback_key = JsValue::from_str(key);
+        let checked = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+            let result = (|| -> Result<(), SecureKeyStoreError> {
+                let value = callback_request.result().map_err(|error| {
+                    SecureKeyStoreError::Backend(format!("compare exchange result: {error:?}"))
+                })?;
+                let current = if value.is_null() || value.is_undefined() {
+                    None
+                } else {
+                    Some(Self::packed_entry(&value)?)
+                };
+                if current != snapshot {
+                    return Ok(());
+                }
+                store
+                    .put_with_key(entry.as_ref(), &callback_key)
+                    .map_err(|error| {
+                        SecureKeyStoreError::Backend(format!("compare exchange put: {error:?}"))
+                    })?;
+                callback_changed.set(true);
+                Ok(())
+            })();
+            if result.is_err() {
+                let _ = callback_tx.abort();
+            }
+        });
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let sender = std::rc::Rc::new(std::cell::RefCell::new(Some(sender)));
+        let done_sender = sender.clone();
+        let done = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+            if let Some(sender) = done_sender.borrow_mut().take() {
+                let _ = sender.send(Ok(changed.get()));
+            }
+        });
+        let failed = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+            if let Some(sender) = sender.borrow_mut().take() {
+                let _ = sender.send(Err(SecureKeyStoreError::Backend(
+                    "secret compare exchange aborted".into(),
+                )));
+            }
+        });
+        struct Guard {
+            tx: web_sys::IdbTransaction,
+            request: web_sys::IdbRequest,
+            _checked: Closure<dyn FnMut(web_sys::Event)>,
+            _done: Closure<dyn FnMut(web_sys::Event)>,
+            _failed: Closure<dyn FnMut(web_sys::Event)>,
+        }
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                self.request.set_onsuccess(None);
+                self.tx.set_oncomplete(None);
+                self.tx.set_onabort(None);
+                self.tx.set_onerror(None);
+                let _ = self.tx.abort();
+            }
+        }
+        request.set_onsuccess(Some(checked.as_ref().unchecked_ref()));
+        tx.set_oncomplete(Some(done.as_ref().unchecked_ref()));
+        tx.set_onabort(Some(failed.as_ref().unchecked_ref()));
+        tx.set_onerror(Some(failed.as_ref().unchecked_ref()));
+        let _guard = Guard {
+            tx,
+            request,
+            _checked: checked,
+            _done: done,
+            _failed: failed,
+        };
+        let committed = tokio::select! {
+            result = receiver => result.map_err(|_| SecureKeyStoreError::Backend("secret compare exchange channel closed".into()))?,
+            _ = crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(12)) =>
+                Err(SecureKeyStoreError::Backend("secret compare exchange completion timeout".into())),
+        }?;
+        if committed {
+            self.cache
+                .lock()
+                .map_err(|error| SecureKeyStoreError::Backend(format!("cache lock: {error}")))?
+                .insert(key.to_owned(), replacement.to_owned());
+        }
+        Ok(committed)
+    }
+
     async fn idb_write_committed(
         tx: &web_sys::IdbTransaction,
         request: &web_sys::IdbRequest,
@@ -1200,6 +1356,33 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
             .lock()
             .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?;
         Ok(guard.get(key).map(|value| KeyBytes::new(value.clone())))
+    }
+
+    fn read_secret_bytes_durable<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Option<KeyBytes>, SecureKeyStoreError>> + 'a>,
+    > {
+        Box::pin(async move {
+            let value = Self::idb_get_value(&self.db.0, Self::OBJECT_STORE_ENTRIES, key).await?;
+            match value {
+                Some(value) => Ok(Some(KeyBytes::new(
+                    Self::subtle_decrypt(&self.crypto_key.0, &Self::packed_entry(&value)?).await?,
+                ))),
+                None => Ok(None),
+            }
+        })
+    }
+
+    fn compare_exchange_secret_bytes_durable<'a>(
+        &'a self,
+        key: &'a str,
+        expected: Option<&'a [u8]>,
+        replacement: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, SecureKeyStoreError>> + 'a>>
+    {
+        Box::pin(self.compare_exchange_entry(key, expected, replacement))
     }
 
     fn list_secret_keys(&self, prefix: Option<&str>) -> Result<Vec<String>, SecureKeyStoreError> {
