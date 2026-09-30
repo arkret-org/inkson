@@ -168,6 +168,70 @@ pub(crate) async fn resolve_mls_send_gate(
     )
 }
 
+/// Readiness also requires that this endpoint can restore its private group.
+/// This probe neither creates secrets nor advances a sender ratchet.
+pub(crate) async fn resolve_restorable_mls_send_gate(
+    input: &MlsSendGateInput,
+    scope: &arkret_sdk::ScopeRef,
+    device: &arkret_sdk::DeviceId,
+) -> anyhow::Result<MlsSendGate> {
+    let gate = resolve_mls_send_gate(input, scope).await?;
+    input.store.read(|state| {
+        let realm_id = scope
+            .realm_id_opt()
+            .ok_or_else(|| anyhow::anyhow!("scope has no Realm"))?;
+        anyhow::ensure!(
+            !state.realm_detail_invalidated(realm_id.as_str()),
+            "the Realm detail awaits a complete baseline"
+        );
+        anyhow::ensure!(
+            !state.current_reset_required() && state.active_authority() == input.authority,
+            "the account current changed"
+        );
+        Ok::<_, anyhow::Error>(())
+    })?;
+    if let MlsSendGate::Encrypted(current) = &gate {
+        let authority = input
+            .authority
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no active account"))?;
+        let snapshot = input.store.read(|state| {
+            anyhow::ensure!(
+                state.active_authority().as_ref() == Some(authority),
+                "active account changed"
+            );
+            state
+                .mls_checkpoint_for_scope(scope)
+                .ok_or_else(|| anyhow::anyhow!("private MLS group is not installed"))
+        })?;
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let secret = crate::mls::runtime::load_device_checkpoint_secret(
+            secure_store.as_ref(),
+            authority,
+            device,
+        )?;
+        let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, current.epoch)?;
+        anyhow::ensure!(
+            group.scope() == scope && group.epoch() == current.epoch,
+            "private MLS group does not match current"
+        );
+        anyhow::ensure!(
+            group.local_actor_id() == &arkret_sdk::ActorId::account(authority.clone()),
+            "private MLS actor does not match account"
+        );
+        anyhow::ensure!(
+            group.local_endpoint_identity()
+                == arkret_sdk::MlsEndpointIdentity::HumanDevice {
+                    principal_id: authority.principal_id.clone(),
+                    device_id: device.clone()
+                },
+            "private MLS endpoint does not match device"
+        );
+        group.local_content_sender_domain()?;
+    }
+    Ok(gate)
+}
+
 /// A retry keeps its original ciphertext and epoch. Recheck current Circle
 /// qualification locally; the authority decides acceptance or exact replay.
 pub(crate) async fn check_circle_send_membership(

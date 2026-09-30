@@ -1798,6 +1798,30 @@ pub fn ChatPanel(
                 .as_ref()
                 .map(|circle| circle.circle_id.clone())
         });
+    let send_scope = arkret_sdk::RealmId::new(selected_realm_id.clone())
+        .ok()
+        .and_then(|realm_id| match selected_scope_circle.as_ref() {
+            Some(circle) => arkret_sdk::CircleId::new(circle.clone())
+                .ok()
+                .map(|circle_id| arkret_sdk::ScopeRef::Circle {
+                    realm_id,
+                    circle_id,
+                }),
+            None => Some(arkret_sdk::ScopeRef::Realm { realm_id }),
+        });
+    let scope_send_ready = crate::views::secure_send::use_scope_send_ready(
+        state_store,
+        send_scope,
+        account_device_id.clone(),
+    );
+    let shared_sync_finished = initial_sync_finished()
+        && if sidecar_mode {
+            sidecar_session
+                .as_ref()
+                .is_some_and(|session| session.membership_ready())
+        } else {
+            scope_send_ready
+        };
     // Participation is a durable Realm projection. The account cursor is an
     // opaque resume checkpoint and can be re-minted for typing/receipts/calls;
     // reduce it to the one useful transition (bootstrap is ready) and use the
@@ -1949,7 +1973,7 @@ pub fn ChatPanel(
             "data-testid": "chat-panel",
             "data-mls-epoch": direct_mls_epoch,
             "data-chat-mode": if direct_mode { "direct" } else { "collaboration" },
-            "data-initial-sync": if initial_sync_finished() { "complete" } else { "pending" },
+            "data-initial-sync": if shared_sync_finished { "complete" } else { "pending" },
             ChatEffects {
                 controller,
                 authority: authority.clone(),

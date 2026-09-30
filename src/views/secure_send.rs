@@ -26,6 +26,83 @@ use crate::state::LocalStateStore;
 
 pub(crate) type LocalMlsEncryptResult = crate::mls::runtime::DeviceSnapshotEncryption;
 
+/// Ephemeral dependencies of the UI's read-only readiness probe.
+#[derive(Clone, PartialEq)]
+struct SendReadinessKey {
+    scope: Option<arkret_sdk::ScopeRef>,
+    device: arkret_sdk::DeviceId,
+    authority: Option<arkret_sdk::AccountId>,
+    generation: u64,
+    reset_required: bool,
+    detail_invalidated: bool,
+    checkpoint: Option<(
+        u64,
+        Option<arkret_sdk::EventId>,
+        chrono::DateTime<chrono::Utc>,
+    )>,
+}
+
+/// Never reuse a ready result across account, scope, cut or private-state changes.
+pub(crate) fn use_scope_send_ready(
+    state_store: SyncSignal<LocalStateStore>,
+    scope: Option<arkret_sdk::ScopeRef>,
+    device: arkret_sdk::DeviceId,
+) -> bool {
+    let key = use_memo(use_reactive((&scope, &device), move |(scope, device)| {
+        let state = state_store.read();
+        let checkpoint = scope
+            .as_ref()
+            .and_then(|scope| state.mls_checkpoint_for_scope(scope))
+            .map(|snapshot| {
+                (
+                    snapshot.epoch,
+                    snapshot.group_state_event_id,
+                    snapshot.recorded_at,
+                )
+            });
+        let detail_invalidated = scope
+            .as_ref()
+            .and_then(arkret_sdk::ScopeRef::realm_id_opt)
+            .is_none_or(|realm_id| state.realm_detail_invalidated(realm_id.as_str()));
+        SendReadinessKey {
+            scope,
+            device,
+            authority: state.active_authority(),
+            generation: state.current_generation(),
+            reset_required: state.current_reset_required(),
+            detail_invalidated,
+            checkpoint,
+        }
+    }));
+    let mut result = use_signal(|| None::<SendReadinessKey>);
+    use_effect(move || {
+        let captured = key();
+        spawn(async move {
+            let ready = if let Some(scope) = captured
+                .scope
+                .as_ref()
+                .filter(|_| !captured.reset_required && !captured.detail_invalidated)
+            {
+                let store = crate::app::runtime_adapter::state_store_handle(state_store);
+                let input = crate::mls::send_gate::MlsSendGateInput::capture(&store, scope);
+                crate::mls::send_gate::resolve_restorable_mls_send_gate(
+                    &input,
+                    scope,
+                    &captured.device,
+                )
+                .await
+                .is_ok()
+            } else {
+                false
+            };
+            if *key.peek() == captured {
+                result.set(ready.then_some(captured));
+            }
+        });
+    });
+    result.read().as_ref() == Some(&key())
+}
+
 /// Encrypt `plaintext_bytes` under the Realm MLS group and return the
 /// structured MLS payload + the canonical AAD it was bound to. Epoch
 /// transitions are reconciled separately; a content send only consumes an

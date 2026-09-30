@@ -907,6 +907,15 @@ pub fn KanbanPanel(
         .read()
         .station_realm_digest_suite(&selected_realm_id)
         .is_some();
+    let card_scope = arkret_sdk::RealmId::new(selected_realm_id.clone())
+        .ok()
+        .map(|realm_id| arkret_sdk::ScopeRef::Realm { realm_id });
+    let card_write_ready = crate::views::secure_send::use_scope_send_ready(
+        state_store,
+        card_scope,
+        active_account.device_id.clone(),
+    ) && event_write_ready
+        && station_frontier_ready;
     // The board id lives in the URL (`/kanban/<realm>/board/<board>` and
     // its `/task/<strand>` extension). Seeding `selected_board`
     // from the route — instead of always `board_options.first()` — is
@@ -2314,6 +2323,7 @@ pub fn KanbanPanel(
                                         variant: ButtonVariant::Primary,
                                         class: "board-card-composer-save",
                                         "data-testid": "save-card-button",
+                                        disabled: !card_write_ready || arkret_sdk::SpaceId::new(column.id.as_str()).is_err(),
                                         title: "Save card",
                                         "aria-label": "Save card",
                                         onclick: {
@@ -2409,8 +2419,10 @@ pub fn KanbanPanel(
                                     // A pending List has no protocol id yet, so it
                                     // cannot be a card's `list_space_id`; the action
                                     // unlocks when the receipt commits the Space id.
-                                    disabled: arkret_sdk::SpaceId::new(column.id.as_str()).is_err(),
-                                    title: if arkret_sdk::SpaceId::new(column.id.as_str()).is_ok() {
+                                    disabled: !card_write_ready || arkret_sdk::SpaceId::new(column.id.as_str()).is_err(),
+                                    title: if !card_write_ready {
+                                        "Waiting for sync and encryption setup"
+                                    } else if arkret_sdk::SpaceId::new(column.id.as_str()).is_ok() {
                                         "Add a card to this list"
                                     } else {
                                         "Waiting for the list to be accepted"
