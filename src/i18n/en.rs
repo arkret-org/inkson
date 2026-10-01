@@ -1996,6 +1996,7 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.petname.placeholder", "Petname (private)");
     dict.set("contacts.petname.save", "Save petname");
     dict.set("contacts.petname.saved", "Petname saved");
+    dict.set("contacts.remark.saving", "Saving…");
     dict.set("contacts.petname.cleared", "Petname cleared");
     dict.set("contacts.petname.badge", "Petname");
     dict.set("contacts.petname.invalid", "Invalid petname");

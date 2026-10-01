@@ -378,71 +378,76 @@ pub(crate) fn push_contact_remark_edit(
     principal_id: arkret_sdk::DidCoreId,
     edit: crate::account_data::ContactRemarkEdit,
 ) {
-    let authority = match crate::secure_key_store::active_device_seed_scope()
-        .map(|scope| scope.authority)
-    {
-        Some(holder) => holder,
-        None => {
-            tracing::warn!("contact remark upload skipped: active account scope is unavailable");
-            return;
-        }
+    let Some(authority) =
+        crate::secure_key_store::active_device_seed_scope().map(|scope| scope.authority)
+    else {
+        tracing::warn!("contact remark upload skipped: active account scope is unavailable");
+        return;
     };
-    let namespace_key = match crate::account_data::account_data_namespace_key(&authority) {
-        Ok(key) => key,
-        Err(error) => {
-            tracing::warn!(%error, "contact remark upload skipped: namespace key unavailable");
-            return;
-        }
-    };
-    let key =
-        match crate::account_data::contact_remark_account_data_key(&namespace_key, &principal_id) {
-            Ok(key) => key,
-            Err(error) => {
-                tracing::warn!(%error, "contact remark key derivation failed");
-                return;
-            }
-        };
     spawn(async move {
-        let key_for_log = key.clone();
-        if let Err(error) = with_event_submitter(&base_url, api_token, move |sub| {
-            let key = key.clone();
-            let authority = authority.clone();
-            let principal_id = principal_id.clone();
-            let edit = edit.clone();
-            async move {
-                crate::transport::account::update_account_data_with_conditional_merge(
-                    &sub,
-                    &key,
-                    |snapshot| {
-                        let merged = crate::account_data::merge_contact_remark_account_data(
-                            &authority,
-                            &key,
-                            &principal_id,
-                            &edit,
-                            snapshot.entry.as_ref(),
-                        )?;
-                        Ok(match merged {
-                            crate::account_data::ContactRemarkMerge::Write(body) => {
-                                crate::transport::account::AccountDataMergeDecision::Replace(body)
-                            }
-                            crate::account_data::ContactRemarkMerge::Delete => {
-                                crate::transport::account::AccountDataMergeDecision::Delete
-                            }
-                        })
-                    },
-                )
-                .await
-            }
-        })
-        .await
+        if let Err(error) =
+            save_contact_remark_edit(base_url, api_token, authority, principal_id, edit).await
         {
-            tracing::warn!(
-                key = %key_for_log,
-                error = %error.display(),
-                "contact remark account_data write failed"
-            );
+            tracing::warn!(error = %error.display(), "contact remark account_data write failed");
         }
     });
+}
+
+/// Return the authoritative merged remark only after the service accepted it.
+pub(crate) async fn save_contact_remark_edit(
+    base_url: String,
+    api_token: String,
+    authority: arkret_sdk::AccountId,
+    principal_id: arkret_sdk::DidCoreId,
+    edit: crate::account_data::ContactRemarkEdit,
+) -> Result<crate::account_data::ContactRemark, crate::transport::auth::ApiCallError> {
+    use crate::transport::auth::ApiCallError;
+    let namespace_key = crate::account_data::account_data_namespace_key(&authority)
+        .map_err(ApiCallError::Failed)?;
+    let key = crate::account_data::contact_remark_account_data_key(&namespace_key, &principal_id)
+        .map_err(ApiCallError::Failed)?;
+    with_event_submitter(&base_url, api_token, move |sub| async move {
+        anyhow::ensure!(
+            sub.authority()? == &authority,
+            "Contact remark account changed"
+        );
+        let result = crate::transport::account::update_account_data_with_conditional_merge(
+            &sub,
+            &key,
+            |snapshot| {
+                let merged = crate::account_data::merge_contact_remark_account_data(
+                    &authority,
+                    &key,
+                    &principal_id,
+                    &edit,
+                    snapshot.entry.as_ref(),
+                )?;
+                Ok(match merged {
+                    crate::account_data::ContactRemarkMerge::Write(body) => {
+                        crate::transport::account::AccountDataMergeDecision::Replace(body)
+                    }
+                    crate::account_data::ContactRemarkMerge::Delete => {
+                        crate::transport::account::AccountDataMergeDecision::Delete
+                    }
+                })
+            },
+        )
+        .await?;
+        if result.is_null() {
+            return Ok(crate::account_data::ContactRemark::new(
+                principal_id,
+                "",
+                chrono::Utc::now(),
+            ));
+        }
+        let row: arkret_sdk::AccountDataRow = serde_json::from_value(result)?;
+        let remark: crate::account_data::ContactRemark = serde_json::from_value(
+            crate::account_data::decrypt_account_data_entry(&authority, &key, &row)?,
+        )?;
+        remark.validate_for_account_data_key(&namespace_key, &key)?;
+        Ok(remark)
+    })
+    .await
 }
 
 // Invariant assertions: each `expect` message names the check that
