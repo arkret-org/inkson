@@ -522,10 +522,12 @@ pub fn LoginPanel(
                     }
                 }
 
-                if !auth_status().is_empty() {
+                if !auth_status().is_empty()
+                    && (connection_change().is_none() || !auth_status().contains("Station identity or authentication changed")) {
                     div { class: "auth-status", "data-testid": "auth-status", role: "status", "{auth_status}" }
                 }
-                if !auto_capture_callback && auth_status().contains("Station identity or authentication changed") {
+                if !auto_capture_callback && connection_change().is_none()
+                    && auth_status().contains("Station identity or authentication changed") {
                     Button {
                         variant: ButtonVariant::Ghost,
                         disabled: is_busy(),
@@ -550,16 +552,34 @@ pub fn LoginPanel(
                 if let Some(change) = connection_change() {
                     div { class: "auth-status auth-connection-review", role: "alert",
                         "data-testid": "station-connection-review",
-                        p { "This server's identity or sign-in provider changed. Continue only if you intended this change. A new sign-in is required." }
-                        p { "Server: {change.candidate.base_url}" }
-                        p { "Previous identity: {change.previous.service_id}" }
-                        p { "New identity: {change.candidate.service_id}" }
-                        p { "Previous trust domain: {change.previous.trust_domain}" }
-                        p { "New trust domain: {change.candidate.trust_domain}" }
-                        strong { "Previous sign-in provider" }
-                        pre { "{crate::station_connection::authentication_summary(&change.previous)}" }
-                        strong { "New sign-in provider" }
-                        pre { "{crate::station_connection::authentication_summary(&change.candidate)}" }
+                        strong { "Server connection changed" }
+                        ul { class: "auth-connection-summary",
+                            if change.previous.service_id != change.candidate.service_id {
+                                li { "Server identity changed" }
+                            }
+                            if change.previous.trust_domain != change.candidate.trust_domain {
+                                li { "Trust domain changed" }
+                            }
+                            if change.previous.auth_metadata != change.candidate.auth_metadata {
+                                li { "Sign-in provider changed" }
+                            }
+                        }
+                        p { "Only trust this change if you expected it. A new sign-in is required." }
+                        details { class: "auth-connection-details",
+                            summary { "View changed details" }
+                            p { class: "auth-connection-server", "Server: {change.candidate.base_url}" }
+                            for detail in crate::station_connection::connection_changes(&change) {
+                                div { class: "auth-connection-field",
+                                    strong { "{detail.label}" }
+                                    dl {
+                                        dt { "Previous" }
+                                        dd { "{detail.previous}" }
+                                        dt { "New" }
+                                        dd { "{detail.candidate}" }
+                                    }
+                                }
+                            }
+                        }
                         div { class: "auth-connection-actions",
                         Button {
                             variant: ButtonVariant::Ghost,
@@ -597,7 +617,7 @@ pub fn LoginPanel(
                                     });
                                 }
                             },
-                            "Trust this connection and sign in again"
+                            "Trust new connection"
                         }
                         }
                     }

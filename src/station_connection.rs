@@ -2,6 +2,9 @@
 
 use arkret_sdk::{ServiceDescribe, StationConnectionBinding};
 
+mod review;
+pub(crate) use review::connection_changes;
+
 #[derive(Clone, Debug)]
 pub(crate) struct ConnectionTrustChange {
     pub previous: StationConnectionBinding,
@@ -57,30 +60,6 @@ pub(crate) fn clear_pending_authentication(
         store.set_pending_principal_registration(None)?;
     }
     Ok(())
-}
-
-pub(crate) fn authentication_summary(binding: &StationConnectionBinding) -> String {
-    let mut lines = Vec::new();
-    if let Some(authority) = &binding.auth_metadata.account_authority {
-        lines.push(format!(
-            "Sign-in service: {}",
-            authority.gate_account_base_url
-        ));
-    }
-    for method in &binding.auth_metadata.methods {
-        lines.push(format!(
-            "Method: {:?} | Issuer: {} | Provider: {} | Client: {} | Permissions: {}",
-            method.method,
-            method.issuer_uri.as_deref().unwrap_or("local"),
-            method.provider_uri.as_deref().unwrap_or("local"),
-            method.client_id.as_deref().unwrap_or("default"),
-            method.scopes.join(", ")
-        ));
-        if let Some(discovery) = &method.openid_configuration_url {
-            lines.push(format!("Provider discovery: {discovery}"));
-        }
-    }
-    lines.join("\n")
 }
 
 fn validate_transition(

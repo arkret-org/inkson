@@ -360,6 +360,34 @@
 .auth-connection-review p { margin: 0; }
 .auth-connection-review strong { color: var(--text); }
 
+.auth-connection-summary {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text);
+}
+
+.auth-connection-details summary {
+  cursor: pointer;
+  color: var(--text);
+}
+
+.auth-connection-details summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.auth-connection-details .auth-connection-server { margin-top: 10px; }
+.auth-connection-field { margin-top: 12px; }
+.auth-connection-field dl { margin: 6px 0 0; }
+.auth-connection-field dt { font-size: 12px; }
+.auth-connection-field dd {
+  margin: 2px 0 8px;
+  color: var(--text);
+  font: 12px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .auth-connection-actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
