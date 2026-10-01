@@ -157,6 +157,38 @@ pub(crate) fn decide_mls_send_gate(
     }
 }
 
+/// A durable local MLS choice blocks plaintext before there is any epoch-zero
+/// material. It is a local safety fence, never an activation claim about a peer.
+pub(crate) async fn check_creator_plaintext_slot(
+    store: &crate::outbound_store::InksonOutboundStore,
+    scope: &arkret_sdk::ScopeRef,
+) -> Result<(), MlsSendGateBlocked> {
+    if store
+        .has_creator_intent_for_scope(scope)
+        .await
+        .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?
+    {
+        return Err(MlsSendGateBlocked::GenesisPending);
+    }
+    Ok(())
+}
+
+async fn check_local_creator_plaintext_fence(
+    input: &MlsSendGateInput,
+    scope: &arkret_sdk::ScopeRef,
+) -> Result<(), MlsSendGateBlocked> {
+    let authority = input
+        .authority
+        .as_ref()
+        .ok_or_else(|| MlsSendGateBlocked::NotReady("no active authoring vault".into()))?;
+    let store = crate::outbound_store::InksonOutboundStore::open(
+        authority,
+        crate::outbound_store::OutboundLane::Standard,
+    )
+    .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
+    check_creator_plaintext_slot(&store, scope).await
+}
+
 /// Resolve the gate of `scope` for a new application body.
 pub(crate) async fn resolve_mls_send_gate(
     input: &MlsSendGateInput,
@@ -166,6 +198,9 @@ pub(crate) async fn resolve_mls_send_gate(
         read_durable_mls_current(input, scope).await,
         input.local.as_ref(),
     )?;
+    if gate == MlsSendGate::Plaintext {
+        check_local_creator_plaintext_fence(input, scope).await?;
+    }
     if let MlsSendGate::Encrypted(current) = &gate {
         let durable = input
             .store
@@ -323,11 +358,11 @@ pub(crate) async fn check_application_body(
     scope: &arkret_sdk::ScopeRef,
     body: ApplicationBody,
 ) -> Result<(), MlsSendGateBlocked> {
-    check_application_body_against(
-        read_durable_mls_current(input, scope).await,
-        input.local.as_ref(),
-        body,
-    )
+    let current = read_durable_mls_current(input, scope).await;
+    if matches!(current, Ok(None)) && matches!(body, ApplicationBody::Plaintext) {
+        check_local_creator_plaintext_fence(input, scope).await?;
+    }
+    check_application_body_against(current, input.local.as_ref(), body)
 }
 
 pub(crate) fn check_application_body_against(

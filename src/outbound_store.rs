@@ -465,6 +465,21 @@ impl InksonOutboundStore {
             .await
     }
 
+    /// Holder-local encryption choice. This does not assert protocol MLS
+    /// activation; it only prevents publishing plaintext during bootstrap.
+    pub(crate) async fn has_creator_intent_for_scope(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> garth::Result<bool> {
+        self.mutate_state(|state| {
+            Ok(state
+                .creator_bootstrap_records
+                .iter()
+                .any(|record| record.intent().effective_scope() == scope))
+        })
+        .await
+    }
+
     pub(crate) async fn creator_intent(
         &self,
         owner: &arkret_sdk::ActorId,
@@ -509,6 +524,27 @@ impl InksonOutboundStore {
         accepted_create: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
         genesis_absence: arkret_wire::RealmStateSnapshot,
     ) -> garth::Result<()> {
+        let mut next = expected.clone();
+        next.accept_realm(accepted_create, genesis_absence)?;
+        self.replace_creator_record(expected, next).await
+    }
+
+    pub(crate) async fn pin_creator_governance(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        evidence: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapGovernanceEvidence,
+    ) -> garth::Result<()> {
+        let mut next = expected.clone();
+        next.pin_governance(evidence)?;
+        self.replace_creator_record(expected, next).await
+    }
+
+    async fn replace_creator_record(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        next: MlsCreatorBootstrapRecord,
+    ) -> garth::Result<()> {
+        next.validate()?;
         self.mutate_state(|state| {
             let record = state
                 .creator_bootstrap_records
@@ -517,10 +553,8 @@ impl InksonOutboundStore {
                     record.intent().effective_scope() == expected.intent().effective_scope()
                 })
                 .ok_or_else(|| {
-                    garth::Error::Storage("creator acceptance lost its durable intent".into())
+                    garth::Error::Storage("creator transaction lost its durable intent".into())
                 })?;
-            let mut next = expected.clone();
-            next.accept_realm(accepted_create, genesis_absence)?;
             if record == &next {
                 return Ok(());
             }
@@ -851,6 +885,11 @@ mod tests {
             .freeze_creator_intent(intent.clone(), submission.clone())
             .await
             .unwrap();
+        assert!(matches!(
+            crate::mls::send_gate::check_creator_plaintext_slot(&store, intent.effective_scope())
+                .await,
+            Err(crate::mls::send_gate::MlsSendGateBlocked::GenesisPending)
+        ));
         let expected = store
             .creator_record(intent.owner_actor_id(), intent.effective_scope())
             .await
@@ -903,6 +942,113 @@ mod tests {
         );
         let state = decode_snapshot(Some(&std::fs::read_to_string(path).unwrap())).unwrap();
         assert_eq!(state.creator_bootstrap_records, vec![winner]);
+        assert_eq!(state.items.len(), 1);
+        assert_eq!(state.items[0].request(), &submission.request);
+    }
+
+    #[tokio::test]
+    async fn creator_pin_failure_and_stale_holder_keep_the_single_durable_cut() {
+        use arkret_models_collaboration::mls_creator_bootstrap::{
+            MlsCreatorBootstrapDeviceAuthority, MlsCreatorBootstrapGovernanceEvidence,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("standard.json");
+        let store = InksonOutboundStore::for_test_path(path.clone());
+        let (intent, submission) = creator_fixture(CREATOR_DEVICE);
+        store
+            .freeze_creator_intent(intent.clone(), submission.clone())
+            .await
+            .unwrap();
+        let initial = store
+            .creator_record(intent.owner_actor_id(), intent.effective_scope())
+            .await
+            .unwrap()
+            .unwrap();
+        let (accepted, snapshot) = creator_acceptance(&intent);
+        store
+            .accept_creator_realm(initial, accepted.clone(), snapshot.clone())
+            .await
+            .unwrap();
+        let expected = store
+            .creator_record(intent.owner_actor_id(), intent.effective_scope())
+            .await
+            .unwrap()
+            .unwrap();
+        let now = accepted.authority_root().bundle_issued_at;
+        // These fixtures check atomic storage, not authenticated source evidence.
+        let outcome: arkret_models_crypto::KeysQueryOutcome = serde_json::from_value(serde_json::json!({
+            "device_keys": [{"account_id": intent.owner_actor_id().as_account_id().unwrap(), "device_keys": {
+                CREATOR_DEVICE: {"signer_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "algorithms": {}, "trust_algorithms": [], "device_projection": {
+                        "device_signing_key_did": "did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5",
+                        "hpke_key": "hpke-test", "device_authorize_event_id": intent.scope_create_event_id(),
+                        "authorized_generation_ref": 7, "device_status": "active",
+                        "attested_at": arkret_sdk::canonical::format_timestamp_canonical(now), "expires_at": arkret_sdk::canonical::format_timestamp_canonical(now + chrono::TimeDelta::minutes(5)),
+                        "authorization_window": {"not_before": arkret_sdk::canonical::format_timestamp_canonical(now), "expires_at": null}
+                    }}
+            }}], "device_generations": [{"account_id": intent.owner_actor_id().as_account_id().unwrap(),
+                "generation_state": {"current_device_generation_ref": 7}}]
+        })).unwrap();
+        let device =
+            MlsCreatorBootstrapDeviceAuthority::from_self_keys_query(&intent, &outcome, now)
+                .unwrap();
+        let evidence = MlsCreatorBootstrapGovernanceEvidence::new_device(
+            &intent,
+            accepted.clone(),
+            snapshot.clone(),
+            device,
+        )
+        .unwrap();
+        let before = std::fs::read(&path).unwrap();
+        std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+        assert!(
+            store
+                .pin_creator_governance(expected.clone(), evidence.clone())
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let reopened = InksonOutboundStore::for_test_path(path.clone());
+        assert_eq!(
+            reopened
+                .creator_record(intent.owner_actor_id(), intent.effective_scope())
+                .await
+                .unwrap(),
+            Some(expected.clone())
+        );
+        std::fs::remove_dir(path.with_extension("json.tmp")).unwrap();
+        reopened
+            .pin_creator_governance(expected.clone(), evidence.clone())
+            .await
+            .unwrap();
+        store
+            .pin_creator_governance(expected.clone(), evidence)
+            .await
+            .unwrap();
+        let later_device = MlsCreatorBootstrapDeviceAuthority::from_self_keys_query(
+            &intent,
+            &outcome,
+            now + chrono::TimeDelta::milliseconds(1),
+        )
+        .unwrap();
+        let later_evidence = MlsCreatorBootstrapGovernanceEvidence::new_device(
+            &intent,
+            accepted,
+            snapshot,
+            later_device,
+        )
+        .unwrap();
+        assert!(
+            store
+                .pin_creator_governance(expected, later_evidence)
+                .await
+                .is_err()
+        );
+        let state = decode_snapshot(Some(&std::fs::read_to_string(path).unwrap())).unwrap();
+        assert_eq!(
+            state.creator_bootstrap_records[0].state(),
+            arkret_wire::MlsCreatorBootstrapState::GovernanceResultPinned
+        );
         assert_eq!(state.items.len(), 1);
         assert_eq!(state.items[0].request(), &submission.request);
     }

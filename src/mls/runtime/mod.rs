@@ -23,6 +23,7 @@ mod artifact_consumer;
 mod backup;
 mod commit;
 mod genesis;
+pub(crate) use genesis::ensure_creator_mls_checkpoint_with_pinned_binding;
 mod message;
 mod reaction;
 mod secret;

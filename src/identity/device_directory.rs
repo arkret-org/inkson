@@ -279,7 +279,7 @@ pub(crate) fn persisted_device_authoring_authority_from_outcome(
     })
 }
 
-fn local_signer_matches_device_projection(
+pub(crate) fn local_signer_matches_device_projection(
     signer: &crate::event_signer::InksonEventSigner,
     account_id: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,

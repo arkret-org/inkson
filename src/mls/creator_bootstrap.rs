@@ -440,12 +440,18 @@ async fn bootstrap_creator_realm_mls_genesis(
             publish_accepted_creator_genesis(state_store, realm_id, accepted_event_id).await?;
         }
         CreatorGenesisResumeAction::Author => {
-            if durable_intent.is_some() {
-                submitter
-                    .persist_creator_realm_acceptance(&scope)
-                    .await
-                    .map_err(|error| format!("persist verified creator acceptance: {error}"))?;
-            }
+            let pinned_binding = if durable_intent.is_some() {
+                Some(
+                    submitter
+                        .persist_creator_governance_pin(&scope)
+                        .await
+                        .map_err(|error| {
+                            format!("persist verified creator governance pin: {error}")
+                        })?,
+                )
+            } else {
+                None
+            };
             // encryption-and-audit.md \u00a75.1 requires creator bootstrap to
             // converge even while account current-sync has not installed the
             // authority-root projection yet. The exact creator was resolved
@@ -470,12 +476,13 @@ async fn bootstrap_creator_realm_mls_genesis(
             })?;
             let fresh_summary = state_store
                 .write(|store| {
-                    crate::mls::runtime::ensure_creator_mls_checkpoint(
+                    crate::mls::runtime::ensure_creator_mls_checkpoint_with_pinned_binding(
                         store,
                         secure_store.as_ref(),
                         realm_id,
                         authority,
                         device_id,
+                        pinned_binding.as_ref(),
                     )
                 })
                 .map_err(|error| {

@@ -67,20 +67,109 @@ impl EventSubmitter {
         &self,
         scope: &arkret_sdk::ScopeRef,
     ) -> anyhow::Result<()> {
-        use arkret_models_collaboration::mls_creator_bootstrap::{
-            MlsCreatorBootstrapAcceptedCreate, MlsCreatorBootstrapRecord,
-        };
+        use arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord;
         let owner = arkret_sdk::ActorId::account(self.authority()?.clone());
         let store = self.outbound(OutboundLane::Standard)?.store().clone();
         let Some(record) = store.creator_record(&owner, scope).await? else {
             anyhow::bail!("creator acceptance requires a durable closed intent");
         };
-        if matches!(record, MlsCreatorBootstrapRecord::RealmAccepted { .. }) {
+        if matches!(
+            record,
+            MlsCreatorBootstrapRecord::RealmAccepted { .. }
+                | MlsCreatorBootstrapRecord::GovernanceResultPinned { .. }
+        ) {
             // This arrow is immutable and idempotent. The following governance
             // pin must authenticate its own current creator/endpoint cut.
             return Ok(());
         }
-        let arkret_sdk::ScopeRef::Realm { realm_id } = scope else {
+        let (accepted, snapshot) = self.read_verified_creator_cut(record.intent()).await?;
+        store
+            .accept_creator_realm(record, accepted, snapshot)
+            .await?;
+        Ok(())
+    }
+
+    /// Pin the entire verified cut and original proposal before producing any
+    /// dependent randomness. Once committed, reads never replace this pin.
+    pub(crate) async fn persist_creator_governance_pin(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<arkret_sdk::MlsGovernanceBindingPayload> {
+        use arkret_models_collaboration::mls_creator_bootstrap::{
+            MlsCreatorBootstrapDeviceAuthority, MlsCreatorBootstrapGovernanceEvidence,
+        };
+        self.persist_creator_realm_acceptance(scope).await?;
+        let owner = arkret_sdk::ActorId::account(self.authority()?.clone());
+        let store = self.outbound(OutboundLane::Standard)?.store().clone();
+        let record = store
+            .creator_record(&owner, scope)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("creator governance pin requires durable acceptance"))?;
+        let intent = record.intent();
+        let signer = crate::event_signer::active_signer().ok_or_else(|| {
+            anyhow::anyhow!("creator governance pin requires its original signer")
+        })?;
+        anyhow::ensure!(
+            signer.verification_method() == intent.creator_signer_method().as_str()
+                && signer.device_id() == Some(intent.creator_device_id().as_str()),
+            "creator governance pin cannot take over another signer or device"
+        );
+        if let Some(evidence) = record.governance_evidence() {
+            anyhow::ensure!(
+                crate::identity::device_directory::local_signer_matches_device_projection(
+                    &signer,
+                    self.authority()?,
+                    intent.creator_device_id(),
+                    evidence.creator_device_authority().projection()
+                ),
+                "pinned creator authority does not match the local private signer"
+            );
+            return Ok(evidence.governance_binding().clone());
+        }
+        anyhow::ensure!(
+            matches!(
+                intent.creator_endpoint(),
+                arkret_sdk::MlsWelcomeRecipientEndpoint::Device { .. }
+            ),
+            "Agent creator governance pin requires independently verified Agent authorization"
+        );
+        let keys = crate::transport::keys::query_keys(
+            &self.http,
+            self.authority()?,
+            intent.creator_device_id().as_str(),
+        )
+        .await?;
+        let (accepted, snapshot) = self.read_verified_creator_cut(intent).await?;
+        let device = MlsCreatorBootstrapDeviceAuthority::from_self_keys_query(
+            intent,
+            &keys,
+            arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now()),
+        )?;
+        anyhow::ensure!(
+            crate::identity::device_directory::local_signer_matches_device_projection(
+                &signer,
+                self.authority()?,
+                intent.creator_device_id(),
+                device.projection()
+            ),
+            "current creator authorization does not match the original local signer"
+        );
+        let evidence =
+            MlsCreatorBootstrapGovernanceEvidence::new_device(intent, accepted, snapshot, device)?;
+        let binding = evidence.governance_binding().clone();
+        store.pin_creator_governance(record, evidence).await?;
+        Ok(binding)
+    }
+
+    async fn read_verified_creator_cut(
+        &self,
+        intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
+    ) -> anyhow::Result<(
+        arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
+        arkret_wire::RealmStateSnapshot,
+    )> {
+        use arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate;
+        let arkret_sdk::ScopeRef::Realm { realm_id } = intent.effective_scope() else {
             anyhow::bail!("Realm creator acceptance requires an exact Realm scope");
         };
         let authority = garth::AuthorityClient::new(self.http.clone());
@@ -101,16 +190,13 @@ impl EventSubmitter {
         );
         replica.install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)?;
         let accepted = MlsCreatorBootstrapAcceptedCreate::new(
-            record.intent(),
+            intent,
             bundle.genesis_event.clone(),
             bundle.genesis_commit.clone(),
             realm_id.digest_suite_code().digest_suite(),
             bundle,
         )?;
-        store
-            .accept_creator_realm(record, accepted, snapshot)
-            .await?;
-        Ok(())
+        Ok((accepted, snapshot))
     }
 }
 

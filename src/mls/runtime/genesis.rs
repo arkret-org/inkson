@@ -131,6 +131,48 @@ pub fn ensure_creator_mls_checkpoint_for_effective_scope_with_binding(
     device_id: &arkret_sdk::DeviceId,
     sidecar_id: Option<arkret_sdk::SidecarId>,
 ) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
+    ensure_creator_mls_checkpoint_with_binding_inner(
+        state_store,
+        secure_store,
+        realm_id,
+        circle_id,
+        authority,
+        device_id,
+        sidecar_id,
+        None,
+    )
+}
+
+pub(crate) fn ensure_creator_mls_checkpoint_with_pinned_binding(
+    state_store: &mut crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    pinned_binding: Option<&arkret_sdk::MlsGovernanceBindingPayload>,
+) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
+    ensure_creator_mls_checkpoint_with_binding_inner(
+        state_store,
+        secure_store,
+        realm_id,
+        None,
+        authority,
+        device_id,
+        None,
+        pinned_binding,
+    )
+}
+
+fn ensure_creator_mls_checkpoint_with_binding_inner(
+    state_store: &mut crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    sidecar_id: Option<arkret_sdk::SidecarId>,
+    pinned_binding: Option<&arkret_sdk::MlsGovernanceBindingPayload>,
+) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
     let realm = realm_id.trim();
     if realm.is_empty() {
         return Err(MlsRuntimeError::Genesis(
@@ -164,6 +206,27 @@ pub fn ensure_creator_mls_checkpoint_for_effective_scope_with_binding(
         .canonical_mls_group_id()
         .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
         .to_string();
+    let governance_binding = match pinned_binding {
+        Some(binding) => {
+            binding
+                .validate()
+                .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?;
+            if binding.effective_scope() != &effective_scope
+                || binding.base_group_state_ref().is_some()
+                || binding.previous_epoch() != 0
+                || binding.next_epoch() != 0
+                || binding.key_access_revision() != 0
+            {
+                return Err(MlsRuntimeError::Genesis(
+                    "pinned creator binding differs from the exact epoch-zero scope".into(),
+                ));
+            }
+            binding.clone()
+        }
+        None => crate::mls::governance_proof::genesis_binding(&effective_scope)
+            .map_err(MlsRuntimeError::Genesis)?,
+    };
+
     let existing = if matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
         state_store.mls_checkpoint_for_scope_and_group(&effective_scope, &group_id)
     } else {
@@ -183,8 +246,6 @@ pub fn ensure_creator_mls_checkpoint_for_effective_scope_with_binding(
     let identity =
         crate::mls_api_helpers::ordinary_mls_identity(authority.clone(), device_id.clone())
             .map_err(MlsRuntimeError::Identity)?;
-    let governance_binding = crate::mls::governance_proof::genesis_binding(&effective_scope)
-        .map_err(MlsRuntimeError::Genesis)?;
     let mut group = identity
         .create_group_with_governance_binding(&effective_scope, &governance_binding)
         .map_err(|err| MlsRuntimeError::Genesis(format!("create group: {err}")))?;

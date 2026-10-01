@@ -225,3 +225,28 @@ fn mls_genesis_emitted_flag_is_idempotent() {
     state.mark_mls_genesis_emitted(realm).expect("valid Realm");
     assert!(state.mls_genesis_emitted_for(realm));
 }
+
+#[test]
+fn pinned_creator_binding_mismatch_generates_no_epoch_zero_checkpoint() {
+    let mut state = temp_state_store("pin-mismatch");
+    let secure = MemorySecureKeyStore::new();
+    let authority = fixture::authority("did:web:alice.example");
+    let device = fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001");
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let wrong_realm = arkret_sdk::RealmId::from_event_id(
+        &arkret_sdk::EventId::new("ak:event:AdU2TJKBkRBC1Jk1dY8ExFkUgDvhnVG8jmKT5BdWMeYp").unwrap(),
+    );
+    let wrong = arkret_sdk::MlsGovernanceBindingPayload::realm(wrong_realm, None, 0, 0, 0).unwrap();
+    assert!(
+        ensure_creator_mls_checkpoint_with_pinned_binding(
+            &mut state,
+            &secure,
+            realm,
+            &authority,
+            &device,
+            Some(&wrong)
+        )
+        .is_err()
+    );
+    assert!(state.mls_checkpoint_for(realm).is_none());
+}

@@ -264,6 +264,38 @@ pub(super) async fn save_card_detail_edit(
                 return;
             }
         };
+    let mut current = current;
+    let mut scope_security_encrypted = scope_security_encrypted;
+    if needs_encryption && sidecar_track_write.is_none() {
+        // Re-read the holder's durable choice: a complete pre-Genesis cut is
+        // still protocol plaintext, but must not publish this private draft.
+        let has_creator_intent = async {
+            let api = crate::transport::auth::authed_api_ready(&base_url, token()).await?;
+            let scope = arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(realm_id.clone())?,
+            };
+            Ok::<_, anyhow::Error>(
+                api.event_submitter()?
+                    .creator_bootstrap_intent(&scope)
+                    .await?
+                    .is_some(),
+            )
+        }
+        .await;
+        match has_creator_intent {
+            Ok(true) => {
+                current.security_encrypted = Some(true);
+                scope_security_encrypted = Some(true);
+            }
+            Ok(false) => {}
+            Err(error) => {
+                card_detail_edit_status.set(format!(
+                    "encryption_transition_pending: read creator intent: {error}"
+                ));
+                return;
+            }
+        }
+    }
     let encrypted_realm_write = needs_encryption
         && sidecar_track_write.is_none()
         && current

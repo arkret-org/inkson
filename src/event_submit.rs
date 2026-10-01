@@ -1738,7 +1738,7 @@ impl EventSubmitter {
             self.quarantine_superseded_items(&outbound, &fence).await?;
             match outbound
                 .submit_next_checked(&authority_client, &options, |request| async move {
-                    self.ensure_queued_circle_send_gate(&request)
+                    self.ensure_queued_application_send_gate(&request)
                         .await
                         .map_err(|error| error.to_string())
                 })
@@ -1981,7 +1981,7 @@ impl EventSubmitter {
             let options = arkret_sdk::http_client::ClientRequestOptions::new();
             match outbound
                 .submit_next_checked(&authority_client, &options, |request| async move {
-                    self.ensure_queued_circle_send_gate(&request)
+                    self.ensure_queued_application_send_gate(&request)
                         .await
                         .map_err(|error| error.to_string())
                 })
@@ -2105,7 +2105,7 @@ impl EventSubmitter {
         anyhow::bail!("Circle join requires a complete verified parent Realm cut")
     }
 
-    async fn ensure_queued_circle_send_gate(
+    async fn ensure_queued_application_send_gate(
         &self,
         request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
     ) -> anyhow::Result<()> {
@@ -2116,16 +2116,23 @@ impl EventSubmitter {
             return Ok(());
         };
         let event = &submission.event;
-        if matches!(event.scope_ref, arkret_sdk::ScopeRef::Circle { .. })
-            && crate::mls::send_gate::ApplicationBody::of_event(&event.kind, &event.payload)?
-                .is_some()
+        if !matches!(
+            event.scope_ref,
+            arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+        ) {
+            return Ok(());
+        }
+        if let Some(body) =
+            crate::mls::send_gate::ApplicationBody::of_event(&event.kind, &event.payload)?
         {
             let input = self.mls_send_gate_input(&event.scope_ref).ok_or_else(|| {
-                anyhow::anyhow!("Circle outbound send requires an account current index")
+                anyhow::anyhow!("outbound application send requires an account current index")
             })?;
-            crate::mls::send_gate::check_circle_send_membership(&input, &event.scope_ref)
-                .await
-                .map_err(anyhow::Error::new)?;
+            if matches!(event.scope_ref, arkret_sdk::ScopeRef::Circle { .. }) {
+                crate::mls::send_gate::check_circle_send_membership(&input, &event.scope_ref)
+                    .await?;
+            }
+            crate::mls::send_gate::check_application_body(&input, &event.scope_ref, body).await?;
         }
         Ok(())
     }
