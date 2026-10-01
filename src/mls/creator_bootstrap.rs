@@ -440,6 +440,12 @@ async fn bootstrap_creator_realm_mls_genesis(
             publish_accepted_creator_genesis(state_store, realm_id, accepted_event_id).await?;
         }
         CreatorGenesisResumeAction::Author => {
+            if durable_intent.is_some() {
+                submitter
+                    .persist_creator_realm_acceptance(&scope)
+                    .await
+                    .map_err(|error| format!("persist verified creator acceptance: {error}"))?;
+            }
             // encryption-and-audit.md \u00a75.1 requires creator bootstrap to
             // converge even while account current-sync has not installed the
             // authority-root projection yet. The exact creator was resolved

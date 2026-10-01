@@ -12,7 +12,9 @@
 //! Events is ciphertext at rest and is not charged against the ~5 MB
 //! localStorage per-origin quota that a single queue can exhaust on its own.
 
-use arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent;
+use arkret_models_collaboration::mls_creator_bootstrap::{
+    MlsCreatorBootstrapIntent, MlsCreatorBootstrapRecord,
+};
 use garth::OutboundQueueStore;
 use garth::outbound::BoxOutboundFuture;
 
@@ -58,16 +60,17 @@ struct DurableOutboundState {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     scheduled_dispatches: ScheduledDispatches,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    creator_bootstrap_intents: Vec<MlsCreatorBootstrapIntent>,
+    creator_bootstrap_records: Vec<MlsCreatorBootstrapRecord>,
 }
 
 impl DurableOutboundState {
     fn validate(&self) -> garth::Result<()> {
-        for (index, intent) in self.creator_bootstrap_intents.iter().enumerate() {
-            intent.validate()?;
-            if self.creator_bootstrap_intents[..index]
+        for (index, record) in self.creator_bootstrap_records.iter().enumerate() {
+            record.validate()?;
+            let intent = record.intent();
+            if self.creator_bootstrap_records[..index]
                 .iter()
-                .any(|other| other.effective_scope() == intent.effective_scope())
+                .any(|other| other.intent().effective_scope() == intent.effective_scope())
             {
                 return Err(garth::Error::Storage(
                     "duplicate creator bootstrap logical key in authoring vault".into(),
@@ -127,18 +130,19 @@ impl DurableOutboundState {
             ));
         }
         if let Some(existing) = self
-            .creator_bootstrap_intents
+            .creator_bootstrap_records
             .iter()
-            .find(|existing| existing.effective_scope() == intent.effective_scope())
+            .find(|existing| existing.intent().effective_scope() == intent.effective_scope())
         {
-            if existing != &intent {
+            if existing.intent() != &intent {
                 return Err(garth::Error::Protocol(
                     "creator bootstrap already belongs to another immutable intent or holder"
                         .into(),
                 ));
             }
         } else {
-            self.creator_bootstrap_intents.push(intent);
+            self.creator_bootstrap_records
+                .push(MlsCreatorBootstrapRecord::new(intent)?);
         }
         let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
             items: std::mem::take(&mut self.items),
@@ -468,12 +472,66 @@ impl InksonOutboundStore {
     ) -> garth::Result<Option<MlsCreatorBootstrapIntent>> {
         self.mutate_state(|state| {
             Ok(state
-                .creator_bootstrap_intents
+                .creator_bootstrap_records
                 .iter()
+                .map(MlsCreatorBootstrapRecord::intent)
                 .find(|intent| {
                     intent.owner_actor_id() == owner && intent.effective_scope() == scope
                 })
                 .cloned())
+        })
+        .await
+    }
+
+    pub(crate) async fn creator_record(
+        &self,
+        owner: &arkret_sdk::ActorId,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> garth::Result<Option<MlsCreatorBootstrapRecord>> {
+        self.mutate_state(|state| {
+            Ok(state
+                .creator_bootstrap_records
+                .iter()
+                .find(|record| {
+                    record.intent().owner_actor_id() == owner
+                        && record.intent().effective_scope() == scope
+                })
+                .cloned())
+        })
+        .await
+    }
+
+    /// Compare the whole previously read record while holding the vault's
+    /// native OS lock or IndexedDB CAS. The queue and record share one commit.
+    pub(crate) async fn accept_creator_realm(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        accepted_create: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
+        genesis_absence: arkret_wire::RealmStateSnapshot,
+    ) -> garth::Result<()> {
+        self.mutate_state(|state| {
+            let record = state
+                .creator_bootstrap_records
+                .iter_mut()
+                .find(|record| {
+                    record.intent().effective_scope() == expected.intent().effective_scope()
+                })
+                .ok_or_else(|| {
+                    garth::Error::Storage("creator acceptance lost its durable intent".into())
+                })?;
+            let mut next = expected.clone();
+            next.accept_realm(accepted_create, genesis_absence)?;
+            if record == &next {
+                return Ok(());
+            }
+            if record != &expected {
+                return Err(garth::Error::Storage(
+                    "creator transaction changed in another holder; reread its committed state"
+                        .into(),
+                ));
+            }
+            *record = next;
+            Ok(())
         })
         .await
     }
@@ -622,7 +680,11 @@ pub mod test_api {
         Vec<arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent>,
     > {
         super::mutate_state_in_store(store, storage_key, |state| {
-            Ok(state.creator_bootstrap_intents.clone())
+            Ok(state
+                .creator_bootstrap_records
+                .iter()
+                .map(|record| record.intent().clone())
+                .collect())
         })
         .await
     }
@@ -700,6 +762,151 @@ mod tests {
 
     const CREATOR_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
 
+    fn creator_acceptance(
+        intent: &MlsCreatorBootstrapIntent,
+    ) -> (
+        arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
+        arkret_wire::RealmStateSnapshot,
+    ) {
+        use arkret_wire::*;
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) = intent.signed_scope_create_unit() else { panic!("fixture is a Realm bootstrap") };
+        let event = unit.events[0].event.clone();
+        let time = event.created_at;
+        // Shape-only acceptance for storage fault tests. Cryptographic source
+        // authentication is covered by the host's Garth gate and live tests.
+        let signature = |context| DetachedObjectSignature {
+            context,
+            signature_algorithm: DetachedSignatureAlgorithm::Ed25519,
+            verification_method: DidUrl::new("did:web:principal.example#key").unwrap(),
+            signed_digest: Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
+            created_at: time,
+            sig: Base64UrlString::new("AA").unwrap(),
+        };
+        let commit = RealmCommit {
+            commit_id: RealmCommitId::from_digest([7; 32]),
+            realm_id: event.realm_id.clone(),
+            stream_ref: CommitStreamRef::Realm {
+                realm_id: event.realm_id.clone(),
+            },
+            stream_position: 0,
+            previous_commit_ref: None,
+            event_ref: event.event_id.clone(),
+            governance_generation: 0,
+            authority_ref: RealmCommitAuthorityRef::GenesisOrChangeEvent(event.event_id.clone()),
+            committed_at: time,
+            signature: signature(DetachedSignatureContext::RealmCommit),
+        };
+        let head = CommitStreamHead {
+            stream_ref: commit.stream_ref.clone(),
+            stream_position: 0,
+            commit_id: commit.commit_id.clone(),
+        };
+        let root = RealmAuthorityBundle {
+            realm_id: event.realm_id.clone(),
+            genesis_event: event.clone(),
+            genesis_commit: commit.clone(),
+            authority_transitions: vec![],
+            current_generation: 0,
+            current_service_id: fixture::core_id(fixture::STATION_ID),
+            current_route_record: serde_json::json!({}),
+            realm_stream_head: head.clone(),
+            bundle_issued_at: time,
+            current_assertion: RealmAuthorityCurrentAssertion {
+                realm_id: event.realm_id.clone(),
+                current_generation: 0,
+                current_service_id: fixture::core_id(fixture::STATION_ID),
+                last_handoff_ref: None,
+                realm_stream_head: head.clone(),
+                nonce: Base64UrlString::new("AAAAAAAAAAAAAAAAAAAAAA").unwrap(),
+                expires_at: time + chrono::TimeDelta::minutes(5),
+                signature: signature(DetachedSignatureContext::RealmAuthorityCurrentAssertion),
+            },
+        };
+        let snapshot = RealmStateSnapshot {
+            snapshot_id: RealmSnapshotId::from_digest([3; 32]),
+            realm_id: event.realm_id.clone(),
+            governance_generation: 0,
+            visible_stream_heads: vec![head],
+            current_state_entries: vec![],
+            retention_and_history_floor: RetentionAndHistoryFloor {
+                history_access: HistoryAccess::SinceJoin,
+                stream_floors: vec![StreamHistoryFloor {
+                    stream_ref: commit.stream_ref.clone(),
+                    oldest_position: 0,
+                }],
+            },
+            created_at: time,
+            signature: signature(DetachedSignatureContext::RealmSnapshot),
+        };
+        (arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate::new(intent, event, commit, arkret_sdk::DigestSuite::Sha256, root).unwrap(), snapshot)
+    }
+
+    #[tokio::test]
+    async fn creator_acceptance_failure_keeps_intent_and_exact_queue_then_reopens() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("standard.json");
+        let store = InksonOutboundStore::for_test_path(path.clone());
+        let (intent, submission) = creator_fixture(CREATOR_DEVICE);
+        store
+            .freeze_creator_intent(intent.clone(), submission.clone())
+            .await
+            .unwrap();
+        let expected = store
+            .creator_record(intent.owner_actor_id(), intent.effective_scope())
+            .await
+            .unwrap()
+            .unwrap();
+        let (accepted, snapshot) = creator_acceptance(&intent);
+        let before = std::fs::read(&path).unwrap();
+        std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+        assert!(
+            store
+                .accept_creator_realm(expected.clone(), accepted.clone(), snapshot.clone())
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let reopened = InksonOutboundStore::for_test_path(path.clone());
+        assert_eq!(
+            reopened
+                .creator_record(intent.owner_actor_id(), intent.effective_scope())
+                .await
+                .unwrap(),
+            Some(expected.clone())
+        );
+        std::fs::remove_dir(path.with_extension("json.tmp")).unwrap();
+        reopened
+            .accept_creator_realm(expected.clone(), accepted.clone(), snapshot.clone())
+            .await
+            .unwrap();
+        let winner = reopened
+            .creator_record(intent.owner_actor_id(), intent.effective_scope())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            winner.state(),
+            arkret_wire::MlsCreatorBootstrapState::RealmAccepted
+        );
+        assert_eq!(winner.intent(), &intent);
+        store
+            .accept_creator_realm(expected.clone(), accepted.clone(), snapshot.clone())
+            .await
+            .unwrap();
+        let mut changed = snapshot;
+        changed.created_at += chrono::TimeDelta::seconds(1);
+        assert!(
+            store
+                .accept_creator_realm(expected, accepted, changed)
+                .await
+                .is_err()
+        );
+        let state = decode_snapshot(Some(&std::fs::read_to_string(path).unwrap())).unwrap();
+        assert_eq!(state.creator_bootstrap_records, vec![winner]);
+        assert_eq!(state.items.len(), 1);
+        assert_eq!(state.items[0].request(), &submission.request);
+    }
+
     #[tokio::test]
     async fn creator_intent_and_create_queue_survive_reopen_together() {
         let directory = std::env::temp_dir().join(format!(
@@ -734,7 +941,10 @@ mod tests {
             .await
             .unwrap();
         let snapshot = decode_snapshot(Some(&std::fs::read_to_string(&path).unwrap())).unwrap();
-        assert_eq!(snapshot.creator_bootstrap_intents, vec![intent]);
+        assert_eq!(
+            snapshot.creator_bootstrap_records,
+            vec![MlsCreatorBootstrapRecord::new(intent).unwrap()]
+        );
         assert_eq!(snapshot.items.len(), 2);
         assert_eq!(snapshot.items[0].request(), &submission.request);
         std::fs::remove_dir_all(directory).unwrap();
@@ -775,10 +985,13 @@ mod tests {
         let outcomes = threads.map(|thread| thread.join().unwrap());
         assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
         let reopened = decode_snapshot(Some(&std::fs::read_to_string(&path).unwrap())).unwrap();
-        assert_eq!(reopened.creator_bootstrap_intents.len(), 1);
+        assert_eq!(reopened.creator_bootstrap_records.len(), 1);
         assert_eq!(reopened.items.len(), 1);
         let winner = outcomes.iter().position(|result| result.is_ok()).unwrap();
-        assert_eq!(reopened.creator_bootstrap_intents[0], contenders[winner].0);
+        assert_eq!(
+            *reopened.creator_bootstrap_records[0].intent(),
+            contenders[winner].0
+        );
         assert_eq!(reopened.items[0].request(), &contenders[winner].1.request);
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -816,7 +1029,7 @@ mod tests {
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), committed);
         let reopened = decode_snapshot(Some(&committed)).unwrap();
-        assert!(reopened.creator_bootstrap_intents.is_empty());
+        assert!(reopened.creator_bootstrap_records.is_empty());
         assert_eq!(reopened.items.len(), 1);
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -833,9 +1046,11 @@ mod tests {
         snapshot
             .freeze_creator_intent(intent.clone(), submission)
             .unwrap();
-        snapshot.creator_bootstrap_intents.push(intent);
+        snapshot
+            .creator_bootstrap_records
+            .push(MlsCreatorBootstrapRecord::new(intent).unwrap());
         assert!(encode_snapshot(&snapshot).is_err());
-        snapshot.creator_bootstrap_intents.pop();
+        snapshot.creator_bootstrap_records.pop();
         snapshot.items.clear();
         assert!(encode_snapshot(&snapshot).is_err());
     }

@@ -58,6 +58,62 @@ pub(super) fn realm_owner_covers_event_kind(kind: &str) -> bool {
         .is_some_and(|descriptor| descriptor.target_event_kinds.contains(&kind))
 }
 
+impl EventSubmitter {
+    /// Persist the registered accepted-create arrow before any MLS material
+    /// is produced. The authority root is independently verified with a fresh
+    /// nonce and method-native key history; only a complete signed current
+    /// snapshot at that same cut can prove exact-scope Genesis absence.
+    pub(crate) async fn persist_creator_realm_acceptance(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<()> {
+        use arkret_models_collaboration::mls_creator_bootstrap::{
+            MlsCreatorBootstrapAcceptedCreate, MlsCreatorBootstrapRecord,
+        };
+        let owner = arkret_sdk::ActorId::account(self.authority()?.clone());
+        let store = self.outbound(OutboundLane::Standard)?.store().clone();
+        let Some(record) = store.creator_record(&owner, scope).await? else {
+            anyhow::bail!("creator acceptance requires a durable closed intent");
+        };
+        if matches!(record, MlsCreatorBootstrapRecord::RealmAccepted { .. }) {
+            // This arrow is immutable and idempotent. The following governance
+            // pin must authenticate its own current creator/endpoint cut.
+            return Ok(());
+        }
+        let arkret_sdk::ScopeRef::Realm { realm_id } = scope else {
+            anyhow::bail!("Realm creator acceptance requires an exact Realm scope");
+        };
+        let authority = garth::AuthorityClient::new(self.http.clone());
+        let (bundle, freshness, mut replica) =
+            crate::realm_events_engine::fresh_verified_realm(&authority, &self.http, realm_id)
+                .await?;
+        let snapshot = self.http.realm_state_snapshot_head(realm_id).await?;
+        let keys = garth::fetch_historical_station_key_directory(
+            &self.http,
+            &bundle,
+            None,
+            Some(&snapshot),
+        )
+        .await?;
+        let freshness = arkret_identity::RealmAuthorityFreshness::new(
+            chrono::Utc::now(),
+            freshness.expected_nonce,
+        );
+        replica.install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)?;
+        let accepted = MlsCreatorBootstrapAcceptedCreate::new(
+            record.intent(),
+            bundle.genesis_event.clone(),
+            bundle.genesis_commit.clone(),
+            realm_id.digest_suite_code().digest_suite(),
+            bundle,
+        )?;
+        store
+            .accept_creator_realm(record, accepted, snapshot)
+            .await?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
