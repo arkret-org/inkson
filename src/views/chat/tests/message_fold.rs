@@ -434,6 +434,7 @@ fn durable_redaction_folds_onto_controller_only_create() {
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let message_id = "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0";
     let seed = vec![ChatMessage {
+        local_scope: None,
         id: "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z".to_owned(),
         protocol_message_id: Some(message_id.to_owned()),
         realm_id: realm_id.to_owned(),
@@ -869,6 +870,7 @@ fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombst
 fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
     fn redacted_message(id: &str, protocol_message_id: &str) -> ChatMessage {
         ChatMessage {
+            local_scope: None,
             realm_id: "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
             id: id.to_owned(),
             protocol_message_id: Some(protocol_message_id.to_owned()),
@@ -959,6 +961,7 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
 
     fn message(id: &str, protocol_message_id: &str, body: &str, created_at: &str) -> ChatMessage {
         ChatMessage {
+            local_scope: None,
             realm_id: "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
             id: id.to_owned(),
             protocol_message_id: Some(protocol_message_id.to_owned()),
@@ -1285,6 +1288,7 @@ fn local_redaction_tombstone_without_signed_scope_cannot_render_row() {
         .unwrap()
         .with_timezone(&chrono::Utc);
     let message = ChatMessage {
+        local_scope: None,
         realm_id: "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
         id: "ak:event:AeVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs".to_owned(),
         protocol_message_id: Some(

@@ -114,6 +114,9 @@ impl MessageCryptoState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ChatMessage {
+    /// Scope fixed by the local ordinary composer before authoring. Private
+    /// Sidecar rows never acquire this ordinary-timeline provenance.
+    pub(crate) local_scope: Option<arkret_sdk::ScopeRef>,
     pub(crate) realm_id: String,
     pub(crate) id: String,
     pub(crate) protocol_message_id: Option<String>,

@@ -264,6 +264,7 @@ fn chat_message_create_operation_rejects_event_id_reply_target() {
 #[test]
 fn chat_message_reply_target_prefers_protocol_message_id() {
     let message = ChatMessage {
+        local_scope: None,
         realm_id: "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE".to_owned(),
         id: "ak:event:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5".to_owned(),
         protocol_message_id: Some(
@@ -299,6 +300,7 @@ fn chat_message_reply_target_prefers_protocol_message_id() {
 #[test]
 fn chat_message_mutation_target_prefers_protocol_message_id_after_revision() {
     let message = ChatMessage {
+        local_scope: None,
         realm_id: "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE".to_owned(),
         id: "ak:operation:01964137-0000-7000-8000-000000000001".to_owned(),
         protocol_message_id: Some(

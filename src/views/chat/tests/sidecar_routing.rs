@@ -104,6 +104,31 @@ fn signed_sidecar_event_with_source_strand_id_never_enters_ordinary_timeline() {
 }
 
 #[test]
+fn locally_scoped_pending_rows_survive_timeline_rebuild_without_becoming_history() {
+    let realm = "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5";
+    let strand = "ak:strand:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N";
+    let mut row =
+        sidecar_projection_message_for_realm(realm, "local-message:queued", strand, "offline");
+    row.pending = true;
+    row.local_scope = Some(arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+    });
+    assert_eq!(
+        verified_scope_timeline_seed(&[row.clone()]),
+        vec![row.clone()]
+    );
+    row.pending = false;
+    assert!(verified_scope_timeline_seed(&[row.clone()]).is_empty());
+    row.failed = true;
+    assert_eq!(
+        verified_scope_timeline_seed(&[row.clone()]),
+        vec![row.clone()]
+    );
+    row.realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned();
+    assert!(verified_scope_timeline_seed(&[row]).is_empty());
+}
+
+#[test]
 fn unscoped_chat_seed_cannot_enter_ordinary_realm_projection() {
     let realm = "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5";
     let source = "ak:strand:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N";

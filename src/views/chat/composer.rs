@@ -4,6 +4,20 @@ use super::*;
 
 mod commands;
 
+fn ordinary_composer_scope(realm: &str, channel: &ChannelEntity) -> Option<arkret_sdk::ScopeRef> {
+    if channel.is_private_sidecar {
+        return None;
+    }
+    let realm_id = arkret_sdk::RealmId::new(realm.to_owned()).ok()?;
+    Some(match &channel.scope_circle {
+        Some(scope) => arkret_sdk::ScopeRef::Circle {
+            realm_id,
+            circle_id: arkret_sdk::CircleId::new(scope.circle_id.clone()).ok()?,
+        },
+        None => arkret_sdk::ScopeRef::Realm { realm_id },
+    })
+}
+
 #[derive(Clone, PartialEq)]
 pub(super) struct ChatComposerContext {
     pub embedded: bool,
@@ -868,6 +882,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         // renders it in place.
                                         poll_cards.write().push(card);
                                         messages.write().push(ChatMessage {
+                                            local_scope: Some(op.intent().scope_ref().clone()),
                                             realm_id: realm.clone(),
                                             id: poll_id.clone(),
                                             protocol_message_id: None,
@@ -1015,6 +1030,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 }
                                 let local_id = new_chat_local_id();
                                 messages.write().push(ChatMessage {
+                                    local_scope: ordinary_composer_scope(&realm, &channel),
                                     realm_id: realm.clone(),
                                     id: local_id.clone(),
                                     protocol_message_id: Some(local_id.clone()),
@@ -1200,6 +1216,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let local_id = new_chat_local_id();
                                     let source_strand_id = session.source_strand_id.clone();
                                     messages.write().push(ChatMessage {
+                                        local_scope: None,
                                         realm_id: session.source_realm_id.clone(),
                                         id: local_id.clone(),
                                         protocol_message_id: Some(local_id.clone()),
@@ -1258,6 +1275,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     .filter(|value| !value.trim().is_empty());
                                 let message_id = new_chat_local_id();
                                 messages.write().push(ChatMessage {
+                                    local_scope: channels().iter()
+                                        .find(|channel| channel.strand_id == strand_id)
+                                        .and_then(|channel| ordinary_composer_scope(&realm, channel)),
                                     realm_id: realm.clone(),
                                     id: message_id.clone(),
                                     protocol_message_id: Some(message_id.clone()),

@@ -1395,6 +1395,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     let reactions = Vec::new();
     let sender = message_actor_from_candidates(&candidates)?;
     Some(ChatMessage {
+        local_scope: None,
         realm_id: first_string_in_candidates(&candidates, &["realm_id"])
             .unwrap_or(realm_id)
             .to_owned(),

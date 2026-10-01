@@ -480,8 +480,8 @@ fn strand_update_patch_uses_canonical_payload_patch() {
         "did:web:alice.example",
         strand_id,
         json!({
-            "title": { "$op": "set", "value": "Launch checklist" },
-            "fields.due_at": { "$op": "set", "value": "2026-05-20" },
+            "metadata.title": { "$op": "set", "value": "Launch checklist" },
+            "metadata.fields.due_at": { "$op": "set", "value": "2026-05-20" },
         }),
     )
     .expect("builds")
@@ -490,7 +490,10 @@ fn strand_update_patch_uses_canonical_payload_patch() {
     assert_eq!(op.local_target_ref(), Some(strand_id));
     assert_eq!(op.payload()["target_ref"], strand_id);
     assert!(!op.payload().contains_key("strand_id"));
-    assert_eq!(op.payload()["patch"]["title"]["value"], "Launch checklist");
+    assert_eq!(
+        op.payload()["patch"]["metadata.title"]["value"],
+        "Launch checklist"
+    );
     assert!(!op.payload().contains_key("fields"));
 }
 
@@ -505,8 +508,8 @@ fn strand_update_builders_match_registered_object_patch_schema() {
         actor,
         strand_id,
         json!({
-            "title": { "$op": "set", "value": "Launch checklist" },
-            "fields.due_at": { "$op": "set", "value": "2026-05-20" },
+            "metadata.title": { "$op": "set", "value": "Launch checklist" },
+            "metadata.fields.due_at": { "$op": "set", "value": "2026-05-20" },
         }),
     )
     .expect("builds")

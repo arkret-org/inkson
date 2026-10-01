@@ -8,6 +8,21 @@
 
 use super::*;
 
+fn invite_delivery_summary(outcome: &arkret_sdk::InviteDeliveryOutcome) -> &'static str {
+    use arkret_sdk::{DisclosedOutcome, InviteDeliveryOutcomeStatus};
+    if outcome.status == InviteDeliveryOutcomeStatus::Deferred {
+        return "private delivery is deferred; retry later";
+    }
+    match outcome.disclosed_outcome {
+        Some(DisclosedOutcome::Blocked) => "recipient reports private delivery blocked",
+        Some(DisclosedOutcome::Delivered) => "recipient reports private delivery delivered",
+        None if outcome.status == InviteDeliveryOutcomeStatus::Duplicate => {
+            "private delivery was already accepted"
+        }
+        None => "private delivery was accepted",
+    }
+}
+
 pub(super) async fn fetch_realm_member_capability(
     api: &crate::transport::TransportClient,
     actor: &str,
@@ -205,9 +220,10 @@ pub(super) async fn recover_from_occupied_live_target(
             .dispatch_accepted_invite(&create_event_id, invitee)
             .await
         {
-            Ok(_) => format!(
-                "{invitee_label} already has a live invite ({}); its private delivery was re-sent.",
-                short_protocol_id(&invite_id)
+            Ok(outcome) => format!(
+                "{invitee_label} already has a live invite ({}); {}.",
+                short_protocol_id(&invite_id),
+                invite_delivery_summary(&outcome)
             ),
             Err(error) => format!(
                 "invite failed: {invitee_label} already has a live invite ({}) and re-delivery failed: {error}",
@@ -818,15 +834,18 @@ impl RealmMembersController {
         };
         match submitted {
             Ok(submitted) => {
-                if let Err(error) = api
+                let delivery = match api
                     .dispatch_accepted_invite(&submitted.event_id, &invitee)
                     .await
                 {
-                    self.status_msg.set(format!(
-                        "invite fact accepted but private delivery failed: {error}"
-                    ));
-                    return;
-                }
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        self.status_msg.set(format!(
+                            "invite fact accepted but private delivery failed: {error}"
+                        ));
+                        return;
+                    }
+                };
                 self.frontier_state.set(submitted.event_id.clone());
                 // The Invite is `retype(create.event_id)`, so its id is read
                 // from the accepted receipt.
@@ -862,9 +881,9 @@ impl RealmMembersController {
                 self.invite_target.set(String::new());
                 self.invite_modal_open.set(false);
                 self.status_msg.set(format!(
-                    "invited {} (pending) fact {}; MLS admission will reconcile after acceptance",
+                    "invited {} (pending) fact {}; {}; MLS admission will reconcile after acceptance",
                     invitee_label,
-                    short_protocol_id(&op_id)
+                    short_protocol_id(&op_id), invite_delivery_summary(&delivery)
                 ));
             }
             Err(error) => {

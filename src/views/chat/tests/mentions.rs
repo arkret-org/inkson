@@ -45,6 +45,7 @@ fn mention_label_for_participant_requires_handle() {
 #[test]
 fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
     let messages = vec![ChatMessage {
+        local_scope: None,
         realm_id: "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE".to_owned(),
         id: "ak:event:A42FkwFdQPw7aC_yPcdlVU5ZjKLAnFCbmrXTVRJTNhRc".to_owned(),
         protocol_message_id: Some(

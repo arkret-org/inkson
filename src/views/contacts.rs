@@ -206,7 +206,7 @@ fn ContactRow(
         let base = base_url.clone();
         let realm_id = shared_realm_id.clone();
         let actor_id = peer_actor_id.clone();
-        use_resource(move || {
+        use_resource(use_reactive!(|(base, realm_id, actor_id)| {
             let base = base.clone();
             let realm_id = realm_id.clone();
             let actor_id = actor_id.clone();
@@ -225,7 +225,7 @@ fn ContactRow(
                     tracing::debug!(%error, "authorized Contact Profile resolve failed");
                 }
             }
-        })
+        }))
     };
     // Reading the resource is what subscribes this row to it. The directory
     // behind it is process state, not a signal, so without this the first visit

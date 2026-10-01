@@ -4027,10 +4027,8 @@ fn apply_account_frame_payload(
         let frame = RealmProjectionFrame::Incremental(&body);
         let projection = reconcile_realm_projection(existing.as_ref(), frame);
         store.save_realm_tree_projection(id.to_owned(), projection.clone());
-        if response.step.has_window_start_realm_metadata(id) {
-            store
-                .save_realm_collaboration_role(id.to_owned(), response.step.collaboration_role(id));
-        }
+        // Collaboration role is installed from the verified genesis Commit.
+        // Optional window-start display metadata cannot authorize MLS routing.
         let _ = ingest_message_events_from_projection(store, id, &projection);
         // Fold the discussion timeline into `raw_operations` too so the
         // card-detail Discussion tab renders local-first instead of

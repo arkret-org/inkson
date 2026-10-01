@@ -286,7 +286,7 @@ pub(crate) fn verified_realm_fixture_as(
 }
 
 /// One contiguous signed Realm stream governed by `station`, whose genesis
-/// Event carries `genesis_payload`.
+/// Event carries `genesis_payload`. An empty tail keeps its head at genesis.
 pub(crate) fn verified_realm_fixture_signed_by(
     station: &FixtureStation,
     realm_id: RealmId,
@@ -299,7 +299,6 @@ pub(crate) fn verified_realm_fixture_signed_by(
     RealmAuthorityKeyMap,
     Vec<CommittedEventFullView>,
 ) {
-    assert!(!entries.is_empty());
     let event_signer = arkret_test_kit::keys::seeded_signer(
         Did::new(format!("did:web:{principal}")).unwrap(),
         DidUrl::new(format!("did:web:{principal}#{device_id}")).unwrap(),

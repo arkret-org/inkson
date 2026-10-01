@@ -345,14 +345,22 @@ fn project_visible_messages(
     visible
 }
 
-/// Bare UI rows do not retain the signed Event scope that created them.
-/// In particular, older native Sidecar optimistic rows can carry the source
-/// Strand ID and would be indistinguishable from an ordinary Realm message.
-/// Until optimistic rows have trustworthy route provenance, rebuild visible
-/// chat exclusively from verified durable Events. This only clips rendering:
-/// the controller's pending submission/retry signal remains untouched.
-fn verified_scope_timeline_seed(_unscoped_rows: &[ChatMessage]) -> Vec<ChatMessage> {
-    Vec::new()
+/// Pending local rows remain visible only with ordinary-composer provenance.
+/// Accepted history is rebuilt from verified Events; unscoped Sidecar rows
+/// cannot enter the ordinary Realm timeline through a reused Strand ID.
+fn verified_scope_timeline_seed(rows: &[ChatMessage]) -> Vec<ChatMessage> {
+    rows.iter()
+        .filter(|row| {
+            (row.pending || row.failed)
+                && row.local_scope.as_ref().is_some_and(|scope| {
+                    matches!(
+                        scope,
+                        arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+                    ) && scope.realm_id().as_str() == row.realm_id
+                })
+        })
+        .cloned()
+        .collect()
 }
 
 fn owned_agent_ids_from_composer(

@@ -190,6 +190,7 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
     let strand = "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
     let message_id = "ak:message:AWYcbgQPjPWiFZOW87QxvndGtWcImO9Xf2-TcOjH1pXs";
     let mut messages = vec![ChatMessage {
+        local_scope: None,
         realm_id: realm.to_owned(),
         id: "ak:event:AZhsY0DZJGk1qN28pQapwgLRRgx7kyis3JdX2xGL1Cj8".to_owned(),
         protocol_message_id: Some(message_id.to_owned()),

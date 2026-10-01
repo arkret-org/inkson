@@ -77,6 +77,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 return;
             };
             let cursor = sync_freshness();
+            let verified_realm_epoch = realm_live_epoch();
             let actor = account.principal_id().to_string();
             let device = account.device_id.clone();
             let authority = account.authority.clone();
@@ -89,11 +90,13 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 || !sync_ready()
                 || cursor.trim().is_empty()
                 || actor.trim().is_empty()
-                || *in_flight.peek()
+                || in_flight()
             {
                 return;
             }
-            let basis = format!("{actor}|{device}|{cursor}");
+            // A Welcome can precede the independently verified Realm cut.
+            // Retry when that cut advances, even without an Account cursor.
+            let basis = format!("{actor}|{device}|{cursor}|{verified_realm_epoch}");
             if basis_seen.peek().as_deref() == Some(basis.as_str()) {
                 return;
             }
