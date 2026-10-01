@@ -240,6 +240,22 @@ fn ContactRow(
             .map(|remark| remark.petname.clone())
             .unwrap_or_default()
     });
+    let mut petname_dirty = use_signal(|| false);
+    let saved_petname = existing_remark
+        .as_ref()
+        .map(|remark| remark.petname.clone())
+        .unwrap_or_default();
+    use_effect(use_reactive!(|(saved_petname)| {
+        if busy() {
+            return;
+        }
+        if !*petname_dirty.peek() || petname_input.peek().trim() == saved_petname {
+            if *petname_input.peek() != saved_petname {
+                petname_input.set(saved_petname.clone());
+            }
+            petname_dirty.set(false);
+        }
+    }));
     // Read the peer's global Profile through the authorized surface. garth
     // decides whether a round trip is actually due, so entering the surface
     // again inside the freshness window costs nothing.
@@ -588,7 +604,11 @@ fn ContactRow(
                         placeholder: tr("contacts.petname.placeholder"),
                         value: "{petname_input}",
                         maxlength: "128",
-                        oninput: move |event: FormEvent| petname_input.set(event.value()),
+                        disabled: busy(),
+                        oninput: move |event: FormEvent| {
+                            petname_dirty.set(true);
+                            petname_input.set(event.value());
+                        },
                     }
                     Button {
                         variant: ButtonVariant::Secondary,
