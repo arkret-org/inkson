@@ -2603,6 +2603,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.action.next_create", "Next: Create");
     dict.set("setup.action.create_realm", "Create Realm");
     dict.set("setup.action.finishing", "Finishing setup...");
+    dict.set("setup.progress.mls_quarantined", "Encrypted activation stopped because local recovery data is inconsistent. The original data is retained; automatic retry is disabled.");
     dict.set("setup.action.retry_mls", "Retry encryption setup");
     dict.set("setup.action.open_realm", "Open Realm");
     dict.set("setup.action.setup_recovery_key", "Set up Recovery Key");

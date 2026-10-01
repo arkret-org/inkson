@@ -39,9 +39,10 @@ pub(crate) use authoring_unit::author_event_unit_for_test;
 use authoring_unit::{UnitAuthoringChain, validate_authored_unit_shape};
 #[cfg(test)]
 pub(crate) use authority::creator_cache_belongs_to_closed_attempt;
-use authority::*;
 #[cfg(test)]
-pub(crate) use authority::{restored_creator_artifacts, verify_creator_genesis_producer};
+pub(crate) use authority::verify_creator_genesis_producer;
+use authority::*;
+pub(crate) use authority::{original_creator_checkpoint_secret, restored_creator_artifacts};
 #[cfg(test)]
 pub(crate) use message_authoring::retry_frozen_message;
 pub(crate) use message_authoring::{MessageSendAttempt, drive_message_send};
@@ -1670,6 +1671,59 @@ impl EventSubmitter {
         Ok(ResolvedQueueGenerationFence::new(decisions))
     }
 
+    /// The creator record lives in the standard vault. MLS control items
+    /// in the other lane must re-read that same terminal fence before retry.
+    async fn cancel_quarantined_creator_items(
+        &self,
+        outbound: &InksonOutboundEngine,
+    ) -> anyhow::Result<usize> {
+        let standard = self.outbound(OutboundLane::Standard)?.store().clone();
+        let owner = arkret_sdk::ActorId::account(self.authority()?.clone());
+        let mut stopped = 0;
+        for item in outbound.snapshot().await?.items {
+            if item.status.is_terminal() {
+                continue;
+            }
+            let event = queued_event(&item);
+            if standard
+                .creator_record(&owner, &event.scope_ref)
+                .await?
+                .is_some_and(|record| record.quarantine_diagnostic().is_some())
+                && outbound.cancel(item.event_id().clone()).await?
+            {
+                stopped += 1;
+            }
+        }
+        Ok(stopped)
+    }
+
+    async fn ensure_creator_quarantine_replay_fence(
+        &self,
+        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+    ) -> anyhow::Result<()> {
+        use arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest;
+        let events: Vec<&arkret_sdk::Event> = match request {
+            SelfAuthoritySubmitRequest::Event(value) => vec![&value.event],
+            SelfAuthoritySubmitRequest::MlsCommit(value) => vec![&value.commit_event],
+            SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(value) => {
+                value.events.iter().map(|event| &event.event).collect()
+            }
+            SelfAuthoritySubmitRequest::DirectConversationFounding(value) => {
+                value.events.iter().map(|event| &event.event).collect()
+            }
+            SelfAuthoritySubmitRequest::MembershipCompensation(value) => {
+                vec![&value.event_submission.event]
+            }
+        };
+        let standard = self.outbound(OutboundLane::Standard)?.store().clone();
+        for event in events {
+            standard
+                .ensure_creator_automatic_replay_allowed(&event.scope_ref)
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Withdraw every quarantined item so the engine never forwards it.
     async fn quarantine_superseded_items(
         &self,
@@ -1748,6 +1802,7 @@ impl EventSubmitter {
             });
         }
 
+        self.cancel_quarantined_creator_items(&outbound).await?;
         let authority_client = self.authority_client();
         let options = arkret_sdk::http_client::ClientRequestOptions::new()
             .request_id(event_id.to_string())
@@ -1759,6 +1814,9 @@ impl EventSubmitter {
             let replay_store = outbound.store().clone();
             match outbound
                 .submit_next_checked(&authority_client, &options, |request| async move {
+                    self.ensure_creator_quarantine_replay_fence(&request)
+                        .await
+                        .map_err(|error| error.to_string())?;
                     if let Some(decision) = self
                         .ensure_creator_genesis_replay_gate(&request)
                         .await
@@ -2005,6 +2063,8 @@ impl EventSubmitter {
         let authority_client = self.authority_client();
         let mut completed = 0usize;
         loop {
+            completed =
+                completed.saturating_add(self.cancel_quarantined_creator_items(&outbound).await?);
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             completed = completed
                 .saturating_add(self.quarantine_superseded_items(&outbound, &fence).await?);
@@ -2012,6 +2072,9 @@ impl EventSubmitter {
             let replay_store = outbound.store().clone();
             match outbound
                 .submit_next_checked(&authority_client, &options, |request| async move {
+                    self.ensure_creator_quarantine_replay_fence(&request)
+                        .await
+                        .map_err(|error| error.to_string())?;
                     if let Some(decision) = self
                         .ensure_creator_genesis_replay_gate(&request)
                         .await

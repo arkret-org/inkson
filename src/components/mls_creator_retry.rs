@@ -1,4 +1,4 @@
-//! Explicit retry of a durable rejected creator attempt.
+//! Durable creator recovery status and explicit rejected-attempt retry.
 
 use dioxus::prelude::*;
 
@@ -14,11 +14,18 @@ pub(crate) fn CreatorMlsRetry(
     let mut busy = use_signal(|| false);
     let mut status = use_signal(String::new);
     let mut revision = use_signal(|| 0u64);
+    use_future(move || async move {
+        let mut changes = crate::outbound_store::subscribe_committed_changes();
+        while changes.changed().await.is_ok() {
+            let next = (*revision.peek()).wrapping_add(1);
+            revision.set(next);
+        }
+    });
     use_effect(move || {
         let _ = realm_id();
         status.set(String::new());
     });
-    let retryable = use_resource(move || {
+    let recovery = use_resource(move || {
         let realm = realm_id();
         let _ = refresh_hint();
         let _ = revision();
@@ -27,29 +34,53 @@ pub(crate) fn CreatorMlsRetry(
         let credential = token();
         async move {
             let Some(account) = account else {
-                return false;
+                return (false, false);
             };
             let Ok(scope_id) = arkret_sdk::RealmId::new(realm) else {
-                return false;
+                return (false, false);
             };
             let Ok(api) = crate::transport::auth::authed_api_ready(&base, credential).await else {
-                return false;
+                return (false, false);
             };
             let submitter = crate::event_submit::EventSubmitter::new(api.http().clone())
                 .with_authority(account.authority.clone());
-            matches!(submitter.creator_bootstrap_record(&arkret_sdk::ScopeRef::Realm { realm_id: scope_id }).await,
-                Ok(Some(record)) if record.rejection().is_some()
-                    && record.intent().creator_device_id() == &account.device_id)
+            let scope = arkret_sdk::ScopeRef::Realm { realm_id: scope_id };
+            let record = match submitter.creator_bootstrap_record(&scope).await {
+                Ok(record) => record,
+                // Detection commits quarantine then stops that caller. Re-read
+                // committed state for presentation without retrying authoring.
+                Err(_) => submitter
+                    .creator_bootstrap_record(&scope)
+                    .await
+                    .ok()
+                    .flatten(),
+            };
+            match record {
+                Some(record) => (
+                    record.rejection().is_some()
+                        && record.intent().creator_device_id() == &account.device_id,
+                    record.quarantine_diagnostic().is_some(),
+                ),
+                None => (false, false),
+            }
         }
     });
-    if !retryable().unwrap_or(false) && !busy() && status().is_empty() {
+    let (retryable, quarantined) = recovery().unwrap_or((false, false));
+    if quarantined {
+        return rsx! {
+            div { class: "muted", role: "status", "data-testid": "creator-mls-quarantined",
+                {crate::i18n::tr("setup.progress.mls_quarantined")}
+            }
+        };
+    }
+    if !retryable && !busy() && status().is_empty() {
         return rsx! {};
     }
     let pending = crate::i18n::tr("setup.action.finishing");
     let success = crate::i18n::tr("setup.progress.mls_ready_local");
     rsx! {
         div { class: "actions", "data-testid": "creator-mls-retry",
-            if retryable().unwrap_or(false) || busy() {
+            if retryable || busy() {
                 Button {
                     variant: ButtonVariant::Secondary,
                     disabled: busy(),

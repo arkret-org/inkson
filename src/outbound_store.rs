@@ -13,6 +13,7 @@
 //! localStorage per-origin quota that a single queue can exhaust on its own.
 
 pub(crate) mod creator_protection;
+mod creator_quarantine;
 
 use arkret_models_collaboration::mls_creator_bootstrap::{
     MlsCreatorBootstrapIntent, MlsCreatorBootstrapRecord, MlsCreatorBootstrapRejection,
@@ -49,6 +50,20 @@ fn secure_outbound_store()
 fn outbound_write_gate() -> &'static tokio::sync::Mutex<()> {
     static GATE: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
     GATE.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+fn committed_changes() -> &'static tokio::sync::watch::Sender<u64> {
+    static CHANGES: std::sync::OnceLock<tokio::sync::watch::Sender<u64>> =
+        std::sync::OnceLock::new();
+    CHANGES.get_or_init(|| tokio::sync::watch::channel(0).0)
+}
+
+pub(crate) fn subscribe_committed_changes() -> tokio::sync::watch::Receiver<u64> {
+    committed_changes().subscribe()
+}
+
+fn notify_committed_change() {
+    committed_changes().send_modify(|revision| *revision = revision.wrapping_add(1));
 }
 
 type ScheduledDispatches =
@@ -136,6 +151,9 @@ impl DurableOutboundState {
                     "duplicate creator bootstrap logical key in authoring vault".into(),
                 ));
             }
+            if record.quarantine_diagnostic().is_some() {
+                continue;
+            }
             let item = self
                 .items
                 .iter()
@@ -152,6 +170,29 @@ impl DurableOutboundState {
             }
         }
         for record in &self.creator_bootstrap_records {
+            if let Some(diagnostic) = record.quarantine_diagnostic() {
+                for item in &self.items {
+                    if creator_quarantine::belongs_to_attempt(
+                        &serde_json::to_value(item)?,
+                        record.intent(),
+                        diagnostic.recovery_record(),
+                    ) || diagnostic.related_recovery_records().iter().any(|raw| {
+                        creator_quarantine::belongs_to_attempt(
+                            &serde_json::to_value(item).expect("queue serialization"),
+                            record.intent(),
+                            raw,
+                        )
+                    }) {
+                        if item.status.is_terminal() {
+                            continue;
+                        }
+                        return Err(garth::Error::Storage(
+                            "quarantined creator queue was reactivated".into(),
+                        ));
+                    }
+                }
+                continue;
+            }
             if record.closed_attempts().iter().any(|closed| {
                 self.items
                     .iter()
@@ -308,6 +349,11 @@ impl DurableOutboundState {
             .iter()
             .find(|existing| existing.intent().effective_scope() == intent.effective_scope())
         {
+            if existing.quarantine_diagnostic().is_some() {
+                return Err(garth::Error::Storage(
+                    "quarantined creator cannot reopen its original authoring intent".into(),
+                ));
+            }
             if existing.intent() != &intent {
                 return Err(garth::Error::Protocol(
                     "creator bootstrap already belongs to another immutable intent or holder"
@@ -388,6 +434,15 @@ async fn mutate_state_in_store<R>(
     storage_key: &str,
     mutation: impl FnOnce(&mut DurableOutboundState) -> garth::Result<R>,
 ) -> garth::Result<R> {
+    mutate_authenticated_state_in_store(store, storage_key, None, mutation).await
+}
+
+async fn mutate_authenticated_state_in_store<R>(
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+    storage_key: &str,
+    authority: Option<&arkret_sdk::AccountId>,
+    mutation: impl FnOnce(&mut DurableOutboundState) -> garth::Result<R>,
+) -> garth::Result<R> {
     let stored_bytes = store
         .read_secret_bytes_durable(storage_key)
         .await
@@ -399,13 +454,19 @@ async fn mutate_state_in_store<R>(
         .map(|bytes| std::str::from_utf8(bytes.as_slice()))
         .transpose()
         .map_err(|error| garth::Error::Storage(format!("decode outbound queue bytes: {error}")))?;
-    let mut state = decode_snapshot(stored)?;
+    let (mut state, quarantined) = creator_quarantine::decode_for_recovery(stored, authority)?;
     let before = encode_snapshot(&state)?;
-    let result = mutation(&mut state)?;
+    let result = if quarantined {
+        Err(garth::Error::Storage(
+            "creator inconsistency quarantined durably; requested queue mutation stopped".into(),
+        ))
+    } else {
+        Ok(mutation(&mut state)?)
+    };
     let changed =
         serde_json::to_string(&state).map_err(|error| garth::Error::Storage(error.to_string()))?;
-    if changed == before {
-        return Ok(result);
+    if !quarantined && changed == before {
+        return result;
     }
     state.commit_position = state
         .commit_position
@@ -431,7 +492,8 @@ async fn mutate_state_in_store<R>(
             "outbound queue changed in another holder; retry from its committed snapshot".into(),
         ));
     }
-    Ok(result)
+    notify_committed_change();
+    result
 }
 
 /// One read-modify-write of a queue held in a file that is replaced atomically.
@@ -520,13 +582,22 @@ async fn mutate_state_in_file<R>(
             None => Ok(raw.to_owned()),
         })
         .transpose()?;
-    let mut state = decode_snapshot(plaintext.as_deref())?;
+    let (mut state, quarantined) = creator_quarantine::decode_for_recovery(
+        plaintext.as_deref(),
+        protection.map(|(authority, _)| authority),
+    )?;
     let before = encode_snapshot(&state)?;
-    let result = mutation(&mut state)?;
+    let result = if quarantined {
+        Err(garth::Error::Storage(
+            "creator inconsistency quarantined durably; requested queue mutation stopped".into(),
+        ))
+    } else {
+        Ok(mutation(&mut state)?)
+    };
     let changed =
         serde_json::to_string(&state).map_err(|error| garth::Error::Storage(error.to_string()))?;
-    if changed == before {
-        return Ok(result);
+    if !quarantined && changed == before {
+        return result;
     }
     state.commit_position = state
         .commit_position
@@ -575,7 +646,8 @@ async fn mutate_state_in_file<R>(
                 garth::Error::Storage(format!("sync outbound queue directory: {error}"))
             })?;
     }
-    Ok(result)
+    notify_committed_change();
+    result
 }
 
 #[derive(Clone)]
@@ -590,6 +662,8 @@ pub(crate) struct InksonOutboundStore {
         arkret_sdk::AccountId,
         std::sync::Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
     )>,
+    #[cfg(target_arch = "wasm32")]
+    authority: arkret_sdk::AccountId,
     #[cfg(target_arch = "wasm32")]
     storage_key: String,
 }
@@ -659,6 +733,7 @@ impl InksonOutboundStore {
         {
             Ok(Self {
                 creator_decision: Default::default(),
+                authority: authority.clone(),
                 storage_key: format!("{OUTBOUND_QUEUE_KEY_PREFIX}{scope}"),
             })
         }
@@ -686,7 +761,13 @@ impl InksonOutboundStore {
         #[cfg(target_arch = "wasm32")]
         {
             let store = secure_outbound_store()?;
-            mutate_state_in_store(store.as_ref(), &self.storage_key, mutation).await
+            mutate_authenticated_state_in_store(
+                store.as_ref(),
+                &self.storage_key,
+                Some(&self.authority),
+                mutation,
+            )
+            .await
         }
     }
 
@@ -894,6 +975,43 @@ impl InksonOutboundStore {
 
     /// Stop and remove the losing original in the same commit as its durable
     /// terminal diagnostics. The retained record cannot become write-ready.
+    /// Preserve the original recovery unit before returning a private/accepted
+    /// inconsistency to its caller. Every related queue and index stops in CAS.
+    pub(crate) async fn quarantine_creator(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        invariant: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapInvariant,
+        detail: String,
+        known: Option<
+            arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapKnownGenesis,
+        >,
+    ) -> garth::Result<()> {
+        self.mutate_state(|state| {
+            let position = state
+                .creator_bootstrap_records
+                .iter()
+                .position(|record| {
+                    record.intent().effective_scope() == expected.intent().effective_scope()
+                })
+                .ok_or_else(|| {
+                    garth::Error::Storage(
+                        "creator quarantine lost the authenticated original".into(),
+                    )
+                })?;
+            let record = &state.creator_bootstrap_records[position];
+            if record.quarantine_diagnostic().is_some() {
+                return Ok(());
+            }
+            if record != &expected {
+                return Err(garth::Error::Storage(
+                    "creator quarantine must reread the changed original".into(),
+                ));
+            }
+            creator_quarantine::stop_creator(state, position, invariant, detail, known)
+        })
+        .await
+    }
+
     pub(crate) async fn supersede_creator(
         &self,
         expected: MlsCreatorBootstrapRecord,
@@ -964,6 +1082,24 @@ impl InksonOutboundStore {
             }
             state.items.retain(|item| item.event_id() != &old_id);
             *record = next;
+            Ok(())
+        })
+        .await
+    }
+
+    pub(crate) async fn ensure_creator_automatic_replay_allowed(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> garth::Result<()> {
+        self.mutate_state(|state| {
+            if state.creator_bootstrap_records.iter().any(|record| {
+                record.intent().effective_scope() == scope
+                    && record.quarantine_diagnostic().is_some()
+            }) {
+                return Err(garth::Error::Storage(
+                    "creator recovery is quarantined; all automatic queue replay stops".into(),
+                ));
+            }
             Ok(())
         })
         .await
@@ -1056,6 +1192,7 @@ impl InksonOutboundStore {
                         "creator private artifact belongs to another accepted Genesis".into(),
                     ));
                 }
+                return Ok(Some(record.clone()));
             }
             Ok(None)
         })
@@ -1097,33 +1234,15 @@ impl InksonOutboundStore {
         &self,
         mutation: impl FnOnce(&mut garth::SendQueue, &mut ScheduledDispatches) -> garth::Result<R>,
     ) -> garth::Result<R> {
-        let _write_guard = outbound_write_gate().lock().await;
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            mutate_state_in_file(
-                &self.path,
-                self.protection.as_ref().map(|(authority, store)| {
-                    (
-                        authority,
-                        store.as_ref() as &dyn crate::secure_key_store::SecureKeyStore,
-                    )
-                }),
-                |state| {
-                    let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
-                        items: std::mem::take(&mut state.items),
-                    });
-                    let result = mutation(&mut queue, &mut state.scheduled_dispatches)?;
-                    state.items = queue.snapshot().items;
-                    Ok(result)
-                },
-            )
-            .await
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let store = secure_outbound_store()?;
-            mutate_dispatches_in_store(store.as_ref(), &self.storage_key, mutation).await
-        }
+        self.mutate_state(|state| {
+            let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
+                items: std::mem::take(&mut state.items),
+            });
+            let result = mutation(&mut queue, &mut state.scheduled_dispatches)?;
+            state.items = queue.snapshot().items;
+            Ok(result)
+        })
+        .await
     }
 
     pub(crate) async fn scheduled_dispatch(
@@ -1635,6 +1754,322 @@ mod tests {
         let before = std::fs::read(&rejected_path).unwrap();
         reopened.reopen_creator(stopped, fresh).await.unwrap();
         assert_eq!(std::fs::read(&rejected_path).unwrap(), before);
+    }
+
+    async fn creator_quarantine_fault_cuts(
+        directory: &std::path::Path,
+        source: &std::path::Path,
+        ready: &MlsCreatorBootstrapRecord,
+        queued: &garth::QueuedSubmission,
+        secrets: &dyn crate::secure_key_store::SecureKeyStore,
+    ) {
+        use arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapInvariant;
+        let original: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(source).unwrap()).unwrap();
+        for cut in ["record", "queue", "index", "duplicate"] {
+            let path = directory.join(format!("quarantine-{cut}.json"));
+            let mut damaged = original.clone();
+            match cut {
+                "record" => {
+                    damaged["creator_bootstrap_records"][0]["epoch_zero"]["encrypted_private_state"] =
+                        serde_json::json!({"damaged": true})
+                }
+                "queue" => {
+                    let items = damaged["items"].as_array_mut().unwrap();
+                    let genesis = items
+                        .iter_mut()
+                        .find(|item| {
+                            item["submission"]["event_id"]
+                                == serde_json::to_value(&queued.event_id).unwrap()
+                        })
+                        .unwrap();
+                    genesis["submission"]["request"]["event"]["created_at"] =
+                        serde_json::json!("2026-01-01T00:00:00.000Z");
+                }
+                "index" => damaged["creator_ready_index"] = serde_json::json!([]),
+                _ => damaged["creator_bootstrap_records"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::to_value(ready).unwrap()),
+            }
+            std::fs::write(&path, serde_json::to_vec(&damaged).unwrap()).unwrap();
+            let raw = std::fs::read(&path).unwrap();
+            let vault = InksonOutboundStore::for_test_path(path.clone());
+            std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+            let error = vault
+                .creator_record(
+                    ready.intent().owner_actor_id(),
+                    ready.intent().effective_scope(),
+                )
+                .await
+                .unwrap_err();
+            assert!(!error.to_string().contains("quarantined durably"));
+            assert_eq!(std::fs::read(&path).unwrap(), raw, "{cut}");
+            std::fs::remove_dir(path.with_extension("json.tmp")).unwrap();
+            assert!(
+                vault
+                    .creator_record(
+                        ready.intent().owner_actor_id(),
+                        ready.intent().effective_scope()
+                    )
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("quarantined durably")
+            );
+            let reopened = InksonOutboundStore::for_test_path(path.clone());
+            let stopped = reopened
+                .creator_record(
+                    ready.intent().owner_actor_id(),
+                    ready.intent().effective_scope(),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            let diagnostic = stopped.quarantine_diagnostic().unwrap();
+            assert_eq!(
+                diagnostic.last_state(),
+                arkret_wire::MlsCreatorBootstrapState::Ready
+            );
+            assert_eq!(diagnostic.event_id(), Some(&queued.event_id));
+            assert_eq!(
+                diagnostic.recovery_record(),
+                &damaged["creator_bootstrap_records"][0]
+            );
+            assert_eq!(
+                diagnostic.related_recovery_records().len(),
+                usize::from(cut == "duplicate")
+            );
+            assert!(
+                diagnostic
+                    .recovery_queue_items()
+                    .iter()
+                    .any(|item| item["submission"]["event_id"]
+                        == serde_json::to_value(&queued.event_id).unwrap())
+            );
+            let state = decode_snapshot(Some(&std::fs::read_to_string(&path).unwrap())).unwrap();
+            assert!(state.creator_ready_index.is_empty());
+            assert!(state.items.iter().all(|item| item.status.is_terminal()));
+            let frozen = std::fs::read(&path).unwrap();
+            assert!(
+                reopened
+                    .ensure_creator_automatic_replay_allowed(ready.intent().effective_scope())
+                    .await
+                    .is_err()
+            );
+            let mut control = serde_json::to_value(&state.items[0]).unwrap();
+            control["submission"]["event_id"] = serde_json::to_value(
+                arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [99; 32]),
+            )
+            .unwrap();
+            control["submission"]["request"] = serde_json::json!({"commit_event": {
+                "scope_ref": ready.intent().effective_scope(), "actor_id": ready.intent().owner_actor_id()
+            }});
+            assert!(creator_quarantine::belongs_to_attempt(
+                &control,
+                ready.intent(),
+                diagnostic.recovery_record()
+            ));
+            control["submission"]["request"] = serde_json::json!({"events": [{"event": {
+                "scope_ref": ready.intent().effective_scope(), "actor_id": ready.intent().owner_actor_id()
+            }}]});
+            assert!(creator_quarantine::belongs_to_attempt(
+                &control,
+                ready.intent(),
+                diagnostic.recovery_record()
+            ));
+            control["submission"]["request"]["events"][0]["event"]["actor_id"] =
+                serde_json::json!(null);
+            assert!(!creator_quarantine::belongs_to_attempt(
+                &control,
+                ready.intent(),
+                diagnostic.recovery_record()
+            ));
+            assert!(
+                reopened
+                    .check_creator_ready_slot(ready.intent().effective_scope(), &queued.event_id)
+                    .await
+                    .is_err()
+            );
+            assert!(
+                reopened
+                    .freeze_creator_intent(
+                        ready.intent().clone(),
+                        state
+                            .items
+                            .iter()
+                            .find(|item| item.event_id() == ready.intent().scope_create_event_id())
+                            .unwrap()
+                            .submission
+                            .clone()
+                    )
+                    .await
+                    .is_err()
+            );
+            assert!(reopened.publish_creator_ready(ready.clone()).await.is_err());
+            assert!(
+                reopened
+                    .mutate_outbound(|queue| {
+                        queue.enqueue(queued.clone(), crate::clock::now_utc())?;
+                        Ok(())
+                    })
+                    .await
+                    .is_err()
+            );
+            reopened
+                .quarantine_creator(
+                    stopped.clone(),
+                    MlsCreatorBootstrapInvariant::SignedBytes,
+                    "replacement diagnostic forbidden".into(),
+                    None,
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                frozen,
+                "terminal diagnostic was amended at {cut}"
+            );
+            assert_eq!(
+                reopened
+                    .creator_record(
+                        ready.intent().owner_actor_id(),
+                        ready.intent().effective_scope()
+                    )
+                    .await
+                    .unwrap(),
+                Some(stopped)
+            );
+        }
+        for private_cut in ["ciphertext", "state_record"] {
+            let path = directory.join(format!("quarantine-actual-private-{private_cut}.json"));
+            let mut damaged = original.clone();
+            let raw = &mut damaged["creator_bootstrap_records"][0];
+            let original_private: Vec<u8> =
+                serde_json::from_value(raw["epoch_zero"]["encrypted_private_state"].clone())
+                    .unwrap();
+            let mut envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope =
+                serde_json::from_slice(&original_private).unwrap();
+            let authority = ready.intent().owner_actor_id().as_account_id().unwrap();
+            let secret =
+                crate::event_submit::original_creator_checkpoint_secret(&ready, secrets, authority)
+                    .unwrap();
+            if private_cut == "ciphertext" {
+                let first = if envelope.ciphertext_hex.starts_with('0') {
+                    "1"
+                } else {
+                    "0"
+                };
+                envelope.ciphertext_hex.replace_range(..1, first);
+                assert!(crate::mls::persistence::decrypt_envelope(&envelope, &secret).is_err());
+            } else {
+                envelope = crate::mls::persistence::encrypt_state(
+                    &envelope.realm_id,
+                    &envelope.group_id,
+                    0,
+                    b"invalid MLS private state",
+                    &secret,
+                    &[19; 32],
+                );
+                assert!(crate::mls::persistence::decrypt_envelope(&envelope, &secret).is_ok());
+                assert!(crate::mls::persistence::restore_envelope(&envelope, &secret, 0).is_err());
+            }
+            let private = serde_json::to_vec(&envelope).unwrap();
+            raw["epoch_zero"]["encrypted_private_state"] = serde_json::to_value(&private).unwrap();
+            raw["artifacts"]["private_state_binding"] = serde_json::to_value(
+                arkret_wire::Hash::new(arkret_sdk::canonical::digest(
+                    ready
+                        .queued_genesis()
+                        .unwrap()
+                        .signed_genesis()
+                        .digest_suite(),
+                    &private,
+                ))
+                .unwrap(),
+            )
+            .unwrap();
+            let retained: MlsCreatorBootstrapRecord = serde_json::from_value(raw.clone()).unwrap();
+            retained.validate().unwrap();
+            std::fs::write(&path, serde_json::to_vec(&damaged).unwrap()).unwrap();
+            let before = std::fs::read(&path).unwrap();
+            let vault = InksonOutboundStore::for_test_path(path.clone());
+            let http =
+                arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
+                    .allow_insecure_localhost()
+                    .build()
+                    .unwrap();
+            let submitter = crate::event_submit::EventSubmitter::new(http).with_authority(
+                ready
+                    .intent()
+                    .owner_actor_id()
+                    .as_account_id()
+                    .unwrap()
+                    .clone(),
+            );
+            let missing = crate::secure_key_store::MemorySecureKeyStore::new();
+            assert!(
+                submitter
+                    .restore_creator_artifacts_or_quarantine(&vault, &retained, &missing)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            assert!(
+                vault
+                    .creator_record(
+                        ready.intent().owner_actor_id(),
+                        ready.intent().effective_scope()
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .quarantine_diagnostic()
+                    .is_none()
+            );
+            std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+            assert!(
+                submitter
+                    .restore_creator_artifacts_or_quarantine(&vault, &retained, secrets)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            std::fs::remove_dir(path.with_extension("json.tmp")).unwrap();
+            assert!(
+                submitter
+                    .restore_creator_artifacts_or_quarantine(&vault, &retained, secrets)
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("quarantined")
+            );
+            let stopped = vault
+                .creator_record(
+                    ready.intent().owner_actor_id(),
+                    ready.intent().effective_scope(),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            let diagnostic = stopped.quarantine_diagnostic().unwrap();
+            assert_eq!(
+                diagnostic.invariant(),
+                MlsCreatorBootstrapInvariant::PrivateMaterial
+            );
+            assert_eq!(
+                diagnostic.recovery_record(),
+                &damaged["creator_bootstrap_records"][0]
+            );
+            assert!(diagnostic.accepted_winner().is_some());
+            let frozen = std::fs::read(&path).unwrap();
+            assert!(
+                submitter
+                    .restore_creator_artifacts_or_quarantine(&vault, &stopped, secrets)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), frozen);
+        }
     }
 
     #[tokio::test]
@@ -2237,6 +2672,14 @@ mod tests {
             state.commit_position,
             ready.ready_receipt().unwrap().ready_commit_position()
         );
+        Box::pin(creator_quarantine_fault_cuts(
+            directory.path(),
+            &path,
+            &ready,
+            &queued,
+            &private_store,
+        ))
+        .await;
         state.creator_ready_index.clear();
         assert!(encode_snapshot(&state).is_err());
     }
@@ -2310,11 +2753,68 @@ mod tests {
                 .creator_record(intent.owner_actor_id(), intent.effective_scope())
                 .await
                 .unwrap(),
-            Some(frozen)
+            Some(frozen.clone())
         );
+        let (accepted, snapshot) = creator_acceptance(&intent);
+        store
+            .accept_creator_realm(frozen, accepted, snapshot)
+            .await
+            .unwrap();
+        let protected = std::fs::read_to_string(&path).unwrap();
+        let opened =
+            creator_protection::open_records(&protected, authority, secrets.as_ref()).unwrap();
+        let mut typed_damage: serde_json::Value = serde_json::from_str(&opened).unwrap();
+        typed_damage["creator_bootstrap_records"][0]["genesis_absence"]["visible_stream_heads"] =
+            serde_json::json!([]);
+        let encoded_damage = creator_protection::protect_records(
+            &serde_json::to_string(&typed_damage).unwrap(),
+            authority,
+            secrets.as_ref(),
+        )
+        .unwrap();
+        std::fs::write(&path, &encoded_damage).unwrap();
+        std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+        assert!(
+            store
+                .creator_record(intent.owner_actor_id(), intent.effective_scope())
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), encoded_damage);
+        std::fs::remove_dir(path.with_extension("json.tmp")).unwrap();
+        assert!(
+            store
+                .creator_record(intent.owner_actor_id(), intent.effective_scope())
+                .await
+                .is_err()
+        );
+        let quarantined = store
+            .creator_record(intent.owner_actor_id(), intent.effective_scope())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(quarantined.quarantine_diagnostic().is_some());
+        assert_eq!(
+            quarantined
+                .quarantine_diagnostic()
+                .unwrap()
+                .recovery_record(),
+            &typed_damage["creator_bootstrap_records"][0]
+        );
+        let ciphertext = std::fs::read_to_string(&path).unwrap();
+        assert!(!ciphertext.contains("genesis_absence"));
+        crate::secure_key_store::store_signing_seed(secrets.as_ref(), &[14; 32]).unwrap();
+        assert!(
+            store
+                .creator_record(intent.owner_actor_id(), intent.effective_scope())
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), ciphertext);
+        crate::secure_key_store::store_signing_seed(secrets.as_ref(), &[13; 32]).unwrap();
         // Old development plaintext is rejected rather than silently adopted.
         let plaintext =
-            creator_protection::open_records(&raw, authority, secrets.as_ref()).unwrap();
+            creator_protection::open_records(&ciphertext, authority, secrets.as_ref()).unwrap();
         std::fs::write(&path, plaintext).unwrap();
         assert!(
             store

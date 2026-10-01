@@ -119,17 +119,16 @@ pub(super) fn open_records(
                     },
                 )
                 .map_err(|_| anyhow::anyhow!("creator record device secret mismatch or tamper"))?;
-            let typed: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord = serde_json::from_slice(&plaintext)?;
-            typed.validate()?;
+            let original: serde_json::Value = serde_json::from_slice(&plaintext)?;
+            let intent: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent = serde_json::from_value(original.get("intent").cloned().ok_or_else(|| anyhow::anyhow!("protected creator lost its authenticated coordinates"))?)?;
+            intent.validate()?;
             anyhow::ensure!(
-                typed.intent().owner_actor_id().as_account_id() == Some(authority)
-                    && typed.intent().creator_device_id() == &protected.creator_device_id,
+                intent.owner_actor_id().as_account_id() == Some(authority)
+                    && intent.creator_device_id() == &protected.creator_device_id,
                 "protected creator record coordinate mismatch"
             );
-            *record = serde_json::to_value(typed)?;
+            *record = original;
         }
     }
-    // Restore the typed serializer's field order for unchanged-read detection.
-    let state = super::decode_snapshot(Some(&serde_json::to_string(&value)?))?;
-    Ok(super::encode_snapshot(&state)?)
+    Ok(serde_json::to_string(&value)?)
 }

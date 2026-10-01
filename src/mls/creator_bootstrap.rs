@@ -194,7 +194,11 @@ pub(crate) async fn should_resume_creator_genesis(
         .creator_bootstrap_record(&scope)
         .await
         .map_err(|error| error.to_string())?
-        .is_some_and(|record| record.superseded_winner().is_some() || record.rejection().is_some())
+        .is_some_and(|record| {
+            record.superseded_winner().is_some()
+                || record.rejection().is_some()
+                || record.quarantine_diagnostic().is_some()
+        })
     {
         return Ok(false);
     }

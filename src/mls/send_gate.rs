@@ -230,6 +230,14 @@ pub(crate) async fn resolve_mls_send_gate(
         }
         if let Some(record) = terminal {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            if record.ready_receipt().is_some() {
+                crate::event_submit::original_creator_checkpoint_secret(
+                    &record,
+                    secure_store.as_ref(),
+                    authority,
+                )
+                .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
+            }
             let secret = crate::mls::runtime::load_device_checkpoint_secret(
                 secure_store.as_ref(),
                 authority,
@@ -239,13 +247,92 @@ pub(crate) async fn resolve_mls_send_gate(
             let snapshot = durable.as_ref().ok_or_else(|| {
                 MlsSendGateBlocked::NotReady("winning private state is not installed".into())
             })?;
-            let group = crate::mls::persistence::restore_envelope(snapshot, &secret, current.epoch)
-                .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
-            validate_superseded_private_group(&record, &group, current)
-                .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
+            let private_check = (|| -> anyhow::Result<()> {
+                if record.ready_receipt().is_some() {
+                    let restored = crate::event_submit::restored_creator_artifacts(
+                        &record,
+                        secure_store.as_ref(),
+                        authority,
+                    )?;
+                    anyhow::ensure!(
+                        record.artifacts() == Some(&restored),
+                        "ready creator recovery unit differs from its durable artifacts"
+                    );
+                }
+                let group =
+                    crate::mls::persistence::restore_envelope(snapshot, &secret, current.epoch)?;
+                if record.superseded_winner().is_some() {
+                    validate_superseded_private_group(&record, &group, current)
+                } else {
+                    validate_ready_creator_private_group(&record, &group, current)
+                }
+            })();
+            if let Err(error) = private_check {
+                // A superseded original cannot be amended. Its separately
+                // acquired winner cache remains blocked when inconsistent.
+                if record.ready_receipt().is_some() {
+                    use arkret_models_collaboration::mls_creator_bootstrap::{
+                        MlsCreatorBootstrapInvariant, MlsCreatorBootstrapKnownGenesis,
+                    };
+                    let known = record.accepted_genesis().map(|accepted| {
+                        MlsCreatorBootstrapKnownGenesis::Original {
+                            acceptance: Box::new(accepted.clone()),
+                        }
+                    });
+                    vault
+                        .quarantine_creator(
+                            record,
+                            MlsCreatorBootstrapInvariant::PrivateMaterial,
+                            error.to_string(),
+                            known,
+                        )
+                        .await
+                        .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
+                }
+                return Err(MlsSendGateBlocked::NotReady(error.to_string()));
+            }
         }
     }
     Ok(gate)
+}
+
+/// A ready creator must still restore the accepted original or a later
+/// durable private state bound to the authenticated current public tree.
+pub(crate) fn validate_ready_creator_private_group(
+    record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+    group: &arkret_sdk::ArkretMlsGroup,
+    current: &arkret_wire::MlsGroupCurrent,
+) -> anyhow::Result<()> {
+    let accepted = record
+        .accepted_genesis()
+        .ok_or_else(|| anyhow::anyhow!("creator has no accepted original"))?;
+    let (info, tree) = group.public_group_state_bytes()?;
+    let digest = arkret_models_collaboration::mls_group_state_material::material_digest_from_ref(
+        &current.public_tree_ref,
+    )?
+    .digest_suite()?;
+    let reference = format!("ak:blob:{}", arkret_sdk::canonical::digest(digest, &tree));
+    anyhow::ensure!(
+        record.ready_receipt().is_some()
+            && accepted.accepted().event.event_id == current.genesis_event_ref
+            && group.scope() == record.intent().effective_scope()
+            && group.scope() == &current.effective_scope
+            && group.group_id() == *record.intent().mls_group_id()
+            && group.epoch() == current.epoch
+            && group.local_actor_id() == record.intent().owner_actor_id()
+            && current.public_tree_ref.as_str() == reference,
+        "creator private state differs from its accepted Genesis/current tree"
+    );
+    if group.epoch() == 0 {
+        let unit = record
+            .epoch_zero()
+            .ok_or_else(|| anyhow::anyhow!("creator lost its original unit"))?;
+        anyhow::ensure!(
+            info == unit.group_info_bytes() && tree == unit.ratchet_tree_bytes(),
+            "ready creator private state differs from its original recovery unit"
+        );
+    }
+    Ok(())
 }
 
 /// A stopped loser stays stopped. Only separately acquired private state

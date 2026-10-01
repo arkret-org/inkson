@@ -117,21 +117,58 @@ pub(crate) fn verify_creator_genesis_producer(
     Ok(())
 }
 
+pub(crate) fn original_creator_checkpoint_secret(
+    record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    authority: &arkret_sdk::AccountId,
+) -> anyhow::Result<String> {
+    let material = crate::secure_key_store::load_signing_seed_for(
+        secure_store,
+        authority,
+        record.intent().creator_device_id(),
+    )?
+    .ok_or_else(|| anyhow::anyhow!("creator recovery requires its original device key"))?;
+    let evidence = record
+        .governance_evidence()
+        .ok_or_else(|| anyhow::anyhow!("creator recovery has no active pinned authority"))?;
+    let public = crate::identity::device_directory::public_key_from_directory_value(
+        evidence
+            .creator_device_authority()
+            .projection()
+            .device_signing_key_did
+            .as_str(),
+    )
+    .ok_or_else(|| anyhow::anyhow!("creator original device key is unavailable"))?;
+    anyhow::ensure!(
+        material.device_public_key() == public.ed25519_bytes()?,
+        "creator recovery does not hold its pinned original device key"
+    );
+    crate::outbound_store::creator_protection::checkpoint_secret(
+        secure_store,
+        authority,
+        record.intent().creator_device_id(),
+    )
+}
+
 pub(crate) fn restored_creator_artifacts(
     record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::AccountId,
 ) -> anyhow::Result<arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapArtifacts>
 {
+    record.validate()?;
+    let secret = original_creator_checkpoint_secret(record, secure_store, authority)?;
+    restored_creator_artifacts_with_secret(record, &secret)
+}
+
+fn restored_creator_artifacts_with_secret(
+    record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+    secret: &str,
+) -> anyhow::Result<arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapArtifacts>
+{
     use arkret_models_collaboration::mls_creator_bootstrap::{
         MlsCreatorBootstrapArtifactChecks, MlsCreatorBootstrapArtifacts,
     };
-    record.validate()?;
-    let secret = crate::outbound_store::creator_protection::checkpoint_secret(
-        secure_store,
-        authority,
-        record.intent().creator_device_id(),
-    )?;
     let unit = record
         .epoch_zero()
         .ok_or_else(|| anyhow::anyhow!("creator artifact lost original private unit"))?;
@@ -168,6 +205,10 @@ impl EventSubmitter {
         let Some(record) = store.creator_record(&owner, scope).await? else {
             anyhow::bail!("creator acceptance requires a durable closed intent");
         };
+        anyhow::ensure!(
+            record.quarantine_diagnostic().is_none(),
+            "creator recovery is quarantined; preserve its original recovery material"
+        );
         anyhow::ensure!(
             record.superseded_winner().is_none(),
             "creator attempt is superseded; use Welcome, device migration or recovery"
@@ -288,11 +329,7 @@ impl EventSubmitter {
             .await?
             .ok_or_else(|| anyhow::anyhow!("creator epoch zero lost its durable pin"))?;
         let intent = record.intent();
-        let secret = crate::outbound_store::creator_protection::checkpoint_secret(
-            secure_store,
-            self.authority()?,
-            intent.creator_device_id(),
-        )?;
+        let secret = original_creator_checkpoint_secret(&record, secure_store, self.authority()?)?;
         if record.epoch_zero().is_none() {
             let evidence = record
                 .governance_evidence()
@@ -347,8 +384,16 @@ impl EventSubmitter {
             .epoch_zero()
             .ok_or_else(|| anyhow::anyhow!("creator epoch-zero commit did not install its unit"))?;
         let (private, summary) =
-            crate::mls::runtime::restore_creator_epoch_zero(unit, record.intent(), &secret)
-                .map_err(|error| anyhow::anyhow!(error.user_message()))?;
+            match crate::mls::runtime::restore_creator_epoch_zero(unit, record.intent(), &secret) {
+                Ok(restored) => restored,
+                Err(error) => {
+                    self.quarantine_creator_private_failure(&vault, &record, error.user_message())
+                        .await?;
+                    anyhow::bail!(
+                        "creator private recovery is quarantined; original material retained"
+                    );
+                }
+            };
         let account_secret = crate::mls::runtime::load_device_checkpoint_secret(
             secure_store,
             self.authority()?,
@@ -358,7 +403,7 @@ impl EventSubmitter {
             .state_store
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("creator recovery requires account state"))?;
-        state.write(|store| -> anyhow::Result<()> {
+        let cache_check = state.read(|store| -> anyhow::Result<bool> {
             if let Some(existing) = store.mls_checkpoint_for_scope(scope) {
                 anyhow::ensure!(
                     existing.group_id == record.intent().mls_group_id().as_str(),
@@ -374,13 +419,13 @@ impl EventSubmitter {
                                     == accepted.accepted().event.event_id)),
                         "advanced creator cache has no accepted Genesis"
                     );
-                    return Ok(());
+                    return Ok(true);
                 }
                 let restored =
                     crate::mls::persistence::restore_envelope(&existing, &account_secret, 0)?;
                 let (public, tree) = restored.public_group_state_bytes()?;
                 if public == unit.group_info_bytes() && tree == unit.ratchet_tree_bytes() {
-                    return Ok(());
+                    return Ok(true);
                 }
                 anyhow::ensure!(restored.scope() == scope && restored.epoch() == 0
                     && creator_cache_belongs_to_closed_attempt(&record, &existing,
@@ -390,20 +435,35 @@ impl EventSubmitter {
                 // attempt may be replaced. The new formal unit is already durable.
 
             }
-            let mut salt = [0u8; 16];
-            getrandom::fill(&mut salt)?;
-            let cache = crate::mls::persistence::encrypt_state(
-                scope.realm_id().as_str(),
-                record.intent().mls_group_id().as_str(),
-                0,
-                &private,
-                &account_secret,
-                &salt,
-            );
-            store
-                .save_mls_checkpoint_for_scope(scope, cache)
-                .map_err(anyhow::Error::msg)
-        })?;
+            Ok(false)
+        });
+        let already_installed = match cache_check {
+            Ok(installed) => installed,
+            Err(error) => {
+                self.quarantine_creator_private_failure(&vault, &record, error.to_string())
+                    .await?;
+                anyhow::bail!(
+                    "creator private recovery is quarantined; original material retained"
+                );
+            }
+        };
+        if !already_installed {
+            state.write(|store| -> anyhow::Result<()> {
+                let mut salt = [0u8; 16];
+                getrandom::fill(&mut salt)?;
+                let cache = crate::mls::persistence::encrypt_state(
+                    scope.realm_id().as_str(),
+                    record.intent().mls_group_id().as_str(),
+                    0,
+                    &private,
+                    &account_secret,
+                    &salt,
+                );
+                store
+                    .save_mls_checkpoint_for_scope(scope, cache)
+                    .map_err(anyhow::Error::msg)
+            })?;
+        }
         Ok((record, summary))
     }
 
@@ -502,10 +562,18 @@ impl EventSubmitter {
             evidence.accepted_create(),
         )
         .await?;
-        anyhow::ensure!(
-            accepted.is_none(),
-            "creator Genesis winner must be reconciled before replay"
-        );
+        if let Some(accepted) = accepted {
+            if record
+                .closed_attempts()
+                .iter()
+                .any(|closed| closed.event_id() == &accepted.event.event_id)
+            {
+                self.quarantine_creator_accepted_conflict(&vault, record, accepted, bundle)
+                    .await?;
+                anyhow::bail!("creator accepted-result contradiction remains stopped");
+            }
+            anyhow::bail!("creator Genesis winner must be reconciled before replay");
+        }
         let pinned = evidence.accepted_create();
         let fresh_create = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate::new(
             record.intent(), pinned.accepted_event().clone(), pinned.covering_commit().clone(),
@@ -515,6 +583,26 @@ impl EventSubmitter {
             record.intent(), fresh_create, snapshot,
         )?;
         Ok(Some((event.event_id.clone(), absence)))
+    }
+
+    async fn quarantine_creator_accepted_conflict(
+        &self,
+        vault: &crate::outbound_store::InksonOutboundStore,
+        record: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+        accepted: arkret_wire::CommittedEventFullView,
+        bundle: arkret_wire::RealmAuthorityBundle,
+    ) -> anyhow::Result<()> {
+        use arkret_models_collaboration::mls_creator_bootstrap::{
+            MlsCreatorBootstrapInvariant, MlsCreatorBootstrapKnownGenesis,
+        };
+        let known =
+            MlsCreatorBootstrapKnownGenesis::authenticated_winner(&record, accepted, bundle)?;
+        vault.quarantine_creator(record, MlsCreatorBootstrapInvariant::AcceptedResult,
+            "independently verified accepted Genesis contradicts a definitely rejected or closed attempt".into(),
+            Some(known)).await?;
+        anyhow::bail!(
+            "creator accepted-result contradiction is quarantined; original material retained"
+        )
     }
 
     pub(crate) async fn reopen_rejected_creator(
@@ -545,6 +633,18 @@ impl EventSubmitter {
         )
         .await?;
         if let Some(accepted) = accepted {
+            if record
+                .rejection()
+                .is_some_and(|rejection| rejection.event_id() == &accepted.event.event_id)
+                || record
+                    .closed_attempts()
+                    .iter()
+                    .any(|closed| closed.event_id() == &accepted.event.event_id)
+            {
+                return self
+                    .quarantine_creator_accepted_conflict(&vault, record, accepted, bundle)
+                    .await;
+            }
             let winner = MlsCreatorBootstrapWinner::new(&record, accepted, bundle)?;
             vault.supersede_creator(record, winner).await?;
             anyhow::bail!(
@@ -578,6 +678,10 @@ impl EventSubmitter {
             .await?
             .ok_or_else(|| anyhow::anyhow!("creator exact query lost its durable intent"))?;
         anyhow::ensure!(
+            record.quarantine_diagnostic().is_none(),
+            "creator recovery is quarantined; preserve its original recovery material"
+        );
+        anyhow::ensure!(
             record.superseded_winner().is_none(),
             "creator attempt is superseded; use Welcome, device migration or recovery"
         );
@@ -601,6 +705,15 @@ impl EventSubmitter {
         let Some(accepted) = accepted else {
             return Ok(None);
         };
+        if record
+            .closed_attempts()
+            .iter()
+            .any(|closed| closed.event_id() == &accepted.event.event_id)
+        {
+            self.quarantine_creator_accepted_conflict(&vault, record, accepted, bundle)
+                .await?;
+            anyhow::bail!("creator accepted-result contradiction remains stopped");
+        }
         if record
             .queued_genesis()
             .is_none_or(|queued| queued.signed_genesis().event_id() != &accepted.event.event_id)
@@ -627,6 +740,51 @@ impl EventSubmitter {
         Ok(Some(id))
     }
 
+    async fn quarantine_creator_private_failure(
+        &self,
+        vault: &crate::outbound_store::InksonOutboundStore,
+        record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+        detail: String,
+    ) -> anyhow::Result<()> {
+        use arkret_models_collaboration::mls_creator_bootstrap::{
+            MlsCreatorBootstrapInvariant, MlsCreatorBootstrapKnownGenesis,
+        };
+        let known =
+            record
+                .accepted_genesis()
+                .map(|accepted| MlsCreatorBootstrapKnownGenesis::Original {
+                    acceptance: Box::new(accepted.clone()),
+                });
+        vault
+            .quarantine_creator(
+                record.clone(),
+                MlsCreatorBootstrapInvariant::PrivateMaterial,
+                detail,
+                known,
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn restore_creator_artifacts_or_quarantine(
+        &self,
+        vault: &crate::outbound_store::InksonOutboundStore,
+        record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> anyhow::Result<
+        arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapArtifacts,
+    > {
+        let secret = original_creator_checkpoint_secret(record, secure_store, self.authority()?)?;
+        match restored_creator_artifacts_with_secret(record, &secret) {
+            Ok(artifacts) => Ok(artifacts),
+            Err(error) => {
+                self.quarantine_creator_private_failure(vault, record, error.to_string())
+                    .await?;
+                anyhow::bail!("creator private recovery is quarantined; original material retained")
+            }
+        }
+    }
+
     /// Restore the retained winning private unit before its whole artifact
     /// install. This never generates material or changes the accepted Event.
     pub(crate) async fn converge_creator_artifacts(
@@ -640,7 +798,9 @@ impl EventSubmitter {
             .creator_record(&owner, scope)
             .await?
             .ok_or_else(|| anyhow::anyhow!("creator artifact lost its durable acceptance"))?;
-        let artifacts = restored_creator_artifacts(&record, secure_store, self.authority()?)?;
+        let artifacts = self
+            .restore_creator_artifacts_or_quarantine(&vault, &record, secure_store)
+            .await?;
         vault.converge_creator_artifacts(record, artifacts).await?;
         Ok(())
     }
@@ -658,19 +818,31 @@ impl EventSubmitter {
             .creator_record(&owner, scope)
             .await?
             .ok_or_else(|| anyhow::anyhow!("creator ready publication lost artifacts"))?;
-        let artifacts = restored_creator_artifacts(&record, secure_store, self.authority()?)?;
-        anyhow::ensure!(
-            record.artifacts() == Some(&artifacts),
-            "creator durable artifact/private state mismatch"
-        );
+        let artifacts = self
+            .restore_creator_artifacts_or_quarantine(&vault, &record, secure_store)
+            .await?;
+        if record.artifacts() != Some(&artifacts) {
+            self.quarantine_creator_private_failure(
+                &vault,
+                &record,
+                "creator durable artifact/private state mismatch".into(),
+            )
+            .await?;
+            anyhow::bail!("creator private recovery is quarantined; original material retained");
+        }
         let state = self
             .state_store
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("creator readiness requires account state"))?;
-        state.read(|store| -> anyhow::Result<()> {
-            let snapshot = store
-                .durable_mls_checkpoint_for_scope(scope)?
-                .ok_or_else(|| anyhow::anyhow!("creator private cache is not durably installed"))?;
+        let account_secret = crate::mls::runtime::load_device_checkpoint_secret(
+            secure_store,
+            self.authority()?,
+            record.intent().creator_device_id(),
+        )?;
+        let snapshot = state
+            .read(|store| store.durable_mls_checkpoint_for_scope(scope))?
+            .ok_or_else(|| anyhow::anyhow!("creator private cache is not durably installed"))?;
+        let private_check = (|| -> anyhow::Result<()> {
             let accepted = record
                 .accepted_genesis()
                 .ok_or_else(|| anyhow::anyhow!("creator readiness lost accepted Genesis"))?;
@@ -680,11 +852,6 @@ impl EventSubmitter {
                         == Some(&accepted.accepted().event.event_id),
                     "creator private cache has another Genesis ref"
                 );
-                let account_secret = crate::mls::runtime::load_device_checkpoint_secret(
-                    secure_store,
-                    self.authority()?,
-                    record.intent().creator_device_id(),
-                )?;
                 let group =
                     crate::mls::persistence::restore_envelope(&snapshot, &account_secret, 0)?;
                 let (info, tree) = group.public_group_state_bytes()?;
@@ -697,7 +864,12 @@ impl EventSubmitter {
                 );
             }
             Ok(())
-        })?;
+        })();
+        if let Err(error) = private_check {
+            self.quarantine_creator_private_failure(&vault, &record, error.to_string())
+                .await?;
+            anyhow::bail!("creator private recovery is quarantined; original material retained");
+        }
         vault.publish_creator_ready(record).await?;
         state.write(|_| {});
         Ok(())
