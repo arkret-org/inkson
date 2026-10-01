@@ -48,6 +48,19 @@ pub(crate) struct StrandScopeCircle {
     pub(crate) member_count: u32,
 }
 
+impl ChannelEntity {
+    pub(crate) fn effective_scope(&self, realm_id: &str) -> Option<arkret_sdk::ScopeRef> {
+        let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?;
+        match self.scope_circle.as_ref() {
+            Some(circle) => Some(arkret_sdk::ScopeRef::Circle {
+                realm_id,
+                circle_id: arkret_sdk::CircleId::new(circle.circle_id.clone()).ok()?,
+            }),
+            None => Some(arkret_sdk::ScopeRef::Realm { realm_id }),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SharedPinScopeKind {
     Realm,

@@ -528,6 +528,91 @@ async fn outbound_queue_past_the_localstorage_quota_round_trips_in_indexeddb() {
 }
 
 #[wasm_bindgen_test(async)]
+async fn retired_ingress_snapshot_metadata_migrates_in_encrypted_indexeddb() {
+    let service_name = format!("retired-ingress-test-{}", js_sys::Date::now());
+    let store = IndexedDbSecureKeyStore::new_async(&service_name)
+        .await
+        .unwrap();
+    let retired_item = serde_json::json!({
+        "transaction_id": "retired-operation",
+        "record": {"kind": "event", "payload": {"old": true}},
+        "canonical_payload_bytes": [123, 125],
+        "status": "sent"
+    });
+    for tagged in [false, true] {
+        for populated in [false, true] {
+            let key = inkson::outbound_store_test_api::outbound_queue_key(
+                &format!("nsRetired-{tagged}-{populated}"),
+                "standard",
+            );
+            let retired_items = if populated {
+                vec![retired_item.clone()]
+            } else {
+                vec![]
+            };
+            let mut legacy = serde_json::json!({"items": retired_items, "next_sequence": 17});
+            if tagged {
+                legacy["schema"] = serde_json::json!("org.arkret.garth.send_queue.v1");
+            }
+            store
+                .store_secret_durable(&key, &legacy.to_string())
+                .await
+                .unwrap();
+            let count =
+                inkson::outbound_store_test_api::mutate_outbound_queue(&store, &key, |queue| {
+                    Ok(queue.items().len())
+                })
+                .await
+                .expect("read-only queue access durably retires old snapshot metadata");
+            assert_eq!(count, 0);
+            let migrated = store
+                .read_secret_bytes_durable(&key)
+                .await
+                .unwrap()
+                .unwrap();
+            let state: serde_json::Value = serde_json::from_slice(migrated.as_slice()).unwrap();
+            assert!(state.get("next_sequence").is_none());
+            assert!(state.get("schema").is_none());
+            assert_eq!(state["retired_ingress_next_sequence"], 17);
+            assert_eq!(state["commit_position"], 1);
+            if tagged {
+                assert_eq!(
+                    state["retired_ingress_schema"],
+                    "org.arkret.garth.send_queue.v1"
+                );
+            }
+            if populated {
+                assert_eq!(
+                    state["retired_ingress_items"],
+                    serde_json::json!([retired_item])
+                );
+            }
+            inkson::outbound_store_test_api::mutate_outbound_queue(&store, &key, |queue| {
+                queue.enqueue(contract_submission(0), chrono::Utc::now())?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+            let reopened = IndexedDbSecureKeyStore::new_async(&service_name)
+                .await
+                .unwrap();
+            let count =
+                inkson::outbound_store_test_api::mutate_outbound_queue(&reopened, &key, |queue| {
+                    assert_eq!(queue.items()[0].status, garth::SendQueueStatus::Queued);
+                    Ok(queue.items().len())
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                count, 1,
+                "only the newly authored Event is in the current queue"
+            );
+            assert!(browser_local_storage().get_item(&key).unwrap().is_none());
+        }
+    }
+}
+
+#[wasm_bindgen_test(async)]
 async fn localstorage_queue_is_not_imported_into_the_secure_store() {
     let service_name = format!("outbound-isolation-{}", js_sys::Date::now());
     let store = IndexedDbSecureKeyStore::new_async(&service_name)

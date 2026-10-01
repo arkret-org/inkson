@@ -205,6 +205,49 @@ pub(super) fn decode_for_recovery(
     let root = value
         .as_object_mut()
         .ok_or_else(|| garth::Error::Storage("outbound vault is not an object".into()))?;
+    // The old SendQueueSnapshot also kept a top-level sequence counter, even
+    // for empty queues. Archive it without giving it any current queue meaning.
+    // Tagged old snapshots have one known schema marker too. Do not accept a
+    // different schema or an incomplete tagged snapshot as an old queue.
+    if let Some(schema) = root.get("schema").cloned() {
+        if schema.as_str() != Some("org.arkret.garth.send_queue.v1")
+            || !root.contains_key("next_sequence")
+        {
+            return Err(garth::Error::Storage(
+                "unknown or incomplete retired ingress snapshot schema".into(),
+            ));
+        }
+        if let Some(archived) = root.get("retired_ingress_schema") {
+            if archived != &schema {
+                return Err(garth::Error::Storage(
+                    "retired ingress schema diagnostics conflict".into(),
+                ));
+            }
+        } else {
+            root.insert("retired_ingress_schema".into(), schema);
+        }
+        root.remove("schema");
+    }
+    // Only the known u64 counter is retired; other unknown fields still fail.
+    let retired_sequence = if let Some(sequence) = root.remove("next_sequence") {
+        if sequence.as_u64().is_none() {
+            return Err(garth::Error::Storage(
+                "retired ingress next_sequence is not a u64".into(),
+            ));
+        }
+        if let Some(archived) = root.get("retired_ingress_next_sequence") {
+            if archived != &sequence {
+                return Err(garth::Error::Storage(
+                    "retired ingress sequence diagnostics conflict".into(),
+                ));
+            }
+        } else {
+            root.insert("retired_ingress_next_sequence".into(), sequence);
+        }
+        true
+    } else {
+        false
+    };
     let records_value = root
         .remove("creator_bootstrap_records")
         .unwrap_or_else(|| Value::Array(vec![]));
@@ -238,7 +281,7 @@ pub(super) fn decode_for_recovery(
         }
         !is_ingress_record
     });
-    let retired = retired_items.len() != original_retired_count;
+    let retired = retired_items.len() != original_retired_count || retired_sequence;
     root.insert(
         "retired_ingress_items".into(),
         serde_json::to_value(retired_items)?,

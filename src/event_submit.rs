@@ -254,6 +254,35 @@ pub(crate) fn creator_intent_for_submission(
     )
 }
 
+/// A new encrypted Circle has a metadata-free discussion before activation.
+/// Its identity is frozen with create/join, so recovery never invents another
+/// application object and no plaintext user metadata enters an activated scope.
+pub(crate) fn initial_circle_discussion_intent(
+    scope: &arkret_sdk::ScopeRef,
+    owner: &arkret_sdk::ActorId,
+) -> anyhow::Result<EventIntent> {
+    let arkret_sdk::ScopeRef::Circle {
+        realm_id,
+        circle_id,
+    } = scope
+    else {
+        anyhow::bail!("initial Circle discussion requires its exact scope");
+    };
+    let object = arkret_sdk::StrandCreateObject::new(realm_id.clone(), owner.clone())
+        .with_scope_circle_id(circle_id.clone())
+        .with_track("discussion", arkret_sdk::StrandTrack::discussion_primary());
+    let payload = crate::operation::ak_ops::strand_create_payload(object)?;
+    let created_at = payload.object.created_at;
+    Ok(
+        arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::StrandCreate>::new(
+            scope.clone(),
+            owner.clone(),
+            payload,
+        )?
+        .into_intent(created_at)?,
+    )
+}
+
 /// A browser runtime has multiple outbound triggers: the foreground writer and
 /// the account-sync drain. Engines opened on the same durable store do not
 /// share an in-memory lease, so without a runtime single-writer gate both can
@@ -437,7 +466,8 @@ fn durable_mls_genesis_for_realm_from_snapshot(
         .filter(|item| is_unsettled(item.status) || item.status == SendQueueStatus::Committed)
         .any(|item| {
             let event = queued_event(item);
-            event.kind == arkret_sdk::EventKind::MlsGenesis && event.realm_id.as_str() == realm_id
+            event.kind == arkret_sdk::EventKind::MlsGenesis
+                && matches!(&event.scope_ref, arkret_sdk::ScopeRef::Realm { realm_id: scope_realm } if scope_realm.as_str() == realm_id)
         })
 }
 
@@ -1361,6 +1391,95 @@ impl EventSubmitter {
             })
             .await?;
         settled_outbound_result(&item)
+    }
+
+    /// Create an explicitly encrypted Circle. Freeze the signed creation
+    /// Events and the closed creator selector in one vault CAS before sending.
+    pub(crate) async fn submit_circle_creator_durable(
+        &self,
+        operation: &LocalOperation,
+        device_id: &arkret_sdk::DeviceId,
+    ) -> anyhow::Result<arkret_sdk::CircleId> {
+        let intent = operation.intent();
+        self.ensure_recovery_material_ready(intent).await?;
+        let _single_writer = outbound_submit_lock().lock().await;
+        let parent_revision = self
+            .read_parent_membership_revision(
+                intent
+                    .realm_id_opt()
+                    .ok_or_else(|| anyhow::anyhow!("Circle create has no parent Realm"))?,
+                intent.actor_id(),
+            )
+            .await?;
+        let create = self.author_intent(intent).await?;
+        anyhow::ensure!(
+            create.kind == arkret_sdk::EventKind::CircleCreate,
+            "Circle creator requires a Circle create operation"
+        );
+        let circle_id = arkret_sdk::CircleId::from_event_id(create.event_id());
+        let scope = arkret_sdk::ScopeRef::Circle {
+            realm_id: create.realm_id.clone(),
+            circle_id: circle_id.clone(),
+        };
+        let member = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::CircleMemberState>::new(
+            scope.clone(),
+            create.actor_id.clone(),
+            arkret_sdk::CircleMemberStatePayload {
+                circle_id: circle_id.clone(),
+                member_id: create.actor_id.clone(),
+                membership: arkret_sdk::CircleMembership::Join,
+                parent_membership_revision: Some(parent_revision),
+                reason: None,
+                effective_at: None,
+                expected_membership: arkret_sdk::WirePresence::Missing,
+            },
+        )?
+        .into_intent(arkret_sdk::canonical::normalize_timestamp_canonical(
+            crate::clock::now_utc(),
+        ))?;
+        let member = self.author_intent(&member).await?;
+        let discussion = self
+            .author_intent(&initial_circle_discussion_intent(&scope, &create.actor_id)?)
+            .await?;
+        let create_submission = event_submission(&create)?;
+        let member_submission = event_submission(&member)?;
+        let discussion_submission = event_submission(&discussion)?;
+        let creator = creator_intent_for_submission(&create_submission, device_id.clone())?;
+        self.outbound(OutboundLane::Standard)?
+            .store()
+            .freeze_circle_creator_intent(
+                creator,
+                create_submission.clone(),
+                member_submission.clone(),
+                discussion_submission.clone(),
+            )
+            .await?;
+        for submission in [create_submission, member_submission, discussion_submission] {
+            let local_operation_id = submission.event_id.to_string();
+            let item = self
+                .enqueue_and_drive(QueuedWrite {
+                    lane: OutboundLane::Standard,
+                    submission,
+                    local_operation_id,
+                    post_accept: PostAccept::None,
+                    retry_scope: InteractiveRetryScope::Ordinary,
+                })
+                .await?;
+            settled_outbound_result(&item)?;
+        }
+        Ok(circle_id)
+    }
+
+    pub(crate) async fn creator_bootstrap_records(
+        &self,
+    ) -> anyhow::Result<
+        Vec<arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord>,
+    > {
+        Ok(self
+            .outbound(OutboundLane::Standard)?
+            .store()
+            .creator_records(&arkret_sdk::ActorId::account(self.authority()?.clone()))
+            .await?)
     }
 
     /// Submit already-signed Events one at a time, in order, to the same

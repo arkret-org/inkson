@@ -989,6 +989,9 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                                                 move |_| {
                                                                                     if let Some(poll_ref) = &poll_ref {
                                                                                         controller.vote_poll(context.clone(), message_id.clone(), poll_ref.clone(), option_id.clone());
+                                                                                    } else {
+                                                                                        let mut status = controller.status_msg;
+                                                                                        status.set("Poll vote refused: accepted poll identity is unavailable".to_owned());
                                                                                     }
                                                                                 }
                                                                             },

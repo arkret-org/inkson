@@ -207,13 +207,24 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     // the locally pinned governance checkpoint to the Seal that covers it.
     // Keep encrypted send disabled during that convergence window; the
     // state-store Signal rerenders this component when bootstrap completes.
-    let creator_mls_bootstrap_pending = selected_channel_security_encrypted
-        && !active_sidecar_present
-        && crate::mls::creator_bootstrap::creator_mls_bootstrap_pending(
-            &state_store.read(),
-            &selected_realm_id,
-            &principal_id,
-        );
+    let creator_mls_bootstrap_pending_reason =
+        if selected_channel_security_encrypted && !active_sidecar_present {
+            selected_channel_info
+                .as_ref()
+                .and_then(|channel| channel.effective_scope(&selected_realm_id))
+                .map_or(
+                    Some("Waiting for the conversation's encryption scope."),
+                    |scope| {
+                        crate::mls::creator_bootstrap::creator_scope_mls_bootstrap_pending_reason(
+                            &state_store.read(),
+                            &scope,
+                        )
+                    },
+                )
+        } else {
+            None
+        };
+    let creator_mls_bootstrap_pending = creator_mls_bootstrap_pending_reason.is_some();
     let participants_for_plaintext_sidecar = participants_for_messages.clone();
     let participants_for_encrypted_sidecar = participants_for_messages.clone();
     let composer_placeholder = chat_composer_placeholder(mentions_enabled);
@@ -959,6 +970,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let realm = selected_realm_id.clone();
                             let actor = principal_id.clone();
                             let sidecar_device_id = device_id.clone();
+                            let selected_circle = selected_channel_info.as_ref()
+                                .and_then(|channel| channel.scope_circle.as_ref())
+                                .map(|circle| circle.circle_id.clone());
                             move |_| {
                                 let authority_for_sidecar = plaintext_sidecar_authority.clone();
                                 let did_for_sidecar = plaintext_sidecar_did.clone();
@@ -1091,6 +1105,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         api_token,
                                         wait_for,
                                         realm_id: realm,
+                                        circle_id: selected_circle.clone(),
                                         strand_id,
                                         actor,
                                         local_id,
@@ -1109,6 +1124,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     Button {
                         variant: send_secure_variant,
                         "data-testid": send_secure_testid,
+                        "data-mls-binding-pending": selected_realm_pending_mls_binding.to_string(),
+                        "data-creator-bootstrap-pending": creator_mls_bootstrap_pending.to_string(),
+                        title: selected_realm_pending_mls_binding_reason.clone().unwrap_or_else(|| {
+                            creator_mls_bootstrap_pending_reason.unwrap_or_default().to_owned()
+                        }),
                         disabled: chat_secure_send_blocked(
                             selected_realm_pending_mls_binding,
                             creator_mls_bootstrap_pending,
@@ -1120,6 +1140,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let realm = selected_realm_id.clone();
                             let actor = principal_id.clone();
                             let selected_strand = selected_channel_value.clone();
+                            let selected_circle = selected_channel_info.as_ref()
+                                .and_then(|channel| channel.scope_circle.as_ref())
+                                .map(|circle| circle.circle_id.clone());
                             let pending_mls_binding = selected_realm_pending_mls_binding;
                             let sidecar_device_id = device_id.clone();
                             let pending_mls_binding_reason =
@@ -1320,6 +1343,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         api_token,
                                         wait_for,
                                         realm_id: realm,
+                                        circle_id: selected_circle.clone(),
                                         strand_id,
                                         actor,
                                         authority: authority_for_sidecar,

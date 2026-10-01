@@ -353,6 +353,7 @@ pub(super) struct PlaintextSendRequest {
     pub api_token: String,
     pub wait_for: Option<String>,
     pub realm_id: String,
+    pub circle_id: Option<String>,
     pub strand_id: String,
     pub actor: String,
     /// Holder-local id of the optimistic row, and the message id the Event
@@ -382,6 +383,7 @@ pub(super) fn send_plaintext_message(
             api_token,
             wait_for,
             realm_id,
+            circle_id,
             strand_id,
             actor,
             local_id,
@@ -431,14 +433,23 @@ pub(super) fn send_plaintext_message(
                 return;
             }
         };
-        let scope = match arkret_sdk::RealmId::new(realm_id.clone()) {
-            Ok(realm_id) => arkret_sdk::ScopeRef::Realm { realm_id },
-            Err(error) => {
-                fail_optimistic_send_row(messages, &local_id, format!("send failed: {error}"));
-                status_msg.set(format!("send failed: {error}"));
-                return;
-            }
-        };
+        let scope =
+            match arkret_sdk::RealmId::new(realm_id.clone()).and_then(|realm_id| match circle_id {
+                Some(circle_id) => arkret_sdk::CircleId::new(circle_id).map(|circle_id| {
+                    arkret_sdk::ScopeRef::Circle {
+                        realm_id,
+                        circle_id,
+                    }
+                }),
+                None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
+            }) {
+                Ok(scope) => scope,
+                Err(error) => {
+                    fail_optimistic_send_row(messages, &local_id, format!("send failed: {error}"));
+                    status_msg.set(format!("send failed: {error}"));
+                    return;
+                }
+            };
         // The §4.5 mention-routing sidecar exists so an encrypted Realm can
         // route a notification without revealing the mentioned DID. A
         // plaintext send already carries `mentions` in the clear, so it gets
@@ -675,6 +686,7 @@ pub(super) struct EncryptedSendRequest {
     pub api_token: String,
     pub wait_for: Option<String>,
     pub realm_id: String,
+    pub circle_id: Option<String>,
     pub strand_id: String,
     pub actor: String,
     pub authority: arkret_sdk::AccountId,
@@ -703,6 +715,7 @@ pub(super) fn send_encrypted_message(
         api_token,
         wait_for,
         realm_id: realm,
+        circle_id,
         strand_id,
         actor,
         authority: authority_for_sidecar,
@@ -861,7 +874,7 @@ pub(super) fn send_encrypted_message(
             reply_to.as_deref(),
             &secure_content_bytes,
             None,
-            None,
+            circle_id.as_deref(),
             None,
         )
         .await

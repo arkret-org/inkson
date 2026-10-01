@@ -605,6 +605,9 @@ pub(super) fn oidc_discovery_url(method: &arkret_sdk::AuthMethod) -> Option<Stri
 }
 
 pub(super) fn format_sign_in_discovery_error(station_url: &str, error: &anyhow::Error) -> String {
+    if let Some(change) = error.downcast_ref::<crate::station_connection::ConnectionTrustChange>() {
+        return change.to_string();
+    }
     let normalized = normalize_server_url(station_url);
     let local_hint = url::Url::parse(&normalized)
         .ok()

@@ -146,7 +146,16 @@ impl E2eePlaintextCacheV1 {
                     let keep_live = live_receive_snapshot_keys.contains(&realm_id);
                     let secure_checkpoint_is_authoritative =
                         recovery_snapshot_keys.contains(&realm_id);
+                    // The secure cache may still hold an earlier creator
+                    // attempt at the same epoch. Never replace an accepted
+                    // private checkpoint with unbound or differently bound
+                    // bytes merely because its epoch matches.
+                    let accepted_checkpoint_conflicts = current.epoch == snapshot.epoch
+                        && current.group_state_event_id.is_some()
+                        && (current.group_id != snapshot.group_id
+                            || current.group_state_event_id != snapshot.group_state_event_id);
                     if !keep_live
+                        && !accepted_checkpoint_conflicts
                         && (secure_checkpoint_is_authoritative || snapshot.epoch >= current.epoch)
                         && snapshot != *current
                     {

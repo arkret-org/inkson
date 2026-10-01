@@ -366,6 +366,30 @@ fn the_genesis_lane_projection_counts_committed_and_unsettled_attempts() {
         "the window between commit and local projection is not absence"
     );
 
+    let circle = arkret_sdk::ScopeRef::Circle {
+        realm_id: realm_id(REALM),
+        circle_id: arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [75; 32],
+        )),
+    };
+    let mut circle_intent = serde_json::to_value(EventIntent::from_authored(&genesis)).unwrap();
+    circle_intent["scope_ref"] = serde_json::to_value(&circle).unwrap();
+    circle_intent["payload"]["governance_binding"] = serde_json::to_value(
+        arkret_sdk::MlsGovernanceBindingPayload::new(circle, None, 0, 0, 0).unwrap(),
+    )
+    .unwrap();
+    let circle_genesis = author_and_sign(serde_json::from_value(circle_intent).unwrap(), &signer);
+    for status in [SendQueueStatus::Queued, SendQueueStatus::Committed] {
+        assert!(
+            !durable_mls_genesis_for_realm_from_snapshot(
+                &snapshot_of(vec![(circle_genesis.clone(), status)]),
+                REALM
+            ),
+            "a Circle Genesis cannot request activation of its plaintext parent Realm"
+        );
+    }
+
     let cancelled = snapshot_of(vec![(genesis, SendQueueStatus::Cancelled)]);
     assert!(!durable_mls_genesis_for_realm_from_snapshot(
         &cancelled, REALM

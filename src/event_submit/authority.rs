@@ -882,35 +882,9 @@ impl EventSubmitter {
         arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
         arkret_wire::RealmStateSnapshot,
     )> {
-        use arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate;
-        let arkret_sdk::ScopeRef::Realm { realm_id } = intent.effective_scope() else {
-            anyhow::bail!("Realm creator acceptance requires an exact Realm scope");
-        };
-        let authority = garth::AuthorityClient::new(self.http.clone());
-        let (bundle, freshness, mut replica) =
-            crate::realm_events_engine::fresh_verified_realm(&authority, &self.http, realm_id)
-                .await?;
-        let snapshot = self.http.realm_state_snapshot_head(realm_id).await?;
-        let keys = garth::fetch_historical_station_key_directory(
-            &self.http,
-            &bundle,
-            None,
-            Some(&snapshot),
-        )
-        .await?;
-        let freshness = arkret_identity::RealmAuthorityFreshness::new(
-            chrono::Utc::now(),
-            freshness.expected_nonce,
-        );
-        replica.install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)?;
-        let accepted = MlsCreatorBootstrapAcceptedCreate::new(
-            intent,
-            bundle.genesis_event.clone(),
-            bundle.genesis_commit.clone(),
-            realm_id.digest_suite_code().digest_suite(),
-            bundle,
-        )?;
-        Ok((accepted, snapshot))
+        crate::realm_events_engine::verified_creator_create(&self.http, intent)
+            .await
+            .map_err(anyhow::Error::from)
     }
 }
 
