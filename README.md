@@ -90,7 +90,8 @@ The `just` recipes wrap the underlying Dioxus commands:
 - iOS/mobile: `python scripts/dev_dioxus.py --platform mobile`
 
 The wrapper fails fast when the generated Arkret SDK registry does not match
-the canonical spec artifact. It also bridges changes from sibling Cargo path
+the canonical `registry/contract-registry.json` spec artifact used by the SDK
+generator. It also bridges changes from sibling Cargo path
 dependencies into Inkson's workspace so Dioxus performs a full Rust rebuild;
 running bare `dx serve` can miss those changes with Dioxus 0.7.
 

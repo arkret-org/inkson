@@ -795,10 +795,6 @@ export async function mockArkretApi(
       },
       series_id: "ak:backup_series:019a6aa0-0000-7000-8000-000000000003",
       series_seq: 0,
-      recovery_policy_ref: {
-        policy_id: seededRecoveryPolicyId,
-        policy_version: 1,
-      },
     });
   }
   const personalAgents = new Map<string, Record<string, unknown>>();
@@ -2306,7 +2302,7 @@ export async function mockArkretApi(
             : {}),
         },
         to_device: {
-          messages: [],
+          deliveries: [],
         },
         account_data: {
           events: notificationEvents.map((event) => ({
@@ -3591,7 +3587,7 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       return json(route, {
-        messages: [],
+        deliveries: [],
         ack_token: "mock-device-messages-ack",
         next_cursor: "ak:cursor:devmsg-1",
         has_more: false,

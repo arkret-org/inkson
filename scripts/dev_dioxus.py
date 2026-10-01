@@ -30,7 +30,7 @@ SPEC_REGISTRY = (
     / "v1"
     / "artifacts"
     / "registry"
-    / "event-kind-registry.json"
+    / "contract-registry.json"
 )
 SDK_EVENT_KINDS = (
     WORKSPACE_ROOT

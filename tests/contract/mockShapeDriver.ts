@@ -60,6 +60,7 @@ const PATH_PARAMETERS: Record<string, string> = {
   recovery_session_id: "ak:recovery_session:01964137-0000-7000-8000-0000000000d1",
   service_id: "ak:did_core:key:z6MkixsGj3MVGKMug2VMC2JbtzX3UjaAcfRs7G1RjbSnZJaH",
   sidecar_id: "ak:sidecar:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM",
+  snapshot_id: "ak:realm_snapshot:AUjRA6G8R-TXotecelrSOdg_YXeFYRh1NE-aQ34q9sOu",
   strand_id: "ak:strand:AQAG6N7vDa1nxssksTCIdqNm-FTDJoKuBrHIclJ7FBy0",
   transaction_id: "ak:transaction:01964137-0000-7000-8000-0000000000e1",
 };
