@@ -1,0 +1,607 @@
+   Compiling inkson v0.3.0 (D:\Works\arkret-org\inkson)
+warning: unused imports: `is_passphrase_account_secret_backup` and `is_recovery_public_key_account_secret_backup`
+  --> src\mls\account_recovery\mod.rs:33:5
+   |
+33 |     is_passphrase_account_secret_backup, is_recovery_public_key_account_secret_backup,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `load_mls_key_package_identity_state`
+ --> src\mls\runtime\message.rs:8:53
+  |
+8 |     MlsRuntimeError, load_device_checkpoint_secret, load_mls_key_package_identity_state,
+  |                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Value`
+    --> src\sync_engine.rs:3147:22
+     |
+3147 |     use serde_json::{Value, json};
+     |                      ^^^^^
+
+warning: unused imports: `SchemaId` and `ServiceOperationId`
+ --> src\views\helpers.rs:2:19
+  |
+2 | use arkret_wire::{SchemaId, ServiceOperationId};
+  |                   ^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::transport::auth::with_endpoint_clients`
+  --> src\views\helpers.rs:42:5
+   |
+42 | use crate::transport::auth::with_endpoint_clients;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `ButtonVariant` and `Button`
+  --> src\views\helpers.rs:43:25
+   |
+43 | use crate::ui::button::{Button, ButtonVariant};
+   |                         ^^^^^^  ^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src\views\secure_send.rs:551:5
+    |
+551 |     mut state_store: SyncSignal<LocalStateStore>,
+    |     ----^^^^^^^^^^^
+    |     |
+    |     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+  --> src\app\shell_effects.rs:30:9
+   |
+30 |         mut personal_handles_lookup_key,
+   |         ----^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `personal_handles_lookup_key`
+  --> src\app\shell_effects.rs:30:9
+   |
+30 |         mut personal_handles_lookup_key,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try ignoring the field: `personal_handles_lookup_key: _`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `contact_handles_lookup_key`
+  --> src\app\shell_effects.rs:36:9
+   |
+36 |         contact_handles_lookup_key,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try ignoring the field: `contact_handles_lookup_key: _`
+
+warning: unused variable: `contact_handles_fetching`
+  --> src\app\shell_effects.rs:37:9
+   |
+37 |         contact_handles_fetching,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^ help: try ignoring the field: `contact_handles_fetching: _`
+
+warning: unused variable: `digest_algorithm`
+  --> src\event_builders.rs:41:5
+   |
+41 |     digest_algorithm: &str,
+   |     ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_digest_algorithm`
+
+warning: unused variable: `prior_state`
+   --> src\event_builders.rs:739:10
+    |
+739 |     let (prior_state, _) = match &kind {
+    |          ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_prior_state`
+
+warning: unused variable: `expected_head`
+    --> src\event_builders.rs:1061:5
+     |
+1061 |     expected_head: Value,
+     |     ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_expected_head`
+
+warning: unused variable: `expected_head`
+    --> src\event_builders.rs:1074:5
+     |
+1074 |     expected_head: Value,
+     |     ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_expected_head`
+
+warning: unused variable: `from_state`
+    --> src\event_builders.rs:1182:5
+     |
+1182 |     from_state: Option<&str>,
+     |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_from_state`
+
+warning: unused variable: `verified_sender_domain`
+   --> src\mls\runtime\message.rs:294:5
+    |
+294 |     verified_sender_domain: Option<&[u8]>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_verified_sender_domain`
+
+warning: variable does not need to be mutable
+   --> src\mls\runtime\message.rs:923:9
+    |
+923 |     let mut encrypt_one =
+    |         ----^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `target_ref`
+   --> src\operation\ak_ops\mod.rs:224:5
+    |
+224 |     target_ref: &str,
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_target_ref`
+
+warning: variable does not need to be mutable
+  --> src\views\kanban\effects.rs:95:9
+   |
+95 |         mut member_handle_fetching,
+   |         ----^^^^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `card_detail_sidebar_tab`
+  --> src\views\kanban\effects.rs:92:9
+   |
+92 |         card_detail_sidebar_tab,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^ help: try ignoring the field: `card_detail_sidebar_tab: _`
+
+warning: unused variable: `member_handle_fetching`
+  --> src\views\kanban\effects.rs:95:9
+   |
+95 |         mut member_handle_fetching,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try ignoring the field: `member_handle_fetching: _`
+
+warning: unreachable `else` clause
+   --> src\views\kanban\tests\projection_overlays.rs:397:24
+    |
+395 | /     let arkret_wire::TypedCurrentResult::Value {
+396 | |         source_stream_ref, ..
+397 | |     } = &mut foreign[0]
+    | |                       -^
+    | |_______________________|
+    |                         assigning to binding pattern will always succeed
+    |
+    = note: this pattern always matches, so the else clause is unreachable
+    = note: `#[warn(irrefutable_let_patterns)]` on by default
+
+warning: unreachable `else` clause
+   --> src\views\kanban\tests\projection_overlays.rs:407:83
+    |
+407 |     let arkret_wire::TypedCurrentResult::Value { selector, .. } = &mut foreign[0] else {
+    |     ----------------------------------------------------------------------------- ^^^^
+    |     |
+    |     assigning to binding pattern will always succeed
+    |
+    = note: this pattern always matches, so the else clause is unreachable
+
+warning: type `authoring_generation::AuthoringGeneration` is more private than the item `state::types::PersistedDeviceAuthoringAuthority::authoring_generation`
+   --> src\state\types.rs:902:5
+    |
+902 |     pub authoring_generation: crate::identity::authoring_generation::AuthoringGeneration,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `state::types::PersistedDeviceAuthoringAuthority::authoring_generation` is reachable at visibility `pub`
+    |
+note: but type `authoring_generation::AuthoringGeneration` is only usable at visibility `pub(crate)`
+   --> src\identity\authoring_generation.rs:32:1
+    |
+ 32 | pub(crate) struct AuthoringGeneration {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: methods `inbox_store` and `account_runner` are never used
+   --> src\client_core.rs:500:19
+    |
+489 | impl InksonClientRuntime {
+    | ------------------------ methods in this implementation
+...
+500 |     pub(crate) fn inbox_store(&self) -> InksonLocalStateStoreAdapter {
+    |                   ^^^^^^^^^^^
+...
+516 |     pub(crate) fn account_runner(
+    |                   ^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `current_revision_for` is never used
+   --> src\current_projection.rs:258:15
+    |
+258 | pub(crate) fn current_revision_for(
+    |               ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `payload_timestamp_wire` is never used
+  --> src\event_builders.rs:19:4
+   |
+19 | fn payload_timestamp_wire(created_at: chrono::DateTime<chrono::Utc>) -> String {
+   |    ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `test_inception_root_key_multibase` is never used
+   --> src\event_builders.rs:282:15
+    |
+282 | pub(crate) fn test_inception_root_key_multibase(principal_did: &str) -> String {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `require_committed_event_with` is never used
+   --> src\event_submit.rs:131:21
+    |
+131 | pub(crate) async fn require_committed_event_with(
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `require_committed_event` and `submit_sdk_events_in_order` are never used
+    --> src\event_submit.rs:1042:25
+     |
+ 733 | impl EventSubmitter {
+     | ------------------- methods in this implementation
+...
+1042 |     pub(crate) async fn require_committed_event(
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^
+...
+1525 |     pub(crate) async fn submit_sdk_events_in_order(
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `realm_owner_covers_event_kind` is never used
+  --> src\event_submit\authority.rs:81:15
+   |
+81 | pub(super) fn realm_owner_covers_event_kind(kind: &str) -> bool {
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `cache_verified_principal_generation_for_test` is never used
+   --> src\identity\authoring_generation.rs:101:15
+    |
+101 | pub(crate) fn cache_verified_principal_generation_for_test(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `EventAuthorityFacts` is never constructed
+   --> src\identity\authoring_generation.rs:150:19
+    |
+150 | pub(crate) struct EventAuthorityFacts<'a> {
+    |                   ^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `authority_account`, `from_intent`, `authority_principal`, `is_delegated`, and `authorization_ref_str` are never used
+   --> src\identity\authoring_generation.rs:157:8
+    |
+156 | impl<'a> EventAuthorityFacts<'a> {
+    | -------------------------------- associated items in this implementation
+157 |     fn authority_account(&self) -> anyhow::Result<&arkret_sdk::AccountId> {
+    |        ^^^^^^^^^^^^^^^^^
+...
+165 |     pub(crate) fn from_intent(intent: &'a crate::operation::EventIntent) -> Self {
+    |                   ^^^^^^^^^^^
+...
+174 |     fn authority_principal(&self) -> &str {
+    |        ^^^^^^^^^^^^^^^^^^^
+...
+182 |     fn is_delegated(&self) -> bool {
+    |        ^^^^^^^^^^^^
+...
+187 |     fn authorization_ref_str(&self) -> &str {
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `cached_event_authoring_generation` is never used
+   --> src\identity\authoring_generation.rs:194:15
+    |
+194 | pub(crate) fn cached_event_authoring_generation(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `resolve_event_authoring_generation` is never used
+   --> src\identity\authoring_generation.rs:226:21
+    |
+226 | pub(crate) async fn resolve_event_authoring_generation(
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `build_confidential_discussion_relation_op` is never used
+  --> src\messaging\discussion_promote.rs:85:15
+   |
+85 | pub(crate) fn build_confidential_discussion_relation_op(
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `accepted_ref` is never used
+  --> src\mls\accepted_artifact.rs:30:19
+   |
+23 | impl AcceptedMlsTransition {
+   | -------------------------- method in this implementation
+...
+30 |     pub(crate) fn accepted_ref(&self) -> CommittedEventRef {
+   |                   ^^^^^^^^^^^^
+
+warning: function `accepted_from_submission` is never used
+  --> src\mls\accepted_artifact.rs:93:15
+   |
+93 | pub(crate) fn accepted_from_submission(
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `mls_key_access_coverage_is_stale` is never used
+   --> src\mls\coverage_liveness.rs:139:15
+    |
+139 | pub(crate) fn mls_key_access_coverage_is_stale(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `with_write` is never used
+  --> src\mls\governance_proof.rs:34:8
+   |
+30 | pub(crate) trait GovernanceProofStateStore:
+   |                  ------------------------- method in this trait
+...
+34 |     fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R;
+   |        ^^^^^^^^^^
+
+warning: function `build_creator_mls_genesis_event_for_sidecar_scope` is never used
+  --> src\mls\group_events.rs:76:15
+   |
+76 | pub(crate) fn build_creator_mls_genesis_event_for_sidecar_scope(
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `governance_binding` and `effective_scope` are never used
+   --> src\mls\group_events.rs:172:19
+    |
+171 | impl MlsCommitBasis {
+    | ------------------- methods in this implementation
+172 |     pub(crate) fn governance_binding(&self) -> &arkret_sdk::MlsGovernanceBindingPayload {
+    |                   ^^^^^^^^^^^^^^^^^^
+...
+176 |     pub(crate) fn effective_scope(&self) -> &arkret_sdk::ScopeRef {
+    |                   ^^^^^^^^^^^^^^^
+
+warning: function `mls_commit_event_from_store_for_sidecar_scope` is never used
+   --> src\mls\group_events.rs:274:15
+    |
+274 | pub(crate) fn mls_commit_event_from_store_for_sidecar_scope(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `build_add_member_commit_for_effective_scope` is never used
+   --> src\mls\runtime\commit.rs:207:15
+    |
+207 | pub(crate) fn build_add_member_commit_for_effective_scope(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `InksonClock` is never constructed
+ --> src\signing_stamp.rs:7:8
+  |
+7 | struct InksonClock;
+  |        ^^^^^^^^^^^
+
+warning: function `issue_event_stamp_for` is never used
+  --> src\signing_stamp.rs:20:21
+   |
+20 | pub(crate) async fn issue_event_stamp_for(
+   |                     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `genesis_authoring_stamp_realm` is never used
+  --> src\signing_stamp.rs:62:4
+   |
+62 | fn genesis_authoring_stamp_realm() -> arkret_sdk::RealmId {
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `issue_protocol_hlc_for_active_device` is never used
+  --> src\signing_stamp.rs:86:15
+   |
+86 | pub(crate) fn issue_protocol_hlc_for_active_device(
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `LOCAL_OPERATION_IDEMPOTENCY_ALIAS` is never used
+   --> src\operation\mod.rs:371:18
+    |
+371 | pub(crate) const LOCAL_OPERATION_IDEMPOTENCY_ALIAS: &str = "local_operation_idempotency_alias";
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `LOCAL_TARGET_REF` is never used
+   --> src\operation\mod.rs:374:18
+    |
+374 | pub(crate) const LOCAL_TARGET_REF: &str = "local_target_ref";
+    |                  ^^^^^^^^^^^^^^^^
+
+warning: function `confidential_discussion_relation_create` is never used
+   --> src\operation\ak_ops\discussion.rs:157:15
+    |
+157 | pub(crate) fn confidential_discussion_relation_create(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `SIGNAL_PLAINTEXT_KIND_TYPING` is never used
+   --> src\signal_receive_engine.rs:433:7
+    |
+433 | const SIGNAL_PLAINTEXT_KIND_TYPING: &str = "ak.typing";
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `SIGNAL_PLAINTEXT_KIND_READ_RECEIPT` is never used
+   --> src\signal_receive_engine.rs:434:7
+    |
+434 | const SIGNAL_PLAINTEXT_KIND_READ_RECEIPT: &str = "ak.receipt.read";
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `staged_mls_checkpoint_for_scope_and_group` and `mark_mls_genesis_emitted_with_event` are never used
+   --> src\state\mls_sidecar.rs:372:19
+    |
+ 45 | impl LocalStateStore {
+    | -------------------- methods in this implementation
+...
+372 |     pub(crate) fn staged_mls_checkpoint_for_scope_and_group(
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+632 |     pub(crate) fn mark_mls_genesis_emitted_with_event(
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `locally_authenticated_identity_link` is never used
+ --> src\state\identity_links.rs:8:19
+  |
+7 | impl LocalStateStore {
+  | -------------------- method in this implementation
+8 |     pub(crate) fn locally_authenticated_identity_link(
+  |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `device_generation_row` is never used
+    --> src\state\current_index.rs:2169:8
+     |
+2169 |     fn device_generation_row(revision: u64) -> TypedCurrentResult {
+     |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `product_current_strands` and `product_current_selectors` are never used
+  --> src\state\realm_tree_snapshot.rs:34:19
+   |
+ 3 | impl LocalStateStore {
+   | -------------------- methods in this implementation
+...
+34 |     pub(crate) fn product_current_strands(
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^
+...
+51 |     pub(crate) fn product_current_selectors(
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `authority_at_authoring_station` is never used
+  --> src\test_support.rs:40:15
+   |
+40 | pub(crate) fn authority_at_authoring_station(principal: &str) -> arkret_sdk::AccountId {
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `resolution` is never read
+  --> src\test_support\committed_event.rs:40:5
+   |
+35 | pub(crate) struct FixtureStation {
+   |                   -------------- field in this struct
+...
+40 |     resolution: Option<arkret_models_identity::AuthenticatedServiceResolution>,
+   |     ^^^^^^^^^^
+
+warning: method `resolution` is never used
+   --> src\test_support\committed_event.rs:127:19
+    |
+ 43 | impl FixtureStation {
+    | ------------------- method in this implementation
+...
+127 |     pub(crate) fn resolution(
+    |                   ^^^^^^^^^^
+
+warning: function `sign_fixture_snapshot` is never used
+   --> src\test_support\committed_event.rs:210:15
+    |
+210 | pub(crate) fn sign_fixture_snapshot(snapshot: &mut arkret_sdk::RealmStateSnapshot) {
+    |               ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `resolve_realm` is never used
+   --> src\transport\directory.rs:193:14
+    |
+193 | pub async fn resolve_realm(
+    |              ^^^^^^^^^^^^^
+
+warning: method `member_group_state_material` is never used
+   --> src\transport\endpoints.rs:122:18
+    |
+118 | impl MlsEndpoints<'_> {
+    | --------------------- method in this implementation
+...
+122 |     pub async fn member_group_state_material(
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `send_device_message` is never used
+   --> src\transport\keys.rs:104:14
+    |
+104 | pub async fn send_device_message(
+    |              ^^^^^^^^^^^^^^^^^^^
+
+warning: function `send_device_message_with_id` is never used
+   --> src\transport\keys.rs:135:14
+    |
+135 | pub async fn send_device_message_with_id(
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `revoke_realm_admin` is never used
+   --> src\transport\realm_write.rs:650:14
+    |
+650 | pub async fn revoke_realm_admin(
+    |              ^^^^^^^^^^^^^^^^^^
+
+warning: method `take_signal` is never used
+   --> src\transport\websocket_rail.rs:158:8
+    |
+ 85 | impl SharedConnection {
+    | --------------------- method in this implementation
+...
+158 |     fn take_signal(&self) -> Option<SignalEnvelope> {
+    |        ^^^^^^^^^^^
+
+warning: function `watch_level_wire_value` is never used
+  --> src\views\chat\model\events.rs:48:15
+   |
+48 | pub(crate) fn watch_level_wire_value(level: WatchLevel) -> &'static str {
+   |               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `watch_level_from_wire` is never used
+  --> src\views\chat\model\events.rs:53:15
+   |
+53 | pub(crate) fn watch_level_from_wire(value: &str) -> WatchLevel {
+   |               ^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `authority` and `device_id` are never read
+ --> src\views\chat\poll_submission.rs:6:9
+  |
+5 | pub(super) struct PollSubmissionContext {
+  |                   --------------------- fields in this struct
+6 |     pub authority: arkret_sdk::AccountId,
+  |         ^^^^^^^^^
+7 |     pub device_id: arkret_sdk::DeviceId,
+  |         ^^^^^^^^^
+  |
+  = note: `PollSubmissionContext` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: variant `Remove` is never constructed
+  --> src\views\kanban\mod.rs:72:5
+   |
+66 | pub(crate) enum StrandPositionEffect {
+   |                 -------------------- variant in this enum
+...
+72 |     Remove,
+   |     ^^^^^^
+   |
+   = note: `StrandPositionEffect` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: constant `POSITION_UNAVAILABLE_COLUMN_ID` is never used
+  --> src\views\kanban\model\board_projection.rs:13:18
+   |
+13 | pub(crate) const POSITION_UNAVAILABLE_COLUMN_ID: &str =
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `take_card` is never used
+   --> src\views\kanban\model\board_projection.rs:725:4
+    |
+725 | fn take_card(columns: &mut [KanbanColumn], strand_id: &str) -> Option<KanbanCard> {
+    |    ^^^^^^^^^
+
+warning: function `projected_card` is never used
+   --> src\views\kanban\model\board_projection.rs:734:4
+    |
+734 | fn projected_card(
+    |    ^^^^^^^^^^^^^^
+
+warning: variant `Control` is never constructed
+   --> src\views\secure_send.rs:259:5
+    |
+257 | pub(crate) enum SecureWritePlan {
+    |                 --------------- variant in this enum
+258 |     Message(SecureMessageAuthoring),
+259 |     Control(SecureControlPlan),
+    |     ^^^^^^^
+
+warning: function `build_sidecar_exchange_control_send` is never used
+   --> src\views\secure_send.rs:429:21
+    |
+429 | pub(crate) async fn build_sidecar_exchange_control_send(
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `inkson` (lib test) generated 78 warnings (run `cargo fix --lib -p inkson --tests` to apply 22 suggestions)
+    Finished `test` profile [unoptimized] target(s) in 2m 00s
+     Running unittests src\lib.rs (target\debug\deps\inkson-c2398a967fe07c67.exe)
+
+running 19 tests
+test app::shell_model::tests::a_local_mls_snapshot_keeps_the_realm_encrypted_without_a_projection ... ok
+test app::shell_model::tests::active_realm_security_falls_back_to_unencrypted_for_an_unknown_realm ... ok
+test app::shell_model::tests::blank_remembered_selection_without_a_route_stays_unset ... ok
+test app::shell_model::tests::contact_inbox_badge_tracks_only_pending_incoming_requests ... ok
+test app::shell_model::tests::contact_inbox_uses_one_revision_for_visible_rows_and_attention ... ok
+test app::shell_model::tests::blocked_pending_contact_is_hidden_from_default_sidebar_without_removing_accepted_rows ... ok
+test app::shell_model::tests::control_and_direct_conversation_realms_are_hidden_with_their_subtrees ... ok
+test app::shell_model::tests::control_realm_route_neither_selects_nor_is_remembered ... ok
+test app::shell_model::tests::direct_contact_query_matches_the_contact_state_wire_word ... ok
+test app::shell_model::tests::direct_contact_query_matches_the_peer_id ... ok
+test app::shell_model::tests::identity_labels_prefer_display_name_then_handle_then_protocol_id ... ok
+test app::shell_model::tests::manage_rows_prefer_the_local_remark_over_the_public_title ... ok
+test app::shell_model::tests::routed_product_realm_replaces_the_remembered_selection ... ok
+test app::shell_model::tests::routed_realm_already_remembered_writes_nothing_back ... ok
+test app::shell_model::tests::shell_chrome_carries_direction_and_sidebar_state_into_both_class_lists ... ok
+test app::shell_model::tests::signed_out_identity_labels_do_not_leak_a_principal_id ... ok
+test app::shell_model::tests::pinned_direct_contacts_sort_ahead_of_the_rest ... ok
+test app::shell_model::tests::system_theme_decides_the_toggle_when_the_mode_is_system ... ok
+test app::shell_model::tests::theme_toggle_title_stays_the_english_default_the_e2e_suite_asserts ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 1994 filtered out; finished in 0.03s
+

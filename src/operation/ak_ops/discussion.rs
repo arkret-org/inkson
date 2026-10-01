@@ -124,13 +124,15 @@ pub fn discussion_circle_create(
         display,
         crate::mls_api_helpers::local_account_actor_id(actor)?,
     );
-    Ok(TypedOperationBuilder::new::<
-        arkret_sdk::event_spec::CircleCreate,
-    >(
-        realm_id,
-        actor,
-        arkret_sdk::CircleCreatePayload { object: circle },
-    ))
+    let created_at = circle.created_at;
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::CircleCreate>(
+            realm_id,
+            actor,
+            arkret_sdk::CircleCreatePayload { object: circle },
+        )
+        .created_at(created_at),
+    )
 }
 
 /// Build a `ak.strand.create` operation whose full Strand scope is a

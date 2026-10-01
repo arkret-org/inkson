@@ -175,8 +175,8 @@ fn handle_label_and_title_agree_when_there_are_no_handles() {
 }
 
 #[test]
-fn canonical_handle_label_matches_its_title() {
-    let handles = ["alice:example.com".to_owned(), "a:example.org".to_owned()];
+fn handle_label_and_title_preserve_canonical_handles() {
+    let handles = ["alice:example.com".to_owned(), "a:example.com".to_owned()];
     let labels = session_identity_labels(
         true,
         "ak:did_core:web:alice.example",
@@ -184,6 +184,6 @@ fn canonical_handle_label_matches_its_title() {
         &handles,
         "unused",
     );
-    assert_eq!(labels.handles_label, "alice:example.com, a:example.org");
+    assert_eq!(labels.handles_label, "alice:example.com, a:example.com");
     assert_eq!(labels.handles_title, labels.handles_label);
 }

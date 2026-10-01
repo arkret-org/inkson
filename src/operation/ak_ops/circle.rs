@@ -162,13 +162,15 @@ pub fn circle_create(
     // irreversibly activates standard RFC 9420 for it. `mls_group_id` is set by
     // that accepted genesis, never by the creator, so the create payload
     // deliberately carries no encryption selection at all.
-    Ok(TypedOperationBuilder::new::<
-        arkret_sdk::event_spec::CircleCreate,
-    >(
-        realm_id,
-        actor,
-        arkret_sdk::CircleCreatePayload { object: circle },
-    ))
+    let created_at = circle.created_at;
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::CircleCreate>(
+            realm_id,
+            actor,
+            arkret_sdk::CircleCreatePayload { object: circle },
+        )
+        .created_at(created_at),
+    )
 }
 
 #[cfg(test)]

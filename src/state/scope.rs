@@ -140,6 +140,7 @@ impl LocalStateStore {
         let preserved_grant = self.cached.session_grant.clone();
         let preserved_dpop = self.cached.dpop_device_key.clone();
         let preserved_recovery_material = self.cached.recovery_material_evidence.clone();
+        let preserved_retired_records = self.cached.retired_event_records.clone();
         // The MLS receive-chain overlay is account-scoped state —
         // wipe it so a stale decrypt write-back can't resurrect old snapshots.
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
@@ -151,6 +152,7 @@ impl LocalStateStore {
             session_grant: preserved_grant,
             dpop_device_key: preserved_dpop,
             recovery_material_evidence: preserved_recovery_material,
+            retired_event_records: preserved_retired_records,
             ..ClientLocalState::default()
         };
         let _ = self.flush();

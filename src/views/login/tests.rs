@@ -495,6 +495,48 @@ async fn retained_setup_reauthentication_rejects_a_foreign_holder_and_creation()
     );
 }
 
+#[tokio::test]
+async fn retired_account_setup_does_not_block_new_authentication_or_supply_device_evidence() {
+    let secure = crate::secure_key_store::MemorySecureKeyStore::default();
+    let authority = crate::test_support::authority_at_station(
+        "did:web:alice.example",
+        "ak:did_core:web:station.example",
+    );
+    let device =
+        arkret_sdk::DeviceId::new("ak:device:019f0000-0000-7000-8000-000000000021").unwrap();
+    let user =
+        crate::secure_key_store::UserLocalStore::new(authority.clone(), device.clone()).unwrap();
+    user.save_device_id(&secure, &device).unwrap();
+    user.save_signing_seed(&secure, &[23; 32]).unwrap();
+    for field in [
+        "pending_principal_registration",
+        "recovery_material_evidence",
+    ] {
+        let mut state = crate::state::ClientLocalState::default();
+        state.retired_event_records.insert(
+            field.to_owned(),
+            serde_json::json!({
+                "stage": "accepted", "did": "did:web:alice.example",
+                "principal_did": "did:web:alice.example", "account_id": authority,
+                "device_id": device,
+                "pcr_genesis_unit": {"events": [{"actor_seq": 7}]}
+            }),
+        );
+        assert!(
+            prepare_retained_account_sign_in(&secure, Some((authority.clone(), state)), None)
+                .await
+                .unwrap()
+                .is_none(),
+            "{field} must not block authentication or become current device evidence",
+        );
+        assert_eq!(user.load_device_id(&secure).unwrap(), Some(device.clone()));
+        assert_eq!(
+            user.load_signing_seed(&secure).unwrap().unwrap().seed,
+            [23; 32]
+        );
+    }
+}
+
 #[test]
 fn session_status_signed_out_without_token_or_grant() {
     assert_eq!(compute_session_status("", None), "signed-out");

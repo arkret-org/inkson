@@ -933,6 +933,10 @@ pub(crate) struct LocallyAuthenticatedIdentityLink {
 /// stored separately in `SecureKeyStore`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClientLocalState {
+    /// Exact retired local Event records, for recovery/diagnostics only. They
+    /// are never input to current protocol validation, authoring, or replay.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) retired_event_records: BTreeMap<String, Value>,
     pub sync_cursor: Option<String>,
     #[serde(default)]
     pub(crate) demand_sync: super::demand_sync::DemandSyncState,
@@ -1528,6 +1532,7 @@ pub struct PersistedSessionGrant {
 impl Default for ClientLocalState {
     fn default() -> Self {
         Self {
+            retired_event_records: BTreeMap::new(),
             sync_cursor: None,
             demand_sync: Default::default(),
             commit_stream_cursors: BTreeMap::new(),

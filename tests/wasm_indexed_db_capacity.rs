@@ -211,6 +211,14 @@ async fn account_state_fault_injection_contract_holds_in_browser() {
         .expect("browser account-state persistence contract");
 }
 
+#[wasm_bindgen_test(async)]
+#[cfg(feature = "wasm-localstorage-secrets-test")]
+async fn retired_account_encrypted_browser_read_and_durable_reopen() {
+    inkson::run_browser_retired_account_contract()
+        .await
+        .unwrap();
+}
+
 // ── Durable outbound queue ───────────────────────────────────────────────────
 //
 // The queue moved off localStorage because one queue of signed, not-yet-sent
