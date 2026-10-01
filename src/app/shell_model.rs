@@ -93,7 +93,7 @@ pub(super) fn account_identity_labels(input: AccountIdentityInput<'_>) -> Accoun
             input
                 .personal_handles
                 .first()
-                .map(|handle| format!("@{handle}"))
+                .cloned()
                 .unwrap_or_else(|| actor_display_label(input.store, input.principal_id_value))
         }
     } else {
@@ -108,7 +108,7 @@ pub(super) fn account_identity_labels(input: AccountIdentityInput<'_>) -> Accoun
         input
             .personal_handles
             .first()
-            .map(|handle| format!("@{handle} · {device}"))
+            .map(|handle| format!("{handle} · {device}"))
             .unwrap_or(device)
     } else {
         crate::i18n::tr("account.refresh_then_sign_in")
