@@ -2713,6 +2713,9 @@ mod tests {
             final_state.creator_bootstrap_records[0]
         );
         let accepted_record = final_state.creator_bootstrap_records[0].clone();
+        assert!(
+            crate::mls::creator_bootstrap::creator_record_needs_background_resume(&accepted_record)
+        );
         let artifacts = crate::event_submit::restored_creator_artifacts(
             &accepted_record,
             &private_store,
@@ -2771,6 +2774,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(ready.state(), arkret_wire::MlsCreatorBootstrapState::Ready);
+        assert!(!crate::mls::creator_bootstrap::creator_record_needs_background_resume(&ready));
         assert_eq!(ready.epoch_zero(), accepted_record.epoch_zero());
         assert_eq!(ready.accepted_genesis(), accepted_record.accepted_genesis());
         assert_eq!(ready.artifacts(), Some(&artifacts));

@@ -6,7 +6,8 @@
 //! *lease* must be shared by processes and browser tabs or two healthy
 //! runtimes can both observe the same deficit and upload it.  Native builds
 //! serialize a small lease record with an OS file lock; browser builds use the
-//! Web Locks API to atomically compare-and-set the same record in localStorage.
+//! Web Locks API to hold the endpoint lock throughout maintenance and fence
+//! the same durable record in localStorage.
 
 #[cfg(not(target_arch = "wasm32"))]
 use serde::{Deserialize, Serialize};
@@ -236,57 +237,70 @@ const BROWSER_KEY_PREFIX: &str = "inkson.keypackage_maintenance.v1.";
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
+const liveKeyPackageMaintenanceLeases = new Map();
+
+function readKeyPackageMaintenanceState(storage, key) {
+  const encoded = storage.getItem(key);
+  const state = encoded === null ? {version: 1, fence: 0, lease: null} : JSON.parse(encoded);
+  const leaseValid = state.lease === null || (
+    typeof state.lease === "object" && typeof state.lease.owner_id === "string" &&
+    state.lease.owner_id.length > 0 && Number.isSafeInteger(state.lease.fence) &&
+    state.lease.fence > 0 && Number.isSafeInteger(state.lease.expires_at_ms)
+  );
+  if (state.version !== 1 || !Number.isSafeInteger(state.fence) || state.fence < 0 || !leaseValid) {
+    throw new Error("invalid KeyPackage maintenance lease record");
+  }
+  return state;
+}
+
 export async function acquireKeyPackageMaintenanceLease(key, ownerId, nowMs, ttlMs) {
   if (!globalThis.navigator?.locks) {
     throw new Error("Web Locks API is required for atomic KeyPackage maintenance");
   }
-  return await globalThis.navigator.locks.request(`${key}.cas`, {mode: "exclusive"}, async () => {
-    const storage = globalThis.localStorage;
-    if (!storage) throw new Error("localStorage is unavailable");
-    const encoded = storage.getItem(key);
-    const state = encoded === null ? {version: 1, fence: 0, lease: null} : JSON.parse(encoded);
-    const leaseValid = state.lease === null || (
-      typeof state.lease === "object" && typeof state.lease.owner_id === "string" &&
-      state.lease.owner_id.length > 0 && Number.isSafeInteger(state.lease.fence) &&
-      state.lease.fence > 0 && Number.isSafeInteger(state.lease.expires_at_ms)
-    );
-    if (state.version !== 1 || !Number.isSafeInteger(state.fence) || state.fence < 0 || !leaseValid) {
-      throw new Error("invalid KeyPackage maintenance lease record");
-    }
-    if (state.lease !== null && state.lease.expires_at_ms > nowMs) return null;
-    const fence = state.fence + 1;
-    if (!Number.isSafeInteger(fence)) throw new Error("KeyPackage maintenance lease fence exhausted");
-    state.fence = fence;
-    state.lease = {owner_id: ownerId, fence, expires_at_ms: nowMs + ttlMs};
-    storage.setItem(key, JSON.stringify(state));
-    return JSON.stringify({fence});
-  });
+  let acquired, refused;
+  const result = new Promise((resolve, reject) => { acquired = resolve; refused = reject; });
+  // Hold the actual endpoint lock for the full maintenance cycle. Navigation
+  // releases it even when Rust cannot finish its asynchronous release path.
+  const holding = globalThis.navigator.locks.request(`${key}.cas`,
+    {mode: "exclusive", ifAvailable: true}, async lock => {
+      if (lock === null) { acquired(null); return; }
+      const storage = globalThis.localStorage;
+      if (!storage) throw new Error("localStorage is unavailable");
+      const state = readKeyPackageMaintenanceState(storage, key);
+      // Possession of this lock proves the prior browser holder has stopped;
+      // a stale durable expiry must not fence the replacement document out.
+      const fence = state.fence + 1;
+      if (!Number.isSafeInteger(fence)) throw new Error("KeyPackage maintenance lease fence exhausted");
+      state.fence = fence;
+      state.lease = {owner_id: ownerId, fence, expires_at_ms: nowMs + ttlMs};
+      storage.setItem(key, JSON.stringify(state));
+      let release;
+      const held = new Promise(resolve => { release = resolve; });
+      liveKeyPackageMaintenanceLeases.set(key, {ownerId, fence, release});
+      acquired(JSON.stringify({fence}));
+      await held;
+    });
+  holding.catch(refused);
+  return await result;
 }
 
 export async function releaseKeyPackageMaintenanceLease(key, ownerId, fence) {
-  if (!globalThis.navigator?.locks) {
-    throw new Error("Web Locks API is required for atomic KeyPackage maintenance");
-  }
-  return await globalThis.navigator.locks.request(`${key}.cas`, {mode: "exclusive"}, async () => {
+  const live = liveKeyPackageMaintenanceLeases.get(key);
+  if (!live || live.ownerId !== ownerId || live.fence !== fence) return false;
+  try {
     const storage = globalThis.localStorage;
     if (!storage) throw new Error("localStorage is unavailable");
-    const encoded = storage.getItem(key);
-    if (encoded === null) return false;
-    const state = JSON.parse(encoded);
-    const leaseValid = state.lease === null || (
-      typeof state.lease === "object" && typeof state.lease.owner_id === "string" &&
-      state.lease.owner_id.length > 0 && Number.isSafeInteger(state.lease.fence) &&
-      state.lease.fence > 0 && Number.isSafeInteger(state.lease.expires_at_ms)
-    );
-    if (state.version !== 1 || !Number.isSafeInteger(state.fence) || state.fence < 0 || !leaseValid) {
-      throw new Error("invalid KeyPackage maintenance lease record");
-    }
+    const state = readKeyPackageMaintenanceState(storage, key);
     if (state.lease?.owner_id !== ownerId || state.lease?.fence !== fence) return false;
     state.lease = null;
     storage.setItem(key, JSON.stringify(state));
     return true;
-  });
+  } finally {
+    liveKeyPackageMaintenanceLeases.delete(key);
+    live.release();
+  }
 }
+
 "#)]
 extern "C" {
     #[wasm_bindgen::prelude::wasm_bindgen(catch, js_name = acquireKeyPackageMaintenanceLease)]

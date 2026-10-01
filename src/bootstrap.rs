@@ -404,23 +404,8 @@ async fn maintain_local_mls_key_packages(
         .await
         .map_err(|error| format!("acquire MLS KeyPackage maintenance lease: {error}"))?
     else {
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let inventory = crate::mls::runtime::load_mls_key_package_inventory(
-            secure_store.as_ref(),
-            authority,
-            device_id,
-        )
-        .map_err(|error| format!("load local MLS KeyPackage inventory: {error}"))?;
-        return Ok(LocalMlsKeyPackageMaintenanceOutcome {
-            latest_key_package_id: inventory
-                .entries
-                .values()
-                .next_back()
-                .map(|entry| entry.keypackage_id.clone()),
-            published_count: 0,
-        });
+        return Err("MLS KeyPackage maintenance is held by another runtime; retry".to_owned());
     };
-
     let outcome = run_local_mls_key_package_maintenance_cycle(
         base_url,
         session_credential,
@@ -932,6 +917,35 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn busy_keypackage_maintenance_cannot_report_publication_success() {
+        let authority = crate::test_support::authority_at_station(
+            "ak:did_core:web:lease-test.example",
+            "ak:did_core:web:lease-test.example",
+        );
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned())
+                .unwrap();
+        let endpoint = format!(
+            "https://{}.example",
+            crate::random::base64url_token(24, "test lease endpoint").unwrap()
+        );
+        let holder = crate::keypackage_maintenance::acquire(&endpoint, &authority, &device)
+            .await
+            .unwrap()
+            .unwrap();
+        let result =
+            maintain_local_mls_key_packages(&endpoint, "unused", &authority, &device).await;
+        holder.release().await.unwrap();
+        assert!(result.is_err_and(|error| error.contains("held by another runtime; retry")));
+        let replacement = crate::keypackage_maintenance::acquire(&endpoint, &authority, &device)
+            .await
+            .unwrap()
+            .unwrap();
+        replacement.release().await.unwrap();
+    }
 
     #[test]
     fn local_mls_refresh_epoch_comes_only_from_persisted_checkpoints() {

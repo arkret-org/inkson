@@ -205,6 +205,16 @@ pub(crate) async fn authenticated_account_is_realm_creator(
         .map_err(|error| format!("resolve accepted Realm creator: {error}"))
 }
 
+/// Ready is the durable terminal cut; later epochs belong to MLS convergence.
+pub(crate) fn creator_record_needs_background_resume(
+    record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+) -> bool {
+    record.ready_receipt().is_none()
+        && record.superseded_winner().is_none()
+        && record.rejection().is_none()
+        && record.quarantine_diagnostic().is_none()
+}
+
 /// Background recovery gate for an already accepted or staged creator Genesis.
 /// Absence of accepted/staged work is a plaintext Realm, not an implicit MLS
 /// activation request. A candidate is still checked against accepted creator
@@ -223,11 +233,7 @@ pub(crate) async fn should_resume_creator_genesis(
         .creator_bootstrap_record(&scope)
         .await
         .map_err(|error| error.to_string())?
-        .is_some_and(|record| {
-            record.superseded_winner().is_some()
-                || record.rejection().is_some()
-                || record.quarantine_diagnostic().is_some()
-        })
+        .is_some_and(|record| !creator_record_needs_background_resume(&record))
     {
         return Ok(false);
     }
@@ -413,6 +419,16 @@ async fn resume_durable_scope_creator(
             .reopen_rejected_creator(scope)
             .await
             .map_err(|error| format!("reopen rejected creator attempt: {error}"))?;
+    }
+    // A completed creator transaction cannot be replayed into a later MLS cut.
+    // Reading the vault already verifies the terminal receipt and its index.
+    if submitter
+        .creator_bootstrap_record(scope)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some_and(|record| record.ready_receipt().is_some())
+    {
+        return Ok(());
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     crate::mls::runtime::ensure_existing_account_mls_secret_durable(
