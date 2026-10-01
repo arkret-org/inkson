@@ -1559,7 +1559,7 @@ impl EventSubmitter {
             let intent = creator_intent_for_submission(&submission, device_id.clone())?;
             self.outbound(OutboundLane::Standard)?
                 .store()
-                .freeze_creator_intent(intent, submission.clone())
+                .freeze_realm_creator_intent(intent, submission.clone())
                 .await?;
         }
         let item = self
@@ -1583,6 +1583,87 @@ impl EventSubmitter {
             realm_id,
             first_commit: outcome.commits[0].clone(),
         })
+    }
+
+    /// Resume the two independent product Events before activating MLS. The
+    /// vault CAS chooses each original signed submission across holder races.
+    pub(crate) async fn ensure_creator_realm_default_discussion(
+        &self,
+        realm: &arkret_sdk::RealmId,
+    ) -> anyhow::Result<arkret_sdk::StrandId> {
+        use crate::outbound_store::CreatorDiscussionStep;
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm.clone(),
+        };
+        let intent = self
+            .creator_bootstrap_intent(&scope)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!("default discussion requires a durable Realm creator")
+            })?;
+        let store = self.outbound(OutboundLane::Standard)?.store().clone();
+        if let Some(strand) = store.completed_creator_discussion(realm).await? {
+            return Ok(strand);
+        }
+        let _single_writer = outbound_submit_lock().lock().await;
+        // The foreground or another holder may have completed while waiting.
+        if let Some(strand) = store.completed_creator_discussion(realm).await? {
+            return Ok(strand);
+        }
+        let actor = intent.owner_actor_id().signing_principal_id().as_str();
+        let mut strand_id: Option<String> = None;
+        for step in [CreatorDiscussionStep::Create, CreatorDiscussionStep::Select] {
+            let submission =
+                if let Some(original) = store.creator_discussion_submission(realm, step).await? {
+                    original
+                } else {
+                    let operation = match step {
+                        CreatorDiscussionStep::Create => {
+                            crate::operation::ak_ops::initial_default_discussion_strand_create(
+                                realm.as_str(),
+                                actor,
+                            )?
+                        }
+                        CreatorDiscussionStep::Select => {
+                            crate::operation::ak_ops::realm_set_default_strand(
+                                realm.as_str(),
+                                actor,
+                                strand_id.as_ref().ok_or_else(|| {
+                                    anyhow::anyhow!("default Strand has not committed")
+                                })?,
+                            )?
+                        }
+                    }
+                    .build_sdk_event("inkson")?;
+                    self.ensure_recovery_material_ready(operation.intent())
+                        .await?;
+                    self.ensure_application_send_gate(operation.intent())
+                        .await?;
+                    self.refresh_direct_message_authority(operation.intent(), None)
+                        .await?;
+                    let signed = self.author_intent(operation.intent()).await?;
+                    store
+                        .freeze_creator_discussion_step(realm, step, event_submission(&signed)?)
+                        .await?
+                };
+            let id = submission.event_id.clone();
+            let item = self
+                .enqueue_and_drive(QueuedWrite {
+                    lane: OutboundLane::Standard,
+                    submission,
+                    local_operation_id: id.to_string(),
+                    post_accept: PostAccept::None,
+                    retry_scope: InteractiveRetryScope::Ordinary,
+                })
+                .await?;
+            settled_outbound_result(&item)?;
+            if matches!(step, CreatorDiscussionStep::Create) {
+                strand_id = Some(arkret_sdk::StrandId::from_event_id(&id).into_string());
+            }
+        }
+        Ok(arkret_sdk::StrandId::new(strand_id.ok_or_else(|| {
+            anyhow::anyhow!("default Strand missing")
+        })?)?)
     }
 
     pub(crate) async fn creator_bootstrap_record(

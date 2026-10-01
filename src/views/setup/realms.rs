@@ -110,7 +110,18 @@ async fn create_initial_default_discussion(
     actor: &str,
 ) -> anyhow::Result<String> {
     let founding_realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
-    let submitter = api.event_submitter()?.for_founding_realm(founding_realm);
+    let submitter = api
+        .event_submitter()?
+        .for_founding_realm(founding_realm.clone());
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: founding_realm.clone(),
+    };
+    if submitter.creator_bootstrap_intent(&scope).await?.is_some() {
+        return Ok(submitter
+            .ensure_creator_realm_default_discussion(&founding_realm)
+            .await?
+            .into_string());
+    }
     let create =
         crate::operation::ak_ops::initial_default_discussion_strand_create(realm_id, actor)?
             .build_sdk_event("inkson")?;

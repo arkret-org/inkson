@@ -12,13 +12,14 @@
 //! Events is ciphertext at rest and is not charged against the ~5 MB
 //! localStorage per-origin quota that a single queue can exhaust on its own.
 
+mod creator_discussion;
 pub(crate) mod creator_protection;
 mod creator_quarantine;
-
 use arkret_models_collaboration::mls_creator_bootstrap::{
     MlsCreatorBootstrapIntent, MlsCreatorBootstrapRecord, MlsCreatorBootstrapRejection,
     MlsCreatorBootstrapVerifiedAbsence,
 };
+pub(crate) use creator_discussion::CreatorDiscussionStep;
 use garth::OutboundQueueStore;
 use garth::outbound::BoxOutboundFuture;
 
@@ -87,6 +88,9 @@ struct DurableOutboundState {
     scheduled_dispatches: ScheduledDispatches,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     creator_bootstrap_records: Vec<MlsCreatorBootstrapRecord>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    creator_realm_discussions:
+        std::collections::BTreeMap<arkret_sdk::RealmId, creator_discussion::CreatorRealmDiscussion>,
     #[serde(default)]
     commit_position: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -148,6 +152,7 @@ impl DurableOutboundState {
     }
 
     fn validate(&self) -> garth::Result<()> {
+        self.validate_creator_discussions()?;
         for (index, record) in self.creator_bootstrap_records.iter().enumerate() {
             record.validate()?;
             let intent = record.intent();
@@ -863,6 +868,24 @@ impl InksonOutboundStore {
     ) -> garth::Result<()> {
         self.mutate_state(|state| state.freeze_creator_intent(intent, submission))
             .await
+    }
+
+    /// Freeze the ordinary Realm product initializer with its original create.
+    pub(crate) async fn freeze_realm_creator_intent(
+        &self,
+        intent: MlsCreatorBootstrapIntent,
+        submission: garth::QueuedSubmission,
+    ) -> garth::Result<()> {
+        self.mutate_state(|state| {
+            if !matches!(submission.request,
+                arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(_)) {
+                return Err(garth::Error::Protocol("Realm initializer requires an ordinary founding unit".into()));
+            }
+            let realm = intent.effective_scope().realm_id().clone();
+            state.freeze_creator_intent(intent, submission)?;
+            state.creator_realm_discussions.entry(realm).or_default();
+            Ok(())
+        }).await
     }
 
     /// Freeze Circle create and the caller's initial signed join before either
@@ -3068,6 +3091,411 @@ mod tests {
         );
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn discussion_candidate(
+        realm: &arkret_sdk::RealmId,
+        strand: Option<&arkret_sdk::StrandId>,
+        tick: i64,
+    ) -> garth::QueuedSubmission {
+        let operation = match strand {
+            Some(strand) => crate::operation::ak_ops::realm_set_default_strand(
+                realm.as_str(),
+                "did:web:alice.example",
+                strand.as_str(),
+            )
+            .unwrap(),
+            None => crate::operation::ak_ops::initial_default_discussion_strand_create(
+                realm.as_str(),
+                "did:web:alice.example",
+            )
+            .unwrap(),
+        }
+        .build_sdk_event("inkson")
+        .unwrap();
+        let mut event = operation
+            .intent()
+            .clone()
+            .with_created_at(
+                chrono::DateTime::from_timestamp_millis(1_760_000_000_000 + tick).unwrap(),
+            )
+            .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+            .unwrap();
+        event
+            .sign_ed25519(
+                "did:web:alice.example",
+                &format!("did:web:alice.example#{CREATOR_DEVICE}"),
+                &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
+            )
+            .unwrap();
+        crate::event_submit::event_submission(&event).unwrap()
+    }
+
+    // Shape-only receipts exercise holder storage; live Station tests verify
+    // authenticated acceptance before product initialization can advance.
+    fn settle_discussion_test_item(state: &mut DurableOutboundState, id: &arkret_sdk::EventId) {
+        use arkret_models_collaboration::authority_commit::*;
+        let (base, _) = creator_acceptance(state.creator_bootstrap_records[0].intent());
+        let item = state
+            .items
+            .iter_mut()
+            .find(|item| item.event_id() == id)
+            .unwrap();
+        let mut commit = base.covering_commit().clone();
+        match &item.submission.request {
+            SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) => {
+                let mut previous = None;
+                let commits = unit
+                    .events
+                    .iter()
+                    .enumerate()
+                    .map(|(index, event)| {
+                        commit.event_ref = event.event.event_id.clone();
+                        commit.commit_id =
+                            arkret_sdk::RealmCommitId::from_digest([index as u8 + 10; 32]);
+                        commit.stream_position = index as u64;
+                        commit.previous_commit_ref = previous.clone();
+                        previous = Some(commit.commit_id.clone());
+                        commit.clone()
+                    })
+                    .collect();
+                item.submission
+                    .apply_self_outcome(SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(
+                        OrdinaryRealmBootstrapAcceptanceOutcome {
+                            unit_kind: unit.unit_kind,
+                            status: AggregateAcceptanceStatus::Committed,
+                            commits,
+                        },
+                    ))
+                    .unwrap();
+            }
+            SelfAuthoritySubmitRequest::Event(event) => {
+                commit.event_ref = event.event.event_id.clone();
+                item.submission
+                    .apply_outcome(arkret_wire::AuthoritySubmitOutcome::Accepted {
+                        status: arkret_wire::AuthorityCommitStatus::Committed,
+                        commit,
+                    })
+                    .unwrap();
+            }
+            _ => panic!("unexpected discussion test item"),
+        }
+        item.status = garth::SendQueueStatus::Committed;
+        item.settled_at = Some(crate::clock::now_utc());
+    }
+
+    #[tokio::test]
+    async fn creator_discussion_vault_failure_and_reopen_preserve_one_original() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("standard.json");
+        let store = InksonOutboundStore::for_test_path(path.clone());
+        let (intent, create) = creator_fixture(CREATOR_DEVICE);
+        let realm = intent.effective_scope().realm_id().clone();
+        store
+            .freeze_realm_creator_intent(intent.clone(), create.clone())
+            .await
+            .unwrap();
+        let candidate = discussion_candidate(&realm, None, 0);
+        assert!(
+            store
+                .freeze_creator_discussion_step(
+                    &realm,
+                    CreatorDiscussionStep::Create,
+                    candidate.clone()
+                )
+                .await
+                .is_err()
+        );
+        store
+            .mutate_state(|state| {
+                settle_discussion_test_item(state, &create.event_id);
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let before = std::fs::read(&path).unwrap();
+        std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+        assert!(
+            store
+                .freeze_creator_discussion_step(
+                    &realm,
+                    CreatorDiscussionStep::Create,
+                    candidate.clone()
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        std::fs::remove_dir(path.with_extension("json.tmp")).unwrap();
+        let reopened = InksonOutboundStore::for_test_path(path.clone());
+        assert!(
+            reopened
+                .creator_discussion_submission(&realm, CreatorDiscussionStep::Create)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            reopened
+                .freeze_creator_discussion_step(
+                    &realm,
+                    CreatorDiscussionStep::Create,
+                    candidate.clone()
+                )
+                .await
+                .unwrap(),
+            candidate
+        );
+        let strand = arkret_sdk::StrandId::from_event_id(&candidate.event_id);
+        let selector = discussion_candidate(&realm, Some(&strand), 2);
+        assert!(
+            reopened
+                .freeze_creator_discussion_step(
+                    &realm,
+                    CreatorDiscussionStep::Select,
+                    selector.clone()
+                )
+                .await
+                .is_err()
+        );
+        reopened
+            .mutate_state(|state| {
+                settle_discussion_test_item(state, &candidate.event_id);
+                Ok(())
+            })
+            .await
+            .unwrap();
+        reopened
+            .freeze_creator_discussion_step(&realm, CreatorDiscussionStep::Select, selector.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            InksonOutboundStore::for_test_path(path.clone())
+                .creator_discussion_submission(&realm, CreatorDiscussionStep::Select)
+                .await
+                .unwrap()
+                .unwrap()
+                .request,
+            selector.request
+        );
+        let before = std::fs::read(&path).unwrap();
+        assert!(
+            reopened
+                .mutate_outbound(|queue| {
+                    queue.compact_terminal_before(
+                        crate::clock::now_utc() + chrono::Duration::seconds(1),
+                    );
+                    Ok(())
+                })
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn creator_discussion_completed_receipts_remain_readable_when_new_writes_are_blocked() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("standard.json");
+        let store = InksonOutboundStore::for_test_path(path.clone());
+        let (intent, create) = creator_fixture(CREATOR_DEVICE);
+        let realm = intent.effective_scope().realm_id().clone();
+        store
+            .freeze_realm_creator_intent(intent, create.clone())
+            .await
+            .unwrap();
+        assert!(
+            store
+                .completed_creator_discussion(&realm)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        store
+            .mutate_state(|state| {
+                settle_discussion_test_item(state, &create.event_id);
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let discussion = discussion_candidate(&realm, None, 30);
+        store
+            .freeze_creator_discussion_step(
+                &realm,
+                CreatorDiscussionStep::Create,
+                discussion.clone(),
+            )
+            .await
+            .unwrap();
+        let strand = arkret_sdk::StrandId::from_event_id(&discussion.event_id);
+        store
+            .mutate_state(|state| {
+                settle_discussion_test_item(state, &discussion.event_id);
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let selection = discussion_candidate(&realm, Some(&strand), 31);
+        store
+            .freeze_creator_discussion_step(
+                &realm,
+                CreatorDiscussionStep::Select,
+                selection.clone(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            store
+                .completed_creator_discussion(&realm)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        store
+            .mutate_state(|state| {
+                settle_discussion_test_item(state, &selection.event_id);
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let before = std::fs::read(&path).unwrap();
+        std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+        assert_eq!(
+            InksonOutboundStore::for_test_path(path.clone())
+                .completed_creator_discussion(&realm)
+                .await
+                .unwrap(),
+            Some(strand)
+        );
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
+
+    #[test]
+    fn creator_discussion_independent_writers_join_the_original_public_event() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("standard.json");
+        let (intent, create) = creator_fixture(CREATOR_DEVICE);
+        let realm = intent.effective_scope().realm_id().clone();
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let store = InksonOutboundStore::for_test_path(path.clone());
+                store
+                    .freeze_realm_creator_intent(intent, create.clone())
+                    .await
+                    .unwrap();
+                store
+                    .mutate_state(|state| {
+                        settle_discussion_test_item(state, &create.event_id);
+                        Ok(())
+                    })
+                    .await
+                    .unwrap();
+            });
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let candidates = [
+            discussion_candidate(&realm, None, 10),
+            discussion_candidate(&realm, None, 11),
+        ];
+        let writers = candidates.map(|candidate| {
+            let path = path.clone();
+            let realm = realm.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap()
+                    .block_on(
+                        InksonOutboundStore::for_test_path(path).freeze_creator_discussion_step(
+                            &realm,
+                            CreatorDiscussionStep::Create,
+                            candidate,
+                        ),
+                    )
+                    .unwrap()
+            })
+        });
+        let [left, right] = writers.map(|writer| writer.join().unwrap());
+        assert_eq!(left, right);
+        let state = decode_snapshot(Some(&std::fs::read_to_string(path).unwrap())).unwrap();
+        assert_eq!(state.items.len(), 2);
+        assert_eq!(
+            state
+                .discussion_submission(&realm, CreatorDiscussionStep::Create)
+                .unwrap()
+                .unwrap(),
+            left
+        );
+    }
+
+    #[tokio::test]
+    async fn creator_discussion_rejects_scope_signer_and_selection_substitution() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = InksonOutboundStore::for_test_path(directory.path().join("standard.json"));
+        let (intent, create) = creator_fixture(CREATOR_DEVICE);
+        let realm = intent.effective_scope().realm_id().clone();
+        store
+            .freeze_realm_creator_intent(intent, create.clone())
+            .await
+            .unwrap();
+        store
+            .mutate_state(|state| {
+                settle_discussion_test_item(state, &create.event_id);
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let candidate = discussion_candidate(&realm, None, 20);
+        let unrelated =
+            discussion_candidate(&crate::test_support::realm_id(FIXTURE_REALM), None, 21);
+        assert!(
+            store
+                .freeze_creator_discussion_step(
+                    &realm,
+                    CreatorDiscussionStep::Create,
+                    unrelated.clone()
+                )
+                .await
+                .is_err()
+        );
+        let mut bad = serde_json::to_value(&candidate).unwrap();
+        bad["request"]["event"]["producer_proof"]["verification_method"] =
+            serde_json::json!("did:web:alice.example#other-device");
+        let bad = serde_json::from_value(bad).unwrap();
+        assert!(
+            store
+                .freeze_creator_discussion_step(&realm, CreatorDiscussionStep::Create, bad)
+                .await
+                .is_err()
+        );
+        store
+            .freeze_creator_discussion_step(
+                &realm,
+                CreatorDiscussionStep::Create,
+                candidate.clone(),
+            )
+            .await
+            .unwrap();
+        store
+            .mutate_state(|state| {
+                settle_discussion_test_item(state, &candidate.event_id);
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let wrong = discussion_candidate(
+            &realm,
+            Some(&arkret_sdk::StrandId::from_event_id(&unrelated.event_id)),
+            22,
+        );
+        assert!(
+            store
+                .freeze_creator_discussion_step(&realm, CreatorDiscussionStep::Select, wrong)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

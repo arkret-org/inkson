@@ -517,6 +517,11 @@ async fn bootstrap_creator_realm_mls_genesis(
     }
     if durable_intent.is_some() {
         let submitter = submitter.for_founding_realm(scope.realm_id().clone());
+        if matches!(durable_intent.as_ref().expect("durable intent").signed_scope_create_unit(),
+            arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(_)) {
+            submitter.ensure_creator_realm_default_discussion(scope.realm_id()).await
+                .map_err(|error| format!("resume creator default discussion: {error}"))?;
+        }
         return resume_durable_scope_creator(
             api,
             state_store,
