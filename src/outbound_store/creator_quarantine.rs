@@ -388,6 +388,22 @@ pub(super) fn decode_for_recovery(
             let isolated = DurableOutboundState {
                 items: state.items.clone(),
                 creator_bootstrap_records: vec![record.clone()],
+                creator_realm_discussions: state
+                    .creator_realm_discussions
+                    .iter()
+                    .filter(|(realm, _)| {
+                        record.intent().effective_scope()
+                            == &arkret_sdk::ScopeRef::Realm {
+                                realm_id: (*realm).clone(),
+                            }
+                    })
+                    .map(|(realm, plan)| {
+                        (
+                            realm.clone(),
+                            creator_discussion::CreatorRealmDiscussion::clone(plan),
+                        )
+                    })
+                    .collect(),
                 creator_ready_index: state
                     .creator_ready_index
                     .iter()
