@@ -4,9 +4,21 @@ use dioxus::prelude::*;
 
 use crate::ui::button::{Button, ButtonVariant};
 
+fn creator_scope(realm: String, circle: Option<String>) -> anyhow::Result<arkret_sdk::ScopeRef> {
+    let realm_id = arkret_sdk::RealmId::new(realm)?;
+    Ok(match circle {
+        Some(circle) => arkret_sdk::ScopeRef::Circle {
+            realm_id,
+            circle_id: arkret_sdk::CircleId::new(circle)?,
+        },
+        None => arkret_sdk::ScopeRef::Realm { realm_id },
+    })
+}
+
 #[component]
 pub(crate) fn CreatorMlsRetry(
     realm_id: ReadSignal<String>,
+    circle_id: Option<String>,
     refresh_hint: ReadSignal<String>,
     token: Signal<String>,
 ) -> Element {
@@ -25,8 +37,10 @@ pub(crate) fn CreatorMlsRetry(
         let _ = realm_id();
         status.set(String::new());
     });
+    let recovery_circle = circle_id.clone();
     let recovery = use_resource(move || {
         let realm = realm_id();
+        let circle = recovery_circle.clone();
         let _ = refresh_hint();
         let _ = revision();
         let account = context.active_account();
@@ -36,7 +50,7 @@ pub(crate) fn CreatorMlsRetry(
             let Some(account) = account else {
                 return (false, false);
             };
-            let Ok(scope_id) = arkret_sdk::RealmId::new(realm) else {
+            let Ok(scope) = creator_scope(realm, circle) else {
                 return (false, false);
             };
             let Ok(api) = crate::transport::auth::authed_api_ready(&base, credential).await else {
@@ -44,7 +58,6 @@ pub(crate) fn CreatorMlsRetry(
             };
             let submitter = crate::event_submit::EventSubmitter::new(api.http().clone())
                 .with_authority(account.authority.clone());
-            let scope = arkret_sdk::ScopeRef::Realm { realm_id: scope_id };
             let record = match submitter.creator_bootstrap_record(&scope).await {
                 Ok(record) => record,
                 // Detection commits quarantine then stops that caller. Re-read
@@ -88,6 +101,7 @@ pub(crate) fn CreatorMlsRetry(
                     onclick: move |_| {
                         let Some(account) = context.active_account() else { return; };
                         let realm = realm_id();
+                        let circle = circle_id.clone();
                         let base = (context.base_url)();
                         let credential = token();
                         let state_store = crate::app::runtime_adapter::state_store_handle(context.state_store);
@@ -96,18 +110,24 @@ pub(crate) fn CreatorMlsRetry(
                         status.set(pending.clone());
                         spawn(async move {
                             let result = async {
-                                let scope_id = arkret_sdk::RealmId::new(realm.clone())?;
+                                let scope = creator_scope(realm.clone(), circle)?;
                                 let api = crate::transport::auth::authed_api_ready(&base, credential).await?;
                                 let submitter = crate::event_submit::EventSubmitter::new(api.http().clone())
                                     .with_authority(account.authority.clone());
-                                let record = submitter.creator_bootstrap_record(&arkret_sdk::ScopeRef::Realm { realm_id: scope_id }).await?
+                                let record = submitter.creator_bootstrap_record(&scope).await?
                                     .ok_or_else(|| anyhow::anyhow!("creator retry lost its durable record"))?;
                                 anyhow::ensure!(record.rejection().is_some(), "creator attempt is no longer rejected");
                                 anyhow::ensure!(record.intent().creator_device_id() == &account.device_id,
                                     "creator retry requires the original device");
-                                crate::mls::creator_bootstrap::start_creator_realm_mls_genesis(
-                                    &api, &state_store, &realm, &account.authority, &account.device_id,
-                                ).await.map_err(anyhow::Error::msg)
+                                if matches!(scope, arkret_sdk::ScopeRef::Circle { .. }) {
+                                    crate::mls::creator_bootstrap::ensure_creator_circle_mls_genesis(
+                                        &api, &state_store, &scope, &account.authority, &account.device_id, true,
+                                    ).await.map_err(anyhow::Error::msg)
+                                } else {
+                                    crate::mls::creator_bootstrap::start_creator_realm_mls_genesis(
+                                        &api, &state_store, &realm, &account.authority, &account.device_id,
+                                    ).await.map_err(anyhow::Error::msg)
+                                }
                             }.await;
                             if realm_id.peek().as_str() == realm {
                                 status.set(match result { Ok(()) => success, Err(error) => error.to_string() });

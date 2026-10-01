@@ -1208,6 +1208,7 @@ impl ChatController {
         poll_ref: arkret_sdk::MessageId,
         option_id: String,
     ) {
+        self.status_msg.set("Preparing poll vote".to_owned());
         let actor = arkret_sdk::ActorId::account(context.authority.clone());
         let selected_circle = self
             .channels
@@ -1274,7 +1275,10 @@ impl ChatController {
         let api_token = (context.token)();
         let mut messages = self.messages;
         let mut status_msg = self.status_msg;
-        spawn(async move {
+        // The option Button can unmount when pending/projection state changes.
+        // Keep the command with the chat controller that owns these signals.
+        dioxus::core::Runtime::current().spawn(messages.origin_scope(), async move {
+            status_msg.set("Submitting poll vote".to_owned());
             let result =
                 crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
                     let operation = crate::messaging::polls::build_poll_vote_op_with_heads_scoped(

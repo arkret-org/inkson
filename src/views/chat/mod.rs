@@ -1502,14 +1502,16 @@ pub fn ChatPanel(
         })
         .map(|channel| channel.unread)
         .unwrap_or(0);
-    // The Realm's MLS activation as the installed durable current cut knows
-    // it. Unknown is not plaintext: the composer keeps the secure path and the
-    // pending reason below blocks it until the cut is complete.
-    let selected_realm_mls_activation = crate::views::helpers::realm_mls_activation(
-        state_store.read().current_product_view().as_ref(),
-        &selected_realm_id,
-    );
-    let selected_realm_security_encrypted = selected_realm_mls_activation.unwrap_or(true);
+    // Unknown scope current keeps the secure path blocked until verification.
+    let selected_scope_circle = selected_channel_info.as_ref().and_then(|channel| {
+        channel
+            .scope_circle
+            .as_ref()
+            .map(|circle| circle.circle_id.clone())
+    });
+    let send_scope = selected_channel_info
+        .as_ref()
+        .and_then(|channel| channel.effective_scope(&selected_realm_id));
     // The first-class Sidecar contract requires an independent MLS backing scope.
     // The private Strand only carries its internal scope id, so ordinary Realm
     // inheritance would incorrectly downgrade a Sidecar opened from a
@@ -1517,10 +1519,15 @@ pub fn ChatPanel(
     let selected_channel_security_encrypted = if sidecar_mode || direct_mode {
         true
     } else {
-        selected_channel_info
+        send_scope
             .as_ref()
-            .and_then(|channel| channel.security_encrypted)
-            .unwrap_or(selected_realm_security_encrypted)
+            .and_then(|scope| {
+                state_store
+                    .read()
+                    .installed_scope_mls_current(scope)
+                    .activated()
+            })
+            .unwrap_or(true)
     };
     let direct_message_authority =
         crate::app::SessionContext::get()
@@ -1532,21 +1539,22 @@ pub fn ChatPanel(
                     &arkret_sdk::ActorId::account(account.authority),
                 )
             });
-    let mut selected_realm_pending_mls_binding_reason = state_store
-        .read()
-        .realm_pending_mls_binding_reason(&selected_realm_id);
+    let mut selected_realm_pending_mls_binding_reason = if selected_scope_circle.is_none() {
+        state_store
+            .read()
+            .realm_pending_mls_binding_reason(&selected_realm_id)
+    } else {
+        None
+    };
     if (selected_channel_security_encrypted || direct_mode)
         && !sidecar_mode
         && selected_realm_pending_mls_binding_reason.is_none()
     {
-        let realm_scope = arkret_sdk::RealmId::new(selected_realm_id.clone())
-            .ok()
-            .map(|realm_id| arkret_sdk::ScopeRef::Realm { realm_id });
-        let installed = realm_scope
+        let installed = send_scope
             .as_ref()
             .map(|scope| state_store.read().installed_scope_mls_current(scope))
             .unwrap_or(crate::current_projection::ScopeMlsCurrent::Unknown);
-        let local_epoch = realm_scope.as_ref().and_then(|scope| {
+        let local_epoch = send_scope.as_ref().and_then(|scope| {
             state_store
                 .read()
                 .mls_checkpoint_for_scope(scope)
@@ -1561,30 +1569,33 @@ pub fn ChatPanel(
                 _ => None,
             },
             crate::current_projection::ScopeMlsCurrent::NotActivated => Some(
-                "encryption_policy_pending: this Realm has no accepted MLS Genesis yet".to_owned(),
+                "encryption_policy_pending: this scope has no accepted MLS Genesis yet".to_owned(),
             ),
             crate::current_projection::ScopeMlsCurrent::Unknown => Some(
-                "encryption_policy_pending: waiting for the Realm's verified current state"
+                "encryption_policy_pending: waiting for the scope's verified current state"
                     .to_owned(),
             ),
         } {
             selected_realm_pending_mls_binding_reason = Some(reason);
         } else {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let roster_matches =
+            let roster_matches = if selected_scope_circle.is_none() {
                 crate::mls::runtime::realm_mls_roster_matches_complete_membership_hint(
                     &state_store.read(),
                     secure_store.as_ref(),
                     &selected_realm_id,
                     &authority,
                     &account_device_id,
-                );
+                )
+            } else {
+                None
+            };
             let local_group_available =
                 crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
                     &state_store.read(),
                     secure_store.as_ref(),
                     &selected_realm_id,
-                    None,
+                    selected_scope_circle.as_deref(),
                     &authority,
                     &account_device_id,
                 )
@@ -1797,26 +1808,6 @@ pub fn ChatPanel(
     // policy enumeration.
     let readable_participation_agent_ids =
         readable_participation_agent_ids(&participants_for_messages, &principal_id);
-    let selected_scope_circle = channels()
-        .iter()
-        .find(|channel| channel.strand_id == selected_channel_value)
-        .and_then(|channel| {
-            channel
-                .scope_circle
-                .as_ref()
-                .map(|circle| circle.circle_id.clone())
-        });
-    let send_scope = arkret_sdk::RealmId::new(selected_realm_id.clone())
-        .ok()
-        .and_then(|realm_id| match selected_scope_circle.as_ref() {
-            Some(circle) => arkret_sdk::CircleId::new(circle.clone())
-                .ok()
-                .map(|circle_id| arkret_sdk::ScopeRef::Circle {
-                    realm_id,
-                    circle_id,
-                }),
-            None => Some(arkret_sdk::ScopeRef::Realm { realm_id }),
-        });
     let scope_send_ready = crate::views::secure_send::use_scope_send_ready(
         state_store,
         send_scope,
@@ -2058,7 +2049,9 @@ pub fn ChatPanel(
                                 div { class: "discussion-track-main",
                                     span { class: "discussion-track-name-row",
                                         SecurityStateBadge {
-                                            encrypted: channel.security_encrypted.unwrap_or(selected_realm_security_encrypted),
+                                            encrypted: channel.effective_scope(&selected_realm_id)
+                                                .and_then(|scope| state_store.read().installed_scope_mls_current(&scope).activated())
+                                                .unwrap_or(true),
                                             compact: true,
                                             test_id: Some("strand-track-security-state".to_owned()),
                                         }

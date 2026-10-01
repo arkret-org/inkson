@@ -339,6 +339,68 @@ impl DurableOutboundState {
         Ok(())
     }
 
+    fn freeze_circle_creator_intent(
+        &mut self,
+        intent: MlsCreatorBootstrapIntent,
+        create: garth::QueuedSubmission,
+        member: garth::QueuedSubmission,
+        discussion: garth::QueuedSubmission,
+    ) -> garth::Result<()> {
+        let event = member.primary_event();
+        if !matches!(
+            intent.effective_scope(),
+            arkret_sdk::ScopeRef::Circle { .. }
+        ) || event.scope_ref != *intent.effective_scope()
+            || event.actor_id != *intent.owner_actor_id()
+            || event.kind != arkret_sdk::EventKind::CircleMemberState
+        {
+            return Err(garth::Error::Protocol(
+                "creator initial membership does not name its exact Circle and actor".into(),
+            ));
+        }
+        let payload: arkret_sdk::CircleMemberStatePayload =
+            serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+        if payload.membership != arkret_sdk::CircleMembership::Join
+            || payload.member_id != *intent.owner_actor_id()
+            || payload.parent_membership_revision.is_none()
+        {
+            return Err(garth::Error::Protocol(
+                "creator initial membership is not an exact parent-bound self join".into(),
+            ));
+        }
+        let strand = discussion.primary_event();
+        let payload: arkret_sdk::StrandCreatePayload =
+            serde_json::from_value(serde_json::to_value(&strand.payload)?)?;
+        if strand.kind != arkret_sdk::EventKind::StrandCreate
+            || strand.scope_ref != *intent.effective_scope()
+            || strand.actor_id != *intent.owner_actor_id()
+            || payload.object.scope_circle_id.as_ref() != intent.effective_scope().circle_id()
+            || payload.object.metadata.is_some()
+            || payload.object.content.is_some()
+            || payload.object.encrypted_metadata.is_some()
+            || payload.object.encrypted_content.is_some()
+        {
+            return Err(garth::Error::Protocol("creator initial discussion must be metadata-free and name its exact Circle and actor".into()));
+        }
+        self.freeze_creator_intent(intent, create)?;
+        let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
+            items: std::mem::take(&mut self.items),
+        });
+        for submission in [member, discussion] {
+            if let Some(existing) = queue.get(&submission.event_id) {
+                if existing.request() != &submission.request {
+                    return Err(garth::Error::Protocol(
+                        "creator initial Event identity has substituted bytes".into(),
+                    ));
+                }
+            } else {
+                queue.enqueue(submission, crate::clock::now_utc())?;
+            }
+        }
+        self.items = queue.snapshot().items;
+        Ok(())
+    }
+
     /// First registry cut: retain the whole closed intent and the exact create
     /// queue item in the same durable unit. A second holder can only join it.
     fn freeze_creator_intent(
@@ -801,6 +863,36 @@ impl InksonOutboundStore {
     ) -> garth::Result<()> {
         self.mutate_state(|state| state.freeze_creator_intent(intent, submission))
             .await
+    }
+
+    /// Freeze Circle create and the caller's initial signed join before either
+    /// can leave the holder. Both ordinary Events retain their own identities.
+    pub(crate) async fn freeze_circle_creator_intent(
+        &self,
+        intent: MlsCreatorBootstrapIntent,
+        create: garth::QueuedSubmission,
+        member: garth::QueuedSubmission,
+        discussion: garth::QueuedSubmission,
+    ) -> garth::Result<()> {
+        self.mutate_state(|state| {
+            state.freeze_circle_creator_intent(intent, create, member, discussion)
+        })
+        .await
+    }
+
+    pub(crate) async fn creator_records(
+        &self,
+        owner: &arkret_sdk::ActorId,
+    ) -> garth::Result<Vec<MlsCreatorBootstrapRecord>> {
+        self.mutate_state(|state| {
+            Ok(state
+                .creator_bootstrap_records
+                .iter()
+                .filter(|record| record.intent().owner_actor_id() == owner)
+                .cloned()
+                .collect())
+        })
+        .await
     }
 
     /// Holder-local encryption choice. This does not assert protocol MLS
@@ -2831,6 +2923,151 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn creator_circle_create_and_initial_join_share_one_recoverable_cut() {
+        use arkret_sdk::*;
+        let (realm_intent, _) = creator_fixture(CREATOR_DEVICE);
+        let realm = realm_intent.effective_scope().realm_id().clone();
+        let owner = realm_intent.owner_actor_id().clone();
+        let payload = CircleCreatePayload {
+            object: Circle::create_object(
+                realm.clone(),
+                "Durable Circle",
+                crate::operation::ak_ops::circle_display_from_title("Durable Circle"),
+                owner.clone(),
+            ),
+        };
+        let mut create = crate::operation::author_intent_for_test(
+            TypedEventDraft::<event_spec::CircleCreate>::new(
+                ScopeRef::Realm {
+                    realm_id: realm.clone(),
+                },
+                owner.clone(),
+                payload,
+            )
+            .unwrap()
+            .into_intent(crate::operation::test_authoring_created_at())
+            .unwrap(),
+        );
+        create
+            .sign_ed25519(
+                "did:web:alice.example",
+                &format!("did:web:alice.example#{CREATOR_DEVICE}"),
+                &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
+            )
+            .unwrap();
+        let create = crate::event_submit::event_submission(&create).unwrap();
+        let intent = crate::event_submit::creator_intent_for_submission(
+            &create,
+            fixture::device_id(CREATOR_DEVICE),
+        )
+        .unwrap();
+        let scope = intent.effective_scope().clone();
+        let mut member = crate::operation::author_intent_for_test_at_seq(
+            TypedEventDraft::<event_spec::CircleMemberState>::new(
+                scope.clone(),
+                owner.clone(),
+                CircleMemberStatePayload {
+                    circle_id: scope.circle_id().unwrap().clone(),
+                    member_id: owner.clone(),
+                    membership: CircleMembership::Join,
+                    parent_membership_revision: Some(CurrentRevision {
+                        commit_id: RealmCommitId::from_digest([31; 32]),
+                        stream_position: 4,
+                    }),
+                    reason: None,
+                    effective_at: None,
+                    expected_membership: WirePresence::Missing,
+                },
+            )
+            .unwrap()
+            .into_intent(crate::operation::test_authoring_created_at())
+            .unwrap(),
+            2,
+        );
+        member
+            .sign_ed25519(
+                "did:web:alice.example",
+                &format!("did:web:alice.example#{CREATOR_DEVICE}"),
+                &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
+            )
+            .unwrap();
+        let member = crate::event_submit::event_submission(&member).unwrap();
+        let mut discussion = crate::event_submit::initial_circle_discussion_intent(&scope, &owner)
+            .unwrap()
+            .author_with_digest_suite(DigestSuite::Sha256)
+            .unwrap();
+        discussion
+            .sign_ed25519(
+                "did:web:alice.example",
+                &format!("did:web:alice.example#{CREATOR_DEVICE}"),
+                &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
+            )
+            .unwrap();
+        let discussion = crate::event_submit::event_submission(&discussion).unwrap();
+        assert!(
+            mutate_state_in_store(
+                &RefusingStore,
+                "inkson.outbound.v1::circle.standard",
+                |state| state.freeze_circle_creator_intent(
+                    intent.clone(),
+                    create.clone(),
+                    member.clone(),
+                    discussion.clone()
+                )
+            )
+            .await
+            .is_err()
+        );
+        let directory =
+            std::env::temp_dir().join(format!("inkson-circle-cut-{}", crate::operation::uuid_v7()));
+        let path = directory.join("standard.json");
+        let store = InksonOutboundStore::for_test_path(path.clone());
+        store
+            .freeze_circle_creator_intent(
+                intent.clone(),
+                create.clone(),
+                member.clone(),
+                discussion.clone(),
+            )
+            .await
+            .unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let reopened = InksonOutboundStore::for_test_path(path.clone());
+        assert_eq!(
+            reopened
+                .creator_record(&owner, &scope)
+                .await
+                .unwrap()
+                .unwrap()
+                .intent(),
+            &intent
+        );
+        let snapshot = decode_snapshot(Some(std::str::from_utf8(&bytes).unwrap())).unwrap();
+        assert_eq!(snapshot.items.len(), 3);
+        assert_eq!(snapshot.items[0].request(), &create.request);
+        assert_eq!(snapshot.items[1].request(), &member.request);
+        assert_eq!(snapshot.items[2].request(), &discussion.request);
+        reopened
+            .freeze_circle_creator_intent(
+                intent.clone(),
+                create.clone(),
+                member.clone(),
+                discussion.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert!(
+            reopened
+                .freeze_circle_creator_intent(intent, create.clone(), create, discussion)
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[tokio::test]

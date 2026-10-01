@@ -54,6 +54,7 @@ pub fn CirclesPanel(
     token: Signal<String>,
 ) -> Element {
     let base_url = crate::app::SessionContext::base_url_string();
+    let session = crate::app::SessionContext::get();
     let navigator = dioxus_router::hooks::use_navigator();
     let mut circles = use_signal(Vec::<arkret_sdk::CircleView>::new);
     let mut previews = use_signal(Vec::<arkret_sdk::CirclePreview>::new);
@@ -63,6 +64,7 @@ pub fn CirclesPanel(
     let mut create_open = use_signal(|| false);
     let mut create_title = use_signal(String::new);
     let mut create_summary = use_signal(String::new);
+    let mut create_encrypted = use_signal(|| false);
     let mut member_actor = use_signal(String::new);
     let mut member_state = use_signal(|| "invite".to_owned());
     let mut busy = use_signal(|| false);
@@ -138,6 +140,14 @@ pub fn CirclesPanel(
 
             if !status().is_empty() {
                 div { class: "circle-status", role: "status", "data-testid": "circle-status", "{status}" }
+            }
+
+            if let Some(circle_id) = selected_circle_id.clone() {
+                crate::components::mls_creator_retry::CreatorMlsRetry {
+                    key: "{circle_id}",
+                    realm_id: realm_id.clone(), circle_id,
+                    refresh_hint: refresh().to_string(), token,
+                }
             }
 
             div { class: "circle-realm-grid",
@@ -429,6 +439,12 @@ pub fn CirclesPanel(
                             input { r#type: "text", value: "{create_title}", oninput: move |event| create_title.set(event.value()), "data-testid": "circle-create-title" }
                             label { "Summary" }
                             textarea { value: "{create_summary}", oninput: move |event| create_summary.set(event.value()) }
+                            label {
+                                input { r#type: "checkbox", checked: create_encrypted(),
+                                    "data-testid": "circle-create-encrypted",
+                                    onchange: move |event| create_encrypted.set(event.checked()) }
+                                "End-to-end encryption"
+                            }
                             div { class: "circle-boundary-preview",
                                 strong { "Boundary preview" }
                                 p { "Initial member: {principal_id}" }
@@ -486,6 +502,9 @@ pub fn CirclesPanel(
                                         };
                                         let creator_actor = create_event.actor_id().clone();
                                         let create_operation = create_event;
+                                        let encrypted = create_encrypted();
+                                        let account = session.active_account();
+                                        let state_store = crate::app::runtime_adapter::state_store_handle(session.state_store);
                                         busy.set(true);
                                         status.set("Creating Circle and establishing initial membership…".to_owned());
                                         let base = base.clone();
@@ -493,6 +512,17 @@ pub fn CirclesPanel(
                                         spawn(async move {
                                             let outcome = with_authed_api(&base, credential, |api| async move {
                                                 let submitter = api.event_submitter()?;
+                                                if encrypted {
+                                                    let account = account.ok_or_else(|| anyhow::anyhow!("encrypted Circle requires an active account"))?;
+                                                    let circle_id = submitter.submit_circle_creator_durable(&create_operation, &account.device_id).await?;
+                                                    let scope = arkret_sdk::ScopeRef::Circle { realm_id: realm_id.clone(), circle_id: circle_id.clone() };
+                                                    // The committed intent remains recoverable even if this
+                                                    // foreground task or its response disappears.
+                                                    crate::mls::creator_bootstrap::ensure_creator_circle_mls_genesis(
+                                                        &api, &state_store, &scope, &account.authority, &account.device_id, false,
+                                                    ).await.map_err(anyhow::Error::msg)?;
+                                                    return Ok::<_, anyhow::Error>(circle_id.to_string());
+                                                }
                                                 let parent_revision = submitter
                                                     .read_parent_membership_revision(&realm_id, &creator_actor)
                                                     .await?;
@@ -522,6 +552,7 @@ pub fn CirclesPanel(
                                                 Ok(circle_id) => {
                                                     create_title.set(String::new());
                                                     create_summary.set(String::new());
+                                                    create_encrypted.set(false);
                                                     create_open.set(false);
                                                     refresh += 1;
                                                     status.set("Circle created".to_owned());

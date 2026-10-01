@@ -3,6 +3,77 @@
 use super::*;
 
 #[test]
+fn stale_secure_creator_cache_cannot_replace_the_accepted_private_checkpoint() {
+    use crate::mls::persistence::encrypt_state;
+    use crate::secure_key_store::MemorySecureKeyStore;
+    let realm =
+        arkret_sdk::RealmId::new("ak:realm:AR9U75vD82XqGon9r2GYv6cwT3_W8U4BtjeOCoODErj_").unwrap();
+    let event =
+        arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [71; 32]);
+    let circle_id = arkret_sdk::CircleId::from_event_id(&event);
+    for scope in [
+        arkret_sdk::ScopeRef::Realm {
+            realm_id: realm.clone(),
+        },
+        arkret_sdk::ScopeRef::Circle {
+            realm_id: realm.clone(),
+            circle_id,
+        },
+    ] {
+        let path = temp_state_path(&format!(
+            "accepted-creator-cache-{}",
+            scope.canonical_mls_group_id().unwrap()
+        ));
+        let secure = MemorySecureKeyStore::new();
+        let mut store = LocalStateStore::with_path(path.clone());
+        store.switch_test_account("did:web:alice.example");
+        let group = scope.canonical_mls_group_id().unwrap().to_string();
+        let old = encrypt_state(
+            realm.as_str(),
+            &group,
+            0,
+            b"closed attempt",
+            "secret",
+            b"old-salt",
+        );
+        store.save_mls_checkpoint_for_scope(&scope, old).unwrap();
+        store
+            .persist_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        let winning = encrypt_state(
+            realm.as_str(),
+            &group,
+            0,
+            b"winning attempt",
+            "secret",
+            b"winning-salt",
+        );
+        store
+            .save_mls_checkpoint_for_scope(&scope, winning.clone())
+            .unwrap();
+        store
+            .mark_mls_genesis_emitted_for_scope_with_event(&scope, &event)
+            .unwrap();
+        let mut expected = winning;
+        expected.group_state_event_id = Some(event.clone());
+        store
+            .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        assert_eq!(
+            store.mls_checkpoint_for_scope(&scope),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            store.durable_mls_checkpoint_for_scope(&scope).unwrap(),
+            Some(expected)
+        );
+        assert!(
+            !crate::mls::creator_bootstrap::creator_scope_mls_bootstrap_pending(&store, &scope)
+        );
+    }
+}
+
+#[test]
 fn mls_snapshot_persists_and_round_trips_through_store() {
     // MLS snapshot envelope is durable across store instances and the
     // boot path can rehydrate every realm's group from the persisted

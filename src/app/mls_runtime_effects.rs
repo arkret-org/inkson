@@ -57,6 +57,84 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         active_account,
         ..
     } = SessionContext::get();
+    // Resume explicit Device creator intents on every route, including a
+    // create wizard left pending by unavailable evidence. No implicit activation.
+    let mut creator_resume_revision = use_signal(|| 0_u64);
+    use_future(move || async move {
+        let mut changes = crate::outbound_store::subscribe_committed_changes();
+        while changes.changed().await.is_ok() {
+            let next = (*creator_resume_revision.peek()).wrapping_add(1);
+            creator_resume_revision.set(next);
+        }
+    });
+    let mut creator_resume_in_flight = use_signal(|| false);
+    let mut creator_resume_error = last_error;
+    use_effect(move || {
+        let _ = creator_resume_revision();
+        let _ = sync_cursor();
+        let ready = secure_store_bootstrap_ready() && sync_bootstrap_complete();
+        let account = active_account();
+        let credential = token();
+        if !ready || credential.trim().is_empty() || *creator_resume_in_flight.peek() {
+            return;
+        }
+        let Some(account) = account else {
+            return;
+        };
+        creator_resume_in_flight.set(true);
+        // A resource would observe checkpoint writes inside its future and
+        // cancel itself at every install. Spawn the serial worker outside the
+        // reactive read context; the durable FSM remains the recovery fence.
+        spawn(async move {
+            let result = async {
+                let api = crate::transport::auth::authed_api_ready(account.server_url.as_str(), credential).await?;
+                let submitter = api.event_submitter()?;
+                let records = submitter.creator_bootstrap_records().await?;
+                let mut pending = false;
+                for record in records {
+                    if !matches!(record.intent().effective_scope(), arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. })
+                        || record.intent().creator_device_id() != &account.device_id
+                        || record.ready_receipt().is_some() || record.rejection().is_some()
+                        || record.superseded_winner().is_some() || record.quarantine_diagnostic().is_some() {
+                        continue;
+                    }
+                    let state = runtime_adapter::state_store_handle(state_store);
+                    let resumed = match record.intent().effective_scope() {
+                        arkret_sdk::ScopeRef::Circle { .. } => crate::mls::creator_bootstrap::ensure_creator_circle_mls_genesis(
+                            &api, &state, record.intent().effective_scope(), &account.authority, &account.device_id, false,
+                        ).await,
+                        arkret_sdk::ScopeRef::Realm { realm_id } => crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
+                            &api, &state, realm_id.as_str(), &account.authority, &account.device_id,
+                        ).await,
+                        _ => continue,
+                    };
+                    if let Err(error) = resumed {
+                        pending = true;
+                        creator_resume_error.set(Some(format!("Creator MLS bootstrap: {error}")));
+                        tracing::debug!(scope = ?record.intent().effective_scope(), %error, "Creator remains pending");
+                    }
+                }
+                Ok::<_, anyhow::Error>(pending)
+            }.await;
+            let retry = !matches!(result, Ok(false));
+            if !retry
+                && creator_resume_error
+                    .peek()
+                    .as_ref()
+                    .is_some_and(|error| error.starts_with("Creator MLS bootstrap:"))
+            {
+                creator_resume_error.set(None);
+            }
+            if retry {
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(5)).await;
+            }
+            creator_resume_in_flight.set(false);
+            if retry {
+                let next = (*creator_resume_revision.peek()).wrapping_add(1);
+                creator_resume_revision.set(next);
+            }
+        });
+    });
     let mls_admission_retry_attempt = use_signal(|| 0_u32);
     let mls_key_package_publish_retry_attempt = use_signal(|| 0_u32);
     let mls_coverage_repair_in_flight = use_signal(std::collections::BTreeSet::<String>::new);

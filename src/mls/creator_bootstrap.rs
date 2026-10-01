@@ -69,41 +69,62 @@ pub(crate) fn creator_mls_bootstrap_pending(
 /// authority-root cell. In that gap the asynchronous entry point verifies the
 /// exact accepted founding Event directly with the Station.
 fn creator_mls_bootstrap_incomplete(store: &LocalStateStore, realm_id: &str) -> bool {
+    let Ok(realm_id) = arkret_sdk::RealmId::new(realm_id) else {
+        return true;
+    };
+    creator_scope_mls_bootstrap_pending(store, &arkret_sdk::ScopeRef::Realm { realm_id })
+}
+
+pub(crate) fn creator_scope_mls_bootstrap_pending(
+    store: &LocalStateStore,
+    scope: &arkret_sdk::ScopeRef,
+) -> bool {
+    creator_scope_mls_bootstrap_pending_reason(store, scope).is_some()
+}
+
+pub(crate) fn creator_scope_mls_bootstrap_pending_reason(
+    store: &LocalStateStore,
+    scope: &arkret_sdk::ScopeRef,
+) -> Option<&'static str> {
     if store.persist_error().is_some() {
-        return true;
+        return Some("The local encryption state could not be saved.");
     }
-    let Some(snapshot) = store.mls_checkpoint_for(realm_id) else {
-        return true;
+    let Some(snapshot) = store.mls_checkpoint_for_scope(scope) else {
+        return Some("Waiting for this device's encryption checkpoint.");
     };
     // This recovery entry point owns the creator's epoch-0 transaction. Once
     // the group has advanced, commit convergence owns later epochs.
     if snapshot.epoch != 0 {
-        return false;
+        return None;
     }
-    if !store.mls_genesis_emitted_for(realm_id) {
-        return true;
+    if !store.mls_genesis_emitted_for_scope(scope) {
+        return Some("Waiting for accepted encryption setup to be recorded.");
     }
     // `emitted` plus a local marker is not a completion boundary: the create
     // flow can be unmounted right after the submit succeeds. Bootstrap is
     // complete only once the epoch-zero checkpoint names the accepted Genesis
     // Event that materialized it.
     let accepted = store
-        .mls_group_state_ref_for_effective_scope(realm_id, None, &snapshot.group_id, 0)
+        .mls_group_state_ref_for_effective_scope(
+            scope.realm_id().as_str(),
+            scope.circle_id().map(|id| id.as_str()),
+            &snapshot.group_id,
+            0,
+        )
         .ok();
-    let scope =
-        arkret_sdk::RealmId::new(realm_id).map(|realm_id| arkret_sdk::ScopeRef::Realm { realm_id });
-    let durable = scope.ok().and_then(|scope| {
-        store
-            .durable_mls_checkpoint_for_scope(&scope)
-            .ok()
-            .flatten()
-    });
-    accepted.is_none()
-        || durable.is_none_or(|durable| {
-            durable.epoch != 0
-                || durable.group_id != snapshot.group_id
-                || durable.group_state_event_id.as_ref() != accepted.as_ref()
-        })
+    let Some(accepted) = accepted else {
+        return Some("Waiting for the accepted encryption state reference.");
+    };
+    let Some(durable) = store.durable_mls_checkpoint_for_scope(scope).ok().flatten() else {
+        return Some("Waiting for the encryption checkpoint to finish saving.");
+    };
+    if durable.epoch != 0
+        || durable.group_id != snapshot.group_id
+        || durable.group_state_event_id.as_ref() != Some(&accepted)
+    {
+        return Some("Saved encryption keys have not converged to the accepted state.");
+    }
+    None
 }
 
 async fn publish_accepted_creator_genesis(
@@ -111,19 +132,27 @@ async fn publish_accepted_creator_genesis(
     realm_id: &str,
     accepted_event_id: &arkret_sdk::EventId,
 ) -> Result<(), String> {
-    let authority = state
-        .read(|store| store.active_authority())
-        .ok_or_else(|| "creator publication has no active account".to_owned())?;
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm_id).map_err(|error| error.to_string())?,
     };
+    publish_accepted_scope_creator_genesis(state, &scope, accepted_event_id).await
+}
+
+async fn publish_accepted_scope_creator_genesis(
+    state: &StateStoreHandle,
+    scope: &arkret_sdk::ScopeRef,
+    accepted_event_id: &arkret_sdk::EventId,
+) -> Result<(), String> {
+    let authority = state
+        .read(|store| store.active_authority())
+        .ok_or_else(|| "creator publication has no active account".to_owned())?;
     let vault = crate::outbound_store::InksonOutboundStore::open(
         &authority,
         crate::outbound_store::OutboundLane::Standard,
     )
     .map_err(|error| error.to_string())?;
     if let Some(record) = vault
-        .creator_record(&arkret_sdk::ActorId::account(authority), &scope)
+        .creator_record(&arkret_sdk::ActorId::account(authority), scope)
         .await
         .map_err(|error| error.to_string())?
         && record
@@ -134,8 +163,8 @@ async fn publish_accepted_creator_genesis(
     }
     let barrier = state.write(|store| {
         store.mark_mls_genesis_emitted_for_effective_scope_with_event(
-            realm_id,
-            None,
+            scope.realm_id().as_str(),
+            scope.circle_id().map(|id| id.as_str()),
             accepted_event_id,
         )
     })?;
@@ -312,6 +341,138 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     .await
 }
 
+/// Circle activation resumes only an explicit, durable, original-device
+/// intent. Parent Realm ownership never grants Circle creator authority.
+pub(crate) async fn ensure_creator_circle_mls_genesis(
+    api: &crate::transport::TransportClient,
+    state_store: &StateStoreHandle,
+    scope: &arkret_sdk::ScopeRef,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    explicit_retry: bool,
+) -> Result<(), String> {
+    let arkret_sdk::ScopeRef::Circle { circle_id, .. } = scope else {
+        return Err("Circle creator requires an exact Circle scope".into());
+    };
+    let lock = creator_bootstrap_lock(format!(
+        "{}|{}|{}|{}",
+        authority.station_id, authority.principal_id, device_id, circle_id
+    ));
+    let _guard = lock.lock().await;
+    let submitter = api.event_submitter().map_err(|error| error.to_string())?;
+    let record = submitter
+        .creator_bootstrap_record(scope)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Circle activation has no durable explicit creator intent".to_owned())?;
+    if record.intent().creator_device_id() != device_id {
+        return Err("Circle creator requires its original device; use Welcome or recovery".into());
+    }
+    if record.quarantine_diagnostic().is_some()
+        || record.superseded_winner().is_some()
+        || (record.rejection().is_some() && !explicit_retry)
+    {
+        return Err("Circle creator attempt is terminal".into());
+    }
+    // Initial membership was frozen with create. Recover those exact bytes
+    // before requiring the Circle's independently authenticated current cut.
+    submitter
+        .drain_outbound()
+        .await
+        .map_err(|error| error.to_string())?;
+    // The original closed creator intent is independently verified by the
+    // durable FSM. A parent detail panel invalidation cannot gate its replay.
+    let submitter = submitter.for_founding_realm(scope.realm_id().clone());
+    resume_durable_scope_creator(
+        api,
+        state_store,
+        &submitter,
+        scope,
+        authority,
+        explicit_retry,
+    )
+    .await
+}
+
+async fn resume_durable_scope_creator(
+    api: &crate::transport::TransportClient,
+    state_store: &StateStoreHandle,
+    submitter: &crate::event_submit::EventSubmitter,
+    scope: &arkret_sdk::ScopeRef,
+    authority: &arkret_sdk::AccountId,
+    explicit_start: bool,
+) -> Result<(), String> {
+    if explicit_start
+        && submitter
+            .creator_bootstrap_record(scope)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_some_and(|record| record.rejection().is_some())
+    {
+        submitter
+            .reopen_rejected_creator(scope)
+            .await
+            .map_err(|error| format!("reopen rejected creator attempt: {error}"))?;
+    }
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    crate::mls::runtime::ensure_existing_account_mls_secret_durable(
+        secure_store.as_ref(),
+        authority,
+    )
+    .await
+    .map_err(|error| format!("persist existing MLS root: {error}"))?;
+    // Resolve the exact winner before restoring or authoring anything.
+    // The original pin is immutable; unavailable evidence cannot mint.
+    submitter
+        .persist_creator_governance_pin(scope)
+        .await
+        .map_err(|error| format!("persist creator pin: {error}"))?;
+    let mut accepted = submitter
+        .reconcile_creator_genesis(scope)
+        .await
+        .map_err(|error| format!("verify exact creator Genesis: {error}"))?;
+    let (record, summary) = submitter
+        .persist_creator_epoch_zero(scope, secure_store.as_ref())
+        .await
+        .map_err(|error| format!("restore committed creator epoch zero: {error}"))?;
+    if accepted.is_none() {
+        crate::mls::runtime::upload_mls_genesis_public_material(api, &summary)
+            .await
+            .map_err(|error| {
+                format!(
+                    "publish original creator material: {}",
+                    error.user_message()
+                )
+            })?;
+        let result = submitter.submit_creator_genesis(record).await;
+        // Even a lost response is settled only by exact verified bytes.
+        accepted = submitter
+            .reconcile_creator_genesis(scope)
+            .await
+            .map_err(|error| format!("verify creator acceptance after submit: {error}"))?;
+        if accepted.is_none() {
+            return Err(format!(
+                "original Genesis remains pending: {}",
+                result
+                    .err()
+                    .map(|error| error.to_string())
+                    .unwrap_or_else(|| "no exact accepted result".into())
+            ));
+        }
+    }
+    let accepted = accepted.ok_or_else(|| "creator exact acceptance missing".to_owned())?;
+    submitter
+        .converge_creator_artifacts(scope, secure_store.as_ref())
+        .await
+        .map_err(|error| format!("install exact creator artifacts: {error}"))?;
+    publish_accepted_scope_creator_genesis(state_store, scope, &accepted).await?;
+    submitter
+        .publish_creator_ready(scope, secure_store.as_ref())
+        .await
+        .map_err(|error| format!("publish durable creator readiness: {error}"))?;
+    Ok(())
+}
+
 async fn bootstrap_creator_realm_mls_genesis(
     api: &crate::transport::TransportClient,
     state_store: &StateStoreHandle,
@@ -356,75 +517,15 @@ async fn bootstrap_creator_realm_mls_genesis(
     }
     if durable_intent.is_some() {
         let submitter = submitter.for_founding_realm(scope.realm_id().clone());
-        if explicit_start
-            && submitter
-                .creator_bootstrap_record(&scope)
-                .await
-                .map_err(|error| error.to_string())?
-                .is_some_and(|record| record.rejection().is_some())
-        {
-            submitter
-                .reopen_rejected_creator(&scope)
-                .await
-                .map_err(|error| format!("reopen rejected creator attempt: {error}"))?;
-        }
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        crate::mls::runtime::ensure_existing_account_mls_secret_durable(
-            secure_store.as_ref(),
+        return resume_durable_scope_creator(
+            api,
+            state_store,
+            &submitter,
+            &scope,
             authority,
+            explicit_start,
         )
-        .await
-        .map_err(|error| format!("persist existing MLS root: {error}"))?;
-        // Resolve the exact winner before restoring or authoring anything.
-        // The original pin is immutable; unavailable evidence cannot mint.
-        submitter
-            .persist_creator_governance_pin(&scope)
-            .await
-            .map_err(|error| format!("persist creator pin: {error}"))?;
-        let mut accepted = submitter
-            .reconcile_creator_genesis(&scope)
-            .await
-            .map_err(|error| format!("verify exact creator Genesis: {error}"))?;
-        let (record, summary) = submitter
-            .persist_creator_epoch_zero(&scope, secure_store.as_ref())
-            .await
-            .map_err(|error| format!("restore committed creator epoch zero: {error}"))?;
-        if accepted.is_none() {
-            crate::mls::runtime::upload_mls_genesis_public_material(api, &summary)
-                .await
-                .map_err(|error| {
-                    format!(
-                        "publish original creator material: {}",
-                        error.user_message()
-                    )
-                })?;
-            let result = submitter.submit_creator_genesis(record).await;
-            // Even a lost response is settled only by exact verified bytes.
-            accepted = submitter
-                .reconcile_creator_genesis(&scope)
-                .await
-                .map_err(|error| format!("verify creator acceptance after submit: {error}"))?;
-            if accepted.is_none() {
-                return Err(format!(
-                    "original Genesis remains pending: {}",
-                    result
-                        .err()
-                        .map(|error| error.to_string())
-                        .unwrap_or_else(|| "no exact accepted result".into())
-                ));
-            }
-        }
-        let accepted = accepted.ok_or_else(|| "creator exact acceptance missing".to_owned())?;
-        submitter
-            .converge_creator_artifacts(&scope, secure_store.as_ref())
-            .await
-            .map_err(|error| format!("install exact creator artifacts: {error}"))?;
-        publish_accepted_creator_genesis(state_store, realm_id, &accepted).await?;
-        submitter
-            .publish_creator_ready(&scope, secure_store.as_ref())
-            .await
-            .map_err(|error| format!("publish durable creator readiness: {error}"))?;
-        return Ok(());
+        .await;
     }
     // An accepted Genesis is the authoritative completion record. Resolve it,
     // or drain its byte-identical durable queue item, before reading or

@@ -672,6 +672,7 @@ impl LocalStateStore {
         genesis_event_id: &arkret_sdk::EventId,
     ) -> Result<LocalStatePersistBarrier, String> {
         self.ensure_cached_loaded();
+        self.absorb_mls_receive_overlay();
         let scope_key = mls_scope_checkpoint_key(effective_scope)?;
         // A Sidecar scope keys its state per group, and the accepted genesis
         // names the group whose snapshot this device already holds.
@@ -734,6 +735,7 @@ impl LocalStateStore {
             attach_group_state_ref_to_snapshot(&mut self.cached, &scoped_key, &record);
         }
         self.cached.mls_genesis_emitted.insert(scoped_key);
+        self.persist_e2ee_plaintext_cache_if_ready();
         self.begin_durable_flush()
             .map_err(|error| error.to_string())
     }

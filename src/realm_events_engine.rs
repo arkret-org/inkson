@@ -381,6 +381,109 @@ pub(crate) async fn verified_mls_recovery_tail(
         .collect())
 }
 
+/// Verify the original scope create under the current Realm authority and a
+/// continuous parent stream ending at the signed current snapshot cut.
+/// A Circle create is a parent Realm Event, not the Realm's root create.
+pub(crate) async fn verified_creator_create(
+    http: &arkret_sdk::http_client::Client,
+    intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
+) -> garth::Result<(
+    arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
+    arkret_sdk::RealmStateSnapshot,
+)> {
+    use arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate;
+    let realm = intent.effective_scope().realm_id();
+    let authority = AuthorityClient::new(http.clone());
+    let (bundle, freshness, mut replica) = fresh_verified_realm(&authority, http, realm).await?;
+    let snapshot = http.realm_state_snapshot_head(realm).await?;
+    let keys =
+        garth::fetch_historical_station_key_directory(http, &bundle, None, Some(&snapshot)).await?;
+    let fresh = arkret_identity::RealmAuthorityFreshness::new(
+        chrono::Utc::now(),
+        freshness.expected_nonce.clone(),
+    );
+    replica.install_verified_current_snapshot_heads(&snapshot, &fresh, &keys)?;
+    let (event, commit) = match intent.effective_scope() {
+        arkret_sdk::ScopeRef::Realm { .. } => {
+            (bundle.genesis_event.clone(), bundle.genesis_commit.clone())
+        }
+        arkret_sdk::ScopeRef::Circle { .. } => {
+            let stream = CommitStreamRef::from_scope(
+                &arkret_sdk::ScopeRef::Realm {
+                    realm_id: realm.clone(),
+                },
+                Some(realm.clone()),
+            )?;
+            let head = snapshot
+                .visible_stream_heads
+                .iter()
+                .find(|head| head.stream_ref == stream)
+                .ok_or_else(|| {
+                    garth::Error::Protocol("Circle create query has no signed parent head".into())
+                })?;
+            let end = head.stream_position.checked_add(1).ok_or_else(|| {
+                garth::Error::Protocol("Circle create query head overflow".into())
+            })?;
+            let mut replay = replica.fork_verified_authority()?;
+            let (pages, _) = verified_stream_pages(
+                &authority,
+                http,
+                &mut replay,
+                &bundle,
+                &freshness,
+                realm,
+                &stream,
+                ReplayStart::ReadableFloor,
+                Some(end),
+            )
+            .await?
+            .into_verified()?;
+            if replay.verified_head(&stream) != Some(head) {
+                return Err(garth::Error::Protocol(
+                    "Circle create query does not reach signed parent cut".into(),
+                ));
+            }
+            let mut original = None;
+            for row in pages.iter().flat_map(|page| page.rows()) {
+                if let CommittedEventView::Full(full) = row
+                    && full.event.event_id == *intent.scope_create_event_id()
+                {
+                    if original
+                        .replace((full.event.clone(), full.commit.clone()))
+                        .is_some()
+                    {
+                        return Err(garth::Error::Protocol(
+                            "Circle create query has duplicate original".into(),
+                        ));
+                    }
+                }
+            }
+            original.ok_or_else(|| {
+                garth::Error::Protocol(
+                    "original Circle create is not disclosed at verified cut".into(),
+                )
+            })?
+        }
+        _ => {
+            return Err(garth::Error::Protocol(
+                "creator requires Realm or Circle scope".into(),
+            ));
+        }
+    };
+    let final_freshness =
+        arkret_identity::RealmAuthorityFreshness::new(chrono::Utc::now(), freshness.expected_nonce);
+    arkret_identity::verify_realm_authority_bundle(&bundle, &final_freshness, &keys)
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    let accepted = MlsCreatorBootstrapAcceptedCreate::new(
+        intent,
+        event,
+        commit,
+        realm.digest_suite_code().digest_suite(),
+        bundle,
+    )?;
+    Ok((accepted, snapshot))
+}
+
 /// Exact creator query at a complete independently verified current cut.
 /// Missing disclosure, an incomplete chain or a changed cut is unavailable,
 /// never evidence that a queued Genesis can be replaced.
@@ -1402,6 +1505,19 @@ fn validate_signed_floor_rows(
             CurrentSelector::MemberState { .. } => {
                 closed_value::<arkret_wire::MemberStateCurrent>(value, "member_state")?;
             }
+            CurrentSelector::Circle { circle_id } => {
+                // Circle configuration is created in the parent Realm stream.
+                // Membership and MLS state retain their own Circle stream.
+                let circle: arkret_sdk::Circle = closed_value(value, "circle")?;
+                if circle.id.as_ref() != Some(circle_id)
+                    || circle.realm_id != *realm_id
+                    || circle.schema != arkret_wire::SchemaId::CIRCLE_V1
+                {
+                    return Err(protocol(
+                        "signed Circle differs from its parent Realm subject",
+                    ));
+                }
+            }
             CurrentSelector::Strand { strand_id } => {
                 let parsed: arkret_models_collaboration::objects::strand::Strand =
                     closed_value(value, "strand")?;
@@ -1544,9 +1660,9 @@ fn validate_signed_floor_rows(
                 bindings.push(pair_key.clone());
             }
             _ => {
-                return Err(protocol(
-                    "signed floor current family has no product installer",
-                ));
+                return Err(protocol(format!(
+                    "signed floor current family {selector:?} has no product installer"
+                )));
             }
         }
     }
@@ -2182,9 +2298,15 @@ pub(crate) fn require_exact_claimed_rows(
             .iter()
             .find(|item| item.commit().stream_position == claimed.commit().stream_position);
         if exact.is_none_or(|item| *item != *claimed) {
-            return Err(garth::Error::Protocol(
-                "account frame Commit differs from verified stream row".to_owned(),
-            ));
+            return Err(garth::Error::Protocol(format!(
+                "account frame Commit differs from verified stream row: stream={:?}, position={}, scanned={}, commit_matches={}, claimed_disclosed={}, scanned_disclosed={}",
+                claimed.commit().stream_ref,
+                claimed.commit().stream_position,
+                exact.is_some(),
+                exact.is_some_and(|item| item.commit() == claimed.commit()),
+                claimed.reducer_input().is_some(),
+                exact.is_some_and(|item| item.reducer_input().is_some()),
+            )));
         }
     }
     Ok(())
@@ -2555,6 +2677,79 @@ mod tests {
         assert_ne!(foreign_space.realm_id, realm_id);
         set_row_value(&mut foreign[metadata_index], json!(foreign_space));
         assert!(validate(&foreign).is_err());
+    }
+
+    #[test]
+    fn signed_parent_floor_installs_exact_circle_configuration_without_child_state() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let circle = arkret_sdk::Circle::create_object(
+            realm_id.clone(),
+            "Circle",
+            crate::operation::ak_ops::circle_display_from_title("Circle"),
+            creator.clone(),
+        );
+        let (bundle, _, items) =
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&creator)
+                    .into_iter()
+                    .chain([("ak.circle.create".to_owned(), json!({"object": circle}))])
+                    .collect(),
+                "alice.example",
+                DEVICE_ID,
+            );
+        let head_commit = &items.last().unwrap().commit;
+        let head = arkret_wire::CommitStreamHead {
+            stream_ref: head_commit.stream_ref.clone(),
+            stream_position: head_commit.stream_position,
+            commit_id: head_commit.commit_id.clone(),
+        };
+        let rows = soland_bootstrap_rows(&bundle, &items);
+        let validate = |rows: &[TypedCurrentResult]| {
+            validate_signed_floor_rows(
+                &realm_id,
+                &bundle,
+                &head,
+                arkret_sdk::HistoryAccess::SinceJoin,
+                rows,
+            )
+        };
+        validate(&rows).unwrap();
+        let index = rows.len() - 1;
+        let mut substituted = rows.clone();
+        let TypedCurrentResult::Value { value, .. } = &mut substituted[index];
+        value["id"] = json!(arkret_sdk::CircleId::from_event_id(
+            &items[0].event.event_id
+        ));
+        assert!(validate(&substituted).is_err());
+        let mut foreign = rows.clone();
+        let TypedCurrentResult::Value { value, .. } = &mut foreign[index];
+        value["realm_id"] = json!(arkret_sdk::RealmId::from_event_id(&items[0].event.event_id));
+        assert!(validate(&foreign).is_err());
+        let mut open = rows.clone();
+        let TypedCurrentResult::Value { value, .. } = &mut open[index];
+        value["unregistered"] = json!(true);
+        assert!(validate(&open).is_err());
+        let mut child_source = rows.clone();
+        let TypedCurrentResult::Value {
+            source_stream_ref,
+            selector,
+            ..
+        } = &mut child_source[index];
+        let arkret_wire::CurrentSelector::Circle { circle_id } = selector else {
+            unreachable!()
+        };
+        *source_stream_ref = CommitStreamRef::Circle {
+            realm_id: realm_id.clone(),
+            circle_id: circle_id.clone(),
+        };
+        assert!(validate(&child_source).is_err());
     }
 
     #[test]
@@ -3206,6 +3401,12 @@ mod tests {
                     commit,
                     json!({"membership": "join"}),
                 ),
+                "ak.circle.create" => {
+                    let circle_id = arkret_sdk::CircleId::from_event_id(&item.event.event_id);
+                    let mut value = payload["object"].clone();
+                    value["id"] = json!(circle_id);
+                    row(CurrentSelector::Circle { circle_id }, commit, value)
+                }
                 "ak.strand.create" => {
                     let strand_id = arkret_sdk::StrandId::from_event_id(&item.event.event_id);
                     let mut value = payload["object"].clone();
