@@ -95,6 +95,9 @@ pub(crate) use e2ee_secure_cache::{
     browser_storage_estimate,
 };
 
+mod account_decode;
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+pub(crate) use account_decode::run_browser_retired_account_contract;
 mod account_persist;
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(crate) use account_persist::run_browser_account_persist_fault_contract;
@@ -869,8 +872,16 @@ impl LocalStateStore {
     #[cfg(not(target_arch = "wasm32"))]
     fn read_account_state(&self, storage_scope: &str) -> Option<ClientLocalState> {
         let path = self.account_state_path(storage_scope);
-        let bytes = fs::read(&path).ok()?;
-        match serde_json::from_slice::<ClientLocalState>(&bytes) {
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // An earlier version may already have moved a legacy account
+                // to this sibling. Recover it without deleting the original.
+                fs::read(path.with_extension("corrupt")).ok()?
+            }
+            Err(_) => return None,
+        };
+        match account_decode::decode_account_state(&bytes) {
             Ok(state) => Some(state),
             Err(error) => {
                 let corrupt_path = path.with_extension("corrupt");
@@ -910,7 +921,7 @@ impl LocalStateStore {
                 Ok(None) | Err(_) => return None,
             }
         };
-        match serde_json::from_str::<ClientLocalState>(&json) {
+        match account_decode::decode_account_state(json.as_bytes()) {
             Ok(state) => Some(state),
             Err(error) => {
                 // Preserve the undecodable blob under a sibling secure entry

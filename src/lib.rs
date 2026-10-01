@@ -127,6 +127,12 @@ pub async fn run_browser_account_persist_fault_contract() -> anyhow::Result<()> 
     state::run_browser_account_persist_fault_contract().await
 }
 
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+#[doc(hidden)]
+pub async fn run_browser_retired_account_contract() -> anyhow::Result<()> {
+    state::run_browser_retired_account_contract().await
+}
+
 /// Durable-outbound-queue contract entry points for the browser test suite
 /// (`tests/wasm_indexed_db_capacity.rs`). `outbound_store` is a private module,
 /// so the contract reaches the real adoption / read-modify-write functions

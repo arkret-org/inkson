@@ -288,6 +288,8 @@ pub(super) async fn prepare_retained_account_sign_in(
     }) {
         return Ok(None);
     }
+    // Retired records are diagnostics only. They neither supply an accepted
+    // device candidate nor block a fresh authentication transaction.
     let candidate = accepted
         .map(|checkpoint| (checkpoint.did.clone(), checkpoint.device_id.clone()))
         .or_else(|| {
