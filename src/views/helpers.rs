@@ -24,7 +24,7 @@ pub(crate) fn contact_peer_label(
     }
 }
 
-/// Render an account's handles as one `@a, @b` label, or `fallback` when the
+/// Render an account's canonical handles as one `a, b` label, or `fallback` when the
 /// account has none.
 ///
 /// Shared by the sidebar account row and the settings account section. They
@@ -34,11 +34,7 @@ pub(crate) fn account_handles_display(handles: &[String], fallback: &str) -> Str
     if handles.is_empty() {
         fallback.to_owned()
     } else {
-        handles
-            .iter()
-            .map(|handle| format!("@{handle}"))
-            .collect::<Vec<_>>()
-            .join(", ")
+        handles.join(", ")
     }
 }
 use crate::api_error::normalize_wait_for_sync_token;

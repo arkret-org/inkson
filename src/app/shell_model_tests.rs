@@ -272,7 +272,10 @@ fn signed_out_identity_labels_do_not_leak_a_principal_id() {
 #[test]
 fn identity_labels_prefer_display_name_then_handle_then_protocol_id() {
     let store = crate::state::isolated_store_for_tests("shell-model-ladder");
-    let handles = ["alice.example".to_owned()];
+    let handles = [
+        "alice:local.host".to_owned(),
+        "alice:example.com".to_owned(),
+    ];
     let with_name = account_identity_labels(AccountIdentityInput {
         has_session: true,
         personal_handles: &handles,
@@ -284,8 +287,12 @@ fn identity_labels_prefer_display_name_then_handle_then_protocol_id() {
         store: &store,
     });
     assert_eq!(with_name.label, "Alice");
-    assert_eq!(with_name.detail, "@alice.example · Laptop");
-    assert_eq!(with_name.handles_title, "alice.example");
+    assert_eq!(with_name.detail, "alice:local.host · Laptop");
+    assert_eq!(
+        with_name.handles_label,
+        "alice:local.host, alice:example.com"
+    );
+    assert_eq!(with_name.handles_title, with_name.handles_label);
 
     let without_name = account_identity_labels(AccountIdentityInput {
         has_session: true,
@@ -297,8 +304,8 @@ fn identity_labels_prefer_display_name_then_handle_then_protocol_id() {
         principal_id_value: "ak:did_core:web:alice.example",
         store: &store,
     });
-    assert_eq!(without_name.label, "@alice.example");
-    assert_eq!(without_name.detail, "@alice.example · ak:dev…001");
+    assert_eq!(without_name.label, "alice:local.host");
+    assert_eq!(without_name.detail, "alice:local.host · ak:dev…001");
 
     let without_handle = account_identity_labels(AccountIdentityInput {
         has_session: true,
