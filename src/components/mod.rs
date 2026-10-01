@@ -26,6 +26,7 @@ pub mod generated_avatar;
 /// Mounted once near the app shell; renders only when boot/per-Realm
 /// detection flags `needs_mls_backup` (local secret exists, no server backup).
 pub mod mls_backup_prompt;
+pub(crate) mod mls_creator_retry;
 /// Account-MLS-secret auto-unlock prompt — the recovery-passphrase banner
 /// that restores encrypted history on a fresh device. Mounted once near the
 /// app shell; renders only when boot detection flags `needs_mls_unlock`.

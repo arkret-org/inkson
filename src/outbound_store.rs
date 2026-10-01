@@ -15,7 +15,8 @@
 pub(crate) mod creator_protection;
 
 use arkret_models_collaboration::mls_creator_bootstrap::{
-    MlsCreatorBootstrapIntent, MlsCreatorBootstrapRecord,
+    MlsCreatorBootstrapIntent, MlsCreatorBootstrapRecord, MlsCreatorBootstrapRejection,
+    MlsCreatorBootstrapVerifiedAbsence,
 };
 use garth::OutboundQueueStore;
 use garth::outbound::BoxOutboundFuture;
@@ -71,6 +72,58 @@ struct DurableOutboundState {
 }
 
 impl DurableOutboundState {
+    fn settle_creator_rejections(
+        &mut self,
+        decision: &Option<(arkret_sdk::EventId, MlsCreatorBootstrapVerifiedAbsence)>,
+    ) -> garth::Result<()> {
+        for record in &mut self.creator_bootstrap_records {
+            let Some(queued) = record.queued_genesis() else {
+                continue;
+            };
+            let Some(item) = self
+                .items
+                .iter()
+                .find(|item| item.event_id() == queued.signed_genesis().event_id())
+            else {
+                continue;
+            };
+            let terminal_problem = item.last_problem.as_deref().filter(|problem| {
+                item.status == garth::SendQueueStatus::Failed
+                    && MlsCreatorBootstrapRejection::terminal_problem_reason(problem).is_some()
+            });
+            let reason = match &item.submission.state {
+                garth::SubmissionState::Rejected {
+                    status: arkret_wire::AuthorityRejectionStatus::Rejected,
+                    reason_code,
+                } if item.status == garth::SendQueueStatus::Rejected => Some(reason_code),
+                _ if terminal_problem.is_some() => None,
+                _ => continue,
+            };
+            let Some((_, absence)) = decision.as_ref().filter(|(id, _)| id == item.event_id())
+            else {
+                return Err(garth::Error::Storage(
+                    "creator rejection has no verified decision for this send attempt".into(),
+                ));
+            };
+            let rejection = match terminal_problem {
+                Some(problem) => MlsCreatorBootstrapRejection::from_problem(
+                    record,
+                    problem.clone(),
+                    absence.clone(),
+                )?,
+                None => MlsCreatorBootstrapRejection::new(
+                    record,
+                    reason
+                        .expect("typed authority rejection has its reason")
+                        .clone(),
+                    absence.clone(),
+                )?,
+            };
+            record.reject(rejection)?;
+        }
+        Ok(())
+    }
+
     fn validate(&self) -> garth::Result<()> {
         for (index, record) in self.creator_bootstrap_records.iter().enumerate() {
             record.validate()?;
@@ -99,6 +152,51 @@ impl DurableOutboundState {
             }
         }
         for record in &self.creator_bootstrap_records {
+            if record.closed_attempts().iter().any(|closed| {
+                self.items
+                    .iter()
+                    .any(|item| item.event_id() == closed.event_id())
+            }) {
+                return Err(garth::Error::Storage(
+                    "closed creator attempt queue item was reintroduced".into(),
+                ));
+            }
+            if let MlsCreatorBootstrapRecord::Rejected {
+                rejection,
+                rejected_record,
+                ..
+            } = record
+            {
+                let queued = rejected_record.queued_genesis().ok_or_else(|| {
+                    garth::Error::Storage("rejected creator lost its signed diagnostic".into())
+                })?;
+                let expected = crate::event_submit::event_submission(queued.signed_genesis())
+                    .map_err(|error| garth::Error::Storage(error.to_string()))?;
+                let item = self
+                    .items
+                    .iter()
+                    .find(|item| item.event_id() == rejection.event_id())
+                    .ok_or_else(|| {
+                        garth::Error::Storage("rejected creator lost its stopped queue item".into())
+                    })?;
+                if item.request() != &expected.request
+                    || match rejection.authority_problem() {
+                        Some(problem) => {
+                            item.status != garth::SendQueueStatus::Failed
+                                || item.last_problem.as_deref() != Some(problem)
+                        }
+                        None => {
+                            item.status != garth::SendQueueStatus::Rejected
+                                || item.rejection_reason_code() != Some(rejection.reason_code())
+                        }
+                    }
+                    || item.settled_at.is_none()
+                {
+                    return Err(garth::Error::Storage(
+                        "rejected creator disagrees with its original queue outcome".into(),
+                    ));
+                }
+            }
             if let MlsCreatorBootstrapRecord::Superseded {
                 loser_genesis: Some((id, _)),
                 ..
@@ -482,6 +580,9 @@ async fn mutate_state_in_file<R>(
 
 #[derive(Clone)]
 pub(crate) struct InksonOutboundStore {
+    creator_decision: std::sync::Arc<
+        std::sync::Mutex<Option<(arkret_sdk::EventId, MlsCreatorBootstrapVerifiedAbsence)>>,
+    >,
     #[cfg(not(target_arch = "wasm32"))]
     path: std::path::PathBuf,
     #[cfg(not(target_arch = "wasm32"))]
@@ -530,6 +631,7 @@ impl InksonOutboundStore {
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn for_test_path(path: std::path::PathBuf) -> Self {
         Self {
+            creator_decision: Default::default(),
             path,
             protection: None,
         }
@@ -543,6 +645,7 @@ impl InksonOutboundStore {
         #[cfg(not(target_arch = "wasm32"))]
         {
             Ok(Self {
+                creator_decision: Default::default(),
                 protection: Some((
                     authority.clone(),
                     crate::secure_key_store::default_secure_key_store("inkson"),
@@ -555,6 +658,7 @@ impl InksonOutboundStore {
         #[cfg(target_arch = "wasm32")]
         {
             Ok(Self {
+                creator_decision: Default::default(),
                 storage_key: format!("{OUTBOUND_QUEUE_KEY_PREFIX}{scope}"),
             })
         }
@@ -584,6 +688,20 @@ impl InksonOutboundStore {
             let store = secure_outbound_store()?;
             mutate_state_in_store(store.as_ref(), &self.storage_key, mutation).await
         }
+    }
+
+    /// The verified gate decision is published with a terminal authority answer,
+    /// never as a refreshed pin or an unregistered active-state amendment.
+    pub(crate) fn remember_creator_absence(
+        &self,
+        decision: (arkret_sdk::EventId, MlsCreatorBootstrapVerifiedAbsence),
+    ) -> garth::Result<()> {
+        *self
+            .creator_decision
+            .lock()
+            .map_err(|_| garth::Error::Storage("creator decision lock poisoned".into()))? =
+            Some(decision);
+        Ok(())
     }
 
     pub(crate) async fn freeze_creator_intent(
@@ -785,7 +903,12 @@ impl InksonOutboundStore {
         next.supersede(winner)?;
         let loser = expected
             .queued_genesis()
-            .map(|queued| queued.outbound_queue_item_id().clone());
+            .map(|queued| queued.outbound_queue_item_id().clone())
+            .or_else(|| {
+                expected
+                    .rejection()
+                    .map(|rejection| rejection.event_id().clone())
+            });
         self.mutate_state(|state| {
             let record = state
                 .creator_bootstrap_records
@@ -804,6 +927,42 @@ impl InksonOutboundStore {
             if let Some(loser) = loser {
                 state.items.retain(|item| item.event_id() != &loser);
             }
+            *record = next;
+            Ok(())
+        })
+        .await
+    }
+
+    pub(crate) async fn reopen_creator(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        absence: MlsCreatorBootstrapVerifiedAbsence,
+    ) -> garth::Result<()> {
+        let old_id = expected
+            .rejection()
+            .ok_or_else(|| {
+                garth::Error::Storage("creator restart requires a rejected attempt".into())
+            })?
+            .event_id()
+            .clone();
+        let mut next = expected.clone();
+        next.reopen_rejected(absence)?;
+        self.mutate_state(|state| {
+            let record = state
+                .creator_bootstrap_records
+                .iter_mut()
+                .find(|record| {
+                    record.intent().effective_scope() == expected.intent().effective_scope()
+                })
+                .ok_or_else(|| {
+                    garth::Error::Storage("creator restart lost its terminal attempt".into())
+                })?;
+            if record != &expected && record != &next {
+                return Err(garth::Error::Storage(
+                    "creator restart changed in another holder".into(),
+                ));
+            }
+            state.items.retain(|item| item.event_id() != &old_id);
             *record = next;
             Ok(())
         })
@@ -1044,25 +1203,23 @@ impl OutboundQueueStore for InksonOutboundStore {
     where
         R: garth::MaybeSend + 'a,
     {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            Box::pin(self.mutate_state(|state| {
+        Box::pin(async move {
+            let decision = self
+                .creator_decision
+                .lock()
+                .map_err(|_| garth::Error::Storage("creator decision lock poisoned".into()))?
+                .clone();
+            self.mutate_state(|state| {
                 let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
                     items: std::mem::take(&mut state.items),
                 });
                 let result = mutation(&mut queue)?;
                 state.items = queue.snapshot().items;
+                state.settle_creator_rejections(&decision)?;
                 Ok(result)
-            }))
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            Box::pin(async move {
-                let store = secure_outbound_store()?;
-                let _write_guard = outbound_write_gate().lock().await;
-                mutate_queue_in_store(store.as_ref(), &self.storage_key, mutation).await
             })
-        }
+            .await
+        })
     }
 }
 
@@ -1329,6 +1486,155 @@ mod tests {
         assert_eq!(state.creator_bootstrap_records, vec![winner]);
         assert_eq!(state.items.len(), 1);
         assert_eq!(state.items[0].request(), &submission.request);
+    }
+
+    async fn creator_rejection_fault_cut(
+        directory: &std::path::Path,
+        path: &std::path::Path,
+        winner: &MlsCreatorBootstrapRecord,
+        queued: &garth::QueuedSubmission,
+    ) {
+        let intent = winner.intent().clone();
+        let create = winner.governance_evidence().unwrap().accepted_create();
+        // Structural authority decision only: this branch verifies the
+        // durable queue/diagnostic cut, not Station authentication.
+        let rejected_path = directory.join("rejected.json");
+        std::fs::copy(path, &rejected_path).unwrap();
+        let rejected_vault = InksonOutboundStore::for_test_path(rejected_path.clone());
+        let snapshot = match &winner {
+            MlsCreatorBootstrapRecord::GenesisQueued {
+                genesis_absence, ..
+            } => (**genesis_absence).clone(),
+            _ => panic!("expected queued creator"),
+        };
+        let absence =
+            MlsCreatorBootstrapVerifiedAbsence::new(&intent, create.clone(), snapshot.clone())
+                .unwrap();
+        let reject_item = |queue: &mut garth::SendQueue| {
+            let mut next = queue.snapshot();
+            let item = next
+                .items
+                .iter_mut()
+                .find(|item| item.event_id() == &queued.event_id)
+                .unwrap();
+            item.status = garth::SendQueueStatus::Failed;
+            item.last_problem = Some(Box::new(arkret_wire::Problem::new(
+                "capability_denied",
+                403,
+                "structural admission refusal",
+            )));
+
+            item.settled_at = Some(crate::clock::now_utc());
+            *queue = garth::SendQueue::from_snapshot(next);
+            Ok(())
+        };
+        let before = std::fs::read(&rejected_path).unwrap();
+        assert!(rejected_vault.mutate_outbound(reject_item).await.is_err());
+        assert_eq!(std::fs::read(&rejected_path).unwrap(), before);
+        rejected_vault
+            .remember_creator_absence((queued.event_id.clone(), absence))
+            .unwrap();
+        std::fs::create_dir(rejected_path.with_extension("json.tmp")).unwrap();
+        assert!(rejected_vault.mutate_outbound(reject_item).await.is_err());
+        assert_eq!(std::fs::read(&rejected_path).unwrap(), before);
+        std::fs::remove_dir(rejected_path.with_extension("json.tmp")).unwrap();
+        rejected_vault.mutate_outbound(reject_item).await.unwrap();
+        let stopped = rejected_vault
+            .creator_record(intent.owner_actor_id(), intent.effective_scope())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stopped.state(),
+            arkret_wire::MlsCreatorBootstrapState::Rejected
+        );
+        assert_eq!(
+            stopped.rejection().unwrap().reason_code(),
+            "capability_denied"
+        );
+        let reopened = InksonOutboundStore::for_test_path(rejected_path.clone());
+        assert_eq!(
+            reopened
+                .creator_record(intent.owner_actor_id(), intent.effective_scope())
+                .await
+                .unwrap(),
+            Some(stopped.clone())
+        );
+        let mut root = create.authority_root().clone();
+        root.current_assertion.nonce =
+            arkret_wire::Base64UrlString::new("BBBBBBBBBBBBBBBBBBBBBB").unwrap();
+        let fresh_create = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate::new(
+            &intent, create.accepted_event().clone(), create.covering_commit().clone(), create.digest_suite(), root,
+        ).unwrap();
+        let fresh =
+            MlsCreatorBootstrapVerifiedAbsence::new(&intent, fresh_create, snapshot).unwrap();
+        let before = std::fs::read(&rejected_path).unwrap();
+        std::fs::create_dir(rejected_path.with_extension("json.tmp")).unwrap();
+        assert!(
+            reopened
+                .reopen_creator(stopped.clone(), fresh.clone())
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&rejected_path).unwrap(), before);
+        std::fs::remove_dir(rejected_path.with_extension("json.tmp")).unwrap();
+        reopened
+            .reopen_creator(stopped.clone(), fresh.clone())
+            .await
+            .unwrap();
+        let next = reopened
+            .creator_record(intent.owner_actor_id(), intent.effective_scope())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            next.state(),
+            arkret_wire::MlsCreatorBootstrapState::RealmAccepted
+        );
+        assert_eq!(next.intent(), &intent);
+        assert_eq!(next.closed_attempts().len(), 1);
+        assert_eq!(next.closed_attempts()[0].event_id(), &queued.event_id);
+        assert!(next.epoch_zero().is_none());
+        assert!(next.queued_genesis().is_none());
+        let unit = winner.epoch_zero().unwrap();
+        let mut old_cache: crate::mls::persistence::MlsLocalCheckpointEnvelope =
+            serde_json::from_slice(unit.encrypted_private_state()).unwrap();
+        let matches_cache = |cache: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+                             emitted: bool,
+                             public: &[u8]| {
+            crate::event_submit::creator_cache_belongs_to_closed_attempt(
+                &next,
+                cache,
+                emitted,
+                public,
+                unit.ratchet_tree_bytes(),
+            )
+            .unwrap()
+        };
+        assert!(matches_cache(&old_cache, false, unit.group_info_bytes()));
+        assert!(!matches_cache(&old_cache, true, unit.group_info_bytes()));
+        assert!(!matches_cache(
+            &old_cache,
+            false,
+            b"unrelated public material"
+        ));
+        old_cache.epoch = 1;
+        assert!(!matches_cache(&old_cache, false, unit.group_info_bytes()));
+        old_cache.epoch = 0;
+        old_cache.group_state_event_id = Some(queued.event_id.clone());
+        assert!(!matches_cache(&old_cache, false, unit.group_info_bytes()));
+
+        let state =
+            decode_snapshot(Some(&std::fs::read_to_string(&rejected_path).unwrap())).unwrap();
+        assert!(
+            !state
+                .items
+                .iter()
+                .any(|item| item.event_id() == &queued.event_id)
+        );
+        let before = std::fs::read(&rejected_path).unwrap();
+        reopened.reopen_creator(stopped, fresh).await.unwrap();
+        assert_eq!(std::fs::read(&rejected_path).unwrap(), before);
     }
 
     #[tokio::test]
@@ -1618,6 +1924,13 @@ mod tests {
             arkret_wire::CommittedEventFullView { commit: commit.clone(), event: winner.queued_genesis().unwrap().signed_genesis().event().clone() },
             create.authority_root().clone()).unwrap();
         crate::event_submit::verify_creator_genesis_producer(&winner, &accepted).unwrap();
+        Box::pin(creator_rejection_fault_cut(
+            directory.path(),
+            &path,
+            &winner,
+            &queued,
+        ))
+        .await;
         {
             let rival_path = directory.path().join("rival.json");
             std::fs::copy(&path, &rival_path).unwrap();
@@ -1941,6 +2254,7 @@ mod tests {
             intent.creator_device_id(),
         )));
         let store = InksonOutboundStore {
+            creator_decision: Default::default(),
             path: path.clone(),
             protection: Some((authority.clone(), secrets.clone())),
         };

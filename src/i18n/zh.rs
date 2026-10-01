@@ -2129,6 +2129,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.action.next_create", "下一步：创建");
     dict.set("setup.action.create_realm", "创建 Realm");
     dict.set("setup.action.finishing", "正在完成设置…");
+    dict.set("setup.action.retry_mls", "重试加密激活");
     dict.set("setup.action.open_realm", "打开 Realm");
     dict.set("setup.action.setup_recovery_key", "设置恢复密钥");
 

@@ -8,6 +8,31 @@
 
 use super::*;
 
+pub(crate) fn creator_cache_belongs_to_closed_attempt(
+    record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+    cache: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    emitted: bool,
+    public: &[u8],
+    tree: &[u8],
+) -> anyhow::Result<bool> {
+    record.validate()?;
+    if cache.epoch != 0
+        || cache.admission_epoch != 0
+        || cache.group_state_event_id.is_some()
+        || emitted
+        || cache.group_id != record.intent().mls_group_id().as_str()
+        || cache.realm_id != record.intent().effective_scope().realm_id().as_str()
+    {
+        return Ok(false);
+    }
+    for closed in record.closed_attempts() {
+        if closed.matches_epoch_zero_public_material(public, tree)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Authority facts pinned by a Realm's committed `ak.realm.create`.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum RealmCreateAuthority {
@@ -146,6 +171,10 @@ impl EventSubmitter {
         anyhow::ensure!(
             record.superseded_winner().is_none(),
             "creator attempt is superseded; use Welcome, device migration or recovery"
+        );
+        anyhow::ensure!(
+            record.rejection().is_none(),
+            "creator attempt is rejected; explicitly retry from a new verified absence"
         );
         if matches!(
             record,
@@ -350,11 +379,16 @@ impl EventSubmitter {
                 let restored =
                     crate::mls::persistence::restore_envelope(&existing, &account_secret, 0)?;
                 let (public, tree) = restored.public_group_state_bytes()?;
-                anyhow::ensure!(
-                    public == unit.group_info_bytes() && tree == unit.ratchet_tree_bytes(),
-                    "creator cache differs from the immutable recovery unit"
-                );
-                return Ok(());
+                if public == unit.group_info_bytes() && tree == unit.ratchet_tree_bytes() {
+                    return Ok(());
+                }
+                anyhow::ensure!(restored.scope() == scope && restored.epoch() == 0
+                    && creator_cache_belongs_to_closed_attempt(&record, &existing,
+                        store.mls_genesis_emitted_for_scope(scope), &public, &tree)?,
+                    "creator cache differs from the immutable recovery unit and every closed attempt");
+                // Only the derived, unaccepted cache of an authenticated closed
+                // attempt may be replaced. The new formal unit is already durable.
+
             }
             let mut salt = [0u8; 16];
             getrandom::fill(&mut salt)?;
@@ -427,21 +461,26 @@ impl EventSubmitter {
     pub(super) async fn ensure_creator_genesis_replay_gate(
         &self,
         request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<
+        Option<(
+            arkret_sdk::EventId,
+            arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapVerifiedAbsence,
+        )>,
+    > {
         let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(
             submission,
         ) = request
         else {
-            return Ok(());
+            return Ok(None);
         };
         let event = &submission.event;
         if event.kind != arkret_sdk::EventKind::MlsGenesis {
-            return Ok(());
+            return Ok(None);
         }
         let owner = arkret_sdk::ActorId::account(self.authority()?.clone());
         let vault = self.outbound(OutboundLane::Standard)?.store().clone();
         let Some(record) = vault.creator_record(&owner, &event.scope_ref).await? else {
-            return Ok(());
+            return Ok(None);
         };
         let queued = record
             .queued_genesis()
@@ -457,7 +496,7 @@ impl EventSubmitter {
         let evidence = record
             .governance_evidence()
             .ok_or_else(|| anyhow::anyhow!("creator worker lost its pin"))?;
-        let (_, accepted) = crate::realm_events_engine::verified_creator_genesis(
+        let (bundle, snapshot, accepted) = crate::realm_events_engine::verified_creator_genesis(
             &self.http,
             record.intent(),
             evidence.accepted_create(),
@@ -467,6 +506,61 @@ impl EventSubmitter {
             accepted.is_none(),
             "creator Genesis winner must be reconciled before replay"
         );
+        let pinned = evidence.accepted_create();
+        let fresh_create = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate::new(
+            record.intent(), pinned.accepted_event().clone(), pinned.covering_commit().clone(),
+            pinned.digest_suite(), bundle,
+        )?;
+        let absence = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapVerifiedAbsence::new(
+            record.intent(), fresh_create, snapshot,
+        )?;
+        Ok(Some((event.event_id.clone(), absence)))
+    }
+
+    pub(crate) async fn reopen_rejected_creator(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<()> {
+        use arkret_models_collaboration::mls_creator_bootstrap::{
+            MlsCreatorBootstrapAcceptedCreate, MlsCreatorBootstrapVerifiedAbsence,
+            MlsCreatorBootstrapWinner,
+        };
+        let vault = self.outbound(OutboundLane::Standard)?.store().clone();
+        let owner = arkret_sdk::ActorId::account(self.authority()?.clone());
+        let record = vault
+            .creator_record(&owner, scope)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("creator restart lost its terminal record"))?;
+        anyhow::ensure!(
+            record.rejection().is_some(),
+            "creator restart requires an explicitly rejected attempt"
+        );
+        let create = record
+            .accepted_create()
+            .ok_or_else(|| anyhow::anyhow!("creator restart lost accepted scope create"))?;
+        let (bundle, snapshot, accepted) = crate::realm_events_engine::verified_creator_genesis(
+            &self.http,
+            record.intent(),
+            create,
+        )
+        .await?;
+        if let Some(accepted) = accepted {
+            let winner = MlsCreatorBootstrapWinner::new(&record, accepted, bundle)?;
+            vault.supersede_creator(record, winner).await?;
+            anyhow::bail!(
+                "creator restart found another accepted Genesis; use Welcome, migration or recovery"
+            );
+        }
+        let fresh_create = MlsCreatorBootstrapAcceptedCreate::new(
+            record.intent(),
+            create.accepted_event().clone(),
+            create.covering_commit().clone(),
+            create.digest_suite(),
+            bundle,
+        )?;
+        let absence =
+            MlsCreatorBootstrapVerifiedAbsence::new(record.intent(), fresh_create, snapshot)?;
+        vault.reopen_creator(record, absence).await?;
         Ok(())
     }
 
@@ -487,6 +581,10 @@ impl EventSubmitter {
             record.superseded_winner().is_none(),
             "creator attempt is superseded; use Welcome, device migration or recovery"
         );
+        anyhow::ensure!(
+            record.rejection().is_none(),
+            "creator attempt is rejected; explicitly retry from a new verified absence"
+        );
         if let Some(accepted) = record.accepted_genesis() {
             record.validate()?;
             return Ok(Some(accepted.accepted().event.event_id.clone()));
@@ -494,7 +592,7 @@ impl EventSubmitter {
         let evidence = record
             .governance_evidence()
             .ok_or_else(|| anyhow::anyhow!("creator exact query requires its original pin"))?;
-        let (bundle, accepted) = crate::realm_events_engine::verified_creator_genesis(
+        let (bundle, _, accepted) = crate::realm_events_engine::verified_creator_genesis(
             &self.http,
             record.intent(),
             evidence.accepted_create(),

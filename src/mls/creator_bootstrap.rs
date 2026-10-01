@@ -194,7 +194,7 @@ pub(crate) async fn should_resume_creator_genesis(
         .creator_bootstrap_record(&scope)
         .await
         .map_err(|error| error.to_string())?
-        .is_some_and(|record| record.superseded_winner().is_some())
+        .is_some_and(|record| record.superseded_winner().is_some() || record.rejection().is_some())
     {
         return Ok(false);
     }
@@ -352,6 +352,18 @@ async fn bootstrap_creator_realm_mls_genesis(
     }
     if durable_intent.is_some() {
         let submitter = submitter.for_founding_realm(scope.realm_id().clone());
+        if explicit_start
+            && submitter
+                .creator_bootstrap_record(&scope)
+                .await
+                .map_err(|error| error.to_string())?
+                .is_some_and(|record| record.rejection().is_some())
+        {
+            submitter
+                .reopen_rejected_creator(&scope)
+                .await
+                .map_err(|error| format!("reopen rejected creator attempt: {error}"))?;
+        }
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         crate::mls::runtime::ensure_existing_account_mls_secret_durable(
             secure_store.as_ref(),

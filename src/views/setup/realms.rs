@@ -1155,6 +1155,11 @@ pub(super) fn RealmsSection(
                                     span { class: "muted", "{realm_state_value}" }
                                 }
                             }
+                            crate::components::mls_creator_retry::CreatorMlsRetry {
+                                realm_id: created_realm_id_value.clone(),
+                                refresh_hint: realm_state_value.clone(),
+                                token,
+                            }
                             div { class: "actions setup-nav-actions",
                                 if realm_create_busy_value {
                                     Button {

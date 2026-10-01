@@ -390,6 +390,7 @@ pub(crate) async fn verified_creator_genesis(
     pinned_create: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
 ) -> garth::Result<(
     arkret_sdk::RealmAuthorityBundle,
+    arkret_sdk::RealmStateSnapshot,
     Option<arkret_sdk::CommittedEventFullView>,
 )> {
     let realm = intent.effective_scope().realm_id();
@@ -467,7 +468,7 @@ pub(crate) async fn verified_creator_genesis(
         arkret_identity::RealmAuthorityFreshness::new(chrono::Utc::now(), freshness.expected_nonce);
     arkret_identity::verify_realm_authority_bundle(&bundle, &fresh, &keys)
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-    Ok((bundle, accepted))
+    Ok((bundle, snapshot, accepted))
 }
 
 pub(crate) async fn fresh_verified_realm<T: garth::AuthorityTransport>(

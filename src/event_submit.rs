@@ -37,6 +37,8 @@ mod message_authoring;
 #[cfg(test)]
 pub(crate) use authoring_unit::author_event_unit_for_test;
 use authoring_unit::{UnitAuthoringChain, validate_authored_unit_shape};
+#[cfg(test)]
+pub(crate) use authority::creator_cache_belongs_to_closed_attempt;
 use authority::*;
 #[cfg(test)]
 pub(crate) use authority::{restored_creator_artifacts, verify_creator_genesis_producer};
@@ -1754,11 +1756,18 @@ impl EventSubmitter {
         loop {
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             self.quarantine_superseded_items(&outbound, &fence).await?;
+            let replay_store = outbound.store().clone();
             match outbound
                 .submit_next_checked(&authority_client, &options, |request| async move {
-                    self.ensure_creator_genesis_replay_gate(&request)
+                    if let Some(decision) = self
+                        .ensure_creator_genesis_replay_gate(&request)
                         .await
-                        .map_err(|error| error.to_string())?;
+                        .map_err(|error| error.to_string())?
+                    {
+                        replay_store
+                            .remember_creator_absence(decision)
+                            .map_err(|error| error.to_string())?;
+                    }
                     self.ensure_queued_application_send_gate(&request)
                         .await
                         .map_err(|error| error.to_string())
@@ -2000,11 +2009,18 @@ impl EventSubmitter {
             completed = completed
                 .saturating_add(self.quarantine_superseded_items(&outbound, &fence).await?);
             let options = arkret_sdk::http_client::ClientRequestOptions::new();
+            let replay_store = outbound.store().clone();
             match outbound
                 .submit_next_checked(&authority_client, &options, |request| async move {
-                    self.ensure_creator_genesis_replay_gate(&request)
+                    if let Some(decision) = self
+                        .ensure_creator_genesis_replay_gate(&request)
                         .await
-                        .map_err(|error| error.to_string())?;
+                        .map_err(|error| error.to_string())?
+                    {
+                        replay_store
+                            .remember_creator_absence(decision)
+                            .map_err(|error| error.to_string())?;
+                    }
                     self.ensure_queued_application_send_gate(&request)
                         .await
                         .map_err(|error| error.to_string())

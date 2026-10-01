@@ -2780,6 +2780,13 @@ fn AppBootstrap() -> Element {
                                 }
                                 span { class: "topbar-context-title", "data-testid": "realm-title", "{topbar_context_title}" }
                                 if route_uses_realm_context && !active_realm_id.is_empty() {
+                                    crate::components::mls_creator_retry::CreatorMlsRetry {
+                                        realm_id: active_realm_id.clone(),
+                                        refresh_hint: last_error().unwrap_or_default(),
+                                        token,
+                                    }
+                                }
+                                if route_uses_realm_context && !active_realm_id.is_empty() {
                                     {
                                         let (current_surface_label, current_surface_icon) = match resolved_realm_surface {
                                             Some(surface) => {
