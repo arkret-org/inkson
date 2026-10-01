@@ -524,15 +524,19 @@ pub fn LoginPanel(
                     }
                 }
                 if let Some(change) = connection_change() {
-                    div { class: "auth-status", role: "alert",
+                    div { class: "auth-status auth-connection-review", role: "alert",
+                        "data-testid": "station-connection-review",
                         p { "This server's identity or sign-in provider changed. Continue only if you intended this change. A new sign-in is required." }
                         p { "Server: {change.candidate.base_url}" }
                         p { "Previous identity: {change.previous.service_id}" }
                         p { "New identity: {change.candidate.service_id}" }
                         p { "Previous trust domain: {change.previous.trust_domain}" }
                         p { "New trust domain: {change.candidate.trust_domain}" }
+                        strong { "Previous sign-in provider" }
                         pre { "{crate::station_connection::authentication_summary(&change.previous)}" }
+                        strong { "New sign-in provider" }
                         pre { "{crate::station_connection::authentication_summary(&change.candidate)}" }
+                        div { class: "auth-connection-actions",
                         Button {
                             variant: ButtonVariant::Ghost,
                             disabled: is_busy(),
@@ -570,6 +574,7 @@ pub fn LoginPanel(
                                 }
                             },
                             "Trust this connection and sign in again"
+                        }
                         }
                     }
                 }

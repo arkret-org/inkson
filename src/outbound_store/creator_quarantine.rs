@@ -195,9 +195,9 @@ pub(super) fn stop_creator(
 pub(super) fn decode_for_recovery(
     raw: Option<&str>,
     authority: Option<&arkret_sdk::AccountId>,
-) -> garth::Result<(DurableOutboundState, bool)> {
+) -> garth::Result<(DurableOutboundState, bool, bool)> {
     let Some(raw) = raw else {
-        return Ok((DurableOutboundState::default(), false));
+        return Ok((DurableOutboundState::default(), false, false));
     };
     let mut value: Value = serde_json::from_str(raw).map_err(|error| {
         garth::Error::Storage(format!("decode authenticated outbound vault: {error}"))
@@ -217,6 +217,32 @@ pub(super) fn decode_for_recovery(
         root.remove("creator_ready_index")
             .unwrap_or_else(|| Value::Array(vec![])),
     )?;
+    // The removed ingress queue stored records and leases, not frozen
+    // authority submissions. Preserve its bytes as diagnostics, without
+    // interpreting its status or upgrading ingress receipts into acceptance.
+    // Unknown damage to the current queue must still fail closed below.
+    let mut retired_items: Vec<Value> = serde_json::from_value(
+        root.remove("retired_ingress_items")
+            .unwrap_or_else(|| Value::Array(vec![])),
+    )?;
+    let original_retired_count = retired_items.len();
+    items.retain(|item| {
+        let is_ingress_record = item.get("submission").is_none()
+            && item.get("record").is_some_and(Value::is_object)
+            && item.get("transaction_id").is_some_and(Value::is_string)
+            && item
+                .get("canonical_payload_bytes")
+                .is_some_and(Value::is_array);
+        if is_ingress_record {
+            retired_items.push(item.clone());
+        }
+        !is_ingress_record
+    });
+    let retired = retired_items.len() != original_retired_count;
+    root.insert(
+        "retired_ingress_items".into(),
+        serde_json::to_value(retired_items)?,
+    );
     let mut quarantined = false;
     let intents: Vec<MlsCreatorBootstrapIntent> = records
         .iter()
@@ -368,5 +394,5 @@ pub(super) fn decode_for_recovery(
     // Unrelated malformed queue data still fails closed. No partial repair is
     // persisted unless the entire replacement vault is valid.
     state.validate()?;
-    Ok((state, quarantined))
+    Ok((state, quarantined, retired))
 }

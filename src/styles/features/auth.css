@@ -325,3 +325,52 @@
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+
+/* Expanded connection diagnostics must remain reachable in short windows. */
+.auth-shell {
+  height: 100dvh;
+  min-height: 0;
+  overflow-y: auto;
+  align-items: safe center;
+}
+
+.auth-card,
+.auth-status,
+.auth-error-content details {
+  min-width: 0;
+}
+
+.auth-status pre {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.5 var(--font-mono);
+}
+
+.auth-connection-review {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.auth-connection-review p { margin: 0; }
+.auth-connection-review strong { color: var(--text); }
+
+.auth-connection-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.auth-connection-actions button {
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 36px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

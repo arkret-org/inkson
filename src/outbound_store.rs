@@ -75,6 +75,10 @@ type ScheduledDispatches =
 #[serde(deny_unknown_fields)]
 struct DurableOutboundState {
     items: Vec<garth::SendQueueItem>,
+    // Opaque diagnostics only; retired ingress records can never be replayed
+    // or used as evidence of an authority commit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    retired_ingress_items: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     scheduled_dispatches: ScheduledDispatches,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -454,7 +458,8 @@ async fn mutate_authenticated_state_in_store<R>(
         .map(|bytes| std::str::from_utf8(bytes.as_slice()))
         .transpose()
         .map_err(|error| garth::Error::Storage(format!("decode outbound queue bytes: {error}")))?;
-    let (mut state, quarantined) = creator_quarantine::decode_for_recovery(stored, authority)?;
+    let (mut state, quarantined, retired) =
+        creator_quarantine::decode_for_recovery(stored, authority)?;
     let before = encode_snapshot(&state)?;
     let result = if quarantined {
         Err(garth::Error::Storage(
@@ -465,7 +470,7 @@ async fn mutate_authenticated_state_in_store<R>(
     };
     let changed =
         serde_json::to_string(&state).map_err(|error| garth::Error::Storage(error.to_string()))?;
-    if !quarantined && changed == before {
+    if !quarantined && !retired && changed == before {
         return result;
     }
     state.commit_position = state
@@ -582,7 +587,7 @@ async fn mutate_state_in_file<R>(
             None => Ok(raw.to_owned()),
         })
         .transpose()?;
-    let (mut state, quarantined) = creator_quarantine::decode_for_recovery(
+    let (mut state, quarantined, retired) = creator_quarantine::decode_for_recovery(
         plaintext.as_deref(),
         protection.map(|(authority, _)| authority),
     )?;
@@ -596,7 +601,7 @@ async fn mutate_state_in_file<R>(
     };
     let changed =
         serde_json::to_string(&state).map_err(|error| garth::Error::Storage(error.to_string()))?;
-    if !quarantined && changed == before {
+    if !quarantined && !retired && changed == before {
         return result;
     }
     state.commit_position = state
@@ -3193,6 +3198,97 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(reloaded, 3, "a persisted queue must reload with every item");
+    }
+
+    fn retired_ingress_fixture() -> serde_json::Value {
+        // Opaque removed wire material: it must never become a current submission.
+        serde_json::json!({
+            "transaction_id": "old-operation",
+            "record": {"kind": "event", "payload": {"old": true}},
+            "canonical_payload_bytes": [123, 125],
+            "status": "sent"
+        })
+    }
+
+    #[tokio::test]
+    async fn retired_ingress_queue_is_preserved_and_new_work_survives_reopen() {
+        let store = garth::MemorySecureKeyStore::default();
+        let key = "inkson.outbound.v1::nsA.standard";
+        let retired = retired_ingress_fixture();
+        let raw = serde_json::json!({"items": [retired.clone()]}).to_string();
+        store.store_secret(key, &raw).unwrap();
+
+        // A read-only snapshot must durably retire the incompatible entry too.
+        assert_eq!(
+            mutate_queue_in_store(&store, key, |q| Ok(q.items().len()))
+                .await
+                .unwrap(),
+            0
+        );
+        let first = store.get_secret(key).unwrap().unwrap();
+        let state = decode_snapshot(Some(&first)).unwrap();
+        assert_eq!(state.retired_ingress_items, vec![retired.clone()]);
+        assert_eq!(state.commit_position, 1);
+
+        mutate_queue_in_store(&store, key, |queue| {
+            queue.enqueue(fixture_submission(0), crate::clock::now_utc())?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            mutate_queue_in_store(&store, key, |q| Ok(q.items().len()))
+                .await
+                .unwrap(),
+            1
+        );
+        let reopened = store.get_secret(key).unwrap().unwrap();
+        let state = decode_snapshot(Some(&reopened)).unwrap();
+        assert_eq!(state.retired_ingress_items, vec![retired]);
+        assert_eq!(state.items[0].status, garth::SendQueueStatus::Queued);
+        assert!(state.items[0].commit().is_none());
+    }
+
+    #[tokio::test]
+    async fn retired_ingress_cleanup_is_durable_in_native_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("standard.json");
+        let retired = retired_ingress_fixture();
+        std::fs::write(
+            &path,
+            serde_json::json!({"items": [retired.clone()]}).to_string(),
+        )
+        .unwrap();
+        mutate_queue_in_file(&path, |q| {
+            assert!(q.items().is_empty());
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let first = std::fs::read_to_string(&path).unwrap();
+        let state = decode_snapshot(Some(&first)).unwrap();
+        assert_eq!(state.retired_ingress_items, vec![retired]);
+        assert_eq!(state.commit_position, 1);
+        mutate_queue_in_file(&path, |_| Ok(())).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), first);
+    }
+
+    #[tokio::test]
+    async fn current_queue_damage_is_not_retired_as_ingress() {
+        let store = garth::MemorySecureKeyStore::default();
+        let key = "inkson.outbound.v1::nsA.standard";
+        let mut queue = garth::SendQueue::default();
+        enqueue_items(&mut queue, 1);
+        let mut raw = serde_json::to_value(queue.snapshot()).unwrap();
+        raw["items"][0]["status"] = serde_json::json!("sent");
+        let original = raw.to_string();
+        store.store_secret(key, &original).unwrap();
+        assert!(
+            mutate_queue_in_store(&store, key, |_| Ok(()))
+                .await
+                .is_err()
+        );
+        assert_eq!(store.get_secret(key).unwrap().unwrap(), original);
     }
 
     #[tokio::test]
