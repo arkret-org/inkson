@@ -1089,6 +1089,9 @@ impl InksonAccountProjector {
                             );
                         }
                     }
+                    for (realm, role) in verified.genesis_roles() {
+                        store.save_realm_collaboration_role(realm.clone(), *role);
+                    }
                     for page in verified.pages() {
                         store.ingest_verified_message_history(page)?;
                         crate::identity::agent_signer_evidence::index_verified_committed_page(

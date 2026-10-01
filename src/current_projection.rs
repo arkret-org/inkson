@@ -33,6 +33,18 @@ fn entry_for<'a>(
 }
 
 pub(crate) fn required_realm_values_ready(entries: &[TypedCurrentResult]) -> bool {
+    if let Some(genesis) = entry_for(entries, &CurrentSelector::RealmGenesis)
+        .map(value_of)
+        .and_then(|value| serde_json::from_value::<arkret_sdk::RealmGenesis>(value.clone()).ok())
+        && genesis.purpose == arkret_sdk::RealmPurpose::DirectConversation
+    {
+        // Direct founding has four Events and no editable profile/policy
+        // baseline. Its closed genesis supplies the fixed policy instead.
+        return genesis.validate().is_ok()
+            && genesis.initial_join_rule == arkret_sdk::JoinRule::Closed
+            && genesis.initial_history_access == arkret_sdk::HistoryAccess::SinceJoin
+            && genesis.initial_discoverability == arkret_sdk::Discoverability::InviteOnly;
+    }
     REQUIRED_REALM_SELECTORS
         .iter()
         .all(|selector| entry_for(entries, selector).is_some())
@@ -78,6 +90,10 @@ impl ScopeMlsCurrent {
 }
 
 impl RealmCurrentView {
+    pub(crate) fn ready(&self) -> bool {
+        self.complete_cut && required_realm_values_ready(&self.entries)
+    }
+
     /// Validate that every scope-carrying row belongs to `realm_id`.
     pub(crate) fn new(
         realm_id: &str,
@@ -348,7 +364,65 @@ mod tests {
             serde_json::json!({"policy_revision": 1}),
         );
         assert!(!required_realm_values_ready(std::slice::from_ref(&profile)));
-        assert!(required_realm_values_ready(&[profile, policy]));
+        let entries = vec![profile, policy];
+        assert!(required_realm_values_ready(&entries));
+        assert!(
+            RealmCurrentView::new(REALM, entries.clone(), true)
+                .unwrap()
+                .ready()
+        );
+        assert!(
+            !RealmCurrentView::new(REALM, entries, false)
+                .unwrap()
+                .ready()
+        );
+    }
+
+    #[test]
+    fn direct_current_uses_fixed_genesis_policy_only_at_a_complete_cut() {
+        let genesis = arkret_sdk::RealmGenesis::new(
+            arkret_sdk::RealmPurpose::DirectConversation,
+            arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
+            arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example").unwrap(),
+            arkret_sdk::SecurityClass::Standard,
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+            arkret_sdk::JoinRule::Closed,
+            arkret_sdk::HistoryAccess::SinceJoin,
+            arkret_sdk::Discoverability::InviteOnly,
+            None,
+            None,
+        )
+        .unwrap();
+        let value = serde_json::to_value(&genesis).unwrap();
+        let entries = vec![entry(CurrentSelector::RealmGenesis, 0, value.clone())];
+        assert!(
+            RealmCurrentView::new(REALM, entries.clone(), true)
+                .unwrap()
+                .ready()
+        );
+        assert!(
+            !RealmCurrentView::new(REALM, entries, false)
+                .unwrap()
+                .ready()
+        );
+        for (field, invalid) in [
+            ("purpose", serde_json::json!("collaboration")),
+            ("initial_join_rule", serde_json::json!("invite")),
+            (
+                "initial_history_access",
+                serde_json::json!("all_history_for_current_members"),
+            ),
+            ("initial_discoverability", serde_json::json!("listed")),
+            ("unexpected", serde_json::json!(true)),
+        ] {
+            let mut invalid_genesis = value.clone();
+            invalid_genesis[field] = invalid;
+            let entries = vec![entry(CurrentSelector::RealmGenesis, 0, invalid_genesis)];
+            assert!(
+                !RealmCurrentView::new(REALM, entries, true).unwrap().ready(),
+                "{field}"
+            );
+        }
     }
 
     #[test]

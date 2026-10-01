@@ -6,17 +6,20 @@ pub(super) fn use_direct_authority(
     authority: arkret_sdk::AccountId,
     token: Signal<String>,
     frontier_state: Signal<String>,
+    realm_live_epoch: Signal<u64>,
     state_store: SyncSignal<LocalStateStore>,
 ) {
     let mut seen = use_signal(String::new);
     use_effect(use_reactive!(|(base_url, realm_id, authority)| {
         let credential = token();
         let cursor = frontier_state();
+        let realm_epoch = realm_live_epoch();
         let peer = state_store.read().direct_conversation_peer(&realm_id);
         let Some(peer) = peer else { return };
         let epoch = crate::identity::device_directory::cache_epoch();
-        let key =
-            format!("{base_url}|{realm_id}|{authority:?}|{peer:?}|{epoch}|{cursor}|{credential}");
+        let key = format!(
+            "{base_url}|{realm_id}|{authority:?}|{peer:?}|{epoch}|{cursor}|{realm_epoch}|{credential}"
+        );
         if credential.is_empty() || *seen.peek() == key {
             return;
         }

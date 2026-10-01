@@ -949,6 +949,7 @@ pub struct VerifiedAccountFrame {
     pages: Vec<garth::VerifiedScanPage>,
     current_snapshots: BTreeMap<String, VerifiedCurrentSnapshot>,
     authority_bases: Vec<crate::state::PersistedRealmAuthorityBasis>,
+    genesis_roles: BTreeMap<String, Option<arkret_sdk::CollaborationRealmRole>>,
     /// `preview_only` windows whose whole readable prefix this client
     /// replayed from genesis through a verified scan: exact from here on.
     resolved_preview_streams: BTreeSet<CommitStreamRef>,
@@ -993,6 +994,12 @@ impl VerifiedAccountFrame {
         &self.authority_bases
     }
 
+    pub(crate) fn genesis_roles(
+        &self,
+    ) -> &BTreeMap<String, Option<arkret_sdk::CollaborationRealmRole>> {
+        &self.genesis_roles
+    }
+
     fn retain_verified_authority(
         &mut self,
         bundle: &arkret_sdk::RealmAuthorityBundle,
@@ -1001,6 +1008,30 @@ impl VerifiedAccountFrame {
     ) -> garth::Result<()> {
         let verified = arkret_identity::verify_realm_authority_bundle(bundle, freshness, keys)
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        // The readable history can start after genesis under `since_join`.
+        // Classify only the closed genesis carried by this verified authority
+        // chain, never an editable projection or a readable-window first row.
+        let event = &bundle.genesis_event;
+        let commit = &bundle.genesis_commit;
+        if event.kind == arkret_sdk::EventKind::RealmCreate
+            && event.scope_ref == arkret_sdk::ScopeRef::RealmGenesis
+            && arkret_sdk::RealmId::from_event_id(&event.event_id) == bundle.realm_id
+            && commit.stream_position == 0
+            && commit.previous_commit_ref.is_none()
+            && commit.stream_ref
+                == (CommitStreamRef::Realm {
+                    realm_id: bundle.realm_id.clone(),
+                })
+            && let Ok(payload) = serde_json::to_value(&event.payload)
+                .and_then(serde_json::from_value::<arkret_sdk::RealmCreatePayload>)
+            && payload.object.validate().is_ok()
+        {
+            self.genesis_roles.insert(
+                bundle.realm_id.to_string(),
+                (payload.object.purpose == arkret_sdk::RealmPurpose::DirectConversation)
+                    .then_some(arkret_sdk::CollaborationRealmRole::DirectConversation),
+            );
+        }
         let committed_ref = |commit: &arkret_wire::RealmCommit| arkret_wire::CommittedEventRef {
             event_id: commit.event_ref.clone(),
             commit_id: commit.commit_id.clone(),
@@ -2675,6 +2706,122 @@ mod tests {
     /// A Direct Conversation is a Collaboration Realm founded with genesis
     /// purpose `direct_conversation` (`models/realm-and-space.md` 2.8.2); a
     /// control-plane genesis never installs as a collaboration floor.
+    #[test]
+    fn verified_authority_genesis_persists_role_without_readable_position_zero() {
+        use crate::test_support::committed_event::{FixtureStation, fixture_time};
+        for purpose in [
+            arkret_sdk::RealmPurpose::DirectConversation,
+            arkret_sdk::RealmPurpose::Collaboration,
+        ] {
+            let station = FixtureStation::did_web();
+            let direct = purpose == arkret_sdk::RealmPurpose::DirectConversation;
+            let genesis = arkret_sdk::RealmGenesis::new(
+                purpose,
+                arkret_sdk::GenesisSalt::new(GENESIS_SALT).unwrap(),
+                arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example").unwrap(),
+                arkret_sdk::SecurityClass::Standard,
+                station.service_id().clone(),
+                if direct {
+                    arkret_sdk::JoinRule::Closed
+                } else {
+                    arkret_sdk::JoinRule::Invite
+                },
+                arkret_sdk::HistoryAccess::SinceJoin,
+                if direct {
+                    arkret_sdk::Discoverability::InviteOnly
+                } else {
+                    arkret_sdk::Discoverability::Listed
+                },
+                None,
+                None,
+            )
+            .unwrap();
+            let signer = arkret_test_kit::keys::seeded_signer(
+                arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+                arkret_sdk::DidUrl::new("did:web:alice.example#device").unwrap(),
+            );
+            let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+                station.service_id().clone(),
+            ));
+            let event = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+                arkret_sdk::EventKind::RealmCreate.as_str(),
+                arkret_sdk::ScopeRef::RealmGenesis,
+                actor,
+                json!({"object": genesis}),
+            )
+            .with_created_at(fixture_time(0))
+            .sign_verifiable(&signer)
+            .unwrap()
+            .expect_verifiable();
+            let realm = event.realm_id.clone();
+            let (mut bundle, keys, _) =
+                crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                    &station,
+                    realm.clone(),
+                    json!({}),
+                    Vec::new(),
+                    "alice.example",
+                    DEVICE_ID,
+                );
+            bundle.genesis_event = event.clone();
+            bundle.genesis_commit.event_ref = event.event_id.clone();
+            bundle.genesis_commit.authority_ref =
+                arkret_sdk::RealmCommitAuthorityRef::GenesisOrChangeEvent(event.event_id.clone());
+            bundle.genesis_commit = station.seal_commit(bundle.genesis_commit);
+            bundle.realm_stream_head.commit_id = bundle.genesis_commit.commit_id.clone();
+            bundle.current_assertion.realm_stream_head = bundle.realm_stream_head.clone();
+            let nonce = bundle.current_assertion.nonce.clone();
+            station.reassert_for_nonce(&mut bundle, nonce.clone(), fixture_time(50));
+            let freshness = arkret_identity::RealmAuthorityFreshness::new(fixture_time(100), nonce);
+            let mut verified = VerifiedAccountFrame::default();
+            verified
+                .retain_verified_authority(&bundle, &freshness, &keys)
+                .unwrap();
+            assert!(verified.pages().is_empty(), "no readable genesis replay");
+            let expected = (purpose == arkret_sdk::RealmPurpose::DirectConversation)
+                .then_some(arkret_sdk::CollaborationRealmRole::DirectConversation);
+            let path = std::env::temp_dir().join(format!(
+                "inkson-authority-genesis-{}.json",
+                crate::operation::uuid_v7()
+            ));
+            let mut store = crate::state::LocalStateStore::with_path(&path);
+            store.save_realm_collaboration_role(
+                realm.to_string(),
+                Some(arkret_sdk::CollaborationRealmRole::DirectConversation),
+            );
+            store
+                .verified_projection_transaction(|store| {
+                    for (realm, role) in verified.genesis_roles() {
+                        store.save_realm_collaboration_role(realm.clone(), *role);
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            assert_eq!(
+                crate::state::LocalStateStore::with_path(&path)
+                    .load()
+                    .realm_collaboration_roles
+                    .get(realm.as_str())
+                    .copied(),
+                expected
+            );
+            let mut tampered = bundle.clone();
+            tampered.genesis_event.payload.insert(
+                "object".to_owned(),
+                json!({"purpose": "direct_conversation"}),
+            );
+            let mut refused = VerifiedAccountFrame::default();
+            assert!(
+                refused
+                    .retain_verified_authority(&tampered, &freshness, &keys)
+                    .is_err()
+            );
+            assert!(refused.genesis_roles().is_empty());
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
     #[test]
     fn signed_floor_genesis_admits_both_collaboration_purposes_only() {
         let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();

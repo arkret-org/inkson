@@ -5,7 +5,8 @@ pub(crate) struct DirectMessageContext {
     pub account: arkret_sdk::AccountId,
     pub session_epoch: u64,
     pub query_sequence: u64,
-    pub binding_event_ref: arkret_sdk::EventId,
+    pub authority_source: arkret_wire::AuthoritySourceId,
+    pub authority_event_ref: arkret_sdk::EventId,
     pub group_state_ref: arkret_sdk::EventId,
 }
 
@@ -132,7 +133,8 @@ mod tests {
                 account: authority.clone(),
                 session_epoch: crate::identity::device_directory::cache_epoch(),
                 query_sequence: sequence,
-                binding_event_ref: reference.clone(),
+                authority_source: arkret_wire::AuthoritySourceId::DirectConversationParticipantV1,
+                authority_event_ref: reference.clone(),
                 group_state_ref: reference,
             }),
         );
@@ -179,7 +181,8 @@ mod tests {
                 account: authority.clone(),
                 session_epoch: crate::identity::device_directory::cache_epoch(),
                 query_sequence: sequence,
-                binding_event_ref: arkret_sdk::EventId::from_digest(
+                authority_source: arkret_wire::AuthoritySourceId::DirectConversationParticipantV1,
+                authority_event_ref: arkret_sdk::EventId::from_digest(
                     arkret_sdk::DigestSuite::Sha256,
                     [7; 32],
                 ),

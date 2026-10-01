@@ -31,6 +31,7 @@ pub(super) fn ChatEffects(
         authority.clone(),
         token,
         frontier_state,
+        realm_live_epoch,
         state_store,
     );
     super::circle_welcome::use_circle_welcome(

@@ -75,7 +75,7 @@ impl LocalStateStore {
     ) -> anyhow::Result<()> {
         self.ensure_cached_loaded();
         let account_key = self.cached_account_key.clone();
-        let required_ready = crate::current_projection::required_realm_values_ready(&view.entries);
+        let required_ready = view.ready();
         if let Some(projection) = self.cached.realm_tree_projections.get(&view.realm_id) {
             let mut updated = projection.clone();
             crate::current_projection::apply_profile_summary(&mut updated, &view.entries)?;

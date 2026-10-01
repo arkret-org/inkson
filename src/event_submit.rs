@@ -1142,14 +1142,66 @@ impl EventSubmitter {
         }
         self.verify_actor_authority(intent).await?;
         validate_capability_grant_payload(intent)?;
-        let digest_suite = self.digest_suite_for_intent(intent)?;
+        let intent = self.direct_participant_authoring_intent(intent).await?;
+        let digest_suite = self.digest_suite_for_intent(&intent)?;
         let proof_context = self.event_proof_context(digest_suite).await?;
         let mut event = intent
             .clone()
             .author_with_digest_suite(digest_suite)
             .map_err(|error| anyhow::anyhow!("author Event: {error}"))?;
-        self.sign_authored_event(intent, &mut event, proof_context)?;
+        self.sign_authored_event(&intent, &mut event, proof_context)?;
         Ok(event)
+    }
+
+    async fn direct_participant_authoring_intent(
+        &self,
+        intent: &EventIntent,
+    ) -> anyhow::Result<EventIntent> {
+        if !matches!(
+            intent.kind(),
+            arkret_sdk::EventKind::MlsCommit | arkret_sdk::EventKind::MessageCreate
+        ) {
+            return Ok(intent.clone());
+        }
+        let Some(realm) = intent.realm_id_opt() else {
+            return Ok(intent.clone());
+        };
+        let Some(store) = self.state_store.as_ref() else {
+            return Ok(intent.clone());
+        };
+        if store.read(|state| state.realm_collaboration_role(realm.as_str()))
+            != Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
+        {
+            return Ok(intent.clone());
+        }
+        if intent.kind() == &arkret_sdk::EventKind::MessageCreate {
+            let context = store
+                .read(|state| state.direct_message_context(realm.as_str(), intent.actor_id()))
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Direct message current authority is unavailable")
+                })?;
+            return crate::mls::direct_binding::participant_authoring_intent(
+                intent,
+                context.authority_source,
+                &context.authority_event_ref,
+            );
+        }
+        let peer = store
+            .read(|state| state.direct_conversation_peer(realm.as_str()))
+            .ok_or_else(|| anyhow::anyhow!("Direct MLS admission requires its exact peer"))?;
+        let (bundle, ..) = crate::realm_events_engine::fresh_verified_realm(
+            &garth::AuthorityClient::new(self.http.clone()),
+            &self.http,
+            realm,
+        )
+        .await?;
+        let outcome = self
+            .http
+            .direct_conversation_resolve(
+                &arkret_sdk::direct_conversation::DirectConversationResolveRequestBody { peer },
+            )
+            .await?;
+        crate::mls::direct_binding::mls_authoring_intent(intent, &bundle.genesis_event, &outcome)
     }
 
     fn sign_authored_event(
