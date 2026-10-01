@@ -2553,10 +2553,16 @@ impl EventSubmitter {
         if store.read(|state| {
             state
                 .direct_message_context(realm.as_str(), intent.actor_id())
-                .is_some()
+                .is_some_and(|context| {
+                    context.authority_source
+                        == arkret_wire::AuthoritySourceId::DirectConversationParticipantV1
+                })
         }) {
             return Ok(());
         }
+        // Bootstrap authority exits when the first binding is accepted. Refresh
+        // this transient source before signing; a settled participant context
+        // remains usable while the peer or network is unavailable.
         let epoch = crate::identity::device_directory::cache_epoch();
         let peer = store
             .read(|state| state.direct_conversation_peer(realm.as_str()))

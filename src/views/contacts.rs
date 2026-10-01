@@ -19,6 +19,47 @@ use crate::views::helpers::short_protocol_id;
 /// `message` is `1..2000`).
 const CONTACT_MESSAGE_MAX: usize = 2000;
 
+fn save_contact_remark(
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    mut busy: Signal<bool>,
+    mut row_status: Signal<String>,
+    base_url: String,
+    api_token: String,
+    principal_id: arkret_sdk::DidCoreId,
+    edit: crate::account_data::ContactRemarkEdit,
+    success_key: &'static str,
+) {
+    let Some(authority) = state_store.read().active_authority() else {
+        return;
+    };
+    busy.set(true);
+    row_status.set(tr("contacts.remark.saving"));
+    spawn(async move {
+        let result = crate::views::settings::save_contact_remark_edit(
+            base_url,
+            api_token,
+            authority.clone(),
+            principal_id,
+            edit,
+        )
+        .await;
+        if state_store.read().active_authority().as_ref() != Some(&authority) {
+            return;
+        }
+        match result {
+            Ok(remark) => {
+                let principal = remark.subject.principal_id.to_string();
+                state_store.write().set_contact_remark(principal, remark);
+                row_status.set(tr(success_key));
+            }
+            Err(error) => {
+                row_status.set(tr("contacts.action_failed").replace("{error}", &error.display()))
+            }
+        }
+        busy.set(false);
+    });
+}
+
 /// i18n key for a contact scope token. Keeps the dropdown values canonical
 /// (`direct_message`, `invite`, …) while the option text is looked up via the
 /// active locale (en is the authoritative default).
@@ -199,6 +240,22 @@ fn ContactRow(
             .map(|remark| remark.petname.clone())
             .unwrap_or_default()
     });
+    let mut petname_dirty = use_signal(|| false);
+    let saved_petname = existing_remark
+        .as_ref()
+        .map(|remark| remark.petname.clone())
+        .unwrap_or_default();
+    use_effect(use_reactive!(|(saved_petname)| {
+        if busy() {
+            return;
+        }
+        if !*petname_dirty.peek() || petname_input.peek().trim() == saved_petname {
+            if *petname_input.peek() != saved_petname {
+                petname_input.set(saved_petname.clone());
+            }
+            petname_dirty.set(false);
+        }
+    }));
     // Read the peer's global Profile through the authorized surface. garth
     // decides whether a round trip is actually due, so entering the surface
     // again inside the freshness window costs nothing.
@@ -387,11 +444,10 @@ fn ContactRow(
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "contact-confirm-name-{peer}",
+                        disabled: busy(),
                         onclick: {
                             let base = base_url.clone();
                             let peer_principal = peer_principal.clone();
-                            let peer_key = peer.clone();
-                            let existing = existing_remark.clone();
                             let current = current.clone();
                             move |_| {
                                 let Ok(principal_id) =
@@ -404,21 +460,9 @@ fn ContactRow(
                                     crate::account_data::ContactRemarkEdit::ConfirmDisplayName(
                                         current.clone(),
                                     );
-                                let remark = edit.apply(
-                                    principal_id.clone(),
-                                    existing.as_ref(),
-                                    chrono::Utc::now(),
-                                );
-                                state_store
-                                    .write()
-                                    .set_contact_remark(peer_key.clone(), remark);
-                                row_status.set(tr("contacts.confirmed_name.confirmed"));
-                                crate::views::settings::push_contact_remark_edit(
-                                    base.clone(),
-                                    token(),
-                                    principal_id,
-                                    edit,
-                                );
+                                save_contact_remark(state_store, busy, row_status,
+                                    base.clone(), token(), principal_id, edit,
+                                    "contacts.confirmed_name.confirmed");
                             }
                         },
                         {tr("contacts.confirmed_name.confirm")}
@@ -432,11 +476,10 @@ fn ContactRow(
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "contact-confirm-name-{peer}",
+                        disabled: busy(),
                         onclick: {
                             let base = base_url.clone();
                             let peer_principal = peer_principal.clone();
-                            let peer_key = peer.clone();
-                            let existing = existing_remark.clone();
                             let display_name = display_name.clone();
                             move |_| {
                                 let Ok(principal_id) =
@@ -449,21 +492,9 @@ fn ContactRow(
                                     crate::account_data::ContactRemarkEdit::ConfirmDisplayName(
                                         display_name.clone(),
                                     );
-                                let remark = edit.apply(
-                                    principal_id.clone(),
-                                    existing.as_ref(),
-                                    chrono::Utc::now(),
-                                );
-                                state_store
-                                    .write()
-                                    .set_contact_remark(peer_key.clone(), remark);
-                                row_status.set(tr("contacts.confirmed_name.confirmed"));
-                                crate::views::settings::push_contact_remark_edit(
-                                    base.clone(),
-                                    token(),
-                                    principal_id,
-                                    edit,
-                                );
+                                save_contact_remark(state_store, busy, row_status,
+                                    base.clone(), token(), principal_id, edit,
+                                    "contacts.confirmed_name.confirmed");
                             }
                         },
                         {crate::i18n::tr_args(
@@ -573,14 +604,18 @@ fn ContactRow(
                         placeholder: tr("contacts.petname.placeholder"),
                         value: "{petname_input}",
                         maxlength: "128",
-                        oninput: move |event: FormEvent| petname_input.set(event.value()),
+                        disabled: busy(),
+                        oninput: move |event: FormEvent| {
+                            petname_dirty.set(true);
+                            petname_input.set(event.value());
+                        },
                     }
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "contact-petname-save-{peer}",
+                        disabled: busy(),
                         onclick: {
                             let peer = peer_principal.clone();
-                            let existing = existing_remark.clone();
                             let base = base_url.clone();
                             move |_| {
                                 let petname = petname_input().trim().to_owned();
@@ -600,25 +635,10 @@ fn ContactRow(
                                 let edit = crate::account_data::ContactRemarkEdit::Petname(
                                     petname.clone(),
                                 );
-                                let remark = edit.apply(
-                                    principal_id.clone(),
-                                    existing.as_ref(),
-                                    chrono::Utc::now(),
-                                );
-                                state_store
-                                    .write()
-                                    .set_contact_remark(peer.clone(), remark);
-                                row_status.set(if petname.is_empty() {
-                                    tr("contacts.petname.cleared")
-                                } else {
-                                    tr("contacts.petname.saved")
-                                });
-                                crate::views::settings::push_contact_remark_edit(
-                                    base.clone(),
-                                    token(),
-                                    principal_id,
-                                    edit,
-                                );
+                                save_contact_remark(state_store, busy, row_status,
+                                    base.clone(), token(), principal_id, edit,
+                                    if petname.is_empty() { "contacts.petname.cleared" }
+                                    else { "contacts.petname.saved" });
                             }
                         },
                         {tr("contacts.petname.save")}

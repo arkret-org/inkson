@@ -1839,6 +1839,7 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.petname.placeholder", "备注名（仅自己可见）");
     dict.set("contacts.petname.save", "保存备注名");
     dict.set("contacts.petname.saved", "备注名已保存");
+    dict.set("contacts.remark.saving", "正在保存…");
     dict.set("contacts.petname.cleared", "备注名已清除");
     dict.set("contacts.petname.badge", "备注名");
     dict.set("contacts.petname.invalid", "备注名无效");
