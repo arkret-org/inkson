@@ -245,6 +245,138 @@ pub(super) fn local_evidence_diagnostics_detail(reason: &LocalEvidenceUnavailabl
     }
 }
 
+pub(super) struct RetainedAccountSignIn {
+    pub(super) principal_did: arkret_sdk::Did,
+    pub(super) device_id: arkret_sdk::DeviceId,
+    pub(super) onboarding: Option<(
+        crate::state::PendingAccountHandoff,
+        crate::state::PendingPrincipalRegistration,
+        crate::state::DpopDeviceKeyRecord,
+    )>,
+}
+
+/// Recover a candidate from the accepted account namespace, including a first
+/// registration whose profile was never published because readiness failed.
+/// The next authenticated handoff still decides the account and device gate.
+pub(super) async fn prepare_retained_account_sign_in(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    retained: Option<(arkret_sdk::AccountId, crate::state::ClientLocalState)>,
+    current_checkpoint: Option<&crate::state::PendingPrincipalRegistration>,
+) -> Result<Option<RetainedAccountSignIn>, String> {
+    let Some((authority, state)) = retained else {
+        return Ok(None);
+    };
+    let accepted = state
+        .pending_principal_registration
+        .as_ref()
+        .filter(|checkpoint| {
+            matches!(
+                checkpoint.stage,
+                crate::state::PendingPrincipalRegistrationStage::Accepted
+                    | crate::state::PendingPrincipalRegistrationStage::RecoveryMaterialComplete
+            ) && arkret_sdk::project_did_to_core_id(&checkpoint.did)
+                .ok()
+                .as_ref()
+                == Some(&authority.principal_id)
+        });
+    // An explicit creation transaction for another identity owns its own
+    // material. The last account must never replace that transaction.
+    if current_checkpoint.is_some_and(|current| {
+        accepted.is_none_or(|accepted| {
+            current.did != accepted.did || current.device_id != accepted.device_id
+        })
+    }) {
+        return Ok(None);
+    }
+    let candidate = accepted
+        .map(|checkpoint| (checkpoint.did.clone(), checkpoint.device_id.clone()))
+        .or_else(|| {
+            state
+                .recovery_material_evidence
+                .as_ref()
+                .filter(|evidence| {
+                    evidence.account_id == authority
+                        && arkret_sdk::project_did_to_core_id(&evidence.principal_did)
+                            .ok()
+                            .as_ref()
+                            == Some(&authority.principal_id)
+                })
+                .map(|evidence| {
+                    (
+                        evidence.principal_did.clone(),
+                        evidence.device_id.to_string(),
+                    )
+                })
+        });
+    let Some((principal_did, device)) = candidate else {
+        return Ok(None);
+    };
+    let device_id = arkret_sdk::DeviceId::new(device).map_err(|error| error.to_string())?;
+    let user_store = crate::secure_key_store::UserLocalStore::new(authority, device_id.clone())
+        .map_err(|error| error.to_string())?;
+    if user_store
+        .load_device_id(secure_store)
+        .map_err(|error| error.to_string())?
+        .as_ref()
+        != Some(&device_id)
+        || user_store
+            .load_signing_seed(secure_store)
+            .map_err(|error| error.to_string())?
+            .is_none()
+    {
+        if accepted.is_none() {
+            return Ok(None);
+        }
+        return Err("The retained accepted device key is unavailable. Its setup was preserved; restore browser storage or use account recovery.".to_owned());
+    }
+    let onboarding = if let Some(checkpoint) = accepted {
+        let handoff = state
+            .pending_account_handoff
+            .as_ref()
+            .filter(|handoff| {
+                handoff.audience_id == user_store.authority().station_id
+                    && handoff.device_id == checkpoint.device_id
+                    && (crate::identity::principal_registration::checkpoint_belongs_to_handoff(
+                        checkpoint, handoff,
+                    ) || crate::identity::account_auth::checkpoint_continues_bound_creation(
+                        checkpoint, handoff,
+                    ))
+            })
+            .ok_or_else(|| {
+                "The retained accepted setup contradicts its account handoff.".to_owned()
+            })?;
+        let holder =
+            crate::identity::account_auth::grant_dpop::load_user_device_key_with_secure_store(
+                &user_store,
+                secure_store,
+            )
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "The retained accepted setup has no grant-binding key.".to_owned())?;
+        if holder.jkt() != handoff.holder_jkt {
+            return Err(
+                "The retained accepted setup belongs to a different authentication key.".to_owned(),
+            );
+        }
+        let pending = crate::secure_key_store::PendingLocalStore::new(device_id.clone());
+        pending
+            .restore_from_user_durable(secure_store, &user_store)
+            .await
+            .map_err(|error| error.to_string())?;
+        let record = crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(
+            holder.seed_b64().as_str(),
+        )
+        .map_err(|error| error.to_string())?;
+        Some((handoff.clone(), checkpoint.clone(), record))
+    } else {
+        None
+    };
+    Ok(Some(RetainedAccountSignIn {
+        principal_did,
+        device_id,
+        onboarding,
+    }))
+}
+
 pub(super) fn recover_pending_handoff_for_sign_in(
     store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,

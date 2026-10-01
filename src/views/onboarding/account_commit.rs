@@ -389,6 +389,12 @@ pub(super) async fn commit_completed_account(
             completed.account.device_id.as_str(),
         );
 
+        crate::views::login::consume_completed_login_pending_store(
+            secure_store.as_ref(),
+            &crate::secure_key_store::PendingLocalStore::new(completed.account.device_id.clone()),
+        )
+        .map_err(anyhow::Error::msg)?;
+
         active_account.set(Some(completed.account.clone()));
         principal_id.set(Some(completed.account.principal_id().clone()));
         device_id.set(completed.account.device_id.to_string());

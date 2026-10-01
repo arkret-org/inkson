@@ -357,6 +357,18 @@ pub fn registration_checkpoint_disposition(
     let facts = match handoff {
         Some(handoff) => {
             let bound_continuation = checkpoint_continues_bound_creation(checkpoint, handoff);
+            // An accepted registration has already consumed its creation lease.
+            // Expiry of the old pre-bind handoff cannot erase the founding
+            // device or its unfinished local readiness checkpoint.
+            let accepted_continuation = matches!(
+                checkpoint.stage,
+                PendingPrincipalRegistrationStage::Accepted
+                    | PendingPrincipalRegistrationStage::RecoveryMaterialComplete
+            ) && checkpoint.device_id == handoff.device_id
+                && crate::identity::principal_registration::checkpoint_belongs_to_handoff(
+                    checkpoint, handoff,
+                )
+                && handoff.bound_principal_id.is_none();
             let belongs = bound_continuation
                 || crate::identity::principal_registration::checkpoint_belongs_to_handoff(
                     checkpoint, handoff,
@@ -364,15 +376,17 @@ pub fn registration_checkpoint_disposition(
             let lease_matches = bound_continuation
                 || (handoff.lease_id.as_deref() == Some(checkpoint.lease_id.as_str())
                     && handoff.lease_fence == Some(checkpoint.lease_fence));
-            let identity_creation_terminal = handoff.identity_creation_state
-                == Some(arkret_sdk::IdentityCreationLeaseState::Completed)
+            let identity_creation_terminal = (!accepted_continuation
+                && handoff.identity_creation_state
+                    == Some(arkret_sdk::IdentityCreationLeaseState::Completed))
                 || (handoff.bound_principal_id.is_some() && !bound_continuation);
             garth::RegistrationCheckpointFacts {
                 continues_current_transaction: belongs,
                 lease_matches,
-                lease_expired: handoff
-                    .lease_expires_at
-                    .is_some_and(|expires_at| expires_at <= now),
+                lease_expired: !accepted_continuation
+                    && handoff
+                        .lease_expires_at
+                        .is_some_and(|expires_at| expires_at <= now),
                 identity_creation_terminal,
             }
         }
@@ -606,6 +620,42 @@ mod tests {
             registration_checkpoint_disposition(&checkpoint, Some(&handoff), chrono::Utc::now()),
             garth::RegistrationCheckpointDisposition::ContinuesIdentityCreation
         );
+    }
+
+    #[test]
+    fn accepted_setup_is_not_discarded_when_its_pre_bind_lease_expires() {
+        for stage in [
+            PendingPrincipalRegistrationStage::Accepted,
+            PendingPrincipalRegistrationStage::RecoveryMaterialComplete,
+        ] {
+            let (mut handoff, mut checkpoint) = active_creation_fixture();
+            checkpoint.stage = stage;
+            handoff.lease_expires_at = Some(chrono::Utc::now() - chrono::Duration::minutes(20));
+            for server in [
+                arkret_sdk::IdentityCreationLeaseState::Reserved,
+                arkret_sdk::IdentityCreationLeaseState::Completed,
+            ] {
+                handoff.identity_creation_state = Some(server);
+                assert_eq!(
+                    registration_checkpoint_disposition(
+                        &checkpoint,
+                        Some(&handoff),
+                        chrono::Utc::now()
+                    ),
+                    garth::RegistrationCheckpointDisposition::ContinuesIdentityCreation
+                );
+            }
+            let mut foreign = handoff.clone();
+            foreign.device_id = "ak:device:019f0000-0000-7000-8000-000000000099".to_owned();
+            assert_ne!(
+                registration_checkpoint_disposition(
+                    &checkpoint,
+                    Some(&foreign),
+                    chrono::Utc::now()
+                ),
+                garth::RegistrationCheckpointDisposition::ContinuesIdentityCreation
+            );
+        }
     }
 
     #[test]

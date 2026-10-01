@@ -350,7 +350,6 @@ pub(super) fn pending_pairing_for_handoff(
 
 pub(crate) struct PreparedCompletedLoginKeys {
     pub(super) user_store: crate::secure_key_store::UserLocalStore,
-    pub(super) pending_store: crate::secure_key_store::PendingLocalStore,
     pub(super) device_id: arkret_sdk::DeviceId,
     pub(super) signing_seed: [u8; 32],
 }
@@ -402,7 +401,6 @@ pub(crate) async fn prepare_completed_login_dpop_key(
         .ok_or_else(|| "Accepted account device signing seed is unavailable.".to_owned())?;
     Ok(PreparedCompletedLoginKeys {
         user_store,
-        pending_store,
         device_id,
         signing_seed: material.seed,
     })
@@ -430,13 +428,21 @@ pub(crate) fn commit_completed_login_dpop_key(
         prepared.device_id.as_str(),
     )
     .map_err(|error| format!("bind account device signer principal: {error}"))?;
+    // Account acceptance precedes the onboarding readiness gate. Retain the
+    // pending keys until its caller has durably committed the whole flow.
+    Ok(())
+}
+
+pub(crate) fn consume_completed_login_pending_store(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    pending_store: &crate::secure_key_store::PendingLocalStore,
+) -> Result<(), String> {
     crate::identity::device_pairing::clear_pending_device_pairing_verification(
-        &prepared.pending_store,
+        pending_store,
         secure_store,
     )
     .map_err(|error| format!("consume pending device-pairing verification: {error}"))?;
-    prepared
-        .pending_store
+    pending_store
         .delete(secure_store)
         .map_err(|error| format!("consume pending local store: {error}"))?;
     Ok(())

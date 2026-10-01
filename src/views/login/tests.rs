@@ -282,6 +282,219 @@ fn sign_in_starts_fresh_when_pending_handoff_holder_is_missing() {
     ));
 }
 
+#[tokio::test]
+async fn accepted_setup_reauthentication_restores_the_original_device_after_pending_cleanup() {
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
+    let _signer = crate::event_signer::ActiveSignerTestGuard::replace(None);
+    let mut store = crate::state::isolated_store_for_tests("accepted-setup-reauthentication");
+    let secure = crate::secure_key_store::MemorySecureKeyStore::default();
+    let mut handoff = pending_handoff_for_test(
+        "ak:request:019f0000-0000-7000-8000-000000000019",
+        "alice:auth.example",
+    );
+    let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+    let mut checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
+        &handoff,
+        &handoff.device_id,
+        &recovery_key,
+    )
+    .unwrap();
+    let account = test_active_account(checkpoint.did.as_str(), &handoff.device_id);
+    handoff.audience_id = account.authority.station_id.clone();
+    let pending = crate::secure_key_store::PendingLocalStore::new(account.device_id.clone());
+    let holder_seed = pending.ensure_grant_binding_seed(&secure).unwrap().seed;
+    let record = dpop_record_for_seed(holder_seed);
+    let signer = crate::event_signer::activate_device_signer_from_seed_for_device(
+        [23; 32],
+        None,
+        Some(account.device_id.as_str()),
+    )
+    .unwrap();
+    let signer = crate::event_signer::bind_active_signer_principal_device_id(
+        &checkpoint.did,
+        account.device_id.as_str(),
+    )
+    .unwrap()
+    .unwrap_or(signer);
+    let holder = crate::identity::account_auth::grant_dpop::device_handle_from_seed(
+        &record.seed_b64,
+        &record.jkt,
+    )
+    .unwrap();
+    checkpoint = crate::identity::principal_registration::prepare_genesis_draft(
+        &checkpoint,
+        &recovery_key,
+        format!("did:key:{}", signer.public_key_multibase().unwrap()),
+        crate::identity::did_key::encode_x25519_multibase(&[31; 32]),
+        signer.as_ref(),
+        &holder,
+        handoff.audience_id.clone(),
+    )
+    .unwrap();
+    checkpoint.stage = crate::state::PendingPrincipalRegistrationStage::Accepted;
+    handoff.holder_jkt = record.jkt.clone();
+    handoff.lease_expires_at = Some(chrono::Utc::now() - chrono::Duration::minutes(20));
+    pending.save_signing_seed(&secure, &[23; 32]).unwrap();
+    store.begin_pending_login(&account.device_id, Some(&record.jkt));
+    store
+        .set_pending_account_handoff(Some(handoff.clone()))
+        .unwrap();
+    store
+        .set_pending_principal_registration(Some(checkpoint.clone()))
+        .unwrap();
+    let prepared =
+        prepare_completed_login_dpop_key(&secure, &account, account.device_id.as_str(), &record)
+            .await
+            .unwrap();
+    commit_completed_login_dpop_key(&mut store, &secure, &account, &record, prepared).unwrap();
+    assert_eq!(
+        pending.load_signing_seed(&secure).unwrap().unwrap().seed,
+        [23; 32],
+        "account acceptance must retain the signer until readiness commits"
+    );
+    store.switch_active_account(&account).unwrap();
+    let unit = checkpoint.pcr_genesis_unit.clone().unwrap();
+    let realm_id = unit.create().realm_id.clone();
+    store
+        .set_recovery_material_evidence(Some(crate::state::RecoveryMaterialEvidence {
+            account_id: account.authority.clone(),
+            principal_did: checkpoint.did.clone(),
+            device_id: account.device_id.clone(),
+            principal_control_realm_id: realm_id.clone(),
+            pcr_genesis_unit: unit,
+            pcr_genesis_commits: [0, 1].map(|position| arkret_wire::CommittedEventRef {
+                event_id: arkret_sdk::EventId::new(
+                    "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                )
+                .unwrap(),
+                commit_id: arkret_sdk::RealmCommitId::from_digest([1; 32]),
+                stream_ref: arkret_wire::CommitStreamRef::Realm {
+                    realm_id: realm_id.clone(),
+                },
+                stream_position: position,
+            }),
+            controller_authority: Some(account.authority.clone()),
+        }))
+        .unwrap();
+    // Reproduce the previous implementation, then a replacement pending login.
+    pending.delete(&secure).unwrap();
+    let replacement =
+        arkret_sdk::DeviceId::new("ak:device:019f0000-0000-7000-8000-000000000099".to_owned())
+            .unwrap();
+    store.begin_pending_login(&replacement, None);
+    assert!(store.pending_principal_registration().is_none());
+    let retained =
+        prepare_retained_account_sign_in(&secure, store.retained_account_state().unwrap(), None)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(retained.device_id, account.device_id);
+    let (old_handoff, old_checkpoint, restored_record) = retained.onboarding.unwrap();
+    assert_eq!(old_checkpoint, checkpoint);
+    assert_eq!(restored_record.jkt, record.jkt);
+    assert_eq!(
+        pending.load_signing_seed(&secure).unwrap().unwrap().seed,
+        [23; 32]
+    );
+    assert_eq!(
+        pending
+            .load_grant_binding_seed(&secure)
+            .unwrap()
+            .unwrap()
+            .seed,
+        holder_seed
+    );
+    assert_eq!(
+        crate::identity::account_auth::registration_checkpoint_disposition(
+            &old_checkpoint,
+            Some(&old_handoff),
+            chrono::Utc::now()
+        ),
+        garth::RegistrationCheckpointDisposition::ContinuesIdentityCreation
+    );
+    // A fresh authenticated Bound response must retain this exact continuation.
+    let mut bound = old_handoff;
+    bound.request_id = "ak:request:019f0000-0000-7000-8000-000000000020".to_owned();
+    bound.bound_principal_id = Some(account.authority.principal_id.clone());
+    bound.bound_principal_did = Some(account.did().clone());
+    bound.lease_id = None;
+    bound.lease_fence = None;
+    bound.lease_expires_at = None;
+    bound.identity_creation_state = None;
+    bound.reserved_identity = None;
+    store
+        .set_pending_principal_registration(Some(old_checkpoint))
+        .unwrap();
+    crate::identity::account_auth::persist_reconciled_handoff(&mut store, bound.clone()).unwrap();
+    assert!(
+        crate::identity::account_auth::checkpoint_continues_bound_creation(
+            &store.pending_principal_registration().unwrap(),
+            &bound
+        )
+    );
+    // Earlier versions could prune the expired checkpoint. The accepted device
+    // evidence still supplies a candidate for server-verified session issuance.
+    let (authority, mut state) = store.retained_account_state().unwrap().unwrap();
+    state.pending_principal_registration = None;
+    let candidate = prepare_retained_account_sign_in(&secure, Some((authority, state)), None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.device_id, account.device_id);
+    assert_eq!(candidate.principal_did, *account.did());
+    assert!(candidate.onboarding.is_none());
+}
+
+#[tokio::test]
+async fn retained_setup_reauthentication_rejects_a_foreign_holder_and_creation() {
+    let secure = crate::secure_key_store::MemorySecureKeyStore::default();
+    let mut handoff = pending_handoff_for_test(
+        "ak:request:019f0000-0000-7000-8000-000000000021",
+        "alice:auth.example",
+    );
+    let mut checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
+        &handoff,
+        &handoff.device_id,
+        &crate::recovery_crypto::generate_recovery_key().unwrap(),
+    )
+    .unwrap();
+    checkpoint.stage = crate::state::PendingPrincipalRegistrationStage::Accepted;
+    let account = test_active_account(checkpoint.did.as_str(), &handoff.device_id);
+    handoff.audience_id = account.authority.station_id.clone();
+    let user = crate::secure_key_store::UserLocalStore::new(
+        account.authority.clone(),
+        account.device_id.clone(),
+    )
+    .unwrap();
+    user.save_device_id(&secure, &account.device_id).unwrap();
+    user.save_signing_seed(&secure, &[23; 32]).unwrap();
+    user.save_grant_binding_seed_b64url_durable(&secure, &URL_SAFE_NO_PAD.encode([7; 32]))
+        .await
+        .unwrap();
+    let state = crate::state::ClientLocalState {
+        pending_principal_registration: Some(checkpoint.clone()),
+        pending_account_handoff: Some(handoff),
+        ..Default::default()
+    };
+    assert!(
+        prepare_retained_account_sign_in(
+            &secure,
+            Some((account.authority.clone(), state.clone())),
+            None
+        )
+        .await
+        .is_err()
+    );
+    let mut foreign = checkpoint;
+    foreign.did = arkret_sdk::Did::new("did:web:other.example").unwrap();
+    assert!(
+        prepare_retained_account_sign_in(&secure, Some((account.authority, state)), Some(&foreign))
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
 #[test]
 fn session_status_signed_out_without_token_or_grant() {
     assert_eq!(compute_session_status("", None), "signed-out");
@@ -656,6 +869,12 @@ async fn completed_login_promotes_verified_authority_and_preserves_device_key() 
         grant.clone(),
     )
     .expect("promote completed login");
+    store.begin_durable_flush().unwrap().wait().await.unwrap();
+    consume_completed_login_pending_store(
+        &secure_store,
+        &crate::secure_key_store::PendingLocalStore::new(pending_device_id),
+    )
+    .unwrap();
 
     assert_eq!(store.active_authority(), Some(account.authority.clone()));
     assert_eq!(

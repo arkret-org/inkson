@@ -247,6 +247,30 @@ pub fn LoginPanel(
                     is_busy.set(false);
                     return;
                 }
+                let account_barrier = state_store_write.write().begin_durable_flush();
+                let committed = match account_barrier {
+                    Ok(barrier) => barrier.wait().await,
+                    Err(error) => Err(error),
+                };
+                if let Err(error) = committed {
+                    auth_status.set(format!(
+                        "Could not durably commit the accepted account: {error}"
+                    ));
+                    is_busy.set(false);
+                    return;
+                }
+                if let Err(error) = consume_completed_login_pending_store(
+                    secure_store.as_ref(),
+                    &crate::secure_key_store::PendingLocalStore::new(
+                        completed.pending_device_id.clone(),
+                    ),
+                ) {
+                    auth_status.set(format!(
+                        "Could not finish the accepted account commit: {error}"
+                    ));
+                    is_busy.set(false);
+                    return;
+                }
                 if let Err(error) = crate::identity::account_auth::clear_account_handoff_grant(
                     &completed.consumed_handoff,
                 ) {

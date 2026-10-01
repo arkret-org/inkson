@@ -510,6 +510,37 @@ impl PendingLocalStore {
         Ok(())
     }
 
+    /// Restore the exact accepted device for unfinished onboarding. Never mint
+    /// a replacement key or overwrite conflicting pending material.
+    pub(crate) async fn restore_from_user_durable(
+        &self,
+        store: &dyn SecureKeyStore,
+        user: &UserLocalStore,
+    ) -> Result<(), SecureKeyStoreError> {
+        if user.load_device_id(store)?.as_ref() != Some(&self.device_id) {
+            return Err(SecureKeyStoreError::Backend(
+                "accepted setup device does not match its secure scope".to_owned(),
+            ));
+        }
+        for logical_key in [SIGNING_SEED_ENTRY, GRANT_BINDING_SEED_ENTRY] {
+            let accepted = store.get_secret(&user.key(logical_key))?.ok_or_else(|| {
+                SecureKeyStoreError::Backend(format!("accepted setup omits {logical_key}"))
+            })?;
+            if store
+                .get_secret(&self.key(logical_key))?
+                .is_some_and(|pending| pending != accepted)
+            {
+                return Err(SecureKeyStoreError::Backend(format!(
+                    "accepted setup conflicts with pending {logical_key}"
+                )));
+            }
+            store
+                .store_secret_durable(&self.key(logical_key), &accepted)
+                .await?;
+        }
+        self.save_device_id_durable(store).await
+    }
+
     /// Prepare pending identity material in its final account namespace and
     /// wait for every newly-created secret write to commit. The pending
     /// namespace remains intact, so callers can retry after any partial error

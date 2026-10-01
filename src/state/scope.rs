@@ -1,6 +1,28 @@
 use super::*;
 
 impl LocalStateStore {
+    /// Read the last accepted account even while a new authentication owns the
+    /// foreground namespace. This is candidate evidence, never session authority.
+    pub(crate) fn retained_account_state(
+        &self,
+    ) -> anyhow::Result<Option<(arkret_sdk::AccountId, ClientLocalState)>> {
+        let root = self.read_root();
+        let Some(entry) = root.active_entry() else {
+            return Ok(None);
+        };
+        let state = if root.pending_login.is_none() {
+            self.load()
+        } else {
+            let namespace = account_storage_scope(&entry.authority)?;
+            self.read_account_state(&namespace)
+                .ok_or_else(|| anyhow::anyhow!("retained accepted account state is unavailable"))?
+        };
+        if let Some(error) = self.persist_error() {
+            anyhow::bail!("retained accepted account storage failed: {error}");
+        }
+        Ok(Some((entry.authority.clone(), state)))
+    }
+
     /// The authenticated foreground principal core id.
     pub fn active_principal_id(&self) -> Option<String> {
         let root = self.read_root();

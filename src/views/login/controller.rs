@@ -58,6 +58,69 @@ impl LoginController {
             } else {
                 None
             };
+            let (retained_state, current_checkpoint) = {
+                let store = reset_state_store.read();
+                (
+                    store.retained_account_state(),
+                    store.pending_principal_registration(),
+                )
+            };
+            let retained_state = match retained_state {
+                Ok(state) => state,
+                Err(error) => {
+                    is_busy.set(false);
+                    auth_status.set(format!("Could not read the retained account: {error}"));
+                    return;
+                }
+            };
+            let retained = match prepare_retained_account_sign_in(
+                secure_store.as_ref(),
+                retained_state,
+                current_checkpoint.as_ref(),
+            )
+            .await
+            {
+                Ok(retained) => retained,
+                Err(error) => {
+                    is_busy.set(false);
+                    auth_status.set(error);
+                    return;
+                }
+            };
+            if let Some(retained) = retained.as_ref()
+                && let Some((handoff, checkpoint, record)) = retained.onboarding.as_ref()
+            {
+                let result = {
+                    let mut store = reset_state_store.write();
+                    let pending =
+                        crate::secure_key_store::PendingLocalStore::new(retained.device_id.clone());
+                    store
+                        .set_pending_account_handoff(Some(handoff.clone()))
+                        .and_then(|()| {
+                            store.set_pending_principal_registration(Some(checkpoint.clone()))
+                        })
+                        .and_then(|()| {
+                            store
+                                .set_pending_dpop_device_key_with_secure_store(
+                                    Some(record.clone()),
+                                    secure_store.as_ref(),
+                                    &pending,
+                                )
+                                .map(|_| ())
+                                .map_err(anyhow::Error::from)
+                        })
+                        .and_then(|()| store.begin_durable_flush())
+                };
+                let result = match result {
+                    Ok(barrier) => barrier.wait().await,
+                    Err(error) => Err(error),
+                };
+                if let Err(error) = result {
+                    is_busy.set(false);
+                    auth_status.set(format!("Could not restore the accepted setup: {error}"));
+                    return;
+                }
+            }
             let (pending_handoff, pending_checkpoint) = {
                 let store = reset_state_store.read();
                 (
@@ -157,13 +220,24 @@ impl LoginController {
             } else if let Some(pairing) = pending_pairing_candidate {
                 (Some(pairing.principal_did), Some(pairing.device_id))
             } else {
-                (
-                    returning_principal,
-                    returning_device.map(|device| {
-                        arkret_sdk::DeviceId::new(device)
-                            .expect("secure-store device id was validated when loaded")
-                    }),
-                )
+                let returning = returning_principal
+                    .zip(returning_device)
+                    .map(|(principal, device)| {
+                        (
+                            principal,
+                            arkret_sdk::DeviceId::new(device)
+                                .expect("secure-store device id was validated when loaded"),
+                        )
+                    })
+                    .or_else(|| {
+                        retained.as_ref().map(|retained| {
+                            (retained.principal_did.clone(), retained.device_id.clone())
+                        })
+                    });
+                match returning {
+                    Some((principal, device)) => (Some(principal), Some(device)),
+                    None => (None, None),
+                }
             };
             let pending_store =
                 crate::secure_key_store::PendingLocalStore::new(pending_device_id.clone());
