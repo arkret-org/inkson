@@ -211,7 +211,7 @@ pub(crate) async fn resolve_mls_send_gate(
             crate::outbound_store::OutboundLane::Standard,
         )
         .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
-        vault
+        let terminal = vault
             .check_creator_ready_slot(scope, &current.genesis_event_ref)
             .await
             .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
@@ -219,7 +219,7 @@ pub(crate) async fn resolve_mls_send_gate(
             .store
             .read(|state| state.durable_mls_checkpoint_for_scope(scope))
             .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
-        if durable.is_none_or(|snapshot| {
+        if durable.as_ref().is_none_or(|snapshot| {
             snapshot.epoch != current.epoch
                 || snapshot.group_state_event_id.as_ref()
                     != Some(&current.current_mls_commit_event_ref)
@@ -228,8 +228,58 @@ pub(crate) async fn resolve_mls_send_gate(
                 "private MLS publication is not durably committed".into(),
             ));
         }
+        if let Some(record) = terminal {
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            let secret = crate::mls::runtime::load_device_checkpoint_secret(
+                secure_store.as_ref(),
+                authority,
+                record.intent().creator_device_id(),
+            )
+            .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
+            let snapshot = durable.as_ref().ok_or_else(|| {
+                MlsSendGateBlocked::NotReady("winning private state is not installed".into())
+            })?;
+            let group = crate::mls::persistence::restore_envelope(snapshot, &secret, current.epoch)
+                .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
+            validate_superseded_private_group(&record, &group, current)
+                .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
+        }
     }
     Ok(gate)
+}
+
+/// A stopped loser stays stopped. Only separately acquired private state
+/// matching the accepted winner/current public tree can admit this endpoint.
+pub(crate) fn validate_superseded_private_group(
+    record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+    group: &arkret_sdk::ArkretMlsGroup,
+    current: &arkret_wire::MlsGroupCurrent,
+) -> anyhow::Result<()> {
+    let winner = record
+        .superseded_winner()
+        .ok_or_else(|| anyhow::anyhow!("creator has no terminal winner"))?;
+    let (_, tree) = group.public_group_state_bytes()?;
+    let reference = format!(
+        "ak:blob:{}",
+        arkret_sdk::canonical::digest(
+            arkret_models_collaboration::mls_group_state_material::material_digest_from_ref(
+                &current.public_tree_ref
+            )?
+            .digest_suite()?,
+            &tree
+        )
+    );
+    anyhow::ensure!(
+        winner.accepted().event.event_id == current.genesis_event_ref
+            && group.scope() == record.intent().effective_scope()
+            && group.scope() == &current.effective_scope
+            && group.group_id() == winner.immutable_genesis_binding().mls_group_id()?
+            && group.epoch() == current.epoch
+            && group.local_actor_id() == record.intent().owner_actor_id()
+            && current.public_tree_ref.as_str() == reference,
+        "losing private state cannot match the accepted Genesis winner; use Welcome, migration or recovery"
+    );
+    Ok(())
 }
 
 /// Readiness also requires that this endpoint can restore its private group.

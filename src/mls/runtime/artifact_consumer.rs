@@ -46,6 +46,17 @@ pub(crate) async fn install_accepted_transition(
 ) -> Result<MlsInstallOutcome, String> {
     let _install = welcome_install_lock().lock().await;
     let transition = accepted_mls_transition(item)?;
+    if item.event.kind == arkret_sdk::EventKind::MlsGenesis {
+        let vault = crate::outbound_store::InksonOutboundStore::open(
+            authority,
+            crate::outbound_store::OutboundLane::Standard,
+        )
+        .map_err(|error| error.to_string())?;
+        vault
+            .check_creator_artifact_candidate(&item.event)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
     if state.read(|store| {
         store.realm_projection_has_retired_minimal_metadata_marker(
             transition.effective_scope.realm_id().as_str(),
@@ -83,8 +94,36 @@ pub(crate) async fn install_accepted_transition(
             if staged.epoch != 0 {
                 return Err("accepted MLS Genesis authoring state is not epoch zero".to_owned());
             }
-            crate::mls::persistence::restore_envelope(&staged, &snapshot_secret, 0)
-                .map_err(describe)?
+            let group = crate::mls::persistence::restore_envelope(&staged, &snapshot_secret, 0)
+                .map_err(describe)?;
+            let payload: arkret_models_collaboration::events_payloads::MlsGenesisPayload =
+                serde_json::from_value(serde_json::Value::Object(
+                    item.event.payload.clone().into_iter().collect(),
+                ))
+                .map_err(|error| error.to_string())?;
+            let (info, tree) = group.public_group_state_bytes().map_err(describe)?;
+            if payload.group_info_ref.as_str()
+                != format!(
+                    "ak:blob:{}",
+                    arkret_sdk::canonical::digest(
+                        arkret_models_collaboration::mls_group_state_material::material_digest_from_ref(&payload.group_info_ref).map_err(describe)?.digest_suite().map_err(describe)?,
+                        &info
+                    )
+                )
+                || payload.ratchet_tree_ref.as_str()
+                    != format!(
+                        "ak:blob:{}",
+                        arkret_sdk::canonical::digest(
+                            arkret_models_collaboration::mls_group_state_material::material_digest_from_ref(&payload.ratchet_tree_ref).map_err(describe)?.digest_suite().map_err(describe)?,
+                            &tree
+                        )
+                    )
+            {
+                return Err(
+                    "accepted Genesis public material differs from local private state".into(),
+                );
+            }
+            group
         }
         arkret_sdk::EventKind::MlsCommit => {
             let base = installed.ok_or_else(|| {

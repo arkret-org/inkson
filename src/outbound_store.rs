@@ -99,6 +99,16 @@ impl DurableOutboundState {
             }
         }
         for record in &self.creator_bootstrap_records {
+            if let MlsCreatorBootstrapRecord::Superseded {
+                loser_genesis: Some((id, _)),
+                ..
+            } = record
+                && self.items.iter().any(|item| item.event_id() == id)
+            {
+                return Err(garth::Error::Storage(
+                    "superseded creator loser queue item was reintroduced".into(),
+                ));
+            }
             if let Some(queued) = record.queued_genesis() {
                 let item = self
                     .items
@@ -764,6 +774,66 @@ impl InksonOutboundStore {
         .await
     }
 
+    /// Stop and remove the losing original in the same commit as its durable
+    /// terminal diagnostics. The retained record cannot become write-ready.
+    pub(crate) async fn supersede_creator(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        winner: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapWinner,
+    ) -> garth::Result<()> {
+        let mut next = expected.clone();
+        next.supersede(winner)?;
+        let loser = expected
+            .queued_genesis()
+            .map(|queued| queued.outbound_queue_item_id().clone());
+        self.mutate_state(|state| {
+            let record = state
+                .creator_bootstrap_records
+                .iter_mut()
+                .find(|record| {
+                    record.intent().effective_scope() == expected.intent().effective_scope()
+                })
+                .ok_or_else(|| {
+                    garth::Error::Storage("superseded creator lost its original record".into())
+                })?;
+            if record != &next && record != &expected {
+                return Err(garth::Error::Storage(
+                    "creator winner changed in another holder".into(),
+                ));
+            }
+            if let Some(loser) = loser {
+                state.items.retain(|item| item.event_id() != &loser);
+            }
+            *record = next;
+            Ok(())
+        })
+        .await
+    }
+
+    pub(crate) async fn check_creator_artifact_candidate(
+        &self,
+        event: &arkret_sdk::Event,
+    ) -> garth::Result<()> {
+        self.mutate_state(|state| {
+            if let Some(record) = state
+                .creator_bootstrap_records
+                .iter()
+                .find(|record| record.intent().effective_scope() == &event.scope_ref)
+            {
+                if record
+                    .queued_genesis()
+                    .is_none_or(|queued| queued.signed_genesis().event() != event)
+                {
+                    return Err(garth::Error::Storage(
+                        "accepted artifact cannot adopt a losing creator private unit".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })
+        .await
+    }
+
     pub(crate) async fn converge_creator_artifacts(
         &self,
         expected: MlsCreatorBootstrapRecord,
@@ -802,13 +872,21 @@ impl InksonOutboundStore {
         &self,
         scope: &arkret_sdk::ScopeRef,
         genesis: &arkret_sdk::EventId,
-    ) -> garth::Result<()> {
+    ) -> garth::Result<Option<MlsCreatorBootstrapRecord>> {
         self.mutate_state(|state| {
             if let Some(record) = state
                 .creator_bootstrap_records
                 .iter()
                 .find(|record| record.intent().effective_scope() == scope)
             {
+                if let Some(winner) = record.superseded_winner() {
+                    if &winner.accepted().event.event_id != genesis {
+                        return Err(garth::Error::Storage(
+                            "superseded creator names another winning Genesis".into(),
+                        ));
+                    }
+                    return Ok(Some(record.clone()));
+                }
                 let receipt = record.ready_receipt().ok_or_else(|| {
                     garth::Error::Storage(
                         "creator artifacts and ready index are not durably published".into(),
@@ -820,7 +898,7 @@ impl InksonOutboundStore {
                     ));
                 }
             }
-            Ok(())
+            Ok(None)
         })
         .await
     }
@@ -1540,6 +1618,172 @@ mod tests {
             arkret_wire::CommittedEventFullView { commit: commit.clone(), event: winner.queued_genesis().unwrap().signed_genesis().event().clone() },
             create.authority_root().clone()).unwrap();
         crate::event_submit::verify_creator_genesis_producer(&winner, &accepted).unwrap();
+        {
+            let rival_path = directory.path().join("rival.json");
+            std::fs::copy(&path, &rival_path).unwrap();
+            let rival_vault = InksonOutboundStore::for_test_path(rival_path.clone());
+            let evidence = winner.governance_evidence().unwrap();
+            let (rival_private, rival_summary) = crate::mls::runtime::generate_creator_epoch_zero(
+                intent.effective_scope(),
+                authority,
+                intent.creator_device_id(),
+                evidence.governance_binding(),
+                &device_secret,
+                Some(
+                    &evidence
+                        .creator_device_authority()
+                        .projection()
+                        .device_authorize_event_id,
+                ),
+            )
+            .unwrap();
+            let mut rival_event =
+                crate::mls::runtime::freeze_creator_genesis_core(&intent, evidence, &rival_summary)
+                    .unwrap();
+            signer
+                .sign_envelope_with_context(
+                    &mut rival_event,
+                    crate::event_signer::ProducerProofContext::new()
+                        .with_digest_suite(arkret_sdk::DigestSuite::Sha256),
+                )
+                .unwrap();
+            assert_ne!(rival_event.event_id(), &queued.event_id);
+            let mut rival_commit = commit.clone();
+            rival_commit.event_ref = rival_event.event_id().clone();
+            // Shape-only Commit; authority authentication is the query's job.
+            let rival_winner =
+                arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapWinner::new(
+                    &winner,
+                    arkret_wire::CommittedEventFullView {
+                        event: rival_event.event().clone(),
+                        commit: rival_commit,
+                    },
+                    create.authority_root().clone(),
+                )
+                .unwrap();
+            let before = std::fs::read(&rival_path).unwrap();
+            std::fs::create_dir(rival_path.with_extension("json.tmp")).unwrap();
+            assert!(
+                rival_vault
+                    .supersede_creator(winner.clone(), rival_winner.clone())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(std::fs::read(&rival_path).unwrap(), before);
+            assert_eq!(
+                rival_vault
+                    .creator_record(intent.owner_actor_id(), intent.effective_scope())
+                    .await
+                    .unwrap(),
+                Some(winner.clone())
+            );
+            std::fs::remove_dir(rival_path.with_extension("json.tmp")).unwrap();
+            rival_vault
+                .supersede_creator(winner.clone(), rival_winner.clone())
+                .await
+                .unwrap();
+            let terminal = rival_vault
+                .creator_record(intent.owner_actor_id(), intent.effective_scope())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                terminal.state(),
+                arkret_wire::MlsCreatorBootstrapState::Superseded
+            );
+            assert_eq!(terminal.superseded_winner(), Some(&rival_winner));
+            let state =
+                decode_snapshot(Some(&std::fs::read_to_string(&rival_path).unwrap())).unwrap();
+            assert_eq!(state.items.len(), 1);
+            assert!(
+                !state
+                    .items
+                    .iter()
+                    .any(|item| item.event_id() == &queued.event_id)
+            );
+            assert!(state.creator_ready_index.is_empty());
+            let before = std::fs::read(&rival_path).unwrap();
+            rival_vault
+                .supersede_creator(winner.clone(), rival_winner)
+                .await
+                .unwrap();
+            assert_eq!(std::fs::read(&rival_path).unwrap(), before);
+            assert!(
+                rival_vault
+                    .queue_creator_genesis(
+                        winner.clone(),
+                        winner.queued_genesis().unwrap().signed_genesis().clone()
+                    )
+                    .await
+                    .is_err()
+            );
+            assert!(
+                rival_vault
+                    .check_creator_artifact_candidate(rival_event.event())
+                    .await
+                    .is_err()
+            );
+            assert!(
+                rival_vault
+                    .check_creator_artifact_candidate(
+                        winner.queued_genesis().unwrap().signed_genesis().event()
+                    )
+                    .await
+                    .is_err()
+            );
+            assert!(
+                rival_vault
+                    .mutate_outbound(|queue| queue.enqueue(queued.clone(), chrono::Utc::now()))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(std::fs::read(&rival_path).unwrap(), before);
+            let current = arkret_wire::MlsGroupCurrent {
+                effective_scope: intent.effective_scope().clone(),
+                genesis_event_ref: rival_event.event_id().clone(),
+                current_mls_commit_event_ref: rival_event.event_id().clone(),
+                epoch: 0,
+                current_key_access_revision: 0,
+                covered_key_access_revision: 0,
+                public_tree_ref: arkret_sdk::BlobRef::new(format!(
+                    "ak:blob:{}",
+                    arkret_sdk::canonical::digest(
+                        arkret_sdk::DigestSuite::Sha256,
+                        &rival_summary.ratchet_tree_bytes
+                    )
+                ))
+                .unwrap(),
+            };
+            let losing_group =
+                crate::mls::persistence::restore_envelope(&private, &device_secret, 0).unwrap();
+            assert!(
+                crate::mls::send_gate::validate_superseded_private_group(
+                    &terminal,
+                    &losing_group,
+                    &current
+                )
+                .is_err()
+            );
+            // Independently acquired winning private material can recover the
+            // scope; it never changes the losing transaction to ready.
+            let recovered_group =
+                crate::mls::persistence::restore_envelope(&rival_private, &device_secret, 0)
+                    .unwrap();
+            crate::mls::send_gate::validate_superseded_private_group(
+                &terminal,
+                &recovered_group,
+                &current,
+            )
+            .unwrap();
+            assert_eq!(
+                rival_vault
+                    .check_creator_ready_slot(intent.effective_scope(), &current.genesis_event_ref)
+                    .await
+                    .unwrap(),
+                Some(terminal)
+            );
+        }
+
         let before = std::fs::read(&path).unwrap();
         std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
         assert!(

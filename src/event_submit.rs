@@ -1411,6 +1411,22 @@ impl EventSubmitter {
         })
     }
 
+    pub(crate) async fn creator_bootstrap_record(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<
+        Option<arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord>,
+    > {
+        Ok(self
+            .outbound(OutboundLane::Standard)?
+            .store()
+            .creator_record(
+                &arkret_sdk::ActorId::account(self.authority()?.clone()),
+                scope,
+            )
+            .await?)
+    }
+
     pub(crate) async fn creator_bootstrap_intent(
         &self,
         scope: &arkret_sdk::ScopeRef,

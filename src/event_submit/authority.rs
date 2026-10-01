@@ -143,6 +143,10 @@ impl EventSubmitter {
         let Some(record) = store.creator_record(&owner, scope).await? else {
             anyhow::bail!("creator acceptance requires a durable closed intent");
         };
+        anyhow::ensure!(
+            record.superseded_winner().is_none(),
+            "creator attempt is superseded; use Welcome, device migration or recovery"
+        );
         if matches!(
             record,
             MlsCreatorBootstrapRecord::RealmAccepted { .. }
@@ -479,6 +483,10 @@ impl EventSubmitter {
             .creator_record(&owner, scope)
             .await?
             .ok_or_else(|| anyhow::anyhow!("creator exact query lost its durable intent"))?;
+        anyhow::ensure!(
+            record.superseded_winner().is_none(),
+            "creator attempt is superseded; use Welcome, device migration or recovery"
+        );
         if let Some(accepted) = record.accepted_genesis() {
             record.validate()?;
             return Ok(Some(accepted.accepted().event.event_id.clone()));
@@ -495,6 +503,19 @@ impl EventSubmitter {
         let Some(accepted) = accepted else {
             return Ok(None);
         };
+        if record
+            .queued_genesis()
+            .is_none_or(|queued| queued.signed_genesis().event_id() != &accepted.event.event_id)
+        {
+            let winner =
+                arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapWinner::new(
+                    &record, accepted, bundle,
+                )?;
+            vault.supersede_creator(record, winner).await?;
+            anyhow::bail!(
+                "another exact accepted Genesis won; creator attempt is superseded and its loser queue stopped"
+            );
+        }
         let queued = record.queued_genesis().ok_or_else(|| {
             anyhow::anyhow!(
                 "another Genesis already won this scope; creator material cannot be adopted"

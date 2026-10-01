@@ -111,6 +111,27 @@ async fn publish_accepted_creator_genesis(
     realm_id: &str,
     accepted_event_id: &arkret_sdk::EventId,
 ) -> Result<(), String> {
+    let authority = state
+        .read(|store| store.active_authority())
+        .ok_or_else(|| "creator publication has no active account".to_owned())?;
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id).map_err(|error| error.to_string())?,
+    };
+    let vault = crate::outbound_store::InksonOutboundStore::open(
+        &authority,
+        crate::outbound_store::OutboundLane::Standard,
+    )
+    .map_err(|error| error.to_string())?;
+    if let Some(record) = vault
+        .creator_record(&arkret_sdk::ActorId::account(authority), &scope)
+        .await
+        .map_err(|error| error.to_string())?
+        && record
+            .accepted_genesis()
+            .is_none_or(|accepted| &accepted.accepted().event.event_id != accepted_event_id)
+    {
+        return Err("creator publication cannot adopt a losing or unaccepted private unit".into());
+    }
     let barrier = state.write(|store| {
         store.mark_mls_genesis_emitted_for_effective_scope_with_event(
             realm_id,
@@ -169,6 +190,14 @@ pub(crate) async fn should_resume_creator_genesis(
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm_id).map_err(|e| e.to_string())?,
     };
+    if submitter
+        .creator_bootstrap_record(&scope)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some_and(|record| record.superseded_winner().is_some())
+    {
+        return Ok(false);
+    }
     let durable_intent = submitter
         .creator_bootstrap_intent(&scope)
         .await
