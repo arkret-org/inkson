@@ -423,6 +423,10 @@ pub(crate) fn restore_creator_epoch_zero(
         || group_info != unit.group_info_bytes()
         || tree != unit.ratchet_tree_bytes()
         || leaf != payload.creator_leaf_authority
+        || group
+            .group_ciphersuite_canonical_id()
+            .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
+            != payload.cipher_suite.as_str()
     {
         return Err(MlsRuntimeError::Genesis(
             "creator private MLS state differs from its frozen public unit".into(),
@@ -438,7 +442,10 @@ pub(crate) fn restore_creator_epoch_zero(
             epoch: 0,
             group_info_bytes: group_info,
             ratchet_tree_bytes: tree,
-            cipher_suite: payload.cipher_suite.to_string(),
+            cipher_suite: group
+                .group_ciphersuite_canonical_id()
+                .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
+                .to_owned(),
             creator_leaf_authority: leaf,
         },
     ))

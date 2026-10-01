@@ -370,7 +370,15 @@ async fn bootstrap_creator_realm_mls_genesis(
             }
         }
         let accepted = accepted.ok_or_else(|| "creator exact acceptance missing".to_owned())?;
+        submitter
+            .converge_creator_artifacts(&scope, secure_store.as_ref())
+            .await
+            .map_err(|error| format!("install exact creator artifacts: {error}"))?;
         publish_accepted_creator_genesis(state_store, realm_id, &accepted).await?;
+        submitter
+            .publish_creator_ready(&scope, secure_store.as_ref())
+            .await
+            .map_err(|error| format!("publish durable creator readiness: {error}"))?;
         return Ok(());
     }
     // An accepted Genesis is the authoritative completion record. Resolve it,

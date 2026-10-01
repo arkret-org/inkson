@@ -202,6 +202,19 @@ pub(crate) async fn resolve_mls_send_gate(
         check_local_creator_plaintext_fence(input, scope).await?;
     }
     if let MlsSendGate::Encrypted(current) = &gate {
+        let authority = input
+            .authority
+            .as_ref()
+            .ok_or_else(|| MlsSendGateBlocked::NotReady("no active authoring vault".into()))?;
+        let vault = crate::outbound_store::InksonOutboundStore::open(
+            authority,
+            crate::outbound_store::OutboundLane::Standard,
+        )
+        .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
+        vault
+            .check_creator_ready_slot(scope, &current.genesis_event_ref)
+            .await
+            .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
         let durable = input
             .store
             .read(|state| state.durable_mls_checkpoint_for_scope(scope))

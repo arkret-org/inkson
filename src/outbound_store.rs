@@ -63,6 +63,11 @@ struct DurableOutboundState {
     scheduled_dispatches: ScheduledDispatches,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     creator_bootstrap_records: Vec<MlsCreatorBootstrapRecord>,
+    #[serde(default)]
+    commit_position: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    creator_ready_index:
+        Vec<arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapReadyReceipt>,
 }
 
 impl DurableOutboundState {
@@ -122,6 +127,35 @@ impl DurableOutboundState {
                     ));
                 }
             }
+        }
+        for record in &self.creator_bootstrap_records {
+            let entries: Vec<_> = self
+                .creator_ready_index
+                .iter()
+                .filter(|receipt| receipt.effective_scope() == record.intent().effective_scope())
+                .collect();
+            match record.ready_receipt() {
+                Some(receipt)
+                    if entries.len() == 1
+                        && entries[0] == receipt
+                        && receipt.ready_commit_position() <= self.commit_position => {}
+                None if entries.is_empty() => {}
+                _ => {
+                    return Err(garth::Error::Storage(
+                        "creator ready record and send-gate index disagree".into(),
+                    ));
+                }
+            }
+        }
+        if self.creator_ready_index.iter().any(|receipt| {
+            !self
+                .creator_bootstrap_records
+                .iter()
+                .any(|record| record.ready_receipt() == Some(receipt))
+        }) {
+            return Err(garth::Error::Storage(
+                "orphan creator send-gate index".into(),
+            ));
         }
         for event_id in self.scheduled_dispatches.values() {
             let item = self
@@ -258,18 +292,18 @@ async fn mutate_state_in_store<R>(
         .transpose()
         .map_err(|error| garth::Error::Storage(format!("decode outbound queue bytes: {error}")))?;
     let mut state = decode_snapshot(stored)?;
+    let before = encode_snapshot(&state)?;
     let result = mutation(&mut state)?;
-    let encoded = encode_snapshot(&state)?;
-    // `OutboundQueueStore` exposes reads through the same mutation closure as
-    // writes. In particular, `OutboundEngine::snapshot()` lands here. Do not
-    // turn an unchanged read into a full AES-GCM + IndexedDB commit while the
-    // process-wide outbound gate is held: besides being unnecessary, that can
-    // serialize an ordinary Event behind unrelated secure-store maintenance.
-    if stored == Some(encoded.as_str())
-        || (stored.is_none() && encoded == encode_snapshot(&DurableOutboundState::default())?)
-    {
+    let changed =
+        serde_json::to_string(&state).map_err(|error| garth::Error::Storage(error.to_string()))?;
+    if changed == before {
         return Ok(result);
     }
+    state.commit_position = state
+        .commit_position
+        .checked_add(1)
+        .ok_or_else(|| garth::Error::Storage("outbound vault commit position exhausted".into()))?;
+    let encoded = encode_snapshot(&state)?;
     let committed = store
         .compare_exchange_secret_bytes_durable(
             storage_key,
@@ -379,13 +413,18 @@ async fn mutate_state_in_file<R>(
         })
         .transpose()?;
     let mut state = decode_snapshot(plaintext.as_deref())?;
+    let before = encode_snapshot(&state)?;
     let result = mutation(&mut state)?;
-    let encoded = encode_snapshot(&state)?;
-    if plaintext.as_deref() == Some(encoded.as_str())
-        || (plaintext.is_none() && encoded == encode_snapshot(&DurableOutboundState::default())?)
-    {
+    let changed =
+        serde_json::to_string(&state).map_err(|error| garth::Error::Storage(error.to_string()))?;
+    if changed == before {
         return Ok(result);
     }
+    state.commit_position = state
+        .commit_position
+        .checked_add(1)
+        .ok_or_else(|| garth::Error::Storage("outbound vault commit position exhausted".into()))?;
+    let encoded = encode_snapshot(&state)?;
     let encoded = match protection {
         Some((authority, store)) => creator_protection::protect_records(&encoded, authority, store)
             .map_err(|error| garth::Error::Storage(error.to_string()))?,
@@ -418,6 +457,16 @@ async fn mutate_state_in_file<R>(
             path.display()
         ))
     })?;
+    #[cfg(unix)]
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| {
+                garth::Error::Storage(format!("sync outbound queue directory: {error}"))
+            })?;
+    }
     Ok(result)
 }
 
@@ -710,6 +759,67 @@ impl InksonOutboundStore {
             item.settled_at = Some(accepted.accepted().commit.committed_at);
             item.last_error = None;
             *record = next;
+            Ok(())
+        })
+        .await
+    }
+
+    pub(crate) async fn converge_creator_artifacts(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        artifacts: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapArtifacts,
+    ) -> garth::Result<()> {
+        let mut next = expected.clone();
+        next.converge_artifacts(artifacts)?;
+        self.replace_creator_record(expected, next).await
+    }
+
+    /// The record and the receipt consumed by every send gate share one CAS.
+    pub(crate) async fn publish_creator_ready(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+    ) -> garth::Result<()> {
+        self.mutate_state(|state| {
+            let record = state.creator_bootstrap_records.iter_mut().find(|record|
+                record.intent().effective_scope() == expected.intent().effective_scope())
+                .ok_or_else(|| garth::Error::Storage("creator ready publication lost its durable artifacts".into()))?;
+            if record.ready_receipt().is_some() {
+                if record != &expected { return Err(garth::Error::Storage("creator ready publication changed in another holder".into())); }
+                return Ok(());
+            }
+            if record != &expected { return Err(garth::Error::Storage("creator artifacts changed before ready publication; reread".into())); }
+            let position = state.commit_position.checked_add(1).ok_or_else(|| garth::Error::Storage("outbound vault commit position exhausted".into()))?;
+            let receipt = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapReadyReceipt::new(record, position)?;
+            record.publish_ready(receipt.clone())?;
+            state.creator_ready_index.push(receipt);
+            Ok(())
+        }).await
+    }
+
+    /// This reads the committed vault, validating record, artifact and index
+    /// together. A cached emitted flag has no authority to open this slot.
+    pub(crate) async fn check_creator_ready_slot(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+        genesis: &arkret_sdk::EventId,
+    ) -> garth::Result<()> {
+        self.mutate_state(|state| {
+            if let Some(record) = state
+                .creator_bootstrap_records
+                .iter()
+                .find(|record| record.intent().effective_scope() == scope)
+            {
+                let receipt = record.ready_receipt().ok_or_else(|| {
+                    garth::Error::Storage(
+                        "creator artifacts and ready index are not durably published".into(),
+                    )
+                })?;
+                if receipt.accepted_genesis_event_id() != genesis {
+                    return Err(garth::Error::Storage(
+                        "creator private artifact belongs to another accepted Genesis".into(),
+                    ));
+                }
+            }
             Ok(())
         })
         .await
@@ -1486,6 +1596,92 @@ mod tests {
                 .unwrap(),
             final_state.creator_bootstrap_records[0]
         );
+        let accepted_record = final_state.creator_bootstrap_records[0].clone();
+        let artifacts = crate::event_submit::restored_creator_artifacts(
+            &accepted_record,
+            &private_store,
+            authority,
+        )
+        .unwrap();
+        assert!(
+            store
+                .check_creator_ready_slot(intent.effective_scope(), &queued.event_id)
+                .await
+                .is_err()
+        );
+        for ready_cut in [false, true] {
+            let before_record = reopened
+                .creator_record(intent.owner_actor_id(), intent.effective_scope())
+                .await
+                .unwrap()
+                .unwrap();
+            let before = std::fs::read(&path).unwrap();
+            std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+            let failed = if ready_cut {
+                store.publish_creator_ready(before_record.clone()).await
+            } else {
+                store
+                    .converge_creator_artifacts(before_record.clone(), artifacts.clone())
+                    .await
+            };
+            assert!(failed.is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            assert_eq!(
+                reopened
+                    .creator_record(intent.owner_actor_id(), intent.effective_scope())
+                    .await
+                    .unwrap(),
+                Some(before_record.clone())
+            );
+            assert!(
+                reopened
+                    .check_creator_ready_slot(intent.effective_scope(), &queued.event_id)
+                    .await
+                    .is_err()
+            );
+            std::fs::remove_dir(path.with_extension("json.tmp")).unwrap();
+            if ready_cut {
+                reopened.publish_creator_ready(before_record).await.unwrap();
+            } else {
+                reopened
+                    .converge_creator_artifacts(before_record, artifacts.clone())
+                    .await
+                    .unwrap();
+            }
+        }
+        let ready = reopened
+            .creator_record(intent.owner_actor_id(), intent.effective_scope())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(ready.state(), arkret_wire::MlsCreatorBootstrapState::Ready);
+        assert_eq!(ready.epoch_zero(), accepted_record.epoch_zero());
+        assert_eq!(ready.accepted_genesis(), accepted_record.accepted_genesis());
+        assert_eq!(ready.artifacts(), Some(&artifacts));
+        let before = std::fs::read(&path).unwrap();
+        reopened.publish_creator_ready(ready.clone()).await.unwrap();
+        reopened
+            .check_creator_ready_slot(intent.effective_scope(), &queued.event_id)
+            .await
+            .unwrap();
+        assert!(
+            reopened
+                .check_creator_ready_slot(intent.effective_scope(), intent.scope_create_event_id())
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let mut state = decode_snapshot(Some(&std::fs::read_to_string(&path).unwrap())).unwrap();
+        assert_eq!(
+            state.creator_ready_index,
+            vec![ready.ready_receipt().unwrap().clone()]
+        );
+        assert_eq!(
+            state.commit_position,
+            ready.ready_receipt().unwrap().ready_commit_position()
+        );
+        state.creator_ready_index.clear();
+        assert!(encode_snapshot(&state).is_err());
     }
 
     #[tokio::test]

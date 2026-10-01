@@ -37,9 +37,9 @@ mod message_authoring;
 #[cfg(test)]
 pub(crate) use authoring_unit::author_event_unit_for_test;
 use authoring_unit::{UnitAuthoringChain, validate_authored_unit_shape};
-#[cfg(test)]
-pub(crate) use authority::verify_creator_genesis_producer;
 use authority::*;
+#[cfg(test)]
+pub(crate) use authority::{restored_creator_artifacts, verify_creator_genesis_producer};
 #[cfg(test)]
 pub(crate) use message_authoring::retry_frozen_message;
 pub(crate) use message_authoring::{MessageSendAttempt, drive_message_send};

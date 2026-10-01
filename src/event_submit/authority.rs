@@ -92,6 +92,42 @@ pub(crate) fn verify_creator_genesis_producer(
     Ok(())
 }
 
+pub(crate) fn restored_creator_artifacts(
+    record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    authority: &arkret_sdk::AccountId,
+) -> anyhow::Result<arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapArtifacts>
+{
+    use arkret_models_collaboration::mls_creator_bootstrap::{
+        MlsCreatorBootstrapArtifactChecks, MlsCreatorBootstrapArtifacts,
+    };
+    record.validate()?;
+    let secret = crate::outbound_store::creator_protection::checkpoint_secret(
+        secure_store,
+        authority,
+        record.intent().creator_device_id(),
+    )?;
+    let unit = record
+        .epoch_zero()
+        .ok_or_else(|| anyhow::anyhow!("creator artifact lost original private unit"))?;
+    let (_, summary) =
+        crate::mls::runtime::restore_creator_epoch_zero(unit, record.intent(), &secret)
+            .map_err(|error| anyhow::anyhow!(error.user_message()))?;
+    Ok(MlsCreatorBootstrapArtifacts::new(
+        record,
+        MlsCreatorBootstrapArtifactChecks {
+            effective_scope: record.intent().effective_scope().clone(),
+            mls_group_id: arkret_sdk::MlsGroupId::new(summary.group_id)
+                .map_err(anyhow::Error::msg)?,
+            epoch: summary.epoch,
+            cipher_suite: summary.cipher_suite,
+            creator_leaf_authority: summary.creator_leaf_authority,
+            group_info_bytes: summary.group_info_bytes,
+            ratchet_tree_bytes: summary.ratchet_tree_bytes,
+        },
+    )?)
+}
+
 impl EventSubmitter {
     /// Persist the registered accepted-create arrow before any MLS material
     /// is produced. The authority root is independently verified with a fresh
@@ -114,6 +150,8 @@ impl EventSubmitter {
                 | MlsCreatorBootstrapRecord::Epoch0StatePersisted { .. }
                 | MlsCreatorBootstrapRecord::GenesisQueued { .. }
                 | MlsCreatorBootstrapRecord::GenesisAccepted { .. }
+                | MlsCreatorBootstrapRecord::ArtifactsConverged { .. }
+                | MlsCreatorBootstrapRecord::Ready { .. }
         ) {
             // This arrow is immutable and idempotent. The following governance
             // pin must authenticate its own current creator/endpoint cut.
@@ -296,7 +334,11 @@ impl EventSubmitter {
                 if existing.epoch > 0 {
                     // Never overwrite later accepted private state with epoch zero.
                     anyhow::ensure!(
-                        store.mls_genesis_emitted_for_scope(scope),
+                        store.mls_genesis_emitted_for_scope(scope)
+                            && record.accepted_genesis().is_some_and(|accepted| store
+                                .current_mls_group_for_scope(scope)
+                                .is_some_and(|current| current.genesis_event_ref
+                                    == accepted.accepted().event.event_id)),
                         "advanced creator cache has no accepted Genesis"
                     );
                     return Ok(());
@@ -464,6 +506,82 @@ impl EventSubmitter {
         let id = carrier.accepted().event.event_id.clone();
         vault.accept_creator_genesis(record, carrier).await?;
         Ok(Some(id))
+    }
+
+    /// Restore the retained winning private unit before its whole artifact
+    /// install. This never generates material or changes the accepted Event.
+    pub(crate) async fn converge_creator_artifacts(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> anyhow::Result<()> {
+        let vault = self.outbound(OutboundLane::Standard)?.store().clone();
+        let owner = arkret_sdk::ActorId::account(self.authority()?.clone());
+        let record = vault
+            .creator_record(&owner, scope)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("creator artifact lost its durable acceptance"))?;
+        let artifacts = restored_creator_artifacts(&record, secure_store, self.authority()?)?;
+        vault.converge_creator_artifacts(record, artifacts).await?;
+        Ok(())
+    }
+
+    /// Re-read the durable install and restore its private state again; a
+    /// previously checked in-memory record cannot stand in for this boundary.
+    pub(crate) async fn publish_creator_ready(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> anyhow::Result<()> {
+        let vault = self.outbound(OutboundLane::Standard)?.store().clone();
+        let owner = arkret_sdk::ActorId::account(self.authority()?.clone());
+        let record = vault
+            .creator_record(&owner, scope)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("creator ready publication lost artifacts"))?;
+        let artifacts = restored_creator_artifacts(&record, secure_store, self.authority()?)?;
+        anyhow::ensure!(
+            record.artifacts() == Some(&artifacts),
+            "creator durable artifact/private state mismatch"
+        );
+        let state = self
+            .state_store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("creator readiness requires account state"))?;
+        state.read(|store| -> anyhow::Result<()> {
+            let snapshot = store
+                .durable_mls_checkpoint_for_scope(scope)?
+                .ok_or_else(|| anyhow::anyhow!("creator private cache is not durably installed"))?;
+            let accepted = record
+                .accepted_genesis()
+                .ok_or_else(|| anyhow::anyhow!("creator readiness lost accepted Genesis"))?;
+            if snapshot.epoch == 0 {
+                anyhow::ensure!(
+                    snapshot.group_state_event_id.as_ref()
+                        == Some(&accepted.accepted().event.event_id),
+                    "creator private cache has another Genesis ref"
+                );
+                let account_secret = crate::mls::runtime::load_device_checkpoint_secret(
+                    secure_store,
+                    self.authority()?,
+                    record.intent().creator_device_id(),
+                )?;
+                let group =
+                    crate::mls::persistence::restore_envelope(&snapshot, &account_secret, 0)?;
+                let (info, tree) = group.public_group_state_bytes()?;
+                let unit = record
+                    .epoch_zero()
+                    .ok_or_else(|| anyhow::anyhow!("creator readiness lost private unit"))?;
+                anyhow::ensure!(
+                    info == unit.group_info_bytes() && tree == unit.ratchet_tree_bytes(),
+                    "creator durable private cache differs from the winning unit"
+                );
+            }
+            Ok(())
+        })?;
+        vault.publish_creator_ready(record).await?;
+        state.write(|_| {});
+        Ok(())
     }
 
     async fn read_verified_creator_cut(
