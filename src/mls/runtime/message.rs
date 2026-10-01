@@ -1001,7 +1001,13 @@ fn ensure_realm_membership_is_covered_for_send(
         .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?
         .into_iter()
         .collect::<std::collections::BTreeSet<_>>();
-    if group_members != joined {
+    if !realm_membership_matches_sending_group(
+        state_store,
+        realm_id,
+        group,
+        &joined,
+        &group_members,
+    ) {
         return Err(MlsRuntimeError::EncryptionTransitionPending);
     }
     Ok(())
@@ -1030,7 +1036,71 @@ pub(crate) fn realm_mls_roster_matches_complete_membership_hint(
         .ok()?
         .into_iter()
         .collect::<std::collections::BTreeSet<_>>();
-    Some(members == joined)
+    Some(realm_membership_matches_sending_group(
+        state_store,
+        realm_id,
+        &group,
+        &joined,
+        &members,
+    ))
+}
+
+/// Before the peer Add, the registered Direct bootstrap source authorizes
+/// the verified founder's epoch-zero leaf. Realm membership already includes
+/// both participants, but no peer history key exists before its Add/Welcome.
+fn realm_membership_matches_sending_group(
+    state: &crate::state::LocalStateStore,
+    realm_id: &str,
+    group: &arkret_sdk::ArkretMlsGroup,
+    joined: &std::collections::BTreeSet<arkret_sdk::ActorId>,
+    members: &std::collections::BTreeSet<arkret_sdk::ActorId>,
+) -> bool {
+    if members == joined {
+        return true;
+    }
+    let actor = group.local_actor_id();
+    if state.realm_collaboration_role(realm_id)
+        != Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
+        || group.epoch() != 0
+        || joined.len() != 2
+        || !joined.contains(actor)
+        || members.len() != 1
+        || !members.contains(actor)
+    {
+        return false;
+    }
+    let Some(context) = state.direct_message_context(realm_id, actor) else {
+        return false;
+    };
+    let Some(peer) = state.direct_conversation_peer(realm_id) else {
+        return false;
+    };
+    let peer = peer.contact_actor_id();
+    if peer == *actor || !joined.contains(&peer) {
+        return false;
+    }
+    if context.authority_source
+        != arkret_wire::AuthoritySourceId::DirectConversationBootstrapParticipantV1
+    {
+        return false;
+    }
+    let Ok(realm) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
+        return false;
+    };
+    if arkret_sdk::RealmId::from_event_id(&context.authority_event_ref) != realm {
+        return false;
+    }
+    let scope = arkret_sdk::ScopeRef::Realm { realm_id: realm };
+    let Some(current) = state.current_mls_group_for_scope(&scope) else {
+        return false;
+    };
+    current.epoch == 0
+        && current.current_key_access_revision == current.covered_key_access_revision
+        && current.genesis_event_ref == context.group_state_ref
+        && current.current_mls_commit_event_ref == context.group_state_ref
+        && state
+            .mls_group_state_ref_for_scope(&scope, group.group_id().as_str(), 0)
+            .is_ok_and(|reference| reference == context.group_state_ref)
 }
 
 fn runtime_effective_scope(

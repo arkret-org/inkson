@@ -300,6 +300,165 @@ fn complete_membership_hint_does_not_alias_same_principal_at_another_station() {
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn direct_epoch_zero_send_requires_exact_verified_founder_bootstrap_context() {
+    let mut state = temp_state_store("direct-provisional-sending");
+    let secure = MemorySecureKeyStore::new();
+    let actor = "did:web:provisional-founder.example";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let authority = fixture::authority(actor);
+    state
+        .switch_active_account(&fixture::AccountFixture::new(actor).device(device).build())
+        .unwrap();
+    super::seed_human_creator_authorization(actor, device);
+    seed_complete_rfc9420_projection(&mut state, realm, actor);
+    ensure_creator_mls_checkpoint(
+        &mut state,
+        &secure,
+        realm,
+        &authority,
+        &fixture::device_id(device),
+    )
+    .unwrap();
+    let reference = super::seed_current_group_state_ref(&mut state, realm);
+    let peer_account = fixture::authority("did:web:provisional-peer.example");
+    let peer = arkret_sdk::contact_operations::ContactPeer::Human {
+        account_id: peer_account.clone(),
+    };
+    let self_actor = arkret_sdk::ActorId::account(authority.clone());
+    let pair = vec![
+        self_actor.clone(),
+        arkret_sdk::ActorId::account(peer_account),
+    ];
+    fixture::install_complete_joined_members(&mut state, realm, pair.clone());
+    let ready = |state: &crate::state::LocalStateStore| {
+        realm_mls_roster_matches_complete_membership_hint(
+            state,
+            &secure,
+            realm,
+            &authority,
+            &fixture::device_id(device),
+        )
+    };
+    assert_eq!(
+        ready(&state),
+        Some(false),
+        "ordinary roster mismatch remains blocked"
+    );
+    state.save_realm_collaboration_role(
+        realm,
+        Some(arkret_sdk::CollaborationRealmRole::DirectConversation),
+    );
+    assert_eq!(
+        ready(&state),
+        Some(false),
+        "Direct purpose alone cannot authorize"
+    );
+    state
+        .save_direct_conversation_peer(realm.into(), peer.clone())
+        .unwrap();
+    let sequence = crate::mls::direct_binding::begin_query(&authority, &peer).unwrap();
+    let context = crate::state::DirectMessageContext {
+        account: authority.clone(),
+        session_epoch: crate::identity::device_directory::cache_epoch(),
+        query_sequence: sequence,
+        authority_source: arkret_wire::AuthoritySourceId::DirectConversationBootstrapParticipantV1,
+        authority_event_ref: arkret_sdk::EventId::new(realm.replace("ak:realm:", "ak:event:"))
+            .unwrap(),
+        group_state_ref: reference.clone(),
+    };
+    state.set_direct_message_context(realm.into(), Some(context.clone()));
+    assert_eq!(ready(&state), Some(true));
+    let (_, encrypted) = encrypt_values_with_device_snapshot_for_effective_scope(
+        &mut state,
+        &secure,
+        realm,
+        &authority,
+        &fixture::device_id(device),
+        "application/vnd.arkret.test+json",
+        &[b"founder-only encrypted history".to_vec()],
+        arkret_wire::event_kind_str::MESSAGE_CREATE,
+        reference.clone(),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(encrypted.len(), 1);
+    assert_eq!(state.mls_checkpoint_for(realm).unwrap().epoch, 0);
+    assert_eq!(
+        mls_group_member_actor_ids_for_effective_scope(
+            &state,
+            &secure,
+            realm,
+            None,
+            &authority,
+            &fixture::device_id(device)
+        )
+        .unwrap(),
+        vec![self_actor.clone()]
+    );
+    let mut bound = context.clone();
+    bound.authority_source = arkret_wire::AuthoritySourceId::DirectConversationParticipantV1;
+    state.set_direct_message_context(realm.into(), Some(bound));
+    assert_eq!(
+        ready(&state),
+        Some(false),
+        "a bound group must cover the pair"
+    );
+    let mut foreign_founder = context.clone();
+    foreign_founder.account = fixture::authority("did:web:another-founder.example");
+    state.set_direct_message_context(realm.into(), Some(foreign_founder));
+    assert_eq!(ready(&state), Some(false));
+    let mut wrong_genesis = context.clone();
+    wrong_genesis.authority_event_ref = reference.clone();
+    state.set_direct_message_context(realm.into(), Some(wrong_genesis));
+    assert_eq!(ready(&state), Some(false));
+    let mut wrong_group = context.clone();
+    wrong_group.group_state_ref =
+        arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [77; 32]);
+    state.set_direct_message_context(realm.into(), Some(wrong_group));
+    assert_eq!(ready(&state), Some(false));
+    state.set_direct_message_context(realm.into(), Some(context));
+    fixture::install_complete_joined_members(
+        &mut state,
+        realm,
+        vec![
+            self_actor.clone(),
+            arkret_sdk::ActorId::account(fixture::authority("did:web:third-person.example")),
+        ],
+    );
+    assert_eq!(ready(&state), Some(false), "the exact peer must match");
+    let mut three = pair;
+    three.push(arkret_sdk::ActorId::account(fixture::authority(
+        "did:web:third-person.example",
+    )));
+    fixture::install_complete_joined_members(&mut state, realm, three);
+    assert_eq!(ready(&state), Some(false));
+    fixture::install_complete_joined_members(
+        &mut state,
+        realm,
+        vec![
+            self_actor,
+            arkret_sdk::ActorId::account(fixture::authority("did:web:provisional-peer.example")),
+        ],
+    );
+    fixture::install_accepted_mls_group_at_epoch(
+        &mut state,
+        &arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+        },
+        1,
+        0,
+    );
+    assert_eq!(
+        ready(&state),
+        Some(false),
+        "provisional history cannot use a stale epoch zero"
+    );
+}
+
 /// Sidecar exchange binding transport (`zh/models/sidecar.md` §7.2.1): the
 /// optional `encrypted_metadata` plaintext is encrypted as a SECOND
 /// application message on the same restored group session, riding the same
