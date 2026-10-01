@@ -237,3 +237,87 @@ fn find_card_by_strand_id_matches_card_or_primary_strand() {
         Some(DEMO_STRAND_LEGAL_REVIEW_ID.to_owned())
     );
 }
+
+#[test]
+fn open_pending_card_editor_resolves_its_receipt_without_rebasing_accepted_edits() {
+    let local_id = "0196419b-0000-7000-8000-000000000001";
+    let event_id =
+        arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [0x23; 32]);
+    let strand_id = arkret_sdk::StrandId::from_event_id(&event_id);
+    let pending = test_card(local_id, "U");
+    let mut accepted = pending.clone();
+    accepted.id = strand_id.to_string();
+    accepted.primary_strand_id = strand_id.to_string();
+    accepted.authoring_basis = Some(arkret_wire::CurrentRevision {
+        commit_id: arkret_wire::RealmCommitId::from_digest([1; 32]),
+        stream_position: 1,
+    });
+    let mut columns = seed_columns();
+    columns[0].cards = vec![accepted.clone()];
+    let receipt = RawOperationRecord {
+        operation_id: local_id.to_owned(),
+        realm_id: Some(TEST_REALM_ID.to_owned()),
+        received_at: chrono::Utc::now(),
+        payload: json!({
+            "kind": "ak.strand.create",
+            "event_id": event_id,
+            "local_temporary_target_ref": local_id,
+            "write_state": "synced"
+        }),
+    };
+    assert_eq!(
+        selected_card_projection_update(&pending, &columns, &[], true),
+        None,
+        "a visible projection alone cannot promote a holder-local handle"
+    );
+    assert!(card_detail_write_ready(&accepted));
+    let mut incomplete = accepted.clone();
+    incomplete.state = CardState::Accepted;
+    incomplete.authoring_basis = None;
+    columns[0].cards = vec![incomplete.clone()];
+    assert!(!card_detail_write_ready(&incomplete));
+    assert_eq!(
+        selected_card_projection_update(&pending, &columns, &[receipt.clone()], true),
+        None,
+        "a canonical identity alone is not an editable accepted current"
+    );
+    columns[0].cards = vec![accepted.clone()];
+    assert_eq!(
+        selected_card_projection_update(&pending, &columns, &[receipt], true),
+        Some(accepted.clone())
+    );
+    assert_eq!(
+        selected_card_projection_update(&incomplete, &columns, &[], true),
+        Some(accepted.clone()),
+        "an editor opened after ID acceptance still waits for its first complete basis"
+    );
+    let mut pending_receipt = accepted.clone();
+    pending_receipt.state = CardState::Accepted;
+    assert!(!card_detail_write_ready(&pending_receipt));
+    columns[0].cards[0].description = "do not rebase captured content".to_owned();
+    assert_eq!(
+        selected_card_projection_update(&pending_receipt, &columns, &[], true),
+        Some(accepted.clone()),
+        "receipt state settles without replacing the captured value/source"
+    );
+    columns[0].cards[0]
+        .authoring_basis
+        .as_mut()
+        .unwrap()
+        .stream_position = 2;
+    assert_eq!(
+        selected_card_projection_update(&pending_receipt, &columns, &[], true),
+        None,
+        "a new source cannot settle an older captured editor basis"
+    );
+    columns[0].cards[0].description = "remote replacement".to_owned();
+    assert_eq!(
+        selected_card_projection_update(&accepted, &columns, &[], true),
+        None,
+        "an accepted editor keeps its captured source/value"
+    );
+    assert_eq!(
+        selected_card_projection_update(&accepted, &columns, &[], false),
+        Some(columns[0].cards[0].clone())
+    );
+}

@@ -77,6 +77,12 @@ pub(super) fn card_matches_strand_id(card: &KanbanCard, strand_id: &str) -> bool
     !strand_id.is_empty() && (card.id == strand_id || card.primary_strand_id == strand_id)
 }
 
+pub(super) fn card_detail_write_ready(card: &KanbanCard) -> bool {
+    arkret_sdk::StrandId::new(card.id.clone()).is_ok()
+        && card.state == CardState::Synced
+        && card.authoring_basis.is_some()
+}
+
 pub(super) fn card_discussion_target_ready(card: &KanbanCard) -> bool {
     arkret_sdk::StrandId::new(card.primary_strand_id.clone()).is_ok()
 }

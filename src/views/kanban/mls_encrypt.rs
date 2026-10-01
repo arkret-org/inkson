@@ -127,6 +127,46 @@ pub(super) async fn encrypt_private_card_detail_patch_values_for_effective_scope
     mut state_store: SyncSignal<LocalStateStore>,
     sidecar: Option<&SidecarTrackWriteContext>,
 ) -> Result<(EncryptedPatchPlan, EncryptedWriteMlsEvents), String> {
+    let account_scope = crate::secure_key_store::active_device_seed_scope()
+        .ok_or_else(|| "active account authority is unavailable".to_owned())?;
+    if !active_scope_matches_write_identity(&account_scope, actor_id, device_id) {
+        return Err("encrypted write identity does not match the active account".to_owned());
+    }
+    if !collect_encryptable_private_patch_values(&patch)?.is_empty() {
+        let realm_id_typed = arkret_sdk::RealmId::new(realm_id.to_owned())
+            .map_err(|error| format!("invalid card Realm id: {error}"))?;
+        let effective_scope = match sidecar {
+            Some(context) => arkret_sdk::ScopeRef::Sidecar {
+                realm_id: realm_id_typed,
+                sidecar_id: context
+                    .sidecar_id
+                    .clone()
+                    .filter(|_| context.ready)
+                    .ok_or_else(|| "Private Sidecar MLS access is not ready".to_owned())?,
+            },
+            None => arkret_sdk::ScopeRef::Realm {
+                realm_id: realm_id_typed,
+            },
+        };
+        // Do not hold the account state lock while reading the committed current
+        // and restoring this device's private group. A concurrent accepted cut may
+        // invalidate the UI probe before the click; authoring rechecks it here.
+        let store_handle = crate::app::runtime_adapter::state_store_handle(state_store);
+        let gate_input =
+            crate::mls::send_gate::MlsSendGateInput::capture(&store_handle, &effective_scope);
+        let gate = crate::mls::send_gate::resolve_restorable_mls_send_gate(
+            &gate_input,
+            &effective_scope,
+            &account_scope.device_id,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        if !matches!(gate, crate::mls::send_gate::MlsSendGate::Encrypted(_)) {
+            return Err(
+                "the scope has no accepted MLS group for encrypted card content".to_owned(),
+            );
+        }
+    }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let mut store = state_store.write();
     encrypt_private_card_detail_patch_values_with_store_for_effective_scope(

@@ -43,18 +43,10 @@ where
             Ok(value) => return Ok(value),
             Err(error) => error,
         };
-        let delay = error
-            .inner()
-            .downcast_ref::<crate::key_backup::KeyBackupUnlockBackoff>()
-            .map(|backoff| backoff.retry_after_ms())
-            .or_else(|| crate::api_error::rate_limited_retry_after(error.inner()));
-        let Some(delay) = delay else {
+        let Some(delay) = crate::key_backup::key_backup_unlock_retry_delay(error.inner()) else {
             return Err(error);
         };
-        // A Station may omit Retry-After. Use the ordinary minute window
-        // instead of a tight loop; explicit server delays remain authoritative.
-        let delay = if delay == 0 { 60_000 } else { delay };
-        wait(Duration::from_millis(delay)).await;
+        wait(delay).await;
     }
 }
 

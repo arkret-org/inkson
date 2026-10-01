@@ -52,18 +52,52 @@ pub(crate) fn sync_selected_card_from_columns(
     mut selected_card: Signal<Option<KanbanCard>>,
     columns: &[KanbanColumn],
     raw_operations: &[RawOperationRecord],
+    preserve_edit_basis: bool,
 ) {
     let Some(current) = selected_card.read().clone() else {
         return;
     };
-    let aliases = event_derived_target_aliases(raw_operations);
-    let strand_id = resolve_event_derived_target_alias(&aliases, &current.id);
-    let Some(next) = find_card_by_strand_id(columns, &strand_id) else {
-        return;
-    };
-    if next != current {
+    if let Some(next) =
+        selected_card_projection_update(&current, columns, raw_operations, preserve_edit_basis)
+    {
         selected_card.set(Some(next));
     }
+}
+
+pub(crate) fn selected_card_projection_update(
+    current: &KanbanCard,
+    columns: &[KanbanColumn],
+    raw_operations: &[RawOperationRecord],
+    preserve_edit_basis: bool,
+) -> Option<KanbanCard> {
+    let aliases = event_derived_target_aliases(raw_operations);
+    let strand_id = resolve_event_derived_target_alias(&aliases, &current.id);
+    let next = find_card_by_strand_id(columns, &strand_id)?;
+    if preserve_edit_basis {
+        if current.authoring_basis.is_some() {
+            // An accepted source/value is captured even if its local receipt
+            // is still converging. Only its write-state may settle; a different
+            // current revision must never silently rebase that editor.
+            if current.state == CardState::Synced
+                || next.id != current.id
+                || next.authoring_basis != current.authoring_basis
+            {
+                return None;
+            }
+            let mut settled = current.clone();
+            settled.state = next.state;
+            return (settled != *current).then_some(settled);
+        }
+        // No editable source was captured yet. Wait for both the verified
+        // complete current and create receipt, rather than freezing the first
+        // canonical-but-still-pending projection.
+        if !card_detail_write_ready(&next)
+            || (arkret_sdk::StrandId::new(current.id.clone()).is_err() && strand_id == current.id)
+        {
+            return None;
+        }
+    }
+    (next != *current).then_some(next)
 }
 
 #[cfg(test)]

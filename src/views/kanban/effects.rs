@@ -231,13 +231,18 @@ pub(super) fn KanbanEffects(
     });
 
     use_effect(move || {
-        // Keep the complete value and source captured at editor entry together.
-        // Remote current replacements must not silently rebase an open draft.
-        if editing_card_detail() || due_picker_open() || assignee_picker_open() {
-            return;
-        }
+        // Preserve an accepted editor basis while allowing a pending create's
+        // receipt to install its event-derived identity. Editor signals retain
+        // the user's draft through that transition.
+        let preserve_edit_basis =
+            editing_card_detail() || due_picker_open() || assignee_picker_open();
         let raw_operations = state_store.read().load().raw_operations;
-        sync_selected_card_from_columns(selected_card, &columns(), &raw_operations);
+        sync_selected_card_from_columns(
+            selected_card,
+            &columns(),
+            &raw_operations,
+            preserve_edit_basis,
+        );
     });
 
     {

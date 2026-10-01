@@ -2907,7 +2907,7 @@ pub fn KanbanPanel(
                     plaintext_service_id: plaintext_service_id.clone(),
                     principal_id: principal_core_id.clone(),
                     account_primary_handle: account_primary_handle(),
-                    device_id: device_id.clone(),
+                    device_id: active_account.device_id.clone(),
                     selected_realm_id: selected_realm_id.clone(),
                     projection_realm_id: projection_realm_id.clone(),
                     token,

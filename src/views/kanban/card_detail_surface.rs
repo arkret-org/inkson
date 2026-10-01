@@ -8,7 +8,7 @@ pub(super) struct CardDetailContext {
     pub plaintext_service_id: String,
     pub principal_id: arkret_sdk::DidCoreId,
     pub account_primary_handle: String,
-    pub device_id: String,
+    pub device_id: arkret_sdk::DeviceId,
     pub selected_realm_id: String,
     pub projection_realm_id: String,
     pub token: Signal<String>,
@@ -187,6 +187,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
     // only the canonical textual representation.
     let principal_core_id = principal_id.clone();
     let principal_id = principal_id.as_str().to_owned();
+    let account_device_id = device_id.clone();
+    let device_id = device_id.to_string();
     let state_store = crate::app::SessionContext::get().state_store;
     let hosted_sidecar_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     let navigator = use_navigator();
@@ -269,6 +271,27 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         mut board_status,
         command_queue: _,
     } = controller;
+    let detail_send_scope = selected_card().and_then(|card| {
+        let realm_id = arkret_sdk::RealmId::new(selected_realm_id.clone()).ok()?;
+        let sidecar = hosted_sidecar_state().filter(|session| {
+            session.source_realm_id == selected_realm_id
+                && session.source_strand_id == card.primary_strand_id
+        });
+        match sidecar {
+            Some(session) => session.mls_scope_sidecar_id().ok().map(|sidecar_id| {
+                arkret_sdk::ScopeRef::Sidecar {
+                    realm_id,
+                    sidecar_id,
+                }
+            }),
+            None => Some(arkret_sdk::ScopeRef::Realm { realm_id }),
+        }
+    });
+    let detail_send_ready = crate::views::secure_send::use_scope_send_ready(
+        state_store,
+        detail_send_scope,
+        account_device_id,
+    );
     let mut sidecar_edit_context_seen = use_signal(SidecarTrackEditContext::default);
     let mut suspended_shared_track_edits = use_signal(BTreeMap::<String, SuspendedTrackEdit>::new);
     let mut card_detail_backdrop_pressed = use_signal(|| false);
@@ -800,7 +823,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             }
                                                         }
                                                         CardDetailEditActions {
-                                                                    save_disabled: arkret_sdk::StrandId::new(card.id.clone()).is_err(),
+                                                                    save_disabled: !detail_send_ready || !card_detail_write_ready(&card),
                                                             status: card_detail_edit_status(),
                                                             on_save: {
                                                                 let base = base_url.clone();
@@ -983,7 +1006,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     }
                                                                 }
                                                                 CardDetailEditActions {
-                                                                    save_disabled: arkret_sdk::StrandId::new(card.id.clone()).is_err(),
+                                                                    save_disabled: !detail_send_ready || !card_detail_write_ready(&card),
                                                                     status: card_detail_edit_status(),
                                                                     on_save: {
                                                                         let base = base_url.clone();
@@ -1356,7 +1379,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             }
                                                                                         }
                                                                                         CardDetailEditActions {
-                                                                    save_disabled: arkret_sdk::StrandId::new(card.id.clone()).is_err(),
+                                                                    save_disabled: !detail_send_ready || !card_detail_write_ready(&card),
                                                                                             status: card_detail_edit_status(),
                                                                                             on_save: {
                                                                                                 let base = base_url.clone();
@@ -1448,7 +1471,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     }
                                                                 }
                                                                 CardDetailEditActions {
-                                                                    save_disabled: arkret_sdk::StrandId::new(card.id.clone()).is_err(),
+                                                                    save_disabled: !detail_send_ready || !card_detail_write_ready(&card),
                                                                     status: card_detail_edit_status(),
                                                                     on_save: {
                                                                         let base = base_url.clone();

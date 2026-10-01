@@ -256,7 +256,7 @@ async fn fetch_active_series_tail(
     }
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    crate::key_backup::fetch_key_backup_with_device_unlock_proof(
+    crate::key_backup::fetch_key_backup_with_device_unlock_proof_retrying(
         api,
         metadata,
         actor_id,
@@ -541,7 +541,7 @@ pub async fn fetch_mls_private_plaintext_backup_body(
     };
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let body = crate::key_backup::fetch_key_backup_with_device_unlock_proof(
+    let body = crate::key_backup::fetch_key_backup_with_device_unlock_proof_retrying(
         api,
         &metadata,
         actor_id,

@@ -227,6 +227,62 @@ pub async fn fetch_key_backup_with_device_unlock_proof(
     .await
 }
 
+pub(crate) fn key_backup_unlock_retry_delay(error: &anyhow::Error) -> Option<std::time::Duration> {
+    let delay = error
+        .downcast_ref::<KeyBackupUnlockBackoff>()
+        .map(KeyBackupUnlockBackoff::retry_after_ms)
+        .or_else(|| crate::api_error::rate_limited_retry_after(error))?;
+    Some(std::time::Duration::from_millis(if delay == 0 {
+        60_000
+    } else {
+        delay
+    }))
+}
+
+async fn retry_key_backup_unlock<T, F, R, W, S>(mut fetch: F, mut wait: W) -> anyhow::Result<T>
+where
+    F: FnMut() -> R,
+    R: std::future::Future<Output = anyhow::Result<T>>,
+    W: FnMut(std::time::Duration) -> S,
+    S: std::future::Future<Output = ()>,
+{
+    loop {
+        let error = match fetch().await {
+            Ok(body) => return Ok(body),
+            Err(error) => error,
+        };
+        let Some(delay) = key_backup_unlock_retry_delay(&error) else {
+            return Err(error);
+        };
+        wait(delay).await;
+    }
+}
+
+/// Wait only on a download's typed unlock rate limit, before an uploader
+/// generates or submits a successor. The underlying fetch retains the exact
+/// holder-bound proof and verified ciphertext receipt across these attempts.
+pub(crate) async fn fetch_key_backup_with_device_unlock_proof_retrying(
+    api: &crate::transport::TransportClient,
+    backup_metadata: &Value,
+    principal_id: &str,
+    requesting_device_id: &str,
+    signer: Option<&std::sync::Arc<crate::event_signer::InksonEventSigner>>,
+) -> anyhow::Result<Value> {
+    retry_key_backup_unlock(
+        || {
+            fetch_key_backup_with_device_unlock_proof(
+                api,
+                backup_metadata,
+                principal_id,
+                requesting_device_id,
+                signer,
+            )
+        },
+        crate::runtime_helpers::sleep_for,
+    )
+    .await
+}
+
 pub async fn fetch_key_backup_with_recovery_session_unlock_proof(
     api: &crate::transport::TransportClient,
     backup_metadata: &Value,
@@ -376,7 +432,12 @@ fn key_backup_unlock_backoff_remaining_ms(scope: &str) -> Option<u64> {
 }
 
 fn note_key_backup_unlock_backoff(scope: &str, retry_after_ms: u64) {
-    let until_ms = crate::clock::now_unix_ms().saturating_add(retry_after_ms.max(1_000));
+    let delay = if retry_after_ms == 0 {
+        60_000
+    } else {
+        retry_after_ms.max(1_000)
+    };
+    let until_ms = crate::clock::now_unix_ms().saturating_add(delay);
     KEY_BACKUP_UNLOCK_BACKOFFS.with(|backoffs| backoffs.borrow_mut().note_until(scope, until_ms));
 }
 
@@ -786,5 +847,56 @@ mod tests {
         let remaining = key_backup_unlock_backoff_remaining_ms(scope)
             .expect("backoff must be visible after rate limit");
         assert!(remaining > 0 && remaining <= 30_000);
+        let no_hint_scope = "server|principal=no-hint";
+        note_key_backup_unlock_backoff(no_hint_scope, 0);
+        let remaining = key_backup_unlock_backoff_remaining_ms(no_hint_scope).unwrap();
+        assert!(remaining > 59_000 && remaining <= 60_000);
+    }
+    #[tokio::test]
+    async fn backup_predecessor_download_waits_on_typed_rate_limits_only() {
+        for (hint, expected) in [(Some(250), 250), (None, 60_000)] {
+            let mut problem = arkret_sdk::Problem::new("rate_limited", 429, "slow down");
+            if let Some(delay) = hint {
+                problem = problem.with_extension("retry_after_ms", serde_json::json!(delay));
+            }
+            let error = anyhow::Error::from(arkret_sdk::Error::Api {
+                status: 429,
+                error: Box::new(problem),
+            })
+            .context("fetch active secret_storage series tail");
+            let mut results = std::collections::VecDeque::from([Err(error), Ok(7_u32)]);
+            let mut waits = Vec::new();
+            let body = retry_key_backup_unlock(
+                || std::future::ready(results.pop_front().unwrap()),
+                |delay| {
+                    waits.push(delay);
+                    std::future::ready(())
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(body, 7);
+            assert_eq!(waits, vec![std::time::Duration::from_millis(expected)]);
+            assert!(results.is_empty());
+        }
+        let backoff = anyhow::Error::from(KeyBackupUnlockBackoff {
+            retry_after_ms: 900,
+        })
+        .context("another caller observed the account cooldown");
+        assert_eq!(
+            key_backup_unlock_retry_delay(&backoff),
+            Some(std::time::Duration::from_millis(900))
+        );
+        let mut waited = false;
+        let rejected = retry_key_backup_unlock::<(), _, _, _, _>(
+            || std::future::ready(Err(anyhow::anyhow!("signature invalid"))),
+            |_| {
+                waited = true;
+                std::future::ready(())
+            },
+        )
+        .await;
+        assert!(rejected.is_err());
+        assert!(!waited);
     }
 }
