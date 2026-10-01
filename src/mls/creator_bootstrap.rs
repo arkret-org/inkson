@@ -178,6 +178,9 @@ pub(crate) async fn should_resume_creator_genesis(
         .await
         .map_err(|e| e.to_string())?;
     let staged_checkpoint = state_store.read(|store| has_staged_creator_genesis(store, realm_id));
+    if accepted.is_some() && durable_intent.is_some() {
+        return authenticated_account_is_realm_creator(api, state_store, realm_id, authority).await;
+    }
     if accepted.is_some() {
         return Ok(creator_genesis_has_resume_evidence(
             true,
@@ -317,6 +320,58 @@ async fn bootstrap_creator_realm_mls_genesis(
     // Resolve exact accepted authority; a local presentation row is not evidence.
     if !authenticated_account_is_realm_creator(api, state_store, realm_id, authority).await? {
         return Err("the authenticated actor is not the accepted Realm creator".to_owned());
+    }
+    if durable_intent.is_some() {
+        let submitter = submitter.for_founding_realm(scope.realm_id().clone());
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        crate::mls::runtime::ensure_existing_account_mls_secret_durable(
+            secure_store.as_ref(),
+            authority,
+        )
+        .await
+        .map_err(|error| format!("persist existing MLS root: {error}"))?;
+        // Resolve the exact winner before restoring or authoring anything.
+        // The original pin is immutable; unavailable evidence cannot mint.
+        submitter
+            .persist_creator_governance_pin(&scope)
+            .await
+            .map_err(|error| format!("persist creator pin: {error}"))?;
+        let mut accepted = submitter
+            .reconcile_creator_genesis(&scope)
+            .await
+            .map_err(|error| format!("verify exact creator Genesis: {error}"))?;
+        let (record, summary) = submitter
+            .persist_creator_epoch_zero(&scope, secure_store.as_ref())
+            .await
+            .map_err(|error| format!("restore committed creator epoch zero: {error}"))?;
+        if accepted.is_none() {
+            crate::mls::runtime::upload_mls_genesis_public_material(api, &summary)
+                .await
+                .map_err(|error| {
+                    format!(
+                        "publish original creator material: {}",
+                        error.user_message()
+                    )
+                })?;
+            let result = submitter.submit_creator_genesis(record).await;
+            // Even a lost response is settled only by exact verified bytes.
+            accepted = submitter
+                .reconcile_creator_genesis(&scope)
+                .await
+                .map_err(|error| format!("verify creator acceptance after submit: {error}"))?;
+            if accepted.is_none() {
+                return Err(format!(
+                    "original Genesis remains pending: {}",
+                    result
+                        .err()
+                        .map(|error| error.to_string())
+                        .unwrap_or_else(|| "no exact accepted result".into())
+                ));
+            }
+        }
+        let accepted = accepted.ok_or_else(|| "creator exact acceptance missing".to_owned())?;
+        publish_accepted_creator_genesis(state_store, realm_id, &accepted).await?;
+        return Ok(());
     }
     // An accepted Genesis is the authoritative completion record. Resolve it,
     // or drain its byte-identical durable queue item, before reading or

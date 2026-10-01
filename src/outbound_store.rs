@@ -112,6 +112,15 @@ impl DurableOutboundState {
                             .into(),
                     ));
                 }
+                if let Some(accepted) = record.accepted_genesis()
+                    && (item.status != garth::SendQueueStatus::Committed
+                        || item.commit() != Some(&accepted.accepted().commit)
+                        || item.settled_at.is_none())
+                {
+                    return Err(garth::Error::Storage(
+                        "accepted creator queue is not completed and retained".into(),
+                    ));
+                }
             }
         }
         for event_id in self.scheduled_dispatches.values() {
@@ -655,6 +664,57 @@ impl InksonOutboundStore {
         .await
     }
 
+    /// Bind exact verified acceptance and stop its retained ledger atomically.
+    pub(crate) async fn accept_creator_genesis(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        accepted: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedGenesis,
+    ) -> garth::Result<()> {
+        let mut next = expected.clone();
+        next.accept_genesis(accepted.clone())?;
+        self.mutate_state(|state| {
+            let record = state
+                .creator_bootstrap_records
+                .iter_mut()
+                .find(|record| {
+                    record.intent().effective_scope() == expected.intent().effective_scope()
+                })
+                .ok_or_else(|| {
+                    garth::Error::Storage("creator acceptance lost its signed original".into())
+                })?;
+            if record != &next && record != &expected {
+                return Err(garth::Error::Storage(
+                    "creator acceptance changed in another holder".into(),
+                ));
+            }
+            let item = state
+                .items
+                .iter_mut()
+                .find(|item| item.event_id() == &accepted.accepted().event.event_id)
+                .ok_or_else(|| {
+                    garth::Error::Storage("creator acceptance lost its queue item".into())
+                })?;
+            if item
+                .commit()
+                .is_some_and(|commit| commit != &accepted.accepted().commit)
+            {
+                return Err(garth::Error::Storage(
+                    "creator queue outcome disagrees with exact accepted Commit".into(),
+                ));
+            }
+            item.submission.state = garth::SubmissionState::Committed {
+                status: arkret_wire::AuthorityCommitStatus::Committed,
+                commit: Box::new(accepted.accepted().commit.clone()),
+            };
+            item.status = garth::SendQueueStatus::Committed;
+            item.settled_at = Some(accepted.accepted().commit.committed_at);
+            item.last_error = None;
+            *record = next;
+            Ok(())
+        })
+        .await
+    }
+
     async fn replace_creator_record(
         &self,
         expected: MlsCreatorBootstrapRecord,
@@ -1117,7 +1177,7 @@ mod tests {
             "device_keys": [{"account_id": intent.owner_actor_id().as_account_id().unwrap(), "device_keys": {
                 CREATOR_DEVICE: {"signer_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "algorithms": {}, "trust_algorithms": [], "device_projection": {
-                        "device_signing_key_did": "did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5",
+                        "device_signing_key_did": format!("did:key:{}", arkret_sdk::ed25519_pubkey_to_did_key_multibase(ed25519_dalek::SigningKey::from_bytes(&[11; 32]).verifying_key().as_bytes())),
                         "hpke_key": "hpke-test", "device_authorize_event_id": intent.scope_create_event_id(),
                         "authorized_generation_ref": 7, "device_status": "active",
                         "attested_at": arkret_sdk::canonical::format_timestamp_canonical(now), "expires_at": arkret_sdk::canonical::format_timestamp_canonical(now + chrono::TimeDelta::minutes(5)),
@@ -1356,7 +1416,75 @@ mod tests {
                 .creator_record(intent.owner_actor_id(), intent.effective_scope())
                 .await
                 .unwrap(),
-            Some(winner)
+            Some(winner.clone())
+        );
+        let create = winner.governance_evidence().unwrap().accepted_create();
+        // Structural acceptance fixture. Live authentication belongs to the
+        // exact verified query, not this durable adapter fault test.
+        let mut commit = create.covering_commit().clone();
+        commit.stream_position += 1;
+        commit.previous_commit_ref = Some(create.covering_commit().commit_id.clone());
+        commit.event_ref = queued.event_id.clone();
+        let accepted = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedGenesis::new(
+            &intent, winner.queued_genesis().unwrap(),
+            arkret_wire::CommittedEventFullView { commit: commit.clone(), event: winner.queued_genesis().unwrap().signed_genesis().event().clone() },
+            create.authority_root().clone()).unwrap();
+        crate::event_submit::verify_creator_genesis_producer(&winner, &accepted).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+        assert!(
+            store
+                .accept_creator_genesis(winner.clone(), accepted.clone())
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(
+            reopened
+                .creator_record(intent.owner_actor_id(), intent.effective_scope())
+                .await
+                .unwrap(),
+            Some(winner.clone())
+        );
+        std::fs::remove_dir(path.with_extension("json.tmp")).unwrap();
+        store
+            .accept_creator_genesis(winner.clone(), accepted.clone())
+            .await
+            .unwrap();
+        reopened
+            .accept_creator_genesis(winner, accepted)
+            .await
+            .unwrap();
+        let final_state = decode_snapshot(Some(&std::fs::read_to_string(&path).unwrap())).unwrap();
+        assert_eq!(
+            final_state.creator_bootstrap_records[0].state(),
+            arkret_wire::MlsCreatorBootstrapState::GenesisAccepted
+        );
+        assert_eq!(final_state.items.len(), 2);
+        let item = final_state
+            .items
+            .iter()
+            .find(|item| item.event_id() == &queued.event_id)
+            .unwrap();
+        assert_eq!(item.status, garth::SendQueueStatus::Committed);
+        assert_eq!(item.commit(), Some(&commit));
+        assert!(item.settled_at.is_some());
+        // Generic queue compaction cannot delete a retained acceptance item.
+        assert!(
+            store
+                .mutate_outbound(|queue| Ok(
+                    queue.compact_terminal_before(chrono::Utc::now() + chrono::TimeDelta::days(1))
+                ))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            reopened
+                .creator_record(intent.owner_actor_id(), intent.effective_scope())
+                .await
+                .unwrap()
+                .unwrap(),
+            final_state.creator_bootstrap_records[0]
         );
     }
 

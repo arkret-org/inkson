@@ -58,6 +58,40 @@ pub(super) fn realm_owner_covers_event_kind(kind: &str) -> bool {
         .is_some_and(|descriptor| descriptor.target_event_kinds.contains(&kind))
 }
 
+/// Verify the original producer using its pinned authorized Device key and
+/// the SDK's generated Event preimage contract, which omits Event id/proof.
+pub(crate) fn verify_creator_genesis_producer(
+    record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+    accepted: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedGenesis,
+) -> anyhow::Result<()> {
+    let queued = record
+        .queued_genesis()
+        .ok_or_else(|| anyhow::anyhow!("accepted creator lost signed original"))?;
+    accepted.validate_binding(record.intent(), queued)?;
+    let projection = record
+        .governance_evidence()
+        .ok_or_else(|| anyhow::anyhow!("accepted creator lost its pin"))?
+        .creator_device_authority()
+        .projection();
+    let key = crate::identity::device_directory::public_key_from_directory_value(
+        projection.device_signing_key_did.as_str(),
+    )
+    .ok_or_else(|| anyhow::anyhow!("pinned creator signing key is unavailable"))?;
+    let event = &accepted.accepted().event;
+    let bytes = arkret_sdk::canonical::canonical_json_bytes(&event.digest_payload()?)?;
+    arkret_sdk::signatures::verify_ed25519_detached_jws_proof_with_digest_suite(
+        event
+            .producer_proof
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("accepted Genesis proof missing"))?,
+        &bytes,
+        record.intent().owner_actor_id(),
+        &key,
+        queued.signed_genesis().digest_suite(),
+    )?;
+    Ok(())
+}
+
 impl EventSubmitter {
     /// Persist the registered accepted-create arrow before any MLS material
     /// is produced. The authority root is independently verified with a fresh
@@ -79,6 +113,7 @@ impl EventSubmitter {
                 | MlsCreatorBootstrapRecord::GovernanceResultPinned { .. }
                 | MlsCreatorBootstrapRecord::Epoch0StatePersisted { .. }
                 | MlsCreatorBootstrapRecord::GenesisQueued { .. }
+                | MlsCreatorBootstrapRecord::GenesisAccepted { .. }
         ) {
             // This arrow is immutable and idempotent. The following governance
             // pin must authenticate its own current creator/endpoint cut.
@@ -338,6 +373,97 @@ impl EventSubmitter {
             })
             .await?;
         settled_outbound_result(&item)
+    }
+
+    /// Each worker attempt must prove absence at a verified exact current cut.
+    /// An accepted winner is reconciled by the transaction owner, never by
+    /// treating a gate refusal as an authority rejection.
+    pub(super) async fn ensure_creator_genesis_replay_gate(
+        &self,
+        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+    ) -> anyhow::Result<()> {
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(
+            submission,
+        ) = request
+        else {
+            return Ok(());
+        };
+        let event = &submission.event;
+        if event.kind != arkret_sdk::EventKind::MlsGenesis {
+            return Ok(());
+        }
+        let owner = arkret_sdk::ActorId::account(self.authority()?.clone());
+        let vault = self.outbound(OutboundLane::Standard)?.store().clone();
+        let Some(record) = vault.creator_record(&owner, &event.scope_ref).await? else {
+            return Ok(());
+        };
+        let queued = record
+            .queued_genesis()
+            .ok_or_else(|| anyhow::anyhow!("creator worker has no durable signed original"))?;
+        anyhow::ensure!(
+            queued.signed_genesis().event() == event,
+            "creator worker cannot replace frozen bytes"
+        );
+        anyhow::ensure!(
+            record.accepted_genesis().is_none(),
+            "creator Genesis already accepted; stop replay"
+        );
+        let evidence = record
+            .governance_evidence()
+            .ok_or_else(|| anyhow::anyhow!("creator worker lost its pin"))?;
+        let (_, accepted) = crate::realm_events_engine::verified_creator_genesis(
+            &self.http,
+            record.intent(),
+            evidence.accepted_create(),
+        )
+        .await?;
+        anyhow::ensure!(
+            accepted.is_none(),
+            "creator Genesis winner must be reconciled before replay"
+        );
+        Ok(())
+    }
+
+    /// Reconcile the frozen original before any resend. Only a complete,
+    /// authenticated exact query can settle it or prove definite absence.
+    pub(crate) async fn reconcile_creator_genesis(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<Option<arkret_sdk::EventId>> {
+        use arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedGenesis;
+        let vault = self.outbound(OutboundLane::Standard)?.store().clone();
+        let owner = arkret_sdk::ActorId::account(self.authority()?.clone());
+        let record = vault
+            .creator_record(&owner, scope)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("creator exact query lost its durable intent"))?;
+        if let Some(accepted) = record.accepted_genesis() {
+            record.validate()?;
+            return Ok(Some(accepted.accepted().event.event_id.clone()));
+        }
+        let evidence = record
+            .governance_evidence()
+            .ok_or_else(|| anyhow::anyhow!("creator exact query requires its original pin"))?;
+        let (bundle, accepted) = crate::realm_events_engine::verified_creator_genesis(
+            &self.http,
+            record.intent(),
+            evidence.accepted_create(),
+        )
+        .await?;
+        let Some(accepted) = accepted else {
+            return Ok(None);
+        };
+        let queued = record.queued_genesis().ok_or_else(|| {
+            anyhow::anyhow!(
+                "another Genesis already won this scope; creator material cannot be adopted"
+            )
+        })?;
+        let carrier =
+            MlsCreatorBootstrapAcceptedGenesis::new(record.intent(), queued, accepted, bundle)?;
+        verify_creator_genesis_producer(&record, &carrier)?;
+        let id = carrier.accepted().event.event_id.clone();
+        vault.accept_creator_genesis(record, carrier).await?;
+        Ok(Some(id))
     }
 
     async fn read_verified_creator_cut(

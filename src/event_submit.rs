@@ -37,6 +37,8 @@ mod message_authoring;
 #[cfg(test)]
 pub(crate) use authoring_unit::author_event_unit_for_test;
 use authoring_unit::{UnitAuthoringChain, validate_authored_unit_shape};
+#[cfg(test)]
+pub(crate) use authority::verify_creator_genesis_producer;
 use authority::*;
 #[cfg(test)]
 pub(crate) use message_authoring::retry_frozen_message;
@@ -1738,6 +1740,9 @@ impl EventSubmitter {
             self.quarantine_superseded_items(&outbound, &fence).await?;
             match outbound
                 .submit_next_checked(&authority_client, &options, |request| async move {
+                    self.ensure_creator_genesis_replay_gate(&request)
+                        .await
+                        .map_err(|error| error.to_string())?;
                     self.ensure_queued_application_send_gate(&request)
                         .await
                         .map_err(|error| error.to_string())
@@ -1981,6 +1986,9 @@ impl EventSubmitter {
             let options = arkret_sdk::http_client::ClientRequestOptions::new();
             match outbound
                 .submit_next_checked(&authority_client, &options, |request| async move {
+                    self.ensure_creator_genesis_replay_gate(&request)
+                        .await
+                        .map_err(|error| error.to_string())?;
                     self.ensure_queued_application_send_gate(&request)
                         .await
                         .map_err(|error| error.to_string())

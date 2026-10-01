@@ -381,6 +381,95 @@ pub(crate) async fn verified_mls_recovery_tail(
         .collect())
 }
 
+/// Exact creator query at a complete independently verified current cut.
+/// Missing disclosure, an incomplete chain or a changed cut is unavailable,
+/// never evidence that a queued Genesis can be replaced.
+pub(crate) async fn verified_creator_genesis(
+    http: &arkret_sdk::http_client::Client,
+    intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
+    pinned_create: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
+) -> garth::Result<(
+    arkret_sdk::RealmAuthorityBundle,
+    Option<arkret_sdk::CommittedEventFullView>,
+)> {
+    let realm = intent.effective_scope().realm_id();
+    let stream = CommitStreamRef::from_scope(intent.effective_scope(), Some(realm.clone()))?;
+    let authority = AuthorityClient::new(http.clone());
+    let (bundle, freshness, mut replica) = fresh_verified_realm(&authority, http, realm).await?;
+    let snapshot = http.realm_state_snapshot_head(realm).await?;
+    let keys =
+        garth::fetch_historical_station_key_directory(http, &bundle, None, Some(&snapshot)).await?;
+    let fresh = arkret_identity::RealmAuthorityFreshness::new(
+        chrono::Utc::now(),
+        freshness.expected_nonce.clone(),
+    );
+    replica.install_verified_current_snapshot_heads(&snapshot, &fresh, &keys)?;
+    // Snapshot verification authenticates the end cut, not a replay prefix.
+    // Start a separate replica with only the verified authority installed.
+    let mut replica = replica.fork_verified_authority()?;
+    let head = snapshot
+        .visible_stream_heads
+        .iter()
+        .find(|head| head.stream_ref == stream)
+        .ok_or_else(|| {
+            garth::Error::Protocol("creator exact query has no signed scope head".into())
+        })?;
+    let end = head
+        .stream_position
+        .checked_add(1)
+        .ok_or_else(|| garth::Error::Protocol("creator exact query head overflow".into()))?;
+    let (pages, _) = verified_stream_pages(
+        &authority,
+        http,
+        &mut replica,
+        &bundle,
+        &freshness,
+        realm,
+        &stream,
+        ReplayStart::Genesis,
+        Some(end),
+    )
+    .await?
+    .into_verified()?;
+    if replica.verified_head(&stream) != Some(head) {
+        return Err(garth::Error::Protocol(
+            "creator exact query does not reach its signed current cut".into(),
+        ));
+    }
+    let mut accepted = None;
+    for row in pages.iter().flat_map(|page| page.rows()) {
+        let CommittedEventView::Full(full) = row else {
+            return Err(garth::Error::Protocol(
+                "creator exact query contains undisclosed history".into(),
+            ));
+        };
+        if full.event.kind == arkret_sdk::EventKind::MlsGenesis
+            && full.event.scope_ref == *intent.effective_scope()
+        {
+            if accepted.replace(full.clone()).is_some() {
+                return Err(garth::Error::Protocol(
+                    "creator scope has multiple accepted Genesis Events".into(),
+                ));
+            }
+        }
+    }
+    if accepted.is_none() {
+        // The immutable pin anchors the original create, not this new query's
+        // head. Only this temporary decision uses the freshly verified cut.
+        let current_create = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate::new(
+            intent, pinned_create.accepted_event().clone(), pinned_create.covering_commit().clone(),
+            pinned_create.digest_suite(), bundle.clone())?;
+        arkret_models_collaboration::mls_creator_bootstrap::validate_creator_genesis_absence_snapshot(
+            intent, &current_create, &snapshot)?;
+    }
+    let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
+    let fresh =
+        arkret_identity::RealmAuthorityFreshness::new(chrono::Utc::now(), freshness.expected_nonce);
+    arkret_identity::verify_realm_authority_bundle(&bundle, &fresh, &keys)
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    Ok((bundle, accepted))
+}
+
 pub(crate) async fn fresh_verified_realm<T: garth::AuthorityTransport>(
     authority: &AuthorityClient<T>,
     http: &arkret_sdk::http_client::Client,
@@ -3206,6 +3295,94 @@ mod tests {
             )),
             device_id: arkret_sdk::DeviceId::new(DEVICE_ID).unwrap(),
         }
+    }
+
+    #[test]
+    fn creator_current_cut_replay_forks_authority_before_genesis_scan() {
+        use crate::test_support::committed_event::FixtureStation;
+        let realm = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let owner = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let station = FixtureStation::did_web();
+        let (bundle, keys, items) =
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &station,
+                realm.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&owner),
+                "alice.example",
+                DEVICE_ID,
+            );
+        let request = arkret_sdk::AuthorityBundleRequest {
+            realm_id: realm.clone(),
+            nonce: bundle.current_assertion.nonce.clone(),
+        };
+        let freshness = arkret_identity::RealmAuthorityFreshness::new(
+            bundle.bundle_issued_at + chrono::Duration::seconds(50),
+            request.nonce.clone(),
+        );
+        let mut snapshot = snapshot_at(&bundle, &items, bundle.bundle_issued_at);
+        station.sign_snapshot(&mut snapshot);
+        let mut replica = RealmReplica::new(realm.clone());
+        replica
+            .install_verified_authority(&request, bundle.clone(), &freshness, &keys)
+            .unwrap();
+        replica
+            .install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)
+            .unwrap();
+        let stream = arkret_sdk::CommitStreamRef::Realm {
+            realm_id: realm.clone(),
+        };
+        let scan = StreamScanRequest {
+            realm_id: realm,
+            stream_ref: stream.clone(),
+            direction: arkret_sdk::StreamScanDirection::After(None),
+            limit: 200,
+        };
+        let outcome = arkret_sdk::StreamScanOutcome {
+            committed_events: std::iter::once(arkret_sdk::CommittedEventFullView {
+                event: bundle.genesis_event.clone(),
+                commit: bundle.genesis_commit.clone(),
+            })
+            .chain(items)
+            .map(CommittedEventView::Full)
+            .collect(),
+            readable_floor: Some(arkret_sdk::ReadableFloor {
+                oldest_position: 0,
+                floor_commit_id: bundle.genesis_commit.commit_id.clone(),
+                floor_reason: arkret_sdk::ReadableFloorReason::StreamStart,
+            }),
+            truncated: false,
+        };
+        assert!(
+            replica
+                .apply_verified_scan(&scan, outcome.clone(), &freshness, &keys)
+                .is_err()
+        );
+        let mut replay = replica.fork_verified_authority().unwrap();
+        let mut forged = outcome.clone();
+        let CommittedEventView::Full(last) = forged.committed_events.last_mut().unwrap() else {
+            unreachable!()
+        };
+        last.commit.signature.sig = arkret_sdk::Base64UrlString::new("AA").unwrap();
+        assert!(
+            replay
+                .apply_verified_scan(&scan, forged, &freshness, &keys)
+                .is_err()
+        );
+        let page = replay
+            .apply_verified_scan(&scan, outcome, &freshness, &keys)
+            .unwrap();
+        assert!(!page.rows().is_empty());
+        assert_eq!(
+            replay.verified_head(&stream),
+            snapshot
+                .visible_stream_heads
+                .iter()
+                .find(|head| head.stream_ref == stream)
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
