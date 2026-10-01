@@ -1436,6 +1436,13 @@ fn validate_signed_floor_rows(
                 }
                 root = true;
             }
+            CurrentSelector::RealmReadReceiptPolicy => {
+                closed_value::<
+                    arkret_models_collaboration::events_payloads::ReadReceiptPolicyPayload,
+                >(value, "realm_read_receipt_policy")?
+                .validate()
+                .map_err(protocol)?;
+            }
             CurrentSelector::RealmProfile => {
                 let parsed: arkret_sdk::RealmProfile = closed_value(value, "realm_profile")?;
                 if parsed.to_value().map_err(protocol)? != *value {
@@ -3523,6 +3530,9 @@ mod tests {
             let commit = &item.commit;
             rows.push(match item.event.kind.as_str() {
                 "ak.realm.profile" => row(CurrentSelector::RealmProfile, commit, payload),
+                "ak.realm.read_receipt_policy" => {
+                    row(CurrentSelector::RealmReadReceiptPolicy, commit, payload)
+                }
                 "ak.realm.policy_bundle" => {
                     row(CurrentSelector::RealmPolicyBundle, commit, payload)
                 }
@@ -3913,6 +3923,75 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    #[test]
+    fn signed_floor_policy_values_preserve_omissions_and_reject_invalid_current() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        for policy in [
+            json!({"disclosure":"disabled"}),
+            json!({"disclosure":"required","visibility":"private","scope_overrides_allowed":false}),
+        ] {
+            let mut entries = ordinary_bootstrap_entries(&creator);
+            entries.push(("ak.realm.read_receipt_policy".to_owned(), policy.clone()));
+            let (bundle, _, items) =
+                crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                    &crate::test_support::committed_event::FixtureStation::did_web(),
+                    realm_id.clone(),
+                    json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                    entries,
+                    "alice.example",
+                    DEVICE_ID,
+                );
+            let rows = soland_bootstrap_rows(&bundle, &items);
+            let head = bundle.current_assertion.realm_stream_head.clone();
+            validate_signed_floor_rows(
+                &realm_id,
+                &bundle,
+                &head,
+                arkret_sdk::HistoryAccess::SinceJoin,
+                &rows,
+            )
+            .unwrap();
+            let index = rows
+                .iter()
+                .position(|row| {
+                    matches!(
+                        row,
+                        arkret_wire::TypedCurrentResult::Value {
+                            selector: arkret_wire::CurrentSelector::RealmReadReceiptPolicy,
+                            ..
+                        }
+                    )
+                })
+                .unwrap();
+            let arkret_wire::TypedCurrentResult::Value { value, .. } = &rows[index];
+            assert_eq!(*value, policy);
+            for invalid in [
+                json!({}),
+                json!({"disclosure":"sometimes"}),
+                json!({"visibility":"anonymous"}),
+                json!({"disclosure":"optional","visibility":null}),
+                json!({"disclosure":"optional","unknown":true}),
+            ] {
+                let mut rejected = rows.clone();
+                set_row_value(&mut rejected[index], invalid);
+                assert!(
+                    validate_signed_floor_rows(
+                        &realm_id,
+                        &bundle,
+                        &head,
+                        arkret_sdk::HistoryAccess::SinceJoin,
+                        &rejected
+                    )
+                    .is_err()
+                );
+            }
+        }
     }
 
     fn snapshot_at(
