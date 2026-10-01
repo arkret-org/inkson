@@ -440,18 +440,6 @@ async fn bootstrap_creator_realm_mls_genesis(
             publish_accepted_creator_genesis(state_store, realm_id, accepted_event_id).await?;
         }
         CreatorGenesisResumeAction::Author => {
-            let pinned_binding = if durable_intent.is_some() {
-                Some(
-                    submitter
-                        .persist_creator_governance_pin(&scope)
-                        .await
-                        .map_err(|error| {
-                            format!("persist verified creator governance pin: {error}")
-                        })?,
-                )
-            } else {
-                None
-            };
             // encryption-and-audit.md \u00a75.1 requires creator bootstrap to
             // converge even while account current-sync has not installed the
             // authority-root projection yet. The exact creator was resolved
@@ -474,60 +462,79 @@ async fn bootstrap_creator_realm_mls_genesis(
             .map_err(|error| {
                 format!("durably persisting the account MLS secret failed: {error}")
             })?;
-            let fresh_summary = state_store
-                .write(|store| {
-                    crate::mls::runtime::ensure_creator_mls_checkpoint_with_pinned_binding(
-                        store,
-                        secure_store.as_ref(),
-                        realm_id,
-                        authority,
-                        device_id,
-                        pinned_binding.as_ref(),
-                    )
-                })
-                .map_err(|error| {
-                    format!("MLS initial group setup failed: {}", error.user_message())
-                })?;
-            // The interesting recovery case is "snapshot persisted, genesis never
-            // accepted": `ensure_creator_mls_checkpoint` short-circuits to `None` there,
-            // and the genesis builder refuses to emit without epoch-0 material. Restore
-            // that material from the stored epoch-0 snapshot — the same fallback the
-            // direct-conversation and Agent PCR bootstraps use — so the submit is
-            // actually retried instead of silently skipped.
-            let summary = match fresh_summary {
-                Some(summary) => Some(summary),
-                None => {
-                    let restored_summary = state_store.read(|store| {
-                        crate::mls::runtime::initial_mls_checkpoint_summary_from_existing(
+            let (creator_record, summary) = if durable_intent.is_some() {
+                let (record, summary) = submitter
+                    .persist_creator_epoch_zero(&scope, secure_store.as_ref())
+                    .await
+                    .map_err(|error| {
+                        format!("persist creator epoch-zero recovery unit: {error}")
+                    })?;
+                (Some(record), Some(summary))
+            } else {
+                let fresh_summary = state_store
+                    .write(|store| {
+                        crate::mls::runtime::ensure_creator_mls_checkpoint_with_pinned_binding(
                             store,
                             secure_store.as_ref(),
                             realm_id,
                             authority,
                             device_id,
+                            None,
                         )
-                    });
-                    match restored_summary {
-                        Ok(summary) => summary,
-                        Err(error) => {
-                            return Err(format!(
-                                "restoring the epoch-0 MLS summary failed: {}",
-                                error.user_message()
-                            ));
+                    })
+                    .map_err(|error| {
+                        format!("MLS initial group setup failed: {}", error.user_message())
+                    })?;
+                // The interesting recovery case is "snapshot persisted, genesis never
+                // accepted": `ensure_creator_mls_checkpoint` short-circuits to `None` there,
+                // and the genesis builder refuses to emit without epoch-0 material. Restore
+                // that material from the stored epoch-0 snapshot — the same fallback the
+                // direct-conversation and Agent PCR bootstraps use — so the submit is
+                // actually retried instead of silently skipped.
+                let summary = match fresh_summary {
+                    Some(summary) => Some(summary),
+                    None => {
+                        let restored_summary = state_store.read(|store| {
+                            crate::mls::runtime::initial_mls_checkpoint_summary_from_existing(
+                                store,
+                                secure_store.as_ref(),
+                                realm_id,
+                                authority,
+                                device_id,
+                            )
+                        });
+                        match restored_summary {
+                            Ok(summary) => summary,
+                            Err(error) => {
+                                return Err(format!(
+                                    "restoring the epoch-0 MLS summary failed: {}",
+                                    error.user_message()
+                                ));
+                            }
                         }
                     }
-                }
+                };
+                (None, summary)
             };
-            let genesis_event = state_store
-                .write(|store| {
-                    crate::mls::group_events::build_creator_mls_genesis_event(
-                        store,
-                        realm_id,
-                        actor_id,
-                        summary.as_ref(),
-                    )
-                })
-                .map_err(|error| format!("building ak.mls.genesis event failed: {error}"))?
-                .ok_or_else(|| "creator MLS Genesis authoring returned no Event".to_owned())?;
+            let genesis_event = if creator_record.is_none() {
+                Some(
+                    state_store
+                        .write(|store| {
+                            crate::mls::group_events::build_creator_mls_genesis_event(
+                                store,
+                                realm_id,
+                                actor_id,
+                                summary.as_ref(),
+                            )
+                        })
+                        .map_err(|error| format!("building ak.mls.genesis event failed: {error}"))?
+                        .ok_or_else(|| {
+                            "creator MLS Genesis authoring returned no Event".to_owned()
+                        })?,
+                )
+            } else {
+                None
+            };
             let genesis_material = summary.as_ref().ok_or_else(|| {
                 "ak.mls.genesis was built without recoverable epoch-0 public material".to_owned()
             })?;
@@ -539,7 +546,19 @@ async fn bootstrap_creator_realm_mls_genesis(
                         error.user_message()
                     )
                 })?;
-            let accepted = match submitter.submit_sdk_event(&genesis_event).await {
+            let result = match creator_record {
+                Some(record) => submitter.submit_creator_genesis(record).await,
+                None => {
+                    submitter
+                        .submit_sdk_event(
+                            genesis_event
+                                .as_ref()
+                                .ok_or_else(|| "creator Genesis operation missing".to_owned())?,
+                        )
+                        .await
+                }
+            };
+            let accepted = match result {
                 Ok(accepted) => {
                     arkret_sdk::EventId::new(accepted.event_id.clone()).map_err(|error| {
                         anyhow::anyhow!(

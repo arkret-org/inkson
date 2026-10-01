@@ -269,6 +269,25 @@ pub fn load_signing_seed(
     load_signing_seed_at(store, &signing_seed_key()?)
 }
 
+/// Read the original device seed by explicit Account/Device coordinates.
+/// Never falls back to the mutable active scope or creates replacement material.
+pub(crate) fn load_signing_seed_for(
+    store: &dyn SecureKeyStore,
+    authority: &AccountId,
+    device_id: &DeviceId,
+) -> Result<Option<SigningSeedMaterial>, SecureKeyStoreError> {
+    load_signing_seed_at(
+        store,
+        &identity_storage_key(
+            &DeviceSeedScope::Account(ActiveDeviceSeedScope {
+                authority: authority.clone(),
+                device_id: device_id.clone(),
+            }),
+            SIGNING_SEED_KEY,
+        )?,
+    )
+}
+
 pub(super) fn load_signing_seed_at(
     store: &dyn SecureKeyStore,
     key: &str,

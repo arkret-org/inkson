@@ -441,3 +441,5 @@ pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore + 
         Arc::new(MemorySecureKeyStore::new())
     }
 }
+
+pub(crate) use signing_seed::load_signing_seed_for;

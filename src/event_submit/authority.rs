@@ -77,6 +77,8 @@ impl EventSubmitter {
             record,
             MlsCreatorBootstrapRecord::RealmAccepted { .. }
                 | MlsCreatorBootstrapRecord::GovernanceResultPinned { .. }
+                | MlsCreatorBootstrapRecord::Epoch0StatePersisted { .. }
+                | MlsCreatorBootstrapRecord::GenesisQueued { .. }
         ) {
             // This arrow is immutable and idempotent. The following governance
             // pin must authenticate its own current creator/endpoint cut.
@@ -159,6 +161,183 @@ impl EventSubmitter {
         let binding = evidence.governance_binding().clone();
         store.pin_creator_governance(record, evidence).await?;
         Ok(binding)
+    }
+
+    /// Commit the entire MLS output and unsigned core before any observable
+    /// material. On restart only the committed recovery unit is restored.
+    pub(crate) async fn persist_creator_epoch_zero(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> anyhow::Result<(
+        arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+        crate::mls::runtime::InitialMlsCheckpointSummary,
+    )> {
+        use arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapEpochZero;
+        self.persist_creator_governance_pin(scope).await?;
+        let owner = arkret_sdk::ActorId::account(self.authority()?.clone());
+        let vault = self.outbound(OutboundLane::Standard)?.store().clone();
+        let mut record = vault
+            .creator_record(&owner, scope)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("creator epoch zero lost its durable pin"))?;
+        let intent = record.intent();
+        let secret = crate::outbound_store::creator_protection::checkpoint_secret(
+            secure_store,
+            self.authority()?,
+            intent.creator_device_id(),
+        )?;
+        if record.epoch_zero().is_none() {
+            let evidence = record
+                .governance_evidence()
+                .ok_or_else(|| anyhow::anyhow!("creator epoch zero requires a pin"))?;
+            let state = self
+                .state_store
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("creator epoch zero requires account state"))?;
+            anyhow::ensure!(
+                !state.read(
+                    |store| store.realm_projection_has_retired_minimal_metadata_marker(
+                        scope.realm_id().as_str()
+                    )
+                ),
+                "retired Realm cannot create MLS material"
+            );
+            let (private, summary) = crate::mls::runtime::generate_creator_epoch_zero(
+                scope,
+                self.authority()?,
+                intent.creator_device_id(),
+                evidence.governance_binding(),
+                &secret,
+                Some(
+                    &evidence
+                        .creator_device_authority()
+                        .projection()
+                        .device_authorize_event_id,
+                ),
+            )
+            .map_err(|error| anyhow::anyhow!(error.user_message()))?;
+            let unsigned =
+                crate::mls::runtime::freeze_creator_genesis_core(intent, evidence, &summary)
+                    .map_err(|error| anyhow::anyhow!(error.user_message()))?;
+            let unit = MlsCreatorBootstrapEpochZero::new(
+                intent,
+                evidence,
+                serde_json::to_vec(&private)?,
+                summary.group_info_bytes,
+                summary.ratchet_tree_bytes,
+                unsigned,
+            )?;
+            vault
+                .persist_creator_epoch_zero(record.clone(), unit)
+                .await?;
+            record = vault
+                .creator_record(&owner, scope)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("committed creator epoch zero vanished"))?;
+        }
+        record.validate()?;
+        let unit = record
+            .epoch_zero()
+            .ok_or_else(|| anyhow::anyhow!("creator epoch-zero commit did not install its unit"))?;
+        let (private, summary) =
+            crate::mls::runtime::restore_creator_epoch_zero(unit, record.intent(), &secret)
+                .map_err(|error| anyhow::anyhow!(error.user_message()))?;
+        let account_secret = crate::mls::runtime::load_device_checkpoint_secret(
+            secure_store,
+            self.authority()?,
+            record.intent().creator_device_id(),
+        )?;
+        let state = self
+            .state_store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("creator recovery requires account state"))?;
+        state.write(|store| -> anyhow::Result<()> {
+            if let Some(existing) = store.mls_checkpoint_for_scope(scope) {
+                anyhow::ensure!(
+                    existing.group_id == record.intent().mls_group_id().as_str(),
+                    "creator cache belongs to another group"
+                );
+                if existing.epoch > 0 {
+                    // Never overwrite later accepted private state with epoch zero.
+                    anyhow::ensure!(
+                        store.mls_genesis_emitted_for_scope(scope),
+                        "advanced creator cache has no accepted Genesis"
+                    );
+                    return Ok(());
+                }
+                let restored =
+                    crate::mls::persistence::restore_envelope(&existing, &account_secret, 0)?;
+                let (public, tree) = restored.public_group_state_bytes()?;
+                anyhow::ensure!(
+                    public == unit.group_info_bytes() && tree == unit.ratchet_tree_bytes(),
+                    "creator cache differs from the immutable recovery unit"
+                );
+                return Ok(());
+            }
+            let mut salt = [0u8; 16];
+            getrandom::fill(&mut salt)?;
+            let cache = crate::mls::persistence::encrypt_state(
+                scope.realm_id().as_str(),
+                record.intent().mls_group_id().as_str(),
+                0,
+                &private,
+                &account_secret,
+                &salt,
+            );
+            store
+                .save_mls_checkpoint_for_scope(scope, cache)
+                .map_err(anyhow::Error::msg)
+        })?;
+        Ok((record, summary))
+    }
+
+    /// Resume the original signed Genesis, or establish its bytes and queue
+    /// association atomically from the already committed unsigned core.
+    pub(crate) async fn submit_creator_genesis(
+        &self,
+        mut record: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let _single_writer = outbound_submit_lock().lock().await;
+        let vault = self.outbound(OutboundLane::Standard)?.store().clone();
+        let submission = if let Some(queued) = record.queued_genesis() {
+            event_submission(queued.signed_genesis())?
+        } else {
+            let mut signed = record
+                .epoch_zero()
+                .ok_or_else(|| anyhow::anyhow!("creator signing requires durable epoch zero"))?
+                .unsigned_genesis()
+                .clone();
+            let intent = EventIntent::from_authored(signed.event());
+            self.verify_actor_authority(&intent).await?;
+            self.ensure_realm_detail_current(signed.realm_id.as_str())
+                .await?;
+            let signer = crate::event_signer::active_signer()
+                .ok_or_else(|| anyhow::anyhow!("creator signing requires the original signer"))?;
+            anyhow::ensure!(
+                signer.verification_method() == record.intent().creator_signer_method().as_str()
+                    && signer.device_id() == Some(record.intent().creator_device_id().as_str()),
+                "creator signed original cannot change its signer"
+            );
+            let proof_context = self.event_proof_context(signed.digest_suite()).await?;
+            self.sign_authored_event(&intent, &mut signed, proof_context)?;
+            let submission = vault
+                .queue_creator_genesis(record.clone(), signed.clone())
+                .await?;
+            record.queue_genesis(signed)?;
+            submission
+        };
+        let local_operation_id = submission.event_id.to_string();
+        let item = self
+            .enqueue_and_drive(QueuedWrite {
+                lane: OutboundLane::Standard,
+                submission,
+                local_operation_id,
+                post_accept: PostAccept::None,
+                retry_scope: InteractiveRetryScope::Ordinary,
+            })
+            .await?;
+        settled_outbound_result(&item)
     }
 
     async fn read_verified_creator_cut(

@@ -243,6 +243,49 @@ fn ensure_creator_mls_checkpoint_with_binding_inner(
 
     let secret = load_or_create_account_mls_secret(secure_store, authority)
         .map_err(MlsRuntimeError::DeviceSecret)?;
+    let (snapshot, summary) = generate_creator_epoch_zero(
+        &effective_scope,
+        authority,
+        device_id,
+        &governance_binding,
+        &secret,
+        None,
+    )?;
+    state_store
+        .save_mls_checkpoint_for_scope(&effective_scope, snapshot)
+        .map_err(MlsRuntimeError::Genesis)?;
+    Ok(Some(summary))
+}
+
+/// Pure in-memory generation. The caller commits the entire recovery unit
+/// before publishing a blob, signing Genesis or exposing a sendable item.
+pub(crate) fn generate_creator_epoch_zero(
+    effective_scope: &arkret_sdk::ScopeRef,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
+    checkpoint_secret: &str,
+    pinned_device_authorization: Option<&arkret_sdk::EventId>,
+) -> Result<
+    (
+        crate::mls::persistence::MlsLocalCheckpointEnvelope,
+        InitialMlsCheckpointSummary,
+    ),
+    MlsRuntimeError,
+> {
+    governance_binding
+        .validate()
+        .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?;
+    if governance_binding.effective_scope() != effective_scope
+        || governance_binding.base_group_state_ref().is_some()
+        || governance_binding.previous_epoch() != 0
+        || governance_binding.next_epoch() != 0
+        || governance_binding.key_access_revision() != 0
+    {
+        return Err(MlsRuntimeError::Genesis(
+            "invalid pinned epoch-zero binding".into(),
+        ));
+    }
     let identity =
         crate::mls_api_helpers::ordinary_mls_identity(authority.clone(), device_id.clone())
             .map_err(MlsRuntimeError::Identity)?;
@@ -254,15 +297,19 @@ fn ensure_creator_mls_checkpoint_with_binding_inner(
             principal_id: _,
             device_id,
         } => Some(
-            crate::identity::device_directory::cached_device_authorize_event_id(
-                &authority.to_string(),
-                device_id.as_str(),
-            )
-            .ok_or_else(|| {
-                MlsRuntimeError::Genesis(
-                    "accepted device authorization is unavailable for MLS genesis".to_owned(),
-                )
-            })?,
+            pinned_device_authorization
+                .cloned()
+                .or_else(|| {
+                    crate::identity::device_directory::cached_device_authorize_event_id(
+                        &authority.to_string(),
+                        device_id.as_str(),
+                    )
+                })
+                .ok_or_else(|| {
+                    MlsRuntimeError::Genesis(
+                        "accepted device authorization is unavailable for MLS genesis".to_owned(),
+                    )
+                })?,
         ),
         arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. } => None,
         arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
@@ -288,15 +335,15 @@ fn ensure_creator_mls_checkpoint_with_binding_inner(
     getrandom::fill(&mut salt)
         .map_err(|err| MlsRuntimeError::Genesis(format!("MLS checkpoint salt: {err}")))?;
     let snapshot = crate::mls::persistence::encrypt_state(
-        realm,
+        effective_scope.realm_id().as_str(),
         &post_state.group_id,
         post_state.epoch,
         &serialized_state,
-        &secret,
+        checkpoint_secret,
         &salt,
     );
     let summary = InitialMlsCheckpointSummary {
-        realm_id: realm.to_owned(),
+        realm_id: effective_scope.realm_id().to_string(),
         group_id: post_state.group_id.as_str().to_owned(),
         epoch: post_state.epoch,
         group_info_bytes,
@@ -304,10 +351,97 @@ fn ensure_creator_mls_checkpoint_with_binding_inner(
         cipher_suite,
         creator_leaf_authority: creator_leaf_authority_from_group(&group, authority)?,
     };
-    state_store
-        .save_mls_checkpoint_for_scope(&effective_scope, snapshot)
-        .map_err(MlsRuntimeError::Genesis)?;
-    Ok(Some(summary))
+    Ok((snapshot, summary))
+}
+
+/// Freeze producer content using the complete Actor carried by the durable
+/// intent, without converting it through a UI principal string builder.
+pub(crate) fn freeze_creator_genesis_core(
+    intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
+    evidence: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapGovernanceEvidence,
+    summary: &InitialMlsCheckpointSummary,
+) -> Result<arkret_sdk::AuthoredEvent, MlsRuntimeError> {
+    evidence
+        .validate_binding(intent)
+        .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?;
+    let payload = build_mls_genesis_payload(summary, evidence.governance_binding())?;
+    let created_at = payload.created_at;
+    let suite = intent
+        .effective_scope()
+        .realm_id()
+        .digest_suite_code()
+        .digest_suite();
+    arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MlsGenesis>::new(
+        intent.effective_scope().clone(),
+        intent.owner_actor_id().clone(),
+        payload,
+    )
+    .and_then(|draft| draft.into_intent(created_at))
+    .and_then(|draft| draft.author_with_digest_suite(suite))
+    .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))
+}
+
+/// Decrypt and authenticate the persisted unit with the original device
+/// secret. The account checkpoint is a derived cache, never the recovery source.
+pub(crate) fn restore_creator_epoch_zero(
+    unit: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapEpochZero,
+    intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
+    checkpoint_secret: &str,
+) -> Result<(Vec<u8>, InitialMlsCheckpointSummary), MlsRuntimeError> {
+    let snapshot: crate::mls::persistence::MlsLocalCheckpointEnvelope =
+        serde_json::from_slice(unit.encrypted_private_state()).map_err(|error| {
+            MlsRuntimeError::Genesis(format!("decode creator private envelope: {error}"))
+        })?;
+    if snapshot.epoch != 0
+        || snapshot.admission_epoch != 0
+        || snapshot.group_state_event_id.is_some()
+        || snapshot.realm_id != intent.effective_scope().realm_id().as_str()
+        || snapshot.group_id != intent.mls_group_id().as_str()
+    {
+        return Err(MlsRuntimeError::Genesis(
+            "creator private envelope coordinate mismatch".into(),
+        ));
+    }
+    let group = crate::mls::persistence::restore_envelope(&snapshot, checkpoint_secret, 0)
+        .map_err(|error| {
+            MlsRuntimeError::Genesis(format!("restore creator private unit: {error}"))
+        })?;
+    let (group_info, tree) = group
+        .public_group_state_bytes()
+        .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?;
+    let owner = intent
+        .owner_actor_id()
+        .as_account_id()
+        .ok_or_else(|| MlsRuntimeError::Genesis("Device creator has no account".into()))?;
+    let leaf = creator_leaf_authority_from_group(&group, owner)?;
+    let payload = unit
+        .payload()
+        .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?;
+    if group.scope() != intent.effective_scope()
+        || group.epoch() != 0
+        || group.group_id() != *intent.mls_group_id()
+        || group_info != unit.group_info_bytes()
+        || tree != unit.ratchet_tree_bytes()
+        || leaf != payload.creator_leaf_authority
+    {
+        return Err(MlsRuntimeError::Genesis(
+            "creator private MLS state differs from its frozen public unit".into(),
+        ));
+    }
+    let raw = crate::mls::persistence::decrypt_envelope(&snapshot, checkpoint_secret)
+        .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?;
+    Ok((
+        raw,
+        InitialMlsCheckpointSummary {
+            realm_id: snapshot.realm_id,
+            group_id: snapshot.group_id,
+            epoch: 0,
+            group_info_bytes: group_info,
+            ratchet_tree_bytes: tree,
+            cipher_suite: payload.cipher_suite.to_string(),
+            creator_leaf_authority: leaf,
+        },
+    ))
 }
 
 pub fn initial_mls_checkpoint_summary_from_existing(
