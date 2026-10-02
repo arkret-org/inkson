@@ -171,16 +171,24 @@ pub(super) fn AccountRecoveryEffects(
             account_recovery_retry_attempt.set(0);
             return;
         }
-        let detection_key = format!("{ui_session_generation}|{generation}|{base}|{actor_id}");
+        let recovery_material_evidence = state_store.read().recovery_material_evidence();
+        let gate_authority = account.authority.clone();
+        let gate_device = device_id();
+        let evidence_fingerprint = recovery_material_evidence
+            .as_ref()
+            .and_then(|evidence| arkret_sdk::canonical::canonical_json_bytes(evidence).ok())
+            .map(|bytes| arkret_sdk::canonical::sha256_hex(&bytes))
+            .unwrap_or_default();
+        let detection_key = format!(
+            "{ui_session_generation}|{generation}|{base}|{actor_id}|{}|{gate_device}|{evidence_fingerprint}",
+            gate_authority.station_id,
+        );
         if account_recovery_detection_key_seen().as_deref() == Some(detection_key.as_str()) {
             return;
         }
         account_recovery_detection_key_seen.set(Some(detection_key.clone()));
         tracing::debug!(target: "recovery_diag", key = %detection_key, "recovery_state re-fetch (authoritative recovery policy)");
-        let recovery_material_evidence = state_store.read().recovery_material_evidence();
-        let gate_actor = account.principal_id().clone();
-        let gate_device = device_id();
-        let remember_actor = actor_id;
+        let remember_authority = gate_authority.clone();
         let remember_device = gate_device.clone();
         let session_coordinator = session_coordinator.clone();
         spawn(async move {
@@ -189,7 +197,7 @@ pub(super) fn AccountRecoveryEffects(
                     let policy = api.get_recovery_policy().await?;
                     let gate_verification = match recovery_material_evidence.as_ref() {
                         Some(evidence)
-                            if evidence.account_id.principal_id == gate_actor
+                            if evidence.account_id == gate_authority
                                 && evidence.device_id.as_str() == gate_device =>
                         {
                             Some(
@@ -255,7 +263,7 @@ pub(super) fn AccountRecoveryEffects(
                     }
                     if remember_verified_gate {
                         crate::event_submit::remember_verified_recovery_gate(
-                            remember_actor.as_str(),
+                            &remember_authority,
                             &remember_device,
                         );
                     }

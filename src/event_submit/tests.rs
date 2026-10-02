@@ -166,12 +166,22 @@ fn founding_realm_bypasses_only_its_own_local_detail_freshness_gap() {
 }
 
 #[test]
-fn recovery_gate_cache_key_normalizes_full_and_core_principal_ids() {
+fn recovery_gate_cache_key_binds_the_complete_account_and_device() {
     let device_id = "ak:device:01964137-0000-7000-8000-0000000000a1";
-    assert_eq!(
-        normalized_recovery_gate_cache_key("did:web:alice.example", device_id),
-        normalized_recovery_gate_cache_key("ak:did_core:web:alice.example", device_id)
+    let authority = test_authority();
+    let other_station = crate::test_support::authority_at_station(
+        PRINCIPAL_CORE,
+        "ak:did_core:web:other-station.example",
     );
+    assert_ne!(
+        recovery_gate_account_cache_key(&authority, device_id),
+        recovery_gate_account_cache_key(&other_station, device_id)
+    );
+    assert_ne!(
+        recovery_gate_account_cache_key(&authority, device_id),
+        recovery_gate_account_cache_key(&authority, DEVICE)
+    );
+    assert!(recovery_gate_account_cache_key(&authority, "invalid-device").is_none());
 }
 
 #[test]
@@ -583,6 +593,64 @@ fn committed_message_without_an_optimistic_record_projects_before_backfill() {
     assert_eq!(projected.len(), 1);
     assert_eq!(projected[0].body, "hello");
     assert_eq!(projected[0].id, event.event_id().as_str());
+}
+
+#[test]
+fn a_memory_only_chat_bubble_joins_the_durable_queue_without_faking_acceptance() {
+    let strand = "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
+    let event = author_and_sign(message_intent(REALM, strand), &test_signer());
+    let local_id = "local-message:0196419b-0000-7000-8000-000000000003";
+    let mut store = local_state_store("memory-only-queued-message");
+    let queued = snapshot_of(vec![(event.clone(), SendQueueStatus::Queued)]);
+    assert_eq!(
+        pending_chat_local_operation_ids_from_snapshot(&queued, REALM, strand, &store.load()),
+        BTreeSet::from([event.event_id().to_string()]),
+    );
+    assert!(record_queued_operation_identity(
+        &mut store,
+        local_id,
+        event.event()
+    ));
+    let original_identity = store.load().raw_operations[0].payload.clone();
+    assert!(record_queued_operation_identity(
+        &mut store,
+        local_id,
+        event.event()
+    ));
+    let state = store.load();
+    assert_eq!(state.raw_operations[0].payload, original_identity);
+    assert_eq!(
+        pending_chat_local_operation_ids_from_snapshot(&queued, REALM, strand, &state),
+        BTreeSet::from([local_id.to_owned()]),
+    );
+    assert_eq!(state.raw_operations.len(), 1);
+    assert_eq!(
+        state.raw_operations[0].payload["event"],
+        serde_json::to_value(event.event()).unwrap()
+    );
+    let pending =
+        crate::views::chat::model::chat_messages_from_local_state_with_sidecar(&state, None, None);
+    assert_eq!(pending.len(), 1);
+    assert!(
+        pending[0].pending,
+        "frozen producer bytes alone are never accepted authority"
+    );
+    let committed = snapshot_of(vec![(event.clone(), SendQueueStatus::Committed)]);
+    assert!(reconcile_settled_outbound_item(
+        &mut store,
+        &committed.items[0]
+    ));
+    let settled = store.load();
+    assert!(
+        pending_chat_local_operation_ids_from_snapshot(&committed, REALM, strand, &settled)
+            .is_empty()
+    );
+    let projected = crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
+        &settled, None, None,
+    );
+    assert_eq!(projected.len(), 1);
+    assert_eq!(projected[0].body, "hello");
+    assert_eq!(settled.raw_operations.len(), 1);
 }
 
 #[test]

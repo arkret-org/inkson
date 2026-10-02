@@ -20,7 +20,7 @@ struct StoredUnlockRequest {
     backup: Option<arkret_sdk::KeyBackup>,
 }
 
-fn backup_matches_summary(
+pub(crate) fn backup_matches_summary(
     backup: &arkret_sdk::KeyBackup,
     summary: &arkret_sdk::KeyBackupSummary,
 ) -> bool {

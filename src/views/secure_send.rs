@@ -36,6 +36,8 @@ struct SendReadinessKey {
     reset_required: bool,
     detail_invalidated: bool,
     persistence_healthy: bool,
+    private_root_available: bool,
+    creator_revision: u64,
     checkpoint: Option<(
         u64,
         Option<arkret_sdk::EventId>,
@@ -49,8 +51,38 @@ pub(crate) fn use_scope_send_ready(
     scope: Option<arkret_sdk::ScopeRef>,
     device: arkret_sdk::DeviceId,
 ) -> bool {
+    use_scope_send_gate(state_store, scope, device).is_some()
+}
+
+/// The body mode and readiness come from the same complete durable cut.
+pub(crate) fn use_scope_send_gate(
+    state_store: SyncSignal<LocalStateStore>,
+    scope: Option<arkret_sdk::ScopeRef>,
+    device: arkret_sdk::DeviceId,
+) -> Option<crate::mls::send_gate::MlsSendGate> {
+    // Creator Ready is committed in its own vault, independently of the
+    // account cursor and checkpoint. That commit must wake a blocked probe.
+    let mut creator_revision = use_signal(|| 0_u64);
+    use_future(move || async move {
+        let mut changes = crate::outbound_store::subscribe_committed_changes();
+        loop {
+            let revision = *changes.borrow_and_update();
+            if *creator_revision.peek() != revision {
+                creator_revision.set(revision);
+            }
+            if changes.changed().await.is_err() {
+                break;
+            }
+        }
+    });
     let key = use_memo(use_reactive((&scope, &device), move |(scope, device)| {
         let state = state_store.read();
+        let authority = state.active_authority();
+        let private_root_available = authority.as_ref().is_some_and(|authority| {
+            let secure = crate::secure_key_store::default_secure_key_store("inkson");
+            crate::mls::runtime::load_device_checkpoint_secret(secure.as_ref(), authority, &device)
+                .is_ok()
+        });
         let checkpoint = scope
             .as_ref()
             .and_then(|scope| state.durable_mls_checkpoint_for_scope(scope).ok().flatten())
@@ -68,41 +100,51 @@ pub(crate) fn use_scope_send_ready(
         SendReadinessKey {
             scope,
             device,
-            authority: state.active_authority(),
+            authority,
             generation: state.current_generation(),
             reset_required: state.current_reset_required(),
             detail_invalidated,
             persistence_healthy: state.persist_error().is_none(),
+            private_root_available,
+            creator_revision: creator_revision(),
             checkpoint,
         }
     }));
-    let mut result = use_signal(|| None::<SendReadinessKey>);
+    let mut result = use_signal(|| None::<(SendReadinessKey, crate::mls::send_gate::MlsSendGate)>);
     use_effect(move || {
         let captured = key();
         spawn(async move {
-            let ready = if let Some(scope) = captured.scope.as_ref().filter(|_| {
+            let gate = if let Some(scope) = captured.scope.as_ref().filter(|_| {
                 !captured.reset_required
                     && !captured.detail_invalidated
                     && captured.persistence_healthy
             }) {
                 let store = crate::app::runtime_adapter::state_store_handle(state_store);
                 let input = crate::mls::send_gate::MlsSendGateInput::capture(&store, scope);
-                crate::mls::send_gate::resolve_restorable_mls_send_gate(
+                let outcome = crate::mls::send_gate::resolve_restorable_mls_send_gate(
                     &input,
                     scope,
                     &captured.device,
                 )
-                .await
-                .is_ok()
+                .await;
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                if let Err(error) = &outcome {
+                    tracing::warn!(%error, "MLS send readiness probe failed");
+                }
+                outcome.ok()
             } else {
-                false
+                None
             };
             if *key.peek() == captured {
-                result.set(ready.then_some(captured));
+                result.set(gate.map(|gate| (captured, gate)));
             }
         });
     });
-    result.read().as_ref() == Some(&key())
+    result
+        .read()
+        .as_ref()
+        .filter(|(captured, _)| captured == &key())
+        .map(|(_, gate)| gate.clone())
 }
 
 /// Encrypt `plaintext_bytes` under the Realm MLS group and return the

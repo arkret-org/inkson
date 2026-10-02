@@ -68,6 +68,75 @@ pub fn mls_restore_prompt_required(
     required
 }
 
+/// A metadata candidate can contain only account state, before the first MLS
+/// write. An admitted local device may distinguish that case after fetching
+/// the complete active series with unlock proof. Incomplete or changing cuts
+/// retain the metadata decision; a local secret never proves absence by itself.
+pub(crate) fn mls_restore_prompt_required_after_material(
+    metadata: &Value,
+    material: Option<&Value>,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    authority: &arkret_sdk::AccountId,
+    actor_id: &str,
+    device_id: &str,
+) -> bool {
+    let required =
+        mls_restore_prompt_required(metadata, secure_store, authority, actor_id, device_id);
+    if !required {
+        return false;
+    }
+    let Some(material) = material else {
+        return true;
+    };
+    let Ok(list) = serde_json::from_value::<arkret_sdk::KeysBackupsList>(metadata.clone()) else {
+        return true;
+    };
+    let bodies = material
+        .get("backups")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<Vec<arkret_sdk::KeyBackup>>(value).ok());
+    let Some(bodies) = bodies else {
+        return true;
+    };
+    if list.has_more
+        || list.next_cursor.is_some()
+        || material.get("active_series") != metadata.get("active_series")
+        || material.get("has_more") == Some(&Value::Bool(true))
+        || material
+            .get("next_cursor")
+            .is_some_and(|cursor| !cursor.is_null())
+        || bodies.len() != list.backups.len()
+        || list.backups.iter().any(|summary| {
+            bodies
+                .iter()
+                .filter(|body| crate::key_backup::backup_matches_summary(body, summary))
+                .count()
+                != 1
+        })
+        || bodies.iter().any(|body| {
+            list.backups
+                .iter()
+                .filter(|summary| crate::key_backup::backup_matches_summary(body, summary))
+                .count()
+                != 1
+        })
+        || validate_backup_account(material, authority, actor_id).is_err()
+        || verify_active_backup_series(material, "secret_storage").is_err()
+    {
+        return true;
+    }
+    let contains_mls_secret = bodies.iter().any(|body| {
+        body.contents
+            .iter()
+            .any(|item| item.item_kind == arkret_sdk::SecretStorageItemKind::MlsAccountSecret)
+    });
+    tracing::debug!(
+        contains_mls_secret,
+        "complete active recovery material classified"
+    );
+    contains_mls_secret
+}
+
 /// Counts returned by [`auto_restore_mls_account_secret_with_passphrase`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RestoreReport {

@@ -791,6 +791,37 @@ mod tests {
             .is_empty(),
             "signed bare Events without a verified Commit must not assert membership"
         );
+        let mut joined_suffix = first_state.clone();
+        let target_position = joined_suffix.verified_message_commits[0]
+            .accepted_ref
+            .stream_position;
+        assert!(target_position > 0);
+        for prefix in joined_suffix.verified_poll_prefixes.values_mut() {
+            prefix.start_position = target_position;
+        }
+        assert_eq!(
+            crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
+                &joined_suffix,
+                None,
+                None,
+            )[0]
+            .reactions,
+            first_messages[0].reactions,
+            "a contiguous authorized suffix covering the target includes all possible reactions"
+        );
+        for prefix in joined_suffix.verified_poll_prefixes.values_mut() {
+            prefix.start_position = target_position + 1;
+        }
+        assert!(
+            crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
+                &joined_suffix,
+                None,
+                None,
+            )[0]
+            .reactions
+            .is_empty(),
+            "a suffix starting after the target cannot establish complete reaction membership"
+        );
         let mut incomplete = first_state;
         for prefix in incomplete.verified_poll_prefixes.values_mut() {
             prefix.contiguous = false;

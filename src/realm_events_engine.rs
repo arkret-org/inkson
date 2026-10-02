@@ -26,6 +26,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
+use arkret_sdk::EventPayloadExt;
 use garth::{
     AuthorityClient, ClientEvent, CommitStreamRef, CommittedDelta, CommittedEventView,
     DecodedInbound, InboundDecoder, RealmReplica, RetrySchedule, StreamScanRequest,
@@ -381,10 +382,82 @@ pub(crate) async fn verified_mls_recovery_tail(
         .collect())
 }
 
+/// The human PCR's root is its accepted genesis: the closed PCR allowlist
+/// has no owner-transfer or authority-reset writer. A fresh verified authority
+/// bundle proves that exact lifetime lineage without disclosing a private PCR
+/// through the ordinary Collaboration Realm snapshot surface.
+pub(crate) async fn verified_root_authorization(
+    http: &arkret_sdk::http_client::Client,
+    realm: &arkret_sdk::RealmId,
+    actor: &arkret_sdk::ActorId,
+) -> garth::Result<arkret_sdk::AuthorizationRef> {
+    let authority = AuthorityClient::new(http.clone());
+    let (bundle, ..) = fresh_verified_realm(&authority, http, realm).await?;
+    holder_pcr_root_authorization(&bundle, realm, actor)
+}
+
+fn holder_pcr_root_authorization(
+    bundle: &arkret_sdk::RealmAuthorityBundle,
+    realm: &arkret_sdk::RealmId,
+    actor: &arkret_sdk::ActorId,
+) -> garth::Result<arkret_sdk::AuthorizationRef> {
+    let event = &bundle.genesis_event;
+    let commit = &bundle.genesis_commit;
+    let payload = event
+        .typed_payload::<arkret_wire::event_spec::RealmCreate>()
+        .map_err(protocol)?;
+    if bundle.realm_id != *realm
+        || event.realm_id != *realm
+        || event.kind != arkret_sdk::EventKind::RealmCreate
+        || event.scope_ref != arkret_sdk::ScopeRef::RealmGenesis
+        || event.actor_id != *actor
+        || actor.as_account_id().is_none()
+        || payload.object.purpose != arkret_sdk::RealmPurpose::PrincipalControl
+        || arkret_sdk::RealmId::from_event_id(&event.event_id) != *realm
+        || commit.event_ref != event.event_id
+        || commit.realm_id != *realm
+        || commit.stream_position != 0
+        || commit.previous_commit_ref.is_some()
+        || commit.stream_ref
+            != (CommitStreamRef::Realm {
+                realm_id: realm.clone(),
+            })
+    {
+        return Err(protocol(
+            "root authorization does not bind this holder's exact human PCR genesis",
+        ));
+    }
+    payload.object.validate().map_err(protocol)?;
+    arkret_sdk::AuthorizationRef::new(event.event_id.to_string()).map_err(protocol)
+}
+
 /// Verify the original scope create under the current Realm authority and a
 /// continuous parent stream ending at the signed current snapshot cut.
 /// A Circle create is a parent Realm Event, not the Realm's root create.
 pub(crate) async fn verified_creator_create(
+    http: &arkret_sdk::http_client::Client,
+    intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
+) -> garth::Result<(
+    arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
+    arkret_sdk::RealmStateSnapshot,
+)> {
+    for attempt in 0..3 {
+        let result = verified_creator_create_at_cut(http, intent).await;
+        if !creator_cut_changed(&result) || attempt == 2 {
+            return result;
+        }
+        crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
+    }
+    unreachable!("the bounded creator-cut loop always returns")
+}
+
+fn creator_cut_changed<T>(result: &garth::Result<T>) -> bool {
+    matches!(result, Err(garth::Error::AuthorityCutBehind))
+        || matches!(result, Err(garth::Error::Api { status: 503, error })
+            if error.error_code() == Some(arkret_wire::ErrorCode::RealmStateSnapshotUnavailable))
+}
+
+async fn verified_creator_create_at_cut(
     http: &arkret_sdk::http_client::Client,
     intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
 ) -> garth::Result<(
@@ -488,6 +561,27 @@ pub(crate) async fn verified_creator_create(
 /// Missing disclosure, an incomplete chain or a changed cut is unavailable,
 /// never evidence that a queued Genesis can be replaced.
 pub(crate) async fn verified_creator_genesis(
+    http: &arkret_sdk::http_client::Client,
+    intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
+    pinned_create: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
+) -> garth::Result<(
+    arkret_sdk::RealmAuthorityBundle,
+    arkret_sdk::RealmStateSnapshot,
+    Option<arkret_sdk::CommittedEventFullView>,
+)> {
+    for attempt in 0..3 {
+        let result = verified_creator_genesis_at_cut(http, intent, pinned_create).await;
+        if !creator_cut_changed(&result) || attempt == 2 {
+            return result;
+        }
+        // This is only a read retry. No absence or winner is published until
+        // a new nonce-bound authority, snapshot and complete chain agree.
+        crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
+    }
+    unreachable!("the bounded creator-cut loop always returns")
+}
+
+async fn verified_creator_genesis_at_cut(
     http: &arkret_sdk::http_client::Client,
     intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
     pinned_create: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
@@ -2425,6 +2519,84 @@ mod tests {
     }
 
     const GENESIS_SALT: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    #[test]
+    fn holder_pcr_root_is_exact_immutable_genesis_and_never_collaboration_owner() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../arkret-spec/spec/v1/artifacts/fixtures/pcr-genesis-fixture.json"
+        ))
+        .unwrap();
+        let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let genesis = arkret_sdk::RealmGenesis::new(
+            arkret_sdk::RealmPurpose::PrincipalControl,
+            arkret_sdk::GenesisSalt::new(GENESIS_SALT).unwrap(),
+            arkret_sdk::TrustDomainId::new("ak:trust_domain:server.example").unwrap(),
+            arkret_sdk::SecurityClass::HighAssurance,
+            actor.as_account_id().unwrap().station_id.clone(),
+            arkret_sdk::JoinRule::Invite,
+            arkret_sdk::HistoryAccess::SinceJoin,
+            arkret_sdk::Discoverability::InviteOnly,
+            Some(serde_json::from_value(fixture["founding_device_descriptor"].clone()).unwrap()),
+            Some(arkret_sdk::ResolutionCommitment {
+                did: arkret_sdk::Did::new(ACTOR_CONTROLLER).unwrap(),
+                method_history_head: format!("sha256:{}", "a".repeat(64)),
+                version_id: "1-fixture".to_owned(),
+            }),
+        )
+        .unwrap();
+        let signer = arkret_test_kit::keys::seeded_signer(
+            arkret_sdk::Did::new(ACTOR_CONTROLLER).unwrap(),
+            arkret_sdk::DidUrl::new(format!("{ACTOR_CONTROLLER}#{DEVICE_ID}")).unwrap(),
+        );
+        let event = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+            arkret_sdk::EventKind::RealmCreate.as_str(),
+            arkret_sdk::ScopeRef::RealmGenesis,
+            actor.clone(),
+            json!({"object":genesis}),
+        )
+        .sign_verifiable(&signer)
+        .unwrap()
+        .expect_verifiable();
+        let realm = event.realm_id.clone();
+        let (mut bundle, ..) = crate::test_support::committed_event::verified_realm_fixture_as(
+            realm.clone(),
+            Vec::new(),
+            "alice.example",
+            DEVICE_ID,
+        );
+        bundle.genesis_event = event.clone();
+        bundle.genesis_commit.event_ref = event.event_id.clone();
+        assert_eq!(
+            holder_pcr_root_authorization(&bundle, &realm, &actor)
+                .unwrap()
+                .as_str(),
+            event.event_id.as_str()
+        );
+
+        let other_account = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            actor.as_account_id().unwrap().principal_id.clone(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example").unwrap(),
+        ));
+        assert!(holder_pcr_root_authorization(&bundle, &realm, &other_account).is_err());
+        let other_realm = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        assert!(holder_pcr_root_authorization(&bundle, &other_realm, &actor).is_err());
+        let mut wrong_commit = bundle.clone();
+        wrong_commit.genesis_commit.stream_position = 1;
+        assert!(holder_pcr_root_authorization(&wrong_commit, &realm, &actor).is_err());
+        wrong_commit = bundle.clone();
+        wrong_commit.genesis_commit.event_ref =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [7; 32]);
+        assert!(holder_pcr_root_authorization(&wrong_commit, &realm, &actor).is_err());
+        let mut collaboration = bundle;
+        collaboration.genesis_event.payload.insert(
+            "object".to_owned(),
+            json!(collaboration_genesis(GENESIS_SALT)),
+        );
+        assert!(holder_pcr_root_authorization(&collaboration, &realm, &actor).is_err());
+    }
 
     #[test]
     fn plaintext_circle_directory_membership_selects_scannable_streams() {

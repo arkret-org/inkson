@@ -385,7 +385,7 @@ pub(super) async fn commit_completed_account(
         crate::views::recovery::local_recovery_public_key_result(&state_store.read())
             .context("verify Recovery Key metadata in the accepted account scope")?;
         crate::event_submit::remember_verified_recovery_gate(
-            completed.account.principal_id().as_str(),
+            &completed.account.authority,
             completed.account.device_id.as_str(),
         );
 

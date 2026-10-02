@@ -268,6 +268,8 @@ pub(crate) async fn resolve_mls_send_gate(
                 }
             })();
             if let Err(error) = private_check {
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                tracing::warn!(error = %error, "creator private material verification failed");
                 // A superseded original cannot be amended. Its separately
                 // acquired winner cache remains blocked when inconsistent.
                 if record.ready_receipt().is_some() {

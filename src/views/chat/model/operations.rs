@@ -11,6 +11,8 @@ pub(crate) fn fail_optimistic_chat_send(
     body_for_restore: &str,
     message: String,
 ) {
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    tracing::warn!(error = %message, "encrypted message preparation failed");
     if let Some(found) = messages
         .write()
         .iter_mut()

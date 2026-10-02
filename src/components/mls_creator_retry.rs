@@ -124,7 +124,7 @@ pub(crate) fn CreatorMlsRetry(
                                         &api, &state_store, &scope, &account.authority, &account.device_id, true,
                                     ).await.map_err(anyhow::Error::msg)
                                 } else {
-                                    crate::mls::creator_bootstrap::start_creator_realm_mls_genesis(
+                                    crate::mls::creator_bootstrap::retry_creator_realm_mls_genesis(
                                         &api, &state_store, &realm, &account.authority, &account.device_id,
                                     ).await.map_err(anyhow::Error::msg)
                                 }

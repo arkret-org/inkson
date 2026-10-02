@@ -6,6 +6,67 @@ use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
 
 #[wasm_bindgen_test(async)]
+async fn cancelled_open_preserves_schema_and_detaches_request_callbacks() {
+    use std::cell::RefCell;
+    use std::future::Future;
+    use std::rc::Rc;
+    use std::task::Poll;
+
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
+
+    let window = web_sys::window().unwrap();
+    let errors = Rc::new(RefCell::new(Vec::new()));
+    let captured = errors.clone();
+    let callback = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+        let message = js_sys::Reflect::get(&event, &"message".into())
+            .unwrap()
+            .as_string()
+            .unwrap_or_default();
+        captured.borrow_mut().push(message);
+        event.prevent_default();
+    });
+    struct Listener(web_sys::Window, Closure<dyn FnMut(web_sys::Event)>);
+    impl Drop for Listener {
+        fn drop(&mut self) {
+            self.0
+                .remove_event_listener_with_callback("error", self.1.as_ref().unchecked_ref())
+                .unwrap();
+        }
+    }
+    window
+        .add_event_listener_with_callback("error", callback.as_ref().unchecked_ref())
+        .unwrap();
+    let _listener = Listener(window, callback);
+    let service = format!("cancelled-open-{}", js_sys::Date::now());
+    let mut opening = Box::pin(IndexedDbSecureKeyStore::new_async(&service));
+    std::future::poll_fn(|cx| {
+        assert!(opening.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    drop(opening);
+    // Observe both the real request event and the cancelled 12-second timer.
+    gloo_timers::future::TimeoutFuture::new(12_100).await;
+    assert!(errors.borrow().is_empty(), "{:?}", errors.borrow());
+    let reopened = IndexedDbSecureKeyStore::new_async(&service).await.unwrap();
+    reopened
+        .store_secret_durable("retained", "after-cancel")
+        .await
+        .unwrap();
+    let reader = IndexedDbSecureKeyStore::new_async(&service).await.unwrap();
+    assert_eq!(
+        reader
+            .read_secret_bytes_durable("retained")
+            .await
+            .unwrap()
+            .unwrap()
+            .as_slice(),
+        b"after-cancel"
+    );
+}
+
+#[wasm_bindgen_test(async)]
 async fn default_product_store_delegates_atomic_queue_writes_to_indexeddb() {
     inkson::secure_key_store::ensure_wasm_secure_key_store_ready("inkson")
         .await

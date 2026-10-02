@@ -115,6 +115,29 @@ pub(crate) fn merge_channels(target: &mut Vec<ChannelEntity>, incoming: Vec<Chan
     }
 }
 
+/// Navigation filters choose which rows to show, never the addressed Strand.
+/// An embedded discussion can target a synthesis card hidden by that filter.
+pub(crate) fn discussion_channels_for_surface(
+    channels: &[ChannelEntity],
+    selected_strand: &str,
+    track_filter: &str,
+) -> (Vec<ChannelEntity>, Option<ChannelEntity>) {
+    let selected = channels
+        .iter()
+        .find(|channel| channel.strand_id == selected_strand)
+        .cloned();
+    let visible = channels
+        .iter()
+        .filter(|channel| {
+            track_filter == "with_discussion_track"
+                || channel.is_default
+                || channel.kind == "discussion"
+        })
+        .cloned()
+        .collect();
+    (visible, selected)
+}
+
 fn chat_message_protocol_id(message: &ChatMessage) -> Option<&str> {
     message
         .protocol_message_id

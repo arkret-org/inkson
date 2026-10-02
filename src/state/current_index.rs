@@ -675,7 +675,16 @@ impl CurrentIndex {
                 .await?
                 .is_none()
         {
-            anyhow::bail!("committed current generation is missing its durable manifest");
+            let manifests = format!("{prefix}stage/");
+            let retained = backend
+                .keys(&manifests, None, None, 8)
+                .await?
+                .iter()
+                .map(|key| split_version(key).map(|(_, generation)| generation))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            anyhow::bail!(
+                "committed current generation {committed_generation} is missing its durable manifest ({prefix}); retained generations: {retained:?}"
+            );
         }
         Ok(Self {
             backend,

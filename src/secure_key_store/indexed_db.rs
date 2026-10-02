@@ -13,6 +13,34 @@ use super::{SecureKeyStore, SecureKeyStoreError, WASM_INDEXEDDB_SECURE_KEY_STORE
 #[path = "current_index_backend.rs"]
 pub(crate) mod current_index_backend;
 
+type IdbEventCallback = std::rc::Rc<
+    std::cell::RefCell<Option<wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>>>,
+>;
+type IdbTimeoutCallback =
+    std::rc::Rc<std::cell::RefCell<Option<wasm_bindgen::closure::Closure<dyn FnMut()>>>>;
+
+struct IdbRequestGuard {
+    request: web_sys::IdbRequest,
+    open_request: Option<web_sys::IdbOpenDbRequest>,
+    window: web_sys::Window,
+    timer: std::rc::Rc<std::cell::Cell<Option<i32>>>,
+    _events: Vec<IdbEventCallback>,
+    _timeout: IdbTimeoutCallback,
+}
+
+impl Drop for IdbRequestGuard {
+    fn drop(&mut self) {
+        self.request.set_onsuccess(None);
+        self.request.set_onerror(None);
+        if let Some(request) = &self.open_request {
+            request.set_onblocked(None);
+        }
+        if let Some(handle) = self.timer.take() {
+            self.window.clear_timeout_with_handle(handle);
+        }
+    }
+}
+
 /// wasm32 IndexedDB-backed secret store that upgrades the wrapping-key
 /// tier from the `localStorage` byte seed to a SubtleCrypto-derived
 /// **non-extractable** AES-GCM key.
@@ -193,18 +221,8 @@ impl IndexedDbSecureKeyStore {
     /// Await a one-shot IndexedDB request, resolving to its `result()`
     /// or rejecting with its `error()`.
     ///
-    /// The success/error closures are stored in `Rc<RefCell<Option<..>>>`
-    /// bindings that outlive the `.await` and are detached + dropped only
-    /// after the request has settled. The previous per-call-site code used
-    /// `Closure::once_into_js` and let the returned `JsValue` handle drop at
-    /// the end of the `Promise::new` executor scope. Under wasm-bindgen
-    /// 0.2.120's `FinalizationRegistry`-based closure dtor (`CLOSURE_DTORS`)
-    /// that frees the closure registration before the DOM invokes it, which
-    /// surfaces as the runtime panic
-    /// `closure invoked recursively or after being dropped`, immediately
-    /// followed by a cascade of `memory access out of bounds` once the
-    /// wasm-bindgen-futures executor heap is corrupted. Keeping the
-    /// `Closure`s alive across the await removes the use-after-free.
+    /// The guard owns callbacks across `.await` and detaches them before
+    /// dropping their Rust owners, including when the future is cancelled.
     async fn idb_request_result(
         request: &web_sys::IdbRequest,
     ) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
@@ -308,18 +326,16 @@ impl IndexedDbSecureKeyStore {
             *on_error_slot.borrow_mut() = Some(error);
             *on_timeout_slot.borrow_mut() = Some(timeout);
         });
-        let settled = JsFuture::from(promise).await;
-        // Detach the handlers and free the closures only after the request
-        // has settled, so the DOM can never invoke a freed closure.
-        request.set_onsuccess(None);
-        request.set_onerror(None);
-        if let Some(handle) = timer_handle.get() {
-            window.clear_timeout_with_handle(handle);
-        }
-        drop(on_success);
-        drop(on_error);
-        drop(on_timeout);
-        settled
+        // Cancellation must detach callbacks before their Rust owners drop.
+        let _guard = IdbRequestGuard {
+            request: request.clone(),
+            open_request: None,
+            window,
+            timer: timer_handle,
+            _events: vec![on_success, on_error],
+            _timeout: on_timeout,
+        };
+        JsFuture::from(promise).await
     }
 
     async fn open_db(db_name: &str) -> Result<web_sys::IdbDatabase, SecureKeyStoreError> {
@@ -359,11 +375,12 @@ impl IndexedDbSecureKeyStore {
                 let _ = db.create_object_store(Self::OBJECT_STORE_KEYS);
             },
         );
-        open_req.set_onupgradeneeded(Some(on_upgrade.as_ref().unchecked_ref()));
+        // An open request cannot be cancelled before its upgrade transaction
+        // starts. Let the browser own this callback so cancellation still
+        // creates a complete v1 database, rather than an empty database at v1.
+        let on_upgrade = on_upgrade.into_js_value();
+        open_req.set_onupgradeneeded(Some(on_upgrade.unchecked_ref()));
         let open_result = Self::idb_open_request_result(&open_req, Self::OPEN_DB_TIMEOUT_MS).await;
-        // The upgrade handler may fire before success; keep it alive until
-        // the open has settled, then detach and drop it. If the open was
-        // blocked / timed out, the handler must not outlive its Rust closure.
         open_req.set_onupgradeneeded(None);
         let result = open_result.map_err(|err| {
             SecureKeyStoreError::Backend(format!("indexedDB open awaited: {err:?}"))
@@ -508,18 +525,15 @@ impl IndexedDbSecureKeyStore {
             *on_timeout_slot.borrow_mut() = Some(timeout);
         });
 
-        let settled_result = JsFuture::from(promise).await;
-        request.set_onsuccess(None);
-        request.set_onerror(None);
-        request.set_onblocked(None);
-        if let Some(handle) = timer_handle.get() {
-            window.clear_timeout_with_handle(handle);
-        }
-        drop(on_success);
-        drop(on_error);
-        drop(on_blocked);
-        drop(on_timeout);
-        settled_result
+        let _guard = IdbRequestGuard {
+            request: request.clone().unchecked_into(),
+            open_request: Some(request.clone()),
+            window,
+            timer: timer_handle,
+            _events: vec![on_success, on_error, on_blocked],
+            _timeout: on_timeout,
+        };
+        JsFuture::from(promise).await
     }
 
     async fn load_or_derive_wrapping_key(

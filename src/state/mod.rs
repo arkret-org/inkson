@@ -160,6 +160,9 @@ pub struct LocalStateStore {
     /// snapshot into Bob's entry. `None` means this instance has not hydrated a
     /// namespace yet.
     cached_account_key: Option<String>,
+    /// Process-only fence for rebuilding the non-serialized private Contact
+    /// projection once per hydrated Account. Never persisted or sent on wire.
+    contact_remarks_restored_for: Option<arkret_sdk::AccountId>,
     /// Ephemeral UI demand, not a second current-state or head cache.
     product_current_demand: Arc<
         Mutex<
@@ -242,6 +245,7 @@ impl Clone for LocalStateStore {
         Self {
             cached: self.cached.clone(),
             cached_account_key: self.cached_account_key.clone(),
+            contact_remarks_restored_for: self.contact_remarks_restored_for.clone(),
             product_current_demand: Arc::clone(&self.product_current_demand),
             current_view: Arc::clone(&self.current_view),
             loaded: AtomicBool::new(self.loaded.load(Ordering::Acquire)),
@@ -315,6 +319,7 @@ impl Default for LocalStateStore {
         Self {
             cached: ClientLocalState::default(),
             cached_account_key: None,
+            contact_remarks_restored_for: None,
             product_current_demand: Arc::new(Mutex::new(None)),
             current_view: Arc::new(Mutex::new(None)),
             loaded: AtomicBool::new(false),
@@ -642,6 +647,7 @@ impl LocalStateStore {
         Self {
             cached: ClientLocalState::default(),
             cached_account_key: None,
+            contact_remarks_restored_for: None,
             product_current_demand: Arc::new(Mutex::new(None)),
             current_view: Arc::new(Mutex::new(None)),
             loaded: AtomicBool::new(false),
@@ -1052,6 +1058,7 @@ impl LocalStateStore {
             .read_account_state(&effective_account_key)
             .unwrap_or_default();
         self.cached_account_key = Some(effective_account_key);
+        self.contact_remarks_restored_for = None;
         self.loaded.store(true, Ordering::Relaxed);
     }
 }

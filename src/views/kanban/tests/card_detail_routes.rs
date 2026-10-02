@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn card_edit_waits_for_the_complete_accepted_current() {
+    let event_id =
+        arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [0x24; 32]);
+    let strand_id = arkret_sdk::StrandId::from_event_id(&event_id);
+    let mut card = test_card(strand_id.as_str(), "U");
+    card.state = CardState::Synced;
+    assert!(!card_detail_write_ready(&card));
+    card.authoring_basis = Some(arkret_wire::CurrentRevision {
+        commit_id: arkret_wire::RealmCommitId::from_digest([0x24; 32]),
+        stream_position: 1,
+    });
+    assert!(card_detail_write_ready(&card));
+    for state in [
+        CardState::Optimistic,
+        CardState::Queued,
+        CardState::Submitted,
+        CardState::Accepted,
+        CardState::SoftFailed,
+        CardState::Quarantined,
+        CardState::Conflict,
+    ] {
+        card.state = state;
+        assert!(!card_detail_write_ready(&card));
+    }
+    card.state = CardState::Synced;
+    card.id = "0196419b-0000-7000-8000-000000000001".to_owned();
+    assert!(!card_detail_write_ready(&card));
+}
+
+#[test]
 fn discussion_waits_for_event_derived_strand_identity() {
     let mut pending = test_card("0196419b-0000-7000-8000-000000000001", "U");
     pending.primary_strand_id = "0196419b-0000-7000-8000-000000000001".to_owned();

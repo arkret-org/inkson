@@ -463,6 +463,24 @@ pub(crate) fn load_account_session_grant_with_secure_store(
     Ok(grant)
 }
 
+// Transport construction reads the exact accepted holder without publishing a
+// separate account-main snapshot. Such a snapshot can be stale while the live
+// projector is committing its current-index pointer and cursor.
+fn load_session_holder(
+    grant: &PersistedSessionGrant,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<DpopHandle> {
+    let user_store = crate::secure_key_store::UserLocalStore::new(
+        grant.account_id.clone(),
+        grant.device_id.clone(),
+    )?;
+    crate::identity::account_auth::grant_dpop::load_user_device_key_with_secure_store(
+        &user_store,
+        secure_store,
+    )?
+    .context("session grant has no durable DPoP holder key")
+}
+
 pub(crate) async fn provide_authenticated_session(
     station_url: &str,
 ) -> anyhow::Result<AuthenticatedSession> {
@@ -477,14 +495,8 @@ async fn provide_authenticated_session_with_secure_store(
     station_url: &str,
     secure_store: Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
 ) -> anyhow::Result<AuthenticatedSession> {
-    let mut store = LocalStateStore::default();
     let grant = load_active_session_grant(station_url, secure_store.as_ref())?;
-    let device_handle =
-        crate::identity::account_auth::grant_dpop::load_or_recover_device_key_with_secure_store(
-            &mut store,
-            secure_store.as_ref(),
-        )?
-        .context("session grant has no durable DPoP device key")?;
+    let device_handle = load_session_holder(&grant, secure_store.as_ref())?;
     let runtime = session_grant_runtime();
     let provider =
         session_transport_provider(runtime.as_ref(), &grant, &device_handle, secure_store).await?;
@@ -516,14 +528,8 @@ async fn refresh_authenticated_session_after_unauthorized_with_secure_store(
     station_url: &str,
     secure_store: Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
 ) -> anyhow::Result<AuthenticatedSession> {
-    let mut store = LocalStateStore::default();
     let grant = load_active_session_grant(station_url, secure_store.as_ref())?;
-    let device_handle =
-        crate::identity::account_auth::grant_dpop::load_or_recover_device_key_with_secure_store(
-            &mut store,
-            secure_store.as_ref(),
-        )?
-        .context("session grant has no durable DPoP device key")?;
+    let device_handle = load_session_holder(&grant, secure_store.as_ref())?;
     let runtime = session_grant_runtime();
     let provider =
         session_transport_provider(runtime.as_ref(), &grant, &device_handle, secure_store).await?;
@@ -814,6 +820,85 @@ fn required_trimmed<'a>(value: &'a str, field: &str) -> anyhow::Result<&'a str> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ReadOnlyHolderStore(crate::secure_key_store::MemorySecureKeyStore);
+
+    impl crate::secure_key_store::SecureKeyStore for ReadOnlyHolderStore {
+        fn store_secret_bytes(
+            &self,
+            _key: &str,
+            _value: &[u8],
+        ) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
+            panic!("session transport construction must not publish local state");
+        }
+
+        fn get_secret_bytes(
+            &self,
+            key: &str,
+        ) -> Result<Option<arkret_sdk::KeyBytes>, crate::secure_key_store::SecureKeyStoreError>
+        {
+            self.0.get_secret_bytes(key)
+        }
+
+        fn delete_secret(
+            &self,
+            _key: &str,
+        ) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
+            panic!("session transport construction must not delete local state");
+        }
+
+        fn list_secret_keys(
+            &self,
+            prefix: Option<&str>,
+        ) -> Result<Vec<String>, crate::secure_key_store::SecureKeyStoreError> {
+            self.0.list_secret_keys(prefix)
+        }
+
+        fn backend_info(&self) -> garth::SecureKeyStoreBackendInfo {
+            self.0.backend_info()
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_holder_restore_is_read_only_and_exactly_account_scoped() {
+        let grant = test_persisted_grant("ak:did_core:webvh:z6mkfixture:alice.example");
+        let user = crate::secure_key_store::UserLocalStore::new(
+            grant.account_id.clone(),
+            grant.device_id.clone(),
+        )
+        .unwrap();
+        let secure = crate::secure_key_store::MemorySecureKeyStore::default();
+        user.save_grant_binding_seed_b64url_durable(&secure, &URL_SAFE_NO_PAD.encode([7_u8; 32]))
+            .await
+            .unwrap();
+        let read_only = ReadOnlyHolderStore(secure);
+        let handle = load_session_holder(&grant, &read_only).unwrap();
+        assert_eq!(handle.jkt(), test_device_handle().jkt());
+
+        let mut other = grant.clone();
+        other.account_id.station_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example").unwrap();
+        assert!(load_session_holder(&other, &read_only).is_err());
+        other = grant;
+        other.device_id =
+            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002").unwrap();
+        assert!(load_session_holder(&other, &read_only).is_err());
+    }
+
+    #[tokio::test]
+    async fn transport_holder_restore_never_substitutes_the_identity_signing_seed() {
+        let grant = test_persisted_grant("ak:did_core:webvh:z6mkfixture:alice.example");
+        let user = crate::secure_key_store::UserLocalStore::new(
+            grant.account_id.clone(),
+            grant.device_id.clone(),
+        )
+        .unwrap();
+        let secure = crate::secure_key_store::MemorySecureKeyStore::default();
+        user.save_signing_seed_durable(&secure, &[7_u8; 32])
+            .await
+            .unwrap();
+        assert!(load_session_holder(&grant, &ReadOnlyHolderStore(secure)).is_err());
+    }
 
     fn test_device_handle() -> DpopHandle {
         let seed = URL_SAFE_NO_PAD.encode([7_u8; 32]);

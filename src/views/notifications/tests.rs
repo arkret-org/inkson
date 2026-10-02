@@ -35,12 +35,8 @@ fn blocklist_revision_rehydrates_retained_contact_notification() {
     };
     store.save_notification_projection(vec![raw]);
     assert_eq!(
-        super::panel::rehydrate_notifications_for_blocklist_revision(
-            &store,
-            &authority,
-            "ak:did_core:web:alice.example",
-        )
-        .len(),
+        super::panel::rehydrate_notifications(&store, &authority, "ak:did_core:web:alice.example",)
+            .len(),
         1
     );
 
@@ -55,22 +51,14 @@ fn blocklist_revision_rehydrates_retained_contact_notification() {
     .unwrap();
     store.set_client_blocklist(7, vec![entry]);
     assert!(
-        super::panel::rehydrate_notifications_for_blocklist_revision(
-            &store,
-            &authority,
-            "ak:did_core:web:alice.example",
-        )
-        .is_empty()
+        super::panel::rehydrate_notifications(&store, &authority, "ak:did_core:web:alice.example",)
+            .is_empty()
     );
 
     store.set_client_blocklist(8, Vec::new());
     assert_eq!(
-        super::panel::rehydrate_notifications_for_blocklist_revision(
-            &store,
-            &authority,
-            "ak:did_core:web:alice.example",
-        )
-        .len(),
+        super::panel::rehydrate_notifications(&store, &authority, "ak:did_core:web:alice.example",)
+            .len(),
         1
     );
     let _ = std::fs::remove_file(path);

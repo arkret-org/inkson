@@ -174,6 +174,27 @@ mod committed_producer_proof_tests {
             .expect("an unresolved Applet executor remains visible and flagged");
         assert_eq!(message.sender, "ak:did_core:web:ghost.example");
         assert_eq!(message.crypto_state, MessageCryptoState::NeedsVerification);
+        let timeline = chat_messages_from_events_with_sidecar(REALM, &[event.clone()], None, None);
+        assert_eq!(
+            timeline.len(),
+            1,
+            "the full timeline retains the explicit verification warning"
+        );
+        assert_eq!(
+            timeline[0].crypto_state,
+            MessageCryptoState::NeedsVerification
+        );
+        assert_eq!(
+            timeline[0].executed_by.as_deref(),
+            Some("ak:did_core:web:applet.example")
+        );
+        let mut tampered = event.clone();
+        tampered["payload"]["content"]["body"] = json!("changed after signing");
+        assert!(chat_messages_from_events_with_sidecar(REALM, &[tampered], None, None).is_empty());
+        let other_realm = "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5";
+        assert!(
+            chat_messages_from_events_with_sidecar(other_realm, &[event], None, None).is_empty()
+        );
     }
 }
 
