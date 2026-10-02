@@ -633,6 +633,10 @@ impl NativeAccountHost {
             control: SubscriptionControl,
         }
         impl AccountBatchProjector for OneWindow<'_> {
+            async fn reset_baseline(&self) -> garth::Result<()> {
+                self.projector.reset_baseline().await
+            }
+
             async fn project(&self, batch: &AccountSubscribeBatch) -> garth::Result<()> {
                 self.projector.project(batch).await
             }
@@ -1321,6 +1325,10 @@ impl InksonAccountProjector {
 }
 
 impl AccountBatchProjector for InksonAccountProjector {
+    async fn reset_baseline(&self) -> garth::Result<()> {
+        self.reset_account_context().await
+    }
+
     async fn project(&self, batch: &AccountSubscribeBatch) -> garth::Result<()> {
         self.project_verified_batch(batch, None).await
     }
@@ -2168,19 +2176,8 @@ async fn run_circle_scope_rotate_pass(
                     )
                     .map_err(anyhow::Error::msg)?;
                     fence()?;
-                    // The staged state includes the pending Commit and must be
-                    // durable before the first network side effect. The MLS
-                    // submission lane installs it only after Station
-                    // acceptance and can replay the exact signed request after
-                    // an unknown outcome.
                     ctx.state_store
-                        .write(|store| {
-                            frozen.ensure_current(store)?;
-                            store.save_mls_checkpoint_for_scope(
-                                &scope,
-                                draft.staged_checkpoint.clone(),
-                            )
-                        })
+                        .read(|store| frozen.ensure_current(store))
                         .map_err(anyhow::Error::msg)?;
                     anyhow::ensure!(
                         removal_session_current(start_generation, generation, ctx),
@@ -2197,6 +2194,7 @@ async fn run_circle_scope_rotate_pass(
                             device.clone(),
                             Vec::new(),
                             &ctx.state_store,
+                            draft.staged_checkpoint,
                         )
                         .await?;
                     Ok::<_, anyhow::Error>(draft.removed_actors.len())
@@ -2347,68 +2345,38 @@ async fn run_idle_self_update_pass(
                 continue;
             }
         };
-        // Submit the canonical ak.mls.commit. The server's expected-prev-epoch
-        // CAS (§5.4) rejects the loser of any concurrent commit race; either
-        // way the epoch advances, so a rejection is fine — we simply do NOT
-        // persist the local snapshot (persist-on-accept).
+        // Freeze the exact signed Commit and private candidate atomically,
+        // then install only its verified acceptance through the MLS lane.
         let submit_token = token.clone();
-        match crate::transport::auth::with_authed_api(&base, submit_token, |api| async move {
-            api.event_submitter()?.submit_sdk_event(&commit_event).await
-        })
-        .await
-        {
-            Ok(accepted) => {
-                let commit_event_id =
-                    arkret_sdk::EventId::new(accepted.event_id.clone()).map_err(anyhow::Error::msg);
-                let Ok(commit_event_id) = commit_event_id else {
-                    tracing::debug!(
-                        %realm_id,
-                        "sync_engine: accepted self-update commit carries an invalid Event id",
-                    );
-                    return;
-                };
-                if generation.get() != start_generation {
-                    // A late accept under a stale generation must not write the
-                    // snapshot into the new generation's store.
-                    return;
-                }
-                let persisted = ctx.state_store.write(|store| {
-                    store.record_mls_group_state_ref_for_effective_scope(
-                        realm_id.clone(),
-                        None,
-                        snapshot.group_id.as_str(),
-                        snapshot.epoch,
-                        commit_event_id,
-                    )?;
-                    store.save_mls_checkpoint(realm_id.clone(), snapshot)?;
-                    Ok::<_, String>(())
-                });
-                if let Err(error) = persisted {
-                    tracing::error!(
-                        %realm_id,
-                        %error,
-                        "sync_engine: idle MLS commit group-state reference conflicted",
-                    );
-                    return;
-                }
-                tracing::info!(
-                    %realm_id,
-                    epoch = next_epoch,
-                    "sync_engine: §5.6 idle self-update commit accepted",
+        let device = device_id.clone();
+        let state = ctx.state_store.clone();
+        let result =
+            crate::transport::auth::with_authed_api(&base, submit_token, |api| async move {
+                let submitter = api.event_submitter()?;
+                let authored = submitter
+                    .author_for_direct_submission(&commit_event)
+                    .await?;
+                anyhow::ensure!(
+                    generation.get() == start_generation,
+                    "idle MLS account session changed"
                 );
-                // One commit per pass: a multi-Realm client staggers the rest
-                // across subsequent sync iterations rather than bursting.
+                submitter
+                    .submit_mls_commit(authored, Vec::new(), device, Vec::new(), &state, snapshot)
+                    .await
+            })
+            .await;
+        match result {
+            Ok(_) => {
+                tracing::info!(%realm_id, epoch = next_epoch,
+                    "sync_engine: idle MLS self-update accepted and installed");
                 return;
             }
             Err(err) => {
-                tracing::debug!(
-                    %realm_id,
-                    error = %err.display_diagnostic(),
-                    "sync_engine: idle §5.6 self-update commit not accepted (race or transient)",
-                );
-                // Lost the §5.4 CAS or a transient error — discard the local
-                // change (never persisted) and let the next pass re-evaluate.
-                continue;
+                tracing::debug!(%realm_id, error = %err.display_diagnostic(),
+                    "sync_engine: idle MLS submission remains subject to exact recovery");
+                // The lane owns the frozen unit, including transient failures.
+                // Never author a replacement while that transition is pending.
+                return;
             }
         }
     }

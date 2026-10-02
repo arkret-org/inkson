@@ -773,11 +773,8 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
 
                 // `encryption-and-audit.md` §2.4.1 — a scope a receiver has put
                 // in `epoch_update_required` stays unsendable until an accepted
-                // `ak.mls.commit` attests the governance Seals it is missing.
-                // Every other commit trigger in this client hangs off a
-                // membership frontier change, so a capability grant, a policy
-                // update, or a single-member creator group had nothing to
-                // resume it. Same replay shape as the bootstrap above.
+                // transition covers its current membership key-access revision.
+                // Policy and endpoint changes do not advance that revision.
                 // Materialize the list before entering the async loop. A
                 // `SyncSignal::read()` temporary used directly as the `for`
                 // iterator input lives for the whole loop statement; the
@@ -812,35 +809,44 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         circle = circle_id.as_deref().unwrap_or("-"),
                         "MLS governance coverage is stale; advancing the epoch to resume encrypted sending",
                     );
-                    let coverage_error = match crate::transport::auth::authed_api_ready(
+                    let coverage_result = match crate::transport::auth::authed_api_ready(
                         &detect_base,
                         detect_session.clone(),
                     )
                     .await
                     {
-                        Ok(api) => crate::mls::coverage_liveness::ensure_mls_governance_coverage(
-                            &api,
-                            &state_store_task,
-                            &creator_bootstrap_realm_id,
-                            circle_id.as_deref(),
-                            &detect_authority,
-                            &detect_device,
-                        )
-                        .await
-                        .err(),
-                        Err(error) => Some(error.to_string()),
+                        Ok(api) => {
+                            crate::mls::coverage_liveness::ensure_mls_governance_coverage(
+                                &api,
+                                &state_store_task,
+                                &creator_bootstrap_realm_id,
+                                circle_id.as_deref(),
+                                &detect_authority,
+                                &detect_device,
+                            )
+                            .await
+                        }
+                        Err(error) => Err(error.to_string()),
                     };
                     coverage_repair_in_flight_for_probe
                         .write()
                         .remove(&repair_key);
-                    if let Some(error) = coverage_error {
+                    let error_prefix = format!("MLS coverage repair [{repair_key}]:");
+                    if let Err(error) = coverage_result {
                         tracing::warn!(
                             realm = %creator_bootstrap_realm_id,
                             circle = circle_id.as_deref().unwrap_or("-"),
                             %error,
                             "MLS coverage repair failed; the scope stays paused until the next attempt",
                         );
-                        last_error_task.set(Some(format!("MLS coverage repair: {error}")));
+                        last_error_task.set(Some(format!("{error_prefix} {error}")));
+                    } else if coverage_result == Ok(true)
+                        && last_error_task
+                            .peek()
+                            .as_ref()
+                            .is_some_and(|error| error.starts_with(&error_prefix))
+                    {
+                        last_error_task.set(None);
                     }
                 }
 

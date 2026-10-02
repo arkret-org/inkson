@@ -1003,7 +1003,7 @@ mod historical_result_tests {
 
     #[test]
     fn delegated_agent_signature_binds_record_actor_and_executing_account() {
-        let (mut selector, _, key) = fixture();
+        let (mut selector, mut entry, key) = fixture();
         let mut event = selector.accepted_event.clone();
         event.executed_by = Some(event.actor_id.clone());
         event.actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
@@ -1033,6 +1033,30 @@ mod historical_result_tests {
         assert_eq!(principal, selector.agent_id);
         assert_eq!(method, selector.verification_method);
         assert!(verify_event_producer(&selector, &key));
+        let mut store = crate::state::isolated_store_for_tests("delegated-agent-aad");
+        store.switch_test_account("did:web:reader.example");
+        entry.recipient_account_id = store.active_authority().unwrap();
+        entry.receiver_id = entry.recipient_account_id.station_id.clone();
+        entry.target_ref = selector.target_ref.clone();
+        index_verified_committed_event(&mut store, &selector.realm_id, &committed_view(&selector))
+            .unwrap();
+        store.store_historical_agent_signer_key(entry).unwrap();
+        let domain = crate::views::chat::model::verified_chat_sender_domain_for_realm(
+            selector.realm_id.as_str(),
+            &serde_json::to_value(&selector.accepted_event).unwrap(),
+            Some(&store),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            domain,
+            arkret_sdk::mls_basic_credential_identity(selector.accepted_event.actual_signer())
+                .unwrap()
+        );
+        assert_ne!(
+            domain,
+            arkret_sdk::mls_basic_credential_identity(&selector.accepted_event.actor_id).unwrap()
+        );
         selector.accepted_event.executed_by =
             Some(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
                 selector.agent_id.clone(),

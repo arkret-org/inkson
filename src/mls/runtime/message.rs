@@ -468,6 +468,57 @@ pub fn verified_author_group_view_for_scope(
     Some(group.author_group_state_view(group_state_ref))
 }
 
+#[cfg(test)]
+mod agent_authorization_tests {
+    use super::*;
+
+    #[test]
+    fn same_key_reauthorization_cannot_replace_the_accepted_leaf_authorization() {
+        let actor = crate::test_support::account_actor("did:web:agent.example");
+        let authorization =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [51; 32]);
+        let replacement =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [52; 32]);
+        let method = arkret_sdk::DidUrl::new("did:web:agent.example#runtime").unwrap();
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[31; 32]);
+        let key = signing.verifying_key().to_bytes();
+        let identity = arkret_sdk::ArkretMlsIdentity::new_agent(
+            actor.clone(),
+            method,
+            authorization.clone(),
+            arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(signing),
+        )
+        .unwrap();
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            )
+            .unwrap(),
+        };
+        let mut group = identity.create_group(&scope).unwrap();
+        group
+            .install_local_creator_binding(actor.clone(), None)
+            .unwrap();
+        let state_ref = authorization.as_str();
+        let view = agent_author_view_from_verified_group(&group, state_ref).unwrap();
+        let group_id = group.group_id();
+        let mut claim = arkret_sdk::mls::AgentMlsSignerClaim {
+            group_id: group_id.as_str(),
+            epoch: group.epoch(),
+            group_state_ref: state_ref,
+            signer_actor_id: &actor,
+            signing_key: &key,
+            agent_key_authorize_event_id: &authorization,
+        };
+        assert_eq!(
+            arkret_sdk::mls::verify_ordinary_agent_mls_binding(&view, &claim).unwrap(),
+            0
+        );
+        claim.agent_key_authorize_event_id = &replacement;
+        assert!(arkret_sdk::mls::verify_ordinary_agent_mls_binding(&view, &claim).is_err());
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn restore_author_group_for_scope(
     state_store: &crate::state::LocalStateStore,
@@ -530,9 +581,15 @@ pub fn ordinary_agent_mls_author_view(
         epoch,
         group_state_ref,
     )?;
+    agent_author_view_from_verified_group(&group, group_state_ref)
+}
+
+fn agent_author_view_from_verified_group(
+    group: &arkret_sdk::ArkretMlsGroup,
+    group_state_ref: &str,
+) -> Option<arkret_sdk::mls::AgentMlsSignerView> {
     let group_state = group.author_group_state_view(group_state_ref);
     let leaves = group.verified_leaf_bindings().ok()?;
-    let historical_keys = state_store.historical_agent_signer_keys_for_realm(realm_id);
     let mut leaf_authorization_refs = Vec::new();
     for leaf in &group_state.active_leaves {
         let arkret_sdk::mls::AuthorLeafCredential::Basic { identity } = &leaf.credential else {
@@ -546,18 +603,14 @@ pub fn ordinary_agent_mls_author_view(
         }) else {
             continue;
         };
-        for entry in historical_keys
-            .iter()
-            .filter(|entry| entry.actor == identity.actor_id)
+        // The verified roster binds the exact accepted authorization instance.
+        // Key equality cannot substitute for it when a runtime is reauthorized.
+        if let arkret_sdk::MlsEndpointIdentity::AgentRuntime {
+            agent_key_authorize_event_id,
+            ..
+        } = &identity.endpoint
         {
-            let Ok(key) = arkret_sdk::base64url_decode(entry.public_key_b64u.as_str().as_bytes())
-            else {
-                continue;
-            };
-            if key == leaf.signature_key {
-                leaf_authorization_refs
-                    .push((leaf.leaf_index, entry.authorization_ref.event_id.clone()));
-            }
+            leaf_authorization_refs.push((leaf.leaf_index, agent_key_authorize_event_id.clone()));
         }
     }
     leaf_authorization_refs.sort_by(|left, right| {

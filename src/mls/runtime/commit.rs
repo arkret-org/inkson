@@ -133,8 +133,19 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
         authority,
         device_id,
     )?;
+    let binding = crate::mls::governance_proof::binding_for_transition(
+        state_store,
+        &effective_scope,
+        group.group_id().as_str(),
+        group.epoch(),
+        group
+            .epoch()
+            .checked_add(1)
+            .ok_or_else(|| MlsRuntimeError::Commit("MLS epoch overflow".to_owned()))?,
+    )
+    .map_err(MlsRuntimeError::Commit)?;
     let envelope = group
-        .self_update_commit()
+        .self_update_commit_with_governance_binding(&binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
     let staged_checkpoint = staged_checkpoint(&group, realm_id, &secret)?;
     Ok(StagedMlsCommit {
@@ -353,8 +364,22 @@ pub fn build_idle_self_update_commit(
         authority,
         device_id,
     )?;
+    if group.has_pending_commit() {
+        return Ok(None);
+    }
+    let binding = crate::mls::governance_proof::binding_for_transition(
+        state_store,
+        &effective_scope,
+        group.group_id().as_str(),
+        group.epoch(),
+        group
+            .epoch()
+            .checked_add(1)
+            .ok_or_else(|| MlsRuntimeError::Commit("MLS epoch overflow".to_owned()))?,
+    )
+    .map_err(MlsRuntimeError::Commit)?;
     let envelope = group
-        .self_update_commit()
+        .self_update_commit_with_governance_binding(&binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
     // A forced epoch advance starts a fresh epoch, so the observed-message
     // counter resets: no application message has ridden the new epoch yet.
