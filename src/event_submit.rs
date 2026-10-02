@@ -482,13 +482,29 @@ fn durable_mls_genesis_for_realm_from_snapshot(
 fn record_queued_operation_identity(
     state_store: &mut crate::state::LocalStateStore,
     local_operation_id: &str,
-    event_id: &arkret_sdk::EventId,
+    event: &arkret_sdk::Event,
 ) -> bool {
-    state_store.update_raw_operation_write_state(
+    if state_store.update_raw_operation_write_state(
         local_operation_id,
         "queued",
-        Some(event_id.to_string()),
+        Some(event.event_id.to_string()),
         None,
+    ) {
+        return true;
+    }
+    if event.kind != arkret_sdk::EventKind::MessageCreate {
+        return false;
+    }
+    // Ordinary chat can reach the durable queue before a holder projection
+    // exists. Keep its signed bytes separate from local lifecycle metadata.
+    state_store.upsert_raw_operation(
+        local_operation_id,
+        Some(event.realm_id.to_string()),
+        serde_json::json!({
+            "event": event,
+            "event_id": event.event_id,
+            "write_state": "queued",
+        }),
     )
 }
 
@@ -2018,6 +2034,7 @@ impl EventSubmitter {
             retry_scope,
         } = write;
         let event_id = submission.event_id.clone();
+        let event = submission.primary_event().clone();
         let outbound = self.outbound(lane)?;
         let existing = outbound
             .snapshot()
@@ -2050,7 +2067,7 @@ impl EventSubmitter {
         }
         if let Some(state_store) = self.state_store.as_ref() {
             state_store.write(|store| {
-                record_queued_operation_identity(store, &local_operation_id, &event_id);
+                record_queued_operation_identity(store, &local_operation_id, &event);
             });
         }
 

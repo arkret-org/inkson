@@ -478,7 +478,7 @@ fn enqueueing_stamps_the_final_event_identity_on_the_optimistic_row() {
     assert!(record_queued_operation_identity(
         &mut store,
         local_operation_id,
-        event.event_id()
+        event.event()
     ));
 
     let state = store.load();
@@ -494,6 +494,67 @@ fn enqueueing_stamps_the_final_event_identity_on_the_optimistic_row() {
         Some(local_operation_id),
         "the durable queue joins back to the operation through the stamped id"
     );
+}
+
+#[test]
+fn queued_message_without_a_holder_record_keeps_identity_and_pending_projection() {
+    let event = author_and_sign(
+        message_intent(
+            REALM,
+            "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+        ),
+        &test_signer(),
+    );
+    let local_id = "local-message:queued-without-record";
+    let mut store = local_state_store("queued-without-optimistic-record");
+    assert!(record_queued_operation_identity(
+        &mut store,
+        local_id,
+        event.event()
+    ));
+    let state = store.load();
+    assert_eq!(
+        local_operation_for_event(&state, event.event_id()).as_deref(),
+        Some(local_id)
+    );
+    assert_eq!(
+        state.raw_operations[0].payload["event"],
+        serde_json::to_value(event.event()).unwrap()
+    );
+    let projected =
+        crate::views::chat::model::chat_messages_from_local_state_with_sidecar(&state, None, None);
+    assert_eq!(projected.len(), 1);
+    assert_eq!(projected[0].body, "hello");
+    assert!(projected[0].pending);
+    let mut seed = projected.clone();
+    seed[0].id = local_id.to_owned();
+    seed[0].protocol_message_id = None;
+    seed[0].local_scope = Some(event.event().scope_ref.clone());
+    let folded = crate::views::chat::model::fold_local_state_into_chat_messages_with_sidecar(
+        seed, &state, None, None,
+    );
+    assert_eq!(
+        folded.len(),
+        1,
+        "the local row and queued Event remain one message"
+    );
+    assert_eq!(folded[0].id, event.event_id().as_str());
+    assert!(
+        folded[0].pending,
+        "a frozen queued Event is not authority acceptance"
+    );
+    let snapshot = snapshot_of(vec![(event.clone(), SendQueueStatus::Committed)]);
+    assert!(reconcile_settled_outbound_item(
+        &mut store,
+        &snapshot.items[0]
+    ));
+    let accepted = crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
+        &store.load(),
+        None,
+        None,
+    );
+    assert_eq!(accepted.len(), 1);
+    assert!(!accepted[0].pending);
 }
 
 #[test]
@@ -541,7 +602,7 @@ fn a_committed_item_moves_its_optimistic_row_to_accepted() {
         None,
         json!({"kind": "ak.message.create", "write_state": "queued"}),
     );
-    record_queued_operation_identity(&mut store, local_operation_id, event.event_id());
+    record_queued_operation_identity(&mut store, local_operation_id, event.event());
 
     let snapshot = snapshot_of(vec![(event.clone(), SendQueueStatus::Committed)]);
     assert!(reconcile_settled_outbound_item(
@@ -576,12 +637,7 @@ fn a_rejected_item_reports_the_station_reason_code_on_its_row() {
     );
     let local_operation_id = "0196419b-0000-7000-8000-000000000003";
     let mut store = local_state_store("rejected-row");
-    store.upsert_raw_operation(
-        local_operation_id,
-        None,
-        json!({"kind": "ak.message.create", "write_state": "queued"}),
-    );
-    record_queued_operation_identity(&mut store, local_operation_id, event.event_id());
+    record_queued_operation_identity(&mut store, local_operation_id, event.event());
 
     let mut snapshot = snapshot_of(vec![(event, SendQueueStatus::Queued)]);
     let item = &mut snapshot.items[0];
@@ -595,6 +651,12 @@ fn a_rejected_item_reports_the_station_reason_code_on_its_row() {
     let state = store.load();
     assert_eq!(state.raw_operations[0].payload["write_state"], "rejected");
     assert_eq!(state.raw_operations[0].payload["error"], "policy_violation");
+    let projected =
+        crate::views::chat::model::chat_messages_from_local_state_with_sidecar(&state, None, None);
+    assert_eq!(projected.len(), 1);
+    assert!(projected[0].failed);
+    assert!(!projected[0].pending);
+    assert_eq!(projected[0].error.as_deref(), Some("policy_violation"));
 
     let error = settled_outbound_result(item)
         .expect_err("a Station refusal is an error for the calling write");

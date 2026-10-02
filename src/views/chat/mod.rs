@@ -1672,6 +1672,9 @@ pub fn ChatPanel(
             // settings, presence preferences) as a timeline invalidation.
             let _account_cursor = sync_cursor();
             let _realm_epoch = realm_live_epoch();
+            // Offline enqueue can persist the final Event identity without
+            // changing the optimistic row or receiving a stream update.
+            let _queued_ids = queued_outbound_local_operation_ids();
             // Local send completion persists its signed Event and author
             // sidecar before updating these rows. Observe that edge even when
             // no account cursor or Realm stream revision has arrived yet.

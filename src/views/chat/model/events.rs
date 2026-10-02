@@ -1430,9 +1430,15 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         edited: false,
         revisions: Vec::new(),
         revision_source: None,
-        pending: false,
-        failed: false,
-        error: None,
+        pending: matches!(
+            event.get("write_state").and_then(Value::as_str),
+            Some("queued" | "forwarding")
+        ),
+        failed: event.get("write_state").and_then(Value::as_str) == Some("rejected"),
+        error: event
+            .get("error")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         mentions: mentions_from_candidates(&candidates),
         crypto_state,
     })
@@ -2227,11 +2233,38 @@ pub(crate) fn chat_messages_from_local_state_with_sidecar(
 /// protocol target immediately; later canonical creates still dedupe through
 /// the normal create merge path.
 pub(crate) fn fold_local_state_into_chat_messages_with_sidecar(
-    seed: Vec<ChatMessage>,
+    mut seed: Vec<ChatMessage>,
     state: &ClientLocalState,
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
+    // Enqueue may author the final identity after the controller made its
+    // local row. The authenticated holder record joins them without changing
+    // signed Event bytes or claiming a covering Commit.
+    for record in &state.raw_operations {
+        let Some(event) = record
+            .payload
+            .get("event")
+            .and_then(|value| serde_json::from_value::<arkret_sdk::Event>(value.clone()).ok())
+            .filter(|event| event.kind == arkret_sdk::EventKind::MessageCreate)
+        else {
+            continue;
+        };
+        if record.payload.get("event_id").and_then(Value::as_str) != Some(event.event_id.as_str()) {
+            continue;
+        }
+        if let Some(message) = seed.iter_mut().find(|message| {
+            message.id == record.operation_id
+                && message.realm_id == event.realm_id.as_str()
+                && message.local_scope.as_ref() == Some(&event.scope_ref)
+                && event.payload.get("strand_id").and_then(Value::as_str)
+                    == Some(message.strand_id.as_str())
+        }) {
+            message.id = event.event_id.to_string();
+            message.protocol_message_id =
+                Some(arkret_sdk::MessageId::from_event_id(&event.event_id).to_string());
+        }
+    }
     let events = state
         .raw_operations
         .iter()
