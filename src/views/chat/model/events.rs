@@ -1067,7 +1067,9 @@ fn committed_human_device_producer(
     let digest_suite = event.realm_id.digest_suite_code().digest_suite();
     event
         .verify_producer_proof_self_consistency(digest_suite)
-        .map_err(|_| ())
+        .map_err(|error| {
+            tracing::warn!(event_id = %event.event_id, %error, "committed chat producer proof rejected");
+        })
 }
 
 /// Realm-aware receiver proof gate. A cached retired minimal-metadata marker
