@@ -159,13 +159,20 @@ fn mark_mls_backup_after_write_probe_started(key: String) -> bool {
     match MLS_BACKUP_AFTER_WRITE_PROBES.lock() {
         Ok(mut probes) => probes.mark(key),
         Err(_) => {
-            // COR-02: a poisoned lock means a prior holder panicked. Surface it
-            // (it would otherwise be invisible) and treat the probe as already
-            // started so we don't re-spawn against corrupt shared state.
-            tracing::warn!(
-                "MLS backup after-write probe set lock poisoned; skipping probe (treat as started)"
-            );
-            true
+            // A poisoned lock cannot authorize another probe against corrupt
+            // shared state.
+            tracing::warn!("MLS backup after-write probe set lock poisoned; skipping probe");
+            false
+        }
+    }
+}
+
+struct MlsBackupAfterWriteProbe(String);
+
+impl Drop for MlsBackupAfterWriteProbe {
+    fn drop(&mut self) {
+        if let Ok(mut probes) = MLS_BACKUP_AFTER_WRITE_PROBES.lock() {
+            probes.forget(&self.0);
         }
     }
 }
@@ -184,10 +191,20 @@ fn recovery_backup_control_realm_id(
     let Some(evidence) = store.recovery_material_evidence() else {
         return Ok(None);
     };
-    if evidence.account_id != *authority || evidence.account_id.principal_id.as_str() != actor_id {
+    if !recovery_backup_scope_matches(&evidence.account_id, authority, actor_id) {
         anyhow::bail!("frozen recovery evidence belongs to a different account");
     }
     Ok(Some(evidence.principal_control_realm_id))
+}
+
+fn recovery_backup_scope_matches(
+    evidence_authority: &arkret_sdk::AccountId,
+    authority: &arkret_sdk::AccountId,
+    actor_id: &str,
+) -> bool {
+    evidence_authority == authority
+        && crate::mls_api_helpers::principal_core_id(actor_id)
+            .is_ok_and(|principal| principal == authority.principal_id)
 }
 
 pub(crate) fn schedule_mls_recovery_backups_after_encrypted_write(
@@ -455,9 +472,6 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     if base_url.trim().is_empty() || token.trim().is_empty() || actor_id.trim().is_empty() {
         return;
     }
-    if needs_mls_backup() {
-        return;
-    }
     let state_store_for_completion_fence = auto_backup.1.clone();
     let backup_completed_while_probe_was_running =
         || state_store_for_completion_fence.read(mls_recovery_backup_configured);
@@ -473,9 +487,12 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
         return;
     }
     let probe_key = mls_backup_after_write_probe_key(&base_url, &actor_id);
-    if !mark_mls_backup_after_write_probe_started(probe_key) {
+    if !mark_mls_backup_after_write_probe_started(probe_key.clone()) {
         return;
     }
+    // The UI prompt is not a lock. Finish or cancellation must release the
+    // probe so newly available confirmed recovery material can be backed up.
+    let _probe = MlsBackupAfterWriteProbe(probe_key);
     // If this browser already confirmed a Recovery Key, use the cached public
     // key to seal the first account-secret backup without asking for the words
     // again. Missing public key falls through to the explicit prompt below.
@@ -484,8 +501,11 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
         state_store.read(|store| {
             let recovery_public_key = crate::views::recovery::local_recovery_public_key(store)?;
             let recovery_material_evidence = store.recovery_material_evidence()?;
-            if recovery_material_evidence.account_id.principal_id.as_str() != actor_id
-                || recovery_material_evidence.device_id.as_str() != device_id
+            if !recovery_backup_scope_matches(
+                &recovery_material_evidence.account_id,
+                &authority,
+                &actor_id,
+            ) || recovery_material_evidence.device_id.as_str() != device_id
             {
                 return None;
             }
@@ -655,7 +675,7 @@ fn upload_mls_backup_with_recovery_key(
         try_set_signal(status, "Frozen PCR authority evidence is required");
         return;
     };
-    if recovery_material_evidence.account_id.principal_id.as_str() != actor
+    if !recovery_backup_scope_matches(&recovery_material_evidence.account_id, &authority, &actor)
         || recovery_material_evidence.device_id.as_str() != device
     {
         try_set_signal(
@@ -1149,6 +1169,57 @@ mod tests {
         BackupJob, MLS_RECOVERY_BACKUP_MIN_INTERVAL, MLS_RECOVERY_BACKUP_SCHEDULER,
         recovery_key_filename, recovery_key_filename_from_handles, recovery_localpart_from_handles,
     };
+
+    #[test]
+    fn recovery_backup_scope_projects_the_did_and_keeps_the_complete_account() {
+        let authority = crate::test_support::authority("did:web:alice.example");
+        assert!(super::recovery_backup_scope_matches(
+            &authority,
+            &authority,
+            "did:web:alice.example",
+        ));
+        assert!(super::recovery_backup_scope_matches(
+            &authority,
+            &authority,
+            authority.principal_id.as_str(),
+        ));
+        assert!(!super::recovery_backup_scope_matches(
+            &authority,
+            &authority,
+            "did:web:bob.example",
+        ));
+        assert!(!super::recovery_backup_scope_matches(
+            &authority,
+            &authority,
+            "not-a-principal",
+        ));
+        let other_station = crate::test_support::authority_at_station(
+            "did:web:alice.example",
+            "did:web:other-station.example",
+        );
+        assert!(!super::recovery_backup_scope_matches(
+            &other_station,
+            &authority,
+            "did:web:alice.example",
+        ));
+    }
+
+    #[test]
+    fn account_backup_probe_releases_on_completion_or_cancellation() {
+        let key = "test-account-backup-probe-release".to_owned();
+        assert!(super::mark_mls_backup_after_write_probe_started(
+            key.clone()
+        ));
+        let probe = super::MlsBackupAfterWriteProbe(key.clone());
+        assert!(!super::mark_mls_backup_after_write_probe_started(
+            key.clone()
+        ));
+        drop(probe);
+        assert!(super::mark_mls_backup_after_write_probe_started(
+            key.clone()
+        ));
+        drop(super::MlsBackupAfterWriteProbe(key));
+    }
 
     #[test]
     fn changed_recovery_backup_reruns_after_success_interval() {

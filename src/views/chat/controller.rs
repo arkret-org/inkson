@@ -681,11 +681,16 @@ impl ChatController {
         let base_url = context.base_url;
         let api_token = (context.token)();
         let wait_for = active_sync_token((context.sync_cursor)());
+        let mut status_msg = self.status_msg;
         spawn(async move {
-            let _ = with_authed_api_with_sync(&base_url, api_token, wait_for, |api| async move {
-                api.event_submitter()?.submit_sdk_event(&operation).await
-            })
-            .await;
+            let result =
+                with_authed_api_with_sync(&base_url, api_token, wait_for, |api| async move {
+                    api.event_submitter()?.submit_sdk_event(&operation).await
+                })
+                .await;
+            if let Err(error) = result {
+                status_msg.set(format!("Reaction failed: {}", error.display()));
+            }
         });
     }
 
@@ -732,7 +737,9 @@ impl ChatController {
         let wait_for = active_sync_token((context.sync_cursor)());
         let mut messages = self.messages;
         let mut status_msg = self.status_msg;
-        spawn(async move {
+        // Closing the edit composer unmounts its Save Button. Keep the
+        // accepted-result handler with the controller that owns the message.
+        dioxus::core::Runtime::current().spawn(messages.origin_scope(), async move {
             let result = match chat_content_block_for_body_with_upload(
                 &base_url,
                 api_token.clone(),

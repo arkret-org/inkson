@@ -377,7 +377,9 @@ pub(super) fn send_plaintext_message(
     let mut status_msg = controller.status_msg;
     let chat_draft = controller.draft;
     let mut state_store = crate::app::SessionContext::get().state_store;
-    spawn(async move {
+    // A verified-current refresh can replace the composer send Button.
+    // Its in-flight write belongs to the controller's message list.
+    dioxus::core::Runtime::current().spawn(messages.origin_scope(), async move {
         let PlaintextSendRequest {
             base_url,
             api_token,
@@ -534,6 +536,8 @@ pub(super) fn present_chat_send_failure(
     body: &str,
     failure: &garth::MessageAuthoringFailure,
 ) {
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    tracing::warn!(error = %failure, "ordinary message authoring failed");
     let message = crate::i18n::tr(chat_authoring_failure_message(failure));
     if matches!(
         failure,
@@ -729,7 +733,7 @@ pub(super) fn send_encrypted_message(
     let base_for_backup_trigger = base.clone();
     let token_for_backup_trigger = api_token.clone();
     let actor_for_backup_trigger = actor.clone();
-    spawn(async move {
+    dioxus::core::Runtime::current().spawn(messages.origin_scope(), async move {
         if let Some(found) = messages
             .write()
             .iter_mut()
@@ -945,6 +949,8 @@ pub(super) fn send_encrypted_message(
                     (event_id, status)
                 }
                 crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
+                    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                    tracing::warn!(error = %message, "encrypted message send failed");
                     // P2: reconcile the optimistic bubble so
                     // it doesn't spin forever, and keep the
                     // draft recoverable.
@@ -961,6 +967,8 @@ pub(super) fn send_encrypted_message(
                 crate::views::secure_send::SecureSendOutcome::MessageAuthoringFailed {
                     failure,
                 } => {
+                    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                    tracing::warn!(error = %failure, "encrypted message authoring failed");
                     present_chat_send_failure(
                         messages,
                         status_msg,

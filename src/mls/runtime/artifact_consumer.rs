@@ -399,6 +399,27 @@ pub(crate) async fn deliver_owed_keypackage_consumes(
     }
 }
 
+/// Whether this endpoint retains a Welcome that still needs installation.
+pub(crate) fn has_pending_mls_welcome_for_endpoint(
+    store: &crate::state::LocalStateStore,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+) -> bool {
+    crate::mls::welcome_delivery::pending_welcome_deliveries(&store.to_device_inbox())
+        .iter()
+        .any(|delivery| {
+            let endpoint = garth::LocalMlsEndpoint::device(
+                delivery.realm_id.clone(),
+                arkret_sdk::ActorId::account(authority.clone()),
+                device_id.clone(),
+            );
+            garth::mls::welcome_matches_endpoint(delivery, &endpoint)
+                && store
+                    .mls_checkpoint_for_scope(&delivery.effective_scope)
+                    .is_none()
+        })
+}
+
 /// Join every encrypted scope this device has been Welcomed into but has not
 /// installed yet.
 ///

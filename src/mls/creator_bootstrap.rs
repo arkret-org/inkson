@@ -314,8 +314,37 @@ pub(crate) async fn start_creator_realm_mls_genesis(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<(), String> {
-    bootstrap_creator_realm_mls_genesis(api, state_store, realm_id, authority, device_id, true)
-        .await
+    bootstrap_creator_realm_mls_genesis(
+        api,
+        state_store,
+        realm_id,
+        authority,
+        device_id,
+        true,
+        false,
+    )
+    .await
+}
+
+/// Only the user retry action may reopen an independently verified terminal
+/// rejection. A delayed initial activation must retain that rejection.
+pub(crate) async fn retry_creator_realm_mls_genesis(
+    api: &crate::transport::TransportClient,
+    state_store: &StateStoreHandle,
+    realm_id: &str,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+) -> Result<(), String> {
+    bootstrap_creator_realm_mls_genesis(
+        api,
+        state_store,
+        realm_id,
+        authority,
+        device_id,
+        true,
+        true,
+    )
+    .await
 }
 
 /// Resume only a previously staged epoch-zero checkpoint or durable Genesis
@@ -343,6 +372,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         authority,
         device_id,
         founder_genesis,
+        false,
     )
     .await
 }
@@ -400,15 +430,58 @@ pub(crate) async fn ensure_creator_circle_mls_genesis(
     .await
 }
 
+/// A completed creator resumes the accepted current group, never its epoch-zero
+/// installation. Missing current evidence is pending, not private corruption.
+pub(crate) async fn verify_ready_creator_scope(
+    state_store: &StateStoreHandle,
+    record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
+) -> Result<(), String> {
+    if state_store
+        .read(|store| store.active_authority().map(arkret_sdk::ActorId::account))
+        .as_ref()
+        != Some(record.intent().owner_actor_id())
+    {
+        return Err("ready creator belongs to another active account".to_owned());
+    }
+    let receipt = record
+        .ready_receipt()
+        .ok_or_else(|| "creator has no durable ready receipt".to_owned())?;
+    let scope = record.intent().effective_scope();
+    let input = crate::mls::send_gate::MlsSendGateInput::capture(state_store, scope);
+    let gate = crate::mls::send_gate::resolve_restorable_mls_send_gate(
+        &input,
+        scope,
+        record.intent().creator_device_id(),
+    )
+    .await
+    .map_err(|error| format!("ready creator awaits verified current private state: {error}"))?;
+    match gate {
+        crate::mls::send_gate::MlsSendGate::Encrypted(current)
+            if &current.genesis_event_ref == receipt.accepted_genesis_event_id() =>
+        {
+            Ok(())
+        }
+        _ => Err("ready creator current does not name its accepted Genesis".to_owned()),
+    }
+}
+
 async fn resume_durable_scope_creator(
     api: &crate::transport::TransportClient,
     state_store: &StateStoreHandle,
     submitter: &crate::event_submit::EventSubmitter,
     scope: &arkret_sdk::ScopeRef,
     authority: &arkret_sdk::AccountId,
-    explicit_start: bool,
+    explicit_retry: bool,
 ) -> Result<(), String> {
-    if explicit_start
+    if let Some(record) = submitter
+        .creator_bootstrap_record(scope)
+        .await
+        .map_err(|error| format!("read committed creator state: {error}"))?
+        && record.ready_receipt().is_some()
+    {
+        return verify_ready_creator_scope(state_store, &record).await;
+    }
+    if explicit_retry
         && submitter
             .creator_bootstrap_record(scope)
             .await
@@ -496,6 +569,7 @@ async fn bootstrap_creator_realm_mls_genesis(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     explicit_start: bool,
+    explicit_retry: bool,
 ) -> Result<(), String> {
     let actor_id = authority.principal_id.as_str();
     let realm_id = realm_id.trim();
@@ -544,7 +618,7 @@ async fn bootstrap_creator_realm_mls_genesis(
             &submitter,
             &scope,
             authority,
-            explicit_start,
+            explicit_retry,
         )
         .await;
     }

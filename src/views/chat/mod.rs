@@ -1465,21 +1465,9 @@ pub fn ChatPanel(
     let sidecar_privacy_gate =
         crate::sidecar::SidecarPrivacyGate::from_store(&state_store.read(), &principal_id);
     let filter_value = track_filter();
-    let visible_channels: Vec<ChannelEntity> = all_channels
-        .iter()
-        .filter(|channel| {
-            filter_value == "with_discussion_track"
-                || channel.is_default
-                || channel.kind == "discussion"
-        })
-        .cloned()
-        .collect();
+    let (visible_channels, selected_channel_info) =
+        discussion_channels_for_surface(&all_channels, &selected_channel_value, &filter_value);
     let visible_channels_empty = visible_channels.is_empty();
-    let selected_channel_info = visible_channels
-        .iter()
-        .find(|channel| channel.strand_id == selected_channel_value)
-        .cloned()
-        .or_else(|| visible_channels.first().cloned());
     let selected_channel_name = if embedded {
         "Discussion".to_owned()
     } else {
@@ -1512,6 +1500,11 @@ pub fn ChatPanel(
     let send_scope = selected_channel_info
         .as_ref()
         .and_then(|channel| channel.effective_scope(&selected_realm_id));
+    let scope_send_gate = crate::views::secure_send::use_scope_send_gate(
+        state_store,
+        send_scope.clone(),
+        account_device_id.clone(),
+    );
     // The first-class Sidecar contract requires an independent MLS backing scope.
     // The private Strand only carries its internal scope id, so ordinary Realm
     // inheritance would incorrectly downgrade a Sidecar opened from a
@@ -1519,15 +1512,10 @@ pub fn ChatPanel(
     let selected_channel_security_encrypted = if sidecar_mode || direct_mode {
         true
     } else {
-        send_scope
-            .as_ref()
-            .and_then(|scope| {
-                state_store
-                    .read()
-                    .installed_scope_mls_current(scope)
-                    .activated()
-            })
-            .unwrap_or(true)
+        !matches!(
+            scope_send_gate.as_ref(),
+            Some(crate::mls::send_gate::MlsSendGate::Plaintext)
+        )
     };
     let direct_message_authority =
         crate::app::SessionContext::get()
@@ -1550,10 +1538,15 @@ pub fn ChatPanel(
         && !sidecar_mode
         && selected_realm_pending_mls_binding_reason.is_none()
     {
-        let installed = send_scope
-            .as_ref()
-            .map(|scope| state_store.read().installed_scope_mls_current(scope))
-            .unwrap_or(crate::current_projection::ScopeMlsCurrent::Unknown);
+        let installed = match scope_send_gate.as_ref() {
+            Some(crate::mls::send_gate::MlsSendGate::Encrypted(current)) => {
+                crate::current_projection::ScopeMlsCurrent::Activated(current.clone())
+            }
+            Some(crate::mls::send_gate::MlsSendGate::Plaintext) => {
+                crate::current_projection::ScopeMlsCurrent::NotActivated
+            }
+            None => crate::current_projection::ScopeMlsCurrent::Unknown,
+        };
         let local_epoch = send_scope.as_ref().and_then(|scope| {
             state_store
                 .read()
@@ -1624,6 +1617,13 @@ pub fn ChatPanel(
     {
         selected_realm_pending_mls_binding_reason =
             Some("Waiting for verified conversation authority and encryption keys.".to_owned());
+    }
+    let scope_send_ready = scope_send_gate.is_some();
+    if !sidecar_mode && !scope_send_ready && selected_realm_pending_mls_binding_reason.is_none() {
+        selected_realm_pending_mls_binding_reason = Some(
+            "Waiting for this scope's verified send state and this device's local encryption keys."
+                .to_owned(),
+        );
     }
     let selected_realm_pending_mls_binding = selected_realm_pending_mls_binding_reason.is_some();
     let sidecar_security_label = sidecar_session.as_ref().map(|session| {
@@ -1811,18 +1811,23 @@ pub fn ChatPanel(
     // policy enumeration.
     let readable_participation_agent_ids =
         readable_participation_agent_ids(&participants_for_messages, &principal_id);
-    let scope_send_ready = crate::views::secure_send::use_scope_send_ready(
-        state_store,
-        send_scope,
-        account_device_id.clone(),
-    );
+    // A readable history baseline does not require this endpoint's private
+    // sending state. Keep the restorable-key probe on the composer above.
     let shared_sync_finished = initial_sync_finished()
         && if sidecar_mode {
             sidecar_session
                 .as_ref()
                 .is_some_and(|session| session.membership_ready())
         } else {
-            scope_send_ready
+            let store = state_store.read();
+            !store.current_reset_required()
+                && !store.realm_detail_invalidated(&selected_realm_id)
+                && send_scope.as_ref().is_some_and(|scope| {
+                    !matches!(
+                        store.installed_scope_mls_current(scope),
+                        crate::current_projection::ScopeMlsCurrent::Unknown
+                    )
+                })
         };
     // Participation is a durable Realm projection. The account cursor is an
     // opaque resume checkpoint and can be re-minted for typing/receipts/calls;

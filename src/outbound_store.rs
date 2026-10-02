@@ -2792,6 +2792,100 @@ mod tests {
         );
         assert_eq!(std::fs::read(&path).unwrap(), before);
         let mut state = decode_snapshot(Some(&std::fs::read_to_string(&path).unwrap())).unwrap();
+        // A cold client may restore an advanced private group before its
+        // independently verified Realm baseline. Keep the terminal creator and
+        // checkpoint intact while current evidence is unavailable.
+        {
+            let account = crate::test_support::AccountFixture::new("did:web:alice.example")
+                .station(authority.station_id.as_str())
+                .device(intent.creator_device_id().as_str())
+                .build();
+            assert_eq!(&account.authority, authority);
+            let mut local = crate::state::LocalStateStore::with_path(
+                directory.path().join("cold-ready-account.json"),
+            );
+            local.switch_active_account(&account).unwrap();
+            let mut group =
+                crate::mls::persistence::restore_envelope(&private, &device_secret, 0).unwrap();
+            let peer = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
+                intent.owner_actor_id().clone(),
+                arkret_sdk::DeviceId::new(
+                    "ak:device:01904100-0000-7000-8000-000000000009".to_owned(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            let claimed = crate::test_support::claimed_mls_key_package(
+                peer.key_package_record().unwrap(),
+                1_760_000_000_091,
+            );
+            let binding = arkret_sdk::MlsGovernanceBindingPayload::new(
+                intent.effective_scope().clone(),
+                Some(queued.event_id.clone()),
+                0,
+                1,
+                0,
+            )
+            .unwrap();
+            let add = group
+                .add_member_with_governance_binding(&claimed, &binding)
+                .unwrap();
+            let accepted_commit = crate::test_support::accepted_mls_commit(
+                intent.effective_scope(),
+                intent.owner_actor_id().clone(),
+                &add.commit,
+                queued.event_id.clone(),
+                0x71,
+            );
+            group
+                .install_recovered_own_commit(&accepted_commit, &queued.event_id)
+                .unwrap();
+            assert_eq!(group.epoch(), 1);
+            group
+                .install_test_leaf_bindings(vec![
+                    group.local_endpoint_identity(),
+                    peer.endpoint_identity(),
+                ])
+                .unwrap();
+            let advanced = crate::mls::persistence::encrypt_state(
+                intent.effective_scope().realm_id().as_str(),
+                intent.mls_group_id().as_str(),
+                group.epoch(),
+                &serde_json::to_vec(&group.export_state_record().unwrap()).unwrap(),
+                &device_secret,
+                &[31; 16],
+            );
+            local
+                .save_mls_checkpoint_for_scope(intent.effective_scope(), advanced.clone())
+                .unwrap();
+            let shared = std::sync::Arc::new(std::sync::Mutex::new(local));
+            let read = shared.clone();
+            let write = shared.clone();
+            let handle = crate::runtime::input::StateStoreHandle::new(
+                move |callback| callback(&read.lock().unwrap()),
+                move |callback| callback(&mut write.lock().unwrap()),
+            );
+            let pending =
+                crate::mls::creator_bootstrap::verify_ready_creator_scope(&handle, &ready)
+                    .await
+                    .unwrap_err();
+            assert!(pending.contains("installed Realm baseline"), "{pending}");
+            assert_eq!(
+                shared
+                    .lock()
+                    .unwrap()
+                    .mls_checkpoint_for_scope(intent.effective_scope()),
+                Some(advanced),
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            assert_eq!(
+                reopened
+                    .creator_record(intent.owner_actor_id(), intent.effective_scope())
+                    .await
+                    .unwrap(),
+                Some(ready.clone())
+            );
+        }
         assert_eq!(
             state.creator_ready_index,
             vec![ready.ready_receipt().unwrap().clone()]

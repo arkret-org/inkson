@@ -409,6 +409,39 @@ pub(super) async fn dispatch_card_detail_update(
         .security_encrypted
         .unwrap_or_else(|| scope_security_encrypted.unwrap_or(true));
     let (patch_plan, _mls_events) = if effective_security_encrypted {
+        let private_values = match collect_encryptable_private_patch_values(&patch) {
+            Ok(values) => values,
+            Err(error) => {
+                board_status.set(error);
+                return false;
+            }
+        };
+        if !private_values.is_empty()
+            && matches!(
+                &source_scope,
+                arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+            )
+        {
+            let device = match arkret_sdk::DeviceId::new(device_id.clone()) {
+                Ok(device) => device,
+                Err(error) => {
+                    board_status.set(format!("invalid card device: {error}"));
+                    return false;
+                }
+            };
+            let store = crate::app::runtime_adapter::state_store_handle(state_store);
+            let input = crate::mls::send_gate::MlsSendGateInput::capture(&store, &source_scope);
+            if let Err(error) = crate::mls::send_gate::resolve_restorable_mls_send_gate(
+                &input,
+                &source_scope,
+                &device,
+            )
+            .await
+            {
+                board_status.set(format!("encrypted card write is not ready: {error}"));
+                return false;
+            }
+        }
         match encrypt_private_card_detail_patch_values_for_effective_scope(
             patch,
             &realm_id,

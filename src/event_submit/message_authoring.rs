@@ -70,6 +70,8 @@ pub(crate) fn classify_submit_failure(error: &anyhow::Error) -> MessageAuthoring
 /// A local pre-submit failure has no frozen request whose acceptance is
 /// unknown. Preserve typed Station API refusals; fail closed on local errors.
 fn classify_presubmit_failure(error: &anyhow::Error) -> MessageAuthoringFailure {
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    tracing::warn!(error = %error, "ordinary message pre-submit gate failed");
     if crate::api_error::api_error_status_and_envelope(error).is_some() {
         classify_submit_failure(error)
     } else {
@@ -137,6 +139,8 @@ impl EventSubmitter {
         self.refresh_direct_message_authority(&event_intent, None)
             .await
             .map_err(|error| classify_presubmit_failure(&error))?;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(stage = "authoring", "ordinary message pre-submit stage");
         let event = self
             .author_intent(&event_intent)
             .await
@@ -201,8 +205,17 @@ pub(crate) async fn drive_message_send(
     submitter: &EventSubmitter,
     attempt: MessageSendAttempt,
 ) -> std::result::Result<SubmitEventResult, MessageAuthoringFailure> {
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    tracing::warn!(
+        stage = "awaiting_writer",
+        "ordinary message pre-submit stage"
+    );
     let _single_writer = outbound_submit_lock().lock().await;
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    tracing::warn!(stage = "freezing", "ordinary message pre-submit stage");
     let submission = submitter.freeze_authored_message(&attempt).await?;
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    tracing::warn!(stage = "frozen", "ordinary message pre-submit stage");
     retry_frozen_message(submission, |submission| {
         submitter.send_frozen_message(submission, &attempt.local_operation_id)
     })

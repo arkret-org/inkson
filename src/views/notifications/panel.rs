@@ -19,7 +19,7 @@ use crate::state::LocalStateStore;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::views::helpers::short_protocol_id;
 
-pub(super) fn rehydrate_notifications_for_blocklist_revision(
+pub(super) fn rehydrate_notifications(
     store: &LocalStateStore,
     authority: &arkret_sdk::AccountId,
     principal_id: &str,
@@ -41,13 +41,6 @@ pub(super) fn rehydrate_notifications_for_blocklist_revision(
         effective_dnd,
         &privacy_gate,
     )
-}
-
-fn notification_projection_ids(projection: &[crate::state::StoredNotification]) -> Vec<String> {
-    projection
-        .iter()
-        .map(|notification| notification.notification_id())
-        .collect()
 }
 
 #[component]
@@ -82,10 +75,6 @@ pub fn NotificationsPanel(
     );
 
     let notifications = use_signal(move || initial_notifications.clone());
-    let mut hydrated_blocklist_revision = use_signal(|| initial_state.client_blocklist_revision);
-    let mut hydrated_projection_ids =
-        use_signal(|| notification_projection_ids(&initial_state.notification_projection));
-    let mut hydrated_read_cursors = use_signal(|| initial_state.read_cursors.clone());
     let mut group_by = use_signal(|| UiNotificationGroup::Latest);
     let mut show_archived = use_signal(|| false);
     let mut did_bootstrap = use_signal(|| false);
@@ -106,31 +95,17 @@ pub fn NotificationsPanel(
     let authority_for_revision = authority.clone();
     let principal_for_revision = principal_id.clone();
     let mut notifications_for_revision = notifications;
-    // The account stream saves each delivered notification into the durable
-    // projection (`sync/client-sync.md` 3). Read-cursor delivery changes the
-    // derived read state even when the retained notification IDs stay identical.
-    // Re-evaluate on each changed cursor winner as well as rows or blocklist.
+    // Accepted read cursors and inbox updates can change an existing row
+    // without changing its ID. Rehydrate from the durable store on each
+    // update, and publish only changes to the rendered notification values.
     use_effect(move || {
         let store = state_store.read();
-        let revision = store.client_blocklist_revision();
-        let projection_ids = notification_projection_ids(&store.notification_projection());
-        let read_cursors = store.load().read_cursors;
-        if revision == *hydrated_blocklist_revision.peek()
-            && projection_ids == *hydrated_projection_ids.peek()
-            && read_cursors == *hydrated_read_cursors.peek()
-        {
-            return;
-        }
-        let hydrated = rehydrate_notifications_for_blocklist_revision(
-            &store,
-            &authority_for_revision,
-            &principal_for_revision,
-        );
+        let hydrated =
+            rehydrate_notifications(&store, &authority_for_revision, &principal_for_revision);
         drop(store);
-        hydrated_blocklist_revision.set(revision);
-        hydrated_projection_ids.set(projection_ids);
-        hydrated_read_cursors.set(read_cursors);
-        notifications_for_revision.set(hydrated);
+        if hydrated != *notifications_for_revision.peek() {
+            notifications_for_revision.set(hydrated);
+        }
     });
 
     let local_state = state_store.read().load();

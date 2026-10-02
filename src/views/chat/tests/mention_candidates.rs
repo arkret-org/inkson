@@ -455,7 +455,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
 }
 
 #[test]
-fn mention_candidate_without_handle_is_not_displayed_as_did() {
+fn mention_candidate_without_handle_keeps_exact_account_and_marks_unresolved() {
     let participant = SpaceParticipant {
         actor_id: Some(local_fixture_actor("ak:did_core:web:bob.example")),
         principal_id: arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example".to_owned()).unwrap(),
@@ -468,14 +468,36 @@ fn mention_candidate_without_handle_is_not_displayed_as_did() {
         agent_metadata: None,
     };
 
-    assert!(
-        mention_candidate_for_participant(
-            &participant,
-            std::slice::from_ref(&participant),
-            "ak:did_core:web:alice.example",
-        )
-        .is_none()
+    let candidate = mention_candidate_for_participant(
+        &participant,
+        std::slice::from_ref(&participant),
+        "ak:did_core:web:alice.example",
+    )
+    .expect("authorized complete member account");
+    assert_eq!(
+        candidate.subject_account_id,
+        participant_mention_account(&participant).unwrap()
     );
+    assert_eq!(
+        candidate.display_name,
+        short_principal_label(participant.principal_id.as_str())
+    );
+    assert_eq!(
+        candidate.subtitle,
+        crate::i18n::tr("identity.tier.unresolved")
+    );
+    let draft = format!("ping @{}", candidate.insert_label());
+    let nodes = composer_mention_nodes(
+        true,
+        &draft,
+        &[candidate.clone()],
+        "ak:did_core:web:alice.example",
+    );
+    let mention = nodes[0]
+        .as_mention()
+        .expect("structured complete member mention");
+    assert_eq!(mention.subject_account_id, candidate.subject_account_id);
+    assert!(mention.handle_at_time.is_none());
 }
 
 #[test]

@@ -302,12 +302,19 @@ fn apply_verified_reaction_assertions(
         let Ok(event_value) = serde_json::to_value(event) else {
             continue;
         };
-        if !verified_ordinary_chat_event_scope(
+        if verify_chat_envelope_proof_for_realm(
             event.realm_id.as_str(),
             &event_value,
             state_store,
             decrypt_identity,
-        ) {
+        ) != ChatProofVerdict::Verified
+            || !ordinary_chat_event_scope(
+                event.realm_id.as_str(),
+                &event_value,
+                state_store,
+                decrypt_identity,
+            )
+        {
             continue;
         }
         let Ok(payload) = serde_json::to_value(&event.payload)
@@ -330,6 +337,8 @@ fn apply_verified_reaction_assertions(
         // when the caller's verified readable floor is later than genesis.
         if target_create.scope_ref != event.scope_ref
             || target_create.accepted_ref.stream_ref != accepted.stream_ref
+            // Reactions cannot predate their target. A verified contiguous
+            // suffix covering the target is complete even for since-join reads.
             || prefix.start_position > target_create.accepted_ref.stream_position
             || target_create.accepted_ref.stream_position >= accepted.stream_position
         {
@@ -661,11 +670,13 @@ fn fold_revision_group(
     true
 }
 
-/// Ordinary chat projection only consumes a proof-verified Event whose signed
+/// Ordinary chat projection only consumes a self-consistent Event whose signed
 /// scope is this Realm or one of its Circles. A native Sidecar Event may name
 /// the same source Strand in its payload, but that does not authorize an echo
 /// into the shared timeline. Missing proof/scope stays out of this fold.
-fn verified_ordinary_chat_event_scope(
+/// Unresolved producer evidence remains explicitly flagged by the renderer;
+/// it never becomes verified sender authority or reaction membership.
+fn ordinary_chat_event_scope(
     realm_id: &str,
     event: &Value,
     state_store: Option<&LocalStateStore>,
@@ -689,9 +700,10 @@ fn verified_ordinary_chat_event_scope(
     if !realm_id.is_empty() && realm_id != signed_realm_id {
         return false;
     }
-    if verify_chat_envelope_proof_for_realm(signed_realm_id, event, state_store, decrypt_identity)
-        != ChatProofVerdict::Verified
-    {
+    if !matches!(
+        verify_chat_envelope_proof_for_realm(signed_realm_id, event, state_store, decrypt_identity),
+        ChatProofVerdict::Verified | ChatProofVerdict::Unresolved
+    ) {
         return false;
     }
     let Some(scope) = envelope
@@ -760,7 +772,7 @@ fn fold_event_list_into_chat_messages(
     let mut ordinary_events = Vec::new();
     let mut suppressed_targets = std::collections::BTreeSet::new();
     for event in events {
-        if verified_ordinary_chat_event_scope(realm_id, event, state_store, decrypt_identity) {
+        if ordinary_chat_event_scope(realm_id, event, state_store, decrypt_identity) {
             ordinary_events.push(event.clone());
         } else if let Some(target) = unverified_tombstone_suppression_target(realm_id, event) {
             suppressed_targets.insert(target);

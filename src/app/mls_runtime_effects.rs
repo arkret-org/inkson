@@ -199,20 +199,31 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     }
                     Err(error) => Err(error.to_string()),
                 };
-                match converged {
+                let retry = match converged {
                     Ok(applied) => {
                         if applied > 0 {
                             tracing::info!(applied, "accepted MLS artifacts converged durably");
                         }
+                        // A pass can apply nothing while a retained Welcome waits
+                        // for its independent Commit, claim, or private material.
+                        // Retry even when no new Account cursor is forthcoming.
+                        convergence_store.read(|store| {
+                            crate::mls::runtime::has_pending_mls_welcome_for_endpoint(
+                                store, &authority, &device,
+                            )
+                        })
                     }
                     Err(error) => {
                         tracing::warn!(%error, "accepted MLS artifact convergence is pending");
                         convergence_error
                             .set(Some(format!("accepted artifact convergence: {error}")));
-                        crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(5)).await;
-                        if basis_seen.peek().as_deref() == Some(basis.as_str()) {
-                            basis_seen.set(None);
-                        }
+                        true
+                    }
+                };
+                if retry {
+                    crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(5)).await;
+                    if basis_seen.peek().as_deref() == Some(basis.as_str()) {
+                        basis_seen.set(None);
                     }
                 }
                 in_flight.set(false);

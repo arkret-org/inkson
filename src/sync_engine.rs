@@ -1421,6 +1421,9 @@ pub async fn run_sync_engine(
     generation: crate::runtime::input::ValueReader<u64>,
     ctx: SyncEngineContext,
 ) {
+    ctx.state_store.write(|store| {
+        store.restore_contact_remarks_from_retained_account_data(&ctx.account.authority);
+    });
     ctx.projection_sink.sync_status(SyncStatusEvent::Connecting);
     let actor_id = arkret_sdk::ActorId::account(ctx.account.authority.clone());
     let device_id = match arkret_sdk::DeviceId::new(ctx.device_id.trim().to_owned()) {

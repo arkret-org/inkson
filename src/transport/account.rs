@@ -1185,8 +1185,8 @@ pub async fn consent_result(
 /// `ak.self.consent.command.grant.v1`.
 ///
 /// The Event is authored and signed here: its `consent_id` is the result
-/// subject, so it is never the server's to choose. Each new grant intent has
-/// a new producer-allocated ID; revoked IDs cannot be reused.
+/// subject, so it is never the server's to choose. Each new grant gets a
+/// freshly minted producer-allocated id, including a grant after revocation.
 pub async fn grant_consent(
     submitter: &crate::event_submit::EventSubmitter,
     holder: &str,
@@ -1194,6 +1194,7 @@ pub async fn grant_consent(
     scope: &str,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> anyhow::Result<arkret_sdk::ConsentView> {
+    // consent-model.md section 3.1: another Event cannot reuse a Consent id.
     let consent_id = arkret_sdk::ConsentId::new_v7_at(crate::clock::now_unix_ms());
     let holder_did = did_for_request_field("holder", holder)?;
     let principal_control_realm_id =
