@@ -540,22 +540,9 @@ impl super::LocalStateStore {
         self.cached.current_reset_required = required;
     }
     pub(crate) fn current_generation(&self) -> u64 {
-        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-        tracing::warn!(
-            storage_instance = self as *const Self as usize,
-            generation = self.cached.current_generation,
-            "current account pointer read"
-        );
         self.cached.current_generation
     }
     pub(crate) fn set_current_generation(&mut self, generation: u64) {
-        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-        tracing::warn!(
-            storage_instance = self as *const Self as usize,
-            previous_generation = self.cached.current_generation,
-            generation,
-            "current account pointer updated"
-        );
         self.cached.current_generation = generation;
     }
     pub(crate) fn current_index_location(&self) -> CurrentIndexLocation {
