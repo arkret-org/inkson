@@ -1,10 +1,15 @@
 //! `encryption-and-audit.md` §2.4.1 / §2.5.2 — recover a scope from
 //! `epoch_update_required` by advancing the MLS epoch.
 //!
-//! Membership Events are the sole writers of `key_access_revision`. Policy
-//! and endpoint authorization changes do not advance it. Only the receiver's
-//! typed `failed_precondition` / `epoch_update_required` refusal triggers this
-//! repair; a moved governance head alone cannot authorize another Commit. A
+//! §2.5.2 gates every E2EE application ordinary Event on the accepted MLS Security
+//! Frontier. Membership or key-access control changes require an accepted
+//! `ak.mls.commit` whose governance binding projects the new control state and
+//! active leaf set. §2.4.1 makes the sender MUST pause until that happens.
+//!
+//! Endpoint authorization and policy updates do not advance key-access revision.
+//! The trigger is a receiver's typed refusal, rather than a moving stream head.
+//! Only the receiver can decide that coverage is actually missing,
+//! and it says so with `failed_precondition` / `epoch_update_required`. A
 //! top-level `epoch_mismatch` is a different state (decision 0100): a covering
 //! Commit already exists, so this module does nothing for it and the sender
 //! refreshes its group and re-encrypts a new request instead.
@@ -168,19 +173,21 @@ pub(crate) async fn ensure_mls_governance_coverage(
         return Ok(false);
     }
 
+    // Resume the original frozen unit before attempting another transition.
+    // Pending OpenMLS state is not permission to overwrite it or claim anew.
     let submitter = api
         .event_submitter()
         .map_err(|error| format!("MLS coverage repair client: {error}"))?
         .with_state_store(state_store.clone());
+    submitter
+        .drain_mls_outbound()
+        .await
+        .map_err(|error| format!("resuming the original MLS submission failed: {error}"))?;
     if submitter
         .has_pending_mls_admission_for_realm(realm_id)
         .await
-        .map_err(|error| format!("inspect durable MLS transition: {error}"))?
+        .map_err(|error| format!("checking the original MLS submission failed: {error}"))?
     {
-        submitter
-            .drain_mls_outbound()
-            .await
-            .map_err(|error| format!("resume exact durable MLS transition: {error}"))?;
         return Ok(false);
     }
 
@@ -209,23 +216,6 @@ pub(crate) async fn ensure_mls_governance_coverage(
     )
     .map_err(|error| format!("building ak.mls.commit event failed: {error}"))?;
 
-    // The staged state carries the pending commit, so it must be durable before
-    // the submission: a crash between submit and acceptance must still be able
-    // to merge the epoch the Station accepted.
-    let staged_barrier = state_store.write(|store| {
-        store.save_mls_checkpoint_for_effective_scope(
-            realm_id.to_owned(),
-            circle_id,
-            staged.staged_checkpoint.clone(),
-        )?;
-        store
-            .begin_durable_flush()
-            .map_err(|error| error.to_string())
-    })?;
-    staged_barrier
-        .wait()
-        .await
-        .map_err(|error| format!("persist staged MLS coverage checkpoint: {error}"))?;
     let authored = submitter
         .author_for_direct_submission(&commit_event)
         .await
@@ -240,6 +230,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
             device_id.clone(),
             Vec::new(),
             state_store,
+            staged.staged_checkpoint,
         )
         .await
         .map_err(|error| format!("submitting the MLS coverage repair commit failed: {error}"))?;

@@ -195,18 +195,6 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         .author_for_direct_submission(&admission.commit)
         .await?;
     let welcomes = (admission.welcomes)(authored_commit.event()).map_err(anyhow::Error::msg)?;
-    // The staged state contains the pending MLS Commit. Persist it before the
-    // atomic authority submission so a page close after Station acceptance can
-    // still merge the exact accepted epoch; the durable outbound item freezes
-    // both the authored Commit and all producer-signed Welcome deliveries.
-    let staged_barrier = {
-        let mut store = state_store.write();
-        store
-            .save_mls_checkpoint(realm_id.clone(), admission.staged_checkpoint)
-            .map_err(anyhow::Error::msg)?;
-        store.begin_durable_flush()?
-    };
-    staged_barrier.wait().await?;
     submitter
         .submit_mls_commit(
             authored_commit,
@@ -214,6 +202,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             account.device_id.clone(),
             admission.authority_hints,
             &crate::app::runtime_adapter::state_store_handle(state_store),
+            admission.staged_checkpoint,
         )
         .await?;
     tracing::debug!(

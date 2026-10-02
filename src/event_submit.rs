@@ -1887,6 +1887,7 @@ impl EventSubmitter {
         device_id: arkret_sdk::DeviceId,
         authority_hints: Vec<crate::mls::governance_proof::MlsLeafAuthorityHint>,
         state_store: &crate::runtime::input::StateStoreHandle,
+        mut staged_checkpoint: crate::mls::persistence::MlsLocalCheckpointEnvelope,
     ) -> anyhow::Result<SubmitEventResult> {
         anyhow::ensure!(
             commit.kind == arkret_sdk::EventKind::MlsCommit,
@@ -1908,6 +1909,24 @@ impl EventSubmitter {
             },
         ))
         .map_err(anyhow::Error::from)?;
+        let payload: arkret_sdk::MlsCommitPayload =
+            serde_json::from_value(serde_json::to_value(&commit.event().payload)?)?;
+        staged_checkpoint.group_state_event_id =
+            payload.governance_binding().base_group_state_ref().cloned();
+        if let Some(base) =
+            state_store.read(|store| store.mls_checkpoint_for_scope(&commit.event().scope_ref))
+        {
+            staged_checkpoint.admission_epoch = base.admission_epoch;
+            staged_checkpoint.epoch_started_at = base.epoch_started_at;
+            staged_checkpoint.app_messages_observed = base.app_messages_observed;
+        }
+        let outbound = self.outbound(OutboundLane::MlsCommit)?;
+        outbound
+            .store()
+            .freeze_mls_commit(submission.clone(), staged_checkpoint)
+            .await?;
+        self.prepare_frozen_mls_checkpoint(outbound.store(), commit.event(), state_store)
+            .await?;
         let item = self
             .enqueue_and_drive(QueuedWrite {
                 lane: OutboundLane::MlsCommit,
@@ -1923,6 +1942,73 @@ impl EventSubmitter {
             })
             .await?;
         settled_outbound_result(&item)
+    }
+
+    async fn prepare_frozen_mls_checkpoint(
+        &self,
+        vault: &InksonOutboundStore,
+        event: &arkret_sdk::Event,
+        state: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<()> {
+        let Some(checkpoint) = vault.mls_commit_checkpoint(&event.event_id).await? else {
+            return Ok(());
+        };
+        let payload: arkret_sdk::MlsCommitPayload =
+            serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+        let binding = payload.governance_binding();
+        let local = state
+            .read(|store| store.mls_checkpoint_for_scope(binding.effective_scope()))
+            .ok_or_else(|| anyhow::anyhow!("MLS retry has no installed private base"))?;
+        if local.epoch >= binding.next_epoch() && local.group_state_event_id.is_some() {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            local.epoch == binding.previous_epoch()
+                && local.group_id == checkpoint.group_id
+                && local.group_state_event_id.as_ref() == binding.base_group_state_ref(),
+            "MLS retry private base differs from its original signed unit"
+        );
+        let endpoint = crate::secure_key_store::active_device_seed_scope()
+            .ok_or_else(|| anyhow::anyhow!("MLS retry requires the original endpoint"))?;
+        anyhow::ensure!(
+            &endpoint.authority == self.authority()?,
+            "MLS retry endpoint belongs to another Account"
+        );
+        let secure = crate::secure_key_store::default_secure_key_store("inkson");
+        let secret = crate::mls::runtime::load_device_checkpoint_secret(
+            secure.as_ref(),
+            &endpoint.authority,
+            &endpoint.device_id,
+        )?;
+        let group = crate::mls::persistence::restore_envelope(&local, &secret, local.epoch)?;
+        let frozen: arkret_models_crypto::MlsGroupStateRecord = serde_json::from_slice(
+            &crate::mls::persistence::decrypt_envelope(&checkpoint, &secret)?,
+        )?;
+        let resumed =
+            group.resume_frozen_pending_commit(&frozen, &payload.commit_envelope()?, binding)?;
+        let record = resumed.export_state_record()?;
+        let mut salt = [0_u8; 16];
+        getrandom::fill(&mut salt)?;
+        let mut checkpoint = crate::mls::persistence::encrypt_state(
+            &checkpoint.realm_id,
+            &record.group_id,
+            record.epoch,
+            &serde_json::to_vec(&record)?,
+            &secret,
+            &salt,
+        );
+        checkpoint.group_state_event_id = local.group_state_event_id;
+        checkpoint.admission_epoch = local.admission_epoch;
+        checkpoint.epoch_started_at = local.epoch_started_at;
+        checkpoint.app_messages_observed = local.app_messages_observed;
+        let barrier = state.write(|store| {
+            store
+                .save_mls_checkpoint_for_scope(binding.effective_scope(), checkpoint)
+                .map_err(anyhow::Error::msg)?;
+            store.begin_durable_flush()
+        })?;
+        barrier.wait().await?;
+        Ok(())
     }
 
     /// Whether this holder already owns an unfinished MLS commit submission
@@ -2330,7 +2416,7 @@ impl EventSubmitter {
                     commit: commit.clone(),
                     event: queued_event(item).clone(),
                 };
-                crate::mls::runtime::install_accepted_transition(
+                let installed = crate::mls::runtime::install_accepted_transition(
                     state_store,
                     authority,
                     device_id,
@@ -2341,6 +2427,12 @@ impl EventSubmitter {
                 .map_err(|error| {
                     anyhow::anyhow!("install the committed MLS transition: {error}")
                 })?;
+                if installed != crate::mls::runtime::MlsInstallOutcome::BaseEpochMissing {
+                    self.outbound(OutboundLane::MlsCommit)?
+                        .store()
+                        .retire_mls_commit_checkpoint(&item.submission.event_id)
+                        .await?;
+                }
                 Ok(())
             }
         }
@@ -2388,7 +2480,7 @@ impl EventSubmitter {
                 commit: (**commit).clone(),
                 event: queued_event(&item).clone(),
             };
-            if let Err(error) = crate::mls::runtime::install_recovered_outbound_commit(
+            match crate::mls::runtime::install_recovered_outbound_commit(
                 &api,
                 state,
                 &endpoint.authority,
@@ -2397,7 +2489,19 @@ impl EventSubmitter {
             )
             .await
             {
-                tracing::warn!(event = %accepted.event.event_id, %error, "accepted outbound MLS Commit remains pending local installation");
+                Ok(
+                    crate::mls::runtime::MlsInstallOutcome::Applied
+                    | crate::mls::runtime::MlsInstallOutcome::AlreadyCurrent,
+                ) => {
+                    self.outbound(OutboundLane::MlsCommit)?
+                        .store()
+                        .retire_mls_commit_checkpoint(&accepted.event.event_id)
+                        .await?;
+                }
+                Ok(crate::mls::runtime::MlsInstallOutcome::BaseEpochMissing) => {}
+                Err(error) => {
+                    tracing::warn!(event = %accepted.event.event_id, %error, "accepted outbound MLS Commit remains pending local installation")
+                }
             }
         }
         Ok(())
@@ -2406,6 +2510,20 @@ impl EventSubmitter {
     async fn drain_lane(&self, lane: OutboundLane) -> anyhow::Result<usize> {
         let _single_writer = outbound_submit_lock().lock().await;
         let outbound = self.outbound(lane)?;
+        if lane == OutboundLane::MlsCommit
+            && let Some(state) = self.state_store.as_ref()
+        {
+            for item in outbound.snapshot().await?.items {
+                if is_unsettled(item.status) || item.status == SendQueueStatus::Committed {
+                    self.prepare_frozen_mls_checkpoint(
+                        outbound.store(),
+                        queued_event(&item),
+                        state,
+                    )
+                    .await?;
+                }
+            }
+        }
         // A previous task can be dropped after the queue durably records a
         // commit but before the caller updates its optimistic row. Replay that
         // join before draining active work.

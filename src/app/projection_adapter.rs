@@ -98,11 +98,9 @@ fn fold_sync_status(event: SyncStatusEvent) -> (String, String, Option<String>) 
             "online".to_owned(),
             Some(reason),
         ),
-        SyncStatusEvent::Terminal { reason } => (
-            "Session expired".to_owned(),
-            "online".to_owned(),
-            Some(reason),
-        ),
+        SyncStatusEvent::Terminal { reason } => {
+            ("Sync stopped".to_owned(), "online".to_owned(), Some(reason))
+        }
     }
 }
 
@@ -157,12 +155,26 @@ mod tests {
     fn terminal_status_updates_all_fields_as_one_projection() {
         assert_eq!(
             fold_sync_status(SyncStatusEvent::Terminal {
-                reason: "revoked".to_owned(),
+                reason: "invalid protocol frame".to_owned(),
             }),
             (
-                "Session expired".to_owned(),
+                "Sync stopped".to_owned(),
                 "online".to_owned(),
-                Some("revoked".to_owned()),
+                Some("invalid protocol frame".to_owned()),
+            )
+        );
+    }
+
+    #[test]
+    fn inactive_session_requires_sign_in_instead_of_reporting_a_protocol_failure() {
+        assert_eq!(
+            fold_sync_status(SyncStatusEvent::NeedsSignIn {
+                reason: "session grant is no longer active".to_owned(),
+            }),
+            (
+                "Sign in required".to_owned(),
+                "online".to_owned(),
+                Some("session grant is no longer active".to_owned()),
             )
         );
     }

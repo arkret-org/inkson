@@ -345,13 +345,10 @@ where
                 return Ok(result);
             }
             if connection.is_closed() {
-                return Ok(AccountSubscribeSnapshotResult::ReconnectAfter {
-                    reconnect_after_ms:
-                        arkret_models_collaboration::sync_frames::account_subscribe::DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS,
-                    reconnect_cursor: None,
-                    reason: Some("websocket rail closed".to_owned()),
-                    reset_cursor: false,
-                });
+                // A subscription retains this connection for its whole run.
+                // Returning a reconnect hint here would retry that same dead
+                // socket forever instead of selecting the replacement rail.
+                return Err(garth::Error::Http("websocket rail closed".to_owned()));
             }
             InksonPacer.pace().await?;
         }
@@ -374,6 +371,33 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_closed_socket_ends_the_attempt_without_advancing_its_checkpoint() {
+        struct NoHttp;
+        impl garth::AccountSubscribeTransport for NoHttp {
+            async fn subscribe(
+                &self,
+                _: &SyncRequestBody,
+            ) -> garth::Result<AccountSubscribeSnapshotResult> {
+                panic!("the replacement binding must be selected by the next attempt");
+            }
+        }
+        let connection = SharedConnection::new();
+        connection.close();
+        let transport = StreamRail {
+            http: NoHttp,
+            websocket: Some(connection),
+        };
+        let error =
+            garth::AccountSubscribeTransport::subscribe(&transport, &SyncRequestBody::default())
+                .await
+                .unwrap_err();
+        assert_eq!(
+            garth::classify_error(&error),
+            garth::RunErrorClass::RetryableTransport
+        );
+    }
 
     #[test]
     fn a_rail_without_a_selector_keeps_every_stream_on_http() {

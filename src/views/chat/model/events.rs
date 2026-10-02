@@ -1194,9 +1194,8 @@ pub(crate) fn verified_chat_sender_domain_for_realm(
             .and_then(Value::as_object)
             .is_some()
     })?;
-    let actor: arkret_sdk::ActorId =
-        serde_json::from_value(envelope.get("actor_id")?.clone()).ok()?;
-    arkret_sdk::mls_basic_credential_identity(&actor).ok()
+    let signed_event: arkret_sdk::Event = serde_json::from_value(envelope.clone()).ok()?;
+    arkret_sdk::mls_basic_credential_identity(signed_event.actual_signer()).ok()
 }
 
 /// Reconstruct the encrypted-content group coordinates used by ordinary

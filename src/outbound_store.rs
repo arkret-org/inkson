@@ -76,6 +76,11 @@ type ScheduledDispatches =
 #[serde(deny_unknown_fields)]
 struct DurableOutboundState {
     items: Vec<garth::SendQueueItem>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    mls_commit_checkpoints: std::collections::BTreeMap<
+        arkret_sdk::EventId,
+        crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    >,
     // Opaque diagnostics only; retired ingress records can never be replayed
     // or used as evidence of an authority commit.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -778,6 +783,97 @@ fn outbound_storage_scope(
 }
 
 impl InksonOutboundStore {
+    /// Freeze the signed retry unit and its encrypted provider state in the
+    /// same existing vault write. No checkpoint is published before this cut.
+    pub(crate) async fn freeze_mls_commit(
+        &self,
+        submission: garth::QueuedSubmission,
+        checkpoint: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    ) -> garth::Result<()> {
+        self.mutate_state(|state| {
+            let event = submission.primary_event();
+            if event.kind != arkret_sdk::EventKind::MlsCommit {
+                return Err(garth::Error::Protocol(
+                    "MLS recovery unit is not a Commit".into(),
+                ));
+            }
+            let payload: arkret_sdk::MlsCommitPayload =
+                serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+            let binding = payload.governance_binding();
+            if checkpoint.realm_id != event.realm_id.as_str()
+                || checkpoint.group_id != binding.mls_group_id()?.as_str()
+                || checkpoint.epoch != binding.previous_epoch()
+                || checkpoint.group_state_event_id.as_ref() != binding.base_group_state_ref()
+            {
+                return Err(garth::Error::Protocol(
+                    "MLS retry checkpoint differs from its signed base".into(),
+                ));
+            }
+            let event_id = event.event_id.clone();
+            for queued in &state.items {
+                let prior = queued.submission.primary_event();
+                if prior.event_id != event_id
+                    && prior.scope_ref == event.scope_ref
+                    && (matches!(
+                        queued.status,
+                        garth::SendQueueStatus::Queued | garth::SendQueueStatus::Forwarding
+                    ) || (queued.status == garth::SendQueueStatus::Committed
+                        && serde_json::from_value::<arkret_sdk::MlsCommitPayload>(
+                            serde_json::to_value(&prior.payload)?,
+                        )?
+                        .governance_binding()
+                        .next_epoch()
+                            > checkpoint.epoch))
+                {
+                    return Err(garth::Error::Protocol(
+                        "another original MLS transition still owns this scope".into(),
+                    ));
+                }
+            }
+            if let Some(existing) = state.mls_commit_checkpoints.get(&event_id) {
+                if existing != &checkpoint {
+                    return Err(garth::Error::Protocol(
+                        "MLS retry substituted its original private checkpoint".into(),
+                    ));
+                }
+            }
+            let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
+                items: std::mem::take(&mut state.items),
+            });
+            if let Some(existing) = queue.get(&event_id) {
+                if existing.request() != &submission.request {
+                    return Err(garth::Error::Protocol(
+                        "MLS retry substituted its original signed unit".into(),
+                    ));
+                }
+            } else {
+                queue.enqueue(submission, crate::clock::now_utc())?;
+            }
+            state.items = queue.snapshot().items;
+            state.mls_commit_checkpoints.insert(event_id, checkpoint);
+            Ok(())
+        })
+        .await
+    }
+
+    pub(crate) async fn mls_commit_checkpoint(
+        &self,
+        event_id: &arkret_sdk::EventId,
+    ) -> garth::Result<Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>> {
+        self.mutate_state(|state| Ok(state.mls_commit_checkpoints.get(event_id).cloned()))
+            .await
+    }
+
+    pub(crate) async fn retire_mls_commit_checkpoint(
+        &self,
+        event_id: &arkret_sdk::EventId,
+    ) -> garth::Result<()> {
+        self.mutate_state(|state| {
+            state.mls_commit_checkpoints.remove(event_id);
+            Ok(())
+        })
+        .await
+    }
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn for_test_path(path: std::path::PathBuf) -> Self {
         Self {
@@ -3875,6 +3971,114 @@ mod tests {
             },
         ))
         .expect("fixture submission is structurally valid")
+    }
+
+    #[tokio::test]
+    async fn mls_retry_unit_and_pending_provider_survive_the_same_atomic_vault_cut() {
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: fixture::realm_id(FIXTURE_REALM),
+        };
+        let actor = fixture::account_actor("did:web:alice.example");
+        let device = fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001");
+        let identity =
+            arkret_sdk::ArkretMlsIdentity::new_test_human_device(actor.clone(), device).unwrap();
+        let genesis =
+            arkret_sdk::MlsGovernanceBindingPayload::new(scope.clone(), None, 0, 0, 0).unwrap();
+        let mut group = identity
+            .create_group_with_governance_binding(&scope, &genesis)
+            .unwrap();
+        let base = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [1; 32]);
+        let binding = arkret_sdk::MlsGovernanceBindingPayload::new(
+            scope.clone(),
+            Some(base.clone()),
+            0,
+            1,
+            1,
+        )
+        .unwrap();
+        let commit = group
+            .self_update_commit_with_governance_binding(&binding)
+            .unwrap();
+        let payload = arkret_sdk::MlsCommitPayload::new(base.clone(), 1, &commit, binding).unwrap();
+        let mut authored = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MlsCommit>::new(
+            scope, actor, payload,
+        )
+        .unwrap()
+        .author_with_digest_suite(crate::clock::now_utc(), arkret_sdk::DigestSuite::Sha256)
+        .unwrap();
+        authored
+            .sign_ed25519(
+                "did:web:alice.example",
+                "did:web:alice.example#key-1",
+                &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
+            )
+            .unwrap();
+        let submission = garth::QueuedSubmission::new(
+            arkret_wire::AuthoritySubmitRequest::MlsCommit(arkret_wire::MlsCommitSubmission {
+                commit_event: authored.into_event(),
+                welcomes: Vec::new(),
+                idempotency_key: arkret_wire::UuidV7::new(arkret_sdk::identifiers::uuid_v7_at(
+                    crate::clock::now_unix_ms(),
+                ))
+                .unwrap(),
+            }),
+        )
+        .unwrap();
+        let private = serde_json::to_vec(&group.export_state_record().unwrap()).unwrap();
+        let mut checkpoint = crate::mls::persistence::encrypt_state(
+            FIXTURE_REALM,
+            group.group_id().as_str(),
+            0,
+            &private,
+            "test secret",
+            &[1; 16],
+        );
+        checkpoint.group_state_event_id = Some(base);
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("mls.json");
+        let vault = InksonOutboundStore::for_test_path(path.clone());
+        std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+        assert!(
+            vault
+                .freeze_mls_commit(submission.clone(), checkpoint.clone())
+                .await
+                .is_err()
+        );
+        assert!(!path.exists(), "a failed cut must publish neither half");
+        std::fs::remove_dir(path.with_extension("json.tmp")).unwrap();
+        vault
+            .freeze_mls_commit(submission.clone(), checkpoint.clone())
+            .await
+            .unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let reopened = InksonOutboundStore::for_test_path(path.clone());
+        let held = reopened
+            .mls_commit_checkpoint(&submission.event_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(held, checkpoint);
+        let queue = reopened
+            .mutate_outbound(|queue| Ok(queue.snapshot()))
+            .await
+            .unwrap();
+        assert_eq!(queue.items[0].request(), &submission.request);
+        let restored = crate::mls::persistence::restore_envelope(&held, "test secret", 0).unwrap();
+        assert!(restored.has_pending_commit());
+        assert_eq!(restored.epoch(), 0);
+        let mut changed = checkpoint;
+        changed.ciphertext_hex.push('0');
+        assert!(
+            reopened
+                .freeze_mls_commit(submission, changed)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            before,
+            "substitution must be zero write"
+        );
     }
 
     fn enqueue_items(queue: &mut garth::SendQueue, count: usize) {

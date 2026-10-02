@@ -233,19 +233,6 @@ impl RealmAdminController {
                 }
             };
             let next_epoch = staged.envelope.epoch;
-            // The checkpoint with the pending Commit must be durable before
-            // the first network I/O so an accepted epoch can always merge
-            // after a crash or an unknown submission outcome.
-            if let Err(error) = self
-                .state_store
-                .write()
-                .save_mls_checkpoint(realm_id.clone(), staged.staged_checkpoint)
-            {
-                self.status_msg.set(format!(
-                    "rotate failed: MLS checkpoint persist failed: {error}"
-                ));
-                return;
-            }
             let state_store_handle =
                 crate::app::runtime_adapter::state_store_handle(self.state_store);
             let submit_device_id = account.device_id.clone();
@@ -261,6 +248,7 @@ impl RealmAdminController {
                         submit_device_id,
                         Vec::new(),
                         &state_store_handle,
+                        staged.staged_checkpoint,
                     )
                     .await
             })
