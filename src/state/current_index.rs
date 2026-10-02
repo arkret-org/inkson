@@ -675,7 +675,9 @@ impl CurrentIndex {
                 .await?
                 .is_none()
         {
-            anyhow::bail!("committed current generation is missing its durable manifest");
+            anyhow::bail!(
+                "committed current generation {committed_generation} is missing its durable manifest ({prefix})"
+            );
         }
         Ok(Self {
             backend,

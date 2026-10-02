@@ -881,18 +881,29 @@ impl InksonAccountProjector {
 
     async fn current_index(&self) -> garth::Result<crate::state::CurrentIndex> {
         let mut cached = self.current_index.lock().await;
-        let (generation, location) = self
+        let location = self
             .ctx
             .state_store
-            .read(|store| (store.current_generation(), store.current_index_location()));
+            .read(LocalStateStore::current_index_location);
         let index = match cached.as_ref() {
             Some(index) => index.clone(),
-            None => {
-                crate::state::CurrentIndex::open(&self.ctx.account.authority, generation, location)
-                    .await
-                    .map_err(|error| garth::Error::Protocol(error.to_string()))?
-            }
+            None => crate::state::CurrentIndex::open_committed(
+                &self.ctx.account.authority,
+                location,
+                || {
+                    Ok(self
+                        .ctx
+                        .state_store
+                        .read(LocalStateStore::current_generation))
+                },
+            )
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?,
         };
+        let generation = self
+            .ctx
+            .state_store
+            .read(LocalStateStore::current_generation);
         if index.is_poisoned() {
             self.confirm_current_pointer_durable(&index, generation)
                 .await?;
@@ -964,14 +975,26 @@ impl InksonAccountProjector {
         self.ctx
             .state_store
             .read(LocalStateStore::invalidate_blocklist_freshness);
-        let (generation, location) = self
+        let location = self
             .ctx
             .state_store
-            .read(|store| (store.current_generation(), store.current_index_location()));
-        let index =
-            crate::state::CurrentIndex::open(&self.ctx.account.authority, generation, location)
-                .await
-                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+            .read(LocalStateStore::current_index_location);
+        let index = crate::state::CurrentIndex::open_committed(
+            &self.ctx.account.authority,
+            location,
+            || {
+                Ok(self
+                    .ctx
+                    .state_store
+                    .read(LocalStateStore::current_generation))
+            },
+        )
+        .await
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let generation = self
+            .ctx
+            .state_store
+            .read(LocalStateStore::current_generation);
         let reset_frame: AccountSubscribeFrame =
             serde_json::from_value(serde_json::json!({"kind":"resync_required"}))
                 .map_err(|error| garth::Error::Protocol(error.to_string()))?;
