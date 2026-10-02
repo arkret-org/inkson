@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, OnceLock as SyncOnceLock, PoisonError};
 use std::time::Duration;
 
+use anyhow::Context;
 use arkret_wire::{CapabilityActionId, event_kind_str};
 use garth::{OutboundEngine, OutboundEngineOutcome, QueuedSubmission, SendQueueStatus};
 use serde_json::Value;
@@ -2855,6 +2856,7 @@ impl EventSubmitter {
             .agent_key_pair(body)
             .await
             .map_err(anyhow::Error::from)
+            .with_context(|| format!("pair Agent key at {authority_origin}"))
     }
 }
 

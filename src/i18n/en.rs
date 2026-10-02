@@ -3355,9 +3355,12 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "agent_runtime.aria_label",
         "An agent runtime is requesting access to your account",
     );
-    dict.set("agent_runtime.title", "Agent runtime approval requested");
+    dict.set("agent_runtime.title", "Connect agent");
     dict.set("agent_runtime.subtitle", "Agent pairing");
-    dict.set("agent_runtime.body", "An agent runtime is asking to finish pairing. Approve only if you started this request and the code matches the runtime screen.");
+    dict.set(
+        "agent_runtime.body",
+        "Confirm the eight-digit code matches the agent app, then approve this connection.",
+    );
     dict.set(
         "agent_runtime.replacement_warning",
         "This replaces the runtime key of an active or paused agent.",
@@ -3368,8 +3371,72 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "agent_runtime.compare_code",
         "Compare this code before approving",
     );
+    dict.set("agent_runtime.permissions", "Requested permissions");
+    dict.set("agent_runtime.scope_ceiling", "Access is limited to conversations and content you separately authorize. Any resource restrictions are listed in details.");
+    dict.set(
+        "agent_runtime.until_revoked",
+        "This connection stays authorized until you revoke it.",
+    );
+    dict.set("agent_runtime.technical_details", "Technical details");
+    dict.set("agent_runtime.error_details", "Error details");
+    dict.set("agent_runtime.agent_id", "Agent identity");
+    dict.set("agent_runtime.station", "Server identity");
+    dict.set("agent_runtime.verification_method", "Key identifier");
+    dict.set("agent_runtime.requested_scope", "Complete permission scope");
+    dict.set(
+        "agent_runtime.replaced_authorizations",
+        "Replaced connections",
+    );
+    dict.set("agent_runtime.permission_read", "Read authorized content");
+    dict.set(
+        "agent_runtime.permission_post",
+        "Send messages in authorized conversations",
+    );
+    dict.set("agent_runtime.permission_react", "React to messages");
+    dict.set(
+        "agent_runtime.permission_draft",
+        "Propose drafts and actions for your approval",
+    );
+    dict.set(
+        "agent_runtime.permission_organize",
+        "Organize conversations and relationships",
+    );
+    dict.set(
+        "agent_runtime.permission_sync",
+        "Receive updates and catch up after reconnecting",
+    );
+    dict.set(
+        "agent_runtime.permission_submit",
+        "Submit authorized events",
+    );
+    dict.set(
+        "agent_runtime.permission_encrypted",
+        "Exchange encrypted messages and manage messaging keys",
+    );
+    dict.set(
+        "agent_runtime.permission_presence",
+        "Send live activity signals",
+    );
+    dict.set(
+        "agent_runtime.permission_resources",
+        "Fetch resources attached to authorized content",
+    );
+    dict.set(
+        "agent_runtime.permission_other",
+        "Additional permission: {action}",
+    );
+    dict.set(
+        "agent_runtime.error_network",
+        "Couldn't reach the pairing service. Check the connection and retry.",
+    );
+    dict.set("agent_runtime.error_pending", "Approval was submitted and activation is still pending. Wait for the agent to connect before starting a new pairing.");
+    dict.set("agent_runtime.error_failed", "Couldn't complete pairing. Open error details for the service's response before starting a new pairing.");
+    dict.set(
+        "agent_runtime.permission_review",
+        "Actions on your behalf require your approval",
+    );
     dict.set("agent_runtime.runtime_key", "Runtime key");
-    dict.set("agent_runtime.pairing_expires", "Pairing expires {time}");
+    dict.set("agent_runtime.pairing_expires", "Code expires at {time}");
     dict.set(
         "agent_runtime.rejecting",
         "Rejecting request and rotating the pairing code…",

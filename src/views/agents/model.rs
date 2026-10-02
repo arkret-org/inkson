@@ -577,9 +577,14 @@ pub fn summarize_runtime_key_approval_request(
 pub fn runtime_key_pairing_error_message(error: impl std::fmt::Display) -> String {
     let error = error.to_string();
     let normalized = error.to_ascii_lowercase();
-    let message = if normalized.contains("expired")
-        || normalized.contains("pairing_request_expired")
+    let message = if normalized.contains("error sending request")
+        || normalized.contains("failed to fetch")
+        || normalized.contains("network")
     {
+        return crate::i18n::tr("agent_runtime.error_network");
+    } else if normalized.contains("not yet active") {
+        return crate::i18n::tr("agent_runtime.error_pending");
+    } else if normalized.contains("expired") || normalized.contains("pairing_request_expired") {
         "Pairing expired. Create a new pairing and paste the fresh runtime key request."
     } else if normalized.contains("pairing_request_id")
         || normalized.contains("pairing code")
@@ -598,7 +603,7 @@ pub fn runtime_key_pairing_error_message(error: impl std::fmt::Display) -> Strin
     } else if normalized.contains("controller") || normalized.contains("accountable") {
         "Controller mismatch. Sign in as this agent's controller and retry."
     } else {
-        "Server rejected the runtime key approval. Refresh the agent, regenerate the runtime key request, and retry."
+        return crate::i18n::tr("agent_runtime.error_failed");
     };
     message.to_owned()
 }

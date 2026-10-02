@@ -2798,11 +2798,11 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "agent_runtime.aria_label",
         "有代理运行时正在请求访问你的账户",
     );
-    dict.set("agent_runtime.title", "代理运行时请求批准");
+    dict.set("agent_runtime.title", "连接代理");
     dict.set("agent_runtime.subtitle", "代理配对");
     dict.set(
         "agent_runtime.body",
-        "一个代理运行时请求完成配对。仅当此请求由你发起且代码与运行时屏幕上显示的一致时才批准。",
+        "核对代理应用中的 8 位数字，然后批准此连接。",
     );
     dict.set(
         "agent_runtime.replacement_warning",
@@ -2811,8 +2811,60 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("agent_runtime.slug", "标识:{slug}");
     dict.set("agent_runtime.requested", "请求时间 {time}");
     dict.set("agent_runtime.compare_code", "批准前请比对此代码");
+    dict.set("agent_runtime.permissions", "请求的权限");
+    dict.set(
+        "agent_runtime.scope_ceiling",
+        "仅限你另外授权的对话和内容；具体资源限制见详情。",
+    );
+    dict.set(
+        "agent_runtime.until_revoked",
+        "连接授权持续有效，直到你撤销。",
+    );
+    dict.set("agent_runtime.technical_details", "技术详情");
+    dict.set("agent_runtime.error_details", "错误详情");
+    dict.set("agent_runtime.agent_id", "代理身份");
+    dict.set("agent_runtime.station", "服务器身份");
+    dict.set("agent_runtime.verification_method", "密钥标识");
+    dict.set("agent_runtime.requested_scope", "完整权限范围");
+    dict.set("agent_runtime.replaced_authorizations", "被替换的连接");
+    dict.set("agent_runtime.permission_read", "读取已授权的内容");
+    dict.set("agent_runtime.permission_post", "在已授权的对话中发送消息");
+    dict.set("agent_runtime.permission_react", "回应消息");
+    dict.set("agent_runtime.permission_draft", "提交草稿和操作供你批准");
+    dict.set("agent_runtime.permission_organize", "组织对话和关联");
+    dict.set(
+        "agent_runtime.permission_sync",
+        "接收更新并在重连后补齐消息",
+    );
+    dict.set("agent_runtime.permission_submit", "提交已授权的操作");
+    dict.set(
+        "agent_runtime.permission_encrypted",
+        "收发加密消息并管理消息密钥",
+    );
+    dict.set("agent_runtime.permission_presence", "发送在线活动信号");
+    dict.set(
+        "agent_runtime.permission_resources",
+        "读取已授权内容附带的资源",
+    );
+    dict.set("agent_runtime.permission_other", "额外权限：{action}");
+    dict.set(
+        "agent_runtime.error_network",
+        "无法连接配对服务。请检查连接后重试。",
+    );
+    dict.set(
+        "agent_runtime.error_pending",
+        "批准已提交，正在等待激活。请先等待代理连接，无需重新配对。",
+    );
+    dict.set(
+        "agent_runtime.error_failed",
+        "无法完成配对。请展开错误详情查看实际原因。",
+    );
+    dict.set(
+        "agent_runtime.permission_review",
+        "代你执行的操作需要你逐次批准",
+    );
     dict.set("agent_runtime.runtime_key", "运行时密钥");
-    dict.set("agent_runtime.pairing_expires", "配对过期时间 {time}");
+    dict.set("agent_runtime.pairing_expires", "配对码于 {time} 过期");
     dict.set("agent_runtime.rejecting", "正在拒绝请求并更换配对代码…");
     dict.set("agent_runtime.rejected", "已拒绝请求并更换配对代码。");
     dict.set(

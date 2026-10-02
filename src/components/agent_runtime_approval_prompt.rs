@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
+use anyhow::Context;
 use arkret_sdk::{DidCoreId, DidUrl, Hash, KeyState, NotificationId, OpaqueLocalId};
 use dioxus::prelude::*;
 
@@ -17,6 +18,53 @@ use crate::views::helpers::short_protocol_id;
 const APPROVAL_FALLBACK_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const APPROVAL_FALLBACK_MAX_INTERVAL: Duration = Duration::from_secs(60);
 
+fn approval_scope_summary(scope: &arkret_sdk::AgentKeyScope) -> Vec<String> {
+    let mut labels = Vec::new();
+    for action in &scope.actions {
+        let key = match action.as_str() {
+            "ak.event.read" => "agent_runtime.permission_read",
+            "ak.message.create" => "agent_runtime.permission_post",
+            "ak.reaction.add" => "agent_runtime.permission_react",
+            "ak.agent.draft.propose" | "ak.agent.action.request" => {
+                "agent_runtime.permission_draft"
+            }
+            "ak.strand.create" | "ak.strand.update" | "ak.relation.create" => {
+                "agent_runtime.permission_organize"
+            }
+            "ak.self.committed_event.read.scan.v1"
+            | "ak.self.committed_event.stream.subscribe.v1" => "agent_runtime.permission_sync",
+            "ak.self.events.command.submit.v1" => "agent_runtime.permission_submit",
+            "ak.self.keys.keypackages.upload.create.v1"
+            | "ak.self.keys.keypackages.command.consume.v1"
+            | "ak.self.keys.keypackages.command.revoke.v1"
+            | "ak.self.device_messages.read.list.v1"
+            | "ak.self.device_messages.command.ack.v1" => "agent_runtime.permission_encrypted",
+            "ak.self.signal.command.send.v1" => "agent_runtime.permission_presence",
+            "ak.self.committed_event.resource.get.v1" => "agent_runtime.permission_resources",
+            _ => "",
+        };
+        let label = if key.is_empty() {
+            crate::i18n::tr_args(
+                "agent_runtime.permission_other",
+                &[("action", action.clone())],
+            )
+        } else {
+            crate::i18n::tr(key)
+        };
+        if !labels.contains(&label) {
+            labels.push(label);
+        }
+    }
+    if scope
+        .constraints
+        .iter()
+        .any(|constraint| constraint.controller_approval_required == Some(true))
+    {
+        labels.push(crate::i18n::tr("agent_runtime.permission_review"));
+    }
+    labels
+}
+
 #[derive(Clone, Debug)]
 struct PendingAgentRuntimeApproval {
     notification_id: Option<NotificationId>,
@@ -25,7 +73,6 @@ struct PendingAgentRuntimeApproval {
     display_name: String,
     agent_slug: String,
     pairing_code: String,
-    approval_requested_at: String,
     pairing_expires_at: String,
     verification_method: DidUrl,
     public_key_fingerprint: Hash,
@@ -43,6 +90,8 @@ pub fn AgentRuntimeApprovalPrompt(
     let mut pending = use_signal(|| None::<PendingAgentRuntimeApproval>);
     let mut handled = use_signal(HashSet::<OpaqueLocalId>::new);
     let mut status = use_signal(String::new);
+    let mut diagnostic = use_signal(String::new);
+    let mut prepared = use_signal(|| None::<(OpaqueLocalId, arkret_sdk::AgentKeyPairRequestBody)>);
     let mut approving = use_signal(|| false);
     let state_store = crate::app::SessionContext::get().state_store;
     let active_account = crate::app::SessionContext::get().active_account;
@@ -92,6 +141,7 @@ pub fn AgentRuntimeApprovalPrompt(
                     Ok(Some(request)) => {
                         tracing::info!(agent_id = %request.agent_id, "agent runtime approval discovered through account notification");
                         status.set(String::new());
+                        diagnostic.set(String::new());
                         pending.set(Some(request));
                     }
                     Ok(None) => {}
@@ -115,6 +165,7 @@ pub fn AgentRuntimeApprovalPrompt(
                         pending.set(None);
                         approving.set(false);
                         status.set(String::new());
+                        diagnostic.set(String::new());
                     }
                     crate::runtime_helpers::sleep_for(APPROVAL_FALLBACK_POLL_INTERVAL).await;
                     continue;
@@ -149,11 +200,13 @@ pub fn AgentRuntimeApprovalPrompt(
                     Ok(Some(request)) => {
                         tracing::info!(agent_id = %request.agent_id, "agent runtime approval discovered through unsupported-notification fallback");
                         status.set(String::new());
+                        diagnostic.set(String::new());
                         pending.set(Some(request));
                         false
                     }
                     Ok(None) => {
                         status.set(String::new());
+                        diagnostic.set(String::new());
                         false
                     }
                     Err(err) => {
@@ -179,7 +232,7 @@ pub fn AgentRuntimeApprovalPrompt(
     };
 
     let agent_label = if request.display_name.trim().is_empty() {
-        short_protocol_id(request.agent_id.as_str())
+        request.agent_slug.clone()
     } else {
         request.display_name.clone()
     };
@@ -193,6 +246,19 @@ pub fn AgentRuntimeApprovalPrompt(
         .to_string();
     let scope_label =
         serde_json::to_string_pretty(&request.key_state.requested_scope).unwrap_or_default();
+    let permissions = approval_scope_summary(&request.key_state.requested_scope);
+    let expiry_label = chrono::DateTime::parse_from_rfc3339(&request.pairing_expires_at)
+        .map(|time| {
+            time.with_timezone(&chrono::Local)
+                .format("%H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|_| request.pairing_expires_at.clone());
+    let code_label = format!(
+        "{} {}",
+        &request.pairing_code[..4],
+        &request.pairing_code[4..]
+    );
     let supersedes_label = request
         .key_state
         .active_authorizations
@@ -209,6 +275,7 @@ pub fn AgentRuntimeApprovalPrompt(
 ",
         );
     let status_value = status();
+    let diagnostic_value = diagnostic();
     let busy = approving();
 
     let dismiss_key = request.request_key.clone();
@@ -223,6 +290,7 @@ pub fn AgentRuntimeApprovalPrompt(
                     handled.write().insert(dismiss_key.clone());
                     pending.set(None);
                     status.set(String::new());
+                    diagnostic.set(String::new());
                     approving.set(false);
                 }
             },
@@ -246,17 +314,9 @@ pub fn AgentRuntimeApprovalPrompt(
                         "data-testid": "agent-runtime-approval-agent",
                         "data-agent-id": "{request.agent_id}",
                         strong { "{agent_label}" }
-                        if agent_label != agent_id_label {
-                            span { class: "muted mono", "{agent_id_label}" }
-                        }
-                        if !request.agent_slug.trim().is_empty() {
+                        if !request.agent_slug.trim().is_empty() && request.agent_slug != agent_label {
                             span { class: "muted",
                                 {crate::i18n::tr_args("agent_runtime.slug", &[("slug", request.agent_slug.clone())])}
-                            }
-                        }
-                        if !request.approval_requested_at.trim().is_empty() {
-                            span { class: "muted",
-                                {crate::i18n::tr_args("agent_runtime.requested", &[("time", request.approval_requested_at.clone())])}
                             }
                         }
                     }
@@ -265,33 +325,49 @@ pub fn AgentRuntimeApprovalPrompt(
                         strong {
                             class: "device-pair-approval-code mono",
                             "data-testid": "agent-runtime-approval-code",
-                            "{request.pairing_code}"
+                            "{code_label}"
+                        }
+                        span { class: "muted",
+                            {crate::i18n::tr_args("agent_runtime.pairing_expires", &[("time", expiry_label)])}
                         }
                     }
-                    div {
-                        class: "device-pair-approval-device",
-                        "data-testid": "agent-runtime-approval-runtime-key",
-                        span { class: "muted", {crate::i18n::tr("agent_runtime.runtime_key")} }
-                        strong { class: "mono", "{fingerprint_label}" }
-                        span { class: "muted mono", "{verification_label}" }
-                        if !request.pairing_expires_at.trim().is_empty() {
-                            span { class: "muted",
-                                {crate::i18n::tr_args("agent_runtime.pairing_expires", &[("time", request.pairing_expires_at.clone())])}
+                    section { class: "agent-approval-permissions",
+                        strong { {crate::i18n::tr("agent_runtime.permissions")} }
+                        ul {
+                            for permission in permissions {
+                                li { "{permission}" }
                             }
                         }
+                        p { class: "muted", {crate::i18n::tr("agent_runtime.scope_ceiling")} }
+                        p { class: "muted", {crate::i18n::tr("agent_runtime.until_revoked")} }
                     }
-                    div { class: "device-pair-approval-device",
-                        span { "Station" }
-                        span { class: "mono", "{station_label}" }
-                        span { "Requested scope" }
+                    details { class: "agent-approval-details",
+                        summary { {crate::i18n::tr("agent_runtime.technical_details")} }
+                        dl {
+                            dt { {crate::i18n::tr("agent_runtime.agent_id")} }
+                            dd { class: "mono", "{agent_id_label}" }
+                            dt { {crate::i18n::tr("agent_runtime.station")} }
+                            dd { class: "mono", "{station_label}" }
+                            dt { {crate::i18n::tr("agent_runtime.runtime_key")} }
+                            dd { class: "mono", "data-testid": "agent-runtime-approval-runtime-key", "{fingerprint_label}" }
+                            dt { {crate::i18n::tr("agent_runtime.verification_method")} }
+                            dd { class: "mono", "{verification_label}" }
+                            dt { {crate::i18n::tr("agent_runtime.requested_scope")} }
+                        }
                         pre { "{scope_label}" }
-                        span { "Authorization expiry: until revoked" }
-                        span { "Replaced authorizations" }
-                        if supersedes_label.is_empty() { span { "None" } }
-                        else { pre { "{supersedes_label}" } }
+                        if !supersedes_label.is_empty() {
+                            p { {crate::i18n::tr("agent_runtime.replaced_authorizations")} }
+                            pre { "{supersedes_label}" }
+                        }
                     }
                     if !status_value.is_empty() {
                         div { class: "muted", "data-testid": "agent-runtime-approval-status", "{status_value}" }
+                    }
+                    if !diagnostic_value.is_empty() {
+                        details { class: "agent-approval-details",
+                            summary { {crate::i18n::tr("agent_runtime.error_details")} }
+                            pre { "{diagnostic_value}" }
+                        }
                     }
                 }
                 div { class: "modal-foot actions",
@@ -348,6 +424,7 @@ pub fn AgentRuntimeApprovalPrompt(
                             handled.write().insert(dismiss_button_key.clone());
                             pending.set(None);
                             status.set(String::new());
+                            diagnostic.set(String::new());
                             approving.set(false);
                         },
                         {crate::i18n::tr("agent_runtime.dismiss")}
@@ -390,7 +467,9 @@ pub fn AgentRuntimeApprovalPrompt(
                                 return;
                             }
                             let api_token = token();
+                            diagnostic.set(String::new());
                             let request_key = approve_request.request_key.clone();
+                            let prepared_key = request_key.clone();
                             let key_state = approve_request.key_state.clone();
                             let approval_agent_id = approve_request.agent_id.clone();
                             status.set(crate::i18n::tr("agent_runtime.approving"));
@@ -400,48 +479,63 @@ pub fn AgentRuntimeApprovalPrompt(
                                     let body = body.clone();
                                     let key_state = key_state.clone();
                                     let controller_did = controller_did.clone();
+                                    let prepared_key = prepared_key.clone();
                                     async move {
-                                        let description = api.describe_cached().await?;
-                                        let service_id = description.service_id.to_string();
-                                        let service_did =
-                                            description.service_resolution.did.to_string();
                                         let submitter = api.event_submitter()?;
-                                        let authorization =
-                                            build_agent_key_authorization_for_pairing(
-                                                &submitter,
-                                                &controller_did,
-                                                &service_id,
-                                                &key_state,
-                                                &body,
-                                            )
-                                            .await?;
-                                        let authorize_event =
-                                            authorization.authorize_event;
-                                        let requested_scope_disclosure =
-                                            build_requested_scope_disclosure_for_pairing(
-                                                &controller_did,
-                                                &service_did,
-                                                &key_state,
-                                                &body,
-                                            )?;
-                                        let authorize_submission = submitter
-                                            .prepare_initial_submissions(std::slice::from_ref(
-                                                &authorize_event,
-                                            ))
-                                            .await?
-                                            .into_iter()
-                                            .next()
-                                            .ok_or_else(|| {
-                                                anyhow::anyhow!(
-                                                    "agent authorize submission was not prepared"
+                                        let cached = prepared.read().clone().filter(|(key, _)| key == &prepared_key);
+                                        let pair_request = if let Some((_, request)) = cached {
+                                            request
+                                        } else {
+                                            let description = api.describe_cached().await.context("discover pairing Station")?;
+                                            let service_id = description.service_id.to_string();
+                                            let service_did =
+                                                description.service_resolution.did.to_string();
+                                            let authorization =
+                                                build_agent_key_authorization_for_pairing(
+                                                    &submitter,
+                                                    &controller_did,
+                                                    &service_id,
+                                                    &key_state,
+                                                    &body,
                                                 )
-                                            })?;
-                                        let pair_request = into_agent_key_pair_request(
-                                            body,
-                                            requested_scope_disclosure,
-                                            authorize_submission,
-                                        );
-                                        let outcome = submitter.agent_key_pair(&pair_request).await?;
+                                                .await.context("author Agent runtime authorization")?;
+                                            let authorize_event =
+                                                authorization.authorize_event;
+                                            let requested_scope_disclosure =
+                                                build_requested_scope_disclosure_for_pairing(
+                                                    &controller_did,
+                                                    &service_did,
+                                                    &key_state,
+                                                    &body,
+                                                )?;
+                                            let authorize_submission = submitter
+                                                .prepare_initial_submissions(std::slice::from_ref(
+                                                    &authorize_event,
+                                                ))
+                                                .await.context("prepare Agent runtime authorization submission")?
+                                                .into_iter()
+                                                .next()
+                                                .ok_or_else(|| {
+                                                    anyhow::anyhow!(
+                                                        "agent authorize submission was not prepared"
+                                                    )
+                                                })?;
+                                            let pair_request = into_agent_key_pair_request(
+                                                body,
+                                                requested_scope_disclosure,
+                                                authorize_submission,
+                                            );
+                                            prepared.set(Some((prepared_key, pair_request.clone())));
+                                            pair_request
+                                        };
+                                        let mut outcome = submitter.agent_key_pair(&pair_request).await.context("submit Agent runtime approval")?;
+                                        for _ in 0..30 {
+                                            if matches!(outcome.activation_state, arkret_sdk::AgentKeyPairActivationState::Active) {
+                                                break;
+                                            }
+                                            crate::runtime_helpers::sleep_for(Duration::from_secs(1)).await;
+                                            outcome = submitter.agent_key_pair(&pair_request).await.context("await Agent runtime activation")?;
+                                        }
                                         if !matches!(
                                             outcome.activation_state,
                                             arkret_models_collaboration::agent_operations::AgentKeyPairActivationState::Active
@@ -490,6 +584,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                         ));
                                     }
                                     Err(err) => {
+                                        diagnostic.set(err.display_diagnostic());
                                         tracing::warn!(
                                             error = %err.display_diagnostic(),
                                             agent_id = %approval_agent_id,
@@ -612,6 +707,9 @@ fn pending_runtime_approval_from_view(
         return None;
     }
     let pairing_code = key_state.pairing_code.clone()?;
+    if pairing_code.len() != 8 || !pairing_code.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
     let request_key = key_state.approval_request_id.clone()?;
     if request_key != summary.approval_request_id {
         return None;
@@ -623,10 +721,6 @@ fn pending_runtime_approval_from_view(
         display_name: view.agent.display_name.clone().unwrap_or_default(),
         agent_slug: view.agent.slug.clone(),
         pairing_code,
-        approval_requested_at: key_state
-            .approval_requested_at
-            .map(arkret_sdk::canonical::format_timestamp_canonical)
-            .unwrap_or_default(),
         pairing_expires_at,
         verification_method: summary.verification_method,
         public_key_fingerprint: summary.public_key_fingerprint,
@@ -688,6 +782,33 @@ fn fallback_poll_environment_ready() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn permission_summary_preserves_unknown_permissions_and_review_requirements() {
+        let mut scope = crate::views::agents::requested_scope_for_presets(
+            &[
+                crate::views::agents::AgentGrantPreset::Read,
+                crate::views::agents::AgentGrantPreset::ActOnBehalf,
+            ],
+            &crate::views::agents::AgentServiceScopePreset::DEFAULTS,
+        )
+        .unwrap();
+        scope.actions.push("ak.future.permission".to_owned());
+        let labels = approval_scope_summary(&scope);
+        assert_eq!(
+            labels
+                .iter()
+                .filter(|label| **label == crate::i18n::tr("agent_runtime.permission_sync"))
+                .count(),
+            1
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.contains("ak.future.permission"))
+        );
+        assert!(labels.contains(&crate::i18n::tr("agent_runtime.permission_review")));
+    }
 
     #[test]
     fn approval_list_fallback_requires_a_resolved_service_without_notifications() {

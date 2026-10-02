@@ -17,6 +17,43 @@
 .agent-runtime-approval-dialog .modal-foot {
   flex-wrap: wrap;
 }
+.agent-runtime-approval-dialog .modal-body {
+  display: grid;
+  gap: 14px;
+  max-height: min(65vh, 640px);
+  overflow-y: auto;
+}
+.agent-approval-permissions ul {
+  display: grid;
+  gap: 5px;
+  padding-left: 20px;
+  margin: 8px 0;
+}
+.agent-approval-permissions p {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.agent-approval-details {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  font-size: 12px;
+}
+.agent-approval-details summary {
+  cursor: pointer;
+  color: var(--text-2);
+}
+.agent-approval-details dl {
+  margin: 12px 0;
+}
+.agent-approval-details dd {
+  margin: 4px 0 12px;
+}
+.agent-approval-details pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 180px;
+  overflow-y: auto;
+}
 
 .agent-admin-page {
   display: grid;

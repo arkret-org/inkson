@@ -370,6 +370,14 @@ mod agent_tests {
 
     #[test]
     fn runtime_key_pairing_error_message_classifies_known_failures() {
+        let network =
+            runtime_key_pairing_error_message("HTTP request failed: error sending request");
+        assert!(network.contains("connection"));
+        assert!(!network.contains("Server rejected"));
+        assert!(
+            runtime_key_pairing_error_message("agent authorization is not yet active")
+                .contains("still pending")
+        );
         for error in [
             "controller Station is not configured",
             "controller Station is not configured or its trusted identity is unavailable",
@@ -397,7 +405,7 @@ mod agent_tests {
                 .contains("Controller mismatch")
         );
         assert!(
-            runtime_key_pairing_error_message("database unavailable").contains("Server rejected")
+            runtime_key_pairing_error_message("database unavailable").contains("error details")
         );
         assert!(!runtime_key_pairing_error_message("database unavailable").contains("Detail:"));
     }
@@ -435,7 +443,7 @@ mod agent_tests {
             "principal_control_realm_id": "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
-            "pairing_code": "AAAAAAAAAAAAAAAAAAAAAA",
+            "pairing_code": "01234567",
             "pairing_expires_at": expires_at,
             "requested_scope": scope,
         }))
@@ -599,7 +607,7 @@ mod agent_tests {
             "status": "active",
             "runtime_state": "pending_runtime_key",
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
-            "pairing_code": "AAAAAAAAAAAAAAAAAAAAAA",
+            "pairing_code": "01234567",
             "pairing_expires_at": "2026-07-06T00:15:00.000123Z",
             "requested_scope": key_state.requested_scope,
         });
@@ -643,7 +651,7 @@ mod agent_tests {
             "principal_control_realm_id": "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
-            "pairing_code": "AAAAAAAAAAAAAAAAAAAAAA",
+            "pairing_code": "01234567",
             "pairing_expires_at": "2026-07-06T00:15:00.000Z",
             "requested_scope": scope,
             "active_authorizations": [{
