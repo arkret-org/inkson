@@ -696,7 +696,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             },
                             UiIcon { name: "plus" }
                         }
-                        if crate::messaging::polls::polls_enabled() {
+                        if !selected_channel_security_encrypted && active_sidecar_session.is_none() {
                             Button {
                                 variant: ButtonVariant::Secondary,
                                 r#type: "button",
@@ -735,7 +735,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         }
                         if attachment_menu_open() {
                             div { class: "attachment-menu",
-                                if crate::messaging::polls::polls_enabled() {
+                                if !selected_channel_security_encrypted && active_sidecar_session.is_none() {
                                     Button {
                                         variant: ButtonVariant::Secondary,
                                         r#type: "button",
@@ -793,7 +793,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         "{compose_upload_status}"
                     }
                 }
-                if crate::messaging::polls::polls_enabled() {
+                if !selected_channel_security_encrypted && active_sidecar_session.is_none() {
                 if let Some(draft) = poll_draft.read().clone() {
                     div { class: "poll-composer",
                         "data-testid": "poll-composer",

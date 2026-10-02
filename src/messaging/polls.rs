@@ -12,8 +12,8 @@
 //! close event kind is registered) — "closed" is therefore a local UI state
 //! only and is never written to the wire.
 //!
-//! Polls are enabled in the local 1.0 UI because soland now projects the
-//! content-type reducer state.
+//! Poll composer controls are available only in plaintext scopes. The v1
+//! reducer does not accept encrypted poll definitions or responses.
 
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
@@ -21,11 +21,6 @@ use serde_json::json;
 
 use crate::operation::uuid_v7;
 use crate::payload::strand_id_value;
-
-/// Whether the local UI should expose poll composer / vote controls.
-pub fn polls_enabled() -> bool {
-    true
-}
 
 /// In-flight draft of a poll being composed by the user.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
