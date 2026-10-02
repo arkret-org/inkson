@@ -343,8 +343,8 @@ fn verified_recovery_gate_cache() -> &'static Mutex<BTreeSet<String>> {
     CACHE.get_or_init(|| Mutex::new(BTreeSet::new()))
 }
 
-pub(crate) fn remember_verified_recovery_gate(authority_principal: &str, device_id: &str) {
-    let Some(key) = normalized_recovery_gate_cache_key(authority_principal, device_id) else {
+pub(crate) fn remember_verified_recovery_gate(authority: &arkret_sdk::AccountId, device_id: &str) {
+    let Some(key) = recovery_gate_account_cache_key(authority, device_id) else {
         return;
     };
     let mut cache = verified_recovery_gate_cache()
@@ -353,21 +353,21 @@ pub(crate) fn remember_verified_recovery_gate(authority_principal: &str, device_
     cache.insert(key);
 }
 
-fn normalized_recovery_gate_cache_key(
-    authority_principal: &str,
+fn recovery_gate_account_cache_key(
+    authority: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> Option<String> {
-    let principal = arkret_sdk::DidCoreId::new(authority_principal.to_owned())
-        .ok()
-        .or_else(|| {
-            let did = arkret_sdk::Did::new(authority_principal.to_owned()).ok()?;
-            arkret_sdk::project_did_to_core_id(&did).ok()
-        })?;
     let device = arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?;
-    Some(format!("{principal}\u{1f}{device}"))
+    Some(format!(
+        "{}\u{1f}{}\u{1f}{device}",
+        authority.principal_id, authority.station_id
+    ))
 }
 
-fn recovery_gate_cache_key(intent: &EventIntent) -> Option<String> {
+fn recovery_gate_cache_key(
+    authority: &arkret_sdk::AccountId,
+    intent: &EventIntent,
+) -> Option<String> {
     let authority_principal = intent
         .executed_by()
         .unwrap_or_else(|| intent.actor_id())
@@ -375,7 +375,9 @@ fn recovery_gate_cache_key(intent: &EventIntent) -> Option<String> {
         .as_str();
     let signer = crate::event_signer::active_signer()?;
     let device_id = signer.device_id()?;
-    normalized_recovery_gate_cache_key(authority_principal, device_id)
+    (authority.principal_id.as_str() == authority_principal)
+        .then(|| recovery_gate_account_cache_key(authority, device_id))
+        .flatten()
 }
 
 pub(crate) fn reset_verified_recovery_gates() {
@@ -425,23 +427,40 @@ fn pending_chat_event_ids_from_snapshot(
 /// Project the pending chat sends of one Strand directly from the durable
 /// queue.
 ///
-/// The ids are the final content-bound Event ids: authoring derives them
-/// before anything is enqueued, so a queued send already knows the identity it
-/// will carry once committed, and the optimistic row is stamped with the same
-/// value at enqueue time.
+/// Each final content-bound Event id is joined back to its holder-local
+/// operation when that identity record exists. A queued send is counted once,
+/// even while the optimistic bubble still carries its local id.
 pub(crate) async fn pending_chat_outbound_local_operation_ids(
     authority: &arkret_sdk::AccountId,
     realm_id: &str,
     strand_id: &str,
+    state: &crate::state::ClientLocalState,
 ) -> anyhow::Result<BTreeSet<String>> {
     let outbound = OutboundEngine::new(
         InksonOutboundStore::open(authority, OutboundLane::Standard)?,
         InksonHostClock,
     );
     let snapshot = outbound.snapshot().await?;
-    Ok(pending_chat_event_ids_from_snapshot(
-        &snapshot, realm_id, strand_id,
+    Ok(pending_chat_local_operation_ids_from_snapshot(
+        &snapshot, realm_id, strand_id, state,
     ))
+}
+
+fn pending_chat_local_operation_ids_from_snapshot(
+    snapshot: &garth::SendQueueSnapshot,
+    realm_id: &str,
+    strand_id: &str,
+    state: &crate::state::ClientLocalState,
+) -> BTreeSet<String> {
+    pending_chat_event_ids_from_snapshot(snapshot, realm_id, strand_id)
+        .into_iter()
+        .map(|event_id| {
+            arkret_sdk::EventId::new(event_id.clone())
+                .ok()
+                .and_then(|event_id| local_operation_for_event(state, &event_id))
+                .unwrap_or(event_id)
+        })
+        .collect()
 }
 
 fn pending_mls_commit_for_realm_from_snapshot(
@@ -485,6 +504,10 @@ fn record_queued_operation_identity(
     local_operation_id: &str,
     event: &arkret_sdk::Event,
 ) -> bool {
+    // Materialize earlier local projection commands before establishing the
+    // durable queue-to-operation join. An ordinary chat bubble may exist only
+    // in memory; its identity record must still survive queue replay.
+    state_store.project_pending_local_commands();
     if state_store.update_raw_operation_write_state(
         local_operation_id,
         "queued",
@@ -492,6 +515,14 @@ fn record_queued_operation_identity(
         None,
     ) {
         return true;
+    }
+    if state_store
+        .load()
+        .raw_operations
+        .iter()
+        .any(|row| row.operation_id == local_operation_id)
+    {
+        return false;
     }
     if event.kind != arkret_sdk::EventKind::MessageCreate {
         return false;
@@ -1152,6 +1183,49 @@ impl EventSubmitter {
         &self,
         digest_suite: arkret_sdk::DigestSuite,
     ) -> anyhow::Result<crate::event_signer::ProducerProofContext> {
+        if let Ok(context) = crate::event_signer::cached_active_event_proof_context(digest_suite) {
+            return Ok(context);
+        }
+        // Device-list refresh fences the retained cache before its async
+        // query completes. Resolve this exact author's current evidence here
+        // instead of turning that transient gap into a failed user action.
+        let authority = self.authority()?;
+        let signer = crate::event_signer::active_signer()
+            .ok_or_else(|| anyhow::anyhow!("active device signer is unavailable"))?;
+        let device = arkret_sdk::DeviceId::new(
+            signer
+                .device_id()
+                .ok_or_else(|| anyhow::anyhow!("active signer has no device id"))?
+                .to_owned(),
+        )?;
+        let epoch = crate::identity::device_directory::cache_epoch();
+        let persisted =
+            crate::identity::device_directory::authenticated_device_authoring_authority(
+                &self.http,
+                authority,
+                &device,
+                signer.as_ref(),
+            )
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!("active device has no matching verified authoring authority")
+            })?;
+        anyhow::ensure!(
+            crate::identity::device_directory::restore_persisted_device_authoring_authority(
+                epoch, authority, &device, &persisted,
+            ),
+            "device authoring refresh crossed its session or authority fence"
+        );
+        if let Some(store) = self.state_store.as_ref() {
+            anyhow::ensure!(
+                store
+                    .read(crate::state::LocalStateStore::active_authority)
+                    .as_ref()
+                    == Some(authority),
+                "device authoring refresh crossed its account fence"
+            );
+            store.write(|state| state.set_device_authoring_authority(Some(persisted)));
+        }
         crate::event_signer::cached_active_event_proof_context(digest_suite)
             .map_err(|error| anyhow::anyhow!("{error}"))
     }
@@ -1381,6 +1455,19 @@ impl EventSubmitter {
 
     /// Submit one user write.
     pub(crate) async fn submit_sdk_event(
+        &self,
+        operation: &LocalOperation,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let result = self.submit_sdk_event_inner(operation).await;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        if let Err(error) = &result {
+            tracing::warn!(kind = %operation.intent().kind().as_str(), error = %error,
+                "ordinary Event submission failed");
+        }
+        result
+    }
+
+    async fn submit_sdk_event_inner(
         &self,
         operation: &LocalOperation,
     ) -> anyhow::Result<SubmitEventResult> {
@@ -2506,17 +2593,85 @@ impl EventSubmitter {
         if !self.event_enters_encrypted_scope(intent).await? {
             return Ok(());
         }
-        let accepted_principal_control = recovery_gate_cache_key(intent).is_some_and(|key| {
+        let authority = self.authority()?;
+        let cache_key = recovery_gate_cache_key(authority, intent);
+        let active_endpoint = crate::secure_key_store::active_device_seed_scope();
+        if cache_key.is_some() {
+            anyhow::ensure!(
+                active_endpoint.as_ref().is_some_and(|endpoint| {
+                    endpoint.authority == *authority
+                        && recovery_gate_account_cache_key(authority, endpoint.device_id.as_str())
+                            == cache_key
+                }) && self.state_store.as_ref().is_some_and(|store| {
+                    store.read(|state| state.active_authority().as_ref() == Some(authority))
+                }),
+                "recovery-material gate requires the active Account and Device context"
+            );
+        }
+        let mut accepted_principal_control = cache_key.as_ref().is_some_and(|key| {
             verified_recovery_gate_cache()
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .contains(&key)
+                .contains(key)
         });
+        // Cold boot may reach authoring before the UI recovery effect has
+        // verified the durable evidence. Resolve that same evidence here;
+        // neither a local marker nor an active policy alone opens the gate.
+        if !accepted_principal_control {
+            let endpoint = crate::secure_key_store::active_device_seed_scope();
+            let evidence = self.state_store.as_ref().and_then(|store| {
+                store.read(|state| {
+                    (state.active_authority().as_ref() == Some(authority))
+                        .then(|| state.recovery_material_evidence())
+                        .flatten()
+                })
+            });
+            if let (Some(key), Some(endpoint), Some(evidence)) =
+                (cache_key.as_ref(), endpoint.as_ref(), evidence.as_ref())
+            {
+                anyhow::ensure!(
+                    endpoint.authority == *authority
+                        && evidence.account_id == *authority
+                        && evidence.device_id == endpoint.device_id,
+                    "recovery-material evidence belongs to another Account or Device"
+                );
+                let api = crate::transport::TransportClient::from_http(
+                    self.http.clone(),
+                    crate::transport::RequestContext::new(""),
+                );
+                crate::recovery_flow::verify_recovery_material_evidence(&api, evidence).await?;
+                anyhow::ensure!(
+                    self.state_store
+                        .as_ref()
+                        .is_some_and(|store| store.read(|state| {
+                            state.active_authority().as_ref() == Some(authority)
+                                && state.recovery_material_evidence().as_ref() == Some(evidence)
+                        }))
+                        && crate::secure_key_store::active_device_seed_scope().as_ref()
+                            == Some(endpoint),
+                    "recovery-material context changed during verification"
+                );
+                verified_recovery_gate_cache()
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(key.clone());
+                accepted_principal_control = true;
+            }
+        }
         let policy: arkret_models_crypto::RecoveryPolicyActiveOutcome = self
             .http
             .get("/_arkret/root/identity/recovery-policy")
             .await
             .map_err(anyhow::Error::from)?;
+        if cache_key.is_some() {
+            anyhow::ensure!(
+                crate::secure_key_store::active_device_seed_scope() == active_endpoint
+                    && self.state_store.as_ref().is_some_and(|store| {
+                        store.read(|state| state.active_authority().as_ref() == Some(authority))
+                    }),
+                "recovery-material context changed during policy verification"
+            );
+        }
         match crate::recovery_flow::first_backup_gate_status(accepted_principal_control, &policy) {
             crate::recovery_flow::FirstBackupGateStatus::Satisfied => Ok(()),
             crate::recovery_flow::FirstBackupGateStatus::Blocked(reason) => {

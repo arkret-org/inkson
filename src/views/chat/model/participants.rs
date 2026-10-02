@@ -507,13 +507,21 @@ pub(crate) fn mention_candidate_for_participant(
         });
     }
 
-    let handle_label = mention_label_for_participant(participant)?;
-    let display_name = handle_label.clone();
+    // An authorized roster's complete AccountId remains selectable even when
+    // handle resolution is unavailable. Never turn the fallback into a handle
+    // claim; mark its display as unresolved (identity-handles.md section 3.8).
+    let (display_name, subtitle) = match mention_label_for_participant(participant) {
+        Some(handle) => (handle, String::new()),
+        None => (
+            short_principal_label(participant.principal_id.as_str()),
+            crate::i18n::tr("identity.tier.unresolved"),
+        ),
+    };
     Some(crate::messaging::mentions::MentionCandidate {
         subject_account_id,
+        insert_label: display_name.clone(),
         display_name,
-        insert_label: handle_label,
-        subtitle: String::new(),
+        subtitle,
         is_agent: false,
         controller_subject_account_id: None,
         controller_handle_at_time: String::new(),

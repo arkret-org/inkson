@@ -2920,6 +2920,7 @@ pub fn KanbanPanel(
                     synthesis_entries: synthesis_entries_memo,
                     selected_scope_security_encrypted,
                     selected_scope_security_encrypted_or_secure,
+                    realm_content_write_ready: card_write_ready,
                     projected_strand_ids: projected_strand_ids.clone(),
                 }
             }

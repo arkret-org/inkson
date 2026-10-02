@@ -376,11 +376,27 @@ async fn fetch_route_material_from_did(
     did: &Did,
     now: DateTime<Utc>,
 ) -> anyhow::Result<FetchedRouteMaterial> {
+    let candidate =
+        authenticated_candidate_from_did(http, service_id, MEDIA_SERVICE_KIND, did, now).await?;
+    fetch_route_describe(http, candidate, now).await
+}
+
+pub(crate) async fn authenticated_candidate_from_did(
+    http: &reqwest::Client,
+    service_id: &DidCoreId,
+    service_kind: &str,
+    did: &Did,
+    now: DateTime<Utc>,
+) -> anyhow::Result<ServiceRouteCandidate> {
+    anyhow::ensure!(
+        arkret_sdk::project_did_to_core_id(did)? == *service_id,
+        "service method does not bind the requested service"
+    );
     let (current, log_entries, witness_records) = fetch_current_service_material(http, did).await?;
     let resolution = match did.method() {
         "webvh" => arkret_identity::build_authenticated_webvh_service_resolution(
             service_id.clone(),
-            MEDIA_SERVICE_KIND.into(),
+            service_kind.to_owned(),
             current.document.clone(),
             log_entries,
             witness_records,
@@ -388,14 +404,14 @@ async fn fetch_route_material_from_did(
         )?,
         "web" => arkret_identity::build_authenticated_did_web_service_resolution(
             service_id.clone(),
-            MEDIA_SERVICE_KIND.into(),
+            service_kind.to_owned(),
             current.document.clone(),
             now,
         )?,
         _ => anyhow::bail!("unsupported persisted service method"),
     };
     let candidate = garth::authenticate_fetched_resolution(resolution, current, now)?;
-    fetch_route_describe(http, candidate, now).await
+    Ok(candidate)
 }
 
 async fn fetch_route_material_from_origin(

@@ -154,6 +154,68 @@ impl LocalStateStore {
 
     // ── Contact remarks (spec client-preferences.md §3.6) ─
 
+    /// Rebuild the transient holder-private labels before resuming a saved
+    /// Account cursor. The encrypted accepted Events are already retained;
+    /// an up-to-date cursor need not deliver them again after process restart.
+    pub(crate) fn restore_contact_remarks_from_retained_account_data(
+        &mut self,
+        authority: &arkret_sdk::AccountId,
+    ) -> usize {
+        if self.active_authority().as_ref() != Some(authority) {
+            return 0;
+        }
+        self.ensure_cached_loaded();
+        if self.contact_remarks_restored_for.as_ref() == Some(authority) {
+            return 0;
+        }
+        let Ok(namespace_key) = crate::account_data::account_data_namespace_key(authority) else {
+            // A locked account is restored by the existing unlock flow.
+            return 0;
+        };
+        let mut restored = 0;
+        for event in self.current_account_data_events() {
+            if event.kind.as_str() != "ak.account_data.set"
+                || event.actor_id != arkret_sdk::ActorId::account(authority.clone())
+            {
+                continue;
+            }
+            let Some(key) = event.payload.get("key").and_then(Value::as_str) else {
+                continue;
+            };
+            if crate::account_data::principal_key_from_contact_remark_key(key).is_none() {
+                continue;
+            }
+            let remark =
+                crate::account_data::decrypt_account_data_entry(authority, key, &event.payload)
+                    .and_then(|body| {
+                        serde_json::from_value::<crate::account_data::ContactRemark>(body)
+                            .map_err(Into::into)
+                    });
+            let Ok(remark) = remark else {
+                continue;
+            };
+            if remark.is_empty()
+                || remark
+                    .validate_for_account_data_key(&namespace_key, key)
+                    .is_err()
+            {
+                continue;
+            }
+            // A local writer may have accepted a newer value before its Account
+            // delta arrives. Retained older evidence cannot overwrite it.
+            if let std::collections::btree_map::Entry::Vacant(slot) = self
+                .cached
+                .contact_remarks
+                .entry(remark.subject.principal_id.to_string())
+            {
+                slot.insert(remark);
+                restored += 1;
+            }
+        }
+        self.contact_remarks_restored_for = Some(authority.clone());
+        restored
+    }
+
     pub fn contact_remark(&self, actor_id: &str) -> Option<crate::account_data::ContactRemark> {
         self.load().contact_remarks.get(actor_id).cloned()
     }
@@ -243,6 +305,9 @@ impl LocalStateStore {
         remark: crate::account_data::ContactRemark,
     ) {
         self.ensure_cached_loaded();
+        if let Some(authority) = self.active_authority() {
+            self.restore_contact_remarks_from_retained_account_data(&authority);
+        }
         let actor_id = actor_id.into();
         if remark.is_empty() {
             self.cached.contact_remarks.remove(&actor_id);

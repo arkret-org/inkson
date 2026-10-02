@@ -442,7 +442,10 @@ pub(super) async fn inject_test_session_grant(
         .and_then(Value::as_bool)
         == Some(true)
     {
-        crate::event_submit::remember_verified_recovery_gate(principal_did.as_str(), device_id);
+        crate::event_submit::remember_verified_recovery_gate(
+            &expected_account.authority,
+            device_id,
+        );
     }
     for (fixture_field, plain_local_data_key) in [
         ("local_recovery_state", "recovery.state.v1"),

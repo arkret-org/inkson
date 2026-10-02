@@ -974,6 +974,7 @@ mod tests {
             continuity_evidence: None,
             direct_conversation: None,
             contact_agent_projections: Vec::new(),
+            peer_endpoint: None,
         };
         assert!(super::contact_grants_me_invite(&row));
     }

@@ -165,7 +165,7 @@ pub(super) fn ChatEffects(
 
     {
         let realm = selected_realm_id.clone();
-        use_effect(move || {
+        use_effect(use_reactive(&realm, move |realm| {
             let _live_epoch = realm_live_epoch();
             let _sync_cursor = sync_cursor();
             let strand = selected_channel();
@@ -189,7 +189,7 @@ pub(super) fn ChatEffects(
                     entries: saved_entries,
                 });
             }
-        });
+        }));
     }
 
     let authority_for_connectivity = authority.clone();
@@ -204,10 +204,12 @@ pub(super) fn ChatEffects(
                     event_sink.emit(ChatProjectionEvent::Connectivity(online));
                 }
                 let strand_for_connectivity = selected_channel();
+                let queue_identity_state = state_store.peek().load();
                 if let Ok(next) = crate::event_submit::pending_chat_outbound_local_operation_ids(
                     &authority_for_connectivity,
                     &realm_for_connectivity,
                     &strand_for_connectivity,
+                    &queue_identity_state,
                 )
                 .await
                     && *queued_outbound_local_operation_ids.peek() != next

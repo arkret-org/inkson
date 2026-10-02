@@ -18,6 +18,7 @@ pub(super) struct CardDetailContext {
     pub synthesis_entries: Memo<Vec<CardSynthesisTrackEntry>>,
     pub selected_scope_security_encrypted: Option<bool>,
     pub selected_scope_security_encrypted_or_secure: bool,
+    pub realm_content_write_ready: bool,
     pub projected_strand_ids: BTreeSet<String>,
 }
 
@@ -181,6 +182,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         synthesis_entries: synthesis_entries_memo,
         selected_scope_security_encrypted,
         selected_scope_security_encrypted_or_secure,
+        realm_content_write_ready,
         projected_strand_ids,
     } = context;
     // Keep validation at the component boundary; local view helpers consume
@@ -637,6 +639,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             variant: ButtonVariant::Secondary,
                                                             class: "card-detail-action-menu-item",
                                                             "data-testid": "card-detail-menu-edit-button",
+                                                            disabled: !card_detail_write_ready(card),
                                                             onclick: {
                                                                 let current = card.clone();
                                                                 move |_| {
@@ -775,6 +778,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             variant: ButtonVariant::Secondary,
                                                             class: "card-detail-mini-action card-detail-edit-action",
                                                             "data-testid": "card-detail-edit-button",
+                                                            disabled: !card_detail_write_ready(card),
                                                             onclick: {
                                                                 let current = card.clone();
                                                                 move |_| {
@@ -823,7 +827,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             }
                                                         }
                                                         CardDetailEditActions {
-                                                                    save_disabled: !detail_send_ready || !card_detail_write_ready(&card),
+                                                            save_disabled: !detail_send_ready || !card_detail_write_ready(card) || !realm_content_write_ready,
                                                             status: card_detail_edit_status(),
                                                             on_save: {
                                                                 let base = base_url.clone();
@@ -1006,7 +1010,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     }
                                                                 }
                                                                 CardDetailEditActions {
-                                                                    save_disabled: !detail_send_ready || !card_detail_write_ready(&card),
+                                                                    save_disabled: !detail_send_ready || !card_detail_write_ready(card) || !realm_content_write_ready,
                                                                     status: card_detail_edit_status(),
                                                                     on_save: {
                                                                         let base = base_url.clone();
@@ -1089,6 +1093,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         variant: ButtonVariant::Secondary,
                                                                         class: "card-detail-mini-action",
                                                                         "data-testid": "card-detail-edit-description-button",
+                                                                        disabled: !card_detail_write_ready(card),
                                                                         onclick: {
                                                                             let current = card.clone();
                                                                             move |_| {
@@ -1336,6 +1341,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             r#type: "button",
                                                                                             class: "card-detail-mini-action card-synthesis-entry-edit",
                                                                                             "data-testid": "card-detail-edit-synthesis-button",
+                                                                                            disabled: !card_detail_write_ready(track_card),
                                                                                             onclick: {
                                                                                                 let current = track_card.clone();
                                                                                                 let entry_id = entry.id.clone();
@@ -1379,7 +1385,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             }
                                                                                         }
                                                                                         CardDetailEditActions {
-                                                                    save_disabled: !detail_send_ready || !card_detail_write_ready(&card),
+                                                                                            save_disabled: !detail_send_ready || !card_detail_write_ready(card) || (!sidecar_track_active && !realm_content_write_ready),
                                                                                             status: card_detail_edit_status(),
                                                                                             on_save: {
                                                                                                 let base = base_url.clone();
@@ -1471,7 +1477,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     }
                                                                 }
                                                                 CardDetailEditActions {
-                                                                    save_disabled: !detail_send_ready || !card_detail_write_ready(&card),
+                                                                    save_disabled: !detail_send_ready || !card_detail_write_ready(card) || (!sidecar_track_active && !realm_content_write_ready),
                                                                     status: card_detail_edit_status(),
                                                                     on_save: {
                                                                         let base = base_url.clone();
@@ -1540,6 +1546,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     variant: ButtonVariant::Secondary,
                                                                     class: "card-detail-mini-action",
                                                                     "data-testid": "card-detail-new-synthesis-button",
+                                                                    disabled: !card_detail_write_ready(track_card),
                                                                     onclick: {
                                                                         let current = track_card.clone();
                                                                         move |_| {
@@ -2461,6 +2468,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             r#type: "button",
                                                                                             class: "card-detail-mini-action",
                                                                                             "data-testid": "card-detail-edit-calendar-button",
+                                                                                            disabled: !card_detail_write_ready(card),
                                                                                             "aria-haspopup": "dialog",
                                                                                             "aria-expanded": "false",
                                                                                             onclick: {

@@ -714,6 +714,93 @@ fn metadata_recovery_candidate_prompts_only_without_a_verified_local_secret() {
 }
 
 #[test]
+fn complete_account_only_recovery_material_allows_the_first_mls_backup() {
+    let (_sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
+    let body = crate::key_backup::build_recovery_public_key_backup_body_in_series(
+        BACKUP_ID,
+        &arkret_sdk::ActorId::account(authority()),
+        DEVICE,
+        &pk,
+        "did:web:alice.example#recovery",
+        arkret_sdk::BackupKind::SecretStorage,
+        "recovery_vault",
+        &arkret_sdk::SecretStorageContentIndex {
+            item_kind: arkret_sdk::SecretStorageItemKind::PrivateAccountState,
+            secret_id: "account_state".to_owned(),
+        },
+        b"private account state",
+        None,
+        ("ak:policy:01964137-0000-7000-8000-0000000000a1", 3),
+        None,
+        None,
+        &test_auth(),
+        &test_sign,
+        None,
+    )
+    .unwrap();
+    let body = key_backup_wire(&body);
+    let material = payload_with_current_series(vec![body.clone()]);
+    let mut metadata = material.clone();
+    metadata["backups"] =
+        serde_json::json!([crate::test_support::key_backup_summary_fixture(&body)]);
+    metadata["has_more"] = false.into();
+    let store = MemorySecureKeyStore::new();
+    crate::mls::runtime::store_account_mls_secret(&store, &authority(), ACCOUNT_SECRET).unwrap();
+    let required = |full| {
+        super::restore::mls_restore_prompt_required_after_material(
+            &metadata,
+            full,
+            &store,
+            &authority(),
+            ACTOR,
+            DEVICE,
+        )
+    };
+    assert!(required(None));
+    assert!(!required(Some(&material)));
+    assert!(!crate::mls::runtime::account_mls_secret_verified(&store, &authority()).unwrap());
+
+    let mut incomplete = material.clone();
+    incomplete["backups"] = serde_json::json!([]);
+    assert!(required(Some(&incomplete)));
+    let mut changed_cut = material.clone();
+    changed_cut["active_series"]["authority_commit_id"] =
+        serde_json::json!(arkret_sdk::RealmCommitId::from_digest([0x59; 32]));
+    assert!(required(Some(&changed_cut)));
+    let mut foreign = material.clone();
+    foreign["backups"][0]["actor_id"]["account_id"]["station_id"] =
+        "ak:did_core:web:other.example".into();
+    assert!(required(Some(&foreign)));
+    let mut partial = material.clone();
+    partial["has_more"] = true.into();
+    assert!(required(Some(&partial)));
+    let mut swapped = material.clone();
+    swapped["backups"][0]["ciphertext_digest"] =
+        serde_json::json!(arkret_sdk::Hash::new(format!("sha256:{}", "42".repeat(32))).unwrap());
+    assert!(required(Some(&swapped)));
+}
+
+#[test]
+fn complete_mls_recovery_material_keeps_an_unverified_secret_locked() {
+    let body = recovery_hpke_backup();
+    let material = payload_with_current_series(vec![body.clone()]);
+    let mut metadata = material.clone();
+    metadata["backups"] =
+        serde_json::json!([crate::test_support::key_backup_summary_fixture(&body)]);
+    metadata["has_more"] = false.into();
+    let store = MemorySecureKeyStore::new();
+    crate::mls::runtime::store_account_mls_secret(&store, &authority(), ACCOUNT_SECRET).unwrap();
+    assert!(super::restore::mls_restore_prompt_required_after_material(
+        &metadata,
+        Some(&material),
+        &store,
+        &authority(),
+        ACTOR,
+        DEVICE,
+    ));
+}
+
+#[test]
 fn backup_prompt_required_when_local_secret_and_no_server_backup() {
     // User has used encryption (local secret present) but never backed it
     // up to the server -> prompt them to set a recovery passphrase.

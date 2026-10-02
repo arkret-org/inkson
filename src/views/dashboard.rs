@@ -868,6 +868,7 @@ mod tests {
                     state: arkret_sdk::DirectConversationSummaryState::Found,
                 }),
                 contact_agent_projections: Vec::new(),
+                peer_endpoint: None,
             }
         }
 

@@ -21,6 +21,14 @@ fn url_host_is_safe(url: &str) -> bool {
         return false;
     }
     host_is_safe_for_outbound(host)
+        || (cfg!(any(
+            debug_assertions,
+            feature = "wasm-localstorage-secrets-test"
+        )) && (host == "localhost"
+            || host.ends_with(".localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())))
 }
 
 /// Fetch `url` over `http` with an enforced response-size ceiling and a JSON
@@ -42,10 +50,21 @@ fn url_host_is_safe(url: &str) -> bool {
 /// failure is fail-closed (`None`) before a socket is opened.
 #[cfg(not(target_arch = "wasm32"))]
 async fn locked_did_fetch_client(url: &str) -> Option<reqwest::Client> {
-    let locked = arkret_egress_reqwest::EgressGuard::public_https()
-        .lock_str_async(url, "did fetch")
-        .await
-        .ok()?;
+    // Local developer and browser fixture builds follow the SDK client's loopback policy.
+    // TLS validation remains enabled; release builds require public HTTPS.
+    let parsed = url::Url::parse(url).ok()?;
+    if parsed.scheme() != "https" {
+        return None;
+    }
+    let guard = if cfg!(any(
+        debug_assertions,
+        feature = "wasm-localstorage-secrets-test"
+    )) {
+        arkret_egress_reqwest::EgressGuard::local_development()
+    } else {
+        arkret_egress_reqwest::EgressGuard::public_https()
+    };
+    let locked = guard.lock_str_async(url, "did fetch").await.ok()?;
     locked
         .apply_to_client_builder(
             reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()),

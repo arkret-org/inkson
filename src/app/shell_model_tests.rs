@@ -339,6 +339,7 @@ fn contact_row(principal: &str) -> crate::models::ContactListRow {
         continuity_evidence: None,
         direct_conversation: None,
         contact_agent_projections: Vec::new(),
+        peer_endpoint: None,
     }
 }
 

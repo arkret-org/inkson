@@ -285,8 +285,9 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                             }
                         }
                         let should_unlock = {
-                            crate::mls::account_recovery::mls_restore_prompt_required(
+                            crate::mls::account_recovery::mls_restore_prompt_required_after_material(
                                 &payload,
+                                history_payload_for_local_restore.as_ref(),
                                 secure_store.as_ref(),
                                 &authority,
                                 &actor,

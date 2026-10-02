@@ -185,6 +185,12 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let typing_throttle = controller.typing_throttle;
     let composer_class = "discussion-composer";
     let visible_channels_empty = channels.read().is_empty();
+    let selected_channel_unavailable = selected_channel_info
+        .as_ref()
+        .is_none_or(|channel| channel.strand_id != selected_channel())
+        || !channels()
+            .iter()
+            .any(|channel| channel.strand_id == selected_channel());
     let send_secure_variant = if selected_channel_security_encrypted {
         ButtonVariant::Primary
     } else {
@@ -202,6 +208,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     };
     let sidecar_send_blocked = sidecar_send_block_reason.is_some();
     let active_sidecar_present = active_sidecar_session.is_some();
+    // content-types section 4.9 permits formal polls only in plaintext scopes.
+    let polls_available = !selected_channel_security_encrypted && !active_sidecar_present;
     // Realm creation exposes the discussion surface as soon as the Genesis
     // Event is accepted, while the background verifier may still be advancing
     // the locally pinned governance checkpoint to the Seal that covers it.
@@ -319,6 +327,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let plaintext_sidecar_did = sidecar_did.clone();
     let secure_sidecar_authority = sidecar_authority.clone();
     let secure_sidecar_did = sidecar_did;
+    let ordinary_plaintext_send_key = "ordinary-plaintext-send";
+    let ordinary_encrypted_send_key = "ordinary-encrypted-send";
     rsx! {
             if !visible_channels_empty {
             div { class: "{composer_class}", "data-testid": "chat-composer",
@@ -696,12 +706,13 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             },
                             UiIcon { name: "plus" }
                         }
-                        if !selected_channel_security_encrypted && active_sidecar_session.is_none() {
+                        if polls_available {
                             Button {
                                 variant: ButtonVariant::Secondary,
                                 r#type: "button",
                                 class: "composer-tool-button",
                                 "data-testid": "open-poll-composer-button",
+                                disabled: selected_channel_unavailable || selected_realm_pending_mls_binding,
                                 title: "Create poll",
                                 "aria-label": "Create poll",
                                 onclick: move |_| {
@@ -735,12 +746,13 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         }
                         if attachment_menu_open() {
                             div { class: "attachment-menu",
-                                if !selected_channel_security_encrypted && active_sidecar_session.is_none() {
+                                if polls_available {
                                     Button {
                                         variant: ButtonVariant::Secondary,
                                         r#type: "button",
                                         class: "attachment-menu-item",
                                         "data-testid": "attachment-menu-poll",
+                                        disabled: selected_channel_unavailable || selected_realm_pending_mls_binding,
                                         onclick: move |_| {
                                             attachment_menu_open.set(false);
                                             poll_draft.set(Some(
@@ -793,7 +805,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         "{compose_upload_status}"
                     }
                 }
-                if !selected_channel_security_encrypted && active_sidecar_session.is_none() {
+                if polls_available {
                 if let Some(draft) = poll_draft.read().clone() {
                     div { class: "poll-composer",
                         "data-testid": "poll-composer",
@@ -838,7 +850,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 variant: ButtonVariant::Primary,
                                 r#type: "button",
                                 "data-testid": "send-poll-button",
-                                disabled: !draft.is_sendable(),
+                                disabled: !draft.is_sendable() || selected_channel_unavailable || selected_realm_pending_mls_binding,
                                 onclick: {
                                     let base = base_url.clone();
                                     let realm = selected_realm_id.clone();
@@ -962,17 +974,15 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 div { class: "actions",
                     if !selected_channel_security_encrypted && active_sidecar_session.is_none() {
                     Button {
+                        key: "{ordinary_plaintext_send_key}",
                         variant: ButtonVariant::Primary,
                         "data-testid": "send-chat-button",
-                        disabled: sidecar_send_blocked || sidecar_route_pending(),
+                        disabled: sidecar_send_blocked || sidecar_route_pending() || selected_channel_unavailable || selected_realm_pending_mls_binding,
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
                             let actor = principal_id.clone();
                             let sidecar_device_id = device_id.clone();
-                            let selected_circle = selected_channel_info.as_ref()
-                                .and_then(|channel| channel.scope_circle.as_ref())
-                                .map(|circle| circle.circle_id.clone());
                             move |_| {
                                 let authority_for_sidecar = plaintext_sidecar_authority.clone();
                                 let did_for_sidecar = plaintext_sidecar_did.clone();
@@ -1105,7 +1115,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         api_token,
                                         wait_for,
                                         realm_id: realm,
-                                        circle_id: selected_circle.clone(),
+                                        circle_id: channel.scope_circle.as_ref().map(|circle| circle.circle_id.clone()),
                                         strand_id,
                                         actor,
                                         local_id,
@@ -1122,6 +1132,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     }
                     }
                     Button {
+                        key: "{ordinary_encrypted_send_key}",
                         variant: send_secure_variant,
                         "data-testid": send_secure_testid,
                         "data-mls-binding-pending": selected_realm_pending_mls_binding.to_string(),
@@ -1134,7 +1145,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             creator_mls_bootstrap_pending,
                             sidecar_send_blocked,
                             sidecar_route_pending(),
-                        ),
+                        ) || (!active_sidecar_present && selected_channel_unavailable),
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();

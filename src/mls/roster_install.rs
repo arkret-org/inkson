@@ -14,16 +14,50 @@ use arkret_sdk::{
 /// verification; the current governance route only verifies the manifest.
 pub(crate) async fn install_welcome_roster_from_service(
     api: &crate::transport::TransportClient,
-    state: &crate::runtime::input::StateStoreHandle,
     group: &mut arkret_sdk::ArkretMlsGroup,
     accepted_commit: &arkret_wire::CommittedEventFullView,
     authority: &arkret_sdk::AccountId,
 ) -> Result<(), String> {
     let transition = crate::mls::accepted_artifact::accepted_mls_transition(accepted_commit)?;
     let scope = &transition.effective_scope;
-    let current = state
-        .read(|store| store.current_mls_group_for_scope(scope))
-        .ok_or_else(|| "MLS roster requires the verified scope current".to_owned())?;
+    let realm_id = scope
+        .realm_id_opt()
+        .ok_or_else(|| "MLS roster requires a Realm or Circle scope".to_owned())?;
+    let http = api.http();
+    let authority_client = garth::AuthorityClient::new(http.clone());
+    let (bundle, freshness, mut replica) =
+        crate::realm_events_engine::fresh_verified_realm(&authority_client, http, realm_id)
+            .await
+            .map_err(|error| format!("verify current MLS governance Station: {error}"))?;
+    let snapshot = http
+        .realm_state_snapshot_head(realm_id)
+        .await
+        .map_err(|error| format!("read MLS roster current Snapshot: {error}"))?;
+    let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, Some(&snapshot))
+        .await
+        .map_err(|error| format!("read MLS roster Station history: {error}"))?;
+    let freshness =
+        arkret_identity::RealmAuthorityFreshness::new(chrono::Utc::now(), freshness.expected_nonce);
+    replica
+        .install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)
+        .map_err(|error| format!("verify MLS roster current Snapshot: {error}"))?;
+    let groups = snapshot
+        .current_state_entries
+        .iter()
+        .filter_map(|row| match row {
+            arkret_wire::TypedCurrentResult::Value {
+                selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref },
+                value,
+                ..
+            } if scope_ref == scope => Some(value),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [value] = groups.as_slice() else {
+        return Err("MLS roster has no unique signed scope current".to_owned());
+    };
+    let current: arkret_wire::MlsGroupCurrent = serde_json::from_value((*value).clone())
+        .map_err(|error| format!("decode signed MLS scope current: {error}"))?;
     if accepted_commit.event.kind != arkret_sdk::EventKind::MlsCommit
         || &current.effective_scope != scope
         || current.epoch < transition.next_epoch
@@ -32,27 +66,10 @@ pub(crate) async fn install_welcome_roster_from_service(
     {
         return Err("MLS roster target differs from the accepted Welcome cut".to_owned());
     }
-    let realm_id = scope
-        .realm_id_opt()
-        .ok_or_else(|| "MLS roster requires a Realm or Circle scope".to_owned())?;
-    let basis = state
-        .read(|store| store.realm_authority_basis(realm_id.as_str()))
-        .ok_or_else(|| "MLS roster requires the verified Realm authority basis".to_owned())?;
-    let http = api.http();
-    let authority_client = garth::AuthorityClient::new(http.clone());
-    let (bundle, ..) =
-        crate::realm_events_engine::fresh_verified_realm(&authority_client, http, realm_id)
-            .await
-            .map_err(|error| format!("verify current MLS governance Station: {error}"))?;
-    if basis.current_service_id != bundle.current_service_id
-        || basis.current_generation != bundle.current_generation
-    {
-        return Err("MLS roster Realm authority changed since verified current".to_owned());
-    }
     let governance_resolution: AuthenticatedServiceResolution =
         serde_json::from_value(bundle.current_route_record)
             .map_err(|error| format!("MLS governance route is not a closed resolution: {error}"))?;
-    if governance_resolution.service_id != basis.current_service_id {
+    if governance_resolution.service_id != bundle.current_service_id {
         return Err("MLS governance resolution belongs to another Station".to_owned());
     }
     let request = MlsRosterAuthorityReadRequestBody {
@@ -77,7 +94,7 @@ pub(crate) async fn install_welcome_roster_from_service(
     arkret_sdk::verify_mls_roster_authority_manifest_signature(
         manifest,
         &request,
-        &basis.current_service_id,
+        &bundle.current_service_id,
         &current.current_mls_commit_event_ref,
         &governance_resolution,
     )
@@ -85,7 +102,7 @@ pub(crate) async fn install_welcome_roster_from_service(
     arkret_sdk::verify_mls_roster_authority_pages(
         &pages,
         &request,
-        &basis.current_service_id,
+        &bundle.current_service_id,
         &current.current_mls_commit_event_ref,
         &governance_resolution,
     )
@@ -99,7 +116,7 @@ pub(crate) async fn install_welcome_roster_from_service(
         group,
         &pages,
         &request,
-        &basis.current_service_id,
+        &bundle.current_service_id,
         &current.current_mls_commit_event_ref,
         &governance_resolution,
         &material,

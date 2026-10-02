@@ -460,6 +460,24 @@ async fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
     .unwrap()]);
     // Welcome validation and application belong to the MLS runtime sync path.
     // The Kanban writer consumes only checkpoint-proven active group state.
+    assert!(crate::mls::runtime::has_pending_mls_welcome_for_endpoint(
+        &state,
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
+    ));
+    assert!(!crate::mls::runtime::has_pending_mls_welcome_for_endpoint(
+        &state,
+        &fixture::authority(bob_actor),
+        &fixture::device_id("ak:device:01904100-0000-7000-8000-0000000000b9",),
+    ));
+    let mut other_station = fixture::authority(bob_actor);
+    other_station.station_id =
+        arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example".to_owned()).unwrap();
+    assert!(!crate::mls::runtime::has_pending_mls_welcome_for_endpoint(
+        &state,
+        &other_station,
+        &fixture::device_id(bob_device),
+    ));
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     crate::mls::runtime::store_account_mls_secret(
         &secure,
