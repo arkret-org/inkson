@@ -372,12 +372,24 @@ impl MlsEndpoints<'_> {
         let expected_service_binding = body.service_binding.clone();
         let expected_request_digest =
             arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(&body)?)?;
-        let outcome = self
-            .transport
-            .http()
-            .keypackages_claim(&body)
-            .await
-            .map_err(anyhow::Error::from)?;
+        // A remote claim is relayed durably. Replay the exact frozen body
+        // until its result arrives; re-signing or minting a new request would
+        // reserve a different KeyPackage on every retry.
+        let deadline = crate::clock::now_utc() + chrono::Duration::seconds(30);
+        let outcome = loop {
+            match self.transport.http().keypackages_claim(&body).await {
+                Ok(outcome) => break outcome,
+                Err(error)
+                    if source_id.as_str() != destination_id
+                        && error.error_code()
+                            == Some(arkret_sdk::ErrorCode::FailedPrecondition)
+                        && crate::clock::now_utc() < deadline =>
+                {
+                    crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(500)).await;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
         outcome
             .validate_shape()
             .map_err(|error| anyhow::anyhow!("KeyPackage claim outcome is invalid: {error}"))?;
@@ -392,12 +404,25 @@ impl MlsEndpoints<'_> {
                 "KeyPackage claim receipt does not bind the exact authorized request and service route"
             );
         }
-        let destination_resolution = self
-            .transport
-            .http()
-            .open_service_resolution(&receipt.destination_id)
-            .await
-            .map_err(anyhow::Error::from)?;
+        let destination_resolution = if receipt.destination_id == source_id {
+            self.transport
+                .http()
+                .open_service_resolution(&receipt.destination_id)
+                .await?
+        } else {
+            // The receipt's method is only a DID locator. Its native history
+            // and exact service identity supply the key independently.
+            let did = arkret_sdk::verification_method_did(receipt.signature.kid.as_str())?;
+            crate::media::service_route::authenticated_candidate_from_did(
+                &reqwest::Client::new(),
+                &receipt.destination_id,
+                "station",
+                &did,
+                crate::clock::now_utc(),
+            )
+            .await?
+            .resolution
+        };
         arkret_sdk::verify_peer_keypackage_claim_receipt_signature(
             receipt,
             &destination_resolution,

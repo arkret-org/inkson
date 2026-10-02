@@ -700,6 +700,7 @@ mod petname_tests {
             continuity_evidence: None,
             direct_conversation: None,
             contact_agent_projections: Vec::new(),
+            peer_endpoint: None,
         }
     }
 

@@ -227,7 +227,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     Ok(Some(next_epoch))
 }
 
-/// Contact Event proofs identify the peer endpoint for a founding membership,
+/// The authenticated Contact list supplies the peer endpoint for a founding membership,
 /// which has no Realm invite/accept Event. This is only a claim selector: the
 /// current signed KeyPackage claim and governance proof still authorize Add.
 async fn direct_contact_claim_route(
@@ -243,47 +243,11 @@ async fn direct_contact_claim_route(
         .iter()
         .find(|row| row.peer.contact_actor_id() == *peer)
         .ok_or_else(|| anyhow::anyhow!("Direct Conversation peer has no accepted Contact row"))?;
-    let refs = [
-        row.request_event_ref.clone(),
-        row.response_event_ref.clone(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
-    anyhow::ensure!(
-        !refs.is_empty(),
-        "Contact has no accepted endpoint-bearing Event"
-    );
-    let mut resolved = Vec::with_capacity(refs.len());
-    for event_id in &refs {
-        if let Some(event) = http.committed_event_get(event_id).await?.reducer_input() {
-            resolved.push(event.clone());
-        }
-    }
-    let device = resolved
-        .iter()
-        .rev()
-        .find_map(|event| {
-            if event.actor_id != *peer || !refs.contains(&event.event_id) {
-                return None;
-            }
-            let expected = event.event_id.event_digest();
-            let actual = event
-                .event_digest_with_digest_suite(expected.digest_suite().ok()?)
-                .ok()?;
-            if actual != expected.as_str() {
-                return None;
-            }
-            crate::sync_parse::accepted_human_event_signing_device(event)
-        })
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Contact endpoint resolution returned {} Events, {} by the peer, {} with a device proof",
-                resolved.len(),
-                resolved.iter().filter(|event| event.actor_id == *peer).count(),
-                resolved.iter().filter(|event| crate::sync_parse::accepted_human_event_signing_device(event).is_some()).count(),
-            )
-        })?;
+    row.validate_shape()?;
+    let endpoint = row.peer_endpoint.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("accepted Contact has no verified peer endpoint selector")
+    })?;
+    let device = &endpoint.device_id;
     Ok(AcceptedInviteClaimRoute {
         destination_id: account.station_id.to_string(),
         target_device_id: Some(device.to_string()),

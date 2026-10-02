@@ -112,6 +112,7 @@ fn contact_remark_set_tombstone_and_display_name() {
         continuity_evidence: None,
         direct_conversation: None,
         contact_agent_projections: Vec::new(),
+        peer_endpoint: None,
     };
     store.replace_accepted_human_contacts(std::slice::from_ref(&accepted));
 
