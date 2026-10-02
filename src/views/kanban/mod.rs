@@ -900,13 +900,16 @@ pub fn KanbanPanel(
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let local_realm_id = local_projection_realm_id(&selected_realm_id, &projection_realm_id);
-    // Authoring uses the authenticated Station's current digest suite. The
-    // Realm events engine refreshes this bounded result independently of history.
-    // Durable same-operation retry still covers changes after the click.
-    let station_frontier_ready = state_store
-        .read()
-        .station_realm_digest_suite(&selected_realm_id)
-        .is_some();
+    // The Realm id fixes its digest suite, but a valid id alone does not
+    // establish authoring readiness. Wait for the verified current view after
+    // selection or Account invalidation, as EventSubmitter requires.
+    let realm_current_ready = {
+        let store = state_store.read();
+        store
+            .station_realm_digest_suite(&selected_realm_id)
+            .is_some()
+            && !store.realm_detail_invalidated(&selected_realm_id)
+    };
     let card_scope = arkret_sdk::RealmId::new(selected_realm_id.clone())
         .ok()
         .map(|realm_id| arkret_sdk::ScopeRef::Realm { realm_id });
@@ -915,7 +918,7 @@ pub fn KanbanPanel(
         card_scope,
         active_account.device_id.clone(),
     ) && event_write_ready
-        && station_frontier_ready;
+        && realm_current_ready;
     // The board id lives in the URL (`/kanban/<realm>/board/<board>` and
     // its `/task/<strand>` extension). Seeding `selected_board`
     // from the route — instead of always `board_options.first()` — is
@@ -1616,11 +1619,11 @@ pub fn KanbanPanel(
                                     Button {
                                         variant: ButtonVariant::Primary,
                                         "data-testid": "create-board-space-button",
-                                        disabled: !event_write_ready || !station_frontier_ready,
-                                        title: if station_frontier_ready {
+                                        disabled: !event_write_ready || !realm_current_ready,
+                                        title: if realm_current_ready {
                                             "Create Board"
                                         } else {
-                                            "Waiting for the Realm Station frontier"
+                                            "Waiting for Realm sync"
                                         },
                                         onclick: {
                                             let base = base_url.clone();

@@ -1169,32 +1169,14 @@ impl InksonAccountProjector {
     /// the canonical HTTPS client the rail keeps.
     async fn post_commit(&self, response: &AccountFrameStep) -> garth::Result<()> {
         let http = self.transport.http().http();
-        if !self.fence() {
-            return Ok(());
-        }
-        if self
-            .ctx
-            .state_store
-            .read(LocalStateStore::local_device_refresh_pending)
-            || changed_device_accounts(&response.device_lists())
-                .contains(&self.ctx.account.authority)
+        if !self
+            .drain_durable_outbound(
+                changed_device_accounts(&response.device_lists())
+                    .contains(&self.ctx.account.authority),
+            )
+            .await?
         {
-            match self.refresh_local_device_view(http).await {
-                Ok(true) => {}
-                Ok(false) => return Ok(()),
-                Err(error) => return self.defer(error),
-            }
-        }
-        let submitter = crate::event_submit::EventSubmitter::new(http.clone())
-            .with_state_store(self.ctx.state_store.clone());
-        if let Err(error) = submitter.drain_outbound().await {
-            tracing::debug!(
-                ?error,
-                "account post-commit deferred durable outbound drain"
-            );
-        }
-        if let Err(error) = submitter.drain_mls_outbound().await {
-            tracing::debug!(?error, "account post-commit deferred MLS outbound drain");
+            return Ok(());
         }
 
         let agent_evidence_changed =
@@ -1204,9 +1186,8 @@ impl InksonAccountProjector {
             )
             .await;
 
-        // A bounded account-sync poll is also the retry clock for durable
-        // outbound work. Its empty business delta must not suppress a due
-        // RetryAt item; projection work below still remains delta-driven.
+        // A durable frame can contain only batch context. Product projection
+        // remains delta-driven after the outbound retry pass above.
         if response.is_empty() {
             self.reconcile_mls_scopes(response).await;
             if agent_evidence_changed {
@@ -1228,6 +1209,39 @@ impl InksonAccountProjector {
 
         self.reconcile_mls_scopes(response).await;
         Ok(())
+    }
+
+    /// Retry durable sends only while the account and local device remain current.
+    async fn drain_durable_outbound(&self, device_view_changed: bool) -> garth::Result<bool> {
+        let http = self.transport.http().http();
+        if !self.fence() {
+            return Ok(false);
+        }
+        if self
+            .ctx
+            .state_store
+            .read(LocalStateStore::local_device_refresh_pending)
+            || device_view_changed
+        {
+            match self.refresh_local_device_view(http).await {
+                Ok(true) => {}
+                Ok(false) => return Ok(false),
+                Err(error) => {
+                    self.defer(error)?;
+                    return Ok(false);
+                }
+            }
+        }
+        let submitter = crate::event_submit::EventSubmitter::new(http.clone())
+            .with_state_store(self.ctx.state_store.clone());
+        if let Err(error) = submitter.drain_outbound().await {
+            tracing::debug!(?error, "account checkpoint deferred durable outbound drain");
+        }
+        if let Err(error) = submitter.drain_mls_outbound().await {
+            tracing::debug!(?error, "account checkpoint deferred MLS outbound drain");
+        }
+
+        Ok(true)
     }
 
     async fn reconcile_mls_scopes(&self, response: &AccountFrameStep) {
@@ -1338,6 +1352,12 @@ impl AccountBatchProjector for InksonAccountProjector {
         let result = self
             .blocklist_catchup
             .finish_checkpoint(durable, reset, self.fence());
+        // Catch-up/checkpoint control frames need no fabricated account delta.
+        // Their successful durable checkpoint is still the retry clock for
+        // queued work after a transient submission failure or a client restart.
+        if result.is_ok() && !reset && batch.frames.is_empty() {
+            self.drain_durable_outbound(false).await?;
+        }
         // Garth keeps the request's demand fixed for this subscription. Once
         // a newly invalidated detail frame is durable, the next request must
         // replace that detail baseline; the current long-poll cannot do it.
