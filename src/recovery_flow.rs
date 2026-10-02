@@ -756,8 +756,11 @@ mod tests {
             device_signing_key.verifying_key().as_bytes(),
         );
         let created_at = policy.issued_at + chrono::Duration::seconds(1);
-        let expires_at = chrono::DateTime::from_timestamp_millis(
-            (chrono::Utc::now() + chrono::Duration::minutes(15)).timestamp_millis(),
+        // Exercise a whole-second expiry: chrono's generic JSON serializer
+        // omits .000, whereas the wire contract requires millisecond precision.
+        let expires_at = chrono::DateTime::from_timestamp(
+            (chrono::Utc::now() + chrono::Duration::minutes(15)).timestamp(),
+            0,
         )
         .unwrap();
         let session: arkret_sdk::RecoverySession = serde_json::from_value(serde_json::json!({
@@ -801,9 +804,9 @@ mod tests {
             "publication_authority_context_digest": format!("sha256:{}", "ab".repeat(32)),
             "challenge": arkret_sdk::canonical::base64url_encode([2; 32]),
             "state": "pending",
-            "expires_at": expires_at,
-            "created_at": created_at,
-            "updated_at": created_at,
+            "expires_at": expires_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "created_at": created_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "updated_at": created_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         }))
         .unwrap();
         session.validate_shape().unwrap();
