@@ -80,6 +80,7 @@ fn circle_commit_restoration_uses_only_its_own_accepted_epoch() {
             circle_base,
         )
         .unwrap();
+    let before = state.mls_checkpoint_for_scope(&circle_scope).unwrap();
     let staged = force_epoch_rotation_commit_for_effective_scope(
         &state,
         &secure,
