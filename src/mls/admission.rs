@@ -8,6 +8,9 @@
 //! inviter installs its staged group state as soon as the submission is
 //! accepted rather than waiting for any recipient acknowledgement.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
+
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
@@ -15,6 +18,24 @@ use crate::mls::persistence::MlsLocalCheckpointEnvelope;
 use crate::operation::trim_realm_id;
 use crate::secure_key_store::SecureKeyStore;
 use crate::state::LocalStateStore;
+
+/// Serialize admission and coverage authoring against the same Realm's
+/// installed private state. Durable outbound ownership is checked under this
+/// lock so a restart cannot mint over a queued transition.
+pub(crate) fn mls_admission_authoring_lock(realm_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+    let mut locks = LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(realm_id).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(realm_id.to_owned(), Arc::downgrade(&lock));
+    lock
+}
 
 /// Build the Welcome deliveries once the Commit they bind has been authored.
 ///

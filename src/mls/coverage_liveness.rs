@@ -160,6 +160,8 @@ pub(crate) async fn ensure_mls_governance_coverage(
     let circle_id = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
+    let authoring_lock = crate::mls::admission::mls_admission_authoring_lock(realm_id);
+    let _authoring_guard = authoring_lock.lock().await;
     if state_store.read(|store| {
         store
             .mls_coverage_stale_reason(realm_id, circle_id)
@@ -175,7 +177,8 @@ pub(crate) async fn ensure_mls_governance_coverage(
     // Pending OpenMLS state is not permission to overwrite it or claim anew.
     let submitter = api
         .event_submitter()
-        .map_err(|error| format!("MLS coverage repair client: {error}"))?;
+        .map_err(|error| format!("MLS coverage repair client: {error}"))?
+        .with_state_store(state_store.clone());
     submitter
         .drain_mls_outbound()
         .await

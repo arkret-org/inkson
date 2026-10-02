@@ -7,21 +7,7 @@
 //! panel, and unrelated to how any of it is rendered.
 
 use super::*;
-
-pub(super) fn mls_admission_authoring_lock(realm_id: &str) -> Arc<tokio::sync::Mutex<()>> {
-    static LOCKS: OnceLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> = OnceLock::new();
-    let mut locks = LOCKS
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    locks.retain(|_, lock| lock.strong_count() > 0);
-    if let Some(lock) = locks.get(realm_id).and_then(Weak::upgrade) {
-        return lock;
-    }
-    let lock = Arc::new(tokio::sync::Mutex::new(()));
-    locks.insert(realm_id.to_owned(), Arc::downgrade(&lock));
-    lock
-}
+pub(super) use crate::mls::admission::mls_admission_authoring_lock;
 
 pub(crate) async fn submit_mls_admission_for_invitee(
     api: &crate::transport::TransportClient,
@@ -57,7 +43,9 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     if !needs_mls_admission {
         return Ok(None);
     }
-    let admission_submitter = api.event_submitter()?;
+    let admission_submitter = api
+        .event_submitter()?
+        .with_state_store(crate::app::runtime_adapter::state_store_handle(state_store));
     if admission_submitter
         .has_pending_mls_admission_for_realm(&realm_id)
         .await?
