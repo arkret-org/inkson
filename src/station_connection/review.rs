@@ -166,9 +166,10 @@ fn display_value(value: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use arkret_sdk::StationConnectionBinding;
     use serde_json::json;
+
+    use super::*;
 
     fn binding() -> StationConnectionBinding {
         serde_json::from_value(json!({

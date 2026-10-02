@@ -153,7 +153,10 @@ fn raw_operation_upsert_keeps_the_verified_envelope_under_a_later_holder_receipt
     let state = store.load();
     assert_eq!(state.raw_operations.len(), 1);
     assert_eq!(state.raw_operations[0].operation_id, "op-rsvp-local");
-    assert_eq!(state.raw_operations[0].payload["event"]["event_id"], event_id);
+    assert_eq!(
+        state.raw_operations[0].payload["event"]["event_id"],
+        event_id
+    );
 }
 
 #[test]
