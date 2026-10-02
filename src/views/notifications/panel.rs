@@ -85,6 +85,7 @@ pub fn NotificationsPanel(
     let mut hydrated_blocklist_revision = use_signal(|| initial_state.client_blocklist_revision);
     let mut hydrated_projection_ids =
         use_signal(|| notification_projection_ids(&initial_state.notification_projection));
+    let mut hydrated_read_cursors = use_signal(|| initial_state.read_cursors.clone());
     let mut group_by = use_signal(|| UiNotificationGroup::Latest);
     let mut show_archived = use_signal(|| false);
     let mut did_bootstrap = use_signal(|| false);
@@ -106,14 +107,17 @@ pub fn NotificationsPanel(
     let principal_for_revision = principal_id.clone();
     let mut notifications_for_revision = notifications;
     // The account stream saves each delivered notification into the durable
-    // projection (`sync/client-sync.md` 3); a new row or a blocklist revision
-    // re-evaluates the feed without waiting for a manual refresh.
+    // projection (`sync/client-sync.md` 3). Read-cursor delivery changes the
+    // derived read state even when the retained notification IDs stay identical.
+    // Re-evaluate on each changed cursor winner as well as rows or blocklist.
     use_effect(move || {
         let store = state_store.read();
         let revision = store.client_blocklist_revision();
         let projection_ids = notification_projection_ids(&store.notification_projection());
+        let read_cursors = store.load().read_cursors;
         if revision == *hydrated_blocklist_revision.peek()
             && projection_ids == *hydrated_projection_ids.peek()
+            && read_cursors == *hydrated_read_cursors.peek()
         {
             return;
         }
@@ -125,6 +129,7 @@ pub fn NotificationsPanel(
         drop(store);
         hydrated_blocklist_revision.set(revision);
         hydrated_projection_ids.set(projection_ids);
+        hydrated_read_cursors.set(read_cursors);
         notifications_for_revision.set(hydrated);
     });
 
