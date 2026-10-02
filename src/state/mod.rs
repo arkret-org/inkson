@@ -476,6 +476,13 @@ impl LocalStateStore {
     }
 
     pub fn flush(&self) -> anyhow::Result<()> {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(
+            storage_instance = self as *const Self as usize,
+            generation = self.cached.current_generation,
+            suspended = self.flush_suspended,
+            "account state flush requested"
+        );
         if self.flush_suspended > 0 {
             // Inside a batch — defer the persist and remember a write happened.
             self.flush_pending.store(true, Ordering::Relaxed);
