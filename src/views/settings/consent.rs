@@ -31,6 +31,7 @@ use crate::ui::select::{Select, SelectOption};
 /// One consent cell row distilled from the holder-private projection.
 #[derive(Clone, Debug, PartialEq)]
 struct ConsentRow {
+    consent_id: arkret_sdk::ConsentId,
     holder: String,
     /// The exact closed `consent_peer` this cell froze, kept typed.
     ///
@@ -106,6 +107,7 @@ fn parse_consent_rows(value: &arkret_sdk::ConsentList, holder: &str) -> Vec<Cons
         .consents
         .iter()
         .map(|cell| ConsentRow {
+            consent_id: cell.consent_id.clone(),
             // The self list endpoint is holder-scoped; ConsentView
             // deliberately does not mirror that authenticated holder.
             holder: holder.to_owned(),
@@ -523,6 +525,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                             ul { class: "settings-list",
                                 for row in granted_rows.iter().cloned() {
                                     {
+                                        let consent_id = row.consent_id.clone();
                                         let peer = row.peer.clone();
                                         let peer_key = row.peer_key.clone();
                                         let peer_label = row.peer_label.clone();
@@ -532,6 +535,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                             li {
                                                 class: "event",
                                                 "data-testid": "consent-granted-row",
+                                                "data-consent-id": "{consent_id}",
                                                 "data-peer": "{peer_key}",
                                                 "data-scope": "{scope}",
                                                 div { class: "event-head",
@@ -548,11 +552,13 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                                         disabled: busy(),
                                                         onclick: {
                                                             let base = base_url();
+                                                            let consent_id = consent_id.clone();
                                                             let peer = peer.clone();
                                                             let scope = scope.clone();
                                                             let me_did = me.clone();
                                                             move |_| {
                                                                 let base = base.clone();
+                                                                let consent_id = consent_id.clone();
                                                                 let api_token = token();
                                                                 let holder = me_did.clone();
                                                                 let peer = peer.clone();
@@ -563,7 +569,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                                                     match with_authed_sdk_client(&base, api_token, |http| async move {
                                                                         crate::transport::account::revoke_consent(
                                                         &crate::event_submit::EventSubmitter::from_current_session(http),
-                                                        &holder, &peer, &scope,
+                                                        &holder, &consent_id, &peer, &scope,
                                                     ).await
                                                                     })
                                                                     .await

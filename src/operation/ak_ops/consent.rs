@@ -26,7 +26,7 @@ pub fn consent_actor_peer(
     })
 }
 
-/// Build a canonical `ak.consent.grant` Control Move in the holder's principal
+/// Build a canonical `ak.consent.grant` Event in the holder's principal
 /// control Realm.
 ///
 /// A grant creates a new stable consent_id once. Revoke targets that ID and
@@ -35,6 +35,7 @@ pub fn consent_actor_peer(
 pub fn consent_grant(
     holder_pcr_realm_id: &str,
     holder: &str,
+    root_authorization_ref: &arkret_sdk::EventId,
     consent_id: &arkret_sdk::ConsentId,
     peer: &arkret_sdk::ConsentPeer,
     consent_scope: &str,
@@ -50,9 +51,14 @@ pub fn consent_grant(
         evidence_ref: None,
         reason: None,
     };
-    Ok(TypedOperationBuilder::new::<
-        arkret_sdk::event_spec::ConsentGrant,
-    >(holder_pcr_realm_id, holder, payload))
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::ConsentGrant>(
+            holder_pcr_realm_id,
+            holder,
+            payload,
+        )
+        .authorization_ref(root_authorization_ref.as_str()),
+    )
 }
 
 /// Build a canonical `ak.consent.revoke` Event.
@@ -65,6 +71,7 @@ pub fn consent_grant(
 pub fn consent_revoke(
     holder_pcr_realm_id: &str,
     holder: &str,
+    root_authorization_ref: &arkret_sdk::EventId,
     consent_id: &arkret_sdk::ConsentId,
     expected_revision: &arkret_sdk::CurrentRevision,
 ) -> anyhow::Result<TypedOperationBuilder> {
@@ -74,7 +81,12 @@ pub fn consent_revoke(
         revoked_at: Some(crate::clock::now_utc_millis()),
         reason: None,
     };
-    Ok(TypedOperationBuilder::new::<
-        arkret_sdk::event_spec::ConsentRevoke,
-    >(holder_pcr_realm_id, holder, payload))
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::ConsentRevoke>(
+            holder_pcr_realm_id,
+            holder,
+            payload,
+        )
+        .authorization_ref(root_authorization_ref.as_str()),
+    )
 }

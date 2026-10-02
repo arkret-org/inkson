@@ -1201,9 +1201,8 @@ pub async fn consent_result(
 /// `ak.self.consent.command.grant.v1`.
 ///
 /// The Event is authored and signed here: its `consent_id` is the result
-/// subject, so it is never the server's to choose. A result that already exists
-/// keeps its `consent_id`; a new one gets a freshly minted producer-allocated
-/// id.
+/// subject, so it is never the server's to choose. Each new grant intent has
+/// a new producer-allocated ID; revoked IDs cannot be reused.
 pub async fn grant_consent(
     submitter: &crate::event_submit::EventSubmitter,
     holder: &str,
@@ -1211,18 +1210,21 @@ pub async fn grant_consent(
     scope: &str,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> anyhow::Result<arkret_sdk::ConsentView> {
-    // Reuse the existing subject when there is one, so a re-grant lands on the
-    // same result instead of opening a second one for the same (peer, scope).
-    let consent_id = match consent_result(submitter.http(), holder, peer, scope).await {
-        Ok(view) => view.consent_id,
-        Err(_) => arkret_sdk::ConsentId::new_v7_at(crate::clock::now_unix_ms()),
-    };
+    let consent_id = arkret_sdk::ConsentId::new_v7_at(crate::clock::now_unix_ms());
     let holder_did = did_for_request_field("holder", holder)?;
     let principal_control_realm_id =
         crate::identity::principal_control::resolve_accepted(submitter.http(), &holder_did).await?;
+    let root_authorization_ref =
+        crate::identity::principal_control::current_root_authorization_ref(
+            submitter.http(),
+            &principal_control_realm_id,
+            submitter.authority()?,
+        )
+        .await?;
     let event = crate::operation::ak_ops::consent_grant(
         principal_control_realm_id.as_str(),
         holder.trim(),
+        &root_authorization_ref,
         &consent_id,
         peer,
         scope,
@@ -1257,16 +1259,39 @@ pub async fn grant_consent(
 pub async fn revoke_consent(
     submitter: &crate::event_submit::EventSubmitter,
     holder: &str,
+    consent_id: &arkret_sdk::ConsentId,
     peer: &arkret_sdk::ConsentPeer,
     scope: &str,
 ) -> anyhow::Result<arkret_sdk::ConsentView> {
-    let view = consent_result(submitter.http(), holder, peer, scope).await?;
+    let list = consent_cells(submitter.http()).await?;
+    list.validate()?;
+    let view = list
+        .consents
+        .iter()
+        .find(|view| &view.consent_id == consent_id)
+        .ok_or_else(|| {
+            anyhow::anyhow!("selected Consent is absent from the holder current list")
+        })?;
+    anyhow::ensure!(
+        &view.peer == peer
+            && view.consent_scope.as_str() == scope
+            && view.state == arkret_sdk::ConsentState::Active,
+        "selected Consent no longer matches the active row"
+    );
     let holder_did = did_for_request_field("holder", holder)?;
     let principal_control_realm_id =
         crate::identity::principal_control::resolve_accepted(submitter.http(), &holder_did).await?;
+    let root_authorization_ref =
+        crate::identity::principal_control::current_root_authorization_ref(
+            submitter.http(),
+            &principal_control_realm_id,
+            submitter.authority()?,
+        )
+        .await?;
     let event = crate::operation::ak_ops::consent_revoke(
         principal_control_realm_id.as_str(),
         holder.trim(),
+        &root_authorization_ref,
         &view.consent_id,
         &view.revision,
     )?
