@@ -14,6 +14,11 @@ impl LocalStateStore {
         cursor: Option<String>,
     ) -> arkret_sdk::Result<()> {
         match scope {
+            garth::CursorScope::AgentDeliveries { .. } => {
+                return Err(arkret_sdk::Error::Protocol(
+                    "human local store cannot carry an Agent runtime delivery cursor".to_owned(),
+                ));
+            }
             garth::CursorScope::Account { .. } => self.cached.sync_cursor = cursor,
             garth::CursorScope::CommitStream { .. } => match cursor {
                 Some(cursor) => {
@@ -249,6 +254,11 @@ impl LocalStateStore {
         scope: &garth::CursorScope,
     ) -> arkret_sdk::Result<Option<garth::OpaqueCursor>> {
         Ok(match scope {
+            garth::CursorScope::AgentDeliveries { .. } => {
+                return Err(arkret_sdk::Error::Protocol(
+                    "human local store cannot carry an Agent runtime delivery cursor".to_owned(),
+                ));
+            }
             garth::CursorScope::Account { .. } => self
                 .sync_cursor()
                 .filter(|cursor| !cursor.trim().is_empty()),
@@ -275,6 +285,11 @@ impl LocalStateStore {
         cursor: garth::OpaqueCursor,
     ) -> arkret_sdk::Result<()> {
         match scope {
+            garth::CursorScope::AgentDeliveries { .. } => {
+                return Err(arkret_sdk::Error::Protocol(
+                    "human local store cannot carry an Agent runtime delivery cursor".to_owned(),
+                ));
+            }
             garth::CursorScope::Account { .. } => self.save_sync_cursor(cursor),
             garth::CursorScope::CommitStream { .. } => {
                 self.ensure_cached_loaded();
@@ -303,6 +318,11 @@ impl LocalStateStore {
 
     pub fn clear_client_cursor(&mut self, scope: &garth::CursorScope) -> arkret_sdk::Result<()> {
         match scope {
+            garth::CursorScope::AgentDeliveries { .. } => {
+                return Err(arkret_sdk::Error::Protocol(
+                    "human local store cannot carry an Agent runtime delivery cursor".to_owned(),
+                ));
+            }
             garth::CursorScope::Account { .. } => self.clear_sync_cursor(),
             garth::CursorScope::CommitStream { .. } => {
                 self.ensure_cached_loaded();
