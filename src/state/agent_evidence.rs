@@ -176,11 +176,18 @@ impl LocalStateStore {
             return Err("historical Agent key belongs to another recipient".to_owned());
         }
         if entry.target_ref.stream_ref.realm_id() != &entry.realm_id
-            || entry.authorization_ref.stream_ref.realm_id() != &entry.realm_id
             || entry.authorization_ref.stream_position > entry.revision.stream_position
         {
             return Err("historical Agent key carries inconsistent commit coordinates".to_owned());
         }
+        arkret_sdk::ResolvedSignerKey {
+            public_key_b64u: entry.public_key_b64u.clone(),
+            authorization_ref: entry.authorization_ref.clone(),
+            revision: entry.revision.clone(),
+            governance_generation: entry.governance_generation,
+        }
+        .validate()
+        .map_err(|error| error.to_string())?;
         let key_bytes = arkret_sdk::base64url_decode(entry.public_key_b64u.as_str().as_bytes())
             .map_err(|error| error.to_string())?;
         if key_bytes.len() != 32 {

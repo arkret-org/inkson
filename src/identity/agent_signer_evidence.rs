@@ -62,7 +62,6 @@ fn historical_key(
         || entry.receiver_id != selector.receiver_id
         || entry.actor != selector.agent_actor_id
         || entry.verification_method != selector.verification_method
-        || entry.authorization_ref.stream_ref.realm_id() != &selector.realm_id
         || entry.authorization_ref.stream_position > entry.revision.stream_position
     {
         return None;
@@ -612,6 +611,41 @@ mod historical_result_tests {
         selector = fixture().0;
         selector.target_ref.stream_position += 1;
         assert!(historical_key(&entry, &selector, &entry.recipient_account_id).is_none());
+    }
+
+    #[test]
+    fn authorization_stream_may_be_the_agents_separate_pcr() {
+        let (selector, mut entry, key) = fixture();
+        entry.authorization_ref.stream_ref = arkret_wire::CommitStreamRef::Realm {
+            realm_id: RealmId::new(
+                "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI".to_owned(),
+            )
+            .unwrap(),
+        };
+        assert_ne!(
+            entry.authorization_ref.stream_ref.realm_id(),
+            &selector.realm_id
+        );
+        assert_eq!(
+            historical_key(&entry, &selector, &entry.recipient_account_id),
+            Some(key)
+        );
+        let mut store = crate::state::isolated_store_for_tests("historical-separate-pcr");
+        store.switch_test_account("did:web:reader.example");
+        let recipient = store.active_authority().unwrap();
+        entry.recipient_account_id = recipient.clone();
+        entry.receiver_id = recipient.station_id.clone();
+        index_verified_committed_event(&mut store, &selector.realm_id, &committed_view(&selector))
+            .unwrap();
+        store.store_historical_agent_signer_key(entry).unwrap();
+        assert_eq!(
+            verify_cached_event(
+                &serde_json::to_value(selector.accepted_event).unwrap(),
+                &store,
+                None
+            ),
+            CachedAgentEventVerdict::Verified
+        );
     }
 
     #[test]
