@@ -62,7 +62,6 @@ fn historical_key(
         || entry.receiver_id != selector.receiver_id
         || entry.actor != selector.agent_actor_id
         || entry.verification_method != selector.verification_method
-        || entry.authorization_ref.stream_ref.realm_id() != &selector.realm_id
         || entry.authorization_ref.stream_position > entry.revision.stream_position
     {
         return None;
@@ -358,6 +357,11 @@ pub(crate) fn verified_cached_agent_event_endpoint(
 
 fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreId, DidUrl)> {
     let event: arkret_sdk::Event = serde_json::from_value(envelope.clone()).ok()?;
+    if event.actual_signer().as_account_id().is_none()
+        || event.human_device_producer().ok().flatten().is_some()
+    {
+        return None;
+    }
     let frozen_agent_evidence = event.producer_proof.is_some();
     if event.applet_id.is_some() || (event.executed_by.is_none() && !frozen_agent_evidence) {
         return None;
@@ -573,6 +577,21 @@ mod historical_result_tests {
     }
 
     #[test]
+    fn device_and_service_producers_do_not_fill_the_agent_query_budget() {
+        let (selector, ..) = fixture();
+        let mut device = selector.accepted_event.clone();
+        device.producer_proof.as_mut().unwrap().verification_method = DidUrl::new(
+            "did:web:agent.example#ak:device:0196419b-0000-7000-8000-0000000000f1".to_owned(),
+        )
+        .unwrap();
+        assert!(device.human_device_producer().unwrap().is_some());
+        assert!(event_agent_identity(&serde_json::to_value(device).unwrap()).is_none());
+        let mut service = selector.accepted_event;
+        service.actor_id = arkret_sdk::ActorId::service(selector.agent_id);
+        assert!(event_agent_identity(&serde_json::to_value(service).unwrap()).is_none());
+    }
+
+    #[test]
     fn historical_result_keeps_original_admission_without_source_provenance() {
         let (selector, entry, key) = fixture();
         assert_ne!(
@@ -615,6 +634,41 @@ mod historical_result_tests {
     }
 
     #[test]
+    fn authorization_stream_may_be_the_agents_separate_pcr() {
+        let (selector, mut entry, key) = fixture();
+        entry.authorization_ref.stream_ref = arkret_wire::CommitStreamRef::Realm {
+            realm_id: RealmId::new(
+                "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI".to_owned(),
+            )
+            .unwrap(),
+        };
+        assert_ne!(
+            entry.authorization_ref.stream_ref.realm_id(),
+            &selector.realm_id
+        );
+        assert_eq!(
+            historical_key(&entry, &selector, &entry.recipient_account_id),
+            Some(key)
+        );
+        let mut store = crate::state::isolated_store_for_tests("historical-separate-pcr");
+        store.switch_test_account("did:web:reader.example");
+        let recipient = store.active_authority().unwrap();
+        entry.recipient_account_id = recipient.clone();
+        entry.receiver_id = recipient.station_id.clone();
+        index_verified_committed_event(&mut store, &selector.realm_id, &committed_view(&selector))
+            .unwrap();
+        store.store_historical_agent_signer_key(entry).unwrap();
+        assert_eq!(
+            verify_cached_event(
+                &serde_json::to_value(selector.accepted_event).unwrap(),
+                &store,
+                None
+            ),
+            CachedAgentEventVerdict::Verified
+        );
+    }
+
+    #[test]
     fn a_bare_event_from_a_current_projection_stays_unresolved() {
         let (selector, ..) = fixture();
         let mut store = crate::state::isolated_store_for_tests("historical-bare-projection");
@@ -623,6 +677,55 @@ mod historical_result_tests {
         assert_eq!(
             verify_cached_event(&envelope, &store, None),
             CachedAgentEventVerdict::Unresolved
+        );
+    }
+
+    #[test]
+    fn chat_verifies_historical_agent_without_unsigned_projection_marker() {
+        let (selector, mut entry, _) = fixture();
+        let mut store = crate::state::isolated_store_for_tests("historical-agent-chat");
+        store.switch_test_account("did:web:reader.example");
+        let recipient = store.active_authority().unwrap();
+        entry.recipient_account_id = recipient.clone();
+        entry.receiver_id = recipient.station_id.clone();
+        index_verified_committed_event(&mut store, &selector.realm_id, &committed_view(&selector))
+            .unwrap();
+        let envelope = serde_json::to_value(&selector.accepted_event).unwrap();
+        assert!(
+            envelope
+                .pointer("/unsigned/agent_authorization_admission")
+                .is_none()
+        );
+        use crate::views::chat::model::{ChatProofVerdict, verify_chat_envelope_proof_for_realm};
+        assert_eq!(
+            verify_chat_envelope_proof_for_realm(
+                selector.realm_id.as_str(),
+                &envelope,
+                Some(&store),
+                None
+            ),
+            ChatProofVerdict::Unresolved
+        );
+        store.store_historical_agent_signer_key(entry).unwrap();
+        assert_eq!(
+            verify_chat_envelope_proof_for_realm(
+                selector.realm_id.as_str(),
+                &envelope,
+                Some(&store),
+                None
+            ),
+            ChatProofVerdict::Verified
+        );
+        let mut tampered = envelope;
+        tampered["payload"]["content"]["body"] = json!("tampered");
+        assert_eq!(
+            verify_chat_envelope_proof_for_realm(
+                selector.realm_id.as_str(),
+                &tampered,
+                Some(&store),
+                None
+            ),
+            ChatProofVerdict::Rejected
         );
     }
 
