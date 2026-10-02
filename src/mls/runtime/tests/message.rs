@@ -57,6 +57,29 @@ fn circle_commit_restoration_uses_only_its_own_accepted_epoch() {
     fixture::install_accepted_mls_group_at_epoch(&mut state, &realm_scope, 7, 0);
     fixture::install_accepted_mls_group(&mut state, &circle_scope);
     let before = state.mls_checkpoint_for_scope(&circle_scope).unwrap();
+    assert!(matches!(
+        force_epoch_rotation_commit_for_effective_scope(
+            &state,
+            &secure,
+            realm,
+            Some(circle),
+            &authority,
+            &device,
+        ),
+        Err(MlsRuntimeError::Commit(_))
+    ));
+    let circle_base = state
+        .current_mls_group_for_scope(&circle_scope)
+        .unwrap()
+        .current_mls_commit_event_ref;
+    state
+        .record_mls_group_state_ref_for_scope(
+            &circle_scope,
+            &before.group_id,
+            before.epoch,
+            circle_base,
+        )
+        .unwrap();
     let staged = force_epoch_rotation_commit_for_effective_scope(
         &state,
         &secure,
