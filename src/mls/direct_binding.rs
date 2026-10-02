@@ -444,51 +444,42 @@ pub(crate) async fn ensure_binding(
     anyhow::ensure!(snapshot.epoch > 0, "waiting for the peer MLS Add");
     let initial_state =
         accepted_pair_commit(&events, realm_id, &snapshot.group_id, snapshot.epoch)?;
-    let peer_account = peer
-        .as_account_id()
-        .ok_or_else(|| anyhow::anyhow!("human Contact binding requires an account peer"))?;
-    let peer_selector = arkret_sdk::contact_operations::ContactPeer::Human {
-        account_id: peer_account.clone(),
-    };
+    let peer_selector = store
+        .direct_conversation_peer(realm_id)
+        .ok_or_else(|| anyhow::anyhow!("waiting for the exact Direct Conversation peer"))?;
+    anyhow::ensure!(
+        peer_selector.contact_actor_id() == *peer,
+        "cached Direct peer differs from accepted founding membership"
+    );
     let resolved = http
         .direct_conversation_resolve(
             &arkret_sdk::direct_conversation::DirectConversationResolveRequestBody {
-                peer: peer_selector,
+                peer: peer_selector.clone(),
             },
         )
         .await?;
     use arkret_sdk::direct_conversation::DirectConversationResolveOutcome;
-    let coordinates = match resolved {
+    let (coordinates, authorization_basis) = match resolved {
         DirectConversationResolveOutcome::Found { .. } => return Ok(()),
-        DirectConversationResolveOutcome::Provisional { coordinates, .. } => coordinates,
+        DirectConversationResolveOutcome::Provisional {
+            coordinates,
+            authorization_basis,
+            ..
+        } => (coordinates, authorization_basis),
         _ => anyhow::bail!("Direct Conversation current authority is not ready for binding"),
     };
     anyhow::ensure!(
         coordinates.realm_id == plan.realm_id && coordinates.main_strand_id == plan.main_strand_id,
         "resolver and accepted founding coordinates differ"
     );
-    let contacts = http.contacts_list().await?;
-    let row = contacts
-        .contacts
-        .iter()
-        .find(|row| row.peer.contact_actor_id() == *peer)
-        .ok_or_else(|| anyhow::anyhow!("accepted Contact is unavailable"))?;
-    let refs = [
-        row.request_event_ref.clone(),
-        row.response_event_ref.clone(),
-    ]
-    .into_iter()
-    .collect::<Option<Vec<_>>>()
-    .ok_or_else(|| {
-        anyhow::anyhow!("accepted Contact request/response references are unavailable")
-    })?;
+    authorization_basis.validate_shape()?;
     let payload = arkret_sdk::DirectConversationBoundPayload {
         pair_key: coordinates.pair_key,
         unordered_participant_ids: participants,
         realm_id: plan.realm_id,
         main_strand_id: plan.main_strand_id,
         founding_unit_digest: plan.founding_unit_digest,
-        authorization_basis: arkret_models_collaboration::objects::direct_conversation::DirectConversationAuthorizationBasis::accepted_contact(refs),
+        authorization_basis,
         initial_exact_pair_group_state_ref: initial_state.event_id.clone(),
         created_at: crate::clock::now_utc_millis(),
     };
@@ -702,6 +693,14 @@ mod tests {
         let provisional =
             arkret_sdk::direct_conversation::DirectConversationResolveOutcome::Provisional {
                 coordinates: coordinates.clone(),
+                authorization_basis:
+                    arkret_sdk::DirectConversationAuthorizationBasis::accepted_contact(vec![
+                        create.event_id.clone(),
+                        arkret_sdk::EventId::new(
+                            "ak:event:AWgGCEbMHnelRQfzqg1C_onV9Ej_FdpdAZyM_JoFgAd3",
+                        )
+                        .unwrap(),
+                    ]),
                 group_state_ref: None,
             };
         let authorized = mls_authoring_intent(&intent, &create, &provisional).unwrap();
