@@ -570,7 +570,17 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                             .find(|p| p.principal_id.as_str() == msg.sender);
                                         let sender_is_agent = sender_participant
                                             .map(|participant| participant.is_agent)
-                                            .unwrap_or(false);
+                                            .unwrap_or(false)
+                                            || msg.actor_id.as_ref().is_some_and(|actor| {
+                                                arkret_sdk::EventId::new(msg.id.clone()).is_ok_and(|event_id| {
+                                                    crate::identity::agent_signer_evidence::verified_historical_agent_author(
+                                                        &event_id,
+                                                        &msg.realm_id,
+                                                        actor,
+                                                        &state_store.read(),
+                                                    )
+                                                })
+                                            });
                                         let sender_agent_owner = sender_participant
                                             .and_then(|participant| {
                                                 agent_controller_label(

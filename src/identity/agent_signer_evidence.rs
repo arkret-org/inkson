@@ -330,6 +330,28 @@ pub(crate) fn verify_cached_event(
     }
 }
 
+/// Historical attribution belongs to one accepted Event, independently of the
+/// Agent's current inventory or lifecycle. It never grants current authority.
+pub(crate) fn verified_historical_agent_author(
+    event_id: &arkret_sdk::EventId,
+    realm_id: &str,
+    actor: &arkret_sdk::ActorId,
+    store: &LocalStateStore,
+) -> bool {
+    store
+        .historical_agent_event_candidates_for_event(event_id)
+        .into_iter()
+        .any(|candidate| {
+            let event = &candidate.accepted_event;
+            event.realm_id.as_str() == realm_id
+                && &event.actor_id == actor
+                && event.actual_signer() == actor
+                && serde_json::to_value(event).is_ok_and(|envelope| {
+                    verify_cached_event(&envelope, store, None) == CachedAgentEventVerdict::Verified
+                })
+        })
+}
+
 pub(crate) fn verified_cached_agent_event_endpoint(
     event: &arkret_sdk::Event,
     store: &LocalStateStore,
@@ -684,6 +706,57 @@ mod historical_result_tests {
             verify_cached_event(&envelope, &store, None),
             CachedAgentEventVerdict::Unresolved
         );
+    }
+
+    #[test]
+    fn historical_author_attribution_needs_exact_evidence_but_no_current_inventory() {
+        let (selector, mut entry, _) = fixture();
+        let mut store = crate::state::isolated_store_for_tests("historical-agent-attribution");
+        store.switch_test_account("did:web:reader.example");
+        let recipient = store.active_authority().unwrap();
+        entry.recipient_account_id = recipient.clone();
+        entry.receiver_id = recipient.station_id;
+        let event = &selector.accepted_event;
+        let attributed = |store: &LocalStateStore| {
+            verified_historical_agent_author(
+                &event.event_id,
+                event.realm_id.as_str(),
+                &event.actor_id,
+                store,
+            )
+        };
+        assert!(!attributed(&store));
+        index_verified_committed_event(&mut store, &selector.realm_id, &committed_view(&selector))
+            .unwrap();
+        assert!(
+            !attributed(&store),
+            "an accepted carrier alone cannot identify an Agent"
+        );
+        store.store_historical_agent_signer_key(entry).unwrap();
+        assert!(
+            attributed(&store),
+            "historical identity does not depend on a current roster"
+        );
+        assert!(!verified_historical_agent_author(
+            &event.event_id,
+            "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI",
+            &event.actor_id,
+            &store,
+        ));
+        let mut other_account = event.actor_id.as_account_id().unwrap().clone();
+        other_account.station_id = DidCoreId::new("ak:did_core:web:other-station.example").unwrap();
+        assert!(!verified_historical_agent_author(
+            &event.event_id,
+            event.realm_id.as_str(),
+            &arkret_sdk::ActorId::account(other_account),
+            &store,
+        ));
+        assert!(!verified_historical_agent_author(
+            &arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [84; 32]),
+            event.realm_id.as_str(),
+            &event.actor_id,
+            &store,
+        ));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
