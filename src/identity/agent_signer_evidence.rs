@@ -357,6 +357,11 @@ pub(crate) fn verified_cached_agent_event_endpoint(
 
 fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreId, DidUrl)> {
     let event: arkret_sdk::Event = serde_json::from_value(envelope.clone()).ok()?;
+    if event.actual_signer().as_account_id().is_none()
+        || event.human_device_producer().ok().flatten().is_some()
+    {
+        return None;
+    }
     let frozen_agent_evidence = event.producer_proof.is_some();
     if event.applet_id.is_some() || (event.executed_by.is_none() && !frozen_agent_evidence) {
         return None;
@@ -569,6 +574,21 @@ mod historical_result_tests {
                 },
             },
         })
+    }
+
+    #[test]
+    fn device_and_service_producers_do_not_fill_the_agent_query_budget() {
+        let (selector, ..) = fixture();
+        let mut device = selector.accepted_event.clone();
+        device.producer_proof.as_mut().unwrap().verification_method = DidUrl::new(
+            "did:web:agent.example#ak:device:0196419b-0000-7000-8000-0000000000f1".to_owned(),
+        )
+        .unwrap();
+        assert!(device.human_device_producer().unwrap().is_some());
+        assert!(event_agent_identity(&serde_json::to_value(device).unwrap()).is_none());
+        let mut service = selector.accepted_event;
+        service.actor_id = arkret_sdk::ActorId::service(selector.agent_id);
+        assert!(event_agent_identity(&serde_json::to_value(service).unwrap()).is_none());
     }
 
     #[test]
