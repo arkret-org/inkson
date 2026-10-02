@@ -152,8 +152,12 @@ pub(crate) async fn prefetch_durable_historical_agent_keys(
             recipient_account_id: recipient.clone(),
             queries: pending.iter().map(query_selector).collect(),
         };
-        let Ok(outcome) = http.signer_keys_query(&request).await else {
-            continue;
+        let outcome = match http.signer_keys_query(&request).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                tracing::warn!(realm_id = %request.realm_id, %error, "historical Agent signer query remains pending");
+                continue;
+            }
         };
         for result in outcome.results {
             let SignerKeyQueryResult::HistoricalResolved {
@@ -307,8 +311,10 @@ pub(crate) fn verify_cached_event(
                     signing_key: &key,
                     agent_key_authorize_event_id: &entry.authorization_ref.event_id,
                 };
-                if arkret_sdk::mls::verify_ordinary_agent_mls_binding(binding.view, &claim).is_err()
+                if let Err(error) =
+                    arkret_sdk::mls::verify_ordinary_agent_mls_binding(binding.view, &claim)
                 {
+                    tracing::warn!(event_id = %event.event_id, %error, "historical Agent message MLS binding rejected");
                     continue;
                 }
             }
@@ -677,6 +683,138 @@ mod historical_result_tests {
         assert_eq!(
             verify_cached_event(&envelope, &store, None),
             CachedAgentEventVerdict::Unresolved
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn realm_stream_resolves_agent_reply_without_an_account_frame() {
+        use std::io::{Read, Write};
+
+        let (selector, mut entry, _) = fixture();
+        let mut store = crate::state::isolated_store_for_tests("realm-agent-reply-query");
+        store.switch_test_account("did:web:reader.example");
+        let recipient = store.active_authority().unwrap();
+        entry.recipient_account_id = recipient.clone();
+        entry.receiver_id = recipient.station_id.clone();
+        index_verified_committed_event(&mut store, &selector.realm_id, &committed_view(&selector))
+            .unwrap();
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(store));
+        let read = shared.clone();
+        let write = shared.clone();
+        let handle = crate::runtime::input::StateStoreHandle::new(
+            move |callback| callback(&read.lock().unwrap()),
+            move |callback| callback(&mut write.lock().unwrap()),
+        );
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let expected_selector = query_selector(&selector);
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut socket = loop {
+                match listener.accept() {
+                    Ok((socket, _)) => break socket,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "Realm stream did not query its pending signer"
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            let request = loop {
+                let mut chunk = [0u8; 4096];
+                let count = socket.read(&mut chunk).unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&chunk[..count]);
+                if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&bytes[..end]).to_ascii_lowercase();
+                    assert!(headers.starts_with("post /_arkret/self/signer-keys/query http/1.1"));
+                    let length = headers
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .unwrap()
+                        .trim()
+                        .parse::<usize>()
+                        .unwrap();
+                    if bytes.len() >= end + 4 + length {
+                        break serde_json::from_slice::<SignerKeysQueryRequestBody>(
+                            &bytes[end + 4..end + 4 + length],
+                        )
+                        .unwrap();
+                    }
+                }
+            };
+            assert_eq!(request.recipient_account_id, recipient);
+            assert_eq!(request.queries, vec![expected_selector.clone()]);
+            let outcome = arkret_sdk::SignerKeysQueryOutcome {
+                request_id: request.request_id.clone(),
+                realm_id: request.realm_id.clone(),
+                recipient_account_id: request.recipient_account_id.clone(),
+                results: vec![SignerKeyQueryResult::HistoricalResolved {
+                    selector: expected_selector,
+                    key: arkret_sdk::ResolvedSignerKey {
+                        public_key_b64u: entry.public_key_b64u,
+                        authorization_ref: entry.authorization_ref,
+                        revision: entry.revision,
+                        governance_generation: entry.governance_generation,
+                    },
+                    accepted_at: entry.accepted_at,
+                }],
+            };
+            outcome.validate_for_request(&request).unwrap();
+            let response = serde_json::to_string(&outcome).unwrap();
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).unwrap();
+        });
+        let http =
+            arkret_sdk::http_client::Client::builder(format!("http://{address}/").parse().unwrap())
+                .allow_insecure_localhost()
+                .build()
+                .unwrap();
+        let envelope = serde_json::to_value(&selector.accepted_event).unwrap();
+        assert_eq!(
+            handle.read(|store| verify_cached_event(&envelope, store, None)),
+            CachedAgentEventVerdict::Unresolved
+        );
+        assert!(
+            crate::realm_events_engine::resolve_stream_agent_keys(&http, &handle)
+                .await
+                .unwrap()
+        );
+        server.join().unwrap();
+        assert_eq!(
+            handle.read(|store| verify_cached_event(&envelope, store, None)),
+            CachedAgentEventVerdict::Verified
+        );
+        let garth::DecodedInbound::Message(message) =
+            garth::InboundDecoder::new().decode_event(selector.accepted_event.clone())
+        else {
+            panic!("fixture is an ordinary Agent reply");
+        };
+        let event = garth::ClientEvent::Message(message);
+        handle.read(|store| {
+            let (_, endpoint) = crate::realm_events_engine::accepted_direct_message_final(
+                &event,
+                arkret_sdk::DigestSuite::Sha256,
+                store,
+            )
+            .unwrap();
+            assert!(matches!(
+                endpoint,
+                arkret_sdk::SignalSequenceEndpoint::AgentKey { .. }
+            ));
+        });
+        assert!(
+            !crate::realm_events_engine::resolve_stream_agent_keys(&http, &handle)
+                .await
+                .unwrap()
         );
     }
 

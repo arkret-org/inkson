@@ -132,7 +132,7 @@ fn committed_views_to_client_events(
 /// not invent a second ordinary proof verifier. Agent finals additionally
 /// require locally verified historical signer evidence so a new runtime key
 /// cannot terminate a preview authored by an older key.
-fn accepted_direct_message_final<'a>(
+pub(crate) fn accepted_direct_message_final<'a>(
     client_event: &'a ClientEvent,
     digest_suite: arkret_sdk::DigestSuite,
     store: &crate::state::LocalStateStore,
@@ -148,7 +148,7 @@ fn accepted_direct_message_final<'a>(
     {
         return None;
     }
-    if event.executed_by.is_some() || event.payload.get("agent_context").is_some() {
+    if event.human_device_producer().ok().flatten().is_none() {
         let endpoint =
             crate::identity::agent_signer_evidence::verified_cached_agent_event_endpoint(
                 event, store,
@@ -721,6 +721,11 @@ where
         .collect();
     let batch = committed_views_to_client_events(realm_id, fresh_rows)?;
     if batch.is_empty() {
+        if resolve_stream_agent_keys(http, &projector.state_store).await? {
+            projector
+                .realm_live_epoch
+                .update(|epoch| *epoch = epoch.wrapping_add(1));
+        }
         return Ok(());
     }
     let final_freshness = arkret_identity::RealmAuthorityFreshness::new(
@@ -734,7 +739,7 @@ where
     // Nothing is projected until the complete stream has passed the verifier.
     // Index, product fold, and cursor form one account-state write. Any
     // validation conflict restores the previous state before persistence.
-    let (changed, finals) = projector
+    let changed = projector
         .state_store
         .write(|store| {
             store.verified_projection_transaction(|store| {
@@ -748,17 +753,11 @@ where
                         store, page,
                     )?;
                 }
-                let finals = batch
-                    .iter()
-                    .filter_map(|event| {
-                        accepted_direct_message_final(event, projector.digest_suite, store)
-                    })
-                    .collect::<Vec<_>>();
                 changed += ingest_realm_batch(store, &projector.realm_id, &batch);
                 if let Some(tail) = tail.clone() {
                     store.save_verified_commit_stream_cursor(stream_ref, tail)?;
                 }
-                Ok((changed, finals))
+                Ok(changed)
             })
         })
         .map_err(garth::Error::Protocol)?;
@@ -770,18 +769,45 @@ where
         .wait()
         .await
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    // This stream owns these verified candidates. Account frames need not
+    // contain Realm messages, so they cannot drive this evidence dependency.
+    let agent_evidence_changed = resolve_stream_agent_keys(http, &projector.state_store).await?;
+    let finals = projector.state_store.read(|store| {
+        batch
+            .iter()
+            .filter_map(|event| accepted_direct_message_final(event, projector.digest_suite, store))
+            .collect::<Vec<_>>()
+    });
     let mut message_stream_hub = projector.message_stream_hub;
     for (event, sender_endpoint) in finals {
         if let Err(error) = message_stream_hub.bind_verified_final(event, &sender_endpoint) {
             tracing::warn!(%error, event_id = %event.event_id, "message stream final binding failed closed");
         }
     }
-    if changed > 0 {
+    if changed > 0 || agent_evidence_changed {
         projector
             .realm_live_epoch
             .update(|epoch| *epoch = epoch.wrapping_add(1));
     }
     Ok(())
+}
+
+pub(crate) async fn resolve_stream_agent_keys(
+    http: &arkret_sdk::http_client::Client,
+    state_store: &crate::runtime::input::StateStoreHandle,
+) -> garth::Result<bool> {
+    let changed = crate::identity::agent_signer_evidence::prefetch_durable_historical_agent_keys(
+        http,
+        state_store,
+    )
+    .await;
+    state_store
+        .read(|store| store.begin_durable_flush())
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?
+        .wait()
+        .await
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    Ok(changed)
 }
 
 /// The exact signed predecessor a limited Account window names, and the own
