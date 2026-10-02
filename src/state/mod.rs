@@ -472,7 +472,7 @@ impl LocalStateStore {
 
     pub fn flush(&self) -> anyhow::Result<()> {
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-        tracing::info!(
+        tracing::warn!(
             storage_instance = self as *const Self as usize,
             generation = self.cached.current_generation,
             suspended = self.flush_suspended,

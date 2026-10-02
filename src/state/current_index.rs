@@ -541,7 +541,7 @@ impl super::LocalStateStore {
     }
     pub(crate) fn current_generation(&self) -> u64 {
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-        tracing::info!(
+        tracing::warn!(
             storage_instance = self as *const Self as usize,
             generation = self.cached.current_generation,
             "current account pointer read"
@@ -550,7 +550,7 @@ impl super::LocalStateStore {
     }
     pub(crate) fn set_current_generation(&mut self, generation: u64) {
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-        tracing::info!(
+        tracing::warn!(
             storage_instance = self as *const Self as usize,
             previous_generation = self.cached.current_generation,
             generation,
