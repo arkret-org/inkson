@@ -1,25 +1,10 @@
 //! `encryption-and-audit.md` §2.4.1 / §2.5.2 — recover a scope from
 //! `epoch_update_required` by advancing the MLS epoch.
 //!
-//! §2.5.2 gates every E2EE application ordinary Event on the accepted MLS Security
-//! Frontier. Membership or key-access control changes require an accepted
-//! `ak.mls.commit` whose governance binding projects the new control state and
-//! active leaf set. §2.4.1 makes the sender MUST pause until that happens.
-//!
-//! Every commit inkson emitted before this module was bound to a membership
-//! frontier change (`sync_engine`'s Remove pass, `mls::admission`'s Add pass).
-//! A capability grant, a policy update, or any other governance write outside
-//! membership therefore left the scope paused with nothing to unpause it, and
-//! a single-member creator group had no membership transition at all — the
-//! Realm simply stopped accepting encrypted writes for the life of the
-//! process.
-//!
-//! The trigger here is a receiver's own typed refusal, not a heuristic. That
-//! matters: an accepted `ak.mls.commit` is itself a Control Move and lands in
-//! a new Seal, so "the accepted Seal head moved since our last binding" is
-//! true after every commit and would make the client emit one commit per Seal
-//! forever. Only the receiver can decide that coverage is actually missing,
-//! and it says so with `failed_precondition` / `epoch_update_required`. A
+//! Membership Events are the sole writers of `key_access_revision`. Policy
+//! and endpoint authorization changes do not advance it. Only the receiver's
+//! typed `failed_precondition` / `epoch_update_required` refusal triggers this
+//! repair; a moved governance head alone cannot authorize another Commit. A
 //! top-level `epoch_mismatch` is a different state (decision 0100): a covering
 //! Commit already exists, so this module does nothing for it and the sender
 //! refreshes its group and re-encrypts a new request instead.
@@ -170,6 +155,8 @@ pub(crate) async fn ensure_mls_governance_coverage(
     let circle_id = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
+    let authoring_lock = crate::mls::admission::mls_admission_authoring_lock(realm_id);
+    let _authoring_guard = authoring_lock.lock().await;
     if state_store.read(|store| {
         store
             .mls_coverage_stale_reason(realm_id, circle_id)
@@ -178,6 +165,22 @@ pub(crate) async fn ensure_mls_governance_coverage(
                 .mls_checkpoint_for_effective_scope(realm_id, circle_id)
                 .is_none()
     }) {
+        return Ok(false);
+    }
+
+    let submitter = api
+        .event_submitter()
+        .map_err(|error| format!("MLS coverage repair client: {error}"))?
+        .with_state_store(state_store.clone());
+    if submitter
+        .has_pending_mls_admission_for_realm(realm_id)
+        .await
+        .map_err(|error| format!("inspect durable MLS transition: {error}"))?
+    {
+        submitter
+            .drain_mls_outbound()
+            .await
+            .map_err(|error| format!("resume exact durable MLS transition: {error}"))?;
         return Ok(false);
     }
 
@@ -209,17 +212,20 @@ pub(crate) async fn ensure_mls_governance_coverage(
     // The staged state carries the pending commit, so it must be durable before
     // the submission: a crash between submit and acceptance must still be able
     // to merge the epoch the Station accepted.
-    state_store.write(|store| {
+    let staged_barrier = state_store.write(|store| {
         store.save_mls_checkpoint_for_effective_scope(
             realm_id.to_owned(),
             circle_id,
             staged.staged_checkpoint.clone(),
-        )
+        )?;
+        store
+            .begin_durable_flush()
+            .map_err(|error| error.to_string())
     })?;
-
-    let submitter = api
-        .event_submitter()
-        .map_err(|error| format!("MLS coverage repair client: {error}"))?;
+    staged_barrier
+        .wait()
+        .await
+        .map_err(|error| format!("persist staged MLS coverage checkpoint: {error}"))?;
     let authored = submitter
         .author_for_direct_submission(&commit_event)
         .await

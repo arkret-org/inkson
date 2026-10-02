@@ -575,7 +575,6 @@ pub async fn direct_conversation_resolve(
             &outcome,
             ensure_owned_agent_direct_reply(
                 http,
-                state_store,
                 peer_actor.signing_principal_id().as_str(),
                 &outcome,
             )
@@ -786,7 +785,6 @@ fn preserve_resolved_direct_conversation(
 
 async fn ensure_owned_agent_direct_reply(
     http: &arkret_sdk::http_client::Client,
-    state_store: &crate::runtime::input::StateStoreHandle,
     agent_id: &str,
     outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
 ) -> anyhow::Result<()> {
@@ -802,10 +800,8 @@ async fn ensure_owned_agent_direct_reply(
         .agent_participation_get(agent_id)
         .await
         .map_err(anyhow::Error::from)?;
-    // Opening an already configured DM is a read/navigation operation.  Do
-    // not author another byte-equivalent capability Control Move on every
-    // contact click: each accepted governance write legitimately pauses E2EE
-    // until the MLS covered-Seal accumulator advances.
+    // Opening an already configured DM does not repeat its participation
+    // update. Policy changes do not advance the MLS key-access revision.
     if !owned_agent_reply_update_needed(&existing, &scope) {
         return Ok(());
     }
@@ -820,18 +816,6 @@ async fn ensure_owned_agent_direct_reply(
     if !participation_reply_is_effective(&updated, &scope) {
         anyhow::bail!("owned-Agent Direct Conversation reply participation remains disabled");
     }
-    // The capability grant is a governance Control Move.  Arm the known
-    // coverage repair immediately so the first human message does not have to
-    // discover the stale MLS accumulator by failing once.
-    state_store
-        .write(|store| {
-            store.record_mls_coverage_stale(
-                scope.realm_id().as_str().to_owned(),
-                None,
-                "agent reply participation grant changed the Realm governance frontier",
-            )
-        })
-        .map_err(anyhow::Error::msg)?;
     Ok(())
 }
 
