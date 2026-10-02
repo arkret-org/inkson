@@ -282,7 +282,6 @@ fn apply_verified_reaction_assertions(
             continue;
         };
         if !prefix.contiguous
-            || prefix.start_position != 0
             || prefix.head.stream_ref != accepted.stream_ref
             || prefix.head.stream_position < accepted.stream_position
             || (prefix.head.stream_position == accepted.stream_position
@@ -326,8 +325,12 @@ fn apply_verified_reaction_assertions(
             // committed target or its effective security scope.
             continue;
         };
+        // A reaction cannot precede its accepted target. The complete chain
+        // from that MessageCreate through the assertion is sufficient even
+        // when the caller's verified readable floor is later than genesis.
         if target_create.scope_ref != event.scope_ref
             || target_create.accepted_ref.stream_ref != accepted.stream_ref
+            || prefix.start_position > target_create.accepted_ref.stream_position
             || target_create.accepted_ref.stream_position >= accepted.stream_position
         {
             continue;

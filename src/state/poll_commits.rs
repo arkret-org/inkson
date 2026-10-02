@@ -723,6 +723,37 @@ mod tests {
             first_messages[0].reactions[0].1,
             vec![items[1].event.actor_id.to_string()]
         );
+        let mut since_join = first_state.clone();
+        let target_position = since_join.verified_message_commits[0]
+            .accepted_ref
+            .stream_position;
+        assert!(target_position > 0);
+        for prefix in since_join.verified_poll_prefixes.values_mut() {
+            prefix.start_position = target_position;
+        }
+        assert_eq!(
+            crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
+                &since_join,
+                None,
+                None,
+            )[0]
+            .reactions,
+            first_messages[0].reactions,
+            "a complete target-to-reaction chain does not require pre-join genesis history"
+        );
+        for prefix in since_join.verified_poll_prefixes.values_mut() {
+            prefix.start_position = target_position + 1;
+        }
+        assert!(
+            crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
+                &since_join,
+                None,
+                None,
+            )[0]
+            .reactions
+            .is_empty(),
+            "a retained target coordinate cannot fill a gap before the reaction"
+        );
         let mut no_target_coordinate = first_state.clone();
         no_target_coordinate.verified_message_commits.clear();
         assert!(
