@@ -128,7 +128,10 @@ mod agent_tests {
                 "ak.self.events.command.submit.v1",
                 "ak.self.keys.keypackages.upload.create.v1",
                 "ak.self.keys.keypackages.command.consume.v1",
-                "ak.self.keys.keypackages.command.revoke.v1",
+                "ak.self.keys.keypackages.read.claim.v1",
+                "ak.self.mls.read.group_state_material.v1",
+                "ak.self.mls.read.roster_authority.v1",
+                "ak.self.realm_state_snapshot.read.manifest_head.v1",
                 "ak.self.device_messages.read.list.v1",
                 "ak.self.device_messages.command.ack.v1",
                 "ak.self.signal.command.send.v1",
@@ -160,7 +163,19 @@ mod agent_tests {
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.keys.keypackages.command.revoke.v1"
+                    "operation": "ak.self.keys.keypackages.read.claim.v1"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.mls.read.group_state_material.v1"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.mls.read.roster_authority.v1"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.realm_state_snapshot.read.manifest_head.v1"
                 },
                 {
                     "kind": "operation",

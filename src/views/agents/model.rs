@@ -239,7 +239,7 @@ impl AgentServiceScopePreset {
                 "Submit approved durable Events for governing Station acceptance."
             }
             Self::SecureMessaging => {
-                "Publish and consume MLS key packages, receive encrypted device messages, and send encrypted live presence."
+                "Publish and consume MLS key packages, verify encrypted conversation membership, receive encrypted messages, and send encrypted live presence."
             }
             Self::ResolveResources => "Fetch event resources referenced by allowed payloads.",
         }
@@ -257,12 +257,10 @@ impl AgentServiceScopePreset {
             Self::SubmitEvents => &[ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1],
             Self::SecureMessaging => &[
                 ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_CONSUME_V1,
-                // Standard KeyPackage lifecycle is upload|claim|consume|revoke
-                // (device-lifecycle §9). The runtime revokes its own published
-                // pool on unbind/replacement, and the requested_scope ceiling
-                // is immutable after provisioning (key-management §4.5), so
-                // revoke must be part of the default ceiling from day one.
-                ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_REVOKE_V1,
+                ServiceOperationId::SELF_KEYS_KEYPACKAGES_READ_CLAIM_V1,
+                ServiceOperationId::SELF_MLS_READ_GROUP_STATE_MATERIAL_V1,
+                ServiceOperationId::SELF_MLS_READ_ROSTER_AUTHORITY_V1,
+                ServiceOperationId::SELF_REALM_STATE_SNAPSHOT_READ_MANIFEST_HEAD_V1,
                 ServiceOperationId::SELF_DEVICE_MESSAGES_READ_LIST_V1,
                 ServiceOperationId::SELF_DEVICE_MESSAGES_COMMAND_ACK_V1,
                 ServiceOperationId::SELF_SIGNAL_COMMAND_SEND_V1,

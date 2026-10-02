@@ -37,6 +37,10 @@ fn approval_scope_summary(scope: &arkret_sdk::AgentKeyScope) -> Vec<String> {
             "ak.self.keys.keypackages.upload.create.v1"
             | "ak.self.keys.keypackages.command.consume.v1"
             | "ak.self.keys.keypackages.command.revoke.v1"
+            | "ak.self.keys.keypackages.read.claim.v1"
+            | "ak.self.mls.read.group_state_material.v1"
+            | "ak.self.mls.read.roster_authority.v1"
+            | "ak.self.realm_state_snapshot.read.manifest_head.v1"
             | "ak.self.device_messages.read.list.v1"
             | "ak.self.device_messages.command.ack.v1" => "agent_runtime.permission_encrypted",
             "ak.self.signal.command.send.v1" => "agent_runtime.permission_presence",
