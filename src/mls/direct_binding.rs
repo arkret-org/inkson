@@ -442,8 +442,9 @@ pub(crate) async fn ensure_binding(
         .mls_checkpoint_for(realm_id)
         .ok_or_else(|| anyhow::anyhow!("MLS checkpoint is unavailable"))?;
     anyhow::ensure!(snapshot.epoch > 0, "waiting for the peer MLS Add");
-    let initial_state =
-        accepted_pair_commit(&events, realm_id, &snapshot.group_id, snapshot.epoch)?;
+    // The current accepted Commit must match our installed state. Its epoch
+    // does not select the immutable initial exact-pair binding reference.
+    accepted_pair_commit(&events, realm_id, &snapshot.group_id, snapshot.epoch)?;
     let peer_selector = store
         .direct_conversation_peer(realm_id)
         .ok_or_else(|| anyhow::anyhow!("waiting for the exact Direct Conversation peer"))?;
@@ -459,13 +460,18 @@ pub(crate) async fn ensure_binding(
         )
         .await?;
     use arkret_sdk::direct_conversation::DirectConversationResolveOutcome;
-    let (coordinates, authorization_basis) = match resolved {
+    resolved.validate_shape()?;
+    let (coordinates, authorization_basis, initial_state_ref) = match resolved {
         DirectConversationResolveOutcome::Found { .. } => return Ok(()),
         DirectConversationResolveOutcome::Provisional {
             coordinates,
             authorization_basis,
+            initial_exact_pair_group_state_ref: Some(initial),
+            peer_mls_admission:
+                arkret_sdk::direct_conversation::DirectConversationPeerMlsAdmission::Durable,
             ..
-        } => (coordinates, authorization_basis),
+        } => (coordinates, authorization_basis, initial),
+        DirectConversationResolveOutcome::Provisional { .. } => return Ok(()),
         _ => anyhow::bail!("Direct Conversation current authority is not ready for binding"),
     };
     anyhow::ensure!(
@@ -473,6 +479,14 @@ pub(crate) async fn ensure_binding(
         "resolver and accepted founding coordinates differ"
     );
     authorization_basis.validate_shape()?;
+    anyhow::ensure!(
+        events
+            .iter()
+            .any(|event| event.event_id == initial_state_ref
+                && event.realm_id == realm
+                && event.kind == EventKind::MlsCommit),
+        "initial exact-pair reference is absent from accepted Realm history"
+    );
     let payload = arkret_sdk::DirectConversationBoundPayload {
         pair_key: coordinates.pair_key,
         unordered_participant_ids: participants,
@@ -480,7 +494,7 @@ pub(crate) async fn ensure_binding(
         main_strand_id: plan.main_strand_id,
         founding_unit_digest: plan.founding_unit_digest,
         authorization_basis,
-        initial_exact_pair_group_state_ref: initial_state.event_id.clone(),
+        initial_exact_pair_group_state_ref: initial_state_ref,
         created_at: crate::clock::now_utc_millis(),
     };
     let operation = crate::operation::TypedOperationBuilder::new::<
@@ -702,6 +716,9 @@ mod tests {
                         .unwrap(),
                     ]),
                 group_state_ref: None,
+                initial_exact_pair_group_state_ref: None,
+                peer_mls_admission:
+                    arkret_sdk::direct_conversation::DirectConversationPeerMlsAdmission::Missing,
             };
         let authorized = mls_authoring_intent(&intent, &create, &provisional).unwrap();
         assert_eq!(

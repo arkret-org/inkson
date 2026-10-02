@@ -636,6 +636,45 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     };
     let self_actor = arkret_sdk::ActorId::account(account.authority.clone()).to_string();
     let http = api.sdk_http_client()?;
+    // A terminal founding claim leaves its peer leaf in the public roster.
+    // Only the authenticated resolver can request its same-group replacement;
+    // local roster membership, clock guesses and opaque failures cannot.
+    let direct_peer = state_store.read().direct_conversation_peer(&realm_id);
+    let mut direct_admission_pending = false;
+    if let Some(peer) = direct_peer {
+        let resolved = http
+            .direct_conversation_resolve(
+                &arkret_sdk::direct_conversation::DirectConversationResolveRequestBody {
+                    peer: peer.clone(),
+                },
+            )
+            .await?;
+        resolved.validate_shape()?;
+        if let arkret_sdk::direct_conversation::DirectConversationResolveOutcome::Provisional {
+            coordinates,
+            peer_mls_admission,
+            ..
+        } = resolved
+        {
+            anyhow::ensure!(
+                coordinates.realm_id.as_str() == realm_id,
+                "Direct admission resolver changed the existing Realm"
+            );
+            let peer_actor = peer.contact_actor_id().to_string();
+            direct_admission_pending = peer_mls_admission
+                != arkret_sdk::direct_conversation::DirectConversationPeerMlsAdmission::Durable;
+            if matches!(peer_mls_admission,
+                arkret_sdk::direct_conversation::DirectConversationPeerMlsAdmission::Missing
+                | arkret_sdk::direct_conversation::DirectConversationPeerMlsAdmission::RepairRequired)
+            {
+                if !pending.iter().any(|(actor, _)| actor == &peer_actor) {
+                    pending.push((peer_actor, None));
+                }
+            } else {
+                pending.retain(|(actor, _)| actor != &peer_actor);
+            }
+        }
+    }
     let active_devices = crate::transport::keys::list_devices(&http).await?.devices;
     pending.extend(active_devices.into_iter().filter_map(|device| {
         (device.status == arkret_sdk::DeviceSummaryStatus::Active
@@ -724,6 +763,12 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         }
     }
     if outcome.admitted > 0 {
+        // Add acceptance does not finish Direct founding. Keep the bounded
+        // resolver retry alive until durable consume permits the binding;
+        // a pending claim may also become repair_required without a new Event.
+        if direct_admission_pending {
+            outcome.deferred += 1;
+        }
         // An accepted Add commit is necessary but not by itself sufficient to
         // release the send gate. Only exact agreement between the current MLS
         // roster and the complete sync hint shows that every currently

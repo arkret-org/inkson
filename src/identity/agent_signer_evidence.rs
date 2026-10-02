@@ -627,6 +627,55 @@ mod historical_result_tests {
     }
 
     #[test]
+    fn chat_verifies_historical_agent_without_unsigned_projection_marker() {
+        let (selector, mut entry, _) = fixture();
+        let mut store = crate::state::isolated_store_for_tests("historical-agent-chat");
+        store.switch_test_account("did:web:reader.example");
+        let recipient = store.active_authority().unwrap();
+        entry.recipient_account_id = recipient.clone();
+        entry.receiver_id = recipient.station_id.clone();
+        index_verified_committed_event(&mut store, &selector.realm_id, &committed_view(&selector))
+            .unwrap();
+        let envelope = serde_json::to_value(&selector.accepted_event).unwrap();
+        assert!(
+            envelope
+                .pointer("/unsigned/agent_authorization_admission")
+                .is_none()
+        );
+        use crate::views::chat::model::{ChatProofVerdict, verify_chat_envelope_proof_for_realm};
+        assert_eq!(
+            verify_chat_envelope_proof_for_realm(
+                selector.realm_id.as_str(),
+                &envelope,
+                Some(&store),
+                None
+            ),
+            ChatProofVerdict::Unresolved
+        );
+        store.store_historical_agent_signer_key(entry).unwrap();
+        assert_eq!(
+            verify_chat_envelope_proof_for_realm(
+                selector.realm_id.as_str(),
+                &envelope,
+                Some(&store),
+                None
+            ),
+            ChatProofVerdict::Verified
+        );
+        let mut tampered = envelope;
+        tampered["payload"]["content"]["body"] = json!("tampered");
+        assert_eq!(
+            verify_chat_envelope_proof_for_realm(
+                selector.realm_id.as_str(),
+                &tampered,
+                Some(&store),
+                None
+            ),
+            ChatProofVerdict::Rejected
+        );
+    }
+
+    #[test]
     fn candidate_builder_persists_exact_coordinate_after_external_verification() {
         // This unit test enters the private row builder directly; the synthetic
         // Commit signature is not an authority proof. Production can call it

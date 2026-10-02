@@ -1085,10 +1085,21 @@ pub(crate) fn verify_chat_envelope_proof_for_realm(
         return ChatProofVerdict::Rejected;
     }
     let candidates = message_candidates(event);
+    let proof_verdict = verify_committed_chat_producer_proof(event);
+    if proof_verdict != ChatProofVerdict::Unresolved {
+        return proof_verdict;
+    }
+    // Historical Agent evidence is indexed at the verified committed carrier
+    // boundary. An unsigned projection marker is neither required nor trusted.
     if let Some(envelope) = candidates.iter().copied().find(|candidate| {
         candidate
-            .pointer("/unsigned/agent_authorization_admission")
+            .get("producer_proof")
+            .and_then(Value::as_object)
             .is_some()
+            && candidate
+                .get("actor_id")
+                .and_then(actor_principal_from_value)
+                .is_some()
     }) {
         let Some(store) = state_store else {
             return ChatProofVerdict::Unresolved;
@@ -1142,11 +1153,11 @@ pub(crate) fn verify_chat_envelope_proof_for_realm(
                 ChatProofVerdict::Unresolved
             }
             crate::identity::agent_signer_evidence::CachedAgentEventVerdict::NotAgent => {
-                ChatProofVerdict::Rejected
+                ChatProofVerdict::Unresolved
             }
         };
     }
-    verify_committed_chat_producer_proof(event)
+    proof_verdict
 }
 
 pub(crate) fn verified_chat_sender_domain_for_realm(
@@ -1169,9 +1180,9 @@ pub(crate) fn verified_chat_sender_domain_for_realm(
             .and_then(Value::as_object)
             .is_some()
     })?;
-    let producer = committed_human_device_producer(envelope).ok()??;
-    arkret_sdk::mls_basic_credential_identity(&arkret_sdk::ActorId::account(producer.account_id))
-        .ok()
+    let actor: arkret_sdk::ActorId =
+        serde_json::from_value(envelope.get("actor_id")?.clone()).ok()?;
+    arkret_sdk::mls_basic_credential_identity(&actor).ok()
 }
 
 /// Reconstruct the encrypted-content group coordinates used by ordinary
