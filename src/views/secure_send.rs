@@ -60,11 +60,24 @@ pub(crate) fn use_scope_send_gate(
     scope: Option<arkret_sdk::ScopeRef>,
     device: arkret_sdk::DeviceId,
 ) -> Option<crate::mls::send_gate::MlsSendGate> {
+    use_scope_send_probe(state_store, scope, device).gate
+}
+
+pub(crate) struct ScopeSendProbe {
+    pub gate: Option<crate::mls::send_gate::MlsSendGate>,
+    pub checking: bool,
+}
+
+pub(crate) fn use_scope_send_probe(
+    state_store: SyncSignal<LocalStateStore>,
+    scope: Option<arkret_sdk::ScopeRef>,
+    device: arkret_sdk::DeviceId,
+) -> ScopeSendProbe {
     // Creator Ready is committed in its own vault, independently of the
     // account cursor and checkpoint. That commit must wake a blocked probe.
     let mut creator_revision = use_signal(|| 0_u64);
     use_future(move || async move {
-        let mut changes = crate::outbound_store::subscribe_committed_changes();
+        let mut changes = crate::outbound_store::subscribe_creator_committed_changes();
         loop {
             let revision = *changes.borrow_and_update();
             if *creator_revision.peek() != revision {
@@ -110,7 +123,8 @@ pub(crate) fn use_scope_send_gate(
             checkpoint,
         }
     }));
-    let mut result = use_signal(|| None::<(SendReadinessKey, crate::mls::send_gate::MlsSendGate)>);
+    let mut result =
+        use_signal(|| None::<(SendReadinessKey, Option<crate::mls::send_gate::MlsSendGate>)>);
     use_effect(move || {
         let captured = key();
         spawn(async move {
@@ -136,15 +150,23 @@ pub(crate) fn use_scope_send_gate(
                 None
             };
             if *key.peek() == captured {
-                result.set(gate.map(|gate| (captured, gate)));
+                result.set(Some((captured, gate)));
             }
         });
     });
-    result
-        .read()
+    let current_key = key();
+    let result = result.read();
+    let completed = result
         .as_ref()
-        .filter(|(captured, _)| captured == &key())
-        .map(|(_, gate)| gate.clone())
+        .filter(|(captured, _)| captured == &current_key);
+    ScopeSendProbe {
+        gate: completed.and_then(|(_, gate)| gate.clone()),
+        checking: completed.is_none()
+            && current_key.scope.is_some()
+            && !current_key.reset_required
+            && !current_key.detail_invalidated
+            && current_key.persistence_healthy,
+    }
 }
 
 /// Encrypt `plaintext_bytes` under the Realm MLS group and return the

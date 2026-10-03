@@ -5,12 +5,12 @@ use dioxus::dioxus_core::{AttributeValue, ElementId, Mutation};
 
 use super::*;
 
-type SendState = Rc<RefCell<Option<Signal<(bool, bool)>>>>;
+type SendState = Rc<RefCell<Option<Signal<(bool, bool, bool)>>>>;
 
 fn send_actions_harness(control: SendState) -> Element {
-    let state = use_signal(|| (false, true));
+    let state = use_signal(|| (false, true, false));
     *control.borrow_mut() = Some(state);
-    let (plaintext, pending) = state();
+    let (plaintext, pending, checking) = state();
     rsx! {
         OrdinarySendActions {
             plaintext,
@@ -20,6 +20,7 @@ fn send_actions_harness(control: SendState) -> Element {
             creator_bootstrap_pending: pending,
             secure_title: if pending { "Waiting for verified current" } else { "" },
             opening: false,
+            readiness_checking: checking,
             on_plaintext: move |_| {},
             on_secure: move |_| {},
         }
@@ -66,15 +67,18 @@ fn primary_send_keeps_its_dom_identity_across_scope_probe_and_encryption_changes
     let primary = primary_send_id(&initial.edits);
     assert_primary_disabled(&initial.edits, primary, true);
 
-    for (plaintext, pending) in [
-        (true, false),
-        (false, true),
-        (false, false),
-        (true, true),
-        (true, false),
+    for (plaintext, pending, checking) in [
+        (true, false, false),
+        (false, true, true),
+        (false, false, false),
+        (true, true, false),
+        (true, false, false),
     ] {
         dom.in_runtime(|| {
-            control.borrow().unwrap().set((plaintext, pending));
+            control
+                .borrow()
+                .unwrap()
+                .set((plaintext, pending, checking));
         });
         let update = dom.render_immediate_to_vec();
         assert_primary_disabled(&update.edits, primary, pending);

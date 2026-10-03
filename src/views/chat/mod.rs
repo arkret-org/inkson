@@ -1519,11 +1519,13 @@ pub fn ChatPanel(
     let send_scope = selected_channel_info
         .as_ref()
         .and_then(|channel| channel.effective_scope(&selected_realm_id));
-    let scope_send_gate = crate::views::secure_send::use_scope_send_gate(
+    let scope_send_probe = crate::views::secure_send::use_scope_send_probe(
         state_store,
         send_scope.clone(),
         account_device_id.clone(),
     );
+    let scope_readiness_checking = scope_send_probe.checking;
+    let scope_send_gate = scope_send_probe.gate;
     // The first-class Sidecar contract requires an independent MLS backing scope.
     // The private Strand only carries its internal scope id, so ordinary Realm
     // inheritance would incorrectly downgrade a Sidecar opened from a
@@ -1564,6 +1566,14 @@ pub fn ChatPanel(
             Some(crate::mls::send_gate::MlsSendGate::Plaintext) => {
                 crate::current_projection::ScopeMlsCurrent::NotActivated
             }
+            None if scope_readiness_checking => send_scope
+                .as_ref()
+                .map(|scope| {
+                    // Presentation only: authoring still requires the independent
+                    // durable send probe to finish restoring private state.
+                    state_store.read().installed_scope_mls_current(scope)
+                })
+                .unwrap_or(crate::current_projection::ScopeMlsCurrent::Unknown),
             None => crate::current_projection::ScopeMlsCurrent::Unknown,
         };
         let local_epoch = send_scope.as_ref().and_then(|scope| {
@@ -1638,6 +1648,9 @@ pub fn ChatPanel(
             Some("Waiting for verified conversation authority and encryption keys.".to_owned());
     }
     let scope_send_ready = scope_send_gate.is_some();
+    let send_readiness_checking = scope_readiness_checking
+        && selected_realm_pending_mls_binding_reason.is_none()
+        && !sidecar_mode;
     if !sidecar_mode && !scope_send_ready && selected_realm_pending_mls_binding_reason.is_none() {
         selected_realm_pending_mls_binding_reason = Some(
             "Waiting for this scope's verified send state and this device's local encryption keys."
@@ -2577,7 +2590,7 @@ pub fn ChatPanel(
                     }
                 }
 
-                if selected_realm_pending_mls_binding && selected_channel_security_encrypted {
+                if selected_realm_pending_mls_binding && selected_channel_security_encrypted && !send_readiness_checking {
                     div {
                         class: "event warning-banner",
                         "data-testid": "epoch-update-required-banner",
@@ -2591,6 +2604,7 @@ pub fn ChatPanel(
                 // `ak.typing` ephemeral within `TYPING_TTL_SECONDS`.
                 // The DIDs live on `data-typing-actors` so cotest can
                 // assert on them without scraping localised text.
+                div { class: "discussion-typing-slot",
                 {
                     let active_typers: Vec<String> = typing_actors()
                         .into_iter()
@@ -2624,6 +2638,7 @@ pub fn ChatPanel(
                     } else {
                         rsx! {}
                     }
+                }
                 }
 
                 if sidecar_mode && sidecar_exchange_current.is_err() {
@@ -2889,6 +2904,7 @@ pub fn ChatPanel(
                     selected_channel_security_encrypted,
                     selected_realm_pending_mls_binding,
                     selected_realm_pending_mls_binding_reason: selected_realm_pending_mls_binding_reason.clone(),
+                    send_readiness_checking,
                     active_sidecar_session: sidecar_session.clone(),
                     sidecar_send_block_reason: sidecar_send_block_reason.clone(),
                     public_agent_ids: public_agent_ids.clone(),
@@ -2899,6 +2915,7 @@ pub fn ChatPanel(
                     frontier_state,
                 }
             }
+            div { class: "discussion-status-slot",
             if !status_msg().is_empty() {
                 div {
                     class: "muted discussion-status",
@@ -2910,6 +2927,7 @@ pub fn ChatPanel(
                     title: "{status_msg}",
                     "{status_msg}"
                 }
+            }
             }
         }
     }

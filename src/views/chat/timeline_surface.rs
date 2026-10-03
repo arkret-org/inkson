@@ -4,23 +4,32 @@ use super::*;
 
 thread_local! {
     static CHAT_FEED_SCROLL_OFFSETS: std::cell::RefCell<
-        std::collections::BTreeMap<String, f64>,
+        std::collections::BTreeMap<String, ChatFeedScrollPosition>,
     > = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
 }
 
-pub(super) fn chat_feed_scroll_offset(key: &str) -> f64 {
-    CHAT_FEED_SCROLL_OFFSETS.with(|offsets| offsets.borrow().get(key).copied().unwrap_or_default())
+#[derive(Clone, Copy)]
+struct ChatFeedScrollPosition {
+    top: f64,
+    follows_latest: bool,
 }
 
-fn preserve_chat_feed_scroll_offset(key: &str, scroll_top: f64) {
-    CHAT_FEED_SCROLL_OFFSETS.with(|offsets| {
-        let mut offsets = offsets.borrow_mut();
-        // A newly mounted browser element emits a synthetic zero before the
-        // saved offset can be restored. Do not let that erase a real position.
-        if scroll_top > 0.0 || !offsets.contains_key(key) {
-            offsets.insert(key.to_owned(), scroll_top);
+impl Default for ChatFeedScrollPosition {
+    fn default() -> Self {
+        Self {
+            top: 0.0,
+            follows_latest: true,
         }
-    });
+    }
+}
+
+fn chat_feed_scroll_position(key: &str) -> ChatFeedScrollPosition {
+    CHAT_FEED_SCROLL_OFFSETS
+        .with(|positions| positions.borrow().get(key).copied().unwrap_or_default())
+}
+
+pub(super) fn chat_feed_scroll_offset(key: &str) -> f64 {
+    chat_feed_scroll_position(key).top
 }
 
 #[derive(Clone, PartialEq)]
@@ -77,6 +86,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
     } = context;
     let scroll_offset_key = format!("{selected_realm_id}\u{1f}{selected_channel_value}");
     let scroll_offset_key_for_event = scroll_offset_key.clone();
+    let mut scroll_restored = use_signal(|| false);
     let state_store = crate::app::SessionContext::get().state_store;
     let command_context = ChatCommandContext {
         base_url: base_url.clone(),
@@ -99,6 +109,22 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
     let message_stream_cards = crate::views::message_streams::MessageStreamHub::try_use()
         .map(|hub| hub.visible_for(&selected_realm_id, &selected_channel_value))
         .unwrap_or_default();
+    // Follow new content only while the reader remains at the end. Restoring
+    // an absolute offset on every append fights browser scroll anchoring.
+    let content_key = (
+        visible_messages.len(),
+        visible_messages.last().map(|message| message.id.clone()),
+        message_stream_cards
+            .iter()
+            .map(|card| (card.message_id.clone(), card.text.len()))
+            .collect::<Vec<_>>(),
+    );
+    let scroll_key_for_effect = scroll_offset_key.clone();
+    use_effect(use_reactive((&content_key,), move |_| {
+        if scroll_restored() && chat_feed_scroll_position(&scroll_key_for_effect).follows_latest {
+            scroll_chat_feed_to_latest();
+        }
+    }));
     let pinned_target_set: std::collections::HashSet<String> = (controller.shared_pins)()
         .iter()
         .map(|pin| pin.target_ref.clone())
@@ -128,23 +154,30 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
     rsx! {
                 div { class: "discussion-chat-feed", "data-testid": "message-list",
                     onscroll: move |event: ScrollEvent| {
-                        preserve_chat_feed_scroll_offset(
-                            &scroll_offset_key_for_event,
-                            event.data().scroll_top(),
-                        );
+                        // Ignore mounting events until the saved position has
+                        // been restored, but retain a real user scroll to zero.
+                        if *scroll_restored.peek() {
+                            let data = event.data();
+                            let top = data.scroll_top();
+                            let follows_latest = f64::from(data.scroll_height() - data.client_height()) - top <= 32.0;
+                            CHAT_FEED_SCROLL_OFFSETS.with(|positions| {
+                                positions.borrow_mut().insert(scroll_offset_key_for_event.clone(), ChatFeedScrollPosition { top, follows_latest });
+                            });
+                        }
                     },
                     onmounted: move |event: MountedEvent| {
                         let scroll_offset_key = scroll_offset_key.clone();
                         async move {
-                            let scroll_top = chat_feed_scroll_offset(&scroll_offset_key);
-                            if scroll_top > 0.0 {
+                            let position = chat_feed_scroll_position(&scroll_offset_key);
+                            if !position.follows_latest {
                                 let _ = event
                                     .scroll(
-                                        dioxus::html::geometry::PixelsVector2D::new(0.0, scroll_top),
+                                        dioxus::html::geometry::PixelsVector2D::new(0.0, position.top),
                                         ScrollBehavior::Instant,
                                     )
                                     .await;
                             }
+                            scroll_restored.set(true);
                         }
                     },
                     for preview in message_stream_cards {

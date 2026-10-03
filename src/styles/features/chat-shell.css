@@ -475,6 +475,28 @@
   min-height: 18px;
 }
 
+.discussion-status-slot {
+  min-height: 18px;
+  grid-column: 2;
+}
+
+.discussion-shell.embedded .discussion-status-slot {
+  grid-column: 1;
+}
+
+.discussion-typing-slot {
+  flex: 0 0 20px;
+  min-height: 20px;
+  padding: 0 14px;
+  overflow: hidden;
+}
+
+.discussion-typing-slot .typing-indicator {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .discussion-detail-section {
   display: grid;
   gap: 10px;

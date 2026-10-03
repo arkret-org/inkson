@@ -67,6 +67,20 @@ fn notify_committed_change() {
     committed_changes().send_modify(|revision| *revision = revision.wrapping_add(1));
 }
 
+fn creator_committed_changes() -> &'static tokio::sync::watch::Sender<u64> {
+    static CHANGES: std::sync::OnceLock<tokio::sync::watch::Sender<u64>> =
+        std::sync::OnceLock::new();
+    CHANGES.get_or_init(|| tokio::sync::watch::channel(0).0)
+}
+
+pub(crate) fn subscribe_creator_committed_changes() -> tokio::sync::watch::Receiver<u64> {
+    creator_committed_changes().subscribe()
+}
+
+fn notify_creator_committed_change() {
+    creator_committed_changes().send_modify(|revision| *revision = revision.wrapping_add(1));
+}
+
 type ScheduledDispatches =
     std::collections::BTreeMap<arkret_identifiers::ScheduledSendId, arkret_sdk::EventId>;
 
@@ -537,6 +551,7 @@ async fn mutate_authenticated_state_in_store<R>(
     let (mut state, quarantined, retired) =
         creator_quarantine::decode_for_recovery(stored, authority)?;
     let before = encode_snapshot(&state)?;
+    let creators_before = state.creator_bootstrap_records.clone();
     let result = if quarantined {
         Err(garth::Error::Storage(
             "creator inconsistency quarantined durably; requested queue mutation stopped".into(),
@@ -572,6 +587,9 @@ async fn mutate_authenticated_state_in_store<R>(
         return Err(garth::Error::Storage(
             "outbound queue changed in another holder; retry from its committed snapshot".into(),
         ));
+    }
+    if quarantined || retired || creators_before != state.creator_bootstrap_records {
+        notify_creator_committed_change();
     }
     notify_committed_change();
     result
@@ -668,6 +686,7 @@ async fn mutate_state_in_file<R>(
         protection.map(|(authority, _)| authority),
     )?;
     let before = encode_snapshot(&state)?;
+    let creators_before = state.creator_bootstrap_records.clone();
     let result = if quarantined {
         Err(garth::Error::Storage(
             "creator inconsistency quarantined durably; requested queue mutation stopped".into(),
@@ -726,6 +745,9 @@ async fn mutate_state_in_file<R>(
             .map_err(|error| {
                 garth::Error::Storage(format!("sync outbound queue directory: {error}"))
             })?;
+    }
+    if quarantined || retired || creators_before != state.creator_bootstrap_records {
+        notify_creator_committed_change();
     }
     notify_committed_change();
     result
@@ -1676,6 +1698,61 @@ mod tests {
     }
 
     const CREATOR_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
+
+    #[tokio::test]
+    async fn ordinary_queue_commits_do_not_invalidate_creator_readiness() {
+        let store = garth::MemorySecureKeyStore::default();
+        let key = "inkson.outbound.v1::readiness.standard";
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("standard.json");
+        let mut creator_changes = subscribe_creator_committed_changes();
+        let mut queue_changes = subscribe_committed_changes();
+        for native_file in [false, true] {
+            creator_changes.borrow_and_update();
+            queue_changes.borrow_and_update();
+            if native_file {
+                mutate_queue_in_file(&path, |queue| {
+                    queue.enqueue(fixture_submission(0), crate::clock::now_utc())?;
+                    Ok(())
+                })
+                .await
+                .unwrap();
+            } else {
+                mutate_queue_in_store(&store, key, |queue| {
+                    queue.enqueue(fixture_submission(0), crate::clock::now_utc())?;
+                    Ok(())
+                })
+                .await
+                .unwrap();
+            }
+            assert!(queue_changes.has_changed().unwrap());
+            assert!(!creator_changes.has_changed().unwrap());
+            let (intent, submission) = creator_fixture(CREATOR_DEVICE);
+            if native_file {
+                mutate_state_in_file(&path, None, |state| {
+                    state.freeze_creator_intent(intent, submission)
+                })
+                .await
+                .unwrap();
+            } else {
+                mutate_state_in_store(&store, key, |state| {
+                    state.freeze_creator_intent(intent, submission)
+                })
+                .await
+                .unwrap();
+            }
+            assert!(creator_changes.has_changed().unwrap());
+        }
+        creator_changes.borrow_and_update();
+        let (intent, submission) = creator_fixture(CREATOR_DEVICE);
+        assert!(
+            mutate_state_in_store(&RefusingStore, key, |state| state
+                .freeze_creator_intent(intent, submission))
+            .await
+            .is_err()
+        );
+        assert!(!creator_changes.has_changed().unwrap());
+    }
 
     fn creator_acceptance(
         intent: &MlsCreatorBootstrapIntent,

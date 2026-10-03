@@ -35,6 +35,7 @@ pub(super) struct ChatComposerContext {
     pub selected_channel_security_encrypted: bool,
     pub selected_realm_pending_mls_binding: bool,
     pub selected_realm_pending_mls_binding_reason: Option<String>,
+    pub send_readiness_checking: bool,
     pub active_sidecar_session: Option<crate::sidecar::HostedSidecarState>,
     pub sidecar_send_block_reason: Option<String>,
     pub public_agent_ids: std::collections::BTreeSet<String>,
@@ -115,6 +116,7 @@ fn OrdinarySendActions(
     creator_bootstrap_pending: bool,
     secure_title: String,
     opening: bool,
+    #[props(default)] readiness_checking: bool,
     on_plaintext: Callback<MouseEvent>,
     on_secure: Callback<MouseEvent>,
 ) -> Element {
@@ -126,6 +128,8 @@ fn OrdinarySendActions(
             "data-testid": "send-chat-button",
             "data-mls-binding-pending": mls_binding_pending.to_string(),
             "data-creator-bootstrap-pending": creator_bootstrap_pending.to_string(),
+            "data-readiness-checking": readiness_checking.to_string(),
+            "aria-busy": readiness_checking.to_string(),
             title: if plaintext { String::new() } else { secure_title.clone() },
             disabled: if plaintext { plaintext_disabled } else { secure_disabled },
             onclick: move |event| {
@@ -175,6 +179,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         selected_channel_security_encrypted,
         selected_realm_pending_mls_binding,
         selected_realm_pending_mls_binding_reason,
+        send_readiness_checking,
         active_sidecar_session,
         sidecar_send_block_reason,
         public_agent_ids,
@@ -1381,6 +1386,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             creator_mls_bootstrap_pending_reason.unwrap_or_default().to_owned()
                         }),
                         opening: sidecar_route_pending(),
+                        readiness_checking: send_readiness_checking,
                         on_plaintext: plaintext_send,
                         on_secure: secure_send,
                     }
