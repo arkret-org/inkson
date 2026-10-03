@@ -530,20 +530,14 @@ fn restore_author_group_for_scope(
     epoch: u64,
     group_state_ref: &str,
 ) -> Option<arkret_sdk::mls::ArkretMlsGroup> {
-    let realm_id = effective_scope.realm_id_opt()?.as_str();
-    let circle_id = match effective_scope {
-        arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str()),
-        _ => None,
-    };
     let snapshot = state_store
         .mls_checkpoint_for_scope(effective_scope)
         .filter(|snapshot| snapshot.epoch == epoch && snapshot.group_id == group_id)
         .or_else(|| {
-            state_store
-                .historical_mls_checkpoint_for_effective_scope(realm_id, circle_id, group_id, epoch)
+            state_store.historical_mls_checkpoint_for_scope(effective_scope, group_id, epoch)
         })?;
     let accepted_ref = state_store
-        .mls_group_state_ref_for_effective_scope(realm_id, circle_id, group_id, epoch)
+        .mls_group_state_ref_for_scope(effective_scope, group_id, epoch)
         .ok()?;
     if accepted_ref.as_str() != group_state_ref {
         return None;

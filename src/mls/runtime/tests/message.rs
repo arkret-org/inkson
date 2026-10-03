@@ -1084,6 +1084,130 @@ fn historical_author_view_survives_epoch_rotation() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn sidecar_author_leaf_view_preserves_exact_scope_and_historical_epoch() {
+    let mut state = temp_state_store("sidecar-author-leaf-view");
+    let secure = MemorySecureKeyStore::new();
+    let authority = fixture::authority("did:web:alice.example");
+    let actor = arkret_sdk::ActorId::account(authority.clone());
+    let device = fixture::device_id("ak:device:01904100-0000-7000-8000-0000000000a1");
+    let realm =
+        arkret_sdk::RealmId::new("ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN").unwrap();
+    let scope = arkret_sdk::ScopeRef::Sidecar {
+        realm_id: realm.clone(),
+        sidecar_id: arkret_sdk::SidecarId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [0x61; 32],
+        )),
+    };
+    let identity =
+        arkret_sdk::ArkretMlsIdentity::new_test_human_device(actor.clone(), device.clone())
+            .unwrap();
+    let endpoint = identity.endpoint_identity();
+    let mut group = identity.create_group(&scope).unwrap();
+    group
+        .install_local_creator_binding(
+            actor.clone(),
+            Some(arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [0x65; 32],
+            )),
+        )
+        .unwrap();
+    let secret = load_or_create_account_mls_secret(&secure, &authority).unwrap();
+    let checkpoint = |group: &arkret_sdk::ArkretMlsGroup| {
+        let record = group.export_state_record().unwrap();
+        crate::mls::persistence::encrypt_state(
+            realm.as_str(),
+            &record.group_id,
+            record.epoch,
+            &serde_json::to_vec(&record).unwrap(),
+            &secret,
+            &[0x62; 16],
+        )
+    };
+    let genesis = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x63; 32]);
+    state
+        .install_accepted_mls_transition(&scope, checkpoint(&group), &genesis)
+        .unwrap();
+    let group_id = group.group_id().to_string();
+    let view_at = |state: &crate::state::LocalStateStore,
+                   scope: &arkret_sdk::ScopeRef,
+                   epoch: u64,
+                   event_ref: &str| {
+        verified_author_group_view_for_scope(
+            state, &secure, &authority, &device, scope, &group_id, epoch, event_ref,
+        )
+    };
+    let before = view_at(&state, &scope, 0, genesis.as_str()).unwrap();
+    assert_eq!(before.active_leaves.len(), 1);
+    assert!(matches!(
+        &before.active_leaves[0].credential,
+        arkret_sdk::mls::AuthorLeafCredential::Basic { identity }
+            if arkret_sdk::decode_mls_basic_credential_identity(identity).unwrap() == actor
+    ));
+    assert!(view_at(&state, &scope, 1, genesis.as_str()).is_none());
+    assert!(
+        view_at(
+            &state,
+            &scope,
+            0,
+            "ak:event:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ"
+        )
+        .is_none()
+    );
+    assert!(
+        view_at(
+            &state,
+            &arkret_sdk::ScopeRef::Realm {
+                realm_id: realm.clone()
+            },
+            0,
+            genesis.as_str(),
+        )
+        .is_none()
+    );
+
+    let arkret_sdk::ScopeRef::Sidecar { sidecar_id, .. } = &scope else {
+        unreachable!();
+    };
+    // This local RFC restoration fixture does not certify Station admission.
+    let binding = arkret_sdk::MlsGovernanceBindingPayload::sidecar(
+        realm.clone(),
+        sidecar_id.clone(),
+        Some(genesis.clone()),
+        0,
+        1,
+        0,
+        arkret_sdk::sidecar_participant_authority_digest(sidecar_id, &realm, &authority, &[])
+            .unwrap(),
+        vec![arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [0x61; 32],
+        )],
+    )
+    .unwrap();
+    let update = group
+        .self_update_commit_with_governance_binding(&binding)
+        .unwrap();
+    let accepted = fixture::accepted_mls_commit_with_binding(actor, &update, binding, 0x64);
+    let base = accepted_mls_base_current(&scope, genesis.clone(), genesis.clone(), 0);
+    group.install_accepted_commit(&accepted, &base).unwrap();
+    group.install_test_leaf_bindings(vec![endpoint]).unwrap();
+    state
+        .install_accepted_mls_transition(&scope, checkpoint(&group), &accepted.event.event_id)
+        .unwrap();
+    let durable_before_read = state.mls_checkpoint_for_scope(&scope).unwrap();
+    assert!(view_at(&state, &scope, 1, accepted.event.event_id.as_str()).is_some());
+    assert_eq!(view_at(&state, &scope, 0, genesis.as_str()), Some(before));
+    assert!(view_at(&state, &scope, 0, accepted.event.event_id.as_str()).is_none());
+    assert_eq!(
+        state.mls_checkpoint_for_scope(&scope),
+        Some(durable_before_read)
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
     // §5.6 MUST + E2EE-at-rest hardening: after a successful decrypt the
     // advanced group state is persisted (so the same-epoch NEXT message

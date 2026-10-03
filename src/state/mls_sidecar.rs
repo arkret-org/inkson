@@ -378,14 +378,13 @@ impl LocalStateStore {
         self.load().mls_local_checkpoints.get(&key).cloned()
     }
 
-    pub fn historical_mls_checkpoint_for_effective_scope(
+    pub fn historical_mls_checkpoint_for_scope(
         &self,
-        realm_id: &str,
-        circle_id: Option<&str>,
+        effective_scope: &arkret_sdk::ScopeRef,
         group_id: &str,
         epoch: u64,
     ) -> Option<crate::mls::persistence::MlsLocalCheckpointEnvelope> {
-        let scope_key = mls_effective_scope_checkpoint_key(realm_id, circle_id).ok()?;
+        let scope_key = mls_scope_checkpoint_key_for_group(effective_scope, group_id).ok()?;
         let history_key = historical_mls_state_key(&scope_key, group_id, epoch);
         self.load()
             .mls_historical_checkpoints

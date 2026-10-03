@@ -103,9 +103,24 @@ pub(crate) fn accepted_mls_commit(
         0,
     )
     .unwrap();
-    let payload =
-        arkret_sdk::MlsCommitPayload::new(base_group_state_ref.clone(), 0, envelope, binding)
-            .unwrap();
+    accepted_mls_commit_with_binding(actor_id, envelope, binding, commit_seed)
+}
+
+pub(crate) fn accepted_mls_commit_with_binding(
+    actor_id: arkret_sdk::ActorId,
+    envelope: &arkret_sdk::MlsCommitEnvelope,
+    binding: arkret_sdk::MlsGovernanceBindingPayload,
+    commit_seed: u8,
+) -> arkret_sdk::CommittedEventFullView {
+    let effective_scope = binding.effective_scope().clone();
+    let base_group_state_ref = binding.base_group_state_ref().unwrap().clone();
+    let payload = arkret_sdk::MlsCommitPayload::new(
+        base_group_state_ref.clone(),
+        binding.key_access_revision(),
+        envelope,
+        binding,
+    )
+    .unwrap();
     let event = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MlsCommit>::new(
         effective_scope.clone(),
         actor_id,
@@ -123,7 +138,7 @@ pub(crate) fn accepted_mls_commit(
     let commit = arkret_sdk::RealmCommit {
         commit_id: arkret_sdk::RealmCommitId::from_digest([commit_seed; 32]),
         realm_id: realm_id.clone(),
-        stream_ref: arkret_sdk::CommitStreamRef::from_scope(effective_scope, Some(realm_id))
+        stream_ref: arkret_sdk::CommitStreamRef::from_scope(&effective_scope, Some(realm_id))
             .unwrap(),
         stream_position,
         previous_commit_ref: Some(arkret_sdk::RealmCommitId::from_digest(
