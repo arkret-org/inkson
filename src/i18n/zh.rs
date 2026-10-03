@@ -681,6 +681,11 @@ pub fn chinese_translations() -> TranslationDict {
         "该卡片仍是本地草稿;请等待同步完成后再归档。",
     );
     dict.set("kanban.archive_board_action", "归档看板");
+    dict.set(
+        "kanban.direct_conversation_unavailable",
+        "私聊不支持看板或列表，请在协作 Realm 中创建。",
+    );
+    dict.set("kanban.open_conversation", "打开聊天");
     dict.set("kanban.archive_board_pending", "正在归档看板及其全部卡片…");
     dict.set("kanban.archive_board_done", "看板已归档;卡片已级联归档。");
     dict.set("kanban.archive_board_confirm_title", "归档此看板？");

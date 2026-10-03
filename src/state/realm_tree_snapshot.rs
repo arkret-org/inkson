@@ -219,6 +219,26 @@ impl LocalStateStore {
         self.cached.realm_collaboration_roles.get(realm_id).copied()
     }
 
+    pub(crate) fn realm_allows_spaces(&self, realm_id: &str) -> bool {
+        if self.realm_collaboration_role(realm_id)
+            == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
+        {
+            return false;
+        }
+        !self
+            .realm_current_state_entries(realm_id)
+            .iter()
+            .any(|entry| {
+                let arkret_wire::TypedCurrentResult::Value {
+                    selector, value, ..
+                } = entry;
+                *selector == arkret_wire::CurrentSelector::RealmGenesis
+                    && serde_json::from_value::<arkret_sdk::RealmGenesis>(value.clone()).is_ok_and(
+                        |genesis| genesis.purpose == arkret_sdk::RealmPurpose::DirectConversation,
+                    )
+            })
+    }
+
     pub fn realm_state_snapshot_sync_status(
         &self,
         realm_id: &str,

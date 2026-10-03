@@ -601,6 +601,8 @@ pub fn english_translations() -> TranslationDict {
         "This card is still a local draft; wait for it to sync before archiving.",
     );
     dict.set("kanban.archive_board_action", "Archive board");
+    dict.set("kanban.direct_conversation_unavailable", "Direct conversations do not support boards or lists. Create them in a collaboration Realm.");
+    dict.set("kanban.open_conversation", "Open conversation");
     dict.set(
         "kanban.archive_board_pending",
         "Archiving board and all its cards...",

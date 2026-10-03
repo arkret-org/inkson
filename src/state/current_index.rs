@@ -235,6 +235,7 @@ fn plan_current_entry(
     baseline: Option<&RealmDetailBaseline>,
     entry: &TypedCurrentResult,
     old: Option<&TypedCurrentResult>,
+    verified_snapshot: bool,
 ) -> anyhow::Result<(bool, bool)> {
     let complete = baseline.is_some_and(|segment| {
         previous
@@ -250,16 +251,41 @@ fn plan_current_entry(
         );
         let old_revision = revision_of(old);
         let new_revision = revision_of(entry);
+        let TypedCurrentResult::Value {
+            source_stream_ref: old_source,
+            ..
+        } = old;
+        let TypedCurrentResult::Value {
+            source_stream_ref: new_source,
+            ..
+        } = entry;
+        anyhow::ensure!(
+            old_source == new_source,
+            "current result changed its source stream"
+        );
         if old_revision.stream_position == new_revision.stream_position {
             anyhow::ensure!(
                 old_revision == new_revision,
                 "current result forked at the same stream position"
             );
-            anyhow::ensure!(
-                arkret_sdk::canonical::canonical_json_bytes(old)?
-                    == arkret_sdk::canonical::canonical_json_bytes(entry)?,
-                "current result changed at the same revision"
-            );
+            if arkret_sdk::canonical::canonical_json_bytes(old)?
+                != arkret_sdk::canonical::canonical_json_bytes(entry)?
+            {
+                // Only a fresh verified complete cut may rebuild a malformed
+                // local typed value. Valid evidence still rejects contradictions.
+                if verified_snapshot
+                    && !cached_mls_value_valid(old)
+                    && cached_mls_value_valid(entry)
+                {
+                    return Ok((true, seen));
+                }
+                anyhow::bail!(
+                    "current result changed at the same revision: selector={}, commit_id={}, stream_position={}",
+                    selector_key(selector_of(entry))?,
+                    new_revision.commit_id,
+                    new_revision.stream_position
+                );
+            }
             return Ok((false, seen));
         }
         if old_revision.stream_position > new_revision.stream_position {
@@ -267,6 +293,19 @@ fn plan_current_entry(
         }
     }
     Ok((!complete, seen))
+}
+
+fn cached_mls_value_valid(entry: &TypedCurrentResult) -> bool {
+    let TypedCurrentResult::Value {
+        selector, value, ..
+    } = entry;
+    match selector {
+        CurrentSelector::MlsGroup { scope_ref } => {
+            serde_json::from_value::<arkret_wire::MlsGroupCurrent>(value.clone())
+                .is_ok_and(|group| group.effective_scope == *scope_ref)
+        }
+        _ => true,
+    }
 }
 
 /// Preflight one Realm entry's baseline transition without changing host state.
@@ -874,6 +913,9 @@ impl CurrentIndex {
         let Some(entry) = self.raw_selector(realm, selector, generation).await? else {
             return Ok(None);
         };
+        if !cached_mls_value_valid(&entry) {
+            anyhow::bail!("cached MLS current value does not match its closed schema");
+        }
         if let Some(mark) = self.strongest_mark(realm, generation).await? {
             let row_generation = self
                 .latest_generation(&self.row_prefix(realm, selector)?, generation)
@@ -1503,8 +1545,13 @@ impl CurrentIndex {
                     {
                         anyhow::bail!("signed current Snapshot predates an installed current row");
                     }
-                    let (write, seen) =
-                        plan_current_entry(&previous, baseline.as_ref(), entry, old.as_ref())?;
+                    let (write, seen) = plan_current_entry(
+                        &previous,
+                        baseline.as_ref(),
+                        entry,
+                        old.as_ref(),
+                        snapshot.is_some(),
+                    )?;
                     if seen || snapshot.is_some() {
                         plan.seen_selectors.push(key);
                     }
@@ -3087,6 +3134,49 @@ mod tests {
     }
 
     #[test]
+    fn invalid_cached_mls_requires_verified_snapshot_and_preserves_fork_checks() {
+        let fresh = mls_group_row(REALM, 7);
+        let mut invalid = fresh.clone();
+        let TypedCurrentResult::Value { value, .. } = &mut invalid;
+        value.as_object_mut().unwrap().remove("cipher_suite");
+        let progress = CurrentRealmProgress::default();
+        assert!(plan_current_entry(&progress, None, &fresh, Some(&invalid), false).is_err());
+        assert_eq!(
+            plan_current_entry(&progress, None, &fresh, Some(&invalid), true).unwrap(),
+            (true, false)
+        );
+        assert!(plan_current_entry(&progress, None, &invalid, Some(&fresh), true).is_err());
+        let mut conflict = fresh.clone();
+        let TypedCurrentResult::Value { value, .. } = &mut conflict;
+        value["epoch"] = json!(2);
+        assert!(plan_current_entry(&progress, None, &conflict, Some(&fresh), true).is_err());
+        let TypedCurrentResult::Value { revision, .. } = &mut conflict;
+        revision.commit_id = "ak:realm_commit:Aaurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6ur"
+            .parse()
+            .unwrap();
+        assert!(plan_current_entry(&progress, None, &conflict, Some(&invalid), true).is_err());
+        let mut foreign = fresh.clone();
+        let TypedCurrentResult::Value {
+            source_stream_ref, ..
+        } = &mut foreign;
+        *source_stream_ref = arkret_sdk::CommitStreamRef::Realm {
+            realm_id: OTHER_REALM.parse().unwrap(),
+        };
+        assert!(plan_current_entry(&progress, None, &foreign, Some(&invalid), true).is_err());
+        assert_eq!(
+            plan_current_entry(
+                &progress,
+                None,
+                &mls_group_row(REALM, 6),
+                Some(&invalid),
+                true
+            )
+            .unwrap(),
+            (false, false)
+        );
+    }
+
+    #[test]
     fn same_position_with_another_commit_is_a_fork() {
         let old = row(7, false);
         let mut value = serde_json::to_value(row(7, false)).unwrap();
@@ -3094,10 +3184,16 @@ mod tests {
             json!("ak:realm_commit:Aaurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6ur");
         let fork: TypedCurrentResult = serde_json::from_value(value).unwrap();
         assert!(
-            plan_current_entry(&CurrentRealmProgress::default(), None, &fork, Some(&old))
-                .unwrap_err()
-                .to_string()
-                .contains("forked at the same stream position")
+            plan_current_entry(
+                &CurrentRealmProgress::default(),
+                None,
+                &fork,
+                Some(&old),
+                false
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("forked at the same stream position")
         );
     }
 

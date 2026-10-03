@@ -1,5 +1,18 @@
 use super::*;
 
+#[test]
+fn direct_conversation_blocks_spaces_but_collaboration_realm_keeps_boards() {
+    let mut store = isolated_store_for_tests("direct-conversation-board-unavailable");
+    assert!(store.realm_allows_spaces(TEST_REALM_ID));
+    store.save_realm_collaboration_role(
+        TEST_REALM_ID.to_owned(),
+        Some(arkret_sdk::CollaborationRealmRole::DirectConversation),
+    );
+    assert!(!store.realm_allows_spaces(TEST_REALM_ID));
+    store.save_realm_collaboration_role(TEST_REALM_ID.to_owned(), None);
+    assert!(store.realm_allows_spaces(TEST_REALM_ID));
+}
+
 const BOARD_A: &str = "ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo";
 const BOARD_B: &str = "ak:space:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
 

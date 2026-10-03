@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use dioxus::prelude::{Asset, AssetOptions, asset, manganis, *};
 use dioxus_primitives::checkbox::CheckboxState;
+use dioxus_router::Link;
 use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::{Map, Value, json};
 
@@ -1253,6 +1254,17 @@ pub fn KanbanPanel(
         .into_iter()
         .map(|view| view.strand_id)
         .collect::<BTreeSet<_>>();
+    if !state_store.read().realm_allows_spaces(&selected_realm_id) {
+        return rsx! {
+            div { class: "timeline kanban-panel", "data-testid": "direct-conversation-board-unavailable",
+                p { "{crate::i18n::tr(\"kanban.direct_conversation_unavailable\")}" }
+                Link {
+                    to: Route::Chat { realm_id: selected_realm_id.clone(), message: String::new() },
+                    "{crate::i18n::tr(\"kanban.open_conversation\")}"
+                }
+            }
+        };
+    }
     rsx! {
         div { class: "timeline kanban-panel", "data-testid": "kanban-panel",
             KanbanEffects {

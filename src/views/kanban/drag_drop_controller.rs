@@ -175,6 +175,10 @@ pub(super) fn submit_kanban_operation_event(
     mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
+    if !state_store.read().realm_allows_spaces(&realm_id) {
+        board_status.set(crate::i18n::tr("kanban.direct_conversation_unavailable"));
+        return;
+    }
     if let Some(reason) = kanban_plaintext_block_reason(scope_security_encrypted, &operation) {
         board_status.set(reason);
         return;
