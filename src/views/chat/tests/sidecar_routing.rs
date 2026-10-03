@@ -18,6 +18,41 @@ fn circle_scope_request_is_single_flight_and_semantically_deduplicated() {
 }
 
 #[test]
+fn pending_display_joins_history_without_reordering_accepted_rows() {
+    let strand = "ak:strand:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N";
+    let at = |seconds| chrono::DateTime::from_timestamp(seconds, 0);
+    let mut first = sidecar_projection_message("first", strand, "first accepted");
+    first.created_at = at(20);
+    let mut second = sidecar_projection_message("second", strand, "second accepted");
+    second.created_at = at(10);
+    let mut pending = sidecar_projection_message("pending", strand, "new send");
+    pending.created_at = at(30);
+    pending.pending = true;
+    let mut failed = sidecar_projection_message("failed", strand, "older failed send");
+    failed.created_at = at(5);
+    failed.failed = true;
+    let projected = position_local_timeline_rows(vec![pending, failed, first, second]);
+    assert_eq!(
+        projected
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["failed", "first", "second", "pending"]
+    );
+    let settled = projected
+        .into_iter()
+        .map(|mut row| {
+            row.pending = false;
+            row
+        })
+        .collect();
+    assert_eq!(
+        position_local_timeline_rows(settled).last().unwrap().id,
+        "pending"
+    );
+}
+
+#[test]
 fn chat_message_matches_protocol_id_after_server_rekeys_render_id() {
     let mut message = sidecar_projection_message(
         "ak:message:Ams1BtISTcaHSjyArAO3RssCwK-vFi70Bs1FzWVrXhck",
@@ -37,6 +72,78 @@ fn chat_message_matches_protocol_id_after_server_rekeys_render_id() {
     assert!(
         !message.matches_id_or_protocol("ak:message:A8a_riy5QTAQw2ZF0lV4Wr_lyFIe2yzXKQYapE970EXw")
     );
+}
+
+#[test]
+fn committed_retry_hides_only_its_rejected_bubble_and_keeps_signed_audit() {
+    let realm = "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5";
+    let strand = "ak:strand:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N";
+    let fixture = |at: &str, target: &str| {
+        signed_chat_event(
+            "ak.message.create",
+            realm,
+            json!({"kind":"account","account_id":{
+                "principal_id":"ak:did_core:web:alice.example",
+                "station_id":"ak:did_core:web:principal.example"
+            }}),
+            at,
+            json!({"content":{"kind":"ak.content.text","body":"hello"},"strand_id":target,"track_name":"discussion"}),
+        )
+    };
+    let previous = fixture("2026-07-08T01:44:39.000Z", strand);
+    let replacement = fixture("2026-07-08T01:44:40.000Z", strand);
+    let prior_id = previous["event_id"].as_str().unwrap();
+    let replacement_id = replacement["event_id"].as_str().unwrap();
+    let path = std::env::temp_dir().join(format!("chat-retry-{}.json", uuid_v7()));
+    let mut store = LocalStateStore::with_path(&path);
+    store.append_raw_operation(
+        "old-send",
+        Some(realm.into()),
+        json!({
+            "event":previous,"event_id":prior_id,"write_state":"rejected","error":"denied"
+        }),
+    );
+    store.mark_message_retry_replacement(realm, prior_id, replacement_id);
+    let retained = store.load().raw_operations[0].payload.clone();
+    assert_eq!(retained["event"], previous);
+    assert_eq!(retained["write_state"], "rejected");
+    let retry =
+        |status| json!({"event":replacement,"event_id":replacement_id,"write_state":status});
+    for status in ["queued", "rejected"] {
+        let rows = chat_messages_from_events_with_sidecar(
+            realm,
+            &[retained.clone(), retry(status)],
+            None,
+            None,
+        );
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.id == prior_id && row.failed));
+    }
+    let rows = chat_messages_from_events_with_sidecar(
+        realm,
+        &[retained.clone(), retry("committed")],
+        None,
+        None,
+    );
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, replacement_id);
+    let wrong_strand = fixture(
+        "2026-07-08T01:44:41.000Z",
+        "ak:strand:AsLgUd73PSI9_dWVG49ZfkmPc0yCUf4zdrfGlSidlNnU",
+    );
+    assert!(chat_message_from_event(realm, &wrong_strand).is_some());
+    let mut wrong_ref = retained.clone();
+    wrong_ref["retry_replacement_event_id"] = wrong_strand["event_id"].clone();
+    let wrong_rows =
+        chat_messages_from_events_with_sidecar(realm, &[wrong_ref, wrong_strand], None, None);
+    assert_eq!(
+        wrong_rows.len(),
+        2,
+        "wrong-strand retry rows: {wrong_rows:?}"
+    );
+    let reopened = LocalStateStore::with_path(&path);
+    assert_eq!(reopened.load().raw_operations[0].payload, retained);
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]
