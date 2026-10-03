@@ -196,7 +196,7 @@ pub(super) fn ChatEffects(
     let realm_for_connectivity = selected_realm_id.clone();
     // Chat survives route prop changes. Cancel the old scope's queue poll and
     // restart it for the active Account/Realm instead of retaining mount props.
-    use_future(use_reactive(
+    let mut connectivity_poll = use_future(use_reactive(
         (&authority_for_connectivity, &realm_for_connectivity),
         move |(authority_for_connectivity, realm_for_connectivity)| async move {
             let queue_state = crate::app::runtime_adapter::state_store_handle(state_store);
@@ -220,6 +220,12 @@ pub(super) fn ChatEffects(
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(2_500)).await;
             }
         },
+    ));
+    // use_future runs once; use_reactive only supplies fresh captured props.
+    // Explicitly cancel/restart when the Account or Realm changes.
+    use_effect(use_reactive(
+        (&authority_for_connectivity, &realm_for_connectivity),
+        move |_| connectivity_poll.restart(),
     ));
 
     let selected_realm_after_initial_sync = selected_realm_id.clone();
