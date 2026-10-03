@@ -114,15 +114,22 @@ pub(super) fn spawn_set_agent_realm_behavior(
     selection: ParticipationBits,
     mut owned_agents: Signal<Vec<MemberAgentRow>>,
     mut status_msg: Signal<String>,
+    mut pending: Signal<BTreeSet<String>>,
 ) {
+    let realm_id = match arkret_sdk::RealmId::new(realm.clone()) {
+        Ok(realm_id) => realm_id,
+        Err(err) => {
+            status_msg.set(format!("invalid realm id: {err:?}"));
+            return;
+        }
+    };
+    // These controls replace the whole CAS selection. Admit only one local
+    // write per Agent until its authoritative outcome has updated every bit.
+    if !pending.with_mut(|agents| agents.insert(agent_id.clone())) {
+        return;
+    }
+    status_msg.set("Updating Agent behavior…".to_owned());
     spawn(async move {
-        let realm_id = match arkret_sdk::RealmId::new(realm.clone()) {
-            Ok(realm_id) => realm_id,
-            Err(err) => {
-                status_msg.set(format!("invalid realm id: {err:?}"));
-                return;
-            }
-        };
         let scope = ParticipationScope::Realm { realm_id };
         match crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| {
             let scope = scope.clone();
@@ -153,6 +160,9 @@ pub(super) fn spawn_set_agent_realm_behavior(
             }
             Err(err) => status_msg.set(format!("Realm behavior update failed: {}", err.display())),
         }
+        pending.with_mut(|agents| {
+            agents.remove(&agent_id);
+        });
     });
 }
 

@@ -377,6 +377,7 @@ pub fn RealmMembersPanel(
     let mut status_msg = use_signal(String::new);
     let mut members = use_signal(Vec::<MemberProfile>::new);
     let owned_agents = use_signal(Vec::<MemberAgentRow>::new);
+    let agent_behavior_pending = use_signal(BTreeSet::<String>::new);
     let block_confirm_id = use_signal(|| Option::<String>::None);
     let permissions = use_signal(RealmMemberCapabilities::default);
     let mut member_roster_section = use_signal(|| MemberRosterSection::Members);
@@ -1110,7 +1111,7 @@ pub fn RealmMembersPanel(
                                                             let agent_title = owned_agent.display_name.clone();
                                                             let status_class = crate::views::agents::agent_state_badge_class(&owned_agent.status);
                                                             let status_label = crate::views::agents::agent_state_label(&owned_agent.status).to_owned();
-                                                            let can_enable = agent_in_realm;
+                                                            let can_enable = agent_in_realm && !agent_behavior_pending.read().contains(&agent_id);
                                                             let can_remove_agent = agent_in_realm;
                                                             rsx! {
                                                                 div { class: "member-self-agent-row", "data-testid": "member-self-agent-row", "data-agent-id": "{agent_id}",
@@ -1174,7 +1175,7 @@ pub fn RealmMembersPanel(
                                                                                                 spawn_set_agent_realm_behavior(
                                                                                                     base.clone(), token(), realm.clone(), agent_id.clone(),
                                                                                                     ParticipationBits { reply_message: bool::from(state), ..previous },
-                                                                                                    owned_agents, status_msg,
+                                                                                                    owned_agents, status_msg, agent_behavior_pending,
                                                                                                 );
                                                                                             }
                                                                                         },
@@ -1195,7 +1196,7 @@ pub fn RealmMembersPanel(
                                                                                                 spawn_set_agent_realm_behavior(
                                                                                                     base.clone(), token(), realm.clone(), agent_id.clone(),
                                                                                                     ParticipationBits { accept_third_party_mention: bool::from(state), ..previous },
-                                                                                                    owned_agents, status_msg,
+                                                                                                    owned_agents, status_msg, agent_behavior_pending,
                                                                                                 );
                                                                                             }
                                                                                         },
@@ -1216,7 +1217,7 @@ pub fn RealmMembersPanel(
                                                                                                 spawn_set_agent_realm_behavior(
                                                                                                     base.clone(), token(), realm.clone(), agent_id.clone(),
                                                                                                     ParticipationBits { act_on_behalf: bool::from(state), ..previous },
-                                                                                                    owned_agents, status_msg,
+                                                                                                    owned_agents, status_msg, agent_behavior_pending,
                                                                                                 );
                                                                                             }
                                                                                         },
