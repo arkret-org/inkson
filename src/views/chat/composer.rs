@@ -1385,18 +1385,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         on_secure: secure_send,
                     }
                 }
-                if !status_msg().is_empty() {
-                    div {
-                        class: "muted discussion-status",
-                        "data-testid": "chat-status",
-                        role: "status",
-                        "aria-live": "polite",
-                        // Keep the full status text discoverable even when the
-                        // embedded panel clips the line.
-                        title: "{status_msg}",
-                        "{status_msg}"
-                    }
-                }
             }
             }
     }

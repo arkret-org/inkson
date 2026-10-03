@@ -2899,6 +2899,18 @@ pub fn ChatPanel(
                     frontier_state,
                 }
             }
+            if !status_msg().is_empty() {
+                div {
+                    class: "muted discussion-status",
+                    "data-testid": "chat-status",
+                    role: "status",
+                    "aria-live": "polite",
+                    // Keep preparation errors visible when the composer has no
+                    // available channel yet, including a pending private scope.
+                    title: "{status_msg}",
+                    "{status_msg}"
+                }
+            }
         }
     }
 }
