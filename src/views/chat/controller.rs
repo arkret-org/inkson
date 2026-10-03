@@ -1437,6 +1437,7 @@ impl ChatController {
         let sequence = self.strand_watch_request.peek().wrapping_add(1);
         self.strand_watch_request.set(sequence);
         self.strand_watch_current.set(None);
+        self.watch_level_menu_open.set(false);
         self.strand_watch_pending.set(false);
         let Some(request) = request else {
             return;

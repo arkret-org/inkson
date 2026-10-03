@@ -351,7 +351,11 @@
   appearance: auto;
   accent-color: var(--accent);
 }
-/* T7.2: watch level dropdown */
+/* Keep the notification menu above the chat panels while it is open. */
+.discussion-shell:has(.watch-level-picker[data-state="open"]),
+.discussion-main-panel:has(.watch-level-picker[data-state="open"]) {
+  overflow: visible;
+}
 .watch-level-picker {
   position: relative;
 }
@@ -360,41 +364,91 @@
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-solid, var(--surface));
+  color: var(--text);
   font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.watch-level-toggle:hover:not(:disabled),
+.watch-level-toggle[data-state="open"] {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-solid, var(--surface)));
+}
+.watch-level-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.watch-level-toggle:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.watch-level-status {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  font-size: 12px;
+  font-weight: 400;
 }
 .watch-level-toggle-caret {
-  font-size: 10px;
+  display: flex;
   opacity: 0.7;
 }
+.watch-level-toggle-caret svg { width: 12px; height: 12px; }
 .watch-level-menu {
   position: absolute;
   right: 0;
   top: calc(100% + 4px);
-  min-width: 200px;
+  width: min(320px, calc(100vw - 32px));
+  max-height: min(480px, calc(100dvh - 160px));
+  overflow-y: auto;
+  box-sizing: border-box;
   background: var(--surface-solid, var(--surface));
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.08));
-  padding: 4px;
+  box-shadow: var(--shadow-lg);
+  padding: 0;
   z-index: var(--layer-local-popover);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
+}
+@supports (anchor-name: --strand-notifications) {
+  .watch-level-toggle { anchor-name: --strand-notifications; }
+  .watch-level-menu {
+    position: fixed;
+    position-anchor: --strand-notifications;
+    top: calc(anchor(bottom) + 4px);
+    left: clamp(16px, calc(anchor(right) - 320px), calc(100vw - 336px));
+    right: auto;
+  }
 }
 .watch-level-option {
-  display: block;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   width: 100%;
+  box-sizing: border-box;
   text-align: left;
-  padding: 8px 10px;
+  padding: 12px 14px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   color: var(--text);
   cursor: pointer;
   font-size: 13px;
 }
+.watch-level-option + .watch-level-option { border-top: 1px solid var(--border); }
+.watch-level-check { width: 16px; min-height: 18px; flex: 0 0 16px; }
+.watch-level-option-copy { display: grid; gap: 4px; }
+.watch-level-option-label { font-weight: 600; line-height: 1.4; }
+.watch-level-option-description { color: var(--text-2); font-size: 12px; line-height: 1.5; font-weight: 400; }
 .watch-level-option:hover,
-.watch-level-option:focus-visible {
+.watch-level-option:focus-visible,
+.watch-level-option[data-highlighted="true"] {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   outline: none;
 }
@@ -427,7 +481,7 @@
 }
 
 @media (max-width: 768px) {
-  .watch-level-menu { left: 0; right: auto; }
+  .watch-level-status { display: none; }
   .discussion-details-panel {
     position: fixed;
     inset: auto 0 0 0;

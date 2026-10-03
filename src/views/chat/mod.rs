@@ -3,6 +3,9 @@ use arkret_wire::event_kind_str;
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
+use dioxus_primitives::dropdown_menu::{
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+};
 use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
 
@@ -2415,45 +2418,70 @@ pub fn ChatPanel(
                             let observed = (controller.strand_watch_current)();
                             let enabled = request.as_ref().zip(observed.as_ref()).is_some_and(|(request, current)| current.validate_for_request(request).is_ok())
                                 && !(controller.strand_watch_pending)();
-                            let label = if (controller.strand_watch_pending)() { crate::i18n::tr("chat.watch_level.pending") }
+                            let explicit_level = observed.as_ref().and_then(|current| match current {
+                                arkret_sdk::StrandWatchCurrentOutcome::Current { result, .. } => match result.value {
+                                    arkret_sdk::StrandWatchCurrentValue::Set(value) => Some(value.level),
+                                    arkret_sdk::StrandWatchCurrentValue::Cleared(()) => None,
+                                },
+                                arkret_sdk::StrandWatchCurrentOutcome::NeverWritten { .. } => None,
+                            });
+                            let label = if (controller.strand_watch_pending)() { crate::i18n::tr("chat.watch_level.pending_short") }
+                                else if enabled && explicit_level.is_none() { crate::i18n::tr("chat.watch_level.default") }
                                 else if enabled { crate::i18n::tr(watch_level_label_key((controller.strand_watch_level)())) }
-                                else { crate::i18n::tr("chat.watch_level.unavailable") };
+                                else { crate::i18n::tr("chat.watch_level.unavailable_short") };
+                            let tooltip = crate::i18n::tr(if enabled { "chat.watch_level.tooltip" } else if (controller.strand_watch_pending)() { "chat.watch_level.pending" } else { "chat.watch_level.unavailable" });
                             rsx! {
-                                div { class: "watch-level-picker", "data-testid": "watch-level-picker",
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        r#type: "button",
+                                DropdownMenu {
+                                    class: "watch-level-picker", "data-testid": "watch-level-picker",
+                                    disabled: !enabled,
+                                    open: enabled && (controller.watch_level_menu_open)(),
+                                    on_open_change: move |open| {
+                                        let mut menu = controller.watch_level_menu_open;
+                                        menu.set(open);
+                                    },
+                                    DropdownMenuTrigger {
                                         class: "watch-level-toggle",
                                         "data-testid": "watch-level-toggle",
-                                        disabled: !enabled,
-                                        onclick: move |_| {
-                                            let mut menu = controller.watch_level_menu_open;
-                                            let open = *menu.peek();
-                                            menu.set(!open);
-                                        },
-                                        span { class: "watch-level-toggle-label", "{label}" }
+                                        title: tooltip,
+                                        "aria-label": format!("{}：{}", crate::i18n::tr("chat.watch_level.title"), label),
+                                        UiIcon { name: "bell" }
+                                        span { class: "watch-level-toggle-label", {crate::i18n::tr("chat.watch_level.prefix")} }
+                                        span { class: "watch-level-status", "{label}" }
+                                        span { class: "watch-level-toggle-caret", "aria-hidden": "true", UiIcon { name: "chevron-down" } }
                                     }
-                                    if enabled && (controller.watch_level_menu_open)() {
-                                        for (level, key) in [
-                                            (Some(arkret_sdk::StrandWatchLevel::MentionsOnly), "chat.watch_level.mentions_only"),
-                                            (Some(arkret_sdk::StrandWatchLevel::Participating), "chat.watch_level.participating"),
-                                            (Some(arkret_sdk::StrandWatchLevel::All), "chat.watch_level.all"),
-                                            (Some(arkret_sdk::StrandWatchLevel::Muted), "chat.watch_level.muted"),
-                                            (None, "chat.watch_level.clear"),
-                                        ] {
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                r#type: "button",
-                                                onclick: {
+                                    DropdownMenuContent {
+                                        class: "watch-level-menu",
+                                        "data-testid": "watch-level-menu",
+                                        "aria-label": crate::i18n::tr("chat.watch_level.title"),
+                                        for (index, (level, key, description)) in [
+                                            (Some(arkret_sdk::StrandWatchLevel::MentionsOnly), "chat.watch_level.mentions_only", "chat.watch_level.mentions_only_description"),
+                                            (Some(arkret_sdk::StrandWatchLevel::Participating), "chat.watch_level.participating", "chat.watch_level.participating_description"),
+                                            (Some(arkret_sdk::StrandWatchLevel::All), "chat.watch_level.all", "chat.watch_level.all_description"),
+                                            (Some(arkret_sdk::StrandWatchLevel::Muted), "chat.watch_level.muted", "chat.watch_level.muted_description"),
+                                            (None, "chat.watch_level.clear", "chat.watch_level.clear_description"),
+                                        ].into_iter().enumerate() {
+                                            DropdownMenuItem::<Option<arkret_sdk::StrandWatchLevel>> {
+                                                index,
+                                                value: level,
+                                                class: if explicit_level == level { "watch-level-option active" } else { "watch-level-option" },
+                                                "data-watch-level": if level.is_none() { "default" } else { key.trim_start_matches("chat.watch_level.") },
+                                                "aria-selected": explicit_level == level,
+                                                on_select: {
                                                     let request = request.clone();
                                                     let base = base_url.clone();
-                                                    move |_| {
+                                                    move |level| {
                                                         if let Some(request) = request.clone() {
                                                             controller.set_strand_watch_level(base.clone(), token(), request, level);
                                                         }
                                                     }
                                                 },
-                                                {crate::i18n::tr(key)}
+                                                span { class: "watch-level-check", "aria-hidden": "true",
+                                                    if explicit_level == level { UiIcon { name: "check" } }
+                                                }
+                                                span { class: "watch-level-option-copy",
+                                                    span { class: "watch-level-option-label", {crate::i18n::tr(key)} }
+                                                    span { class: "watch-level-option-description", {crate::i18n::tr(description)} }
+                                                }
                                             }
                                         }
                                     }

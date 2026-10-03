@@ -1171,23 +1171,50 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.call.voice", "发起语音通话");
     dict.set("chat.call.video", "发起视频通话");
     // T7.2 watch-level quick switch
-    dict.set("chat.watch_level.tooltip", "选择此 Strand 的通知频率。");
+    dict.set("chat.watch_level.tooltip", "设置此会话在哪些情况下通知你。");
     dict.set("chat.watch_level.prefix", "通知");
+    dict.set("chat.watch_level.title", "此会话的通知设置");
+    dict.set("chat.watch_level.default", "默认 · 仅 @ 我");
+    dict.set("chat.watch_level.pending_short", "加载中…");
+    dict.set("chat.watch_level.unavailable_short", "暂不可用");
+    dict.set(
+        "chat.watch_level.mentions_only_description",
+        "仅在有人 @ 你或将事项分配给你时通知。",
+    );
+    dict.set(
+        "chat.watch_level.participating_description",
+        "除 @ 和分配通知外，也接收你参与过的话题的新回复及与你相关的回复更新。",
+    );
+    dict.set(
+        "chat.watch_level.all_description",
+        "接收此会话的所有新消息、表情回应和会话信息更新。",
+    );
+    dict.set(
+        "chat.watch_level.muted_description",
+        "不接收此会话的任何通知，包括 @ 和分配通知。",
+    );
+    dict.set(
+        "chat.watch_level.clear_description",
+        "清除此会话的单独设置，恢复为仅接收 @ 和分配通知。",
+    );
     dict.set(
         "chat.watch_level.unavailable",
         "当前关注状态未获确认，暂不可更改",
     );
     dict.set("chat.watch_level.mentions_only", "仅 @ 我");
-    dict.set("chat.watch_level.participating", "参与中");
-    dict.set("chat.watch_level.all", "全部");
+    dict.set("chat.watch_level.participating", "我参与的讨论和 @");
+    dict.set("chat.watch_level.all", "全部动态");
     dict.set("chat.watch_level.clear", "恢复默认（仅提及）");
     dict.set("chat.watch_level.queued", "订阅变更已排队，等待权威接纳");
     dict.set("chat.watch_level.muted", "静音");
-    dict.set("chat.watch_level.pending", "正在更新 watch level…");
-    dict.set("chat.watch_level.saved", "watch level 已更新。");
+    dict.set(
+        "chat.watch_level.pending",
+        "正在获取或更新此会话的通知设置…",
+    );
+    dict.set("chat.watch_level.saved", "通知设置已更新。");
     dict.set(
         "chat.watch_level.failed",
-        "watch level 更新失败（已回滚）。",
+        "通知设置更新失败，正在重新确认当前设置。",
     );
     // T7.3 handle reassignment context
     dict.set("chat.binding_context.details", "显示服务绑定");

@@ -1144,27 +1144,57 @@ pub fn english_translations() -> TranslationDict {
     // T7.2 watch level fast switcher.
     dict.set(
         "chat.watch_level.tooltip",
-        "Choose how often this Strand notifies you.",
+        "Choose when this conversation notifies you.",
     );
     dict.set("chat.watch_level.prefix", "Notifications");
+    dict.set(
+        "chat.watch_level.title",
+        "Notifications for this conversation",
+    );
+    dict.set("chat.watch_level.default", "Default · mentions only");
+    dict.set("chat.watch_level.pending_short", "Loading…");
+    dict.set("chat.watch_level.unavailable_short", "Unavailable");
+    dict.set(
+        "chat.watch_level.mentions_only_description",
+        "Only notify when you are mentioned or assigned an item.",
+    );
+    dict.set("chat.watch_level.participating_description", "Also notify about new replies in threads you have joined and reply updates connected to you.");
+    dict.set(
+        "chat.watch_level.all_description",
+        "Notify about all new messages, reactions and conversation details updates.",
+    );
+    dict.set(
+        "chat.watch_level.muted_description",
+        "Never notify from this conversation, including mentions and assignments.",
+    );
+    dict.set(
+        "chat.watch_level.clear_description",
+        "Clear this conversation's override and return to mentions and assignments only.",
+    );
     dict.set(
         "chat.watch_level.unavailable",
         "Unavailable until current watch state is confirmed",
     );
     dict.set("chat.watch_level.mentions_only", "Mentions only");
-    dict.set("chat.watch_level.participating", "Participating");
-    dict.set("chat.watch_level.all", "All");
+    dict.set(
+        "chat.watch_level.participating",
+        "Participating and @mentions",
+    );
+    dict.set("chat.watch_level.all", "All activity");
     dict.set("chat.watch_level.clear", "Use default (mentions only)");
     dict.set(
         "chat.watch_level.queued",
         "Watch change queued; awaiting authority acceptance",
     );
     dict.set("chat.watch_level.muted", "Muted");
-    dict.set("chat.watch_level.pending", "Updating watch level…");
-    dict.set("chat.watch_level.saved", "Watch level updated.");
+    dict.set(
+        "chat.watch_level.pending",
+        "Fetching or updating notification settings…",
+    );
+    dict.set("chat.watch_level.saved", "Notification settings updated.");
     dict.set(
         "chat.watch_level.failed",
-        "Watch level update failed (rolled back).",
+        "Notification settings update failed; confirming the current settings again.",
     );
     // T7.3 handle reassigned context.
     dict.set("chat.binding_context.details", "Show service binding");
