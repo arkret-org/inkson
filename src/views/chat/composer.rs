@@ -4,6 +4,9 @@ use super::*;
 
 mod commands;
 
+#[cfg(test)]
+mod tests;
+
 fn ordinary_composer_scope(realm: &str, channel: &ChannelEntity) -> Option<arkret_sdk::ScopeRef> {
     if channel.is_private_sidecar {
         return None;
@@ -104,6 +107,60 @@ fn latest_source_event_anchor(
 }
 
 #[component]
+fn OrdinarySendActions(
+    plaintext: bool,
+    plaintext_disabled: bool,
+    secure_disabled: bool,
+    mls_binding_pending: bool,
+    creator_bootstrap_pending: bool,
+    secure_title: String,
+    opening: bool,
+    on_plaintext: Callback<MouseEvent>,
+    on_secure: Callback<MouseEvent>,
+) -> Element {
+    // Keep the primary button mounted while a fresh scope probe is pending.
+    // Its identity and visibility must not depend on the encryption result.
+    rsx! {
+        Button {
+            variant: ButtonVariant::Primary,
+            "data-testid": "send-chat-button",
+            "data-mls-binding-pending": mls_binding_pending.to_string(),
+            "data-creator-bootstrap-pending": creator_bootstrap_pending.to_string(),
+            title: if plaintext { String::new() } else { secure_title.clone() },
+            disabled: if plaintext { plaintext_disabled } else { secure_disabled },
+            onclick: move |event| {
+                if plaintext {
+                    on_plaintext.call(event);
+                } else {
+                    on_secure.call(event);
+                }
+            },
+            if opening {
+                "Opening…"
+            } else {
+                {crate::i18n::tr("chat.send")}
+            }
+        }
+        if plaintext {
+            Button {
+                variant: ButtonVariant::Secondary,
+                "data-testid": "send-e2ee-move-button",
+                "data-mls-binding-pending": mls_binding_pending.to_string(),
+                "data-creator-bootstrap-pending": creator_bootstrap_pending.to_string(),
+                title: secure_title,
+                disabled: secure_disabled,
+                onclick: on_secure,
+                if opening {
+                    "Opening…"
+                } else {
+                    {crate::i18n::tr("chat.send_secure")}
+                }
+            }
+        }
+    }
+}
+
+#[component]
 pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerContext) -> Element {
     let ChatComposerContext {
         embedded: _,
@@ -189,21 +246,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         || !channels()
             .iter()
             .any(|channel| channel.strand_id == selected_channel());
-    let send_secure_variant = if selected_channel_security_encrypted {
-        ButtonVariant::Primary
-    } else {
-        ButtonVariant::Secondary
-    };
-    let send_secure_testid = if selected_channel_security_encrypted {
-        "send-chat-button"
-    } else {
-        "send-e2ee-move-button"
-    };
-    let send_secure_label = if selected_channel_security_encrypted {
-        crate::i18n::tr("chat.send")
-    } else {
-        crate::i18n::tr("chat.send_secure")
-    };
     let sidecar_send_blocked = sidecar_send_block_reason.is_some();
     let active_sidecar_present = active_sidecar_session.is_some();
     // content-types section 4.9 permits formal polls only in plaintext scopes.
@@ -319,8 +361,368 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let plaintext_sidecar_did = sidecar_did.clone();
     let secure_sidecar_authority = sidecar_authority.clone();
     let secure_sidecar_did = sidecar_did;
-    let ordinary_plaintext_send_key = "ordinary-plaintext-send";
-    let ordinary_encrypted_send_key = "ordinary-encrypted-send";
+    let plaintext_send = use_callback::<MouseEvent, ()>({
+        let base = base_url.clone();
+        let realm = selected_realm_id.clone();
+        let actor = principal_id.clone();
+        let sidecar_device_id = device_id.clone();
+        move |_| {
+            let authority_for_sidecar = plaintext_sidecar_authority.clone();
+            let did_for_sidecar = plaintext_sidecar_did.clone();
+            let device_id_for_sidecar = sidecar_device_id.clone();
+            let body = chat_draft().trim().to_owned();
+            if body.is_empty() {
+                return;
+            }
+            let inserted_candidates = mention_picker_state.read().inserted.clone();
+            let mentions =
+                composer_mention_nodes(mentions_enabled, &body, &inserted_candidates, &actor);
+            let channel = channels()
+                .iter()
+                .find(|candidate| candidate.strand_id == selected_channel())
+                .cloned();
+            let Some(channel) = channel else {
+                status_msg.set("select a discussion first".to_owned());
+                return;
+            };
+            let local_owned_agent_ids = owned_agent_ids_from_composer(
+                mentions_enabled,
+                &mentions,
+                &participants_for_plaintext_sidecar,
+                &actor,
+            );
+            let targets_owned_agent = mentions_enabled
+                && should_route_owned_agent_to_sidecar(
+                    active_sidecar_present,
+                    selected_channel_is_circle_scoped,
+                    !local_owned_agent_ids.is_empty(),
+                );
+            if targets_owned_agent {
+                sidecar_route_pending.set(true);
+                status_msg.set("Activating Private Sidecar…".to_owned());
+                let trace_id = uuid_v7();
+                tracing::info!(
+                    target: "sidecar",
+                    event = "sidecar.route.requested",
+                    trace_id = %trace_id,
+                    source_realm_id = %realm,
+                    source_strand_id = %channel.strand_id,
+                );
+                commands::route_to_owned_agent_sidecar(
+                    controller,
+                    sidecar_session,
+                    sidecar_route_pending,
+                    commands::OwnedAgentSidecarRoute {
+                        base_url: base.clone(),
+                        api_token: token(),
+                        trace_id,
+                        realm_id: realm.clone(),
+                        strand_id: channel.strand_id.clone(),
+                        actor: actor.clone(),
+                        authority: authority_for_sidecar.clone(),
+                        controller_did: did_for_sidecar.clone(),
+                        device_id: device_id_for_sidecar.clone(),
+                        mentions_enabled,
+                        mentions,
+                        body: body.clone(),
+                        participants: participants_for_plaintext_sidecar.clone(),
+                    },
+                );
+                return;
+            }
+            let local_id = new_chat_local_id();
+            messages.write().push(ChatMessage {
+                local_scope: ordinary_composer_scope(&realm, &channel),
+                realm_id: realm.clone(),
+                id: local_id.clone(),
+                protocol_message_id: Some(local_id.clone()),
+                actor_id: crate::mls_api_helpers::local_account_actor_id(&actor).ok(),
+                sender: actor.clone(),
+                executed_by: None,
+                body: body.clone(),
+                content_format: Some(arkret_sdk::TextFormat::Markdown),
+                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                created_at: Some(chrono::Utc::now()),
+                strand_id: channel.strand_id.clone(),
+                reply_to: reply_to_message(),
+                reactions: Vec::new(),
+                redacted: false,
+                edited: false,
+                revisions: Vec::new(),
+                revision_source: None,
+                pending: true,
+                failed: false,
+                error: None,
+                mentions: mentions.clone(),
+                // Local-only sends start plaintext;
+                // the Send Secure flow may upgrade
+                // them via a separate `messages.write()`
+                // patch after `encrypt_payload`.
+                crypto_state: MessageCryptoState::Plaintext,
+            });
+
+            // Continue into the ordinary submit path while
+            // offline: EventSubmitter persists the stable SDK
+            // Event in Garth before its first network attempt.
+            // Queue status and replay both come from that one
+            // durable source.
+            let offline_now = !is_online() || !navigator_online();
+            if offline_now {
+                if *is_online.peek() {
+                    is_online.set(false);
+                }
+                status_msg.set(crate::i18n::tr("chat.outbox.queued_offline"));
+            }
+
+            let base = base.clone();
+            let realm = realm.clone();
+            let api_token = token();
+            let actor = actor.clone();
+            let strand_id = channel.strand_id.clone();
+            let reply_to = reply_to_message();
+            // Clear the picker chip list now that
+            // we've folded the mentions into the
+            // pending send state.
+            mention_picker_state.write().clear();
+            let wait_for = active_sync_token(sync_cursor());
+            commands::send_plaintext_message(
+                controller,
+                frontier_state,
+                commands::PlaintextSendRequest {
+                    base_url: base,
+                    api_token,
+                    wait_for,
+                    realm_id: realm,
+                    circle_id: channel
+                        .scope_circle
+                        .as_ref()
+                        .map(|circle| circle.circle_id.clone()),
+                    strand_id,
+                    actor,
+                    local_id,
+                    body,
+                    reply_to,
+                    mentions,
+                },
+            );
+            chat_draft.set(String::new());
+            reply_to_message.set(None);
+        }
+    });
+    let secure_send = use_callback::<MouseEvent, ()>({
+        let device_id = device_id.clone();
+        let active_sidecar_session = active_sidecar_session.clone();
+        let base = base_url.clone();
+        let realm = selected_realm_id.clone();
+        let actor = principal_id.clone();
+        let selected_strand = selected_channel_value.clone();
+        let selected_circle = selected_channel_info
+            .as_ref()
+            .and_then(|channel| channel.scope_circle.as_ref())
+            .map(|circle| circle.circle_id.clone());
+        let pending_mls_binding = selected_realm_pending_mls_binding;
+        let sidecar_device_id = device_id.clone();
+        let pending_mls_binding_reason = selected_realm_pending_mls_binding_reason.clone();
+        move |_| {
+            let authority_for_sidecar = secure_sidecar_authority.clone();
+            let did_for_sidecar = secure_sidecar_did.clone();
+            let device_id_for_sidecar = sidecar_device_id.clone();
+            if pending_mls_binding {
+                status_msg.set(pending_mls_binding_reason.clone().unwrap_or_else(|| {
+                    "epoch_update_required: membership frontier changed; MLS commit required"
+                        .to_owned()
+                }));
+                return;
+            }
+            let body = chat_draft().trim().to_owned();
+            if body.is_empty() {
+                status_msg.set("Type a message before secure send".to_owned());
+                return;
+            }
+            let inserted_candidates = mention_picker_state.read().inserted.clone();
+            let mentions =
+                composer_mention_nodes(mentions_enabled, &body, &inserted_candidates, &actor);
+            let realm = realm.clone();
+            let actor = actor.clone();
+            if selected_strand.trim().is_empty() {
+                status_msg.set(
+                    "Default Strand is unavailable until its accepted projection arrives"
+                        .to_owned(),
+                );
+                return;
+            }
+            let strand_id = selected_strand.clone();
+            let local_owned_agent_ids = owned_agent_ids_from_composer(
+                mentions_enabled,
+                &mentions,
+                &participants_for_encrypted_sidecar,
+                &actor,
+            );
+            let active_sidecar_for_send = active_sidecar_session.clone();
+            let targets_owned_agent = mentions_enabled
+                && should_route_owned_agent_to_sidecar(
+                    active_sidecar_for_send.is_some(),
+                    selected_channel_is_circle_scoped,
+                    !local_owned_agent_ids.is_empty(),
+                );
+            if targets_owned_agent {
+                sidecar_route_pending.set(true);
+                status_msg.set("Activating Private Sidecar…".to_owned());
+                let trace_id = uuid_v7();
+                tracing::info!(
+                    target: "sidecar",
+                    event = "sidecar.route.requested",
+                    trace_id = %trace_id,
+                    source_realm_id = %realm,
+                    source_strand_id = %strand_id,
+                );
+                commands::route_to_owned_agent_sidecar(
+                    controller,
+                    sidecar_session,
+                    sidecar_route_pending,
+                    commands::OwnedAgentSidecarRoute {
+                        base_url: base.clone(),
+                        api_token: token(),
+                        trace_id,
+                        realm_id: realm.clone(),
+                        strand_id: strand_id.clone(),
+                        actor: actor.clone(),
+                        authority: authority_for_sidecar.clone(),
+                        controller_did: did_for_sidecar.clone(),
+                        device_id: device_id_for_sidecar.clone(),
+                        mentions_enabled,
+                        mentions,
+                        body: body.clone(),
+                        participants: participants_for_encrypted_sidecar.clone(),
+                    },
+                );
+                return;
+            }
+            if let Some(session) = active_sidecar_for_send {
+                if !session.membership_ready() {
+                    status_msg.set("Private Sidecar MLS access is not ready".to_owned());
+                    return;
+                }
+                let local_id = new_chat_local_id();
+                let source_strand_id = session.source_strand_id.clone();
+                messages.write().push(ChatMessage {
+                    local_scope: None,
+                    realm_id: session.source_realm_id.clone(),
+                    id: local_id.clone(),
+                    protocol_message_id: Some(local_id.clone()),
+                    actor_id: crate::mls_api_helpers::local_account_actor_id(&actor).ok(),
+                    sender: actor.clone(),
+                    executed_by: None,
+                    body: body.clone(),
+                    content_format: Some(arkret_sdk::TextFormat::Markdown),
+                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                    created_at: Some(chrono::Utc::now()),
+                    strand_id: source_strand_id.clone(),
+                    reply_to: None,
+                    reactions: Vec::new(),
+                    redacted: false,
+                    edited: false,
+                    revisions: Vec::new(),
+                    revision_source: None,
+                    pending: true,
+                    failed: false,
+                    error: None,
+                    mentions: mentions.clone(),
+                    crypto_state: MessageCryptoState::Plaintext,
+                });
+                chat_draft.set(String::new());
+                mention_picker_state.write().clear();
+                reply_to_message.set(None);
+
+                let base = base.clone();
+                let api_token = token();
+                let source_event_id = latest_source_event_anchor(
+                    &messages.read(),
+                    &session.source_realm_id,
+                    &session.source_strand_id,
+                );
+                commands::send_sidecar_message(
+                    controller,
+                    commands::SidecarSendRequest {
+                        base_url: base,
+                        api_token,
+                        session,
+                        sidecar_strand_id: source_strand_id,
+                        source_event_id,
+                        actor,
+                        authority: authority_for_sidecar,
+                        device_id: device_id_for_sidecar,
+                        local_id,
+                        body,
+                        mentions,
+                    },
+                );
+                return;
+            }
+            // P2: preserve the composer's reply target on the
+            // encrypted path (it was silently dropped before).
+            let reply_to = reply_to_message().filter(|value| !value.trim().is_empty());
+            let message_id = new_chat_local_id();
+            messages.write().push(ChatMessage {
+                local_scope: channels()
+                    .iter()
+                    .find(|channel| channel.strand_id == strand_id)
+                    .and_then(|channel| ordinary_composer_scope(&realm, channel)),
+                realm_id: realm.clone(),
+                id: message_id.clone(),
+                protocol_message_id: Some(message_id.clone()),
+                actor_id: crate::mls_api_helpers::local_account_actor_id(&actor).ok(),
+                sender: actor.clone(),
+                executed_by: None,
+                body: body.clone(),
+                content_format: Some(arkret_sdk::TextFormat::Markdown),
+                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+                created_at: Some(chrono::Utc::now()),
+                strand_id: strand_id.clone(),
+                reply_to: reply_to.clone(),
+                reactions: Vec::new(),
+                redacted: false,
+                edited: false,
+                revisions: Vec::new(),
+                revision_source: None,
+                pending: true,
+                failed: false,
+                error: None,
+                mentions: mentions.clone(),
+                crypto_state: MessageCryptoState::Plaintext,
+            });
+            mention_picker_state.write().clear();
+            chat_draft.set(String::new());
+            reply_to_message.set(None);
+            let base = base.clone();
+            let realm = realm.clone();
+            let actor = actor.clone();
+            let did = device_id.clone();
+            let api_token = token();
+            let wait_for = active_sync_token(sync_cursor());
+            let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
+            commands::send_encrypted_message(
+                controller,
+                frontier_state,
+                commands::EncryptedSendRequest {
+                    base_url: base,
+                    api_token,
+                    wait_for,
+                    realm_id: realm,
+                    circle_id: selected_circle.clone(),
+                    strand_id,
+                    actor,
+                    authority: authority_for_sidecar,
+                    device_id: did,
+                    message_id,
+                    body,
+                    reply_to,
+                    mentions,
+                    backup_trigger_signal,
+                },
+            );
+        }
+    });
     rsx! {
             if !visible_channels_empty {
             div { class: "{composer_class}", "data-testid": "chat-composer",
@@ -964,407 +1366,23 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     }
                 }
                 div { class: "actions",
-                    if !selected_channel_security_encrypted && active_sidecar_session.is_none() {
-                    Button {
-                        key: "{ordinary_plaintext_send_key}",
-                        variant: ButtonVariant::Primary,
-                        "data-testid": "send-chat-button",
-                        disabled: sidecar_send_blocked || sidecar_route_pending() || selected_channel_unavailable || selected_realm_pending_mls_binding,
-                        onclick: {
-                            let base = base_url.clone();
-                            let realm = selected_realm_id.clone();
-                            let actor = principal_id.clone();
-                            let sidecar_device_id = device_id.clone();
-                            move |_| {
-                                let authority_for_sidecar = plaintext_sidecar_authority.clone();
-                                let did_for_sidecar = plaintext_sidecar_did.clone();
-                                let device_id_for_sidecar = sidecar_device_id.clone();
-                                let body = chat_draft().trim().to_owned();
-                                if body.is_empty() {
-                                    return;
-                                }
-                                let inserted_candidates =
-                                    mention_picker_state.read().inserted.clone();
-                                let mentions = composer_mention_nodes(
-                                    mentions_enabled,
-                                    &body,
-                                    &inserted_candidates,
-                                    &actor,
-                                );
-                                let channel = channels()
-                                    .iter()
-                                    .find(|candidate| candidate.strand_id == selected_channel())
-                                    .cloned();
-                                let Some(channel) = channel else {
-                                    status_msg.set("select a discussion first".to_owned());
-                                    return;
-                                };
-                                let local_owned_agent_ids = owned_agent_ids_from_composer(
-                                    mentions_enabled,
-                                    &mentions,
-                                    &participants_for_plaintext_sidecar,
-                                    &actor,
-                                );
-                                let targets_owned_agent = mentions_enabled
-                                    && should_route_owned_agent_to_sidecar(
-                                        active_sidecar_present,
-                                        selected_channel_is_circle_scoped,
-                                        !local_owned_agent_ids.is_empty(),
-                                    );
-                                if targets_owned_agent {
-                                    sidecar_route_pending.set(true);
-                                    status_msg.set("Activating Private Sidecar…".to_owned());
-                                    let trace_id = uuid_v7();
-                                    tracing::info!(
-                                        target: "sidecar",
-                                        event = "sidecar.route.requested",
-                                        trace_id = %trace_id,
-                                        source_realm_id = %realm,
-                                        source_strand_id = %channel.strand_id,
-                                    );
-                                    commands::route_to_owned_agent_sidecar(
-                                        controller,
-                                        sidecar_session,
-                                        sidecar_route_pending,
-                                        commands::OwnedAgentSidecarRoute {
-                                            base_url: base.clone(),
-                                            api_token: token(),
-                                            trace_id,
-                                            realm_id: realm.clone(),
-                                            strand_id: channel.strand_id.clone(),
-                                            actor: actor.clone(),
-                                            authority: authority_for_sidecar.clone(),
-                                            controller_did: did_for_sidecar.clone(),
-                                            device_id: device_id_for_sidecar.clone(),
-                                            mentions_enabled,
-                                            mentions,
-                                            body: body.clone(),
-                                            participants: participants_for_plaintext_sidecar.clone(),
-                                        },
-                                    );
-                                    return;
-                                }
-                                let local_id = new_chat_local_id();
-                                messages.write().push(ChatMessage {
-                                    local_scope: ordinary_composer_scope(&realm, &channel),
-                                    realm_id: realm.clone(),
-                                    id: local_id.clone(),
-                                    protocol_message_id: Some(local_id.clone()),
-                                    actor_id: crate::mls_api_helpers::local_account_actor_id(&actor).ok(),
-                                    sender: actor.clone(),
-                                    executed_by: None,
-                                    body: body.clone(),
-                                    content_format: Some(arkret_sdk::TextFormat::Markdown),
-                                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                                    created_at: Some(chrono::Utc::now()),
-                                    strand_id: channel.strand_id.clone(),
-                                    reply_to: reply_to_message(),
-                                    reactions: Vec::new(),
-                                    redacted: false,
-                                    edited: false,
-                                    revisions: Vec::new(),
-                                    revision_source: None,
-                                    pending: true,
-                                    failed: false,
-                                    error: None,
-                                    mentions: mentions.clone(),
-                                    // Local-only sends start plaintext;
-                                    // the Send Secure flow may upgrade
-                                    // them via a separate `messages.write()`
-                                    // patch after `encrypt_payload`.
-                                    crypto_state: MessageCryptoState::Plaintext,
-                                });
-
-                                // Continue into the ordinary submit path while
-                                // offline: EventSubmitter persists the stable SDK
-                                // Event in Garth before its first network attempt.
-                                // Queue status and replay both come from that one
-                                // durable source.
-                                let offline_now = !is_online() || !navigator_online();
-                                if offline_now {
-                                    if *is_online.peek() {
-                                        is_online.set(false);
-                                    }
-                                    status_msg.set(crate::i18n::tr("chat.outbox.queued_offline"));
-                                }
-
-                                let base = base.clone();
-                                let realm = realm.clone();
-                                let api_token = token();
-                                let actor = actor.clone();
-                                let strand_id = channel.strand_id.clone();
-                                let reply_to = reply_to_message();
-                                // Clear the picker chip list now that
-                                // we've folded the mentions into the
-                                // pending send state.
-                                mention_picker_state.write().clear();
-                                let wait_for = active_sync_token(sync_cursor());
-                                commands::send_plaintext_message(
-                                    controller,
-                                    frontier_state,
-                                    commands::PlaintextSendRequest {
-                                        base_url: base,
-                                        api_token,
-                                        wait_for,
-                                        realm_id: realm,
-                                        circle_id: channel.scope_circle.as_ref().map(|circle| circle.circle_id.clone()),
-                                        strand_id,
-                                        actor,
-                                        local_id,
-                                        body,
-                                        reply_to,
-                                        mentions,
-                                    },
-                                );
-                                chat_draft.set(String::new());
-                                reply_to_message.set(None);
-                            }
-                        },
-                        {crate::i18n::tr("chat.send")}
-                    }
-                    }
-                    Button {
-                        key: "{ordinary_encrypted_send_key}",
-                        variant: send_secure_variant,
-                        "data-testid": send_secure_testid,
-                        "data-mls-binding-pending": selected_realm_pending_mls_binding.to_string(),
-                        "data-creator-bootstrap-pending": creator_mls_bootstrap_pending.to_string(),
-                        title: selected_realm_pending_mls_binding_reason.clone().unwrap_or_else(|| {
-                            creator_mls_bootstrap_pending_reason.unwrap_or_default().to_owned()
-                        }),
-                        disabled: chat_secure_send_blocked(
+                    OrdinarySendActions {
+                        plaintext: !selected_channel_security_encrypted && !active_sidecar_present,
+                        plaintext_disabled: sidecar_send_blocked || sidecar_route_pending() || selected_channel_unavailable || selected_realm_pending_mls_binding,
+                        secure_disabled: chat_secure_send_blocked(
                             selected_realm_pending_mls_binding,
                             creator_mls_bootstrap_pending,
                             sidecar_send_blocked,
                             sidecar_route_pending(),
                         ) || (!active_sidecar_present && selected_channel_unavailable),
-                        onclick: {
-                            let base = base_url.clone();
-                            let realm = selected_realm_id.clone();
-                            let actor = principal_id.clone();
-                            let selected_strand = selected_channel_value.clone();
-                            let selected_circle = selected_channel_info.as_ref()
-                                .and_then(|channel| channel.scope_circle.as_ref())
-                                .map(|circle| circle.circle_id.clone());
-                            let pending_mls_binding = selected_realm_pending_mls_binding;
-                            let sidecar_device_id = device_id.clone();
-                            let pending_mls_binding_reason =
-                                selected_realm_pending_mls_binding_reason.clone();
-                            move |_| {
-                                let authority_for_sidecar = secure_sidecar_authority.clone();
-                                let did_for_sidecar = secure_sidecar_did.clone();
-                                let device_id_for_sidecar = sidecar_device_id.clone();
-                                if pending_mls_binding {
-                                    status_msg.set(
-                                        pending_mls_binding_reason.clone().unwrap_or_else(|| {
-                                            "epoch_update_required: membership frontier changed; MLS commit required"
-                                                .to_owned()
-                                        }),
-                                    );
-                                    return;
-                                }
-                                let body = chat_draft().trim().to_owned();
-                                if body.is_empty() {
-                                    status_msg.set("Type a message before secure send".to_owned());
-                                    return;
-                                }
-                                let inserted_candidates =
-                                    mention_picker_state.read().inserted.clone();
-                                let mentions = composer_mention_nodes(
-                                    mentions_enabled,
-                                    &body,
-                                    &inserted_candidates,
-                                    &actor,
-                                );
-                                let realm = realm.clone();
-                                let actor = actor.clone();
-                                if selected_strand.trim().is_empty() {
-                                    status_msg.set(
-                                        "Default Strand is unavailable until its accepted projection arrives"
-                                            .to_owned(),
-                                    );
-                                    return;
-                                }
-                                let strand_id = selected_strand.clone();
-                                let local_owned_agent_ids = owned_agent_ids_from_composer(
-                                    mentions_enabled,
-                                    &mentions,
-                                    &participants_for_encrypted_sidecar,
-                                    &actor,
-                                );
-                                let active_sidecar_for_send = active_sidecar_session.clone();
-                                let targets_owned_agent = mentions_enabled
-                                    && should_route_owned_agent_to_sidecar(
-                                        active_sidecar_for_send.is_some(),
-                                        selected_channel_is_circle_scoped,
-                                        !local_owned_agent_ids.is_empty(),
-                                    );
-                                if targets_owned_agent {
-                                    sidecar_route_pending.set(true);
-                                    status_msg.set("Activating Private Sidecar…".to_owned());
-                                    let trace_id = uuid_v7();
-                                    tracing::info!(
-                                        target: "sidecar",
-                                        event = "sidecar.route.requested",
-                                        trace_id = %trace_id,
-                                        source_realm_id = %realm,
-                                        source_strand_id = %strand_id,
-                                    );
-                                    commands::route_to_owned_agent_sidecar(
-                                        controller,
-                                        sidecar_session,
-                                        sidecar_route_pending,
-                                        commands::OwnedAgentSidecarRoute {
-                                            base_url: base.clone(),
-                                            api_token: token(),
-                                            trace_id,
-                                            realm_id: realm.clone(),
-                                            strand_id: strand_id.clone(),
-                                            actor: actor.clone(),
-                                            authority: authority_for_sidecar.clone(),
-                                            controller_did: did_for_sidecar.clone(),
-                                            device_id: device_id_for_sidecar.clone(),
-                                            mentions_enabled,
-                                            mentions,
-                                            body: body.clone(),
-                                            participants: participants_for_encrypted_sidecar.clone(),
-                                        },
-                                    );
-                                    return;
-                                }
-                                if let Some(session) = active_sidecar_for_send {
-                                    if !session.membership_ready() {
-                                        status_msg.set(
-                                            "Private Sidecar MLS access is not ready".to_owned(),
-                                        );
-                                        return;
-                                    }
-                                    let local_id = new_chat_local_id();
-                                    let source_strand_id = session.source_strand_id.clone();
-                                    messages.write().push(ChatMessage {
-                                        local_scope: None,
-                                        realm_id: session.source_realm_id.clone(),
-                                        id: local_id.clone(),
-                                        protocol_message_id: Some(local_id.clone()),
-                                        actor_id: crate::mls_api_helpers::local_account_actor_id(&actor).ok(),
-                                        sender: actor.clone(),
-                                        executed_by: None,
-                                        body: body.clone(),
-                                        content_format: Some(arkret_sdk::TextFormat::Markdown),
-                                        timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                                        created_at: Some(chrono::Utc::now()),
-                                        strand_id: source_strand_id.clone(),
-                                        reply_to: None,
-                                        reactions: Vec::new(),
-                                        redacted: false,
-                                        edited: false,
-                                        revisions: Vec::new(),
-                                        revision_source: None,
-                                        pending: true,
-                                        failed: false,
-                                        error: None,
-                                        mentions: mentions.clone(),
-                                        crypto_state: MessageCryptoState::Plaintext,
-                                    });
-                                    chat_draft.set(String::new());
-                                    mention_picker_state.write().clear();
-                                    reply_to_message.set(None);
-
-                                    let base = base.clone();
-                                    let api_token = token();
-                                    let source_event_id = latest_source_event_anchor(
-                                        &messages.read(),
-                                        &session.source_realm_id,
-                                        &session.source_strand_id,
-                                    );
-                                    commands::send_sidecar_message(
-                                        controller,
-                                        commands::SidecarSendRequest {
-                                            base_url: base,
-                                            api_token,
-                                            session,
-                                            sidecar_strand_id: source_strand_id,
-                                            source_event_id,
-                                            actor,
-                                            authority: authority_for_sidecar,
-                                            device_id: device_id_for_sidecar,
-                                            local_id,
-                                            body,
-                                            mentions,
-                                        },
-                                    );
-                                    return;
-                                }
-                                // P2: preserve the composer's reply target on the
-                                // encrypted path (it was silently dropped before).
-                                let reply_to = reply_to_message()
-                                    .filter(|value| !value.trim().is_empty());
-                                let message_id = new_chat_local_id();
-                                messages.write().push(ChatMessage {
-                                    local_scope: channels().iter()
-                                        .find(|channel| channel.strand_id == strand_id)
-                                        .and_then(|channel| ordinary_composer_scope(&realm, channel)),
-                                    realm_id: realm.clone(),
-                                    id: message_id.clone(),
-                                    protocol_message_id: Some(message_id.clone()),
-                                    actor_id: crate::mls_api_helpers::local_account_actor_id(&actor).ok(),
-                                    sender: actor.clone(),
-                                    executed_by: None,
-                                    body: body.clone(),
-                                    content_format: Some(arkret_sdk::TextFormat::Markdown),
-                                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                                    created_at: Some(chrono::Utc::now()),
-                                    strand_id: strand_id.clone(),
-                                    reply_to: reply_to.clone(),
-                                    reactions: Vec::new(),
-                                    redacted: false,
-                                    edited: false,
-                                    revisions: Vec::new(),
-                                    revision_source: None,
-                                    pending: true,
-                                    failed: false,
-                                    error: None,
-                                    mentions: mentions.clone(),
-                                    crypto_state: MessageCryptoState::Plaintext,
-                                });
-                                mention_picker_state.write().clear();
-                                chat_draft.set(String::new());
-                                reply_to_message.set(None);
-                                let base = base.clone();
-                                let realm = realm.clone();
-                                let actor = actor.clone();
-                                let did = device_id.clone();
-                                let api_token = token();
-                                let wait_for = active_sync_token(sync_cursor());
-                                let backup_trigger_signal =
-                                    crate::components::try_needs_mls_backup_signal();
-                                commands::send_encrypted_message(
-                                    controller,
-                                    frontier_state,
-                                    commands::EncryptedSendRequest {
-                                        base_url: base,
-                                        api_token,
-                                        wait_for,
-                                        realm_id: realm,
-                                        circle_id: selected_circle.clone(),
-                                        strand_id,
-                                        actor,
-                                        authority: authority_for_sidecar,
-                                        device_id: did,
-                                        message_id,
-                                        body,
-                                        reply_to,
-                                        mentions,
-                                        backup_trigger_signal,
-                                    },
-                                );
-                            }
-                        },
-                        if sidecar_route_pending() {
-                            "Opening…"
-                        } else {
-                            "{send_secure_label}"
-                        }
+                        mls_binding_pending: selected_realm_pending_mls_binding,
+                        creator_bootstrap_pending: creator_mls_bootstrap_pending,
+                        secure_title: selected_realm_pending_mls_binding_reason.clone().unwrap_or_else(|| {
+                            creator_mls_bootstrap_pending_reason.unwrap_or_default().to_owned()
+                        }),
+                        opening: sidecar_route_pending(),
+                        on_plaintext: plaintext_send,
+                        on_secure: secure_send,
                     }
                 }
                 if !status_msg().is_empty() {
