@@ -254,6 +254,31 @@ pub(crate) fn build_add_member_commit_for_scope(
     member_authority_hints: &[crate::mls::governance_proof::MlsLeafAuthorityHint],
     member_actor_id: Option<&arkret_sdk::ActorId>,
 ) -> Result<(arkret_sdk::MlsAddMemberResult, StagedMlsCommit), MlsRuntimeError> {
+    build_add_member_commit_with_binding(
+        state_store,
+        secure_store,
+        effective_scope,
+        authority,
+        device_id,
+        member_key_package,
+        member_authority_hints,
+        member_actor_id,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_add_member_commit_with_binding(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    effective_scope: &arkret_sdk::ScopeRef,
+    authority: &AccountId,
+    device_id: &DeviceId,
+    member_key_package: &arkret_sdk::MlsKeyPackageRecord,
+    member_authority_hints: &[crate::mls::governance_proof::MlsLeafAuthorityHint],
+    member_actor_id: Option<&arkret_sdk::ActorId>,
+    pinned_binding: Option<&arkret_sdk::MlsGovernanceBindingPayload>,
+) -> Result<(arkret_sdk::MlsAddMemberResult, StagedMlsCommit), MlsRuntimeError> {
     let realm_id = effective_scope
         .realm_id_opt()
         .ok_or_else(|| MlsRuntimeError::Commit("MLS Add has no Realm scope".to_owned()))?
@@ -267,19 +292,44 @@ pub(crate) fn build_add_member_commit_for_scope(
         authority,
         device_id,
     )?;
-    let governance_binding = crate::mls::governance_proof::binding_for_transition(
-        state_store,
-        effective_scope,
-        &group.group_id(),
-        group.epoch(),
-        group.epoch().saturating_add(1),
-    )
-    .map_err(MlsRuntimeError::Commit)?;
+    let next_epoch = group
+        .epoch()
+        .checked_add(1)
+        .ok_or_else(|| MlsRuntimeError::Commit("MLS epoch overflow".into()))?;
+    let governance_binding = match pinned_binding {
+        Some(binding) => {
+            binding
+                .validate()
+                .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
+            let base = state_store
+                .mls_group_state_ref_for_scope(effective_scope, &group.group_id(), group.epoch())
+                .map_err(MlsRuntimeError::Commit)?;
+            if binding.effective_scope() != effective_scope
+                || binding.previous_epoch() != group.epoch()
+                || binding.next_epoch() != next_epoch
+                || binding.base_group_state_ref() != Some(&base)
+            {
+                return Err(MlsRuntimeError::Commit(
+                    "MLS Add binding differs from its exact private base".into(),
+                ));
+            }
+            binding.clone()
+        }
+        None => crate::mls::governance_proof::binding_for_transition(
+            state_store,
+            effective_scope,
+            &group.group_id(),
+            group.epoch(),
+            next_epoch,
+        )
+        .map_err(MlsRuntimeError::Commit)?,
+    };
     // A Direct Conversation has exactly two members, so a new endpoint of an
     // actor already in the group replaces that actor's leaf instead of adding
     // a third one.
-    let replacement_actor = (state_store.realm_collaboration_role(&realm_id)
-        == Some(arkret_sdk::CollaborationRealmRole::DirectConversation))
+    let replacement_actor = (matches!(effective_scope, arkret_sdk::ScopeRef::Realm { .. })
+        && state_store.realm_collaboration_role(&realm_id)
+            == Some(arkret_sdk::CollaborationRealmRole::DirectConversation))
     .then(|| {
         group.verified_leaf_bindings().ok().and_then(|leaves| {
             leaves

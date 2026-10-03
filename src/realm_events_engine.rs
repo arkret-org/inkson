@@ -382,6 +382,41 @@ pub(crate) async fn verified_mls_recovery_tail(
         .collect())
 }
 
+/// Read the private scope's MLS current from a complete authority-signed cut.
+/// Parent Realm state and a shape-only Sidecar GET cannot supply this binding.
+pub(crate) async fn verified_sidecar_mls_current(
+    api: &crate::transport::TransportClient,
+    scope: &arkret_sdk::ScopeRef,
+) -> garth::Result<arkret_wire::MlsGroupCurrent> {
+    if !matches!(scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
+        return Err(protocol(
+            "Sidecar current read requires its native effective scope",
+        ));
+    }
+    let realm = scope.realm_id();
+    let http = api.http();
+    let authority = AuthorityClient::new(http.clone());
+    let (bundle, freshness, mut replica) = fresh_verified_realm(&authority, http, realm).await?;
+    let snapshot = http.realm_state_snapshot_head(realm).await?;
+    let keys =
+        garth::fetch_historical_station_key_directory(http, &bundle, None, Some(&snapshot)).await?;
+    let fresh =
+        arkret_identity::RealmAuthorityFreshness::new(chrono::Utc::now(), freshness.expected_nonce);
+    replica.install_verified_current_snapshot_heads(&snapshot, &fresh, &keys)?;
+    let stream = CommitStreamRef::from_scope(scope, Some(realm.clone()))?;
+    if !snapshot
+        .visible_stream_heads
+        .iter()
+        .any(|head| head.stream_ref == stream)
+    {
+        return Err(protocol(
+            "authorized current Snapshot does not cover this Sidecar stream",
+        ));
+    }
+    crate::current_projection::current_mls_group(&snapshot.current_state_entries, scope)
+        .ok_or_else(|| protocol("verified Sidecar Snapshot has no current MLS group"))
+}
+
 /// The human PCR's root is its accepted genesis: the closed PCR allowlist
 /// has no owner-transfer or authority-reset writer. A fresh verified authority
 /// bundle proves that exact lifetime lineage without disclosing a private PCR

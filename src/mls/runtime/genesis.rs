@@ -496,6 +496,29 @@ pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope_with_bin
     device_id: &arkret_sdk::DeviceId,
     sidecar_id: Option<arkret_sdk::SidecarId>,
 ) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
+    initial_mls_checkpoint_summary_with_pinned_binding(
+        state_store,
+        secure_store,
+        realm_id,
+        circle_id,
+        authority,
+        device_id,
+        sidecar_id,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn initial_mls_checkpoint_summary_with_pinned_binding(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    sidecar_id: Option<arkret_sdk::SidecarId>,
+    pinned_binding: Option<&arkret_sdk::MlsGovernanceBindingPayload>,
+) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
     let realm = realm_id.trim();
     if realm.is_empty() {
         return Err(MlsRuntimeError::Genesis(
@@ -546,8 +569,16 @@ pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope_with_bin
     // The epoch-0 group must be the one this scope derives, or the material
     // belongs to another group and must not be described as this scope's
     // Genesis.
-    let expected_binding = crate::mls::governance_proof::genesis_binding(&effective_scope)
-        .map_err(MlsRuntimeError::Genesis)?;
+    let expected_binding = match pinned_binding {
+        Some(binding) if binding.effective_scope() == &effective_scope => binding.clone(),
+        Some(_) => {
+            return Err(MlsRuntimeError::Genesis(
+                EPOCH_ZERO_SNAPSHOT_GOVERNANCE_BINDING_MISMATCH.to_owned(),
+            ));
+        }
+        None => crate::mls::governance_proof::genesis_binding(&effective_scope)
+            .map_err(MlsRuntimeError::Genesis)?,
+    };
     if expected_binding
         .mls_group_id()
         .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
@@ -561,6 +592,33 @@ pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope_with_bin
     let (group_info_bytes, ratchet_tree_bytes) = group
         .public_group_state_bytes()
         .map_err(|err| MlsRuntimeError::Genesis(format!("export public group state: {err}")))?;
+    let public = arkret_sdk::mls::MlsPublicGroupTracker::from_external(
+        &group_info_bytes,
+        &ratchet_tree_bytes,
+        &expected_group_id,
+        0,
+    )
+    .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?;
+    if public
+        .governance_binding()
+        .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?
+        != expected_binding
+    {
+        return Err(MlsRuntimeError::Genesis(
+            EPOCH_ZERO_SNAPSHOT_GOVERNANCE_BINDING_MISMATCH.to_owned(),
+        ));
+    }
+    let creator_leaf_authority = creator_leaf_authority_from_group(&group, authority)?;
+    if matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. })
+        && creator_leaf_authority.endpoint
+            != (arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+                device_id: device_id.clone(),
+            })
+    {
+        return Err(MlsRuntimeError::Genesis(
+            "Sidecar epoch-zero material belongs to another creator device; use Welcome or recovery".into(),
+        ));
+    }
     Ok(Some(InitialMlsCheckpointSummary {
         realm_id: realm.to_owned(),
         group_id: group_id.as_str().to_owned(),
@@ -568,7 +626,7 @@ pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope_with_bin
         group_info_bytes,
         ratchet_tree_bytes,
         cipher_suite: arkret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned(),
-        creator_leaf_authority: creator_leaf_authority_from_group(&group, authority)?,
+        creator_leaf_authority,
     }))
 }
 

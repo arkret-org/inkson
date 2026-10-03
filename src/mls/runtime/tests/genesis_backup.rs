@@ -14,6 +14,222 @@ fn genesis_governance_binding() -> arkret_sdk::MlsGovernanceBindingPayload {
 }
 
 #[test]
+fn sidecar_epoch_zero_restores_only_its_pinned_authority_and_creator_device() {
+    let mut state = temp_state_store("sidecar-pinned-genesis");
+    let secure = MemorySecureKeyStore::new();
+    let actor = "did:web:alice.example";
+    let authority = fixture::authority(actor);
+    let device = fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001");
+    let realm = genesis_governance_binding()
+        .effective_scope()
+        .realm_id()
+        .clone();
+    super::seed_human_creator_authorization(actor, device.as_str());
+    ensure_creator_mls_checkpoint(&mut state, &secure, realm.as_str(), &authority, &device)
+        .unwrap();
+    let create =
+        arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [17; 32]);
+    let sidecar = arkret_sdk::SidecarId::from_event_id(&create);
+    let scope = arkret_sdk::ScopeRef::Sidecar {
+        realm_id: realm.clone(),
+        sidecar_id: sidecar.clone(),
+    };
+    let digest =
+        arkret_sdk::sidecar_participant_authority_digest(&sidecar, &realm, &authority, &[])
+            .unwrap();
+    let binding = arkret_sdk::MlsGovernanceBindingPayload::sidecar(
+        realm.clone(),
+        sidecar.clone(),
+        None,
+        0,
+        0,
+        0,
+        digest.clone(),
+        vec![create.clone()],
+    )
+    .unwrap();
+    let secret = load_device_checkpoint_secret(&secure, &authority, &device).unwrap();
+    let (checkpoint, original) =
+        generate_creator_epoch_zero(&scope, &authority, &device, &binding, &secret, None).unwrap();
+    state
+        .save_mls_checkpoint_for_scope(&scope, checkpoint)
+        .unwrap();
+    let restore = |binding: &arkret_sdk::MlsGovernanceBindingPayload,
+                   device: &arkret_sdk::DeviceId| {
+        initial_mls_checkpoint_summary_with_pinned_binding(
+            &state,
+            &secure,
+            realm.as_str(),
+            None,
+            &authority,
+            device,
+            Some(sidecar.clone()),
+            Some(binding),
+        )
+    };
+    let restored = restore(&binding, &device).unwrap().unwrap();
+    assert_eq!(restored.group_id, original.group_id);
+    assert_eq!(restored.group_info_bytes, original.group_info_bytes);
+    assert_eq!(restored.ratchet_tree_bytes, original.ratchet_tree_bytes);
+    let changed_cut = arkret_sdk::MlsGovernanceBindingPayload::sidecar(
+        realm.clone(),
+        sidecar.clone(),
+        None,
+        0,
+        0,
+        0,
+        digest,
+        vec![arkret_sdk::EventId::from_digest(
+            arkret_sdk::canonical::DigestSuite::Sha256,
+            [18; 32],
+        )],
+    )
+    .unwrap();
+    assert!(
+        restore(&changed_cut, &device).is_err(),
+        "a retry cannot substitute another authority cut"
+    );
+    let other_scope =
+        arkret_sdk::MlsGovernanceBindingPayload::realm(realm.clone(), None, 0, 0, 0).unwrap();
+    assert!(
+        restore(&other_scope, &device).is_err(),
+        "parent Realm material cannot bootstrap Sidecar"
+    );
+    assert!(
+        restore(
+            &binding,
+            &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000002")
+        )
+        .is_err(),
+        "another device cannot resume the creator's private material"
+    );
+    assert_eq!(state.mls_checkpoint_for_scope(&scope).unwrap().epoch, 0);
+}
+
+#[test]
+fn sidecar_add_keeps_exact_binding_and_stages_private_state_until_acceptance() {
+    let mut state = temp_state_store("sidecar-add-binding");
+    let secure = MemorySecureKeyStore::new();
+    let authority = fixture::authority("did:web:alice.example");
+    let device = fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001");
+    let realm = genesis_governance_binding()
+        .effective_scope()
+        .realm_id()
+        .clone();
+    super::seed_human_creator_authorization("did:web:alice.example", device.as_str());
+    ensure_creator_mls_checkpoint(&mut state, &secure, realm.as_str(), &authority, &device)
+        .unwrap();
+    let create = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [21; 32]);
+    let sidecar = arkret_sdk::SidecarId::from_event_id(&create);
+    let scope = arkret_sdk::ScopeRef::Sidecar {
+        realm_id: realm.clone(),
+        sidecar_id: sidecar.clone(),
+    };
+    let digest =
+        arkret_sdk::sidecar_participant_authority_digest(&sidecar, &realm, &authority, &[])
+            .unwrap();
+    let genesis = arkret_sdk::MlsGovernanceBindingPayload::sidecar(
+        realm.clone(),
+        sidecar.clone(),
+        None,
+        0,
+        0,
+        0,
+        digest.clone(),
+        vec![create.clone()],
+    )
+    .unwrap();
+    let secret = load_device_checkpoint_secret(&secure, &authority, &device).unwrap();
+    let (checkpoint, _) =
+        generate_creator_epoch_zero(&scope, &authority, &device, &genesis, &secret, None).unwrap();
+    state
+        .save_mls_checkpoint_for_scope(&scope, checkpoint.clone())
+        .unwrap();
+    let base = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [22; 32]);
+    state
+        .record_mls_group_state_ref_for_scope(&scope, &checkpoint.group_id, 0, base.clone())
+        .unwrap();
+    let before = state.mls_checkpoint_for_scope(&scope).unwrap();
+    let member_actor = fixture::account_actor("did:web:bob.example");
+    let member_device = fixture::device_id("ak:device:01904100-0000-7000-8000-000000000002");
+    let member =
+        arkret_sdk::ArkretMlsIdentity::new_test_human_device(member_actor.clone(), member_device)
+            .unwrap();
+    let key_package =
+        fixture::claimed_mls_key_package(member.key_package_record().unwrap(), 1_760_000_000_011);
+    let leaf = arkret_sdk::mls::author_leaf_from_key_package_bytes(
+        &arkret_sdk::base64url_decode(key_package.keypackage.as_bytes()).unwrap(),
+        0,
+    )
+    .unwrap();
+    let hint = crate::mls::governance_proof::MlsLeafAuthorityHint {
+        actor_id: member_actor.clone(),
+        signature_key: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+            &leaf.signature_key,
+        ))
+        .unwrap(),
+        endpoint: key_package.endpoint.clone(),
+        device_authorize_event_id: Some(create.clone()),
+    };
+    let binding = arkret_sdk::MlsGovernanceBindingPayload::sidecar(
+        realm.clone(),
+        sidecar.clone(),
+        Some(base.clone()),
+        0,
+        1,
+        7,
+        digest.clone(),
+        vec![create.clone()],
+    )
+    .unwrap();
+    let build = |binding: &arkret_sdk::MlsGovernanceBindingPayload| {
+        build_add_member_commit_with_binding(
+            &state,
+            &secure,
+            &scope,
+            &authority,
+            &device,
+            &key_package,
+            std::slice::from_ref(&hint),
+            Some(&member_actor),
+            Some(binding),
+        )
+    };
+    let (_, staged) = build(&binding).unwrap();
+    assert_eq!(staged.envelope.epoch, 1);
+    assert_eq!(staged.staged_checkpoint.epoch, 0);
+    assert_eq!(state.mls_checkpoint_for_scope(&scope).unwrap(), before);
+    let operation = crate::mls::group_events::mls_commit_event_with_binding(
+        &state,
+        authority.principal_id.as_str(),
+        &staged.envelope,
+        &binding,
+    )
+    .unwrap();
+    assert_eq!(operation.intent().scope_ref(), &scope);
+    let payload: arkret_sdk::MlsCommitPayload =
+        serde_json::from_value(serde_json::to_value(operation.intent().payload()).unwrap())
+            .unwrap();
+    assert_eq!(payload.governance_binding(), &binding);
+    let wrong_base = arkret_sdk::MlsGovernanceBindingPayload::sidecar(
+        realm.clone(),
+        sidecar,
+        Some(create.clone()),
+        0,
+        1,
+        7,
+        digest,
+        vec![create],
+    )
+    .unwrap();
+    assert!(build(&wrong_base).is_err());
+    let parent =
+        arkret_sdk::MlsGovernanceBindingPayload::realm(realm, Some(base), 0, 1, 7).unwrap();
+    assert!(build(&parent).is_err());
+    assert_eq!(state.mls_checkpoint_for_scope(&scope).unwrap(), before);
+}
+
+#[test]
 fn build_mls_genesis_payload_has_required_fields() {
     let mut state = temp_state_store("genesis-payload");
     let secure = MemorySecureKeyStore::new();

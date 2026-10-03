@@ -25,7 +25,8 @@ mod commit;
 mod genesis;
 pub(crate) use genesis::{
     ensure_creator_mls_checkpoint_with_pinned_binding, freeze_creator_genesis_core,
-    generate_creator_epoch_zero, restore_creator_epoch_zero,
+    generate_creator_epoch_zero, initial_mls_checkpoint_summary_with_pinned_binding,
+    restore_creator_epoch_zero,
 };
 mod message;
 mod reaction;
