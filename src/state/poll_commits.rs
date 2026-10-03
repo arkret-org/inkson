@@ -174,6 +174,48 @@ impl LocalStateStore {
         Ok(())
     }
 
+    pub(crate) fn verified_commit_stream_anchor(
+        &self,
+        stream_ref: &arkret_sdk::CommitStreamRef,
+    ) -> Result<Option<arkret_sdk::RealmCommit>, String> {
+        let key = serde_json::to_string(stream_ref).map_err(|error| error.to_string())?;
+        Ok(self
+            .load()
+            .verified_commit_stream_anchors
+            .get(&key)
+            .cloned())
+    }
+
+    /// Stage one signed checkpoint in the existing projection transaction.
+    /// The caller awaits its durable barrier before installing the candidate.
+    pub(crate) fn stage_verified_commit_stream_checkpoint(
+        &mut self,
+        replica: &garth::RealmReplica,
+        stream_ref: &arkret_sdk::CommitStreamRef,
+    ) -> Result<(), String> {
+        let head = replica
+            .verified_head(stream_ref)
+            .ok_or("checkpoint has no verified head")?;
+        let anchor = replica
+            .verified_anchor(stream_ref)
+            .ok_or("checkpoint has no signed anchor")?;
+        if head.stream_ref != anchor.stream_ref
+            || head.stream_position != anchor.stream_position
+            || head.commit_id != anchor.commit_id
+        {
+            return Err("signed checkpoint differs from verified head".to_owned());
+        }
+        let key = serde_json::to_string(stream_ref).map_err(|error| error.to_string())?;
+        self.ensure_cached_loaded();
+        self.cached
+            .verified_commit_stream_cursors
+            .insert(key.clone(), head.clone());
+        self.cached
+            .verified_commit_stream_anchors
+            .insert(key, anchor.clone());
+        Ok(())
+    }
+
     /// Stage verified coordinates in the existing account-state blob. On wasm,
     /// the caller must await `begin_durable_flush()` before ACKing the scan
     /// cursor: `flush()` alone only enqueues the IndexedDB write.

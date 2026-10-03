@@ -947,10 +947,12 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub commit_stream_cursors: BTreeMap<String, String>,
     /// Only pages admitted by Garth's fresh authority and Commit signature
-    /// gate may advance these positions. Never use them as scan anchors: a
-    /// new replica reconstructs its verified predecessor from genesis.
+    /// gate may advance these positions. A bare head cannot resume a new
+    /// replica; the signed anchor must be reverified against fresh authority.
     #[serde(default)]
     pub verified_commit_stream_cursors: BTreeMap<String, arkret_sdk::CommitStreamHead>,
+    #[serde(default)]
+    pub(crate) verified_commit_stream_anchors: BTreeMap<String, arkret_sdk::RealmCommit>,
     /// Station-CAS revision identity folded through the same durable account
     /// checkpoint as `sync_cursor`.
     #[serde(default)]
@@ -1543,6 +1545,7 @@ impl Default for ClientLocalState {
             demand_sync: Default::default(),
             commit_stream_cursors: BTreeMap::new(),
             verified_commit_stream_cursors: BTreeMap::new(),
+            verified_commit_stream_anchors: BTreeMap::new(),
             station_cas_projection: garth::StationCasProjection::default(),
             client_core_pending_deliveries: VecDeque::new(),
             client_core_next_delivery_id: 0,

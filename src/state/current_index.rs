@@ -2192,6 +2192,7 @@ mod tests {
             "value":{
                 "effective_scope":{"kind":"realm","realm_id":realm},
                 "genesis_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [1; 32]),
+                "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
                 "current_mls_commit_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [2; 32]),
                 "epoch":1,
                 "current_key_access_revision":1,

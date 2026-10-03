@@ -378,6 +378,7 @@ pub(crate) fn install_accepted_mls_group_at_epoch(
         "value": {
             "effective_scope": effective_scope,
             "genesis_event_ref": genesis_ref,
+            "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
             "current_mls_commit_event_ref": genesis_ref,
             "epoch": epoch,
             "current_key_access_revision": key_access_revision,

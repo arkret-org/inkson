@@ -33,6 +33,13 @@ use garth::{
 };
 
 use crate::config::MultiProfileConfig;
+// Native hosts share the app's verifier and durable projector through these
+// narrow adapters, without exposing UI or the rest of the transport internals.
+pub use crate::runtime::effects::{EffectKey, EffectOwner, EffectRegistry};
+pub use crate::runtime::input::{StateStoreHandle, ValueCell, ValueReader};
+pub use crate::state::LocalStateStore;
+pub use crate::transport::websocket::WebSocketTransportSelector;
+pub use crate::transport::websocket_rail::{SharedConnection, WebSocketRail};
 
 /// Floor / ceiling for the failure backoff. Mirrors the account engine's
 /// human-scale recovery cadence. The doubling ladder is [`garth::RetrySchedule`];
@@ -41,10 +48,8 @@ use crate::config::MultiProfileConfig;
 const BACKOFF_FLOOR: Duration = Duration::from_secs(1);
 const BACKOFF_CEILING: Duration = Duration::from_secs(60);
 
-/// Pause between drained passes over the Realm's streams.
-// A fresh bundle resets the verified predecessor, so each pass replays from
-// genesis. Do not spin that O(history) work at the old shape-only 250 ms beat.
-const BEAT: Duration = Duration::from_secs(5);
+/// Cancellation checks while the bounded subscription waits for a live hint.
+const SUBSCRIBE_CANCEL_POLL: Duration = Duration::from_millis(250);
 
 /// Rows requested per scan. The Station may return fewer and flag `truncated`,
 /// which this engine drains before moving to the next stream.
@@ -54,6 +59,7 @@ const SCAN_LIMIT: u16 = 200;
 /// confined to the app adapter that constructs these handles.
 #[derive(Clone)]
 pub struct RealmEventsEngineContext {
+    pub websocket_rail: crate::transport::websocket_rail::WebSocketRail,
     pub base_url: crate::runtime::input::ValueReader<String>,
     pub token: crate::runtime::input::ValueCell<String>,
     pub state_store: crate::runtime::input::StateStoreHandle,
@@ -70,11 +76,10 @@ pub struct RealmEventsEngineContext {
     pub realm_live_epoch: crate::runtime::input::ValueCell<u64>,
     /// Removes transient message previews only after the matching final Event
     /// has been durably folded by this projector.
-    pub message_stream_hub: crate::views::message_streams::MessageStreamHub,
+    pub message_stream_hub: Option<crate::views::message_streams::MessageStreamHub>,
     /// Active multi-profile config — the engine exits when the active profile
     /// rotates (mirrors the account engine's profile guard).
     pub profiles: crate::runtime::input::ValueReader<MultiProfileConfig>,
-    pub client_runtime: crate::client_core::InksonClientRuntime,
     pub effect: crate::runtime::effects::EffectHandle,
 }
 
@@ -84,7 +89,7 @@ struct RealmIngestProjector {
     realm_id: String,
     digest_suite: arkret_sdk::DigestSuite,
     realm_live_epoch: crate::runtime::input::ValueCell<u64>,
-    message_stream_hub: crate::views::message_streams::MessageStreamHub,
+    message_stream_hub: Option<crate::views::message_streams::MessageStreamHub>,
 }
 
 fn ingest_realm_batch(
@@ -204,6 +209,31 @@ pub async fn run_realm_events_engine(
     realm_id: String,
     ctx: RealmEventsEngineContext,
 ) {
+    run_realm_events_engine_with_transport(
+        start_generation,
+        generation,
+        realm_id,
+        ctx,
+        |station: String| async move {
+            crate::identity::session_refresh::provide_authenticated_sdk_client(&station).await
+        },
+    )
+    .await;
+}
+
+/// Run the same verifier, follower and durable projector with a host-provided
+/// authenticated SDK transport. Native hosts can supply their trust store;
+/// the default app entry point retains the shared session provider.
+pub async fn run_realm_events_engine_with_transport<P, F>(
+    start_generation: u64,
+    generation: crate::runtime::input::ValueReader<u64>,
+    realm_id: String,
+    ctx: RealmEventsEngineContext,
+    provide: P,
+) where
+    P: Fn(String) -> F,
+    F: std::future::Future<Output = anyhow::Result<arkret_sdk::http_client::Client>>,
+{
     if realm_id.trim().is_empty() {
         return;
     }
@@ -232,13 +262,11 @@ pub async fn run_realm_events_engine(
         message_stream_hub: ctx.message_stream_hub,
     };
     let mut backoff = RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING);
+    let mut replica = RealmReplica::new(realm_id_typed.clone());
+    let mut subscription_cursor = None;
 
     while is_active() {
-        let http = match crate::identity::session_refresh::provide_authenticated_sdk_client(
-            &ctx.base_url.get(),
-        )
-        .await
-        {
+        let http = match provide(ctx.base_url.get()).await {
             Ok(http) => http,
             Err(error) => {
                 if !retry_after(&mut backoff, is_active(), &error.to_string()).await {
@@ -248,21 +276,27 @@ pub async fn run_realm_events_engine(
             }
         };
         let authority = AuthorityClient::new(http.clone());
-        match follow_once(
+        match follow_subscription(
             &authority,
             &http,
             &realm_id_typed,
             &projector,
             &ctx,
             &is_active,
+            &mut replica,
+            &mut subscription_cursor,
         )
         .await
         {
             Ok(()) => {
                 backoff.reset();
-                crate::runtime_helpers::sleep_for(BEAT).await;
             }
             Err(error) => {
+                if error.is_invalid_cursor() {
+                    // Only this subscription handle is invalid. Independent
+                    // verified stream heads and private MLS state survive.
+                    subscription_cursor = None;
+                }
                 if garth::classify_error(&error) == garth::RunErrorClass::Unauthorized {
                     match crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
                         &ctx.base_url.get(),
@@ -293,6 +327,102 @@ pub async fn run_realm_events_engine(
     }
 }
 
+async fn follow_subscription<F: Fn() -> bool>(
+    authority: &AuthorityClient<arkret_sdk::http_client::Client>,
+    http: &arkret_sdk::http_client::Client,
+    realm: &arkret_sdk::RealmId,
+    projector: &RealmIngestProjector,
+    ctx: &RealmEventsEngineContext,
+    is_active: &F,
+    replica: &mut RealmReplica,
+    resume: &mut Option<String>,
+) -> garth::Result<()> {
+    use arkret_models_collaboration::sync_frames::committed_event_subscribe::CommittedEventSubscribeFrameKind as Kind;
+    // Open before baseline so a concurrent append belongs either to the scan
+    // or to this subscription's frozen head/catch-up range.
+    let mut stream = crate::transport::websocket_rail::CommittedRailSource::open(
+        http,
+        &ctx.websocket_rail,
+        realm.clone(),
+        resume.clone(),
+    )
+    .await?;
+    if resume.is_none() {
+        follow_once(authority, http, realm, projector, ctx, is_active, replica).await?;
+    }
+    while is_active() {
+        let frame = loop {
+            use futures_util::future::{Either, select};
+            match select(
+                Box::pin(stream.next_frame()),
+                Box::pin(crate::runtime_helpers::sleep_for(SUBSCRIBE_CANCEL_POLL)),
+            )
+            .await
+            {
+                Either::Left((frame, _)) => break frame?,
+                Either::Right(_) if !is_active() => return Ok(()),
+                Either::Right(_) => {}
+            }
+        };
+        let Some(frame) = frame else {
+            return Ok(());
+        };
+        if let Some(view) = frame.committed_event() {
+            let stream_ref = &view.commit().stream_ref;
+            if stream_ref.realm_id() != realm {
+                return Err(protocol("subscription names another Realm"));
+            }
+            let (bundle, freshness) =
+                refresh_verified_realm(authority, http, realm, replica).await?;
+            drain_stream(
+                authority, http, replica, &bundle, &freshness, realm, stream_ref, projector,
+            )
+            .await?;
+            // The Realm stream can introduce or invalidate a Circle. Only a
+            // governance change needs directory discovery; a message hint on
+            // an established private stream reads that stream alone.
+            if matches!(view, CommittedEventView::Full(full) if matches!(full.event.kind,
+                arkret_sdk::EventKind::CircleCreate | arkret_sdk::EventKind::CircleMemberState | arkret_sdk::EventKind::MemberState | arkret_sdk::EventKind::InviteAccept))
+            {
+                follow_once(authority, http, realm, projector, ctx, is_active, replica).await?;
+            }
+        }
+        match frame.kind {
+            Kind::ResyncRequired => {
+                *resume = None;
+                return Ok(());
+            }
+            Kind::Unauthorized => {
+                return Err(garth::Error::Api {
+                    status: 401,
+                    error: Box::new(arkret_wire::Problem::new(
+                        "unauthenticated",
+                        401,
+                        "committed subscription authorization ended",
+                    )),
+                });
+            }
+            Kind::Quarantined => {
+                return Err(protocol("committed subscription stream is quarantined"));
+            }
+            _ => {}
+        }
+        // The hint's cursor is reusable only after the corresponding scan has
+        // completed its exact signed-chain and local durable checkpoint gate.
+        let terminal = frame.is_terminal();
+        if let Some(cursor) = frame.cursor {
+            *resume = Some(cursor);
+        }
+        if let Some(delay) = frame.reconnect_after_ms {
+            crate::runtime_helpers::sleep_for(Duration::from_millis(delay)).await;
+        }
+        if terminal {
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
 async fn retry_after(backoff: &mut RetrySchedule, active: bool, reason: &str) -> bool {
     let Some(delay) = crate::runtime_helpers::next_reconnect_delay(active, backoff) else {
         return false;
@@ -314,12 +444,13 @@ async fn follow_once<T, F>(
     projector: &RealmIngestProjector,
     ctx: &RealmEventsEngineContext,
     is_active: &F,
+    replica: &mut RealmReplica,
 ) -> garth::Result<()>
 where
     T: garth::AuthorityTransport,
     F: Fn() -> bool,
 {
-    let (bundle, freshness, mut replica) = fresh_verified_realm(authority, http, realm_id).await?;
+    let (bundle, freshness) = refresh_verified_realm(authority, http, realm_id, replica).await?;
     let circles = http.circle_list(realm_id.as_str()).await?;
     let streams = followed_streams(realm_id, ctx, &circles);
     let has_sidecar = streams
@@ -332,7 +463,7 @@ where
         drain_stream(
             authority,
             http,
-            &mut replica,
+            replica,
             &bundle,
             &freshness,
             realm_id,
@@ -787,6 +918,21 @@ pub(crate) async fn fresh_verified_realm<T: garth::AuthorityTransport>(
     arkret_identity::RealmAuthorityFreshness,
     RealmReplica,
 )> {
+    let mut replica = RealmReplica::new(realm_id.clone());
+    let (bundle, freshness) =
+        refresh_verified_realm(authority, http, realm_id, &mut replica).await?;
+    Ok((bundle, freshness, replica))
+}
+
+async fn refresh_verified_realm<T: garth::AuthorityTransport>(
+    authority: &AuthorityClient<T>,
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &arkret_sdk::RealmId,
+    replica: &mut RealmReplica,
+) -> garth::Result<(
+    arkret_sdk::RealmAuthorityBundle,
+    arkret_identity::RealmAuthorityFreshness,
+)> {
     let mut nonce = [0_u8; 32];
     getrandom::fill(&mut nonce)
         .map_err(|error| garth::Error::Protocol(format!("authority nonce: {error}")))?;
@@ -799,9 +945,8 @@ pub(crate) async fn fresh_verified_realm<T: garth::AuthorityTransport>(
     let freshness =
         arkret_identity::RealmAuthorityFreshness::new(chrono::Utc::now(), request.nonce.clone());
     let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
-    let mut replica = RealmReplica::new(realm_id.clone());
-    replica.install_verified_authority(&request, bundle.clone(), &freshness, &keys)?;
-    Ok((bundle, freshness, replica))
+    replica.refresh_verified_authority(&request, bundle.clone(), &freshness, &keys)?;
+    Ok((bundle, freshness))
 }
 
 /// The independent streams this client follows for one Realm.
@@ -882,20 +1027,75 @@ where
         .state_store
         .read(|store| store.verified_commit_stream_cursor(stream_ref))
         .map_err(garth::Error::Protocol)?;
-    let (pages, _) = verified_stream_pages(
+    let saved_anchor = projector
+        .state_store
+        .read(|store| store.verified_commit_stream_anchor(stream_ref))
+        .map_err(garth::Error::Protocol)?;
+    // Scan into a candidate so a failed local durable checkpoint cannot move
+    // the network resume point past unprojected rows.
+    let mut candidate = replica.clone();
+    if candidate.verified_head(stream_ref).is_none()
+        && let (Some(saved), Some(anchor)) = (&projected_through, &saved_anchor)
+    {
+        if anchor.stream_ref != saved.stream_ref
+            || anchor.stream_position != saved.stream_position
+            || anchor.commit_id != saved.commit_id
+        {
+            return Err(protocol(
+                "persisted signed anchor differs from its durable head",
+            ));
+        }
+        let keys =
+            garth::fetch_historical_station_keys_for_commits(http, bundle, &[anchor]).await?;
+        let fresh = arkret_identity::RealmAuthorityFreshness::new(
+            chrono::Utc::now(),
+            freshness.expected_nonce.clone(),
+        );
+        candidate.restore_verified_anchor(anchor, &fresh, &keys)?;
+    }
+    let predecessor = candidate.verified_head(stream_ref).cloned();
+    let mut start = if predecessor.as_ref() == projected_through.as_ref() && predecessor.is_some() {
+        ReplayStart::VerifiedTail
+    } else {
+        // A persisted bare head is never sufficient to establish a new
+        // cryptographic predecessor after reload or a different consumer.
+        candidate.reset_verified_stream(stream_ref);
+        ReplayStart::ReadableFloor
+    };
+    let scanned = verified_stream_pages(
         authority,
         http,
-        replica,
+        &mut candidate,
         bundle,
         freshness,
         realm_id,
         stream_ref,
-        ReplayStart::ReadableFloor,
+        start,
         None,
     )
-    .await?
-    .into_verified()?;
-    let tail = replica.verified_head(stream_ref).cloned();
+    .await?;
+    let scanned = if matches!(scanned, StreamPages::FloorAdvanced) {
+        // A moved visibility floor invalidates this predecessor alone. The
+        // replacement page still crosses the signed authority/floor gate.
+        candidate.reset_verified_stream(stream_ref);
+        start = ReplayStart::ReadableFloor;
+        verified_stream_pages(
+            authority,
+            http,
+            &mut candidate,
+            bundle,
+            freshness,
+            realm_id,
+            stream_ref,
+            start,
+            None,
+        )
+        .await?
+    } else {
+        scanned
+    };
+    let (pages, _) = scanned.into_verified()?;
+    let tail = candidate.verified_head(stream_ref).cloned();
     // A stored cursor is a commit identity, not merely a number. Locate that
     // exact commit in the newly verified replay before deduplicating.
     if let Some(saved) = projected_through.as_ref() {
@@ -903,7 +1103,14 @@ where
             .iter()
             .flat_map(|page| page.rows())
             .find(|row| row.commit().stream_position == saved.stream_position);
-        if found.is_none_or(|row| row.commit().commit_id != saved.commit_id)
+        let newer_floor = matches!(start, ReplayStart::ReadableFloor)
+            && pages
+                .first()
+                .and_then(|page| page.rows().first())
+                .is_some_and(|row| row.commit().stream_position > saved.stream_position);
+        if !newer_floor
+            && !(matches!(start, ReplayStart::VerifiedTail) && predecessor.as_ref() == Some(saved))
+            && found.is_none_or(|row| row.commit().commit_id != saved.commit_id)
             || tail
                 .as_ref()
                 .is_none_or(|head| head.stream_position < saved.stream_position)
@@ -924,7 +1131,9 @@ where
         .cloned()
         .collect();
     let batch = committed_views_to_client_events(realm_id, fresh_rows)?;
-    if batch.is_empty() {
+    if batch.is_empty() && saved_anchor.as_ref() == candidate.verified_anchor(stream_ref) {
+        candidate.release_verified_rows();
+        *replica = candidate;
         if resolve_stream_agent_keys(http, &projector.state_store).await? {
             projector
                 .realm_live_epoch
@@ -958,8 +1167,8 @@ where
                     )?;
                 }
                 changed += ingest_realm_batch(store, &projector.realm_id, &batch);
-                if let Some(tail) = tail.clone() {
-                    store.save_verified_commit_stream_cursor(stream_ref, tail)?;
+                if tail.is_some() {
+                    store.stage_verified_commit_stream_checkpoint(&candidate, stream_ref)?;
                 }
                 Ok(changed)
             })
@@ -973,6 +1182,8 @@ where
         .wait()
         .await
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    candidate.release_verified_rows();
+    *replica = candidate;
     // This stream owns these verified candidates. Account frames need not
     // contain Realm messages, so they cannot drive this evidence dependency.
     let agent_evidence_changed = resolve_stream_agent_keys(http, &projector.state_store).await?;
@@ -982,10 +1193,11 @@ where
             .filter_map(|event| accepted_direct_message_final(event, projector.digest_suite, store))
             .collect::<Vec<_>>()
     });
-    let mut message_stream_hub = projector.message_stream_hub;
-    for (event, sender_endpoint) in finals {
-        if let Err(error) = message_stream_hub.bind_verified_final(event, &sender_endpoint) {
-            tracing::warn!(%error, event_id = %event.event_id, "message stream final binding failed closed");
+    if let Some(mut message_stream_hub) = projector.message_stream_hub {
+        for (event, sender_endpoint) in finals {
+            if let Err(error) = message_stream_hub.bind_verified_final(event, &sender_endpoint) {
+                tracing::warn!(%error, event_id = %event.event_id, "message stream final binding failed closed");
+            }
         }
     }
     if changed > 0 || agent_evidence_changed {
@@ -1026,6 +1238,8 @@ struct FloorAnchor<'a> {
 /// Where one verified per-stream replay may begin.
 #[derive(Clone, Copy)]
 enum ReplayStart<'a> {
+    /// Continue only from a predecessor installed by this live verifier.
+    VerifiedTail,
     /// Position 0 only. A readable history that begins above genesis cannot
     /// settle an Account window without a signed basis: such a window stays
     /// `preview_only` (`sync/client-sync.md` 5.2).
@@ -1058,7 +1272,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
     // readable page must extend that signed head.
     let floor_anchor = match start {
         ReplayStart::Basis(anchor) => Some(anchor),
-        ReplayStart::Genesis | ReplayStart::ReadableFloor => None,
+        ReplayStart::Genesis | ReplayStart::ReadableFloor | ReplayStart::VerifiedTail => None,
     };
     let floor_basis = floor_anchor.map(|anchor| anchor.basis);
     let snapshot = if let Some(anchor) = floor_anchor {
@@ -1077,7 +1291,16 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
     } else {
         None
     };
-    let mut after_position = snapshot.as_ref().map(|(_, position)| *position);
+    let mut after_position = if matches!(start, ReplayStart::VerifiedTail) {
+        Some(
+            replica
+                .verified_head(stream_ref)
+                .ok_or_else(|| protocol("tail continuation has no verified predecessor"))?
+                .stream_position,
+        )
+    } else {
+        snapshot.as_ref().map(|(_, position)| *position)
+    };
     let mut pages = Vec::new();
     let mut verified_floor_snapshot = None;
     let mut dependency_pages = BTreeMap::new();
@@ -1154,6 +1377,15 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
             limit,
         };
         let outcome = authority.scan(&request).await?;
+        if matches!(start, ReplayStart::VerifiedTail)
+            && outcome
+                .readable_floor
+                .as_ref()
+                .is_some_and(|floor| floor.oldest_position > next_position)
+        {
+            outcome.validate_for_request(&request)?;
+            return Ok(StreamPages::FloorAdvanced);
+        }
         if let Some(basis) = floor_basis {
             if pages.is_empty() {
                 let floor = outcome.readable_floor.as_ref().ok_or_else(|| {
@@ -1242,6 +1474,7 @@ enum StreamPages {
         Option<garth::VerifiedFloorSnapshot>,
     ),
     AboveGenesis,
+    FloorAdvanced,
 }
 
 impl StreamPages {
@@ -1254,6 +1487,7 @@ impl StreamPages {
         match self {
             Self::Verified(pages, snapshot) => Ok((pages, snapshot)),
             Self::AboveGenesis => Err(above_genesis_without_basis()),
+            Self::FloorAdvanced => Err(protocol("stream readable floor moved during continuation")),
         }
     }
 }
@@ -2512,6 +2746,11 @@ fn resolve_full_history_window(
             return Ok(WindowResolution::Preview);
         }
         StreamPages::AboveGenesis => return Err(above_genesis_without_basis()),
+        StreamPages::FloorAdvanced => {
+            return Err(protocol(
+                "stream readable floor moved during window verification",
+            ));
+        }
     };
     let scanned = pages
         .iter()

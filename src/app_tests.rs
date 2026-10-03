@@ -1173,6 +1173,7 @@ fn encrypted_realm_current() -> arkret_wire::TypedCurrentResult {
     let group: arkret_wire::MlsGroupCurrent = serde_json::from_value(serde_json::json!({
         "effective_scope": scope,
         "genesis_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
         "current_mls_commit_event_ref": "ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL",
         "epoch": 4,
         "current_key_access_revision": 2,

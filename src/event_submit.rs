@@ -3126,11 +3126,23 @@ impl EventSubmitter {
     )> {
         state_store.read(|store| store.require_blocklist_signal_freshness(payload))?;
         let stream_head_ref = self.current_stream_head_for(&scope_ref).await?;
+        let parent_realm_authority_commit_id =
+            if matches!(&scope_ref, arkret_sdk::ScopeRef::Circle { .. }) {
+                Some(
+                    self.current_stream_head_for(&arkret_sdk::ScopeRef::Realm {
+                        realm_id: scope_ref.realm_id().clone(),
+                    })
+                    .await?,
+                )
+            } else {
+                None
+            };
         let header = crate::signal::SignalHeader::new(
             scope_ref,
             arkret_sdk::ActorId::account(authority.clone()),
             device_id.clone(),
             stream_head_ref,
+            parent_realm_authority_commit_id,
             payload.signal_class(),
             crate::clock::now_utc(),
         );

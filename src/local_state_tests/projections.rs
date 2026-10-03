@@ -133,6 +133,7 @@ fn mls_encrypted_projection_reads_the_installed_realm_genesis_value() {
         "value": {
             "effective_scope": {"kind": "realm", "realm_id": realm},
             "genesis_event_ref": arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x32; 32]),
+            "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
             "current_mls_commit_event_ref": arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x32; 32]),
             "epoch": 0,
             "current_key_access_revision": 0,

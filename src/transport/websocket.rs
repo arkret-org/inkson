@@ -49,63 +49,37 @@ pub enum WebSocketHandshakeFailure {
 /// connection-level authorization failures. Either budget running out ends the
 /// WebSocket attempt for this session; a connection that reached `welcome`
 /// resets both.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct WebSocketFallbackPolicy {
-    restarts_without_welcome: u8,
-    policy_failures: u8,
+    policy: arkret_models_collaboration::sync_frames::websocket::WebSocketReconnectPolicy,
 }
-
-/// A connection may be restarted twice without ever reaching `welcome`; the
-/// third attempt stays on HTTP.
-const MAX_RESTARTS_WITHOUT_WELCOME: u8 = 2;
-/// A second connection-level authorization failure stays on HTTP.
-const MAX_POLICY_FAILURES: u8 = 1;
-
 impl WebSocketFallbackPolicy {
     pub fn new() -> Self {
         Self::default()
     }
-
-    /// A connection reached `welcome`: both budgets reset.
     pub fn welcomed(&mut self) {
-        self.restarts_without_welcome = 0;
-        self.policy_failures = 0;
+        self.policy.welcomed();
     }
-
     pub fn on_close(
         &mut self,
-        code: arkret_wire::websocket_binding::WebSocketCloseCode,
-        drain_reconnect_after_ms: Option<u32>,
+        code: WebSocketCloseCode,
+        delay: Option<u32>,
     ) -> WebSocketTransportDecision {
-        use arkret_wire::websocket_binding::WebSocketCloseCode;
-        if code.forces_http_fallback() {
-            return WebSocketTransportDecision::FallbackHttp;
-        }
-        if code == WebSocketCloseCode::PolicyViolation {
-            self.policy_failures = self.policy_failures.saturating_add(1);
-            if self.policy_failures > MAX_POLICY_FAILURES {
-                return WebSocketTransportDecision::FallbackHttp;
+        use arkret_models_collaboration::sync_frames::websocket::WebSocketTransportAction;
+        match self.policy.on_close(code, delay) {
+            WebSocketTransportAction::RetryWebSocket { after_ms } => {
+                WebSocketTransportDecision::RetryWebSocket { after_ms }
             }
-        } else {
-            self.restarts_without_welcome = self.restarts_without_welcome.saturating_add(1);
-            if self.restarts_without_welcome > MAX_RESTARTS_WITHOUT_WELCOME {
-                return WebSocketTransportDecision::FallbackHttp;
-            }
-        }
-        WebSocketTransportDecision::RetryWebSocket {
-            after_ms: drain_reconnect_after_ms.unwrap_or(0),
+            WebSocketTransportAction::FallbackHttp => WebSocketTransportDecision::FallbackHttp,
         }
     }
-
-    /// An upgrade failure never buys a WebSocket retry.
     pub fn on_handshake_failure(
         &mut self,
-        _failure: WebSocketHandshakeFailure,
+        _: WebSocketHandshakeFailure,
     ) -> WebSocketTransportDecision {
         WebSocketTransportDecision::FallbackHttp
     }
 }
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WebSocketEndpoint {
     pub base_url: String,

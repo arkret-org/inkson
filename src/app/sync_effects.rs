@@ -94,6 +94,7 @@ pub(super) fn SyncEffects(
     // browser session from holding two Signal consumers.
     let signal_effects = runtime_services.effects.clone();
     let signal_product_sink = runtime_services.signal_product_sink.clone();
+    let signal_websocket_rail = runtime_services.websocket_rail.clone();
     use_effect(move || {
         let current_gen = sync_generation();
         let Some(account) = active_account() else {
@@ -124,6 +125,7 @@ pub(super) fn SyncEffects(
         });
         let completion_effects = signal_effects.clone();
         let ctx = crate::signal_receive_engine::SignalReceiveEngineContext {
+            websocket_rail: signal_websocket_rail.clone(),
             token: runtime_adapter::value_reader(token),
             state_store: runtime_adapter::state_store_handle(state_store),
             account,
@@ -195,7 +197,7 @@ pub(super) fn SyncEffects(
     });
 
     let realm_effects = runtime_services.effects.clone();
-    let client_runtime = runtime_services.client.clone();
+    let realm_websocket_rail = runtime_services.websocket_rail.clone();
     use_effect(move || {
         let current_gen = sync_generation();
         let base = base_url();
@@ -225,15 +227,15 @@ pub(super) fn SyncEffects(
         });
         let completion_effects = realm_effects.clone();
         let ctx = crate::realm_events_engine::RealmEventsEngineContext {
+            websocket_rail: realm_websocket_rail.clone(),
             base_url: runtime_adapter::value_reader(base_url),
             token: runtime_adapter::value_cell(token),
             state_store: runtime_adapter::state_store_handle(state_store),
             selected_realm_id: runtime_adapter::value_reader(selected_realm_id),
             route_enabled: runtime_adapter::value_reader(realm_events_route_enabled),
             realm_live_epoch: runtime_adapter::value_cell(realm_live_epoch),
-            message_stream_hub,
+            message_stream_hub: Some(message_stream_hub),
             profiles: runtime_adapter::value_reader(profiles),
-            client_runtime: client_runtime.clone(),
             effect: effect.clone(),
         };
         let mut active_key_signal = realm_events_engine_active_key;

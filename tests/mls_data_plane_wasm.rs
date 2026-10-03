@@ -95,6 +95,10 @@ impl AcceptedGroupState {
         arkret_wire::MlsGroupCurrent {
             effective_scope: scope(),
             genesis_event_ref: self.genesis_event_ref.clone(),
+            cipher_suite: arkret_wire::NonEmptyString::new(
+                "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+            )
+            .unwrap(),
             current_mls_commit_event_ref: self.current_event_ref.clone(),
             epoch: self.epoch,
             current_key_access_revision: 0,

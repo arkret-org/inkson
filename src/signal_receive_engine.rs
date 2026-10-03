@@ -36,7 +36,9 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use garth::RetrySchedule;
-use garth::signal::{SignalReceiveOutcome, SignalReceiver, SignalStreamStopReason};
+use garth::signal::{
+    SignalFrameSource, SignalReceiveOutcome, SignalReceiver, SignalStreamStopReason,
+};
 use serde_json::Value;
 
 use crate::config::MultiProfileConfig;
@@ -54,6 +56,7 @@ const MAX_LIVE_SIGNAL_BODIES: usize = 512;
 /// the app adapter that builds these handles.
 #[derive(Clone)]
 pub struct SignalReceiveEngineContext {
+    pub websocket_rail: crate::transport::websocket_rail::WebSocketRail,
     pub token: crate::runtime::input::ValueReader<String>,
     pub state_store: crate::runtime::input::StateStoreHandle,
     pub account: crate::config::ActiveAccountContext,
@@ -792,16 +795,35 @@ async fn run_signal_receive_attempt(
     )
     .await
     .map_err(|error| garth::Error::Http(error.to_string()))?;
-    let mut stream = client
-        .signal_subscribe_frames()
-        .await
-        .map_err(|error| garth::Error::Http(error.to_string()))?;
+    let mut stream =
+        crate::transport::websocket_rail::SignalRailSource::open(&client, &ctx.websocket_rail)
+            .await?;
     while signal_engine_is_active(ctx, generation, start_generation, start_profile_id) {
-        let Some(frame) = stream
-            .next_frame()
+        let frame = loop {
+            use futures_util::future::{Either, select};
+            match select(
+                Box::pin(stream.next_frame()),
+                Box::pin(crate::runtime_helpers::sleep_for(Duration::from_millis(
+                    250,
+                ))),
+            )
             .await
-            .map_err(|error| garth::Error::Http(error.to_string()))?
-        else {
+            {
+                Either::Left((frame, _)) => break frame?,
+                Either::Right(_)
+                    if !signal_engine_is_active(
+                        ctx,
+                        generation,
+                        start_generation,
+                        start_profile_id,
+                    ) =>
+                {
+                    return Ok(SignalStreamStopReason::Ended);
+                }
+                Either::Right(_) => {}
+            }
+        };
+        let Some(frame) = frame else {
             return Ok(SignalStreamStopReason::Ended);
         };
         match frame {

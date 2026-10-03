@@ -1154,6 +1154,10 @@ mod tests {
         let current = arkret_wire::MlsGroupCurrent {
             effective_scope: scope.clone(),
             genesis_event_ref: genesis,
+            cipher_suite: arkret_wire::NonEmptyString::new(
+                "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+            )
+            .unwrap(),
             current_mls_commit_event_ref: base.clone(),
             epoch: 7,
             current_key_access_revision: 11,

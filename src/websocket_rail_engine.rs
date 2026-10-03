@@ -9,8 +9,8 @@
 //! ([`garth::websocket::WebSocketSocket`] / [`WebSocketConnector`]); the frame
 //! protocol DTOs are SDK-owned
 //! (`arkret_models_collaboration::sync_frames::websocket`). This engine is the
-//! host half between them: it authenticates the upgrade, installs the one
-//! subscription the binding allows, and pumps server frames into the shared
+//! host half between them: it authenticates the upgrade, sends each consumer's
+//! channel commands, and pumps canonical server frames into the shared
 //! [`WebSocketRail`] queues the stream engines read. When the connection ends,
 //! the §8.1 decision table says whether to reconnect (honouring any drain
 //! delay) or to stop trying; either way the rail detaches first, so an engine's
@@ -18,12 +18,10 @@
 
 use std::time::Duration;
 
-use arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrameKind;
 use arkret_models_collaboration::sync_frames::websocket::{
-    WebSocketAccountOpenParameters, WebSocketChannelControlPayload, WebSocketClientFrame,
-    WebSocketDataPayload, WebSocketOpenParameters, WebSocketServerFrame,
+    WebSocketClientFrame, WebSocketServerFrame,
 };
-use arkret_wire::websocket_binding::{WebSocketCloseCode, WebSocketOperationId};
+use arkret_wire::websocket_binding::WebSocketCloseCode;
 use garth::websocket::{AuthProofRequest, WebSocketConnector, WebSocketInbound, WebSocketSocket};
 
 use crate::config::MultiProfileConfig;
@@ -120,7 +118,7 @@ pub async fn run_websocket_rail_engine(
         // The connection is not usable yet: §3.1 puts a challenge/authenticate
         // exchange between the upgrade and the first channel, so both the retry
         // budget reset and the rail attachment happen inside the pump, after
-        // the server's `welcome` and the account channel's `opened`.
+        // the server's `welcome`. Consumers then open their own channels.
         let (code, drain_reconnect_after_ms) = pump_until_closed(
             socket,
             &connection,
@@ -134,6 +132,10 @@ pub async fn run_websocket_rail_engine(
         connection.close();
         match ctx.rail.on_close(code, drain_reconnect_after_ms) {
             WebSocketTransportDecision::RetryWebSocket { after_ms } => {
+                if code == WebSocketCloseCode::PolicyViolation
+                    && crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(&ctx.base_url.get()).await.is_err() {
+                    break;
+                }
                 crate::runtime_helpers::sleep_for(reconnect_delay(after_ms)).await;
             }
             WebSocketTransportDecision::FallbackHttp => break,
@@ -144,18 +146,41 @@ pub async fn run_websocket_rail_engine(
     ctx.rail.detach();
 }
 
-/// Drive one connection through the binding's handshake, then fan the account
-/// channel's frames into the shared queues until the peer closes or the frame
+/// Drive one connection through the binding's handshake, then dispatch each
+/// channel's frames into its bounded queue until the peer closes or the frame
 /// contract is broken.
 ///
 /// The order is fixed and one-way (`websocket-binding.md` §3.1): the server
 /// challenges, the client answers with a holder-signed proof over that exact
 /// nonce, the server welcomes with its authoritative limits, and only then may
-/// a channel be opened. Nothing is published to the rail before the account
-/// channel is `opened`, so a socket that never authenticated can never become
+/// a channel be opened. Nothing is published to the rail before `welcome`,
+/// so a socket that never authenticated can never become
 /// a delivery path.
-async fn pump_until_closed<S, F>(
+async fn pump_until_closed<S: WebSocketSocket, F: Fn() -> bool>(
     mut socket: S,
+    connection: &SharedConnection,
+    connector: &InksonWebSocketConnector,
+    base_url: &str,
+    max_frame_bytes: u32,
+    ctx: &WebSocketRailContext,
+    is_active: &F,
+) -> (WebSocketCloseCode, Option<u32>) {
+    let result = pump_until_closed_inner(
+        &mut socket,
+        connection,
+        connector,
+        base_url,
+        max_frame_bytes,
+        ctx,
+        is_active,
+    )
+    .await;
+    connection.close();
+    let _ = socket.close(result.0, "connection_closed").await;
+    result
+}
+async fn pump_until_closed_inner<S, F>(
+    socket: &mut S,
     connection: &SharedConnection,
     connector: &InksonWebSocketConnector,
     base_url: &str,
@@ -167,280 +192,229 @@ where
     S: WebSocketSocket,
     F: Fn() -> bool,
 {
-    // Until `welcome` lands, the descriptor's ceiling is the only bound we
-    // have; afterwards the server's own limit applies and the smaller wins.
-    let mut max_frame_bytes = advertised_max_frame_bytes;
-    let channel_id = crate::operation::uuid_v7();
-    let mut welcomed = false;
-    let mut opened = false;
-
+    use arkret_models_collaboration::sync_frames::websocket::{
+        WebSocketConnectionPhase, WebSocketConnectionState, WebSocketFrameIngress,
+    };
+    let mut state = WebSocketConnectionState::new();
+    let mut ingress = WebSocketFrameIngress::new(advertised_max_frame_bytes, None);
+    let mut drain = None;
+    let mut reconnect = None;
     loop {
-        if ctx.effect.is_cancelled() || !is_active() {
+        if !is_active() || ctx.effect.is_cancelled() {
             let _ = socket.close(WebSocketCloseCode::Normal, "cancelled").await;
-            return (WebSocketCloseCode::Normal, None);
+            return (WebSocketCloseCode::Normal, reconnect);
         }
-        let inbound = match socket.recv().await {
-            Ok(Some(inbound)) => inbound,
-            Ok(None) => return (WebSocketCloseCode::Normal, None),
-            Err(error) => {
-                tracing::debug!(%error, "WebSocket receive failed");
+        if drain.is_some_and(|deadline| crate::clock::now_utc() >= deadline) {
+            let _ = socket.close(WebSocketCloseCode::GoingAway, "drain").await;
+            return (WebSocketCloseCode::GoingAway, reconnect);
+        }
+        if let Some(command) = connection.next_command() {
+            let id = command.channel_id().map(ToOwned::to_owned);
+            if matches!(&command, WebSocketClientFrame::Close { channel_id, .. }
+                if state.channel(channel_id).is_none_or(|c| c.closed))
+            {
+                continue;
+            }
+            if state.observe_client(&command).is_err() {
+                if let Some(id) = id {
+                    connection.refuse(&id, "channel cannot open within current limits");
+                    continue;
+                }
                 let _ = socket
-                    .close(WebSocketCloseCode::InternalError, "recv")
+                    .close(WebSocketCloseCode::ProtocolError, "state")
                     .await;
-                return (WebSocketCloseCode::InternalError, None);
+                return (WebSocketCloseCode::ProtocolError, reconnect);
+            }
+            if send_client_frame(socket, &command).await.is_err() {
+                return (WebSocketCloseCode::InternalError, reconnect);
+            }
+            continue;
+        }
+        let inbound = {
+            use futures_util::future::{Either, select};
+            match select(
+                socket.recv(),
+                Box::pin(crate::runtime_helpers::sleep_for(Duration::from_millis(
+                    100,
+                ))),
+            )
+            .await
+            {
+                Either::Left((inbound, _)) => inbound,
+                Either::Right(_) => continue,
             }
         };
         let text = match inbound {
-            WebSocketInbound::Text(text) => text,
-            // A binary message is a protocol error, not a frame.
-            WebSocketInbound::Binary => {
+            Ok(Some(WebSocketInbound::Text(text))) => text,
+            Ok(Some(WebSocketInbound::Closed(code))) => {
+                return (
+                    code.and_then(WebSocketCloseCode::from_u16)
+                        .unwrap_or(WebSocketCloseCode::Normal),
+                    reconnect,
+                );
+            }
+            Ok(None) => return (WebSocketCloseCode::Normal, reconnect),
+            Ok(Some(WebSocketInbound::Binary)) => {
                 let _ = socket
-                    .close(WebSocketCloseCode::ProtocolError, "binary_frame")
+                    .close(WebSocketCloseCode::ProtocolError, "binary")
                     .await;
-                return (WebSocketCloseCode::ProtocolError, None);
+                return (WebSocketCloseCode::ProtocolError, reconnect);
             }
-            WebSocketInbound::TooLarge => {
+            Ok(Some(WebSocketInbound::TooLarge)) => {
                 let _ = socket
-                    .close(WebSocketCloseCode::MessageTooBig, "frame_too_large")
+                    .close(WebSocketCloseCode::MessageTooBig, "frame_size")
                     .await;
-                return (WebSocketCloseCode::MessageTooBig, None);
+                return (WebSocketCloseCode::MessageTooBig, reconnect);
             }
-            WebSocketInbound::Closed(code) => {
-                let code = code
-                    .and_then(WebSocketCloseCode::from_u16)
-                    .unwrap_or(WebSocketCloseCode::Normal);
-                return (code, None);
-            }
+            Err(_) => return (WebSocketCloseCode::InternalError, reconnect),
         };
-        if text.len() > max_frame_bytes as usize {
-            let _ = socket
-                .close(WebSocketCloseCode::MessageTooBig, "frame_too_large")
-                .await;
-            return (WebSocketCloseCode::MessageTooBig, None);
-        }
-        let frame: WebSocketServerFrame = match serde_json::from_str(&text) {
+        let generic = match ingress.decode_server_frame(text.as_bytes()) {
             Ok(frame) => frame,
             Err(error) => {
-                tracing::debug!(%error, "WebSocket server frame is not canonical");
-                let _ = socket
-                    .close(WebSocketCloseCode::ProtocolError, "invalid_frame")
-                    .await;
-                return (WebSocketCloseCode::ProtocolError, None);
+                let code = error
+                    .close_code
+                    .unwrap_or(WebSocketCloseCode::ProtocolError);
+                let _ = socket.close(code, "frame_schema").await;
+                return (code, reconnect);
             }
         };
-        // The schema's own bounds, applied before anything acts on the frame.
-        if let Err(error) = frame.validate() {
-            tracing::debug!(%error, "WebSocket server frame failed its schema bounds");
+        let frame = match ingress.decode_server_frame_for_channels(text.as_bytes(), |id| {
+            state.channel(id).map(|channel| channel.operation_id)
+        }) {
+            Ok(frame) => frame,
+            Err(error) => {
+                if let Some(id) = generic.channel_id()
+                    && state.channel(id).is_some()
+                {
+                    connection.refuse(id, "channel payload schema mismatch");
+                    continue;
+                }
+                let code = error
+                    .close_code
+                    .unwrap_or(WebSocketCloseCode::ProtocolError);
+                let _ = socket.close(code, "frame_schema").await;
+                return (code, reconnect);
+            }
+        };
+        if state.observe_server(&frame).is_err() {
+            if let Some(id) = frame.channel_id()
+                && state.channel(id).is_some()
+            {
+                connection.refuse(id, "channel operation or state mismatch");
+                continue;
+            }
             let _ = socket
-                .close(WebSocketCloseCode::ProtocolError, "invalid_frame")
+                .close(WebSocketCloseCode::ProtocolError, "state")
                 .await;
-            return (WebSocketCloseCode::ProtocolError, None);
+            return (WebSocketCloseCode::ProtocolError, reconnect);
         }
-
-        match frame {
-            // ── handshake ──────────────────────────────────────────────────
+        match &frame {
             WebSocketServerFrame::Challenge {
                 connection_id,
                 nonce,
-                ..
+                expires_at,
             } => {
-                if welcomed {
-                    let _ = socket
-                        .close(WebSocketCloseCode::ProtocolError, "late_challenge")
-                        .await;
-                    return (WebSocketCloseCode::ProtocolError, None);
+                if *expires_at <= crate::clock::now_utc() {
+                    return (WebSocketCloseCode::PolicyViolation, reconnect);
                 }
-                let Some(payload) =
-                    authenticate_frame(connector, base_url, &connection_id, &nonce).await
+                let Some(auth) =
+                    authenticate_frame(connector, base_url, connection_id, nonce).await
                 else {
-                    // The holder could not sign this exact nonce; a connection
-                    // that cannot authenticate is not retried on the socket.
-                    let _ = socket
-                        .close(WebSocketCloseCode::InternalError, "auth_proof")
-                        .await;
-                    return (WebSocketCloseCode::InternalError, None);
+                    return (WebSocketCloseCode::PolicyViolation, reconnect);
                 };
-                if socket.send_text(payload).await.is_err() {
-                    return (WebSocketCloseCode::InternalError, None);
+                if state.observe_client(&auth).is_err()
+                    || send_client_frame(socket, &auth).await.is_err()
+                {
+                    return (WebSocketCloseCode::PolicyViolation, reconnect);
                 }
             }
             WebSocketServerFrame::ReauthRequired {
                 connection_id,
                 nonce,
+                expires_at,
                 ..
             } => {
-                // A fresh proof over the new nonce, never a replay of the one
-                // that opened the connection.
-                let Some(payload) =
-                    authenticate_frame(connector, base_url, &connection_id, &nonce).await
-                else {
-                    let _ = socket
-                        .close(WebSocketCloseCode::InternalError, "auth_proof")
-                        .await;
-                    return (WebSocketCloseCode::InternalError, None);
+                connection.set_ready(false);
+                let refreshed = crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(&ctx.base_url.get()).await;
+                if refreshed.is_err() || *expires_at <= crate::clock::now_utc() {
+                    return (WebSocketCloseCode::PolicyViolation, reconnect);
+                }
+                let Some(fresh_connector) = connector_for(ctx).await else {
+                    return (WebSocketCloseCode::PolicyViolation, reconnect);
                 };
-                if socket.send_text(payload).await.is_err() {
-                    return (WebSocketCloseCode::InternalError, None);
+                let Some(auth) =
+                    authenticate_frame(&fresh_connector, base_url, connection_id, nonce).await
+                else {
+                    return (WebSocketCloseCode::PolicyViolation, reconnect);
+                };
+                if state.observe_client(&auth).is_err()
+                    || send_client_frame(socket, &auth).await.is_err()
+                {
+                    return (WebSocketCloseCode::PolicyViolation, reconnect);
                 }
             }
             WebSocketServerFrame::Welcome { limits, .. } => {
-                // The server's budget is authoritative; a client that reads
-                // past it is closed rather than throttled.
-                max_frame_bytes = max_frame_bytes.min(limits.max_frame_bytes);
-                if !welcomed {
-                    welcomed = true;
-                    // §8.1: reaching `welcome` is what resets both retry
-                    // budgets.
-                    ctx.rail.welcomed();
-                    let open = WebSocketClientFrame::Open {
-                        channel_id: channel_id.clone(),
-                        operation_id: WebSocketOperationId::AccountStreamSubscribe,
-                        parameters: WebSocketOpenParameters::Account(
-                            WebSocketAccountOpenParameters {
-                                after: ctx.state_store.read(|store| store.sync_cursor()),
-                                catchup: None,
-                                filter: None,
-                                wait_for: None,
-                                realm_list: None,
-                                replace_filter: None,
-                            },
-                        ),
-                    };
-                    let Ok(payload) = serde_json::to_string(&open) else {
-                        return (WebSocketCloseCode::InternalError, None);
-                    };
-                    if socket.send_text(payload).await.is_err() {
-                        return (WebSocketCloseCode::InternalError, None);
-                    }
-                }
-            }
-            WebSocketServerFrame::Opened {
-                channel_id: acknowledged,
-                operation_id,
-            } => {
-                if acknowledged != channel_id
-                    || operation_id != WebSocketOperationId::AccountStreamSubscribe
-                {
-                    let _ = socket
-                        .close(WebSocketCloseCode::ProtocolError, "channel_id")
-                        .await;
-                    return (WebSocketCloseCode::ProtocolError, None);
-                }
-                opened = true;
-                // Only now may the stream engines take delivery from it.
+                ingress = WebSocketFrameIngress::new(
+                    advertised_max_frame_bytes,
+                    Some(limits.max_frame_bytes),
+                );
+                connection.set_ready(state.phase() == WebSocketConnectionPhase::Ready);
+                ctx.rail.welcomed();
                 ctx.rail.attach(connection.clone());
             }
-
-            // ── the account channel ────────────────────────────────────────
-            WebSocketServerFrame::Data {
-                channel_id: delivered,
-                payload,
-            } => {
-                if delivered != channel_id || !opened {
-                    let _ = socket
-                        .close(WebSocketCloseCode::ProtocolError, "channel_id")
-                        .await;
-                    return (WebSocketCloseCode::ProtocolError, None);
-                }
-                // The account channel is the only one this engine opens, so an
-                // events or Signal payload here is the service answering
-                // something that was never asked for. The socket's Signal frame
-                // in particular carries no delivery authority, so a Signal
-                // admitted from it could not be verified.
-                let WebSocketDataPayload::Account(frame) = payload else {
-                    let _ = socket
-                        .close(WebSocketCloseCode::ProtocolError, "unsolicited_channel")
-                        .await;
-                    return (WebSocketCloseCode::ProtocolError, None);
-                };
-                if !publish_account_frame(connection, *frame) {
-                    // The consumer is too far behind for the socket to stay a
-                    // low-latency path; drop back to HTTP rather than growing
-                    // an unbounded buffer.
-                    let _ = socket
-                        .close(WebSocketCloseCode::InternalError, "consumer_backlog")
-                        .await;
-                    return (WebSocketCloseCode::InternalError, None);
-                }
-            }
-            WebSocketServerFrame::ChannelControl {
-                channel_id: delivered,
-                payload,
-                ..
-            } => {
-                if delivered != channel_id || !opened {
-                    let _ = socket
-                        .close(WebSocketCloseCode::ProtocolError, "channel_id")
-                        .await;
-                    return (WebSocketCloseCode::ProtocolError, None);
-                }
-                let WebSocketChannelControlPayload::Account(frame) = payload else {
-                    let _ = socket
-                        .close(WebSocketCloseCode::ProtocolError, "unsolicited_channel")
-                        .await;
-                    return (WebSocketCloseCode::ProtocolError, None);
-                };
-                // `dropped`, `resync_required` and `unauthorized` are terminal
-                // for this connection: the consumer cannot resume from the
-                // cursor it holds, so the account stream goes back to its
-                // canonical HTTP binding and re-establishes there.
-                let terminal = matches!(
-                    frame.kind,
-                    AccountSubscribeFrameKind::Dropped
-                        | AccountSubscribeFrameKind::ResyncRequired
-                        | AccountSubscribeFrameKind::Unauthorized
-                );
-                if !publish_account_frame(connection, *frame) {
-                    let _ = socket
-                        .close(WebSocketCloseCode::InternalError, "consumer_backlog")
-                        .await;
-                    return (WebSocketCloseCode::InternalError, None);
-                }
-                if terminal {
-                    let _ = socket
-                        .close(WebSocketCloseCode::Normal, "stream_interrupted")
-                        .await;
-                    return (WebSocketCloseCode::Normal, None);
-                }
-            }
-            WebSocketServerFrame::Closed { .. } => {
-                return (WebSocketCloseCode::Normal, None);
-            }
-            WebSocketServerFrame::ChannelError { .. } => {
-                let _ = socket
-                    .close(WebSocketCloseCode::InternalError, "channel_error")
-                    .await;
-                return (WebSocketCloseCode::InternalError, None);
-            }
-            WebSocketServerFrame::ConnectionError { .. } => {
-                let _ = socket
-                    .close(WebSocketCloseCode::InternalError, "connection_error")
-                    .await;
-                return (WebSocketCloseCode::InternalError, None);
-            }
-
-            // ── connection control ─────────────────────────────────────────
             WebSocketServerFrame::ConnectionControl { payload, .. } => {
-                connection.request_reconnect(u64::from(payload.reconnect_after_ms));
-                let _ = socket.close(WebSocketCloseCode::GoingAway, "drain").await;
-                return (
-                    WebSocketCloseCode::GoingAway,
-                    Some(payload.reconnect_after_ms),
+                connection.set_ready(false);
+                reconnect = Some(payload.reconnect_after_ms);
+                drain = Some(
+                    payload
+                        .deadline
+                        .min(crate::clock::now_utc() + chrono::Duration::seconds(30)),
                 );
             }
             WebSocketServerFrame::Ping { ping_id, .. } => {
-                let pong = WebSocketClientFrame::Pong { ping_id };
-                let Ok(payload) = serde_json::to_string(&pong) else {
-                    return (WebSocketCloseCode::InternalError, None);
+                let pong = WebSocketClientFrame::Pong {
+                    ping_id: ping_id.clone(),
                 };
-                if socket.send_text(payload).await.is_err() {
-                    return (WebSocketCloseCode::InternalError, None);
+                if state.observe_client(&pong).is_err()
+                    || send_client_frame(socket, &pong).await.is_err()
+                {
+                    return (WebSocketCloseCode::InternalError, reconnect);
+                }
+            }
+            WebSocketServerFrame::ConnectionError { error, .. } => {
+                let code = if matches!(
+                    error.code.as_str(),
+                    "unauthenticated" | "session_grant_expired" | "session_grant_revoked"
+                ) {
+                    WebSocketCloseCode::PolicyViolation
+                } else {
+                    WebSocketCloseCode::InternalError
+                };
+                let _ = socket.close(code, "connection_error").await;
+                return (code, reconnect);
+            }
+            _ => {
+                if connection.publish(frame).is_err() {
+                    let _ = socket
+                        .close(WebSocketCloseCode::ProtocolError, "channel_state")
+                        .await;
+                    return (WebSocketCloseCode::ProtocolError, reconnect);
                 }
             }
         }
     }
 }
 
+async fn send_client_frame<S: WebSocketSocket>(
+    socket: &mut S,
+    frame: &WebSocketClientFrame,
+) -> garth::Result<()> {
+    frame.validate()?;
+    let bytes = arkret_sdk::canonical::canonical_json_bytes(frame)?;
+    socket
+        .send_text(String::from_utf8(bytes).map_err(|e| garth::Error::Protocol(e.to_string()))?)
+        .await
+}
 /// Serialize one `authenticate` frame answering this exact challenge nonce.
 ///
 /// `jti` is minted per proof and never reused, which is what keeps a reauth
@@ -450,7 +424,7 @@ async fn authenticate_frame(
     base_url: &str,
     connection_id: &str,
     nonce: &str,
-) -> Option<String> {
+) -> Option<WebSocketClientFrame> {
     let session_grant = connector.session_grant().await.ok()?;
     let request = AuthProofRequest {
         base_url: base_url.to_owned(),
@@ -459,27 +433,11 @@ async fn authenticate_frame(
         jti: crate::operation::uuid_v7(),
     };
     let dpop_proof = connector.sign_auth_proof(&request).await.ok()?;
-    serde_json::to_string(&WebSocketClientFrame::Authenticate {
+    Some(WebSocketClientFrame::Authenticate {
         connection_id: connection_id.to_owned(),
         session_grant,
         dpop_proof,
     })
-    .ok()
-}
-
-/// Hand one account frame to the shared queues, carrying its cursor first.
-///
-/// The cursor is what makes a drained window a resumable batch, so it is
-/// recorded before the frame is published rather than after.
-#[must_use]
-fn publish_account_frame(
-    connection: &SharedConnection,
-    frame: arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
-) -> bool {
-    if let Some(cursor) = frame.cursor.clone() {
-        connection.set_cursor(cursor);
-    }
-    connection.push_account_frame(frame)
 }
 
 /// Build a connector against the session's current grant and holder key.
@@ -487,18 +445,25 @@ fn publish_account_frame(
 /// Asked per attempt, so a retry after a policy failure picks up a refreshed
 /// grant instead of replaying the one that was rejected.
 async fn connector_for(ctx: &WebSocketRailContext) -> Option<InksonWebSocketConnector> {
-    let grant = ctx.token.get();
-    if grant.trim().is_empty() {
-        return None;
-    }
-    // The same device key the HTTP DPoP path uses. The proof is bound to the
-    // grant's `cnf.jkt`, so a different key here would fail closed.
-    let holder = ctx
-        .state_store
-        .write(crate::identity::account_auth::grant_dpop::load_or_recover_device_key)
-        .ok()
-        .flatten()?;
-    Some(InksonWebSocketConnector::new(grant, holder))
+    let session =
+        crate::identity::session_refresh::provide_authenticated_session(&ctx.base_url.get())
+            .await
+            .ok()?;
+    let user = crate::secure_key_store::UserLocalStore::new(
+        session.grant.account_id.clone(),
+        session.grant.device_id.clone(),
+    )
+    .ok()?;
+    let holder = crate::identity::account_auth::grant_dpop::load_user_device_key_with_secure_store(
+        &user,
+        crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
+    )
+    .ok()
+    .flatten()?;
+    Some(InksonWebSocketConnector::new(
+        session.grant.grant_jwt,
+        holder,
+    ))
 }
 
 fn reconnect_delay(after_ms: u32) -> Duration {

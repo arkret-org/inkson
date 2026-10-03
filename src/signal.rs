@@ -478,6 +478,7 @@ pub struct SignalHeader {
     pub sender_actor_id: arkret_sdk::ActorId,
     pub sender_device_id: arkret_sdk::DeviceId,
     pub authority_commit_id: arkret_sdk::RealmCommitId,
+    pub parent_realm_authority_commit_id: Option<arkret_sdk::RealmCommitId>,
     pub signal_class: arkret_wire::SignalClass,
     pub sent_at: chrono::DateTime<chrono::Utc>,
     pub expires_at: chrono::DateTime<chrono::Utc>,
@@ -490,6 +491,7 @@ impl SignalHeader {
         sender_actor_id: arkret_sdk::ActorId,
         sender_device_id: arkret_sdk::DeviceId,
         authority_commit_id: arkret_sdk::RealmCommitId,
+        parent_realm_authority_commit_id: Option<arkret_sdk::RealmCommitId>,
         signal_class: arkret_wire::SignalClass,
         sent_at: chrono::DateTime<chrono::Utc>,
     ) -> Self {
@@ -498,6 +500,7 @@ impl SignalHeader {
             sender_actor_id,
             sender_device_id,
             authority_commit_id,
+            parent_realm_authority_commit_id,
             signal_class,
             sent_at,
             expires_at: sent_at + signal_class.max_ttl(),
@@ -690,6 +693,7 @@ pub fn encrypt_signal_payload_with_store(
         sender_actor_id: &header.sender_actor_id,
         sender_device_id: Some(&header.sender_device_id),
         authority_commit_id: &header.authority_commit_id,
+        parent_realm_authority_commit_id: header.parent_realm_authority_commit_id.as_ref(),
         signal_class: header.signal_class,
         sent_at: header.sent_at,
         expires_at: header.expires_at,
@@ -769,6 +773,7 @@ fn seal_signal_envelope_with_signer(
         sender_actor_id: header.sender_actor_id,
         sender_device_id: Some(header.sender_device_id),
         authority_commit_id: header.authority_commit_id,
+        parent_realm_authority_commit_id: header.parent_realm_authority_commit_id,
         signal_class: header.signal_class,
         sent_at: header.sent_at,
         expires_at: header.expires_at,
@@ -844,6 +849,7 @@ pub(crate) mod test_support {
             actor_id.clone(),
             device_id.clone(),
             arkret_sdk::RealmCommitId::from_digest([0xab; 32]),
+            None,
             payload.signal_class(),
             sent_at,
         );
@@ -1118,6 +1124,7 @@ mod tests {
             actor(),
             arkret_sdk::DeviceId::new(device_id).unwrap(),
             arkret_sdk::RealmCommitId::from_digest([0xab; 32]),
+            None,
             arkret_wire::SignalClass::Session,
             crate::clock::now_utc(),
         );
@@ -1181,6 +1188,7 @@ mod tests {
                 arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-a11ce0000001")
                     .unwrap(),
                 arkret_sdk::RealmCommitId::from_digest([0xab; 32]),
+                None,
                 class,
                 sent_at,
             );
