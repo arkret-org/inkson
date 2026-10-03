@@ -4281,7 +4281,8 @@ mod tests {
                 "id":arkret_wire::RelationId::from_event_id(&accepted.event.event_id),
                 "realm_id":realm_id,"effective_scope":accepted.event.scope_ref,
                 "relation_kind":"references","from_ref":realm_id,"to_ref":realm_id,
-                "state":"active","created_by":creator,"created_at":accepted.event.created_at,
+                "state":"active","created_by":creator,
+                "created_at":accepted.event.created_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             }),
         });
         let validate = |rows: &[arkret_wire::TypedCurrentResult]| {
