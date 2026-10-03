@@ -561,6 +561,20 @@ pub(crate) fn merge_duplicate_create_message(
         if incoming.body.is_empty() && !existing.body.is_empty() {
             incoming.body = existing.body.clone();
             incoming.content_format = existing.content_format;
+            // A duplicate projection can temporarily lack the decrypt context.
+            // Retain the resolved state only for the exact same content source;
+            // a different revision or unresolved producer still needs its gate.
+            if incoming.crypto_state.is_pending()
+                && existing.crypto_state == MessageCryptoState::Plaintext
+                && incoming.id == existing.id
+                && incoming.revision_source == existing.revision_source
+                && incoming.realm_id == existing.realm_id
+                && incoming.strand_id == existing.strand_id
+                && incoming.actor_id == existing.actor_id
+                && incoming.executed_by == existing.executed_by
+            {
+                incoming.crypto_state = MessageCryptoState::Plaintext;
+            }
         }
         // Carry forward locally-tracked edit metadata. The sync projection
         // rebuilds a message from its events but does not surface the

@@ -323,4 +323,65 @@ mod merge_duplicate_create_message_alignment_tests {
         assert_eq!(existing.body, "rendered body");
         assert!(existing.revisions.is_empty());
     }
+
+    #[test]
+    fn repeated_projection_keeps_decrypted_message_resolved() {
+        let original = msg(
+            "ak:event:AT44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck",
+            "authenticated agent reply",
+            at("2026-07-07T06:19:20.000Z"),
+        );
+        for pending_state in [
+            MessageCryptoState::Decrypting,
+            MessageCryptoState::KeyMissing,
+        ] {
+            let mut timeline = vec![original.clone()];
+            for _ in 0..3 {
+                let mut pending = original.clone();
+                pending.body.clear();
+                pending.crypto_state = pending_state.clone();
+                merge_chat_messages(&mut timeline, vec![pending]);
+                assert_eq!(timeline.len(), 1);
+                assert_eq!(timeline[0].body, original.body);
+                assert_eq!(timeline[0].crypto_state, MessageCryptoState::Plaintext);
+                assert!(timeline[0].revisions.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn pending_projection_cannot_borrow_resolution_from_a_different_source() {
+        let original = msg(
+            "ak:event:AT44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck",
+            "authenticated reply",
+            at("2026-07-07T06:19:20.000Z"),
+        );
+        let mut pending = original.clone();
+        pending.body.clear();
+        pending.crypto_state = MessageCryptoState::KeyMissing;
+        let mut cases = Vec::new();
+        let mut revision = pending.clone();
+        revision.revision_source = Some(
+            arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(b"new revision")).unwrap(),
+        );
+        cases.push(revision);
+        let mut event = pending.clone();
+        event.id = "ak:event:AZZZ".to_owned();
+        cases.push(event);
+        let mut scope = pending.clone();
+        scope.strand_id = "another strand".to_owned();
+        cases.push(scope);
+        let mut producer = pending.clone();
+        producer.executed_by = Some("another producer".to_owned());
+        cases.push(producer);
+        let mut unverified = pending;
+        unverified.crypto_state = MessageCryptoState::NeedsVerification;
+        cases.push(unverified);
+        for incoming in cases {
+            let expected_state = incoming.crypto_state.clone();
+            let mut existing = original.clone();
+            merge_duplicate_create_message(&mut existing, incoming);
+            assert_eq!(existing.crypto_state, expected_state);
+        }
+    }
 }
