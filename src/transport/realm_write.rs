@@ -219,11 +219,30 @@ pub async fn transition_member_state(
     let event = build_member_state_transition_event(
         realm_id, actor_id, &member, from_state, to_state, reason,
     )?;
-    // The CBS basis is resolved once, at the authoring boundary, from the Realm
-    // Seal frontier. Post-bootstrap transitions (ban / kick / leave / unban)
-    // carry effects and the server rejects effects-carrying Control Moves
-    // without `seal_basis.leaves`; every caller here is an already-joined actor,
-    // so that frontier is readable when the write is authored.
+    submitter.submit_sdk_event(&event).await
+}
+
+/// Add an owned Agent through the controller carve-out with an explicit
+/// accepted controller join generation. The Station rechecks ownership,
+/// lifecycle, accountability, policy and MLS readiness at admission.
+pub async fn add_owned_agent_to_realm(
+    submitter: &EventSubmitter,
+    realm_id: &str,
+    actor_id: &str,
+    member: &str,
+) -> anyhow::Result<SubmitEventResult> {
+    let member: arkret_sdk::ActorId = serde_json::from_str(member)?;
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
+    let binding = submitter
+        .read_agent_controller_membership_binding(&realm)
+        .await?;
+    anyhow::ensure!(
+        crate::mls_api_helpers::principal_core_id(actor_id)?
+            == binding.controller_account_id.principal_id,
+        "Agent controller differs from the authenticated Account"
+    );
+    let event =
+        crate::event_builders::build_owned_agent_join_event(realm_id, actor_id, &member, binding)?;
     submitter.submit_sdk_event(&event).await
 }
 

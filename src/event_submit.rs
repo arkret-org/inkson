@@ -2714,27 +2714,87 @@ impl EventSubmitter {
             .map(|store| crate::mls::send_gate::MlsSendGateInput::capture(store, scope))
     }
 
+    /// Resolve the controller's join Event from its complete current revision,
+    /// then read that exact accepted stream position. A cached roster or a
+    /// principal-only identity cannot supply an Agent membership generation.
+    pub(crate) async fn read_agent_controller_membership_binding(
+        &self,
+        realm: &arkret_sdk::RealmId,
+    ) -> anyhow::Result<arkret_sdk::AgentControllerMembershipBinding> {
+        let controller = self.authority()?.clone();
+        let member = arkret_sdk::ActorId::account(controller.clone());
+        let revision = self.read_parent_membership_revision(realm, &member).await?;
+        let stream = arkret_wire::CommitStreamRef::Realm {
+            realm_id: realm.clone(),
+        };
+        let page = self
+            .scan_stream(&stream, revision.stream_position.checked_sub(1), 1)
+            .await?;
+        let row = page
+            .0
+            .committed_events
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("controller membership Event is unavailable"))?;
+        anyhow::ensure!(
+            row.commit().commit_id == revision.commit_id
+                && row.commit().stream_position == revision.stream_position
+                && row.commit().stream_ref == stream,
+            "controller membership Event differs from the verified current revision"
+        );
+        let event = row
+            .reducer_input()
+            .ok_or_else(|| anyhow::anyhow!("controller membership Event is not disclosed"))?;
+        anyhow::ensure!(
+            event.realm_id == *realm,
+            "controller membership belongs to another Realm"
+        );
+        match event.kind {
+            arkret_sdk::EventKind::MemberState => {
+                let payload: arkret_sdk::MembershipPayload =
+                    serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+                anyhow::ensure!(
+                    payload.member_id == member
+                        && payload.membership == arkret_sdk::MembershipPayloadState::Join
+                        && payload.strand_id.is_none()
+                        && payload.agent_controller_binding.is_none(),
+                    "controller is not in an accepted ordinary joined generation"
+                );
+            }
+            arkret_sdk::EventKind::InviteAccept => {
+                anyhow::ensure!(
+                    event.actor_id == member,
+                    "accepted Invite names another controller"
+                );
+            }
+            _ => anyhow::bail!("controller membership revision does not cover a join Event"),
+        }
+        Ok(arkret_sdk::AgentControllerMembershipBinding {
+            controller_account_id: controller,
+            controller_membership_generation_ref: event.event_id.clone(),
+            controller_terminal_event_ref: None,
+        })
+    }
+
     pub(crate) async fn read_parent_membership_revision(
         &self,
         realm: &arkret_sdk::RealmId,
         member: &arkret_sdk::ActorId,
     ) -> anyhow::Result<arkret_wire::CurrentRevision> {
         let authority = self.authority()?.clone();
-        let store = self
-            .state_store
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Circle join requires an account current index"))?;
+        let store = self.state_store.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("membership authoring requires an account current index")
+        })?;
         for _ in 0..60 {
             let location = store.read(|state| state.current_index_location());
             let index = crate::state::CurrentIndex::open_committed(&authority, location, || {
                 store.read(|state| {
                     anyhow::ensure!(
                         state.active_authority().as_ref() == Some(&authority),
-                        "the active account changed before the Circle join current read"
+                        "the active account changed before the membership current read"
                     );
                     anyhow::ensure!(
                         !state.current_reset_required(),
-                        "Circle join awaits a fresh account baseline"
+                        "membership authoring awaits a fresh account baseline"
                     );
                     Ok(state.current_generation())
                 })
@@ -2748,7 +2808,7 @@ impl EventSubmitter {
             }
             crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
         }
-        anyhow::bail!("Circle join requires a complete verified parent Realm cut")
+        anyhow::bail!("membership authoring requires a complete verified parent Realm cut")
     }
 
     async fn ensure_queued_application_send_gate(

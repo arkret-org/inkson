@@ -529,14 +529,11 @@ impl RealmMembersController {
         } = context;
         let request_realm = realm_id.clone();
         match crate::transport::auth::with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::realm_write::transition_member_state(
+            crate::transport::realm_write::add_owned_agent_to_realm(
                 &sub,
                 &request_realm,
                 &actor_id,
                 &target_id,
-                None,
-                "join",
-                "controller_add_agent",
             )
             .await
         })

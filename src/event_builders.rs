@@ -258,6 +258,7 @@ pub fn build_realm_bootstrap_membership_intent(
         None,
         "join",
         "creator_membership",
+        None,
     )?
     .into_intent())
 }
@@ -1171,6 +1172,37 @@ pub fn build_member_state_transition_event(
         from_state,
         to_state,
         reason,
+        None,
+    )
+}
+
+/// A controller explicitly joins its own Agent, bound to the exact accepted
+/// controller membership generation (`actor.md` section 3.3).
+pub fn build_owned_agent_join_event(
+    realm_id: &str,
+    actor_id: &str,
+    member: &arkret_sdk::ActorId,
+    binding: arkret_sdk::AgentControllerMembershipBinding,
+) -> anyhow::Result<crate::operation::LocalOperation> {
+    binding.validate()?;
+    anyhow::ensure!(
+        crate::mls_api_helpers::principal_core_id(actor_id)?
+            == binding.controller_account_id.principal_id,
+        "Agent join writer differs from its controller Account"
+    );
+    anyhow::ensure!(
+        binding.controller_terminal_event_ref.is_none(),
+        "an Agent join cannot bind a terminal controller Event"
+    );
+    build_member_state_transition_event_for_station(
+        &binding.controller_account_id.station_id.clone(),
+        realm_id,
+        actor_id,
+        member,
+        Some("leave"),
+        "join",
+        "controller_add_agent",
+        Some(binding),
     )
 }
 
@@ -1182,6 +1214,7 @@ fn build_member_state_transition_event_for_station(
     from_state: Option<&str>,
     to_state: &str,
     reason: &str,
+    agent_controller_binding: Option<arkret_sdk::AgentControllerMembershipBinding>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     use arkret_models_collaboration::governance::membership_invite::{
         MembershipPayload, MembershipPayloadState,
@@ -1215,11 +1248,12 @@ fn build_member_state_transition_event_for_station(
     // dropped accordingly (spec is the source of truth).
     let realm_value = arkret_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("realm_id not canonical: {err}"))?;
-    let membership_payload = if membership == MembershipPayloadState::Join {
+    let mut membership_payload = if membership == MembershipPayloadState::Join {
         MembershipPayload::join(realm_value, member_id, reason)
     } else {
         MembershipPayload::transition(membership, member_id, reason).with_realm_id(realm_value)
     };
+    membership_payload.agent_controller_binding = agent_controller_binding;
     let builder = TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::MemberState>(
         realm_id,
         actor_id,
@@ -1236,6 +1270,63 @@ mod genesis_authority_tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn owned_agent_join_carries_exact_controller_generation_and_rejects_terminal_binding() {
+        let controller = arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:controller.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        );
+        let member = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
+            controller.station_id.clone(),
+        ));
+        let generation =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [57; 32]);
+        let binding = arkret_sdk::AgentControllerMembershipBinding {
+            controller_account_id: controller.clone(),
+            controller_membership_generation_ref: generation.clone(),
+            controller_terminal_event_ref: None,
+        };
+        let realm = arkret_sdk::RealmId::from_event_id(&generation);
+        let intent = build_owned_agent_join_event(
+            realm.as_str(),
+            controller.principal_id.as_str(),
+            &member,
+            binding.clone(),
+        )
+        .unwrap()
+        .into_intent();
+        let payload: arkret_sdk::MembershipPayload =
+            serde_json::from_value(serde_json::to_value(intent.payload()).unwrap()).unwrap();
+        assert_eq!(payload.agent_controller_binding, Some(binding.clone()));
+        assert_eq!(payload.member_id, member);
+        assert_eq!(payload.membership, arkret_sdk::MembershipPayloadState::Join);
+        assert!(payload.invite_ref.is_none());
+        assert!(
+            build_owned_agent_join_event(
+                realm.as_str(),
+                "ak:did_core:web:foreign.example",
+                &member,
+                binding.clone()
+            )
+            .is_err()
+        );
+        let mut terminal = binding;
+        terminal.controller_terminal_event_ref = Some(arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [58; 32],
+        ));
+        assert!(
+            build_owned_agent_join_event(
+                realm.as_str(),
+                controller.principal_id.as_str(),
+                &member,
+                terminal
+            )
+            .is_err()
+        );
+    }
 
     fn agent_resolution() -> arkret_sdk::ResolutionCommitment {
         arkret_sdk::ResolutionCommitment {
