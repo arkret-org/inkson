@@ -517,7 +517,7 @@ fn session_fence_rejects_same_principal_account_switch_and_signer_replacement() 
         device.as_str(),
     ));
     let _signer = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer.clone()));
-    let fence = ContactSessionFence::capture().unwrap();
+    let fence = AuthoringSessionFence::capture().unwrap();
     fence.check().unwrap();
     let other = crate::test_support::authority_at_station(
         "did:web:alice.example",

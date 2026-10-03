@@ -5,7 +5,7 @@ use std::sync::{Arc, LazyLock, Mutex, Weak};
 use arkret_sdk::contact_operations::{ContactCommitRequestBody, ContactOperationOutcome};
 use serde::{Deserialize, Serialize};
 
-use super::{ContactCommitContext, ContactSessionFence};
+use super::{AuthoringSessionFence, ContactCommitContext};
 use crate::secure_key_store::{SecureKeyStore, UserLocalStore};
 
 pub(crate) const SECRET_KEY: &str = "contact.pending_commit";
@@ -111,7 +111,7 @@ impl Journal {
 /// Persistent identity uses the complete account/device, never this run's epoch.
 pub(crate) struct PendingOperation {
     _lock: tokio::sync::OwnedMutexGuard<()>,
-    pub(super) fence: ContactSessionFence,
+    pub(super) fence: AuthoringSessionFence,
     scope: UserLocalStore,
     store: Arc<dyn SecureKeyStore + Send + Sync>,
     intent_digest: Option<String>,
@@ -120,7 +120,7 @@ pub(crate) struct PendingOperation {
 
 impl PendingOperation {
     pub(crate) async fn begin(intent: Option<serde_json::Value>) -> anyhow::Result<Self> {
-        let fence = ContactSessionFence::capture()?;
+        let fence = AuthoringSessionFence::capture()?;
         let scope = crate::secure_key_store::active_device_seed_scope().ok_or_else(|| {
             anyhow::anyhow!("Contact recovery requires an active account/device scope")
         })?;

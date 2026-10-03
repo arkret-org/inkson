@@ -5,6 +5,8 @@ use arkret_sdk::contact_operations::{
 };
 use arkret_sdk::{IdempotencyKey, PreparedEventDraft, ProtocolOperationId, ReservationHandle};
 
+use super::auth::AuthoringSessionFence;
+
 pub(crate) mod pending;
 #[cfg(test)]
 mod tests;
@@ -43,48 +45,17 @@ mod default_scope_tests {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct ContactSessionFence {
-    epoch: u64,
-    signer: std::sync::Arc<crate::event_signer::InksonEventSigner>,
-    scope: Option<crate::secure_key_store::ActiveDeviceSeedScope>,
-}
-
-impl ContactSessionFence {
-    pub(crate) fn capture() -> anyhow::Result<Self> {
-        Ok(Self {
-            epoch: crate::identity::device_directory::cache_epoch(),
-            signer: crate::event_signer::active_signer()
-                .ok_or_else(|| anyhow::anyhow!("active Contact signer is required"))?,
-            scope: crate::secure_key_store::active_device_seed_scope(),
-        })
-    }
-
-    pub(crate) fn check(&self) -> anyhow::Result<()> {
-        let active = crate::event_signer::active_signer();
-        anyhow::ensure!(
-            self.epoch == crate::identity::device_directory::cache_epoch()
-                && self.scope == crate::secure_key_store::active_device_seed_scope()
-                && active
-                    .as_ref()
-                    .is_some_and(|signer| std::sync::Arc::ptr_eq(signer, &self.signer)),
-            "Contact operation belongs to a replaced account session or signer"
-        );
-        Ok(())
-    }
-}
-
 pub(crate) struct ContactCommitContext {
     actor_id: arkret_sdk::ActorId,
     control_realm: arkret_sdk::RealmId,
-    fence: ContactSessionFence,
+    fence: AuthoringSessionFence,
     journal: Option<pending::Journal>,
 }
 
 pub(crate) fn freeze_contact_commit_context(
     principal_event: &arkret_sdk::Event,
 ) -> anyhow::Result<ContactCommitContext> {
-    let fence = ContactSessionFence::capture()?;
+    let fence = AuthoringSessionFence::capture()?;
     let signer = &fence.signer;
     let principal = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
     let principal_id = arkret_sdk::project_did_to_core_id(&principal)?;
@@ -547,7 +518,7 @@ impl crate::transport::TransportClient {
         scopes: &[String],
         message: Option<&str>,
     ) -> anyhow::Result<ContactOperationOutcome> {
-        let session = ContactSessionFence::capture()?;
+        let session = AuthoringSessionFence::capture()?;
         let mut granted_to_peer_scopes = scopes
             .iter()
             .map(|scope| contact_scope(scope))
