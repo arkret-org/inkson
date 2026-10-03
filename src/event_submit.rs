@@ -286,8 +286,9 @@ pub(crate) fn initial_circle_discussion_intent(
 
 /// A browser runtime has multiple outbound triggers: the foreground writer and
 /// the account-sync drain. Engines opened on the same durable store do not
-/// share an in-memory lease, so without a runtime single-writer gate both can
-/// enqueue and forward concurrently against the same persisted queue file.
+/// share an in-memory lease, so forwarding needs a runtime single-writer gate.
+/// Durable enqueue uses the store's own mutation gate and must not wait for a
+/// network attempt or its retry delay.
 fn outbound_submit_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
@@ -2193,31 +2194,22 @@ impl EventSubmitter {
     }
 
     /// Enqueue one frozen submission and drive the queue until this item has
-    /// an authority answer or is left durably queued.
-    /// Enqueue one frozen submission and drive the queue until this item has
-    /// a settled authority answer, or is left durably queued.
-    ///
-    /// A Station refusal is an answer, not an error: it comes back as the
-    /// settled item so the caller can read its exact `reason_code`.
-    async fn enqueue_and_drive(&self, write: QueuedWrite) -> anyhow::Result<garth::SendQueueItem> {
-        let QueuedWrite {
-            lane,
-            submission,
-            local_operation_id,
-            post_accept,
-            retry_scope,
-        } = write;
-        let event_id = submission.event_id.clone();
-        let event = submission.primary_event().clone();
-        let outbound = self.outbound(lane)?;
+    /// Persist frozen bytes and their holder-local identity without forwarding.
+    async fn persist_queued_write(
+        &self,
+        write: &QueuedWrite,
+        outbound: &InksonOutboundEngine,
+    ) -> anyhow::Result<Option<garth::SendQueueItem>> {
+        let event_id = &write.submission.event_id;
+        let event = write.submission.primary_event();
         let existing = outbound
             .snapshot()
             .await?
             .items
             .into_iter()
-            .find(|item| item.event_id() == &event_id);
+            .find(|item| item.event_id() == event_id);
         if let Some(item) = &existing {
-            ensure_exact_queued_request(&item.submission, &submission)?;
+            ensure_exact_queued_request(&item.submission, &write.submission)?;
         }
         match existing {
             // The Station already answered for these exact bytes. Authoring is
@@ -2229,21 +2221,51 @@ impl EventSubmitter {
                         reconcile_settled_outbound_item(store, &item);
                     });
                 }
-                return Ok(item);
+                return Ok(Some(item));
             }
             Some(_) => {}
             None => {
                 outbound
-                    .enqueue(submission)
+                    .enqueue(write.submission.clone())
                     .await
                     .map_err(anyhow::Error::from)?;
             }
         }
         if let Some(state_store) = self.state_store.as_ref() {
             state_store.write(|store| {
-                record_queued_operation_identity(store, &local_operation_id, &event);
+                record_queued_operation_identity(store, &write.local_operation_id, event);
             });
         }
+
+        // A concurrent drain may have settled the item between durable enqueue
+        // and the holder-local identity join. Reconcile that answer as well.
+        let settled = outbound
+            .snapshot()
+            .await?
+            .items
+            .into_iter()
+            .find(|item| item.event_id() == event_id && item.status.is_terminal());
+        if let (Some(state_store), Some(item)) = (self.state_store.as_ref(), settled.as_ref()) {
+            state_store.write(|store| {
+                reconcile_settled_outbound_item(store, item);
+            });
+        }
+        Ok(settled)
+    }
+
+    async fn enqueue_and_drive(&self, write: QueuedWrite) -> anyhow::Result<garth::SendQueueItem> {
+        let outbound = self.outbound(write.lane)?;
+        if let Some(item) = self.persist_queued_write(&write, &outbound).await? {
+            return Ok(item);
+        }
+        let QueuedWrite {
+            submission,
+            local_operation_id,
+            post_accept,
+            retry_scope,
+            ..
+        } = write;
+        let event_id = submission.event_id;
 
         self.cancel_quarantined_creator_items(&outbound).await?;
         let authority_client = self.authority_client();
