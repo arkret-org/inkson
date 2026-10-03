@@ -7,6 +7,37 @@
 use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
 use crate::transport::TransportClient;
 
+#[derive(Clone)]
+pub(crate) struct AuthoringSessionFence {
+    epoch: u64,
+    pub(crate) signer: std::sync::Arc<crate::event_signer::InksonEventSigner>,
+    scope: Option<crate::secure_key_store::ActiveDeviceSeedScope>,
+}
+
+impl AuthoringSessionFence {
+    pub(crate) fn capture() -> anyhow::Result<Self> {
+        Ok(Self {
+            epoch: crate::identity::device_directory::cache_epoch(),
+            signer: crate::event_signer::active_signer()
+                .ok_or_else(|| anyhow::anyhow!("active authoring signer is required"))?,
+            scope: crate::secure_key_store::active_device_seed_scope(),
+        })
+    }
+
+    pub(crate) fn check(&self) -> anyhow::Result<()> {
+        let active = crate::event_signer::active_signer();
+        anyhow::ensure!(
+            self.epoch == crate::identity::device_directory::cache_epoch()
+                && self.scope == crate::secure_key_store::active_device_seed_scope()
+                && active
+                    .as_ref()
+                    .is_some_and(|signer| std::sync::Arc::ptr_eq(signer, &self.signer)),
+            "frozen operation belongs to a replaced account session or signer"
+        );
+        Ok(())
+    }
+}
+
 /// Create an authenticated API client from a base URL and optional session credential.
 pub fn authed_api(base_url: &str, session_credential: String) -> anyhow::Result<TransportClient> {
     authed_api_with_sync(base_url, session_credential, None)

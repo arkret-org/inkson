@@ -444,6 +444,49 @@ struct PendingNativeSidecarCommit {
     request: arkret_sdk::SidecarEnsureRequestBody,
 }
 
+async fn submit_frozen_sidecar_ensure<'a, F, Fut>(
+    request: &'a arkret_sdk::SidecarEnsureRequestBody,
+    expires_at: chrono::DateTime<chrono::Utc>,
+    check_session: impl Fn() -> anyhow::Result<()>,
+    mut submit: F,
+) -> anyhow::Result<arkret_sdk::SidecarEnsureOutcome>
+where
+    F: FnMut(&'a arkret_sdk::SidecarEnsureRequestBody) -> Fut,
+    Fut: std::future::Future<
+            Output = arkret_sdk::http_client::Result<arkret_sdk::SidecarEnsureOutcome>,
+        >,
+{
+    anyhow::ensure!(
+        matches!(
+            request,
+            arkret_sdk::SidecarEnsureRequestBody::Commit(_)
+                | arkret_sdk::SidecarEnsureRequestBody::Attach(_)
+        ),
+        "only an already frozen Sidecar commit or attach may be replayed"
+    );
+    for attempt in 0..3 {
+        check_session()?;
+        anyhow::ensure!(
+            expires_at > crate::clock::now_utc(),
+            "frozen Sidecar reservation expired"
+        );
+        let result = submit(request).await;
+        check_session()?;
+        match result {
+            Ok(outcome) => return Ok(outcome),
+            Err(error) => {
+                let unconfirmed = matches!(error, arkret_sdk::http_client::Error::Http(_))
+                    || matches!(error, arkret_sdk::http_client::Error::Api { status: 503, .. }
+                        if error.error_code() == Some(arkret_sdk::ErrorCode::TemporarilyUnavailable));
+                if !unconfirmed || attempt == 2 {
+                    return Err(error.into());
+                }
+            }
+        }
+    }
+    unreachable!("bounded Sidecar commit replay always returns its last result")
+}
+
 fn pending_native_sidecar_commit_key(
     controller_principal_id: &str,
     realm_id: &str,
@@ -673,21 +716,25 @@ async fn ensure_owned_agent_sidecar(
     let ceremony_context = context_ref.clone();
     let ceremony_device = device_id.to_string();
     let ceremony_pending_key = pending_key.clone();
+    let ceremony_fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+    let completion_fence = ceremony_fence.clone();
     let mut ceremony_state_store = state_store;
     let (sidecar_id, view) = crate::transport::auth::with_authed_sdk_client(
         base_url,
         api_token,
         move |http| async move {
-            let (expected_phase, expected_sidecar_id, request) = if let Some(pending) = pending {
+            ceremony_fence.check()?;
+            let (expected_phase, expected_sidecar_id, request, expires_at) = if let Some(pending) = pending {
                 if pending.operation_id != ceremony_operation_id {
                     anyhow::bail!("durable native Sidecar commit changed its operation binding");
                 }
-                (pending.expected_phase, pending.sidecar_id, pending.request)
+                (pending.expected_phase, pending.sidecar_id, pending.request, pending.expires_at)
             } else {
                 let prepared = http
                     .agent_sidecar_ensure(&prepare)
                     .await
                     .map_err(anyhow::Error::from)?;
+                ceremony_fence.check()?;
                 let idempotency_key =
                     arkret_sdk::IdempotencyKey::new(uuid_v7()).map_err(anyhow::Error::msg)?;
                 match prepared {
@@ -754,6 +801,7 @@ async fn ensure_owned_agent_sidecar(
                                 request: request.clone(),
                             };
                             {
+                                ceremony_fence.check()?;
                                 let barrier = {
                                     let mut store = ceremony_state_store.write();
                                     store.save_plain_local_data(ceremony_pending_key.clone(),
@@ -767,6 +815,7 @@ async fn ensure_owned_agent_sidecar(
                                 arkret_sdk::SidecarEnsureAcceptedPhase::Commit,
                                 sidecar_id,
                                 request,
+                                expires_at,
                             )
                         }
                         arkret_sdk::SidecarEnsureOutcome::PreparedExisting(
@@ -817,6 +866,7 @@ async fn ensure_owned_agent_sidecar(
                                 request: request.clone(),
                             };
                             {
+                                ceremony_fence.check()?;
                                 let barrier = {
                                     let mut store = ceremony_state_store.write();
                                     store.save_plain_local_data(ceremony_pending_key.clone(),
@@ -830,14 +880,17 @@ async fn ensure_owned_agent_sidecar(
                                 arkret_sdk::SidecarEnsureAcceptedPhase::Attach,
                                 sidecar_id,
                                 request,
+                                expires_at,
                             )
                         }
                 }
             };
-            let accepted = http
-                .agent_sidecar_ensure(&request)
-                .await
-                .map_err(anyhow::Error::from)?;
+            let accepted = submit_frozen_sidecar_ensure(
+                &request,
+                expires_at,
+                || ceremony_fence.check(),
+                |request| http.agent_sidecar_ensure(request),
+            ).await?;
             let sidecar_id = accepted_native_sidecar_id(
                 &accepted,
                 &ceremony_operation_id,
@@ -849,6 +902,7 @@ async fn ensure_owned_agent_sidecar(
                 .agent_sidecar_get(&sidecar_id)
                 .await
                 .map_err(anyhow::Error::from)?;
+            ceremony_fence.check()?;
             crate::sidecar::validate_agent_sidecar_view(&view)?;
             if view.sidecar.id != sidecar_id
                 || view.sidecar.realm_id != ceremony_realm
@@ -861,6 +915,7 @@ async fn ensure_owned_agent_sidecar(
     )
     .await
     .map_err(|error| anyhow::anyhow!(error.display()))?;
+    completion_fence.check()?;
     {
         let barrier = {
             let mut store = state_store.write();
