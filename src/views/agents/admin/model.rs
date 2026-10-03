@@ -114,6 +114,17 @@ pub(super) fn upsert_agent_view(rows: &mut Vec<AgentView>, view: AgentView) {
     }
 }
 
+pub(super) fn apply_agent_detail_read(
+    rows: &mut Vec<AgentView>,
+    view: AgentView,
+    request_epoch: u64,
+    current_epoch: u64,
+) {
+    if request_epoch == current_epoch {
+        upsert_agent_view(rows, view);
+    }
+}
+
 pub(super) fn replace_agent_directory(rows: &mut Vec<AgentView>, directory_rows: Vec<AgentView>) {
     let previous_rows = std::mem::take(rows);
     *rows = directory_rows

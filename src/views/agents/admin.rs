@@ -70,6 +70,7 @@ pub fn AgentAdminPanel(
         use_signal(|| vec![AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent]);
     let mut provision_service_scopes = use_signal(|| AgentServiceScopePreset::DEFAULTS.to_vec());
     let agent_list_refresh_epoch = use_signal(|| 0_u64);
+    let agent_detail_refresh_epoch = use_signal(|| 0_u64);
     let mut deactivate_confirm = use_signal(String::new);
     let mut deactivate_dialog_open = use_signal(|| false);
     // Replacing a runtime atomically revokes the current key and takes the
@@ -88,6 +89,7 @@ pub fn AgentAdminPanel(
         list_status,
         last_op_status,
         refresh_epoch: agent_list_refresh_epoch,
+        detail_refresh_epoch: agent_detail_refresh_epoch,
         selected_agent_id,
         create_mode,
         new_agent_avatar_blob_ref,

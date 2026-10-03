@@ -19,6 +19,9 @@ pub(super) struct AgentAdminController {
     /// one: every refresh claims the next epoch and drops its own result once
     /// the epoch has moved on.
     pub(super) refresh_epoch: Signal<u64>,
+    /// Invalidates older detail reads when a newer read or accepted pairing
+    /// operation owns the row. Directory refreshes preserve loaded details.
+    pub(super) detail_refresh_epoch: Signal<u64>,
     pub(super) selected_agent_id: Signal<String>,
     pub(super) create_mode: Signal<bool>,
     pub(super) new_agent_avatar_blob_ref: Signal<String>,
@@ -115,8 +118,11 @@ impl AgentAdminController {
             mut agents,
             mut last_op_status,
             mut pairing_action_phase,
+            mut detail_refresh_epoch,
             ..
         } = self;
+        let request_epoch = (*detail_refresh_epoch.peek()).saturating_add(1);
+        detail_refresh_epoch.set(request_epoch);
         let applied = agents.with_mut(|rows| {
             apply_renewed_pairing(rows, renewed_agent_id, outcome, crate::clock::now_utc())
         });
@@ -133,6 +139,11 @@ impl AgentAdminController {
         let refreshed_view = fetch_agent_details(base, api_token, renewed_agent_id)
             .await
             .map_err(|error| PairingReconcileError::RefreshFailed(error.display()))?;
+        if *detail_refresh_epoch.peek() != request_epoch {
+            return Err(PairingReconcileError::RefreshedViewRejected(
+                "the Agent details changed while loading the pairing code",
+            ));
+        }
         agents
             .with_mut(|rows| {
                 reconcile_refreshed_pairing(
@@ -204,17 +215,30 @@ impl AgentAdminController {
         let Self {
             mut agents,
             mut last_op_status,
+            mut detail_refresh_epoch,
             ..
         } = self;
+        let request_epoch = (*detail_refresh_epoch.peek()).saturating_add(1);
+        detail_refresh_epoch.set(request_epoch);
         spawn(async move {
             if id.trim().is_empty() {
                 return;
             }
             match fetch_agent_details(&base, &api_token, &id).await {
                 Ok(view) => {
-                    agents.with_mut(|rows| upsert_agent_view(rows, view));
+                    agents.with_mut(|rows| {
+                        apply_agent_detail_read(
+                            rows,
+                            view,
+                            request_epoch,
+                            *detail_refresh_epoch.peek(),
+                        )
+                    });
                 }
                 Err(err) => {
+                    if *detail_refresh_epoch.peek() != request_epoch {
+                        return;
+                    }
                     last_op_status.set(format!("Failed to load agent details: {}", err.display()))
                 }
             }

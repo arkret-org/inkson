@@ -383,6 +383,44 @@ fn authoritative_pairing_reconcile_repairs_and_upserts_a_stale_local_row() {
 }
 
 #[test]
+fn accepted_replacement_rejects_old_detail_but_allows_current_consumed_handle() {
+    let ready = test_pairing_view(AgentLifecycleState::Active, AgentRuntimeState::Ready);
+    let mut rows = vec![ready.clone()];
+    let outcome = test_renew_outcome(true);
+    let now = chrono::DateTime::parse_from_rfc3339("2026-07-18T00:00:00.000Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    apply_renewed_pairing(&mut rows, outcome.agent_id.as_str(), &outcome, now).unwrap();
+
+    apply_agent_detail_read(&mut rows, ready.clone(), 1, 2);
+    assert_eq!(
+        agent_view_runtime_state(&rows[0]),
+        AgentRuntimeState::Replacing
+    );
+    assert_eq!(
+        rows[0]
+            .key_state
+            .as_ref()
+            .unwrap()
+            .pairing_request_id
+            .as_deref(),
+        Some(outcome.pairing_request_id.as_str())
+    );
+    assert_eq!(rows[0].agent.lifecycle, AgentLifecycleState::Active);
+
+    apply_agent_detail_read(&mut rows, ready, 3, 3);
+    assert_eq!(agent_view_runtime_state(&rows[0]), AgentRuntimeState::Ready);
+    assert!(
+        rows[0]
+            .key_state
+            .as_ref()
+            .unwrap()
+            .pairing_request_id
+            .is_none()
+    );
+}
+
+#[test]
 fn pairing_renewal_is_available_before_an_open_request_expires() {
     assert!(should_offer_pairing_renewal(true, "pending_runtime_key"));
     assert!(should_offer_pairing_renewal(true, "pairing_expired"));
