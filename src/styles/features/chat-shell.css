@@ -676,6 +676,26 @@
   color: var(--text);
 }
 
+@media (min-width: 981px) {
+  .discussion-shell.direct-mode:not(.embedded) {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  }
+
+  .discussion-shell.direct-mode.right-collapsed:not(.embedded) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .discussion-shell.direct-mode:not(.embedded) .discussion-main-panel,
+  .discussion-shell.direct-mode:not(.embedded) .discussion-composer,
+  .discussion-shell.direct-mode:not(.embedded) .discussion-status-slot {
+    grid-column: 1;
+  }
+
+  .discussion-shell.direct-mode:not(.embedded) .discussion-details-panel {
+    grid-column: 2;
+  }
+}
+
 @media (max-width: 980px) {
   .discussion-shell,
   .discussion-shell.left-collapsed,
