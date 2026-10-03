@@ -154,7 +154,7 @@ impl WriteState {
             "synced" | "effective" => Some(Self::Synced),
             "optimistic" => Some(Self::Optimistic),
             "queued" => Some(Self::Queued),
-            "submitted" => Some(Self::Submitted),
+            "submitted" | "pending_commit" => Some(Self::Submitted),
             "accepted" | "pending" | "pending_seal" => Some(Self::Accepted),
             "failed" | "rejected" | "soft_failed" | "soft failed" => Some(Self::SoftFailed),
             "conflict" | "cas_conflict" | "CAS conflict" => Some(Self::CasConflict),

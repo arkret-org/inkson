@@ -853,6 +853,111 @@ fn local_strand_create_overlay_restores_card_until_projection_catches_up() {
 }
 
 #[test]
+fn card_create_stays_visible_through_commit_and_backfill_until_placement() {
+    let board_id = PENDING_TEST_SPACE;
+    let list_id = "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
+    let event_id = "ak:event:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
+    let strand_id = "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
+    let local_id = "01904100-0000-7000-8000-000000000099";
+    let mut store = isolated_store_for_tests("card-create-display-handoff");
+    store.upsert_raw_operation(
+        local_id,
+        Some(PENDING_TEST_REALM.to_owned()),
+        json!({
+            "kind": "ak.strand.create",
+            "operation_id": local_id,
+            "local_target_ref": local_id,
+            "write_state": "queued",
+            "effect": {
+                "strand_id": local_id, "board_space_id": board_id,
+                "list_space_id": list_id, "title": "Continuous card", "rank": "U"
+            }
+        }),
+    );
+    let columns = vec![KanbanColumn {
+        id: list_id.to_owned(),
+        title: "Todo".to_owned(),
+        rank: "U".to_owned(),
+        cards: Vec::new(),
+        state: SpaceContainerLifecycleState::Active,
+    }];
+    for (write_state, expected_id, expected_state) in [
+        ("queued", local_id, CardState::Queued),
+        ("pending_commit", strand_id, CardState::Submitted),
+        ("effective", strand_id, CardState::Synced),
+    ] {
+        store.update_raw_operation_write_state(
+            local_id,
+            write_state,
+            (write_state != "queued").then(|| event_id.to_owned()),
+            None,
+        );
+        let shown = overlay_local_card_create_records(
+            columns.clone(),
+            &store.load().raw_operations,
+            board_id,
+        );
+        assert_eq!(shown[0].cards.len(), 1, "card disappeared at {write_state}");
+        assert_eq!(shown[0].cards[0].id, expected_id);
+        assert_eq!(shown[0].cards[0].title, "Continuous card");
+        assert_eq!(shown[0].cards[0].state, expected_state);
+    }
+    // The create's canonical stream copy arrives before its placement Move.
+    store.upsert_raw_operation(
+        event_id,
+        Some(PENDING_TEST_REALM.to_owned()),
+        json!({
+            "kind": "ak.strand.create", "operation_id": event_id,
+            "local_target_ref": strand_id, "write_state": "synced",
+            "body": {"object": {"kind": "card"}}
+        }),
+    );
+    let rows = store.load().raw_operations;
+    assert_eq!(rows.len(), 1);
+    let shown = overlay_local_card_create_records(columns.clone(), &rows, board_id);
+    assert_eq!(
+        shown[0].cards.len(),
+        1,
+        "backfill must preserve the intended placement"
+    );
+    assert_eq!(shown[0].cards[0].id, strand_id);
+    assert_eq!(shown[0].cards[0].title, "Continuous card");
+    let confirmed = overlay_local_card_create_records(shown, &rows, board_id);
+    assert_eq!(
+        confirmed[0].cards.len(),
+        1,
+        "projection handoff must not duplicate the card"
+    );
+
+    // Once placed, subsequent moves/archives must not resurrect the create's
+    // original destination, even when that column no longer contains the card.
+    store.upsert_raw_operation(
+        "placement",
+        Some(PENDING_TEST_REALM.to_owned()),
+        json!({
+            "kind": "ak.strand.move", "write_state": "effective",
+            "body": {"strand_id": strand_id}
+        }),
+    );
+    assert!(
+        overlay_local_card_create_records(columns.clone(), &store.load().raw_operations, board_id)
+            [0]
+        .cards
+        .is_empty()
+    );
+
+    for terminal in ["rejected", "quarantined", "dropped"] {
+        let mut failed = rows.clone();
+        failed[0].payload["write_state"] = json!(terminal);
+        assert!(
+            overlay_local_card_create_records(columns.clone(), &failed, board_id)[0]
+                .cards
+                .is_empty()
+        );
+    }
+}
+
+#[test]
 fn remote_strand_update_events_overlay_detail_fields_on_projection() {
     let board_id = "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let strand_id = "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";

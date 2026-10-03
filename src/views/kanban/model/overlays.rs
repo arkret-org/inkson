@@ -146,7 +146,13 @@ pub(crate) fn raw_operation_allows_overlay(payload: &Value) -> bool {
         json_path_string(Some(payload), &["write_state"]).unwrap_or_else(|| "queued".to_owned());
     matches!(
         write_state.as_str(),
-        "queued" | "submitting" | "submitted" | "accepted" | "synced"
+        "queued"
+            | "submitting"
+            | "submitted"
+            | "pending_commit"
+            | "accepted"
+            | "effective"
+            | "synced"
     )
 }
 
@@ -698,6 +704,27 @@ pub(crate) fn overlay_local_card_create_records(
 
     let aliases = event_derived_target_aliases(raw_operations);
     let board_space_id = resolve_event_derived_target_alias(&aliases, board_space_id);
+    // Once a placement is confirmed, the create's intended destination must
+    // stop acting as a fallback. Otherwise a later move or archive could bring
+    // the card back into its original List.
+    let placed_card_ids = raw_operations
+        .iter()
+        .filter(|record| {
+            raw_operation_kind_matches(&record.payload, event_kind_str::STRAND_MOVE)
+                && matches!(
+                    record.payload.get("write_state").and_then(Value::as_str),
+                    Some("accepted" | "effective" | "synced")
+                )
+        })
+        .filter_map(|record| {
+            let body = record
+                .payload
+                .get("body")
+                .or_else(|| record.payload.get("payload"));
+            json_path_string(body, &["strand_id"])
+        })
+        .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+        .collect::<BTreeSet<_>>();
     let mut existing_card_ids = columns
         .iter()
         .flat_map(|column| column.cards.iter().map(|card| card.id.clone()))
@@ -715,7 +742,9 @@ pub(crate) fn overlay_local_card_create_records(
         if local_create.board_space_id != board_space_id {
             continue;
         }
-        if existing_card_ids.contains(&local_create.card.id) {
+        if existing_card_ids.contains(&local_create.card.id)
+            || placed_card_ids.contains(&local_create.card.id)
+        {
             continue;
         }
         let Some(column) = columns

@@ -1025,9 +1025,8 @@ fn raw_payload_is_message_create(payload: &Value) -> bool {
 }
 
 fn merge_synced_raw_operation_payload(existing: &Value, mut incoming: Value) -> Value {
-    if raw_payload_is_redaction_tombstone(existing)
-        && !raw_payload_is_redaction_tombstone(&incoming)
-    {
+    let incoming_redacted = raw_payload_is_redaction_tombstone(&incoming);
+    if raw_payload_is_redaction_tombstone(existing) && !incoming_redacted {
         return existing.clone();
     }
     let Some(incoming_object) = incoming.as_object_mut() else {
@@ -1036,6 +1035,19 @@ fn merge_synced_raw_operation_payload(existing: &Value, mut incoming: Value) -> 
     let Some(existing_object) = existing.as_object() else {
         return incoming;
     };
+    // Canonical Kanban create backfill can arrive before the first placement
+    // Move. Keep the holder-local display intent on the local operation row
+    // throughout that gap, without adding members to a producer-signed Event
+    // or restoring private content after redaction.
+    if !raw_payload_is_signed_event(incoming_object)
+        && !incoming_redacted
+        && incoming_object.get("effect").is_none_or(Value::is_null)
+        && let Some(effect) = existing_object.get("effect")
+        && existing_object.get("kind").and_then(Value::as_str)
+            == Some(event_kind_str::STRAND_CREATE)
+    {
+        incoming_object.insert("effect".to_owned(), effect.clone());
+    }
     for key in [
         // Accepted optimistic rows keep their holder-local record key.  The
         // receipt's content-bound identity remains authoritative after a later
@@ -1131,6 +1143,23 @@ mod durable_inbox_tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("inkson-realm-inbox-{nonce}.json"))
+    }
+
+    #[test]
+    fn card_placement_intent_is_not_copied_into_signed_events_or_redactions() {
+        let existing = json!({
+            "kind": "ak.strand.create",
+            "effect": {"title": "Private card", "list_space_id": "local-list"}
+        });
+        for incoming in [
+            json!({"kind": "ak.strand.create", "producer_proof": {"kid": "k"}}),
+            json!({"kind": "ak.strand.create", "redacted": true}),
+        ] {
+            assert_eq!(
+                super::merge_synced_raw_operation_payload(&existing, incoming.clone()),
+                incoming
+            );
+        }
     }
 
     #[test]
