@@ -1043,6 +1043,11 @@ impl ChatController {
                 .await;
                 match outcome {
                     crate::views::secure_send::SecureSendOutcome::Sent { event_id, status } => {
+                        state_store.write().mark_message_retry_replacement(
+                            &message.realm_id,
+                            &local_id,
+                            &event_id,
+                        );
                         let protocol_message_id = arkret_sdk::EventId::new(event_id.clone())
                             .ok()
                             .map(|event_id| {
@@ -1160,6 +1165,11 @@ impl ChatController {
             .await
             {
                 Ok(submitted) => {
+                    state_store.write().mark_message_retry_replacement(
+                        &message.realm_id,
+                        &local_id,
+                        &submitted.event_id,
+                    );
                     match serde_json::to_value(AcceptedChatMessageOperation {
                         event_id: &submitted.event_id,
                         kind: event_kind_str::MESSAGE_CREATE,

@@ -199,34 +199,24 @@ setTimeout(() => {{
     let _ = document::eval(&script);
 }
 
-fn timeline_projection_key(
-    selected_realm_id: &str,
-    realm_live_epoch: u64,
-    visible_messages: &[ChatMessage],
-    private_sidecar_strand_ids: &std::collections::BTreeSet<String>,
-) -> String {
-    use std::hash::{Hash, Hasher};
-
-    let mut projection = std::collections::hash_map::DefaultHasher::new();
-    selected_realm_id.hash(&mut projection);
-    realm_live_epoch.hash(&mut projection);
-    for message in visible_messages {
-        message.id.hash(&mut projection);
-        message.protocol_message_id.hash(&mut projection);
-        message.strand_id.hash(&mut projection);
-        message.realm_id.hash(&mut projection);
-        message.body.hash(&mut projection);
-        message.timestamp.hash(&mut projection);
-        message.reply_to.hash(&mut projection);
-        message.reactions.hash(&mut projection);
-        message.edited.hash(&mut projection);
-        message.revision_source.hash(&mut projection);
-        message.redacted.hash(&mut projection);
-        message.pending.hash(&mut projection);
-        message.failed.hash(&mut projection);
+fn position_local_timeline_rows(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    let (mut local, mut accepted): (Vec<_>, Vec<_>) = messages
+        .into_iter()
+        .partition(|message| message.pending || message.failed);
+    // Pending rows have no Commit position. Use their local send time only to
+    // place the optimistic display; never reorder accepted history by clocks.
+    local.sort_by_key(|message| message.created_at);
+    for message in local {
+        let index = message.created_at.and_then(|created_at| {
+            accepted.iter().position(|candidate| {
+                candidate.realm_id == message.realm_id
+                    && candidate.strand_id == message.strand_id
+                    && candidate.created_at.is_some_and(|at| at > created_at)
+            })
+        });
+        accepted.insert(index.unwrap_or(accepted.len()), message);
     }
-    private_sidecar_strand_ids.hash(&mut projection);
-    format!("{:016x}", projection.finish())
+    accepted
 }
 
 fn project_visible_messages(
@@ -1718,7 +1708,7 @@ pub fn ChatPanel(
                 decrypt_identity,
             );
             merge_chat_messages(&mut folded, server_folded);
-            folded
+            position_local_timeline_rows(folded)
         }
     });
     let all_messages_snapshot = all_messages_snapshot.read().clone();
@@ -1733,15 +1723,9 @@ pub fn ChatPanel(
         &sidecar_exchange_projections,
         sidecar_exchange_current.is_ok(),
     );
-    // Dioxus may retain the child timeline across context-backed signal updates. Key the
-    // projection boundary by every visible timeline row so lifecycle folds cannot
-    // leave a memoized child rendering an older snapshot.
-    let _timeline_projection_key = timeline_projection_key(
-        &selected_realm_id,
-        realm_live_epoch(),
-        &visible_messages,
-        &private_sidecar_strand_ids,
-    );
+    // Context props carry row changes. Retain the mounted feed across sync and
+    // lifecycle updates so its scroll position and focused controls survive.
+    let timeline_scope_key = format!("{selected_realm_id}\u{1f}{selected_channel_value}");
     // P3B.2.4 — per-strand Circle-scope lookup used by the
     // message accent rail. We index by `strand_id` once instead of
     // searching the `channels` Vec for every rendered message.
@@ -2643,7 +2627,7 @@ pub fn ChatPanel(
                     }
                 } else {
                 ChatTimeline {
-                    key: "{_timeline_projection_key}",
+                    key: "{timeline_scope_key}",
                     controller,
                     context: ChatTimelineContext {
                         embedded,

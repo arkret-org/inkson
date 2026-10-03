@@ -912,6 +912,57 @@ impl LocalStateStore {
                 )
         })
     }
+
+    /// Retain the rejected submission for audit while linking its explicit
+    /// user retry. This holder metadata never changes the signed Event.
+    pub(crate) fn mark_message_retry_replacement(
+        &mut self,
+        realm_id: &str,
+        previous_ref: &str,
+        replacement_event_id: &str,
+    ) {
+        if arkret_sdk::EventId::new(replacement_event_id.to_owned()).is_err() {
+            return;
+        }
+        self.ensure_cached_loaded();
+        let mut changed = false;
+        for record in &mut self.cached.raw_operations {
+            let Some(event) = record
+                .payload
+                .get("event")
+                .and_then(|value| serde_json::from_value::<arkret_sdk::Event>(value.clone()).ok())
+            else {
+                continue;
+            };
+            if event.kind != arkret_sdk::EventKind::MessageCreate
+                || event.realm_id.as_str() != realm_id
+                || record.payload.get("producer_proof").is_some()
+                || record.payload.get("write_state").and_then(Value::as_str) != Some("rejected")
+                || replacement_event_id == event.event_id.as_str()
+                || !(record.operation_id == previous_ref
+                    || event.event_id.as_str() == previous_ref
+                    || arkret_sdk::MessageId::from_event_id(&event.event_id).as_str()
+                        == previous_ref
+                    || record
+                        .payload
+                        .get("retry_replacement_event_id")
+                        .and_then(Value::as_str)
+                        == Some(previous_ref))
+            {
+                continue;
+            }
+            if let Some(payload) = record.payload.as_object_mut() {
+                payload.insert(
+                    "retry_replacement_event_id".to_owned(),
+                    Value::String(replacement_event_id.to_owned()),
+                );
+                changed = true;
+            }
+        }
+        if changed {
+            let _ = self.flush();
+        }
+    }
 }
 
 fn update_operation_write_state_payload(
