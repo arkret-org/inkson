@@ -1114,11 +1114,13 @@ pub fn KanbanPanel(
         let realm = local_realm_id.clone();
         move || {
             let (strands, _) = current_page();
+            let space_selectors =
+                kanban_space_current_selectors(selected_board().as_ref(), &columns());
             state_store.read().set_product_current_demand(
                 &authority,
                 &realm,
                 Some(strands),
-                Vec::new(),
+                space_selectors,
             );
         }
     });
@@ -1145,7 +1147,8 @@ pub fn KanbanPanel(
         &board_space_options(),
         pending_board_creates(),
     );
-    let board_status_text = board_status();
+    let board_status_text =
+        kanban_operation_status_text(&board_status(), &state_store.read().load().raw_operations);
     let board_select_label = format!("{}:", crate::i18n::tr("kanban.board_header"));
 
     // Synthesis track projection (option`ak.strand.update). The track is built

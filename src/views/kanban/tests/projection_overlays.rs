@@ -1,5 +1,215 @@
 use super::*;
 
+fn current_space_siblings(
+    id: &str,
+    kind: &str,
+    title: &str,
+    parent: Option<&str>,
+) -> Vec<arkret_wire::TypedCurrentResult> {
+    use arkret_wire::{CommitStreamRef, CurrentRevision, CurrentSelector, TypedCurrentResult};
+    let space_id = arkret_sdk::SpaceId::new(id).unwrap();
+    let space = arkret_sdk::Space::new(
+        space_id.clone(),
+        arkret_sdk::RealmId::new(PENDING_TEST_REALM).unwrap(),
+        kind,
+        title,
+        crate::test_support::account_actor("ak:did_core:web:alice.example"),
+    );
+    [
+        (
+            CurrentSelector::Space {
+                space_id: space_id.clone(),
+            },
+            serde_json::to_value(space).unwrap(),
+        ),
+        (
+            CurrentSelector::SpaceParent {
+                space_id: space_id.clone(),
+            },
+            json!({"parent_space_id": parent}),
+        ),
+        (
+            CurrentSelector::SpaceChildScopePolicy { space_id },
+            Value::Null,
+        ),
+    ]
+    .into_iter()
+    .map(|(selector, value)| TypedCurrentResult::Value {
+        selector,
+        source_stream_ref: CommitStreamRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(PENDING_TEST_REALM).unwrap(),
+        },
+        revision: CurrentRevision {
+            commit_id: arkret_wire::RealmCommitId::from_digest([9; 32]),
+            stream_position: 9,
+        },
+        value,
+    })
+    .collect()
+}
+
+#[test]
+fn board_and_lists_render_from_current_without_create_history() {
+    let list_id = "ak:space:AXDc1EwPcJZuThaCiR4FHq4V7rQ4I9QBR1YmEVB4xroH";
+    let mut entries = current_space_siblings(PENDING_TEST_SPACE, "board", "Current board", None);
+    entries.extend(current_space_siblings(
+        list_id,
+        "list",
+        "Current list",
+        Some(PENDING_TEST_SPACE),
+    ));
+    let canonical = entries.clone();
+    let (columns, options, selected) = project_board_with_projection_for_actor(
+        &[],
+        &[],
+        &[],
+        PENDING_TEST_SPACE,
+        PENDING_TEST_REALM,
+        None,
+        "",
+        &entries,
+    );
+    assert_eq!(selected.as_deref(), Some(PENDING_TEST_SPACE));
+    assert_eq!(options[0].title, "Current board");
+    assert_eq!(columns.len(), 1);
+    assert_eq!(columns[0].id, list_id);
+    assert_eq!(columns[0].title, "Current list");
+    assert_eq!(
+        overlay_local_board_space_options(Vec::new(), &[], PENDING_TEST_REALM, &entries)[0].title,
+        "Current board"
+    );
+    assert_eq!(entries, canonical);
+    assert_eq!(
+        kanban_space_current_selectors(Some(&options[0].id), &columns).len(),
+        6
+    );
+}
+
+#[test]
+fn queued_list_is_visible_under_a_current_only_board() {
+    let entries = current_space_siblings(PENDING_TEST_SPACE, "board", "Current board", None);
+    let mut list = accepted_board_create_record();
+    list.operation_id = "pending-list-operation".to_owned();
+    list.payload["write_state"] = json!("queued");
+    list.payload.as_object_mut().unwrap().remove("event_id");
+    list.payload["operation_id"] = json!("pending-list-operation");
+    list.payload["local_target_ref"] = json!("pending-list-operation");
+    list.payload["body"]["object"]["kind"] = json!("list");
+    list.payload["body"]["object"]["title"] = json!("New list");
+    list.payload["body"]["object"]["parent_space_id"] = json!(PENDING_TEST_SPACE);
+    let (columns, ..) = project_board_with_projection_for_actor(
+        &[list],
+        &[],
+        &[],
+        PENDING_TEST_SPACE,
+        PENDING_TEST_REALM,
+        None,
+        "",
+        &entries,
+    );
+    assert_eq!(columns.len(), 1);
+    assert_eq!(columns[0].title, "New list");
+}
+
+#[test]
+fn current_space_name_wins_over_historical_create_and_update() {
+    let entries = current_space_siblings(PENDING_TEST_SPACE, "board", "Renamed board", None);
+    let create = accepted_board_create_record();
+    let mut update = create.clone();
+    update.payload = json!({"kind": "ak.space.update", "write_state": "synced", "body": {
+        "space_id": PENDING_TEST_SPACE, "patch": {"title": {"$op": "set", "value": "Old name"}}
+    }});
+    let views = space_container_views_from_projection_and_ops(
+        &[],
+        &[create, update.clone()],
+        PENDING_TEST_REALM,
+        &entries,
+    );
+    assert_eq!(views[0].title, "Renamed board");
+    update.payload["write_state"] = json!("queued");
+    let views =
+        space_container_views_from_projection_and_ops(&[], &[update], PENDING_TEST_REALM, &entries);
+    assert_eq!(views[0].title, "Old name");
+}
+
+#[test]
+fn current_space_requires_exact_realm_and_complete_resolved_siblings() {
+    let entries = current_space_siblings(PENDING_TEST_SPACE, "board", "Board", None);
+    assert_eq!(
+        space_container_views_from_current(&entries, PENDING_TEST_REALM).len(),
+        1
+    );
+    for omitted in 0..3 {
+        let mut partial = entries.clone();
+        partial.remove(omitted);
+        assert!(space_container_views_from_current(&partial, PENDING_TEST_REALM).is_empty());
+    }
+    let list_id = "ak:space:AXDc1EwPcJZuThaCiR4FHq4V7rQ4I9QBR1YmEVB4xroH";
+    assert!(
+        space_container_views_from_current(
+            &current_space_siblings(list_id, "list", "Orphan", Some(PENDING_TEST_SPACE)),
+            PENDING_TEST_REALM
+        )
+        .is_empty()
+    );
+    let mut cycle = current_space_siblings(PENDING_TEST_SPACE, "board", "Board", Some(list_id));
+    cycle.extend(current_space_siblings(
+        list_id,
+        "list",
+        "List",
+        Some(PENDING_TEST_SPACE),
+    ));
+    assert!(space_container_views_from_current(&cycle, PENDING_TEST_REALM).is_empty());
+    let mut foreign = entries.clone();
+    let arkret_wire::TypedCurrentResult::Value {
+        source_stream_ref, ..
+    } = &mut foreign[1];
+    *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
+        realm_id: arkret_sdk::RealmId::new("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-")
+            .unwrap(),
+    };
+    assert!(space_container_views_from_current(&foreign, PENDING_TEST_REALM).is_empty());
+}
+
+#[test]
+fn detached_space_submission_status_settles_and_preserves_newer_ui_actions() {
+    let mut record = accepted_board_create_record();
+    let submitting = format!(
+        "submitting ak.space.create operation {}",
+        crate::views::helpers::short_protocol_id(&record.operation_id)
+    );
+    record.payload["write_state"] = json!("queued");
+    assert_eq!(
+        kanban_operation_status_text(&submitting, &[record.clone()]),
+        submitting
+    );
+    record.payload["write_state"] = json!("accepted");
+    assert_eq!(
+        kanban_operation_status_text(&submitting, &[record.clone()]),
+        "ak.space.create completed"
+    );
+    record.payload["write_state"] = json!("failed");
+    record.payload["error"] = json!("parent not readable");
+    assert_eq!(
+        kanban_operation_status_text(&submitting, &[record.clone()]),
+        "ak.space.create failed: parent not readable"
+    );
+    assert_eq!(
+        kanban_operation_status_text("Board selected", &[record.clone()]),
+        "Board selected"
+    );
+    record
+        .payload
+        .as_object_mut()
+        .unwrap()
+        .remove("write_state");
+    record.payload["producer_proof"] = json!({});
+    assert_eq!(
+        kanban_operation_status_text(&submitting, &[record]),
+        "ak.space.create completed"
+    );
+}
+
 const PENDING_TEST_REALM: &str = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
 const PENDING_TEST_OPERATION: &str = "01a01bdd-804b-7ad0-bee8-194898437ad7";
 const PENDING_TEST_EVENT: &str = "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";

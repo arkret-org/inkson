@@ -557,6 +557,17 @@ pub(crate) fn space_container_views_from_projection_and_ops(
         .cloned()
         .map(|view| (view.space_id.clone(), view))
         .collect::<std::collections::BTreeMap<_, _>>();
+    let current = space_container_views_from_current(current_entries, realm_id);
+    let current_ids = current
+        .iter()
+        .map(|view| view.space_id.clone())
+        .collect::<BTreeSet<_>>();
+    for view in current {
+        if !by_id.contains_key(&view.space_id) {
+            order.push(view.space_id.clone());
+        }
+        by_id.insert(view.space_id.clone(), view);
+    }
     for record in ordered_operations(ops) {
         if !raw_operation_allows_overlay(&record.payload) {
             continue;
@@ -606,6 +617,16 @@ pub(crate) fn space_container_views_from_projection_and_ops(
         let Some(kind) = op_kind(record) else {
             continue;
         };
+        if op_space_target_id(record).is_some_and(|id| current_ids.contains(&id))
+            && !matches!(
+                record.payload.get("write_state").and_then(Value::as_str),
+                Some("queued" | "submitting" | "submitted")
+            )
+        {
+            // Current has already selected the accepted metadata/lifecycle.
+            // Only a pending local edit may overlay that value.
+            continue;
+        }
         match kind.as_str() {
             event_kind_str::SPACE_UPDATE => {
                 if let Some(id) = op_space_target_id(record)

@@ -129,6 +129,16 @@ pub(crate) fn overlay_local_board_space_options(
 ) -> Vec<BoardSpaceOption> {
     let terminal_ids = terminal_space_ids_from_current(current_entries, realm_id);
     options.retain(|option| !terminal_ids.contains(option.id.as_str()));
+    for current in board_space_options_from_projection(&space_container_views_from_current(
+        current_entries,
+        realm_id,
+    )) {
+        if let Some(existing) = options.iter_mut().find(|option| option.id == current.id) {
+            *existing = current;
+        } else {
+            options.push(current);
+        }
+    }
     for local_create in local_space_create_records(raw_operations, realm_id)
         .into_iter()
         .filter(|local_create| local_create.kind == "board")
@@ -156,6 +166,183 @@ pub(crate) fn overlay_local_board_space_options(
     }
     sort_board_space_options(&mut options);
     options
+}
+
+/// Join the registered Space sibling values from the installed current view.
+/// Metadata never supplies a structural parent; missing siblings remain
+/// unresolved rather than turning a List into a root or replaying its create.
+pub(crate) fn space_container_views_from_current(
+    entries: &[arkret_wire::TypedCurrentResult],
+    realm_id: &str,
+) -> Vec<crate::state::projection_views::SpaceContainerProjectionView> {
+    use arkret_wire::{CommitStreamRef, CurrentSelector, TypedCurrentResult};
+
+    let value_for = |selector: &CurrentSelector| {
+        entries.iter().find_map(|entry| {
+            let TypedCurrentResult::Value {
+                selector: candidate,
+                source_stream_ref: CommitStreamRef::Realm { realm_id: source },
+                value,
+                ..
+            } = entry
+            else {
+                return None;
+            };
+            (source.as_str() == realm_id && candidate == selector).then_some(value)
+        })
+    };
+    let spaces = entries
+        .iter()
+        .filter_map(|entry| {
+            let TypedCurrentResult::Value {
+                selector: CurrentSelector::Space { space_id },
+                source_stream_ref: CommitStreamRef::Realm { realm_id: source },
+                value,
+                ..
+            } = entry
+            else {
+                return None;
+            };
+            if source.as_str() != realm_id
+                || value.get("parent_space_id").is_some()
+                || value.get("child_scope_policy").is_some()
+            {
+                return None;
+            }
+            let parent = value_for(&CurrentSelector::SpaceParent {
+                space_id: space_id.clone(),
+            })?
+            .as_object()?;
+            if parent.len() != 1 {
+                return None;
+            }
+            let policy = value_for(&CurrentSelector::SpaceChildScopePolicy {
+                space_id: space_id.clone(),
+            })?;
+            let mut joined = value.clone();
+            joined["parent_space_id"] = parent.get("parent_space_id")?.clone();
+            joined["child_scope_policy"] = policy.clone();
+            let space: arkret_sdk::Space = serde_json::from_value(joined).ok()?;
+            if space.id.as_ref() != Some(space_id)
+                || space.realm_id.as_str() != realm_id
+                || space.scope_circle_id.is_some()
+            {
+                return None;
+            }
+            Some(
+                crate::state::projection_views::SpaceContainerProjectionView {
+                    space_id: space_id.to_string(),
+                    realm_id: space.realm_id.to_string(),
+                    kind: space.kind,
+                    title: space.title,
+                    state: space.state?,
+                    rank: space.rank,
+                    parent_space_id: space.parent_space_id.map(|id| id.to_string()),
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    spaces
+        .iter()
+        .filter(|space| {
+            arkret_sdk::validate_space_parent_chain(
+                &space.space_id,
+                &space.realm_id,
+                space.parent_space_id.as_deref(),
+                |id| {
+                    spaces
+                        .iter()
+                        .find(|parent| parent.space_id == id)
+                        .map(|parent| arkret_sdk::SpaceStructureNode {
+                            realm_id: &parent.realm_id,
+                            parent_space_id: parent.parent_space_id.as_deref(),
+                            active: parent.state == arkret_sdk::SpaceState::Active,
+                        })
+                },
+            )
+            .is_ok()
+        })
+        .cloned()
+        .collect()
+}
+
+pub(crate) fn kanban_space_current_selectors(
+    board: Option<&arkret_sdk::SpaceId>,
+    columns: &[KanbanColumn],
+) -> Vec<arkret_wire::CurrentSelector> {
+    use arkret_wire::CurrentSelector;
+    // Three siblings per Space, within the product demand's 256-selector cap.
+    // Remaining columns continue to display the complete derived read page.
+    board
+        .into_iter()
+        .cloned()
+        .chain(
+            columns
+                .iter()
+                .filter_map(|column| arkret_sdk::SpaceId::new(column.id.clone()).ok()),
+        )
+        .take(85)
+        .flat_map(|space_id| {
+            [
+                CurrentSelector::Space {
+                    space_id: space_id.clone(),
+                },
+                CurrentSelector::SpaceParent {
+                    space_id: space_id.clone(),
+                },
+                CurrentSelector::SpaceChildScopePolicy { space_id },
+            ]
+        })
+        .collect()
+}
+
+/// Settle only the status of the write still displayed by this panel. A root
+/// submission may outlive its component; render its durable result instead of
+/// capturing a component-owned status signal across the await.
+pub(crate) fn kanban_operation_status_text(
+    status: &str,
+    operations: &[RawOperationRecord],
+) -> String {
+    operations
+        .iter()
+        .rev()
+        .find_map(|record| {
+            let kind = record.payload.get("kind")?.as_str()?;
+            if status
+                != format!(
+                    "submitting {kind} operation {}",
+                    short_protocol_id(&record.operation_id)
+                )
+            {
+                return None;
+            }
+            let write_state = record
+                .payload
+                .get("write_state")
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    record
+                        .payload
+                        .get("producer_proof")
+                        .filter(|proof| proof.is_object())
+                        .map(|_| "synced")
+                });
+            match write_state {
+                Some("accepted" | "synced") => Some(format!("{kind} completed")),
+                Some("failed" | "rejected" | "quarantined" | "dropped" | "cancelled") => {
+                    Some(format!(
+                        "{kind} failed: {}",
+                        record
+                            .payload
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .unwrap_or("operation did not complete")
+                    ))
+                }
+                _ => None,
+            }
+        })
+        .unwrap_or_else(|| status.to_owned())
 }
 
 /// Read only negative lifecycle facts from the installed verified current index.

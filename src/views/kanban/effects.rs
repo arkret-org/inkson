@@ -28,7 +28,15 @@ async fn fetch_kanban_projection_snapshot(
             None
         }
     };
-    let events = api.event_submitter()?.backfill(realm_id).await?.events();
+    // History may be unavailable to a since-join member. It must not erase
+    // successfully read current objects or block their presentation.
+    let events = match api.event_submitter()?.backfill(realm_id).await {
+        Ok(page) => page.events(),
+        Err(error) => {
+            tracing::warn!(%error, %realm_id, "kanban Event backfill unavailable");
+            Vec::new()
+        }
+    };
     Ok(KanbanProjectionSnapshot {
         containers: spaces,
         strands,
