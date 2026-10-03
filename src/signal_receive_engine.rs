@@ -510,13 +510,25 @@ impl InksonSignalSink {
         let Ok(mut live) = self.live.lock() else {
             return;
         };
-        if !live.expire(now) {
-            return;
-        }
-        let bodies = live.bodies();
+        let changed = live.expire(now);
+        let bodies = changed.then(|| live.bodies());
         drop(live);
-        self.state_store
-            .write(|store| store.save_presence_projection(&bodies));
+        let cached = self
+            .state_store
+            .read(|store| store.load().presence_projection);
+        // A restarted receiver has no in-memory keys for the prior projection.
+        // Its admitted cached bodies still expire without a new network frame.
+        let mut bodies = bodies.unwrap_or_else(|| cached.clone());
+        bodies.retain(|body| {
+            body.get("expires_at")
+                .and_then(Value::as_str)
+                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+                .is_some_and(|expiry| expiry > now)
+        });
+        if bodies != cached {
+            self.state_store
+                .write(|store| store.save_presence_projection(&bodies));
+        }
     }
 
     /// The Realm's accepted `ak.realm.read_receipt_policy`, as last projected
@@ -660,25 +672,55 @@ pub async fn run_signal_receive_engine(
         products: ctx.products.clone(),
         live: Mutex::new(LiveSignalProjection::new()),
     };
+    let receive = run_signal_receive_loop(
+        start_generation,
+        &generation,
+        &ctx,
+        start_profile_id.as_deref(),
+        &decryptor,
+        &sink,
+    );
+    let clock = async {
+        while signal_engine_is_active(
+            &ctx,
+            &generation,
+            start_generation,
+            start_profile_id.as_deref(),
+        ) {
+            let now = crate::clock::now_utc();
+            sink.expire_live_bodies(now);
+            sink.products.advance_clock(now);
+            crate::runtime_helpers::sleep_for(Duration::from_secs(1)).await;
+        }
+    };
+    futures_util::pin_mut!(receive, clock);
+    // Keep the receive future intact while the local clock runs, including
+    // blocked HTTP reads and reconnect backoff. Either lifecycle end cancels both.
+    let _ = futures_util::future::select(receive, clock).await;
+}
+
+async fn run_signal_receive_loop(
+    start_generation: u64,
+    generation: &crate::runtime::input::ValueReader<u64>,
+    ctx: &SignalReceiveEngineContext,
+    start_profile_id: Option<&str>,
+    decryptor: &MlsSignalDecryptor,
+    sink: &InksonSignalSink,
+) {
     let mut receiver = SignalReceiver::new();
     let mut jitter_seed = [0_u8; 8];
     let _ = getrandom::fill(&mut jitter_seed);
     let mut restart_backoff = RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING)
         .with_jitter(0.2, u64::from_le_bytes(jitter_seed));
-    while signal_engine_is_active(
-        &ctx,
-        &generation,
-        start_generation,
-        start_profile_id.as_deref(),
-    ) {
+    while signal_engine_is_active(ctx, generation, start_generation, start_profile_id) {
         let result = run_signal_receive_attempt(
-            &ctx,
-            &generation,
+            ctx,
+            generation,
             start_generation,
-            start_profile_id.as_deref(),
+            start_profile_id,
             &mut receiver,
-            &decryptor,
-            &sink,
+            decryptor,
+            sink,
         )
         .await;
         if matches!(result, Ok(SignalStreamStopReason::Unauthorized { .. })) {
@@ -698,12 +740,7 @@ pub async fn run_signal_receive_engine(
                 ),
             }
         }
-        if !signal_engine_is_active(
-            &ctx,
-            &generation,
-            start_generation,
-            start_profile_id.as_deref(),
-        ) {
+        if !signal_engine_is_active(ctx, generation, start_generation, start_profile_id) {
             break;
         }
         let retry_delay = match &result {
@@ -808,6 +845,41 @@ mod tests {
 
     fn at(seconds: i64) -> chrono::DateTime<chrono::Utc> {
         chrono::DateTime::from_timestamp(1_800_000_000 + seconds, 0).unwrap()
+    }
+
+    #[test]
+    fn restarted_projection_expires_without_a_transport_heartbeat() {
+        use std::sync::Arc;
+
+        let directory = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(crate::LocalStateStore::with_path(
+            directory.path().join("presence-clock.json"),
+        )));
+        let expired = json!({"kind": "ak.presence", "state": "online", "expires_at": at(30)});
+        let live = json!({"kind": "ak.presence", "state": "idle", "expires_at": at(45)});
+        store
+            .lock()
+            .unwrap()
+            .save_presence_projection(&[expired.clone(), live.clone()]);
+        let read = store.clone();
+        let write = store.clone();
+        let sink = InksonSignalSink {
+            state_store: crate::runtime::input::StateStoreHandle::new(
+                move |consume| consume(&read.lock().unwrap()),
+                move |consume| consume(&mut write.lock().unwrap()),
+            ),
+            products: SignalProductRouter::default(),
+            live: Mutex::new(Default::default()),
+        };
+        sink.expire_live_bodies(at(29));
+        assert_eq!(
+            store.lock().unwrap().load().presence_projection,
+            [expired, live.clone()]
+        );
+        sink.expire_live_bodies(at(30));
+        assert_eq!(store.lock().unwrap().load().presence_projection, [live]);
+        sink.expire_live_bodies(at(45));
+        assert!(store.lock().unwrap().load().presence_projection.is_empty());
     }
 
     fn plaintext_of(kind: &str, body: Value) -> AdmittedSignal {

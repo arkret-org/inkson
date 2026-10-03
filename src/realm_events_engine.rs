@@ -382,6 +382,44 @@ pub(crate) async fn verified_mls_recovery_tail(
         .collect())
 }
 
+/// Prove a Realm MLS read cut without asking a replica to issue a Snapshot.
+/// This does not settle an Account window or advance its durable cursor.
+pub(crate) async fn verified_realm_roster_history(
+    http: &arkret_sdk::http_client::Client,
+    bundle: &arkret_sdk::RealmAuthorityBundle,
+    freshness: &arkret_identity::RealmAuthorityFreshness,
+    replica: &mut RealmReplica,
+) -> garth::Result<Vec<arkret_sdk::CommittedEventView>> {
+    let head = &bundle.realm_stream_head;
+    let end = head
+        .stream_position
+        .checked_add(1)
+        .ok_or_else(|| garth::Error::Protocol("MLS roster authority head overflows".to_owned()))?;
+    let authority = AuthorityClient::new(http.clone());
+    let (pages, _) = verified_stream_pages(
+        &authority,
+        http,
+        replica,
+        bundle,
+        freshness,
+        &bundle.realm_id,
+        &head.stream_ref,
+        ReplayStart::ReadableFloor,
+        Some(end),
+    )
+    .await?
+    .into_verified()?;
+    if replica.verified_head(&head.stream_ref) != Some(head) {
+        return Err(garth::Error::Protocol(
+            "MLS roster history does not reach the nonce-bound authority head".to_owned(),
+        ));
+    }
+    Ok(pages
+        .iter()
+        .flat_map(|page| page.rows().iter().cloned())
+        .collect())
+}
+
 /// Read the private scope's MLS current from a complete authority-signed cut.
 /// Parent Realm state and a shape-only Sidecar GET cannot supply this binding.
 pub(crate) async fn verified_sidecar_mls_current(

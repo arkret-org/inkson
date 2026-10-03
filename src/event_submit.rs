@@ -435,16 +435,23 @@ pub(crate) async fn pending_chat_outbound_local_operation_ids(
     authority: &arkret_sdk::AccountId,
     realm_id: &str,
     strand_id: &str,
-    state: &crate::state::ClientLocalState,
+    state_store: &crate::runtime::input::StateStoreHandle,
 ) -> anyhow::Result<BTreeSet<String>> {
     let outbound = OutboundEngine::new(
         InksonOutboundStore::open(authority, OutboundLane::Standard)?,
         InksonHostClock,
     );
     let snapshot = outbound.snapshot().await?;
-    Ok(pending_chat_local_operation_ids_from_snapshot(
-        &snapshot, realm_id, strand_id, state,
-    ))
+    // Enqueue may finish its holder-local identity join during the async read.
+    // Project with that latest durable mapping, not a pre-await UI snapshot.
+    Ok(state_store.read(|store| {
+        pending_chat_local_operation_ids_from_snapshot(
+            &snapshot,
+            realm_id,
+            strand_id,
+            &store.load(),
+        )
+    }))
 }
 
 fn pending_chat_local_operation_ids_from_snapshot(

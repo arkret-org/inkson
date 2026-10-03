@@ -194,22 +194,23 @@ pub(super) fn ChatEffects(
 
     let authority_for_connectivity = authority.clone();
     let realm_for_connectivity = selected_realm_id.clone();
-    use_future(move || {
-        let authority_for_connectivity = authority_for_connectivity.clone();
-        let realm_for_connectivity = realm_for_connectivity.clone();
-        async move {
+    // Chat survives route prop changes. Cancel the old scope's queue poll and
+    // restart it for the active Account/Realm instead of retaining mount props.
+    use_future(use_reactive(
+        (&authority_for_connectivity, &realm_for_connectivity),
+        move |(authority_for_connectivity, realm_for_connectivity)| async move {
+            let queue_state = crate::app::runtime_adapter::state_store_handle(state_store);
             loop {
                 let online = navigator_online();
                 if *is_online.peek() != online {
                     event_sink.emit(ChatProjectionEvent::Connectivity(online));
                 }
                 let strand_for_connectivity = selected_channel();
-                let queue_identity_state = state_store.peek().load();
                 if let Ok(next) = crate::event_submit::pending_chat_outbound_local_operation_ids(
                     &authority_for_connectivity,
                     &realm_for_connectivity,
                     &strand_for_connectivity,
-                    &queue_identity_state,
+                    &queue_state,
                 )
                 .await
                     && *queued_outbound_local_operation_ids.peek() != next
@@ -218,8 +219,8 @@ pub(super) fn ChatEffects(
                 }
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(2_500)).await;
             }
-        }
-    });
+        },
+    ));
 
     let selected_realm_after_initial_sync = selected_realm_id.clone();
     let account_after_initial_sync = principal_id.clone();
