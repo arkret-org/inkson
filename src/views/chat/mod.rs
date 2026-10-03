@@ -1226,6 +1226,63 @@ fn sidecar_agent_label(agent_ids: &[String], participants: &[SpaceParticipant]) 
     }
 }
 
+async fn drive_sidecar_completion_closes(
+    base_url: String,
+    token: String,
+    authority: arkret_sdk::AccountId,
+    device_id: arkret_sdk::DeviceId,
+    realm: String,
+    state_store: SyncSignal<LocalStateStore>,
+) -> anyhow::Result<()> {
+    let closes = crate::sidecar_fold::pending_closes(&state_store.read(), &authority, &realm)?;
+    let api = crate::transport::auth::authed_api_with_sync(&base_url, token, None)?;
+    for (projection, control) in closes {
+        let digest = arkret_sdk::canonical::canonical_sha256(&control)?;
+        let Some(_guard) = crate::sidecar::try_begin_sidecar_submission(
+            authority.principal_id.as_str(),
+            projection.source_track_ref.strand_id.as_str(),
+            &digest,
+        ) else {
+            continue;
+        };
+        let handle = crate::app::runtime_adapter::state_store_handle(state_store);
+        if crate::event_submit::retained_sidecar_control_request(
+            &authority,
+            &projection.sidecar_id,
+            &projection.private_request_event_id,
+            &handle,
+        )
+        .await?
+        {
+            continue;
+        }
+        let build = crate::views::secure_send::build_sidecar_exchange_control_send(
+            state_store,
+            &realm,
+            &authority,
+            authority.principal_id.as_str(),
+            &device_id,
+            projection.source_track_ref.strand_id.as_str(),
+            projection.sidecar_id,
+            &control,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        match crate::views::secure_send::submit_secure_send(&api, state_store, build, &realm, None)
+            .await
+        {
+            crate::views::secure_send::SecureSendOutcome::Sent { .. } => {}
+            crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
+                anyhow::bail!(message)
+            }
+            crate::views::secure_send::SecureSendOutcome::MessageAuthoringFailed { .. } => {
+                anyhow::bail!("Sidecar close was refused by the authoring gate")
+            }
+        }
+    }
+    Ok(())
+}
+
 fn composer_mention_nodes(
     mentions_enabled: bool,
     body: &str,
@@ -1518,11 +1575,6 @@ pub fn ChatPanel(
         }
     });
     let all_channels = channels();
-    let mut private_sidecar_strand_ids = all_channels
-        .iter()
-        .filter(|channel| channel.is_private_sidecar)
-        .map(|channel| channel.strand_id.clone())
-        .collect::<std::collections::BTreeSet<_>>();
     // Read-only lookup. Taking a `write()` guard here mark-dirties every
     // `state_store` subscriber on each render — including this component —
     // which spins ChatPanel into an infinite re-render that hangs the page
@@ -1536,9 +1588,52 @@ pub fn ChatPanel(
         .as_ref()
         .cloned()
         .unwrap_or_default();
-    for projection in &sidecar_exchange_projections {
-        private_sidecar_strand_ids.insert(projection.source_track_ref.strand_id.to_string());
-    }
+    let private_sidecar_event_ids = sidecar_exchange_projections
+        .iter()
+        .flat_map(|projection| {
+            std::iter::once(projection.private_request_event_id.to_string()).chain(
+                projection
+                    .user_facing_response_event_ids
+                    .iter()
+                    .map(ToString::to_string),
+            )
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    use_effect({
+        let base = base_url.clone();
+        let realm = selected_realm_id.clone();
+        let authority = authority.clone();
+        let device = account_device_id.clone();
+        move || {
+            let closes =
+                crate::sidecar_fold::pending_closes(&state_store.read(), &authority, &realm);
+            if !closes.is_ok_and(|closes| !closes.is_empty()) {
+                return;
+            }
+            let base = base.clone();
+            let realm = realm.clone();
+            let authority = authority.clone();
+            let device = device.clone();
+            let credential = token();
+            spawn(async move {
+                if drive_sidecar_completion_closes(
+                    base,
+                    credential,
+                    authority,
+                    device,
+                    realm,
+                    state_store,
+                )
+                .await
+                .is_err()
+                {
+                    tracing::warn!(
+                        "Sidecar completion close is awaiting verified recovery or durable submission"
+                    );
+                }
+            });
+        }
+    });
     let sidecar_privacy_gate =
         crate::sidecar::SidecarPrivacyGate::from_store(&state_store.read(), &principal_id);
     let filter_value = track_filter();
@@ -1790,7 +1885,29 @@ pub fn ChatPanel(
             position_local_timeline_rows(folded)
         }
     });
-    let all_messages_snapshot = all_messages_snapshot.read().clone();
+    let mut all_messages_snapshot = all_messages_snapshot.read().clone();
+    if sidecar_exchange_current.is_ok()
+        && let Ok((_, histories)) = state_store
+            .read()
+            .verified_sidecar_inputs(&selected_realm_id)
+    {
+        let store = state_store.read();
+        let private_messages = histories
+            .values()
+            .flatten()
+            .filter(|full| private_sidecar_event_ids.contains(full.event.event_id.as_str()))
+            .filter_map(|full| serde_json::to_value(&full.event).ok())
+            .filter_map(|event| {
+                chat_message_from_event_with_sidecar(
+                    &selected_realm_id,
+                    &event,
+                    Some(&store),
+                    Some((&authority, &principal_id, &account_device_id)),
+                )
+            })
+            .collect();
+        merge_chat_messages(&mut all_messages_snapshot, private_messages);
+    }
     let sidecar_projection: Option<(&str, arkret_sdk::AgentSidecarDisplayMode)> = sidecar_session
         .as_ref()
         .map(|session| (session.source_strand_id.as_str(), session.display_mode));
@@ -1818,7 +1935,20 @@ pub fn ChatPanel(
         })
         .collect();
     let visible_message_count = visible_messages.len();
-    let latest_sidecar_publish_body: Option<String> = None;
+    let latest_sidecar_publish_body = sidecar_exchange_projections
+        .iter()
+        .filter(|projection| {
+            projection.source_track_ref.strand_id.as_str() == selected_channel_value
+        })
+        .flat_map(|projection| &projection.user_facing_response_event_ids)
+        .filter_map(|event_id| {
+            all_messages_snapshot
+                .iter()
+                .find(|message| message.id == event_id.as_str())
+        })
+        .filter(|message| !message.body.is_empty() && !message.crypto_state.is_pending())
+        .max_by_key(|message| message.created_at)
+        .map(|message| message.body.clone());
     let messages_for_reply_lookup = &all_messages_snapshot;
     let left_open = !embedded && !direct_mode && left_panel_open();
     let active_right_panel = if embedded { None } else { right_panel() };
@@ -2739,7 +2869,7 @@ pub fn ChatPanel(
                         embedded,
                         visible_messages: visible_messages.clone(),
                         strand_scope_lookup: strand_scope_lookup.clone(),
-                        private_sidecar_strand_ids: private_sidecar_strand_ids.clone(),
+                        private_sidecar_event_ids: private_sidecar_event_ids.clone(),
                         authority: authority.clone(),
                         principal_id: active_account.principal_id().clone(),
                         account_display_label: account_display_label.clone(),

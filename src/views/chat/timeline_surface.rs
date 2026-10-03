@@ -37,7 +37,7 @@ pub(super) struct ChatTimelineContext {
     pub embedded: bool,
     pub visible_messages: Vec<ChatMessage>,
     pub strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle>,
-    pub private_sidecar_strand_ids: std::collections::BTreeSet<String>,
+    pub private_sidecar_event_ids: std::collections::BTreeSet<String>,
     pub authority: arkret_sdk::AccountId,
     pub principal_id: arkret_sdk::DidCoreId,
     pub account_display_label: String,
@@ -64,7 +64,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
         embedded,
         visible_messages,
         strand_scope_lookup,
-        private_sidecar_strand_ids,
+        private_sidecar_event_ids,
         authority,
         principal_id,
         account_display_label,
@@ -219,7 +219,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                     for msg in visible_messages {
                         {
                             let message_is_private_sidecar =
-                                private_sidecar_strand_ids.contains(&msg.strand_id);
+                                private_sidecar_event_ids.contains(&msg.id);
                             let message_is_read_only_shared =
                                 sidecar_active && !message_is_private_sidecar;
                             let scope_circle = (!message_is_private_sidecar)

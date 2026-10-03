@@ -142,6 +142,7 @@ pub use outbound_store::test_api as outbound_store_test_api;
 pub mod realm_state_snapshot;
 pub(crate) mod scheduled_send;
 pub mod sidecar;
+mod sidecar_fold;
 pub mod signal;
 pub mod signal_receive_engine;
 /// Sync projection layer (account/realm wire payloads -> local projection

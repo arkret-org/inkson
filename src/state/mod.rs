@@ -81,6 +81,7 @@ mod agent_evidence;
 mod direct_conversation;
 mod mls_governance;
 mod poll_commits;
+mod sidecar_commits;
 pub(crate) use direct_conversation::DirectMessageContext;
 mod mls_welcome_discovery;
 pub use mls_welcome_discovery::MlsWelcomeDiscoveryProgress;

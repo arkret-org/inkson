@@ -402,6 +402,53 @@ fn is_unsettled(status: SendQueueStatus) -> bool {
     )
 }
 
+/// A frozen controller control remains the retry identity until the signed
+/// history exposes its terminal result. Never seal a second close merely
+/// because the response to the first submission was lost.
+pub(crate) async fn retained_sidecar_control_request(
+    authority: &arkret_sdk::AccountId,
+    sidecar: &arkret_sdk::SidecarId,
+    request: &arkret_sdk::EventId,
+    store: &crate::runtime::input::StateStoreHandle,
+) -> anyhow::Result<bool> {
+    let outbound = OutboundEngine::new(
+        InksonOutboundStore::open(authority, OutboundLane::Standard)?,
+        InksonHostClock,
+    );
+    let snapshot = outbound.snapshot().await?;
+    for item in &snapshot.items {
+        if matches!(
+            item.submission.state,
+            garth::SubmissionState::Rejected { .. }
+        ) {
+            continue;
+        }
+        let event = queued_event(item);
+        if event.kind != arkret_sdk::EventKind::AgentSidecarExchangeControl
+            || !matches!(&event.scope_ref, arkret_sdk::ScopeRef::Sidecar { sidecar_id, .. } if sidecar_id == sidecar)
+            || event.actor_id.as_account_id() != Some(authority)
+        {
+            continue;
+        }
+        let payload: arkret_sdk::AgentSidecarExchangeControlPayload =
+            serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+        let digest = payload.encrypted_payload.payload_digest()?;
+        let plaintext = store
+            .read(|store| {
+                store.mls_decrypted_plaintext_for(event.realm_id.as_str(), digest.as_str())
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("frozen Sidecar control awaits its retained authored plaintext")
+            })?;
+        let control: arkret_sdk::AgentSidecarExchangeControl = serde_json::from_slice(&plaintext)?;
+        control.validate_shape()?;
+        if &control.request_event_id == request {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn pending_chat_event_ids_from_snapshot(
     snapshot: &garth::SendQueueSnapshot,
     realm_id: &str,

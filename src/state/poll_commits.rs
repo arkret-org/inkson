@@ -106,7 +106,16 @@ impl LocalStateStore {
         &mut self,
         page: &garth::VerifiedScanPage,
     ) -> Result<usize, String> {
-        let verified_changes = self.ingest_verified_message_commits(page)?;
+        self.ensure_cached_loaded();
+        let prior_private_history = self.cached.verified_sidecar_history.clone();
+        let private_changes = self.ingest_verified_sidecar_history(page)?;
+        let verified_changes = match self.ingest_verified_message_commits(page) {
+            Ok(changed) => changed,
+            Err(error) => {
+                self.cached.verified_sidecar_history = prior_private_history;
+                return Err(error);
+            }
+        };
         let events = page
             .rows()
             .iter()
@@ -118,7 +127,9 @@ impl LocalStateStore {
                 }
             })
             .collect::<Vec<_>>();
-        Ok(verified_changes + crate::sync_engine::ingest_message_events(self, "", &events))
+        Ok(private_changes
+            + verified_changes
+            + crate::sync_engine::ingest_message_events(self, "", &events))
     }
 
     pub(crate) fn verified_commit_stream_cursor(
@@ -231,6 +242,12 @@ impl LocalStateStore {
                 });
             }
             if full.event.kind != arkret_sdk::EventKind::MessageCreate {
+                continue;
+            }
+            if matches!(
+                full.commit.stream_ref,
+                arkret_sdk::CommitStreamRef::Sidecar { .. }
+            ) {
                 continue;
             }
             let commit = &full.commit;

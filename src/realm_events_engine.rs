@@ -321,7 +321,11 @@ where
 {
     let (bundle, freshness, mut replica) = fresh_verified_realm(authority, http, realm_id).await?;
     let circles = http.circle_list(realm_id.as_str()).await?;
-    for stream_ref in followed_streams(realm_id, ctx, &circles) {
+    let streams = followed_streams(realm_id, ctx, &circles);
+    let has_sidecar = streams
+        .iter()
+        .any(|stream| matches!(stream, CommitStreamRef::Sidecar { .. }));
+    for stream_ref in streams {
         if !is_active() {
             return Ok(());
         }
@@ -336,6 +340,39 @@ where
             projector,
         )
         .await?;
+    }
+    if has_sidecar && is_active() {
+        let snapshot = http.realm_state_snapshot_head(realm_id).await?;
+        let keys =
+            garth::fetch_historical_station_key_directory(http, &bundle, None, Some(&snapshot))
+                .await?;
+        let fresh = arkret_identity::RealmAuthorityFreshness::new(
+            chrono::Utc::now(),
+            freshness.expected_nonce.clone(),
+        );
+        let mut current_verifier = replica.fork_verified_authority()?;
+        current_verifier.install_verified_current_snapshot_heads(&snapshot, &fresh, &keys)?;
+        let proof = VerifiedCurrentSnapshot { snapshot };
+        let changed = projector
+            .state_store
+            .write(|store| {
+                store.verified_projection_transaction(|store| {
+                    store.install_verified_sidecar_current(&proof)
+                })
+            })
+            .map_err(garth::Error::Protocol)?;
+        projector
+            .state_store
+            .read(|store| store.begin_durable_flush())
+            .map_err(protocol)?
+            .wait()
+            .await
+            .map_err(protocol)?;
+        if changed > 0 {
+            projector
+                .realm_live_epoch
+                .update(|epoch| *epoch = epoch.wrapping_add(1));
+        }
     }
     Ok(())
 }
@@ -4024,6 +4061,197 @@ mod tests {
                 .iter()
                 .find(|head| head.stream_ref == stream)
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn verified_native_sidecar_prefix_survives_restart_and_requires_the_signed_head() {
+        use crate::state::LocalStateStore;
+        use crate::test_support::committed_event::{FixtureStation, fixture_time};
+        let realm = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let station = FixtureStation::did_web();
+        let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            station.service_id().clone(),
+        ));
+        let (bundle, keys, items) =
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &station,
+                realm.clone(),
+                json!({"object":collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&actor),
+                "alice.example",
+                DEVICE_ID,
+            );
+        let request = arkret_sdk::AuthorityBundleRequest {
+            realm_id: realm.clone(),
+            nonce: bundle.current_assertion.nonce.clone(),
+        };
+        let freshness =
+            arkret_identity::RealmAuthorityFreshness::new(fixture_time(100), request.nonce.clone());
+        let mut replica = RealmReplica::new(realm.clone());
+        replica
+            .install_verified_authority(&request, bundle.clone(), &freshness, &keys)
+            .unwrap();
+        let sidecar = arkret_sdk::SidecarId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [118; 32],
+        ));
+        let scope = arkret_sdk::ScopeRef::Sidecar {
+            realm_id: realm.clone(),
+            sidecar_id: sidecar.clone(),
+        };
+        let stream = CommitStreamRef::from_scope(&scope, None).unwrap();
+        let signer = arkret_test_kit::keys::seeded_signer(
+            arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            arkret_sdk::DidUrl::new("did:web:alice.example#device").unwrap(),
+        );
+        // This regression proves signature-gated replay persistence, not the
+        // governing Station's separate context or MLS admission policy.
+        let mut native = Vec::<arkret_sdk::CommittedEventFullView>::new();
+        for position in 0..2_u64 {
+            let mut payload = json!({"sidecar_id":sidecar,
+                "source_context_ref":{"kind":"strand","strand_id":arkret_sdk::StrandId::from_event_id(&bundle.genesis_event.event_id)},
+                "version":position+1});
+            if let Some(previous) = native.last() {
+                payload["predecessor_event_ref"] = json!(previous.event.event_id);
+            }
+            let event = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
+                arkret_sdk::EventKind::SidecarContextAttach.as_str(),
+                scope.clone(),
+                actor.clone(),
+                payload,
+            )
+            .with_created_at(fixture_time(2 + position as i64))
+            .sign_verifiable(&signer)
+            .unwrap()
+            .expect_verifiable();
+            let mut commit = bundle.genesis_commit.clone();
+            commit.commit_id = arkret_sdk::RealmCommitId::from_digest([120 + position as u8; 32]);
+            commit.stream_ref = stream.clone();
+            commit.stream_position = position;
+            commit.previous_commit_ref = native.last().map(|full| full.commit.commit_id.clone());
+            commit.event_ref = event.event_id.clone();
+            native.push(arkret_sdk::CommittedEventFullView {
+                commit: station.seal_commit(commit),
+                event,
+            });
+        }
+        let directory = std::env::temp_dir().join(format!(
+            "inkson-sidecar-replay-{}",
+            crate::operation::uuid_v7()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("state.json");
+        let mut store = LocalStateStore::with_path(&path);
+        let mut snapshot = snapshot_at(&bundle, &items, bundle.bundle_issued_at);
+        snapshot
+            .visible_stream_heads
+            .push(arkret_sdk::CommitStreamHead {
+                stream_ref: stream.clone(),
+                commit_id: native[0].commit.commit_id.clone(),
+                stream_position: 0,
+            });
+        snapshot
+            .retention_and_history_floor
+            .stream_floors
+            .push(arkret_sdk::StreamHistoryFloor {
+                stream_ref: stream.clone(),
+                oldest_position: 0,
+            });
+        station.sign_snapshot(&mut snapshot);
+        replica
+            .install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)
+            .unwrap();
+        store
+            .install_verified_sidecar_current(&VerifiedCurrentSnapshot {
+                snapshot: snapshot.clone(),
+            })
+            .unwrap();
+        assert!(store.verified_sidecar_inputs(REALM_ID).is_err());
+        let mut replay = replica.fork_verified_authority().unwrap();
+        let scan = arkret_sdk::StreamScanRequest {
+            realm_id: realm.clone(),
+            stream_ref: stream.clone(),
+            direction: arkret_sdk::StreamScanDirection::After(None),
+            limit: 1,
+        };
+        let page = replay
+            .apply_verified_scan(
+                &scan,
+                arkret_sdk::StreamScanOutcome {
+                    committed_events: vec![CommittedEventView::Full(native[0].clone())],
+                    readable_floor: Some(arkret_sdk::ReadableFloor {
+                        oldest_position: 0,
+                        floor_commit_id: native[0].commit.commit_id.clone(),
+                        floor_reason: arkret_sdk::ReadableFloorReason::StreamStart,
+                    }),
+                    truncated: false,
+                },
+                &freshness,
+                &keys,
+            )
+            .unwrap();
+        store.ingest_verified_message_history(&page).unwrap();
+        store.flush().unwrap();
+        assert!(std::fs::read_dir(&directory).unwrap().next().is_some());
+        drop(store);
+        let mut reopened = LocalStateStore::with_path(&path);
+        assert_eq!(
+            reopened.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            vec![native[0].clone()]
+        );
+        let old = snapshot.clone();
+        let head = snapshot
+            .visible_stream_heads
+            .iter_mut()
+            .find(|head| head.stream_ref == stream)
+            .unwrap();
+        head.stream_position = 1;
+        head.commit_id = native[1].commit.commit_id.clone();
+        station.sign_snapshot(&mut snapshot);
+        let mut current_verifier = replica.fork_verified_authority().unwrap();
+        current_verifier
+            .install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)
+            .unwrap();
+        reopened
+            .install_verified_sidecar_current(&VerifiedCurrentSnapshot { snapshot })
+            .unwrap();
+        assert!(reopened.verified_sidecar_inputs(REALM_ID).is_err());
+        let scan = arkret_sdk::StreamScanRequest {
+            direction: arkret_sdk::StreamScanDirection::After(Some(0)),
+            ..scan
+        };
+        let page = replay
+            .apply_verified_scan(
+                &scan,
+                arkret_sdk::StreamScanOutcome {
+                    committed_events: vec![CommittedEventView::Full(native[1].clone())],
+                    readable_floor: Some(arkret_sdk::ReadableFloor {
+                        oldest_position: 0,
+                        floor_commit_id: native[0].commit.commit_id.clone(),
+                        floor_reason: arkret_sdk::ReadableFloorReason::StreamStart,
+                    }),
+                    truncated: false,
+                },
+                &freshness,
+                &keys,
+            )
+            .unwrap();
+        reopened.ingest_verified_message_history(&page).unwrap();
+        assert_eq!(
+            reopened.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            native
+        );
+        assert!(
+            reopened
+                .install_verified_sidecar_current(&VerifiedCurrentSnapshot { snapshot: old })
+                .is_err()
+        );
+        reopened.invalidate_sidecar_current(Some(REALM_ID));
+        assert!(reopened.verified_sidecar_inputs(REALM_ID).is_err());
+        drop(reopened);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[cfg(not(target_arch = "wasm32"))]

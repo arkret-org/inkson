@@ -1167,12 +1167,30 @@ pub(crate) fn verify_chat_envelope_proof_for_realm(
                 return ChatProofVerdict::Unresolved;
             };
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let Some(view) = crate::mls::runtime::ordinary_agent_mls_author_view(
+            let Some(scope) = candidates
+                .iter()
+                .find_map(|candidate| {
+                    candidate
+                        .get("scope_ref")
+                        .or_else(|| candidate.get("effective_scope"))
+                })
+                .and_then(|value| {
+                    serde_json::from_value::<arkret_sdk::ScopeRef>(value.clone()).ok()
+                })
+                .filter(|scope| {
+                    scope
+                        .realm_id_opt()
+                        .is_some_and(|realm| realm.as_str() == realm_id)
+                })
+            else {
+                return ChatProofVerdict::Unresolved;
+            };
+            let Some(view) = crate::mls::runtime::ordinary_agent_mls_author_view_for_scope(
                 store,
                 secure_store.as_ref(),
-                realm_id,
                 authority,
                 self_device,
+                &scope,
                 group_id,
                 *epoch,
                 group_state_ref,
@@ -1255,9 +1273,20 @@ fn encrypted_content_coordinates(
         })
     })?;
     let envelope = serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(content.clone()).ok()?;
-    let effective_scope = arkret_sdk::ScopeRef::Realm {
-        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
-    };
+    let effective_scope = candidates
+        .iter()
+        .find_map(|candidate| {
+            candidate
+                .get("scope_ref")
+                .or_else(|| candidate.get("effective_scope"))
+        })
+        .and_then(|value| serde_json::from_value::<arkret_sdk::ScopeRef>(value.clone()).ok())?;
+    if effective_scope
+        .realm_id_opt()
+        .is_none_or(|realm| realm.as_str() != realm_id)
+    {
+        return None;
+    }
     Some((
         effective_scope
             .canonical_mls_group_id()

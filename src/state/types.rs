@@ -978,6 +978,12 @@ pub struct ClientLocalState {
     pub(crate) verified_reaction_assertions: Vec<VerifiedReactionAssertion>,
     #[serde(default)]
     pub(crate) verified_poll_prefixes: BTreeMap<String, VerifiedPollPrefix>,
+    /// Complete private replay material in the existing account-state blob.
+    /// Only VerifiedScanPage and VerifiedCurrentSnapshot can produce it.
+    #[serde(default)]
+    pub(crate) verified_sidecar_history: BTreeMap<String, Vec<arkret_sdk::CommittedEventView>>,
+    #[serde(default)]
+    pub(crate) verified_sidecar_current: BTreeMap<String, arkret_sdk::RealmStateSnapshot>,
     #[serde(default)]
     pub realm_destroy_receipts: BTreeMap<String, RealmDestroyReceipt>,
     pub realm_tree_projections: BTreeMap<String, Value>,
@@ -1547,6 +1553,8 @@ impl Default for ClientLocalState {
             verified_poll_inputs: Vec::new(),
             verified_reaction_assertions: Vec::new(),
             verified_poll_prefixes: BTreeMap::new(),
+            verified_sidecar_history: BTreeMap::new(),
+            verified_sidecar_current: BTreeMap::new(),
             realm_destroy_receipts: BTreeMap::new(),
             realm_tree_projections: BTreeMap::new(),
             realm_collaboration_roles: BTreeMap::new(),

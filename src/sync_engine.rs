@@ -1109,6 +1109,17 @@ impl InksonAccountProjector {
             .state_store
             .write(|store| {
                 store.verified_projection_transaction(|store| {
+                    if frame.kind == arkret_sdk::sync::AccountSubscribeFrameKind::ResyncRequired {
+                        store.invalidate_sidecar_current(None);
+                    }
+                    if let Some(invalidations) = &frame.realm_invalidations {
+                        for invalidation in invalidations {
+                            store.invalidate_sidecar_current(Some(invalidation.realm_id.as_str()));
+                        }
+                    }
+                    for snapshot in verified.current_snapshots().values() {
+                        store.install_verified_sidecar_current(snapshot)?;
+                    }
                     for basis in verified.authority_bases() {
                         if !store.record_realm_authority_basis(basis.clone()) {
                             return Err(

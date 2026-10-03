@@ -571,12 +571,35 @@ pub fn ordinary_agent_mls_author_view(
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
     };
-    let group = restore_author_group_for_scope(
+    ordinary_agent_mls_author_view_for_scope(
         state_store,
         secure_store,
         authority,
         device_id,
         &scope,
+        group_id,
+        epoch,
+        group_state_ref,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn ordinary_agent_mls_author_view_for_scope(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    authority: &AccountId,
+    device_id: &DeviceId,
+    scope: &arkret_sdk::ScopeRef,
+    group_id: &str,
+    epoch: u64,
+    group_state_ref: &str,
+) -> Option<arkret_sdk::mls::AgentMlsSignerView> {
+    let group = restore_author_group_for_scope(
+        state_store,
+        secure_store,
+        authority,
+        device_id,
+        scope,
         group_id,
         epoch,
         group_state_ref,

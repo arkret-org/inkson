@@ -393,11 +393,11 @@ pub(crate) fn sidecar_exchange_binding(
 /// contiguous Sidecar Commit stream and the Station's typed current controls.
 /// Persisted old fold entries are not current authority.
 pub fn cached_sidecar_exchange_projections(
-    _store: &crate::state::LocalStateStore,
-    _controller_account_id: &arkret_sdk::AccountId,
-    _source_realm_id: &str,
+    store: &crate::state::LocalStateStore,
+    controller_account_id: &arkret_sdk::AccountId,
+    source_realm_id: &str,
 ) -> anyhow::Result<Vec<arkret_sdk::AgentSidecarExchangeProjection>> {
-    anyhow::bail!("Sidecar exchange current requires verified Sidecar Commit history")
+    crate::sidecar_fold::rebuild(store, controller_account_id, source_realm_id)
 }
 
 /// The opt-in test hook does not report an empty successful fold while
@@ -407,11 +407,29 @@ pub fn cached_sidecar_exchange_projections(
     any(target_arch = "wasm32", test)
 ))]
 pub(crate) fn sidecar_fold_evidence_canonical_json(
-    _store: &crate::state::LocalStateStore,
-    _controller_account_id: &arkret_sdk::AccountId,
-    _source_realm_id: &str,
+    store: &crate::state::LocalStateStore,
+    controller_account_id: &arkret_sdk::AccountId,
+    source_realm_id: &str,
 ) -> anyhow::Result<String> {
-    anyhow::bail!("Sidecar exchange fold evidence requires verified Sidecar Commit history")
+    let projections =
+        cached_sidecar_exchange_projections(store, controller_account_id, source_realm_id)?;
+    let exchanges = projections
+        .into_iter()
+        .map(|projection| {
+            Ok(serde_json::json!({
+                "projection_digest": arkret_sdk::canonical::canonical_sha256(&projection)?,
+                "projection": projection,
+            }))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(arkret_sdk::canonical::canonical_json_string(
+        &serde_json::json!({
+            "schema": "inkson.test.sidecar_fold_evidence.v1",
+            "controller_account_id": controller_account_id,
+            "source_realm_id": source_realm_id,
+            "exchanges": exchanges,
+        }),
+    )?)
 }
 
 /// Ordinary product surfaces that must never disclose Sidecar-private
@@ -434,6 +452,7 @@ pub(crate) enum SidecarDisclosureSurface {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SidecarPrivacyGate {
     private_identifiers: std::collections::BTreeSet<String>,
+    verified_publish_targets: std::collections::BTreeSet<String>,
 }
 
 impl SidecarPrivacyGate {
@@ -442,6 +461,46 @@ impl SidecarPrivacyGate {
         controller_principal_id: &str,
     ) -> Self {
         let mut private_identifiers = std::collections::BTreeSet::new();
+        let mut verified_publish_targets = std::collections::BTreeSet::new();
+        let state = store.load();
+        if let Some(local) = &state.device_authoring_authority
+            && local.account_id.principal_id.as_str() == controller_principal_id
+        {
+            for (realm, snapshot) in &state.verified_sidecar_current {
+                for row in &snapshot.current_state_entries {
+                    if let arkret_sdk::TypedCurrentResult::Value {
+                        selector: arkret_sdk::CurrentSelector::Sidecar { sidecar_id },
+                        value,
+                        ..
+                    } = row
+                        && let Ok(sidecar) =
+                            serde_json::from_value::<arkret_sdk::AgentSidecar>(value.clone())
+                        && sidecar.controller_account_id == local.account_id
+                    {
+                        private_identifiers.insert(sidecar_id.to_string());
+                        for rows in state.verified_sidecar_history.values() {
+                            for row in rows {
+                                if matches!(&row.commit().stream_ref, arkret_sdk::CommitStreamRef::Sidecar { sidecar_id: id, .. } if id == sidecar_id)
+                                {
+                                    private_identifiers.insert(row.commit().event_ref.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Ok(projections) =
+                    cached_sidecar_exchange_projections(store, &local.account_id, realm)
+                {
+                    for projection in projections {
+                        private_identifiers.insert(projection.exchange_id.clone());
+                        if !projection.user_facing_response_event_ids.is_empty() {
+                            verified_publish_targets
+                                .insert(projection.source_track_ref.strand_id.to_string());
+                        }
+                    }
+                }
+            }
+        }
         for key in store.plain_local_data_keys() {
             let belongs_to_controller = [
                 SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX,
@@ -465,6 +524,7 @@ impl SidecarPrivacyGate {
         }
         Self {
             private_identifiers,
+            verified_publish_targets,
         }
     }
 
@@ -506,7 +566,10 @@ impl SidecarPrivacyGate {
         {
             anyhow::bail!("Sidecar publish body contains a private Sidecar identifier");
         }
-        anyhow::bail!("Sidecar publish requires verified Sidecar exchange current")
+        if !self.verified_publish_targets.contains(target_strand_id) {
+            anyhow::bail!("Sidecar publish requires verified Sidecar exchange current");
+        }
+        Ok(())
     }
 
     pub(crate) fn validate_public_export<T: serde::Serialize>(
