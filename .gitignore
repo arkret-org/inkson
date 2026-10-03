@@ -8,6 +8,7 @@ _*.md
 /test-results-contract
 /.claude
 /.playwright-mcp/
+/**/__pycache__/
 /_circle_rollout_baseline.md
 /_*_todos.md
 .claude/
