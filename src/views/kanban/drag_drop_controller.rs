@@ -179,6 +179,15 @@ pub(super) fn submit_kanban_operation_event(
         board_status.set(reason);
         return;
     }
+    let Some(authority) = crate::app::SessionContext::get()
+        .active_account
+        .read()
+        .as_ref()
+        .map(|account| account.authority.clone())
+    else {
+        board_status.set("active account authority is unavailable".to_owned());
+        return;
+    };
     let operation_id = operation.local_operation_id().to_string();
     let kind = operation.kind().as_str().to_owned();
     let actor_id = operation.actor_id().to_string();
@@ -251,6 +260,7 @@ pub(super) fn submit_kanban_operation_event(
         let result = with_authed_api(&base_url, api_token.clone(), |api| async move {
             api.event_submitter()?
                 .with_state_store(submit_state_store)
+                .with_authority(authority)
                 .submit_sdk_event(&operation)
                 .await
         })
