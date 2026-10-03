@@ -5,7 +5,7 @@ try {
     cargo fmt --check
     cargo clippy --all-targets -- -D warnings
     cargo test
-    dx build --platform web
+    python scripts/build_web.py
     npm install
     npm run e2e
 }

@@ -20,6 +20,8 @@ import sys
 import threading
 import time
 
+from web_bootstrap import normalize_web_bootstrap
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_ROOT = PROJECT_ROOT.parent
@@ -202,6 +204,27 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def web_bootstrap_watch_loop(path: Path, stop: threading.Event) -> None:
+    previous: tuple[int, int] | None = None
+    checked: tuple[int, int] | None = None
+    while not stop.wait(0.5):
+        try:
+            stat = path.stat()
+            current = (stat.st_mtime_ns, stat.st_size)
+            if current != previous:
+                previous = current
+                continue
+            if current == checked:
+                continue
+            checked = current
+            if normalize_web_bootstrap(path):
+                print("[inkson-dev] removed duplicate generated WASM bootstrap", flush=True)
+        except FileNotFoundError:
+            previous = None
+        except Exception as error:
+            print(f"[inkson-dev] web bootstrap validation failed: {error}", file=sys.stderr, flush=True)
+
+
 def main() -> int:
     args = parse_args()
     try:
@@ -232,6 +255,17 @@ def main() -> int:
         daemon=True,
     )
     watcher.start()
+    bootstrap_watcher = None
+    if args.platform == "web":
+        package = next(package for package in metadata["packages"] if Path(package["manifest_path"]).parent == PROJECT_ROOT)
+        bootstrap_path = Path(metadata["target_directory"]) / "dx" / package["name"] / "debug" / "web" / "public" / "wasm" / f"{package['name']}.js"
+        bootstrap_watcher = threading.Thread(
+            target=web_bootstrap_watch_loop,
+            args=(bootstrap_path, stop),
+            name="inkson-web-bootstrap-watch",
+            daemon=True,
+        )
+        bootstrap_watcher.start()
     print(
         "[inkson-dev] registry aligned; watching sibling path dependencies",
         flush=True,
@@ -245,6 +279,8 @@ def main() -> int:
     finally:
         stop.set()
         watcher.join(timeout=3)
+        if bootstrap_watcher is not None:
+            bootstrap_watcher.join(timeout=3)
         if process.poll() is None:
             process.terminate()
 
