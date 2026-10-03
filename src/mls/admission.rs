@@ -159,6 +159,33 @@ pub(crate) fn build_admission_events_for_scope(
     claim_request_id: &str,
     claim_receipt: &arkret_sdk::PeerKeyPackageClaimReceipt,
 ) -> Result<RealmMlsAdmissionEvents, String> {
+    build_admission_events_with_binding(
+        state_store,
+        secure_store,
+        effective_scope,
+        authority,
+        actor_id,
+        device_id,
+        claim,
+        claim_request_id,
+        claim_receipt,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_admission_events_with_binding(
+    state_store: &LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    effective_scope: &arkret_sdk::ScopeRef,
+    authority: &arkret_sdk::AccountId,
+    actor_id: &str,
+    device_id: &arkret_sdk::DeviceId,
+    claim: &arkret_sdk::KeyPackageClaimRecord,
+    claim_request_id: &str,
+    claim_receipt: &arkret_sdk::PeerKeyPackageClaimReceipt,
+    pinned_binding: Option<&arkret_sdk::MlsGovernanceBindingPayload>,
+) -> Result<RealmMlsAdmissionEvents, String> {
     let realm_id = effective_scope
         .realm_id_opt()
         .ok_or_else(|| "MLS admission scope has no Realm".to_owned())?
@@ -178,7 +205,7 @@ pub(crate) fn build_admission_events_for_scope(
         .map_err(|err| format!("MLS KeyPackage claim decode failed: {err}"))?;
     let member_authority_hint =
         crate::mls::governance_proof::leaf_authority_hint_from_claim(claim)?;
-    let (add, staged) = crate::mls::runtime::build_add_member_commit_for_scope(
+    let (add, staged) = crate::mls::runtime::build_add_member_commit_with_binding(
         state_store,
         secure_store,
         effective_scope,
@@ -187,6 +214,7 @@ pub(crate) fn build_admission_events_for_scope(
         &member_key_package,
         std::slice::from_ref(&member_authority_hint),
         Some(&target_actor),
+        pinned_binding,
     )
     .map_err(|err| err.user_message())?;
 
@@ -194,13 +222,21 @@ pub(crate) fn build_admission_events_for_scope(
         arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str().to_owned()),
         _ => None,
     };
-    let commit = crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
-        state_store,
-        realm_id.as_str(),
-        circle_id.as_deref(),
-        &actor_id,
-        &staged.envelope,
-    )?;
+    let commit = match pinned_binding {
+        Some(binding) => crate::mls::group_events::mls_commit_event_with_binding(
+            state_store,
+            &actor_id,
+            &staged.envelope,
+            binding,
+        )?,
+        None => crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
+            state_store,
+            realm_id.as_str(),
+            circle_id.as_deref(),
+            &actor_id,
+            &staged.envelope,
+        )?,
+    };
     let welcome_scope = effective_scope.clone();
     let welcome_draft = add.welcome.clone();
     let welcomes: WelcomeDeliveryStep = Box::new(move |commit_event| {

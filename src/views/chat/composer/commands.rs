@@ -322,17 +322,85 @@ pub(super) fn route_to_owned_agent_sidecar(
                     addressed_agent_label,
                     source_realm_id: realm_id,
                     source_strand_id: strand_id,
-                    sidecar_id,
+                    sidecar_id: sidecar_id.clone(),
                     access_readiness: sidecar_view.access_readiness,
                     pending_access_reconciliations: sidecar_view
                         .pending_access_reconciliations
                         .clone(),
-                    mls_context: sidecar_view.mls_context,
+                    mls_context: sidecar_view.mls_context.clone(),
                     native_mls_ready,
                     display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
                     migrated_draft: body,
                     opened_at: chrono::Utc::now(),
                 }));
+                let reconciliation = async {
+                    let api =
+                        crate::transport::auth::authed_api_with_sync(&base_url, api_token, None)?;
+                    let store = crate::app::runtime_adapter::state_store_handle(state_store);
+                    let mut current = crate::mls::sidecar_bootstrap::reconcile_sidecar_mls(
+                        &api,
+                        &store,
+                        &authority,
+                        &device_id,
+                        &sidecar_view,
+                    )
+                    .await?;
+                    loop {
+                        crate::sidecar::validate_agent_sidecar_view(&current)?;
+                        anyhow::ensure!(
+                            current.sidecar.id == sidecar_id
+                                && current.sidecar.realm_id == sidecar_view.sidecar.realm_id
+                                && current.sidecar.controller_account_id == authority,
+                            "Sidecar reconciliation returned another private workspace"
+                        );
+                        let mut open = sidecar_session.peek().clone();
+                        let Some(session) = open
+                            .as_mut()
+                            .filter(|session| session.sidecar_id == sidecar_id)
+                        else {
+                            return Ok::<(), anyhow::Error>(());
+                        };
+                        session.native_mls_ready = current
+                            .mls_context
+                            .mls_group_id
+                            .as_ref()
+                            .is_some_and(|group| {
+                                store
+                                    .read(|state| {
+                                        state.mls_checkpoint_for_scope_and_group(
+                                            &native_scope,
+                                            group,
+                                        )
+                                    })
+                                    .is_some_and(|checkpoint| {
+                                        Some(checkpoint.epoch) == current.mls_context.epoch
+                                            && checkpoint.group_state_event_id.is_some()
+                                    })
+                            });
+                        session.access_readiness = current.access_readiness;
+                        session.pending_access_reconciliations =
+                            current.pending_access_reconciliations.clone();
+                        session.mls_context = current.mls_context.clone();
+                        let ready = session.membership_ready();
+                        sidecar_session.set(open);
+                        if ready {
+                            status_msg.set("Private AI workspace ready".to_owned());
+                            return Ok(());
+                        }
+                        // Recipient consumption is asynchronous. Keep the
+                        // existing workspace visible while its authenticated
+                        // current read reports actual key readiness.
+                        crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(2)).await;
+                        current = api
+                            .sdk_http_client()?
+                            .agent_sidecar_get(&sidecar_id)
+                            .await?;
+                    }
+                }
+                .await;
+                if let Err(error) = reconciliation {
+                    status_msg.set(format!("Could not prepare private AI access: {error:#}"));
+                }
             }
             Ok(None) => status_msg
                 .set("Could not resolve an owned agent for the private sidecar.".to_owned()),

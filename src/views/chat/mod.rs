@@ -94,13 +94,15 @@ fn watch_level_from_wire(value: arkret_sdk::StrandWatchLevel) -> WatchLevel {
 pub struct MentionInsertRequest {
     request_id: String,
     subject_account_id: arkret_sdk::AccountId,
+    require_agent_identity: bool,
 }
 
 impl MentionInsertRequest {
-    pub fn new(subject_account_id: arkret_sdk::AccountId) -> Self {
+    pub fn new(subject_account_id: arkret_sdk::AccountId, require_agent_identity: bool) -> Self {
         Self {
             request_id: uuid_v7(),
             subject_account_id,
+            require_agent_identity,
         }
     }
 
@@ -117,6 +119,12 @@ impl MentionInsertRequest {
                 .and_then(arkret_sdk::ActorId::as_account_id)
                 == Some(&self.subject_account_id)
         })?;
+        // The card may already know this owned Agent while the chat's current
+        // inventory is still loading. Do not consume that selection as an
+        // ordinary member mention before its Agent visibility can be checked.
+        if self.require_agent_identity && !participant.is_agent {
+            return None;
+        }
         mention_candidate_for_explicit_target(
             participant,
             participants,
