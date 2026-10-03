@@ -266,6 +266,30 @@ fn known_agent_account_candidate_uses_full_identity_not_selector_label() {
     )
     .expect("agent mention candidate");
 
+    let request = MentionInsertRequest::new(candidate.subject_account_id.clone());
+    assert!(
+        request
+            .resolve_candidate(
+                &participants,
+                "ak:did_core:web:example.com:users:alice",
+                &std::collections::BTreeSet::new(),
+            )
+            .is_none(),
+        "an exact AccountId does not bypass Agent visibility",
+    );
+    let owned = request
+        .resolve_candidate(
+            &participants,
+            "ak:did_core:web:example.com:users:bob",
+            &std::collections::BTreeSet::new(),
+        )
+        .expect("controller can select its current Agent member");
+    assert_eq!(owned.subject_account_id, candidate.subject_account_id);
+    assert_eq!(
+        owned.insert_label(),
+        candidate.subject_account_id.to_string()
+    );
+
     assert_eq!(
         candidate.insert_label(),
         local_fixture_account("ak:did_core:web:agents.example:summary").to_string()
@@ -641,6 +665,25 @@ fn mention_candidate_keeps_same_principal_accounts_at_different_stations_apart()
     assert_ne!(
         local_candidate.subject_account_id,
         remote_candidate.subject_account_id
+    );
+
+    let request = MentionInsertRequest::new(remote_candidate.subject_account_id.clone());
+    let selected = request
+        .resolve_candidate(&participants, requester, &std::collections::BTreeSet::new())
+        .expect("the exact remote AccountId is selected");
+    assert_eq!(
+        selected.subject_account_id,
+        remote_candidate.subject_account_id
+    );
+    assert!(
+        request
+            .resolve_candidate(
+                std::slice::from_ref(&local),
+                requester,
+                &std::collections::BTreeSet::new(),
+            )
+            .is_none(),
+        "the same principal at another Station cannot satisfy the request",
     );
 
     // Inserting one chip must not hide the other, and the composer must emit

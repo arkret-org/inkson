@@ -93,17 +93,38 @@ fn watch_level_from_wire(value: arkret_sdk::StrandWatchLevel) -> WatchLevel {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MentionInsertRequest {
     request_id: String,
-    target_id: String,
-    agent_slug: Option<String>,
+    subject_account_id: arkret_sdk::AccountId,
 }
 
 impl MentionInsertRequest {
-    pub fn new(target_id: impl Into<String>, agent_slug: Option<String>) -> Self {
+    pub fn new(subject_account_id: arkret_sdk::AccountId) -> Self {
         Self {
             request_id: uuid_v7(),
-            target_id: target_id.into(),
-            agent_slug: agent_slug.filter(|slug| !slug.trim().is_empty()),
+            subject_account_id,
         }
+    }
+
+    fn resolve_candidate(
+        &self,
+        participants: &[SpaceParticipant],
+        requester_principal_id: &str,
+        public_agent_ids: &std::collections::BTreeSet<String>,
+    ) -> Option<crate::messaging::mentions::MentionCandidate> {
+        let participant = participants.iter().find(|participant| {
+            participant
+                .actor_id
+                .as_ref()
+                .and_then(arkret_sdk::ActorId::as_account_id)
+                == Some(&self.subject_account_id)
+        })?;
+        mention_candidate_for_explicit_target(
+            participant,
+            participants,
+            requester_principal_id,
+            public_agent_ids,
+            None,
+            None,
+        )
     }
 }
 
@@ -2879,7 +2900,6 @@ pub fn ChatPanel(
                     active_sidecar_session: sidecar_session.clone(),
                     sidecar_send_block_reason: sidecar_send_block_reason.clone(),
                     public_agent_ids: public_agent_ids.clone(),
-                    own_controller_handle: own_controller_handle.clone(),
                     mention_insert_request,
                     mentions_enabled: composer::chat_mentions_enabled(direct_mode),
                     token,

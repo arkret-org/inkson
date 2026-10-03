@@ -35,7 +35,6 @@ pub(super) struct ChatComposerContext {
     pub active_sidecar_session: Option<crate::sidecar::HostedSidecarState>,
     pub sidecar_send_block_reason: Option<String>,
     pub public_agent_ids: std::collections::BTreeSet<String>,
-    pub own_controller_handle: Option<String>,
     pub mention_insert_request: Option<Signal<Option<MentionInsertRequest>>>,
     pub mentions_enabled: bool,
     pub token: Signal<String>,
@@ -122,7 +121,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         active_sidecar_session,
         sidecar_send_block_reason,
         public_agent_ids,
-        own_controller_handle,
         mention_insert_request,
         mentions_enabled,
         token,
@@ -253,7 +251,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         let request_participants = participants_for_messages.clone();
         let request_principal_id = principal_id.clone();
         let request_public_agent_ids = public_agent_ids.clone();
-        let request_controller_handle = own_controller_handle.clone();
         use_effect(use_reactive(
             (&mentions_enabled,),
             move |(mentions_enabled,)| {
@@ -274,26 +271,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 if mention_insert_request_seen.peek().as_str() == request.request_id {
                     return;
                 }
-                let candidate = if request.agent_slug.is_some() {
-                    // A slug is not a target identity under 0364 D2.
-                    None
-                } else {
-                    request_participants
-                        .iter()
-                        .find(|participant| {
-                            participant.principal_id.as_str().trim() == request.target_id.trim()
-                        })
-                        .and_then(|participant| {
-                            mention_candidate_for_explicit_target(
-                                participant,
-                                &request_participants,
-                                &request_principal_id,
-                                &request_public_agent_ids,
-                                None,
-                                request_controller_handle.as_deref(),
-                            )
-                        })
-                };
+                let candidate = request.resolve_candidate(
+                    &request_participants,
+                    &request_principal_id,
+                    &request_public_agent_ids,
+                );
                 let Some(candidate) = candidate else {
                     return;
                 };

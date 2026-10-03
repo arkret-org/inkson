@@ -105,8 +105,15 @@ fn CardMemberMentionRow(
     } else {
         "Realm member"
     };
-    let mention_agent_slug = agent_slug.clone();
-    let agent_selector = agent_slug.as_ref().map(|slug| format!("me/{slug}"));
+    let mention_target = serde_json::from_str::<arkret_sdk::ActorId>(&member_id)
+        .ok()
+        .and_then(|actor| actor.as_account_id().cloned());
+    let mentionable = mention_target.is_some();
+    let agent_id = agent_slug.as_ref().and_then(|_| {
+        mention_target
+            .as_ref()
+            .map(|account| account.principal_id.to_string())
+    });
     let row_class = format!(
         "card-detail-actor-row{}{}",
         if agent_slug.is_some() {
@@ -132,19 +139,22 @@ fn CardMemberMentionRow(
             "data-testid": test_id,
             "data-member-id": "{member_id}",
             "data-agent-slug": agent_slug.as_deref(),
+            "data-agent-id": agent_id,
             "data-strand-participant": "{in_strand}",
             button {
                 r#type: "button",
                 class: "card-detail-actor-mention-button",
                 "data-testid": "card-detail-member-mention-button",
                 "aria-label": "Mention {label}",
+                disabled: !mentionable,
                 onclick: {
-                    let mention_target = serde_json::from_str::<arkret_sdk::ActorId>(&member_id).map(|actor| actor.signing_principal_id().to_string()).unwrap_or_default();
+                    let mention_target = mention_target.clone();
                     move |_| {
-                        onmention.call(crate::views::chat::MentionInsertRequest::new(
-                            mention_target.clone(),
-                            mention_agent_slug.clone(),
-                        ));
+                        if let Some(account) = mention_target.as_ref() {
+                            onmention.call(crate::views::chat::MentionInsertRequest::new(
+                                account.clone(),
+                            ));
+                        }
                     }
                 },
                 span { class: "{dot_class}", title: "{dot_title}", "aria-label": "{dot_title}" }
@@ -157,7 +167,6 @@ fn CardMemberMentionRow(
                     agent_badge_test_id: None,
                     is_self,
                     agent_slug: agent_slug.clone(),
-                    agent_selector,
                 }
             }
             {children}
