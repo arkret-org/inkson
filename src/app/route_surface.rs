@@ -287,13 +287,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             sync_cursor: sync_cursor(),
                         }
                     },
-                    Route::FileTransfer => rsx! {
-                        crate::views::file_transfer::FileTransferPanel {
-                            token,
-                            principal_id: principal_id.clone(),
-                            device_id: device_id(),
-                        }
-                    },
                     Route::Realm { .. } => {
                         match resolved_realm_surface.unwrap_or(RealmSurface::Board) {
                             RealmSurface::Board => {

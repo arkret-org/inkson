@@ -183,7 +183,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("nav.directory", "目录");
     dict.set("nav.notifications", "通知");
     dict.set("nav.settings", "设置");
-    dict.set("nav.files", "文件");
     dict.set("nav.collaboration", "协作");
     dict.set("nav.contacts", "联系人");
     dict.set("direct.unavailable", "暂不可发送");
@@ -2484,7 +2483,6 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.direct", "私聊");
     dict.set("route.contacts_manage", "管理联系人");
     dict.set("route.contacts", "联系人");
-    dict.set("route.files", "文件");
     dict.set("route.directory", "搜索");
     dict.set("route.setup", "设置向导");
     dict.set("route.setup_realms", "新建 Realm");

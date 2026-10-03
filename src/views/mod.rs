@@ -47,7 +47,6 @@ pub mod dashboard;
 /// users do not need to read this surface.
 pub mod developer;
 pub mod directory;
-pub mod file_transfer;
 /// A6.1 — global cross-Realm message search panel. The Arkret HTTP
 /// catalog currently has no spec-defined global search endpoint; cross-Realm
 /// coverage will improve once the durable projection lands.
@@ -109,7 +108,6 @@ pub enum AppView {
     /// approval requests. Writes here MUST land on those canonical kinds, not
     /// on a synthetic `ak.notification.*` event.
     Notifications,
-    FileTransfer,
     /// Recovery — Recovery Key (24 words) + restore-from-backup, with Social
     /// Recovery behind an Advanced fold (claude-design `desktop/recovery.html`,
     /// crypto-media/device-lifecycle.md §10-§13 — secret storage / key backup / recovery)

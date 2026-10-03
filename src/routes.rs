@@ -48,9 +48,6 @@ pub enum Route {
     #[route("/contacts", RoutePage)]
     Contacts,
 
-    #[route("/files", RoutePage)]
-    FileTransfer,
-
     #[route("/setup", RoutePage)]
     Setup,
 
@@ -295,7 +292,6 @@ impl Route {
             Route::Realm { .. } => AppView::Kanban,
             Route::Chat { .. } | Route::DirectConversation { .. } => AppView::Chat,
             Route::Contacts | Route::ContactsManage => AppView::Contacts,
-            Route::FileTransfer => AppView::FileTransfer,
             Route::Directory => AppView::Directory,
             Route::Setup | Route::SetupSection { .. } => AppView::Setup,
             Route::Settings
@@ -385,7 +381,6 @@ impl From<AppView> for Route {
                 message: String::new(),
             },
             AppView::Contacts => Route::Contacts,
-            AppView::FileTransfer => Route::FileTransfer,
             AppView::Directory => Route::Directory,
             AppView::Setup => Route::Setup,
             AppView::Settings => Route::Settings,
@@ -430,7 +425,6 @@ mod tests {
                 realm_id: "ak:realm:Ah-TN8ceKyXkuwRp9fuEVw7pwATVHa-ISAbDJQgUm9hA".to_owned(),
             },
             Route::Directory,
-            Route::FileTransfer,
             Route::Setup,
             Route::SetupSection {
                 // Canonical Realm bootstrap slug.

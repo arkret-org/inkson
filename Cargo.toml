@@ -224,7 +224,6 @@ dioxus = { workspace = true, features = ["desktop", "web"] }
 fs2 = "0.4.3"
 garth = { path = "../garth", default-features = false, features = ["native"] }
 reqwest = { workspace = true, default-features = false, features = ["json", "multipart", "rustls", "stream", "form"] }
-rfd = "0.17.2"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 sentry = { workspace = true, default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
 tempfile = "3.27.0"

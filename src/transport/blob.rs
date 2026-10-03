@@ -1,8 +1,5 @@
 const DEFAULT_BLOB_DOWNLOAD_MAX_BYTES: usize = 64 * 1024 * 1024;
 
-pub const RESUMABLE_UPLOAD_THRESHOLD_BYTES: usize =
-    arkret_sdk::http_client::RESUMABLE_UPLOAD_THRESHOLD_BYTES;
-
 pub struct BlobEndpoints<'a> {
     transport: &'a super::TransportClient,
 }
@@ -162,54 +159,6 @@ impl<'a> BlobEndpoints<'a> {
             .map_err(anyhow::Error::from)?;
         verify_content_addressed_blob_bytes(blob_ref.as_str(), &bytes)?;
         Ok(bytes)
-    }
-
-    pub async fn resumable_upload_base_url(&self) -> Option<url::Url> {
-        let describe = self.transport.describe_cached().await.ok()?;
-        arkret_sdk::http_client::blob_resumable_upload_base_url(describe)
-    }
-
-    pub async fn upload_file_transfer_ciphertext_auto(
-        &self,
-        ciphertext: Vec<u8>,
-        content_digest: &str,
-        principal_control_realm_id: &str,
-        encryption: arkret_models_collaboration::objects::blob::BlobStorageEncryption,
-    ) -> anyhow::Result<crate::models::BlobUploadOutcome> {
-        if ciphertext.len() >= RESUMABLE_UPLOAD_THRESHOLD_BYTES
-            && let Some(base_url) = self.resumable_upload_base_url().await
-        {
-            // Only the storage classification is disclosed for private ciphertext.
-            let options =
-                arkret_sdk::http_client::BlobResumableUploadOptions::new(Some(encryption));
-            match self
-                .transport
-                .http()
-                .blob_upload_resumable(base_url, &ciphertext, &options)
-                .await
-            {
-                Ok(outcome) => return Ok(outcome),
-                Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        "resumable upload failed; falling back to canonical blob upload"
-                    );
-                }
-            }
-        }
-        let metadata = Self::upload_metadata(
-            ciphertext.len(),
-            crate::blob::CIPHERTEXT_MEDIA_TYPE,
-            Some(principal_control_realm_id),
-            Some(content_digest),
-            None,
-            Some(encryption),
-        )?;
-        self.transport
-            .http()
-            .blob_upload_bytes(&metadata, ciphertext)
-            .await
-            .map_err(anyhow::Error::from)
     }
 }
 

@@ -893,9 +893,8 @@ fn productivity_account_data_keys_use_sdk_private_derivation() {
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
     )
     .unwrap();
-    let transfer = file_transfer_account_data_key(ns, "0123456789abcdefghijkl").unwrap();
 
-    for key in [&snooze, &saved, &manifest, &transfer] {
+    for key in [&snooze, &saved, &manifest] {
         assert!(validate_private_account_data_key(key).is_ok());
         assert!(!key.contains("ak:strand:"));
         assert!(!key.contains("Focus"));

@@ -70,7 +70,7 @@ Realm's **current governance Station**, which answers with an authority-signed
 | Current-state projection | `src/current_projection.rs` over `TypedCurrentResult` / `CurrentSelector`, incl. `scope_has_accepted_mls_genesis` | `src/local_state_tests/projections.rs` |
 | Chat, Direct Conversation, reactions, polls, read receipts, mentions | `src/views/chat/`, `src/messaging/`, `src/state/direct_conversation.rs` | `src/views/chat/tests/`, `tests/e2e/inkson.strands.chat-discussion.spec.ts` |
 | Circle, Realm, Space, Strand, Kanban, calendar | `src/circle.rs`, `src/circle_mls.rs`, `src/realm_tree.rs`, `src/views/kanban/`, `src/calendar.rs` | `src/views/kanban/tests/`, `tests/e2e/inkson.strands.kanban.spec.ts` |
-| File transfer, media / WebRTC (SFrame RFC 9420 exporter), push | `src/file_transfer.rs`, `src/media/`, `src/rtc_transport/`, `src/push/` | `src/push/tests.rs`, `tests/cross_platform/push_*.spec.ts` |
+| Media / WebRTC (SFrame RFC 9420 exporter), push | `src/media/`, `src/rtc_transport/`, `src/push/` | `src/push/tests.rs`, `tests/cross_platform/push_*.spec.ts` |
 | Account / device recovery, key backup | `src/recovery_flow.rs`, `src/key_backup/`, `src/mls/account_recovery/`, `garth::security_transaction` | `src/views/recovery/tests.rs`, `src/key_backup/tests.rs` |
 | Signal / WebSocket receive, observable sync state | `src/signal.rs`, `src/signal_receive_engine.rs`, `src/sync_engine.rs`, `src/transport/`, `garth::run`, `garth::replica` | `tests/server_contract.rs`, `src/local_state_tests/sync_states.rs` |
 

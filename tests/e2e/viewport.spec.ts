@@ -49,7 +49,6 @@ test.describe("responsive viewport — desktop", () => {
     const drawer = page.getByTestId("mobile-nav-drawer");
     const mobileNavLinks = [
       "mobile-dashboard-nav-button",
-      "mobile-file-transfer-nav-button",
       "mobile-directory-nav-button",
       "mobile-settings-nav-button",
     ];

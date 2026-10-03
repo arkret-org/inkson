@@ -165,7 +165,6 @@ pub(super) fn MobileNavDrawer(
             {status}
             div { class: "mobile-primary-nav",
                 Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.dashboard")} }
-                Link { class: "secondary", "data-testid": "mobile-file-transfer-nav-button", to: Route::FileTransfer, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.files")} }
                 Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.directory")} }
                 Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.settings")} }
             }

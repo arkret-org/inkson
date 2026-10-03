@@ -6,7 +6,6 @@ use super::*;
 pub(super) fn palette_destinations() -> Vec<(&'static str, &'static str, Route)> {
     vec![
         ("Home", "overview, recent activity", Route::Dashboard),
-        ("Files", "private file transfer", Route::FileTransfer),
         (
             "Notifications",
             "inbox, mentions, approvals",

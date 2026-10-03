@@ -86,7 +86,6 @@ pub(super) fn route_label_key(route: &Route) -> &'static str {
         Route::DirectConversation { .. } => "route.direct",
         Route::ContactsManage => "route.contacts_manage",
         Route::Contacts => "route.contacts",
-        Route::FileTransfer => "route.files",
         Route::Directory => "route.directory",
         Route::Setup => "route.setup_realms",
         Route::SetupSection { section } => match section.as_str() {

@@ -139,14 +139,6 @@ pub fn search_index_manifest_account_data_key(
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
-pub fn file_transfer_account_data_key(
-    namespace_key: &[u8],
-    transfer_id: &str,
-) -> anyhow::Result<String> {
-    arkret_sdk::file_transfer_account_data_key(namespace_key, transfer_id)
-        .map_err(|error| anyhow::anyhow!(error.to_string()))
-}
-
 pub fn private_view_account_data_key(view_id: &str) -> anyhow::Result<String> {
     let view_id = arkret_sdk::ViewId::new(view_id.to_owned())
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;

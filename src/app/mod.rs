@@ -231,7 +231,6 @@ const FEATURE_STYLE: &str = concat!(
     include_str!("../styles/features/realm-manage.css"),
     include_str!("../styles/features/directory.css"),
     include_str!("../styles/features/recovery.css"),
-    include_str!("../styles/features/file-transfer.css"),
     include_str!("../styles/features/call.css"),
 );
 
@@ -930,7 +929,6 @@ fn AppBootstrap() -> Element {
             .map(|surface| surface.title().to_owned())
             .unwrap_or_else(|| match &route {
                 Route::Dashboard => crate::i18n::tr("nav.dashboard"),
-                Route::FileTransfer => crate::i18n::tr("nav.files"),
                 Route::Settings | Route::SettingsSection { .. } => crate::i18n::tr("nav.settings"),
                 _ => crate::i18n::tr(route_label_key(&route)),
             })
@@ -1603,10 +1601,6 @@ fn AppBootstrap() -> Element {
                         Link { class: "sidebar-nav-item", to: Route::Dashboard,
                             span { class: "sidebar-nav-icon", UiIcon { name: "home" } }
                             span { class: "grow", {crate::i18n::tr("nav.dashboard")} }
-                        }
-                        Link { class: "sidebar-nav-item", to: Route::FileTransfer,
-                            span { class: "sidebar-nav-icon", UiIcon { name: "file" } }
-                            span { class: "grow", {crate::i18n::tr("nav.files")} }
                         }
                     }
 

@@ -14,7 +14,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("nav.directory", "Directory");
     dict.set("nav.notifications", "Notifications");
     dict.set("nav.settings", "Settings");
-    dict.set("nav.files", "Files");
     dict.set("nav.collaboration", "Collaboration");
     dict.set("nav.contacts", "Contacts");
     dict.set("direct.unavailable", "Direct conversation unavailable");
@@ -2997,7 +2996,6 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.direct", "Direct");
     dict.set("route.contacts_manage", "Manage Contacts");
     dict.set("route.contacts", "Contacts");
-    dict.set("route.files", "Files");
     dict.set("route.directory", "Search");
     dict.set("route.setup", "Setup");
     dict.set("route.setup_realms", "New Realm");
