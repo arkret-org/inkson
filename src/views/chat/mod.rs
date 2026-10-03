@@ -587,12 +587,13 @@ fn accepted_native_sidecar_id(
 
 fn sign_prepared_sidecar_event(
     draft: &arkret_sdk::PreparedEventDraft,
-    digest_suite: arkret_sdk::DigestSuite,
+    proof_context: crate::event_signer::ProducerProofContext,
     expected_kind: &str,
     controller_did: &arkret_sdk::Did,
     device_id: &str,
     source_realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
+    let digest_suite = proof_context.digest_suite;
     let controller_actor = arkret_sdk::project_did_to_core_id(controller_did)?;
     let mut event = draft.unsigned_event()?;
     let digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
@@ -615,10 +616,7 @@ fn sign_prepared_sidecar_event(
     {
         anyhow::bail!("active Sidecar signer is not bound to the authenticated controller device");
     }
-    signer.sign_sdk_event_with_context(
-        &mut event,
-        crate::event_signer::cached_active_event_proof_context(digest_suite)?,
-    )?;
+    signer.sign_sdk_event_with_context(&mut event, proof_context)?;
     let signed_digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
     if signed_digest != draft.event_digest
         || event.producer_proof.is_none()
@@ -738,6 +736,17 @@ async fn ensure_owned_agent_sidecar(
                     .await
                     .map_err(anyhow::Error::from)?;
                 ceremony_fence.check()?;
+                // Device-list refresh may fence the retained key while prepare
+                // is in flight. Resolve the exact active author through the
+                // ordinary Event authoring path before signing either draft.
+                let proof_context = crate::event_submit::EventSubmitter::new(http.clone())
+                    .with_authority(ceremony_controller_account_id.clone())
+                    .with_state_store(crate::app::runtime_adapter::state_store_handle(
+                        ceremony_state_store,
+                    ))
+                    .event_proof_context(source_digest_suite)
+                    .await?;
+                ceremony_fence.check()?;
                 let idempotency_key =
                     arkret_sdk::IdempotencyKey::new(uuid_v7()).map_err(anyhow::Error::msg)?;
                 match prepared {
@@ -760,7 +769,7 @@ async fn ensure_owned_agent_sidecar(
                             }
                             let create_event = sign_prepared_sidecar_event(
                                 &create_event_draft,
-                                source_digest_suite,
+                                proof_context.clone(),
                                 arkret_sdk::EventKind::SidecarCreate.as_str(),
                                 &ceremony_controller_did,
                                 &ceremony_device,
@@ -771,7 +780,7 @@ async fn ensure_owned_agent_sidecar(
                             );
                             let context_attach_event = sign_prepared_sidecar_event(
                                 &context_attach_event_draft,
-                                source_digest_suite,
+                                proof_context,
                                 arkret_sdk::EventKind::SidecarContextAttach.as_str(),
                                 &ceremony_controller_did,
                                 &ceremony_device,
@@ -837,7 +846,7 @@ async fn ensure_owned_agent_sidecar(
                             }
                             let context_attach_event = sign_prepared_sidecar_event(
                                 &context_attach_event_draft,
-                                source_digest_suite,
+                                proof_context,
                                 arkret_sdk::EventKind::SidecarContextAttach.as_str(),
                                 &ceremony_controller_did,
                                 &ceremony_device,
