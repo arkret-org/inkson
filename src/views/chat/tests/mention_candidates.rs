@@ -266,7 +266,20 @@ fn known_agent_account_candidate_uses_full_identity_not_selector_label() {
     )
     .expect("agent mention candidate");
 
-    let request = MentionInsertRequest::new(candidate.subject_account_id.clone());
+    let request = MentionInsertRequest::new(candidate.subject_account_id.clone(), true);
+    let mut unresolved_agent = agent.clone();
+    unresolved_agent.is_agent = false;
+    unresolved_agent.agent_metadata = None;
+    assert!(
+        request
+            .resolve_candidate(
+                std::slice::from_ref(&unresolved_agent),
+                "ak:did_core:web:example.com:users:bob",
+                &std::collections::BTreeSet::new(),
+            )
+            .is_none(),
+        "an Agent selection waits for current Agent classification",
+    );
     assert!(
         request
             .resolve_candidate(
@@ -667,7 +680,7 @@ fn mention_candidate_keeps_same_principal_accounts_at_different_stations_apart()
         remote_candidate.subject_account_id
     );
 
-    let request = MentionInsertRequest::new(remote_candidate.subject_account_id.clone());
+    let request = MentionInsertRequest::new(remote_candidate.subject_account_id.clone(), false);
     let selected = request
         .resolve_candidate(&participants, requester, &std::collections::BTreeSet::new())
         .expect("the exact remote AccountId is selected");

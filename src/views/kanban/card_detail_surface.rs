@@ -109,6 +109,7 @@ fn CardMemberMentionRow(
         .ok()
         .and_then(|actor| actor.as_account_id().cloned());
     let mentionable = mention_target.is_some();
+    let require_agent_identity = agent_slug.is_some();
     let agent_id = agent_slug.as_ref().and_then(|_| {
         mention_target
             .as_ref()
@@ -153,6 +154,7 @@ fn CardMemberMentionRow(
                         if let Some(account) = mention_target.as_ref() {
                             onmention.call(crate::views::chat::MentionInsertRequest::new(
                                 account.clone(),
+                                require_agent_identity,
                             ));
                         }
                     }

@@ -153,24 +153,27 @@ impl EventSubmitter {
         submission: QueuedSubmission,
         local_operation_id: &str,
     ) -> std::result::Result<SubmitEventResult, MessageAuthoringFailure> {
-        let item = self
-            .enqueue_and_drive(QueuedWrite {
-                lane: OutboundLane::Standard,
-                submission,
-                local_operation_id: local_operation_id.to_owned(),
-                post_accept: PostAccept::None,
-                retry_scope: InteractiveRetryScope::Ordinary,
-            })
+        let write = QueuedWrite {
+            lane: OutboundLane::Standard,
+            submission,
+            local_operation_id: local_operation_id.to_owned(),
+            post_accept: PostAccept::None,
+            retry_scope: InteractiveRetryScope::Ordinary,
+        };
+        let outbound = self.outbound(write.lane).map_err(failure)?;
+        self.persist_queued_write(&write, &outbound)
             .await
-            .map_err(|error| {
-                if is_durably_queued_error(&error) {
-                    MessageAuthoringFailure::SubmissionOutcomeUnknown {
-                        detail: format!("{error:#}"),
-                    }
-                } else {
-                    classify_submit_failure(&error)
+            .map_err(|error| classify_presubmit_failure(&error))?;
+        let _single_writer = outbound_submit_lock().lock().await;
+        let item = self.enqueue_and_drive(write).await.map_err(|error| {
+            if is_durably_queued_error(&error) {
+                MessageAuthoringFailure::SubmissionOutcomeUnknown {
+                    detail: format!("{error:#}"),
                 }
-            })?;
+            } else {
+                classify_submit_failure(&error)
+            }
+        })?;
         match item.rejection_reason_code() {
             Some(reason_code) => Err(garth::classify_authority_rejection(reason_code)),
             None => Ok(SubmitEventResult::from(&item)),
@@ -205,12 +208,6 @@ pub(crate) async fn drive_message_send(
     submitter: &EventSubmitter,
     attempt: MessageSendAttempt,
 ) -> std::result::Result<SubmitEventResult, MessageAuthoringFailure> {
-    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-    tracing::warn!(
-        stage = "awaiting_writer",
-        "ordinary message pre-submit stage"
-    );
-    let _single_writer = outbound_submit_lock().lock().await;
     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
     tracing::warn!(stage = "freezing", "ordinary message pre-submit stage");
     let submission = submitter.freeze_authored_message(&attempt).await?;

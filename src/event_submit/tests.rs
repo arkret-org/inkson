@@ -1722,6 +1722,96 @@ pub(crate) fn queue_message_operation_for_test(operation: &LocalOperation) -> Qu
     queued
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn ordinary_message_is_durable_while_the_network_writer_is_busy() {
+    let directory = tempfile::tempdir().unwrap();
+    let state_path = directory.path().join("state.json");
+    let state = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::state::LocalStateStore::with_path(state_path.clone()),
+    ));
+    let read = state.clone();
+    let write_state = state.clone();
+    let handle = crate::runtime::input::StateStoreHandle::new(
+        move |callback| callback(&read.lock().unwrap()),
+        move |callback| callback(&mut write_state.lock().unwrap()),
+    );
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let http = arkret_sdk::http_client::Client::builder(
+        format!("http://{}/", listener.local_addr().unwrap())
+            .parse()
+            .unwrap(),
+    )
+    .allow_insecure_localhost()
+    .build()
+    .unwrap();
+    let submitter = EventSubmitter::new(http)
+        .with_authority(test_authority())
+        .with_state_store(handle);
+    let event = author_and_sign(
+        message_intent(
+            REALM,
+            "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+        ),
+        &test_signer(),
+    );
+    let submission = event_submission(&event).unwrap();
+    let expected = arkret_sdk::canonical::canonical_json_bytes(&submission.request).unwrap();
+    let queue_path = directory.path().join("standard.json");
+    let outbound = OutboundEngine::new(
+        InksonOutboundStore::for_test_path(queue_path.clone()),
+        InksonHostClock,
+    );
+    let write = QueuedWrite {
+        lane: OutboundLane::Standard,
+        submission,
+        local_operation_id: "offline-message".to_owned(),
+        post_accept: PostAccept::None,
+        retry_scope: InteractiveRetryScope::Ordinary,
+    };
+    let _busy_network_writer = outbound_submit_lock().lock().await;
+    assert!(
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            submitter.persist_queued_write(&write, &outbound),
+        )
+        .await
+        .expect("durable enqueue must not wait for the network writer")
+        .unwrap()
+        .is_none()
+    );
+    assert!(
+        submitter
+            .persist_queued_write(&write, &outbound)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    drop(outbound);
+    let resumed = OutboundEngine::new(
+        InksonOutboundStore::for_test_path(queue_path),
+        InksonHostClock,
+    );
+    let snapshot = resumed.snapshot().await.unwrap();
+    assert_eq!(snapshot.items.len(), 1);
+    assert_eq!(snapshot.items[0].status, SendQueueStatus::Queued);
+    assert_eq!(snapshot.items[0].attempts, 0);
+    assert_eq!(
+        arkret_sdk::canonical::canonical_json_bytes(&snapshot.items[0].submission.request).unwrap(),
+        expected,
+    );
+    let restored_state = crate::state::LocalStateStore::with_path(state_path);
+    assert_eq!(
+        local_operation_for_event(&restored_state.load(), &event.event().event_id),
+        Some("offline-message".to_owned()),
+    );
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}
+
 #[tokio::test]
 async fn blocklist_unknown_freshness_withholds_privacy_signals_before_transport() {
     let directory = tempfile::tempdir().unwrap();

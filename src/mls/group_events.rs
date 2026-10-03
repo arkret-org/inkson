@@ -70,6 +70,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
         realm_id,
         actor_id,
         fresh_summary,
+        None,
     )
 }
 
@@ -79,6 +80,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_sidecar_scope(
     sidecar_id: &arkret_sdk::SidecarId,
     actor_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsCheckpointSummary>,
+    binding: &arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<Option<crate::operation::LocalOperation>, String> {
     build_creator_mls_genesis_event_for_scope(
         state_store,
@@ -86,6 +88,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_sidecar_scope(
         realm_id,
         actor_id,
         fresh_summary,
+        Some(binding),
     )
 }
 
@@ -95,6 +98,7 @@ fn build_creator_mls_genesis_event_for_scope(
     realm_id: &str,
     actor_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsCheckpointSummary>,
+    pinned_binding: Option<&arkret_sdk::MlsGovernanceBindingPayload>,
 ) -> Result<Option<crate::operation::LocalOperation>, String> {
     if state_store.mls_genesis_emitted_for_scope(effective_scope)
         && let Some(snapshot) = state_store.mls_checkpoint_for_scope(effective_scope)
@@ -115,7 +119,11 @@ fn build_creator_mls_genesis_event_for_scope(
         return Ok(None);
     }
 
-    let governance_binding = crate::mls::governance_proof::genesis_binding(effective_scope)?;
+    let governance_binding = match pinned_binding {
+        Some(binding) if binding.effective_scope() == effective_scope => binding.clone(),
+        Some(_) => return Err("MLS Genesis binding names another effective scope".into()),
+        None => crate::mls::governance_proof::genesis_binding(effective_scope)?,
+    };
     let payload = crate::mls::runtime::build_mls_genesis_payload(summary, &governance_binding)
         .map_err(|err| err.user_message())?;
     let event = crate::operation::ak_ops::mls_genesis_with_governance(
@@ -286,6 +294,36 @@ pub(crate) fn mls_commit_event_from_store_for_sidecar_scope(
         commit_envelope,
         Some(sidecar_id),
     )?
+    .build()
+}
+
+pub(crate) fn mls_commit_event_with_binding(
+    state: &LocalStateStore,
+    actor_id: &str,
+    envelope: &arkret_sdk::MlsCommitEnvelope,
+    binding: &arkret_sdk::MlsGovernanceBindingPayload,
+) -> Result<crate::operation::LocalOperation, String> {
+    binding.validate().map_err(|error| error.to_string())?;
+    let base = state.mls_group_state_ref_for_scope(
+        binding.effective_scope(),
+        envelope.group_id.as_str(),
+        binding.previous_epoch(),
+    )?;
+    if binding.base_group_state_ref() != Some(&base)
+        || binding.next_epoch() != envelope.epoch
+        || binding.mls_group_id().map_err(|error| error.to_string())? != envelope.group_id
+    {
+        return Err("MLS Commit binding differs from the exact staged transition".into());
+    }
+    MlsCommitBasis {
+        realm_id: binding.effective_scope().realm_id().to_string(),
+        actor_id: actor_id.to_owned(),
+        effective_scope: binding.effective_scope().clone(),
+        base_group_state_ref: base,
+        governance_binding: binding.clone(),
+        commit_envelope: envelope.clone(),
+        covers_key_access_revision: binding.key_access_revision(),
+    }
     .build()
 }
 

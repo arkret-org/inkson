@@ -23,6 +23,7 @@ pub(crate) mod roster_install;
 pub mod runtime;
 /// The durable MLS send gate of one effective scope.
 pub(crate) mod send_gate;
+pub(crate) mod sidecar_bootstrap;
 /// The `keypackages/consume` a joined Welcome owes once it is durable.
 pub mod welcome_consume;
 pub(crate) mod welcome_delivery;

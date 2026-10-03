@@ -382,6 +382,41 @@ pub(crate) async fn verified_mls_recovery_tail(
         .collect())
 }
 
+/// Read the private scope's MLS current from a complete authority-signed cut.
+/// Parent Realm state and a shape-only Sidecar GET cannot supply this binding.
+pub(crate) async fn verified_sidecar_mls_current(
+    api: &crate::transport::TransportClient,
+    scope: &arkret_sdk::ScopeRef,
+) -> garth::Result<arkret_wire::MlsGroupCurrent> {
+    if !matches!(scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
+        return Err(protocol(
+            "Sidecar current read requires its native effective scope",
+        ));
+    }
+    let realm = scope.realm_id();
+    let http = api.http();
+    let authority = AuthorityClient::new(http.clone());
+    let (bundle, freshness, mut replica) = fresh_verified_realm(&authority, http, realm).await?;
+    let snapshot = http.realm_state_snapshot_head(realm).await?;
+    let keys =
+        garth::fetch_historical_station_key_directory(http, &bundle, None, Some(&snapshot)).await?;
+    let fresh =
+        arkret_identity::RealmAuthorityFreshness::new(chrono::Utc::now(), freshness.expected_nonce);
+    replica.install_verified_current_snapshot_heads(&snapshot, &fresh, &keys)?;
+    let stream = CommitStreamRef::from_scope(scope, Some(realm.clone()))?;
+    if !snapshot
+        .visible_stream_heads
+        .iter()
+        .any(|head| head.stream_ref == stream)
+    {
+        return Err(protocol(
+            "authorized current Snapshot does not cover this Sidecar stream",
+        ));
+    }
+    crate::current_projection::current_mls_group(&snapshot.current_state_entries, scope)
+        .ok_or_else(|| protocol("verified Sidecar Snapshot has no current MLS group"))
+}
+
 /// The human PCR's root is its accepted genesis: the closed PCR allowlist
 /// has no owner-transfer or authority-reset writer. A fresh verified authority
 /// bundle proves that exact lifetime lineage without disclosing a private PCR
@@ -1689,6 +1724,17 @@ fn validate_signed_floor_rows(
                     ));
                 }
                 strands.insert(strand_id.clone(), revision.stream_position);
+            }
+            CurrentSelector::Relation {
+                primary_conflict_domain,
+            } => {
+                let relation: arkret_wire::relation::Relation = closed_value(value, "relation")?;
+                relation
+                    .validate_current_for_domain(realm_id, primary_conflict_domain)
+                    .map_err(protocol)?;
+                if relation.scope_circle_id.is_some() {
+                    return Err(protocol("signed Realm floor contains a Circle Relation"));
+                }
             }
             CurrentSelector::MlsGroup { scope_ref } => {
                 let group: arkret_wire::MlsGroupCurrent = closed_value(value, "mls_group")?;
@@ -4190,6 +4236,110 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn signed_realm_floor_accepts_complete_relation_and_rejects_domain_or_scope_drift() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let domain = json!({"domain_kind":"tuple","relation_kind":"references",
+            "from_ref":realm_id,"to_ref":realm_id});
+        let mut entries = ordinary_bootstrap_entries(&creator);
+        entries.push((
+            "ak.relation.create".to_owned(),
+            json!({
+                "primary_conflict_domain":domain,"expected_revision":null,
+                "relation":{"relation_kind":"references","from_ref":realm_id,"to_ref":realm_id}
+            }),
+        ));
+        let (bundle, _, items) =
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                entries,
+                "alice.example",
+                DEVICE_ID,
+            );
+        let accepted = items.last().unwrap();
+        let head = bundle.current_assertion.realm_stream_head.clone();
+        let mut rows = soland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
+        rows.push(arkret_wire::TypedCurrentResult::Value {
+            selector: serde_json::from_value(json!({"kind":"relation",
+                "primary_conflict_domain":domain}))
+            .unwrap(),
+            source_stream_ref: accepted.commit.stream_ref.clone(),
+            revision: arkret_wire::CurrentRevision {
+                commit_id: accepted.commit.commit_id.clone(),
+                stream_position: accepted.commit.stream_position,
+            },
+            value: json!({
+                "schema":arkret_wire::SchemaId::RELATION_V1,
+                "id":arkret_wire::RelationId::from_event_id(&accepted.event.event_id),
+                "realm_id":realm_id,"effective_scope":accepted.event.scope_ref,
+                "relation_kind":"references","from_ref":realm_id,"to_ref":realm_id,
+                "state":"active","created_by":creator,
+                "created_at":accepted.event.created_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            }),
+        });
+        let validate = |rows: &[arkret_wire::TypedCurrentResult]| {
+            validate_signed_floor_rows(
+                &realm_id,
+                &bundle,
+                &head,
+                arkret_sdk::HistoryAccess::SinceJoin,
+                rows,
+            )
+        };
+        validate(&rows).unwrap();
+        let arkret_wire::TypedCurrentResult::Value { value, .. } = rows.last().unwrap();
+        let valid = value.clone();
+        for invalid in [
+            {
+                let mut value = valid.clone();
+                value["locked"] = json!(true);
+                value
+            },
+            {
+                let mut value = valid.clone();
+                value["id"] = serde_json::Value::Null;
+                value
+            },
+            {
+                let mut value = valid.clone();
+                value["state"] = json!("tombstoned");
+                value
+            },
+            {
+                let mut value = valid.clone();
+                value["scope_circle_id"] = json!(arkret_wire::CircleId::from_event_id(
+                    &accepted.event.event_id
+                ));
+                value["effective_scope"] = json!(arkret_wire::ScopeRef::Circle {
+                    realm_id: realm_id.clone(),
+                    circle_id: arkret_wire::CircleId::from_event_id(&accepted.event.event_id),
+                });
+                value
+            },
+        ] {
+            let mut rejected = rows.clone();
+            set_row_value(rejected.last_mut().unwrap(), invalid);
+            assert!(validate(&rejected).is_err());
+        }
+        let mut rejected = rows.clone();
+        let arkret_wire::TypedCurrentResult::Value { selector, .. } = rejected.last_mut().unwrap();
+        let foreign = arkret_wire::RealmId::from_event_id(&arkret_wire::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [0x73; 32],
+        ));
+        *selector = serde_json::from_value(json!({"kind":"relation",
+            "primary_conflict_domain":{"domain_kind":"tuple","relation_kind":"references",
+                "from_ref":foreign,"to_ref":realm_id}}))
+        .unwrap();
+        assert!(validate(&rejected).is_err());
     }
 
     fn snapshot_at(
