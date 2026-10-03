@@ -252,8 +252,18 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         let request_principal_id = principal_id.clone();
         let request_public_agent_ids = public_agent_ids.clone();
         use_effect(use_reactive(
-            (&mentions_enabled,),
-            move |(mentions_enabled,)| {
+            (
+                &mentions_enabled,
+                &request_participants,
+                &request_principal_id,
+                &request_public_agent_ids,
+            ),
+            move |(
+                mentions_enabled,
+                request_participants,
+                request_principal_id,
+                request_public_agent_ids,
+            )| {
                 if !mentions_enabled {
                     if let Some(request_signal) = request_signal.as_mut()
                         && request_signal.peek().is_some()
