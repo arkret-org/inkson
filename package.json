@@ -7,6 +7,7 @@
     "contract": "playwright test --config playwright.contract.config.ts",
     "e2e:headed": "playwright test --headed",
     "e2e:viewport": "playwright test tests/e2e/viewport.spec.ts",
+    "test:layout": "playwright test --config playwright.layout.config.ts",
     "test:cross-platform": "playwright test --config tests/cross_platform/playwright.config.ts",
     "release:signing-dry-run": "powershell -ExecutionPolicy Bypass -File scripts/signing-dry-run.ps1",
     "release:linux-package": "powershell -ExecutionPolicy Bypass -File scripts/linux-package-local.ps1",

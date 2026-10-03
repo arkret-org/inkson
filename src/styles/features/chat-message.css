@@ -35,14 +35,20 @@
   inset: 0;
   z-index: var(--layer-local-scrim);
   background: transparent;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  width: auto;
+  height: auto;
 }
 
 .message-context-menu {
-  position: absolute;
+  position: fixed;
   z-index: var(--layer-local-popover);
   background: var(--surface-solid, var(--surface));
-  top: 30px;
-  right: 0;
+  inset: auto;
+  margin: 0;
+  visibility: hidden;
   display: grid;
   gap: 2px;
   width: max-content;
@@ -52,17 +58,22 @@
   border-radius: 9px;
   box-shadow: var(--shadow-lg);
   padding: 4px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
-.discussion-message:nth-child(n + 4):nth-last-child(-n + 2) .message-context-menu {
-  top: auto;
-  bottom: 30px;
+.message-context-menu::backdrop,
+.message-context-menu-scrim::backdrop {
+  background: transparent;
 }
 
-.message-context-menu .message-context-menu-item {
+.message-context-menu .message-context-menu-item[data-size] {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   width: 100%;
+  height: auto;
   min-height: 34px;
   text-align: left;
   padding: 7px 10px;
@@ -74,24 +85,25 @@
   font-weight: 650;
   cursor: pointer;
   color: var(--text);
+  transition: background-color 100ms ease, color 100ms ease;
 }
 
-.message-context-menu .message-context-menu-item:hover,
-.message-context-menu .message-context-menu-item:focus-visible {
+.message-context-menu .message-context-menu-item[data-style]:not(:disabled):hover,
+.message-context-menu .message-context-menu-item[data-style]:focus-visible {
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
   outline: none;
 }
 
-.message-context-menu .message-context-menu-item.danger {
+.message-context-menu .message-context-menu-item.danger[data-style] {
   margin-top: 2px;
   border-top: 1px solid var(--border-faint);
   border-radius: 0 0 6px 6px;
   color: var(--danger);
 }
 
-.message-context-menu .message-context-menu-item.danger:hover,
-.message-context-menu .message-context-menu-item.danger:focus-visible {
+.message-context-menu .message-context-menu-item.danger[data-style]:not(:disabled):hover,
+.message-context-menu .message-context-menu-item.danger[data-style]:focus-visible {
   background: color-mix(in srgb, var(--danger) 12%, var(--surface-2));
 }
 
@@ -330,10 +342,6 @@
   background: var(--surface);
 }
 
-.discussion-message.is-pinned .msg-body {
-  padding-right: 42px;
-}
-
 .discussion-message.is-own .msg-body {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
   background:
@@ -356,6 +364,17 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 6px;
+  min-height: 28px;
+  padding-right: 40px;
+}
+
+.discussion-message.is-pinned .msg-head,
+.discussion-message:has(.message-private-saved-indicator) .msg-head {
+  padding-right: 72px;
+}
+
+.discussion-message.is-pinned:has(.message-private-saved-indicator) .msg-head {
+  padding-right: 104px;
 }
 
 .discussion-message.is-own .msg-head {
@@ -392,10 +411,10 @@
   overflow-wrap: anywhere;
 }
 
-.message-pin-indicator {
+.discussion-message .message-pin-indicator[data-size] {
   position: absolute;
   top: 7px;
-  right: 7px;
+  right: 48px;
   display: inline-grid;
   place-items: center;
   width: 26px;
@@ -412,7 +431,7 @@
 .message-private-saved-indicator {
   position: absolute;
   top: 7px;
-  right: 39px;
+  right: 48px;
   display: inline-grid;
   place-items: center;
   width: 26px;
@@ -425,8 +444,12 @@
   color: var(--success-ink, var(--text));
 }
 
-.message-pin-indicator:hover,
-.message-pin-indicator:focus-visible {
+.discussion-message.is-pinned .message-private-saved-indicator {
+  right: 80px;
+}
+
+.discussion-message .message-pin-indicator[data-style]:not(:disabled):hover,
+.discussion-message .message-pin-indicator[data-style]:focus-visible {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent-soft) 70%, var(--surface));
 }
@@ -511,15 +534,13 @@
 
 .chat-message-actions {
   position: absolute;
-  top: -13px;
+  top: 7px;
   right: 8px;
   z-index: 2;
   display: inline-flex;
   margin: 0;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(2px);
-  transition: opacity 100ms ease, transform 100ms ease;
+  opacity: 0.7;
+  transition: opacity 100ms ease;
 }
 
 .discussion-message:hover .chat-message-actions,
@@ -527,22 +548,22 @@
 .chat-message-actions.is-open {
   opacity: 1;
   pointer-events: auto;
-  transform: translateY(0);
 }
 
-.chat-message-menu-button {
+.discussion-message .chat-message-menu-button[data-size] {
   display: inline-grid;
   place-items: center;
-  width: 28px;
-  height: 26px;
-  min-width: 28px;
-  min-height: 26px;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
   padding: 0;
   border: 1px solid var(--border-strong);
   border-radius: 7px;
   color: var(--text-2);
   background: var(--surface-solid, var(--surface));
   box-shadow: var(--shadow-sm);
+  cursor: pointer;
 }
 
 .chat-message-menu-button .ui-icon {
@@ -550,13 +571,17 @@
   height: 15px;
 }
 
-.chat-message-menu-button:hover,
-.chat-message-menu-button:focus-visible,
-.chat-message-actions.is-open .chat-message-menu-button {
+.discussion-message .chat-message-menu-button[data-style]:not(:disabled):hover,
+.discussion-message .chat-message-menu-button[data-style]:focus-visible,
+.discussion-message .chat-message-actions.is-open .chat-message-menu-button[data-style] {
   color: var(--accent-ink);
   border-color: color-mix(in srgb, var(--accent) 58%, var(--border-strong));
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  outline: none;
+}
+
+.discussion-message .chat-message-menu-button[data-style]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .message-retry-button:hover,
@@ -566,11 +591,43 @@
   text-underline-offset: 2px;
 }
 
-@media (hover: none) {
+@media (pointer: coarse) {
   .chat-message-actions {
     opacity: 1;
-    pointer-events: auto;
-    transform: translateY(0);
+  }
+
+  .discussion-message .chat-message-menu-button[data-size] {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .discussion-message .msg-head {
+    min-height: 36px;
+    padding-right: 48px;
+  }
+
+  .discussion-message.is-pinned .msg-head,
+  .discussion-message:has(.message-private-saved-indicator) .msg-head {
+    padding-right: 80px;
+  }
+
+  .discussion-message.is-pinned:has(.message-private-saved-indicator) .msg-head {
+    padding-right: 112px;
+  }
+
+  .discussion-message .message-pin-indicator[data-size],
+  .message-private-saved-indicator {
+    right: 56px;
+  }
+
+  .discussion-message.is-pinned .message-private-saved-indicator {
+    right: 88px;
+  }
+
+  .message-context-menu .message-context-menu-item[data-size] {
+    min-height: 44px;
   }
 }
 

@@ -388,15 +388,29 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                             if message_menu_is_open {
                                 div {
                                     class: "message-context-menu-scrim",
+                                    "popover": "manual",
                                     "aria-hidden": "true",
                                     onclick: move |_| controller.close_message_menu(),
                                 }
                                 div {
                                     id: "{message_menu_id}",
                                     class: "message-context-menu",
+                                    "popover": "manual",
                                     "data-testid": "message-context-menu",
                                     role: "menu",
                                     "aria-label": crate::i18n::tr("message.actions"),
+                                    onmounted: {
+                                        let menu_id = message_menu_id.clone();
+                                        move |_| {
+                                            if let Ok(menu_id) = serde_json::to_string(&menu_id) {
+                                                let script = format!(
+                                                    "({})({menu_id});",
+                                                    include_str!("message_menu.js"),
+                                                );
+                                                let _ = document::eval(&script);
+                                            }
+                                        }
+                                    },
                                     onkeydown: move |event: KeyboardEvent| {
                                         if event.key().to_string() == "Escape" {
                                             controller.close_message_menu();
@@ -870,34 +884,32 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         }
                                     }
                                 }
-                                if !msg.redacted {
-                                    div {
-                                        class: if message_menu_is_open {
-                                            "chat-message-actions is-open"
-                                        } else {
-                                            "chat-message-actions"
+                                div {
+                                    class: if message_menu_is_open {
+                                        "chat-message-actions is-open"
+                                    } else {
+                                        "chat-message-actions"
+                                    },
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        r#type: "button",
+                                        class: "chat-message-menu-button",
+                                        "data-testid": "chat-message-menu-button",
+                                        title: crate::i18n::tr("message.actions"),
+                                        "aria-label": crate::i18n::tr("message.actions"),
+                                        "aria-haspopup": "menu",
+                                        "aria-controls": "{message_menu_id}",
+                                        "aria-expanded": if message_menu_is_open { "true" } else { "false" },
+                                        onclick: {
+                                            let msg_id = msg.id.clone();
+                                            move |_| controller.toggle_message_menu(msg_id.clone())
                                         },
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            r#type: "button",
-                                            class: "chat-message-menu-button",
-                                            "data-testid": "chat-message-menu-button",
-                                            title: crate::i18n::tr("message.actions"),
-                                            "aria-label": crate::i18n::tr("message.actions"),
-                                            "aria-haspopup": "menu",
-                                            "aria-controls": "{message_menu_id}",
-                                            "aria-expanded": if message_menu_is_open { "true" } else { "false" },
-                                            onclick: {
-                                                let msg_id = msg.id.clone();
-                                                move |_| controller.toggle_message_menu(msg_id.clone())
-                                            },
-                                            onkeydown: move |event: KeyboardEvent| {
-                                                if event.key().to_string() == "Escape" {
-                                                    controller.close_message_menu();
-                                                }
-                                            },
-                                            UiIcon { name: "more-horizontal" }
-                                        }
+                                        onkeydown: move |event: KeyboardEvent| {
+                                            if event.key().to_string() == "Escape" {
+                                                controller.close_message_menu();
+                                            }
+                                        },
+                                        UiIcon { name: "more-horizontal" }
                                     }
                                 }
                                 // Per-message read-receipt indicator: the actors
