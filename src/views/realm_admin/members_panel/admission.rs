@@ -65,39 +65,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         == Some(arkret_sdk::CollaborationRealmRole::DirectConversation);
     let target_agent = if is_direct && target_device_id_override.is_none() {
         let http = api.sdk_http_client()?;
-        match http.agent_get(invitee_principal).await {
-            Ok(view) => {
-                anyhow::ensure!(
-                    view.agent.lifecycle == arkret_sdk::AgentLifecycleState::Active,
-                    "Agent is not active"
-                );
-                let keys = view
-                    .key_state
-                    .context("Agent runtime key state is unavailable")?;
-                anyhow::ensure!(
-                    keys.controller_account_id == account.authority
-                        && invitee_actor.route_service_id() == &account.authority.station_id,
-                    "Agent claim does not belong to the current controller Account"
-                );
-                let key = keys
-                    .active_authorizations
-                    .iter()
-                    .find(|key| {
-                        Some(&key.authorized_event_ref) == keys.authorized_event_ref.as_ref()
-                            && key
-                                .expires_at
-                                .is_none_or(|expiry| expiry > crate::clock::now_utc())
-                    })
-                    .context("Agent has no current authorized runtime key")?;
-                Some(arkret_sdk::MlsEndpointIdentity::agent_runtime(
-                    keys.agent_id,
-                    key.verification_method.clone(),
-                    key.authorized_event_ref.clone(),
-                )?)
-            }
-            Err(arkret_sdk::http_client::Error::Api { status: 404, .. }) => None,
-            Err(error) => return Err(error.into()),
-        }
+        current_owned_agent_endpoint(&http, &invitee_actor, &account.authority).await?
     } else {
         None
     };
@@ -214,6 +182,52 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         "submitted MLS admission for accepted Commit and Welcome delivery"
     );
     Ok(Some(next_epoch))
+}
+
+/// Resolve the current authorized runtime, never a stale local Agent projection.
+async fn current_owned_agent_endpoint(
+    http: &arkret_sdk::http_client::Client,
+    invitee_actor: &arkret_sdk::ActorId,
+    controller: &arkret_sdk::AccountId,
+) -> anyhow::Result<Option<arkret_sdk::MlsEndpointIdentity>> {
+    Ok(
+        match http
+            .agent_get(invitee_actor.signing_principal_id().as_str())
+            .await
+        {
+            Ok(view) => {
+                anyhow::ensure!(
+                    view.agent.lifecycle == arkret_sdk::AgentLifecycleState::Active,
+                    "Agent is not active"
+                );
+                let keys = view
+                    .key_state
+                    .context("Agent runtime key state is unavailable")?;
+                anyhow::ensure!(
+                    keys.controller_account_id == *controller
+                        && invitee_actor.route_service_id() == &controller.station_id,
+                    "Agent claim does not belong to the current controller Account"
+                );
+                let key = keys
+                    .active_authorizations
+                    .iter()
+                    .find(|key| {
+                        Some(&key.authorized_event_ref) == keys.authorized_event_ref.as_ref()
+                            && key
+                                .expires_at
+                                .is_none_or(|expiry| expiry > crate::clock::now_utc())
+                    })
+                    .context("Agent has no current authorized runtime key")?;
+                Some(arkret_sdk::MlsEndpointIdentity::agent_runtime(
+                    keys.agent_id,
+                    key.verification_method.clone(),
+                    key.authorized_event_ref.clone(),
+                )?)
+            }
+            Err(arkret_sdk::http_client::Error::Api { status: 404, .. }) => None,
+            Err(error) => return Err(error.into()),
+        },
+    )
 }
 
 /// The authenticated Contact list supplies the peer endpoint for a founding membership,
@@ -508,7 +522,11 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     // the commit + Welcome. Without a snapshot we are not an admit-capable
     // member and have nothing to reconcile.
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let (group_member_ids, group_device_ids): (BTreeSet<String>, BTreeSet<String>) = {
+    let (group_member_ids, group_device_ids, group_endpoints): (
+        BTreeSet<String>,
+        BTreeSet<String>,
+        Vec<arkret_sdk::MlsEndpointIdentity>,
+    ) = {
         let store = state_store.read();
         let Some(member_ids) = crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
             &store,
@@ -532,7 +550,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             );
             return Ok(MlsAdmissionReconcileOutcome::default());
         };
-        let Some(device_ids) = crate::mls::runtime::mls_group_member_device_ids_for_effective_scope(
+        let Some(endpoints) = crate::mls::runtime::mls_group_member_endpoints_for_effective_scope(
             &store,
             secure_store.as_ref(),
             &realm_id,
@@ -552,10 +570,16 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                 .into_iter()
                 .map(|actor| actor.to_string())
                 .collect(),
-            device_ids
-                .into_iter()
-                .map(|device| device.to_string())
+            endpoints
+                .iter()
+                .filter_map(|endpoint| match endpoint {
+                    arkret_sdk::MlsEndpointIdentity::HumanDevice { device_id, .. } => {
+                        Some(device_id.to_string())
+                    }
+                    _ => None,
+                })
                 .collect(),
+            endpoints,
         )
     };
     // Joined Realm members not yet represented in the MLS group, plus current
@@ -577,9 +601,9 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     };
     let self_actor = arkret_sdk::ActorId::account(account.authority.clone()).to_string();
     let http = api.sdk_http_client()?;
-    // A terminal founding claim leaves its peer leaf in the public roster.
-    // Only the authenticated resolver can request its same-group replacement;
-    // local roster membership, clock guesses and opaque failures cannot.
+    // Founding recovery follows the authenticated resolver. A bound owned
+    // Agent also needs a fresh Welcome after its accepted runtime authorization
+    // changes; ActorId membership alone cannot attest the current endpoint.
     let direct_peer = state_store.read().direct_conversation_peer(&realm_id);
     let mut direct_admission_pending = false;
     if let Some(peer) = direct_peer {
@@ -613,6 +637,23 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                 }
             } else {
                 pending.retain(|(actor, _)| actor != &peer_actor);
+            }
+        }
+        if let arkret_sdk::contact_operations::ContactPeer::Agent {
+            actor_id: peer_actor,
+            controller_account_id,
+        } = &peer
+        {
+            if *controller_account_id == account.authority {
+                let current = current_owned_agent_endpoint(&http, peer_actor, &account.authority)
+                    .await?
+                    .context("owned Agent has no current runtime endpoint")?;
+                if !group_endpoints.contains(&current) {
+                    let peer_actor = peer_actor.to_string();
+                    if !pending.iter().any(|(actor, _)| actor == &peer_actor) {
+                        pending.push((peer_actor, None));
+                    }
+                }
             }
         }
     }

@@ -207,34 +207,24 @@ setTimeout(() => {{
     let _ = document::eval(&script);
 }
 
-fn timeline_projection_key(
-    selected_realm_id: &str,
-    realm_live_epoch: u64,
-    visible_messages: &[ChatMessage],
-    private_sidecar_strand_ids: &std::collections::BTreeSet<String>,
-) -> String {
-    use std::hash::{Hash, Hasher};
-
-    let mut projection = std::collections::hash_map::DefaultHasher::new();
-    selected_realm_id.hash(&mut projection);
-    realm_live_epoch.hash(&mut projection);
-    for message in visible_messages {
-        message.id.hash(&mut projection);
-        message.protocol_message_id.hash(&mut projection);
-        message.strand_id.hash(&mut projection);
-        message.realm_id.hash(&mut projection);
-        message.body.hash(&mut projection);
-        message.timestamp.hash(&mut projection);
-        message.reply_to.hash(&mut projection);
-        message.reactions.hash(&mut projection);
-        message.edited.hash(&mut projection);
-        message.revision_source.hash(&mut projection);
-        message.redacted.hash(&mut projection);
-        message.pending.hash(&mut projection);
-        message.failed.hash(&mut projection);
+fn position_local_timeline_rows(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    let (mut local, mut accepted): (Vec<_>, Vec<_>) = messages
+        .into_iter()
+        .partition(|message| message.pending || message.failed);
+    // Pending rows have no Commit position. Use their local send time only to
+    // place the optimistic display; never reorder accepted history by clocks.
+    local.sort_by_key(|message| message.created_at);
+    for message in local {
+        let index = message.created_at.and_then(|created_at| {
+            accepted.iter().position(|candidate| {
+                candidate.realm_id == message.realm_id
+                    && candidate.strand_id == message.strand_id
+                    && candidate.created_at.is_some_and(|at| at > created_at)
+            })
+        });
+        accepted.insert(index.unwrap_or(accepted.len()), message);
     }
-    private_sidecar_strand_ids.hash(&mut projection);
-    format!("{:016x}", projection.finish())
+    accepted
 }
 
 fn project_visible_messages(
@@ -452,6 +442,49 @@ struct PendingNativeSidecarCommit {
     expected_phase: arkret_sdk::SidecarEnsureAcceptedPhase,
     expires_at: chrono::DateTime<chrono::Utc>,
     request: arkret_sdk::SidecarEnsureRequestBody,
+}
+
+async fn submit_frozen_sidecar_ensure<'a, F, Fut>(
+    request: &'a arkret_sdk::SidecarEnsureRequestBody,
+    expires_at: chrono::DateTime<chrono::Utc>,
+    check_session: impl Fn() -> anyhow::Result<()>,
+    mut submit: F,
+) -> anyhow::Result<arkret_sdk::SidecarEnsureOutcome>
+where
+    F: FnMut(&'a arkret_sdk::SidecarEnsureRequestBody) -> Fut,
+    Fut: std::future::Future<
+            Output = arkret_sdk::http_client::Result<arkret_sdk::SidecarEnsureOutcome>,
+        >,
+{
+    anyhow::ensure!(
+        matches!(
+            request,
+            arkret_sdk::SidecarEnsureRequestBody::Commit(_)
+                | arkret_sdk::SidecarEnsureRequestBody::Attach(_)
+        ),
+        "only an already frozen Sidecar commit or attach may be replayed"
+    );
+    for attempt in 0..3 {
+        check_session()?;
+        anyhow::ensure!(
+            expires_at > crate::clock::now_utc(),
+            "frozen Sidecar reservation expired"
+        );
+        let result = submit(request).await;
+        check_session()?;
+        match result {
+            Ok(outcome) => return Ok(outcome),
+            Err(error) => {
+                let unconfirmed = matches!(error, arkret_sdk::http_client::Error::Http(_))
+                    || matches!(error, arkret_sdk::http_client::Error::Api { status: 503, .. }
+                        if error.error_code() == Some(arkret_sdk::ErrorCode::TemporarilyUnavailable));
+                if !unconfirmed || attempt == 2 {
+                    return Err(error.into());
+                }
+            }
+        }
+    }
+    unreachable!("bounded Sidecar commit replay always returns its last result")
 }
 
 fn pending_native_sidecar_commit_key(
@@ -683,21 +716,25 @@ async fn ensure_owned_agent_sidecar(
     let ceremony_context = context_ref.clone();
     let ceremony_device = device_id.to_string();
     let ceremony_pending_key = pending_key.clone();
+    let ceremony_fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+    let completion_fence = ceremony_fence.clone();
     let mut ceremony_state_store = state_store;
     let (sidecar_id, view) = crate::transport::auth::with_authed_sdk_client(
         base_url,
         api_token,
         move |http| async move {
-            let (expected_phase, expected_sidecar_id, request) = if let Some(pending) = pending {
+            ceremony_fence.check()?;
+            let (expected_phase, expected_sidecar_id, request, expires_at) = if let Some(pending) = pending {
                 if pending.operation_id != ceremony_operation_id {
                     anyhow::bail!("durable native Sidecar commit changed its operation binding");
                 }
-                (pending.expected_phase, pending.sidecar_id, pending.request)
+                (pending.expected_phase, pending.sidecar_id, pending.request, pending.expires_at)
             } else {
                 let prepared = http
                     .agent_sidecar_ensure(&prepare)
                     .await
                     .map_err(anyhow::Error::from)?;
+                ceremony_fence.check()?;
                 let idempotency_key =
                     arkret_sdk::IdempotencyKey::new(uuid_v7()).map_err(anyhow::Error::msg)?;
                 match prepared {
@@ -764,6 +801,7 @@ async fn ensure_owned_agent_sidecar(
                                 request: request.clone(),
                             };
                             {
+                                ceremony_fence.check()?;
                                 let barrier = {
                                     let mut store = ceremony_state_store.write();
                                     store.save_plain_local_data(ceremony_pending_key.clone(),
@@ -777,6 +815,7 @@ async fn ensure_owned_agent_sidecar(
                                 arkret_sdk::SidecarEnsureAcceptedPhase::Commit,
                                 sidecar_id,
                                 request,
+                                expires_at,
                             )
                         }
                         arkret_sdk::SidecarEnsureOutcome::PreparedExisting(
@@ -827,6 +866,7 @@ async fn ensure_owned_agent_sidecar(
                                 request: request.clone(),
                             };
                             {
+                                ceremony_fence.check()?;
                                 let barrier = {
                                     let mut store = ceremony_state_store.write();
                                     store.save_plain_local_data(ceremony_pending_key.clone(),
@@ -840,14 +880,17 @@ async fn ensure_owned_agent_sidecar(
                                 arkret_sdk::SidecarEnsureAcceptedPhase::Attach,
                                 sidecar_id,
                                 request,
+                                expires_at,
                             )
                         }
                 }
             };
-            let accepted = http
-                .agent_sidecar_ensure(&request)
-                .await
-                .map_err(anyhow::Error::from)?;
+            let accepted = submit_frozen_sidecar_ensure(
+                &request,
+                expires_at,
+                || ceremony_fence.check(),
+                |request| http.agent_sidecar_ensure(request),
+            ).await?;
             let sidecar_id = accepted_native_sidecar_id(
                 &accepted,
                 &ceremony_operation_id,
@@ -859,6 +902,7 @@ async fn ensure_owned_agent_sidecar(
                 .agent_sidecar_get(&sidecar_id)
                 .await
                 .map_err(anyhow::Error::from)?;
+            ceremony_fence.check()?;
             crate::sidecar::validate_agent_sidecar_view(&view)?;
             if view.sidecar.id != sidecar_id
                 || view.sidecar.realm_id != ceremony_realm
@@ -871,6 +915,7 @@ async fn ensure_owned_agent_sidecar(
     )
     .await
     .map_err(|error| anyhow::anyhow!(error.display()))?;
+    completion_fence.check()?;
     {
         let barrier = {
             let mut store = state_store.write();
@@ -1529,11 +1574,13 @@ pub fn ChatPanel(
     let send_scope = selected_channel_info
         .as_ref()
         .and_then(|channel| channel.effective_scope(&selected_realm_id));
-    let scope_send_gate = crate::views::secure_send::use_scope_send_gate(
+    let scope_send_probe = crate::views::secure_send::use_scope_send_probe(
         state_store,
         send_scope.clone(),
         account_device_id.clone(),
     );
+    let scope_readiness_checking = scope_send_probe.checking;
+    let scope_send_gate = scope_send_probe.gate;
     // The first-class Sidecar contract requires an independent MLS backing scope.
     // The private Strand only carries its internal scope id, so ordinary Realm
     // inheritance would incorrectly downgrade a Sidecar opened from a
@@ -1574,6 +1621,14 @@ pub fn ChatPanel(
             Some(crate::mls::send_gate::MlsSendGate::Plaintext) => {
                 crate::current_projection::ScopeMlsCurrent::NotActivated
             }
+            None if scope_readiness_checking => send_scope
+                .as_ref()
+                .map(|scope| {
+                    // Presentation only: authoring still requires the independent
+                    // durable send probe to finish restoring private state.
+                    state_store.read().installed_scope_mls_current(scope)
+                })
+                .unwrap_or(crate::current_projection::ScopeMlsCurrent::Unknown),
             None => crate::current_projection::ScopeMlsCurrent::Unknown,
         };
         let local_epoch = send_scope.as_ref().and_then(|scope| {
@@ -1648,6 +1703,9 @@ pub fn ChatPanel(
             Some("Waiting for verified conversation authority and encryption keys.".to_owned());
     }
     let scope_send_ready = scope_send_gate.is_some();
+    let send_readiness_checking = scope_readiness_checking
+        && selected_realm_pending_mls_binding_reason.is_none()
+        && !sidecar_mode;
     if !sidecar_mode && !scope_send_ready && selected_realm_pending_mls_binding_reason.is_none() {
         selected_realm_pending_mls_binding_reason = Some(
             "Waiting for this scope's verified send state and this device's local encryption keys."
@@ -1726,7 +1784,7 @@ pub fn ChatPanel(
                 decrypt_identity,
             );
             merge_chat_messages(&mut folded, server_folded);
-            folded
+            position_local_timeline_rows(folded)
         }
     });
     let all_messages_snapshot = all_messages_snapshot.read().clone();
@@ -1741,15 +1799,9 @@ pub fn ChatPanel(
         &sidecar_exchange_projections,
         sidecar_exchange_current.is_ok(),
     );
-    // Dioxus may retain the child timeline across context-backed signal updates. Key the
-    // projection boundary by every visible timeline row so lifecycle folds cannot
-    // leave a memoized child rendering an older snapshot.
-    let _timeline_projection_key = timeline_projection_key(
-        &selected_realm_id,
-        realm_live_epoch(),
-        &visible_messages,
-        &private_sidecar_strand_ids,
-    );
+    // Context props carry row changes. Retain the mounted feed across sync and
+    // lifecycle updates so its scroll position and focused controls survive.
+    let timeline_scope_key = format!("{selected_realm_id}\u{1f}{selected_channel_value}");
     // P3B.2.4 — per-strand Circle-scope lookup used by the
     // message accent rail. We index by `strand_id` once instead of
     // searching the `channels` Vec for every rendered message.
@@ -2593,7 +2645,7 @@ pub fn ChatPanel(
                     }
                 }
 
-                if selected_realm_pending_mls_binding && selected_channel_security_encrypted {
+                if selected_realm_pending_mls_binding && selected_channel_security_encrypted && !send_readiness_checking {
                     div {
                         class: "event warning-banner",
                         "data-testid": "epoch-update-required-banner",
@@ -2607,6 +2659,7 @@ pub fn ChatPanel(
                 // `ak.typing` ephemeral within `TYPING_TTL_SECONDS`.
                 // The DIDs live on `data-typing-actors` so cotest can
                 // assert on them without scraping localised text.
+                div { class: "discussion-typing-slot",
                 {
                     let active_typers: Vec<String> = typing_actors()
                         .into_iter()
@@ -2641,6 +2694,7 @@ pub fn ChatPanel(
                         rsx! {}
                     }
                 }
+                }
 
                 if sidecar_mode && sidecar_exchange_current.is_err() {
                     div {
@@ -2651,7 +2705,7 @@ pub fn ChatPanel(
                     }
                 } else {
                 ChatTimeline {
-                    key: "{_timeline_projection_key}",
+                    key: "{timeline_scope_key}",
                     controller,
                     context: ChatTimelineContext {
                         embedded,
@@ -2905,6 +2959,7 @@ pub fn ChatPanel(
                     selected_channel_security_encrypted,
                     selected_realm_pending_mls_binding,
                     selected_realm_pending_mls_binding_reason: selected_realm_pending_mls_binding_reason.clone(),
+                    send_readiness_checking,
                     active_sidecar_session: sidecar_session.clone(),
                     sidecar_send_block_reason: sidecar_send_block_reason.clone(),
                     public_agent_ids: public_agent_ids.clone(),
@@ -2914,6 +2969,20 @@ pub fn ChatPanel(
                     sync_cursor,
                     frontier_state,
                 }
+            }
+            div { class: "discussion-status-slot",
+            if !status_msg().is_empty() {
+                div {
+                    class: "muted discussion-status",
+                    "data-testid": "chat-status",
+                    role: "status",
+                    "aria-live": "polite",
+                    // Keep preparation errors visible when the composer has no
+                    // available channel yet, including a pending private scope.
+                    title: "{status_msg}",
+                    "{status_msg}"
+                }
+            }
             }
         }
     }

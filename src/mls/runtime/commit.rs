@@ -324,21 +324,22 @@ pub(crate) fn build_add_member_commit_with_binding(
         )
         .map_err(MlsRuntimeError::Commit)?,
     };
-    // A Direct Conversation has exactly two members, so a new endpoint of an
-    // actor already in the group replaces that actor's leaf instead of adding
-    // a third one.
-    let replacement_actor = (matches!(effective_scope, arkret_sdk::ScopeRef::Realm { .. })
+    // Repair the exact endpoint, or replace an Agent's retired runtime in the
+    // same group. Different human devices remain independent member leaves.
+    let replacement_actor = if matches!(effective_scope, arkret_sdk::ScopeRef::Realm { .. })
         && state_store.realm_collaboration_role(&realm_id)
-            == Some(arkret_sdk::CollaborationRealmRole::DirectConversation))
-    .then(|| {
-        group.verified_leaf_bindings().ok().and_then(|leaves| {
-            leaves
-                .into_iter()
-                .find(|leaf| leaf.endpoint == member_key_package.endpoint)
-                .map(|leaf| leaf.actor_id)
-        })
-    })
-    .flatten();
+            == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
+    {
+        member_actor_id
+            .map(|actor| {
+                group.member_endpoint_replacement_actor(&member_key_package.endpoint, actor)
+            })
+            .transpose()
+            .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?
+            .flatten()
+    } else {
+        None
+    };
     let add = if let Some(actor) = replacement_actor {
         group.replace_member_endpoint(member_key_package, &actor, Some(&governance_binding))
     } else {
@@ -354,7 +355,6 @@ pub(crate) fn build_add_member_commit_with_binding(
             "MLS Add requires verified claim evidence for the added leaf".to_owned(),
         ));
     }
-    let _ = member_actor_id;
     let envelope = add.commit.clone();
     Ok((
         add,

@@ -300,26 +300,6 @@ pub(super) fn ChatEffects(
     }
 
     {
-        let messages = controller.messages;
-        let mut last_scroll_key = use_signal(|| (0_usize, String::new()));
-        let scroll_realm_id = selected_realm_id.clone();
-        use_effect(move || {
-            let selected_channel_value = selected_channel();
-            let key = (messages.read().len(), selected_channel_value.clone());
-            if last_scroll_key.peek().clone() != key {
-                last_scroll_key.set(key);
-                let offset_key = format!("{scroll_realm_id}\u{1f}{selected_channel_value}");
-                let scroll_top = super::timeline_surface::chat_feed_scroll_offset(&offset_key);
-                if scroll_top > 0.0 {
-                    scroll_chat_feed_to_offset(scroll_top);
-                } else {
-                    scroll_chat_feed_to_latest();
-                }
-            }
-        });
-    }
-
-    {
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
         let actor = principal_id.clone();

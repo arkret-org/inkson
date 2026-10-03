@@ -2,6 +2,7 @@
 //! never be opened for a Sidecar; its accepted participant cut binds both the
 //! private RFC 9420 state and the producer-signed Genesis.
 
+use anyhow::Context as _;
 use garth::OutboundQueueStore;
 
 use crate::runtime::input::StateStoreHandle;
@@ -258,7 +259,9 @@ pub(crate) async fn reconcile_sidecar_mls(
     device: &arkret_sdk::DeviceId,
     expected: &arkret_sdk::AgentSidecarView,
 ) -> anyhow::Result<arkret_sdk::AgentSidecarView> {
-    let mut view = ensure_sidecar_mls_genesis(api, state, authority, device, expected).await?;
+    let mut view = ensure_sidecar_mls_genesis(api, state, authority, device, expected)
+        .await
+        .context("Sidecar Genesis preparation failed")?;
     let scope = arkret_sdk::ScopeRef::Sidecar {
         realm_id: view.sidecar.realm_id.clone(),
         sidecar_id: view.sidecar.id.clone(),
@@ -282,7 +285,8 @@ pub(crate) async fn reconcile_sidecar_mls(
     );
     let secure = crate::secure_key_store::default_secure_key_store("inkson");
     let secret =
-        crate::mls::runtime::load_device_checkpoint_secret(secure.as_ref(), authority, device)?;
+        crate::mls::runtime::load_device_checkpoint_secret(secure.as_ref(), authority, device)
+            .context("Sidecar checkpoint key is unavailable")?;
     for agent in view.desired_agent_ids.clone() {
         // Revalidate the exact scope and controller on each cut. A removed
         // Agent is never claimed from an earlier displayed desired set.
@@ -329,19 +333,23 @@ pub(crate) async fn reconcile_sidecar_mls(
             .ok_or_else(|| anyhow::anyhow!("Sidecar has no local MLS checkpoint"))?;
         let group =
             crate::mls::persistence::restore_envelope(&checkpoint, &secret, checkpoint.epoch)
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                .map_err(|error| anyhow::anyhow!(error.to_string()))
+                .context("Sidecar private checkpoint could not be restored")?;
         let target_actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId {
             station_id: authority.station_id.clone(),
             principal_id: agent.clone(),
         });
         if group
-            .verified_leaf_bindings()?
+            .verified_leaf_bindings()
+            .context("Sidecar local leaf bindings could not be verified")?
             .iter()
             .any(|leaf| leaf.actor_id == target_actor && leaf.endpoint == endpoint)
         {
             continue;
         }
-        let current = crate::realm_events_engine::verified_sidecar_mls_current(api, &scope).await?;
+        let current = crate::realm_events_engine::verified_sidecar_mls_current(api, &scope)
+            .await
+            .context("Sidecar signed MLS current could not be verified")?;
         let after = http.agent_sidecar_get(&expected.sidecar.id).await?;
         genesis_binding(&after, authority)?;
         anyhow::ensure!(

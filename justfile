@@ -23,7 +23,7 @@ mobile:
 
 # Build the Dioxus web artifact.
 web-build:
-    dx build --platform web --release
+    python scripts/build_web.py --release
 
 # Build the native desktop binary for the current host.
 desktop-build:

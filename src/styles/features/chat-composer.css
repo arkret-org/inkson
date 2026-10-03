@@ -274,6 +274,16 @@
   flex-wrap: wrap;
 }
 
+/* Private-state revalidation is busy, not a loss of the public MLS state.
+ * The native disabled attribute continues to refuse authoring meanwhile. */
+.discussion-composer [data-testid="send-chat-button"][data-readiness-checking="true"]:disabled,
+.discussion-composer [data-testid="send-chat-button"][data-readiness-checking="true"]:disabled:hover {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%) !important;
+  color: var(--primary-foreground) !important;
+  box-shadow: 0 14px 28px color-mix(in srgb, var(--primary) 24%, transparent) !important;
+  cursor: progress !important;
+}
+
 .discussion-shell.embedded .discussion-composer {
   position: relative;
 }

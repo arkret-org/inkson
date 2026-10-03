@@ -656,18 +656,16 @@ pub(crate) fn mls_group_member_actor_ids_for_effective_scope(
         .ok()
 }
 
-/// Active human-device leaves for one effective MLS scope. Realm membership is
-/// actor-scoped, but each authorized endpoint needs its own leaf and its own
-/// Welcome delivery, so this projection stays separate from
-/// `member_actor_ids`, which deduplicates devices of the same account actor.
-pub(crate) fn mls_group_member_device_ids_for_effective_scope(
+/// Verified endpoint incarnations for one effective MLS scope. Actor membership
+/// deduplicates human devices and does not detect an Agent runtime replacement.
+pub(crate) fn mls_group_member_endpoints_for_effective_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
     authority: &AccountId,
     device_id: &DeviceId,
-) -> Option<Vec<DeviceId>> {
+) -> Option<Vec<arkret_sdk::MlsEndpointIdentity>> {
     let snapshot = state_store.mls_checkpoint_for_effective_scope(realm_id, circle_id)?;
     let secret = load_device_checkpoint_secret(secure_store, authority, device_id).ok()?;
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
@@ -676,11 +674,7 @@ pub(crate) fn mls_group_member_device_ids_for_effective_scope(
             .verified_leaf_bindings()
             .ok()?
             .into_iter()
-            .filter_map(|binding| match binding.endpoint {
-                arkret_sdk::MlsEndpointIdentity::HumanDevice { device_id, .. } => Some(device_id),
-                arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. }
-                | arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => None,
-            })
+            .map(|binding| binding.endpoint)
             .collect(),
     )
 }

@@ -399,6 +399,7 @@ pub(super) fn route_to_owned_agent_sidecar(
                 }
                 .await;
                 if let Err(error) = reconciliation {
+                    tracing::warn!(target: "sidecar", reason = %error, "Sidecar MLS preparation failed");
                     status_msg.set(format!("Could not prepare private AI access: {error:#}"));
                 }
             }

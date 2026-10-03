@@ -342,7 +342,7 @@ async fn submit_contact_response(
     action: &str,
     pending: &crate::transport::contacts::pending::PendingOperation,
 ) -> anyhow::Result<()> {
-    let session = crate::transport::contacts::ContactSessionFence::capture()?;
+    let session = crate::transport::auth::AuthoringSessionFence::capture()?;
     use arkret_sdk::contact_operations::{
         ContactAcceptAction, ContactAcceptPrepareRequestBody, ContactAcceptRequestBody,
         ContactCommitPhase, ContactCommitRequestBody, ContactOperationOutcome, ContactPreparePhase,
@@ -966,7 +966,7 @@ pub async fn update_contact_scopes(
     peer: &str,
     granted_to_peer_scopes: Vec<arkret_sdk::contact_operations::ContactScope>,
 ) -> anyhow::Result<()> {
-    let session = crate::transport::contacts::ContactSessionFence::capture()?;
+    let session = crate::transport::auth::AuthoringSessionFence::capture()?;
     use arkret_sdk::contact_operations::{
         ContactCommitPhase, ContactCommitRequestBody, ContactOperationOutcome,
         ContactPreparedOutcome, ContactScopeUpdateRequestBody,
@@ -1063,7 +1063,7 @@ pub async fn tombstone_contact(
     peer: &str,
     block_peer: bool,
 ) -> anyhow::Result<()> {
-    let session = crate::transport::contacts::ContactSessionFence::capture()?;
+    let session = crate::transport::auth::AuthoringSessionFence::capture()?;
     use arkret_sdk::contact_operations::{
         ContactCommitPhase, ContactCommitRequestBody, ContactOperationOutcome, ContactPreparePhase,
         ContactPreparedOutcome, ContactTombstonePrepareRequestBody, ContactTombstoneRequestBody,

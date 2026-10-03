@@ -820,6 +820,49 @@ fn fold_event_list_into_chat_messages(
         state_store,
         decrypt_identity,
     );
+    // A rejected attempt is retained in the holder audit, but stops producing
+    // an error bubble once its explicit retry has a verified settled row in
+    // the same signed scope. An unknown or rejected retry cannot hide it.
+    for record in &ordinary_events {
+        let Some(replacement_ref) = record
+            .get("retry_replacement_event_id")
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        if record.get("write_state").and_then(Value::as_str) != Some("rejected") {
+            continue;
+        }
+        let Some(previous) = record
+            .get("event")
+            .and_then(|value| serde_json::from_value::<arkret_sdk::Event>(value.clone()).ok())
+        else {
+            continue;
+        };
+        let replacement_matches = ordinary_events.iter().any(|candidate| {
+            let Ok(replacement) = serde_json::from_value::<arkret_sdk::Event>(
+                candidate.get("event").unwrap_or(candidate).clone(),
+            ) else {
+                return false;
+            };
+            replacement.event_id.as_str() == replacement_ref
+                && replacement.kind == arkret_sdk::EventKind::MessageCreate
+                && replacement.actor_id == previous.actor_id
+                && replacement.realm_id == previous.realm_id
+                && replacement.scope_ref == previous.scope_ref
+                && replacement.payload.get("strand_id") == previous.payload.get("strand_id")
+                && messages.iter().any(|message| {
+                    message.matches_id_or_protocol(replacement_ref)
+                        && !message.pending
+                        && !message.failed
+                })
+        });
+        if replacement_matches {
+            messages.retain(|message| {
+                !message.failed || !message.matches_id_or_protocol(previous.event_id.as_str())
+            });
+        }
+    }
     messages.retain(|message| {
         let target_ref = message
             .protocol_message_id

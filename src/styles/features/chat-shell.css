@@ -475,6 +475,28 @@
   min-height: 18px;
 }
 
+.discussion-status-slot {
+  min-height: 18px;
+  grid-column: 2;
+}
+
+.discussion-shell.embedded .discussion-status-slot {
+  grid-column: 1;
+}
+
+.discussion-typing-slot {
+  flex: 0 0 20px;
+  min-height: 20px;
+  padding: 0 14px;
+  overflow: hidden;
+}
+
+.discussion-typing-slot .typing-indicator {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .discussion-detail-section {
   display: grid;
   gap: 10px;
@@ -652,6 +674,26 @@
 
 .detail-row strong {
   color: var(--text);
+}
+
+@media (min-width: 981px) {
+  .discussion-shell.direct-mode:not(.embedded) {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  }
+
+  .discussion-shell.direct-mode.right-collapsed:not(.embedded) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .discussion-shell.direct-mode:not(.embedded) .discussion-main-panel,
+  .discussion-shell.direct-mode:not(.embedded) .discussion-composer,
+  .discussion-shell.direct-mode:not(.embedded) .discussion-status-slot {
+    grid-column: 1;
+  }
+
+  .discussion-shell.direct-mode:not(.embedded) .discussion-details-panel {
+    grid-column: 2;
+  }
 }
 
 @media (max-width: 980px) {
