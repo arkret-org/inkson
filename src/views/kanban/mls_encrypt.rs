@@ -640,7 +640,11 @@ pub(super) async fn dispatch_card_detail_update(
                 submit_state_store.write(|store| {
                     store.update_raw_operation_write_state(
                         &operation_id,
-                        "accepted",
+                        if resp.is_committed() {
+                            "accepted"
+                        } else {
+                            "queued"
+                        },
                         Some(resp.event_id.clone()),
                         None,
                     );

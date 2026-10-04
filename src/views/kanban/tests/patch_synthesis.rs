@@ -1,6 +1,93 @@
 use super::*;
 
 #[test]
+fn saved_card_content_never_rolls_back_between_receipt_backfill_and_current() {
+    let id = DEMO_STRAND_LEGAL_REVIEW_ID;
+    let stream = arkret_wire::CommitStreamRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(TEST_REALM_ID).unwrap(),
+    };
+    let revision = |position| arkret_wire::CurrentRevision {
+        commit_id: arkret_wire::RealmCommitId::from_digest([position as u8; 32]),
+        stream_position: position,
+    };
+    let current = |position, value: Value| arkret_wire::TypedCurrentResult::Value {
+        selector: arkret_wire::CurrentSelector::Strand {
+            strand_id: arkret_sdk::StrandId::new(id).unwrap(),
+        },
+        source_stream_ref: stream.clone(),
+        revision: revision(position),
+        value,
+    };
+    for previous in ["", "before edit"] {
+        let mut card = test_card(id, "U");
+        card.description_body = previous.to_owned();
+        card.synthesis = previous.to_owned();
+        card.authoring_basis = Some(revision(1));
+        let mut columns = seed_columns();
+        columns[0].cards = vec![card.clone()];
+        let mut record = RawOperationRecord {
+            operation_id: "pending-save".to_owned(),
+            realm_id: Some(TEST_REALM_ID.to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "kind": "ak.strand.update", "write_state": "queued",
+                "body": {"strand_id": id, "patch": {
+                    "content": content_patch_value("after edit"),
+                    "tracks.synthesis.content": content_patch_value("after edit"),
+                }},
+            }),
+        };
+        let old = vec![current(1, json!({"id": id}))];
+        for state in ["queued", "accepted", "synced"] {
+            record.payload["write_state"] = json!(state);
+            if state != "queued" {
+                record.payload["card_display_commit"] = json!({
+                    "stream_ref": stream, "revision": revision(2),
+                });
+            }
+            let displayed =
+                overlay_pending_card_updates(columns.clone(), &[record.clone()], &old, None);
+            assert_eq!(
+                displayed[0].cards[0].description_body, "after edit",
+                "{state}"
+            );
+            assert_eq!(displayed[0].cards[0].synthesis, "after edit", "{state}");
+            assert!(card_detail_edit_ready(&displayed[0].cards[0]));
+            assert!(!card_detail_write_ready(&displayed[0].cards[0]));
+        }
+        let missing = overlay_pending_card_updates(columns.clone(), &[record.clone()], &[], None);
+        assert_eq!(missing[0].cards[0].description_body, "after edit");
+
+        card.description_body = "after edit".to_owned();
+        card.synthesis = "after edit".to_owned();
+        card.state = CardState::Accepted;
+        card.authoring_basis = Some(revision(2));
+        columns[0].cards = vec![card];
+        let caught_up = vec![current(2, json!({"id": id}))];
+        let settled =
+            overlay_pending_card_updates(columns.clone(), &[record.clone()], &caught_up, None);
+        assert_eq!(settled[0].cards[0].description_body, "after edit");
+        assert!(card_detail_write_ready(&settled[0].cards[0]));
+        assert!(card_detail_edit_ready(&settled[0].cards[0]));
+
+        columns[0].cards[0].description_body = "newer remote edit".to_owned();
+        let newer = vec![current(3, json!({"id": id}))];
+        let displayed =
+            overlay_pending_card_updates(columns.clone(), &[record.clone()], &newer, None);
+        assert_eq!(displayed[0].cards[0].description_body, "newer remote edit");
+
+        record.payload["write_state"] = json!("failed");
+        let failed = overlay_pending_card_updates(columns.clone(), &[record.clone()], &old, None);
+        assert_eq!(failed[0].cards[0].description_body, "newer remote edit");
+        record.payload["write_state"] = json!("accepted");
+        let unavailable = vec![current(2, Value::Null)];
+        columns[0].cards[0].description_body.clear();
+        let displayed = overlay_pending_card_updates(columns, &[record], &unavailable, None);
+        assert!(displayed[0].cards[0].description_body.is_empty());
+    }
+}
+
+#[test]
 fn save_requires_mls_only_when_the_actual_patch_encrypts_private_values() {
     let mut current = test_card(
         "ak:strand:AYn5t7vVVEpjWpz-OryzuNs9zqzSHqMj2K5GK36I3Z5Q",
