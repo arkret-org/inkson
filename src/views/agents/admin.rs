@@ -40,6 +40,37 @@ mod model;
 use controller::*;
 use model::*;
 
+fn use_agent_selection(
+    agents: Signal<Vec<AgentView>>,
+    mut selected_agent_id: Signal<String>,
+    filter: String,
+) {
+    use_effect(use_reactive((&filter,), move |(filter,)| {
+        // Creation selects an Agent before its row arrives. Reconcile only
+        // when the directory or route filter changes, not on that selection.
+        let current = selected_agent_id.peek().clone();
+        let next = {
+            let rows = agents.read();
+            if rows.iter().any(|agent| {
+                agent_id(agent) == current
+                    && agent_matches_filter(agent_lifecycle_wire(agent.agent.lifecycle), &filter)
+            }) {
+                current.clone()
+            } else {
+                rows.iter()
+                    .find(|agent| {
+                        agent_matches_filter(agent_lifecycle_wire(agent.agent.lifecycle), &filter)
+                    })
+                    .map(agent_id)
+                    .unwrap_or_default()
+            }
+        };
+        if next != current {
+            selected_agent_id.set(next);
+        }
+    }));
+}
+
 // Invariant assertions: each `expect` message names the check that
 // establishes it a few lines earlier. Rewriting them as `?` would add
 // error paths no caller can reach.
@@ -128,37 +159,7 @@ pub fn AgentAdminPanel(
         });
     }
 
-    {
-        let filter = active_agent_filter.clone();
-        use_effect(move || {
-            let current = selected_agent_id();
-            let next = {
-                let rows = agents.read();
-                if rows.iter().any(|agent| {
-                    agent_id(agent) == current
-                        && agent_matches_filter(
-                            agent_lifecycle_wire(agent.agent.lifecycle),
-                            &filter,
-                        )
-                }) {
-                    current.clone()
-                } else {
-                    rows.iter()
-                        .find(|agent| {
-                            agent_matches_filter(
-                                agent_lifecycle_wire(agent.agent.lifecycle),
-                                &filter,
-                            )
-                        })
-                        .map(agent_id)
-                        .unwrap_or_default()
-                }
-            };
-            if next != current {
-                selected_agent_id.set(next);
-            }
-        });
-    }
+    use_agent_selection(agents, selected_agent_id, active_agent_filter.clone());
 
     {
         let base = base_url.clone();

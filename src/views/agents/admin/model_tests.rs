@@ -1,6 +1,89 @@
 use super::*;
 
 #[test]
+fn newly_created_agent_selection_survives_directory_refresh_and_follows_filter_changes() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    type SelectionControl =
+        Rc<RefCell<Option<(Signal<Vec<AgentView>>, Signal<String>, Signal<String>)>>>;
+    fn agent(slug: &str, lifecycle: AgentLifecycleState) -> AgentView {
+        let mut projection = test_agent_projection(lifecycle, AgentRuntimeState::PendingRuntimeKey);
+        projection.agent_id =
+            crate::mls_api_helpers::principal_core_id(&format!("did:web:agents.example:{slug}"))
+                .unwrap();
+        projection.slug = slug.to_owned();
+        AgentView {
+            agent: projection,
+            grants: Vec::new(),
+            key_state: None,
+        }
+    }
+    fn harness(control: SelectionControl) -> Element {
+        let agents = use_signal(|| vec![agent("old", AgentLifecycleState::Active)]);
+        let selected = use_signal(|| agent_id(&agent("old", AgentLifecycleState::Active)));
+        let filter = use_signal(|| "all".to_owned());
+        *control.borrow_mut() = Some((agents, selected, filter));
+        use_agent_selection(agents, selected, filter());
+        let visible_selection = selected();
+        rsx! { span { "{visible_selection}" } }
+    }
+    fn settle(dom: &mut VirtualDom) {
+        // Drive the real effect/task queue as well as component renders.
+        for _ in 0..4 {
+            dom.render_immediate_to_vec();
+            dom.process_events();
+        }
+    }
+    let control = Rc::new(RefCell::new(None));
+    let mut dom = VirtualDom::new_with_props(harness, control.clone());
+    dom.rebuild_in_place();
+    settle(&mut dom);
+    let (mut agents, mut selected, mut filter) = control.borrow().as_ref().unwrap().clone();
+    let new = agent("new", AgentLifecycleState::Active);
+    let new_id = agent_id(&new);
+    dom.in_runtime(|| selected.set(new_id.clone()));
+    settle(&mut dom);
+    assert_eq!(
+        *selected.peek(),
+        new_id,
+        "creation selects the new Agent before its directory row arrives"
+    );
+    dom.in_runtime(|| agents.set(vec![agent("old", AgentLifecycleState::Active), new.clone()]));
+    settle(&mut dom);
+    assert_eq!(
+        *selected.peek(),
+        new_id,
+        "a fresh directory retains the newly selected Agent"
+    );
+    let paused = agent("paused", AgentLifecycleState::Paused);
+    let paused_id = agent_id(&paused);
+    dom.in_runtime(|| agents.set(vec![paused, new.clone()]));
+    settle(&mut dom);
+    assert_eq!(*selected.peek(), new_id);
+    dom.in_runtime(|| filter.set("paused".to_owned()));
+    settle(&mut dom);
+    assert_eq!(
+        *selected.peek(),
+        paused_id,
+        "route filter changes still reconcile the visible selection"
+    );
+    dom.in_runtime(|| agents.set(vec![new]));
+    settle(&mut dom);
+    assert!(
+        selected.peek().is_empty(),
+        "directory removal clears a selection outside the current filter"
+    );
+    dom.in_runtime(|| filter.set("all".to_owned()));
+    settle(&mut dom);
+    assert_eq!(
+        *selected.peek(),
+        new_id,
+        "returning to all selects the remaining Agent"
+    );
+}
+
+#[test]
 fn agent_slug_input_is_trimmed_and_lowercased() {
     assert_eq!(normalize_agent_slug(" AA "), "aa");
     assert_eq!(normalize_agent_slug("Summary_V2"), "summary_v2");
