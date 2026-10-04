@@ -12,7 +12,7 @@ const POSITIVE_TTL_MS: u64 = 5 * 60 * 1000;
 const NEGATIVE_TTL_MS: u64 = 30 * 1000;
 const MAX_CACHE_ENTRIES: usize = 4096;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct VerifiedProjectionVersion {
     generation_ref: u64,
     attested_at: chrono::DateTime<chrono::Utc>,
@@ -38,6 +38,7 @@ type CacheKey = (arkret_sdk::AccountId, String);
 #[derive(Default)]
 struct DeviceKeyCache {
     epoch: u64,
+    session_epoch: u64,
     entries: HashMap<CacheKey, CacheEntry>,
 }
 
@@ -66,6 +67,23 @@ pub(crate) fn cache_epoch() -> u64 {
 }
 
 pub(crate) fn reset_session_cache() {
+    let mut cache = CACHE.write().unwrap_or_else(|poison| poison.into_inner());
+    cache.epoch = cache.epoch.wrapping_add(1);
+    cache.session_epoch = cache.session_epoch.wrapping_add(1);
+    cache.entries.clear();
+}
+
+pub(crate) fn session_cache_epoch() -> u64 {
+    CACHE
+        .read()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .session_epoch
+}
+
+/// Fence pending queries while this same session refreshes its device view.
+/// Old evidence cannot cross this epoch; a caller may query again only while
+/// the session epoch and its exact signer/account/device still match.
+pub(crate) fn fence_device_refresh() {
     let mut cache = CACHE.write().unwrap_or_else(|poison| poison.into_inner());
     cache.epoch = cache.epoch.wrapping_add(1);
     cache.entries.clear();
@@ -242,15 +260,35 @@ pub(crate) fn restore_persisted_device_authoring_authority(
     let Some(version) = projection_version(expected_account, expected_device, projection) else {
         return false;
     };
-    store_entry_at_epoch(
+    if !store_entry_at_epoch(
         expected_epoch,
         &expected_account.to_string(),
         expected_device.as_str(),
         Some(key),
         Some(projection.device_authorize_event_id.clone()),
         None,
-        Some(version),
-    )
+        Some(version.clone()),
+    ) {
+        return false;
+    }
+    let guard = CACHE.read().unwrap_or_else(|poison| poison.into_inner());
+    if guard.epoch != expected_epoch
+        || !guard
+            .get(&(expected_account.clone(), expected_device.to_string()))
+            .is_some_and(|entry| {
+                entry.key.is_some() && entry.verified_projection.as_ref() == Some(&version)
+            })
+    {
+        return false;
+    }
+    // Hold the directory fence while installing its matching generation so a
+    // stale query cannot repopulate generation state after invalidation.
+    crate::identity::authoring_generation::cache_verified_principal_generation(
+        expected_account,
+        expected_device.as_str(),
+        &persisted.authoring_generation,
+    );
+    true
 }
 
 pub(crate) fn persisted_device_authoring_authority_from_outcome(
@@ -328,18 +366,12 @@ pub(crate) async fn authenticated_device_authoring_authority(
     ) {
         return Ok(None);
     }
-    if !crate::identity::authoring_generation::cache_principal_authoring_generation_from_keys(
-        &outcome,
-        account_id,
-        device_id.as_str(),
-    )? {
-        return Ok(None);
-    }
     let Some(generation) =
-        crate::identity::authoring_generation::cached_principal_authoring_generation(
+        crate::identity::authoring_generation::principal_authoring_generation_from_keys(
+            &outcome,
             account_id,
             device_id.as_str(),
-        )
+        )?
     else {
         return Ok(None);
     };

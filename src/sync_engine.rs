@@ -1772,7 +1772,8 @@ async fn refresh_local_device_authoring_authority(
 
     // A device-list notification fences retained authoring evidence before
     // the next exact keys/query refresh installs the current device root.
-    crate::identity::device_directory::reset_session_cache();
+    let session_epoch = crate::identity::device_directory::session_cache_epoch();
+    crate::identity::device_directory::fence_device_refresh();
     crate::identity::authoring_generation::reset_verified_authoring_generations();
     ctx.state_store
         .write(|store| store.set_device_authoring_authority(None));
@@ -1782,6 +1783,18 @@ async fn refresh_local_device_authoring_authority(
             .await?;
     let device_id = arkret_sdk::DeviceId::new(ctx.device_id.clone())?;
     anyhow::ensure!(
+        crate::identity::device_directory::session_cache_epoch() == session_epoch
+            && crate::event_signer::active_signer()
+                .is_some_and(|active| std::sync::Arc::ptr_eq(&active, &signer))
+            && crate::secure_key_store::active_device_seed_scope().is_some_and(|scope| {
+                scope.authority == ctx.account.authority && scope.device_id == device_id
+            })
+            && ctx
+                .state_store
+                .read(|store| store.active_authority() == Some(ctx.account.authority.clone())),
+        "device-list refresh crossed its session or authority fence"
+    );
+    anyhow::ensure!(
         outcome
             .devices_for(&ctx.account.authority)
             .and_then(|devices| devices.get(&device_id))
@@ -1789,19 +1802,15 @@ async fn refresh_local_device_authoring_authority(
             == Some(expected_key.as_str()),
         "refreshed device projection does not match the active signer"
     );
-    anyhow::ensure!(
-        crate::identity::authoring_generation::cache_principal_authoring_generation_from_keys(
+    let generation =
+        crate::identity::authoring_generation::principal_authoring_generation_from_keys(
             &outcome,
             &ctx.account.authority,
             ctx.device_id.as_str(),
-        )?,
-        "refreshed device projection has no active authoring generation"
-    );
-    let generation = crate::identity::authoring_generation::cached_principal_authoring_generation(
-        &ctx.account.authority,
-        ctx.device_id.as_str(),
-    )
-    .ok_or_else(|| anyhow::anyhow!("refreshed authoring generation was not retained"))?;
+        )?
+        .ok_or_else(|| {
+            anyhow::anyhow!("refreshed device projection has no active authoring generation")
+        })?;
     let persisted =
         crate::identity::device_directory::persisted_device_authoring_authority_from_outcome(
             &outcome,

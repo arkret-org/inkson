@@ -68,6 +68,190 @@ fn test_signer() -> crate::event_signer::InksonEventSigner {
     crate::event_signer::build_ed25519_device_signer([73; 32], PRINCIPAL, DEVICE)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn device_authoring_requeries_only_across_a_same_session_device_refresh() {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    for (fault, expected_queries) in [
+        ("device-refresh", 2),
+        ("device-refresh-negative", 2),
+        ("session-replacement", 1),
+        ("account-change", 1),
+        ("signer-change", 1),
+        ("revoked", 1),
+        ("continuous-refresh", 3),
+    ] {
+        let account = test_authority();
+        let device = arkret_sdk::DeviceId::new(DEVICE).unwrap();
+        let _scope =
+            crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((&account, &device)));
+        let signer = Arc::new(test_signer());
+        let _signer = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer.clone()));
+        crate::identity::device_directory::reset_session_cache();
+        crate::identity::authoring_generation::reset_verified_authoring_generations();
+        let now = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
+        let outcome: arkret_models_crypto::KeysQueryOutcome = serde_json::from_value(json!({
+            "device_keys": [{"account_id": account, "device_keys": {
+                DEVICE: {
+                    "signer_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "algorithms": {}, "trust_algorithms": [],
+                    "device_projection": {
+                        "device_signing_key_did": format!("did:key:{}", signer.public_key_multibase().unwrap()),
+                        "hpke_key": "hpke-test",
+                        "device_authorize_event_id": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
+                        "authorized_generation_ref": 7,
+                        "device_status": "active",
+                        "authorization_window": { "not_before": now, "expires_at": null },
+                        "attested_at": now,
+                        "expires_at": now + chrono::Duration::minutes(5)
+                    }
+                }
+            }}],
+            "failures": [],
+            "device_generations": [{"account_id": account, "generation_state": {
+                "current_device_generation_ref": 7
+            }}]
+        })).unwrap();
+        let body = serde_json::to_vec(&outcome).unwrap();
+        let mut unavailable = outcome.clone();
+        unavailable.device_keys.clear();
+        unavailable
+            .failures
+            .push(arkret_models_crypto::QueryFailure {
+                account_id: Some(account.clone()),
+                device_id: Some(device.clone()),
+                reason_code: arkret_models_crypto::QueryFailureReason::DeviceResultUnavailable,
+                retry_after_ms: None,
+            });
+        let unavailable_body = serde_json::to_vec(&unavailable).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let http = arkret_sdk::http_client::Client::builder(
+            format!("http://{}/", listener.local_addr().unwrap())
+                .parse()
+                .unwrap(),
+        )
+        .allow_insecure_localhost()
+        .build()
+        .unwrap();
+        let query_account = account.clone();
+        let query_device = device.clone();
+        let server = std::thread::spawn(move || {
+            for query in 0..expected_queries {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(
+                                Instant::now() < deadline,
+                                "expected a fresh keys query: {fault}"
+                            );
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                        Err(error) => panic!("keys fixture listener failed: {error}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let (header_end, length) = loop {
+                    let mut chunk = [0u8; 4096];
+                    let read = stream.read(&mut chunk).unwrap();
+                    assert!(read > 0 && request.len() < 65536);
+                    request.extend_from_slice(&chunk[..read]);
+                    if let Some(end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                        let headers = std::str::from_utf8(&request[..end]).unwrap();
+                        assert!(headers.starts_with("POST /_arkret/self/keys/query HTTP/1.1"));
+                        let length = headers
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().unwrap())
+                            })
+                            .unwrap();
+                        break (end + 4, length);
+                    }
+                };
+                while request.len() < header_end + length {
+                    let mut chunk = [0u8; 4096];
+                    let read = stream.read(&mut chunk).unwrap();
+                    assert!(read > 0);
+                    request.extend_from_slice(&chunk[..read]);
+                }
+                let request: arkret_models_crypto::KeysQueryRequestBody =
+                    serde_json::from_slice(&request[header_end..header_end + length]).unwrap();
+                assert_eq!(request.device_keys.len(), 1);
+                assert_eq!(request.device_keys[0].account_id, query_account);
+                assert_eq!(
+                    request.device_keys[0].device_ids,
+                    vec![query_device.clone()]
+                );
+                if query > 0 {
+                    assert!(crate::identity::authoring_generation::cached_principal_authoring_generation(
+                        &query_account, query_device.as_str(),
+                    ).is_none(), "discarded query must not install a generation");
+                }
+                if fault == "continuous-refresh"
+                    || (matches!(fault, "device-refresh" | "device-refresh-negative") && query == 0)
+                {
+                    crate::identity::device_directory::fence_device_refresh();
+                } else if fault == "session-replacement" {
+                    crate::identity::device_directory::reset_session_cache();
+                } else if fault == "account-change" {
+                    let other = arkret_sdk::AccountId::new(
+                        query_account.principal_id.clone(),
+                        arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example")
+                            .unwrap(),
+                    );
+                    crate::secure_key_store::set_active_device_seed_scope(Some((
+                        &other,
+                        &query_device,
+                    )));
+                } else if fault == "signer-change" {
+                    crate::event_signer::replace_active_signer(Some(Arc::new(
+                        crate::event_signer::build_ed25519_device_signer(
+                            [74; 32], PRINCIPAL, DEVICE,
+                        ),
+                    )));
+                }
+                let body =
+                    if fault == "revoked" || (fault == "device-refresh-negative" && query == 0) {
+                        &unavailable_body
+                    } else {
+                        &body
+                    };
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+                stream.write_all(&body).unwrap();
+            }
+            expected_queries
+        });
+        let result = EventSubmitter::new(http)
+            .with_authority(account.clone())
+            .event_proof_context(arkret_sdk::DigestSuite::Sha256)
+            .await;
+        assert_eq!(server.join().unwrap(), expected_queries);
+        let expects_success = matches!(fault, "device-refresh" | "device-refresh-negative");
+        assert_eq!(result.is_ok(), expects_success, "{fault}");
+        let generation =
+            crate::identity::authoring_generation::cached_principal_authoring_generation(
+                &account,
+                device.as_str(),
+            );
+        assert_eq!(generation.is_some(), expects_success, "{fault}");
+        if let Some(generation) = generation {
+            assert_eq!(generation.generation_ref, "7");
+        }
+        crate::identity::device_directory::reset_session_cache();
+        crate::identity::authoring_generation::reset_verified_authoring_generations();
+    }
+}
+
 /// Finalize and sign one intent the way production does: the identity is
 /// derived from the finished content, then a single producer proof is added.
 fn author_and_sign(

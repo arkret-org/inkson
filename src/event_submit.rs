@@ -1238,9 +1238,6 @@ impl EventSubmitter {
         &self,
         digest_suite: arkret_sdk::DigestSuite,
     ) -> anyhow::Result<crate::event_signer::ProducerProofContext> {
-        if let Ok(context) = crate::event_signer::cached_active_event_proof_context(digest_suite) {
-            return Ok(context);
-        }
         // Device-list refresh fences the retained cache before its async
         // query completes. Resolve this exact author's current evidence here
         // instead of turning that transient gap into a failed user action.
@@ -1253,22 +1250,65 @@ impl EventSubmitter {
                 .ok_or_else(|| anyhow::anyhow!("active signer has no device id"))?
                 .to_owned(),
         )?;
-        let epoch = crate::identity::device_directory::cache_epoch();
-        let persisted =
-            crate::identity::device_directory::authenticated_device_authoring_authority(
-                &self.http,
-                authority,
-                &device,
-                signer.as_ref(),
-            )
-            .await?
-            .ok_or_else(|| {
+        let session_epoch = crate::identity::device_directory::session_cache_epoch();
+        for _ in 0..3 {
+            self.ensure_device_authoring_fence(authority, &device, &signer, session_epoch)?;
+            if let Ok(context) =
+                crate::event_signer::cached_active_event_proof_context(digest_suite)
+            {
+                return Ok(context);
+            }
+            let epoch = crate::identity::device_directory::cache_epoch();
+            let persisted =
+                crate::identity::device_directory::authenticated_device_authoring_authority(
+                    &self.http,
+                    authority,
+                    &device,
+                    signer.as_ref(),
+                )
+                .await?;
+            self.ensure_device_authoring_fence(authority, &device, &signer, session_epoch)?;
+            // A notification invalidated this read, even if its reply was a
+            // negative projection. Re-query in the same session; never install
+            // that reply under the new directory epoch.
+            if crate::identity::device_directory::cache_epoch() != epoch {
+                continue;
+            }
+            let persisted = persisted.ok_or_else(|| {
                 anyhow::anyhow!("active device has no matching verified authoring authority")
             })?;
-        anyhow::ensure!(
-            crate::identity::device_directory::restore_persisted_device_authoring_authority(
+            if !crate::identity::device_directory::restore_persisted_device_authoring_authority(
                 epoch, authority, &device, &persisted,
-            ),
+            ) {
+                self.ensure_device_authoring_fence(authority, &device, &signer, session_epoch)?;
+                if crate::identity::device_directory::cache_epoch() != epoch {
+                    continue;
+                }
+                anyhow::bail!("device authoring authority was superseded or revoked");
+            }
+            if let Some(store) = self.state_store.as_ref() {
+                store.write(|state| state.set_device_authoring_authority(Some(persisted)));
+            }
+            return crate::event_signer::cached_active_event_proof_context(digest_suite)
+                .map_err(|error| anyhow::anyhow!("{error}"));
+        }
+        anyhow::bail!("device authoring refresh did not settle in the current session")
+    }
+
+    fn ensure_device_authoring_fence(
+        &self,
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        signer: &std::sync::Arc<crate::event_signer::InksonEventSigner>,
+        session_epoch: u64,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            crate::identity::device_directory::session_cache_epoch() == session_epoch
+                && crate::secure_key_store::active_device_seed_scope().is_some_and(|scope| {
+                    &scope.authority == authority && &scope.device_id == device
+                })
+                && crate::event_signer::active_signer()
+                    .is_some_and(|active| std::sync::Arc::ptr_eq(&active, signer)),
             "device authoring refresh crossed its session or authority fence"
         );
         if let Some(store) = self.state_store.as_ref() {
@@ -1279,10 +1319,8 @@ impl EventSubmitter {
                     == Some(authority),
                 "device authoring refresh crossed its account fence"
             );
-            store.write(|state| state.set_device_authoring_authority(Some(persisted)));
         }
-        crate::event_signer::cached_active_event_proof_context(digest_suite)
-            .map_err(|error| anyhow::anyhow!("{error}"))
+        Ok(())
     }
 
     async fn verify_actor_authority(&self, intent: &EventIntent) -> anyhow::Result<()> {

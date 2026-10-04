@@ -239,6 +239,20 @@ enum PrincipalGenerationResolution {
     Quarantine(String),
 }
 
+/// Derive evidence without installing it before the caller's async fence.
+pub(crate) fn principal_authoring_generation_from_keys(
+    outcome: &arkret_models_crypto::KeysQueryOutcome,
+    account_id: &arkret_sdk::AccountId,
+    device_id: &str,
+) -> anyhow::Result<Option<AuthoringGeneration>> {
+    Ok(
+        match resolve_principal_authoring_generation_from_keys(outcome, account_id, device_id)? {
+            PrincipalGenerationResolution::Active(generation) => Some(generation),
+            PrincipalGenerationResolution::Quarantine(_) => None,
+        },
+    )
+}
+
 /// Cache the current authoring generation from a keys projection that the
 /// authenticated connection bootstrap has already fetched. Returning `false`
 /// keeps the device-authorization gate closed when the projection quarantines
