@@ -47,6 +47,117 @@ fn inventory_only_agent_has_no_guessed_station_or_selector_candidate() {
 }
 
 #[test]
+fn selected_owned_agent_uses_readable_name_only_token_without_guessing_a_slug() {
+    let principal = "ak:did_core:web:example.com:users:alice";
+    let controller = SpaceParticipant {
+        actor_id: Some(local_fixture_actor(principal)),
+        principal_id: arkret_sdk::DidCoreId::new(principal).unwrap(),
+        display_name: Some("Alice".into()),
+        handle_label: Some("alice:example.com".into()),
+        display_name_rank: 0,
+        role: SpaceParticipantRole::Member,
+        is_self: true,
+        is_agent: false,
+        agent_metadata: None,
+    };
+    let agent_id = "ak:did_core:web:agents.example:aa";
+    let agent = SpaceParticipant {
+        actor_id: Some(local_fixture_actor(agent_id)),
+        principal_id: arkret_sdk::DidCoreId::new(agent_id).unwrap(),
+        display_name: Some("aa".into()),
+        handle_label: None,
+        display_name_rank: 1,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: true,
+        agent_metadata: Some(AgentParticipantMetadata {
+            controller_principal_id: principal.into(),
+            controller_handle: "alice:example.com".into(),
+            agent_slug: "unverified-inventory-slug".into(),
+            display_name: "aa".into(),
+        }),
+    };
+    let participants = vec![controller, agent.clone()];
+    let candidate = mention_candidate_for_participant(&agent, &participants, principal).unwrap();
+    assert_eq!(candidate.insert_label(), "me/aa");
+    assert_eq!(
+        candidate.subtitle,
+        crate::i18n::tr("identity.tier.name_only")
+    );
+    assert!(candidate.agent_slug_at_time.is_empty());
+    let mut picker = crate::messaging::mentions::MentionPickerState::new();
+    let draft = picker.select(candidate, "ask @me/a", Some((4, 9)));
+    let nodes = composer_mention_nodes(true, &draft, &picker.bound_candidates(&draft), principal);
+    assert_eq!(
+        nodes[0].as_mention().unwrap().subject_account_id,
+        participant_mention_account(&agent).unwrap()
+    );
+    assert_eq!(
+        composer_agent_mention_route(
+            arkret_sdk::AgentMentionComposerScope::Realm,
+            arkret_sdk::AgentMentionSendChoice::PrivateDefault,
+            &nodes,
+            &participants,
+            principal
+        ),
+        arkret_sdk::AgentMentionRoute::Sidecar
+    );
+    let mut mixed = nodes.clone();
+    let bound = picker.bound_candidates(&draft);
+    assert_eq!(
+        composer_selected_agent_mention_route(
+            arkret_sdk::AgentMentionComposerScope::Realm,
+            arkret_sdk::AgentMentionSendChoice::PrivateDefault,
+            &nodes,
+            &[],
+            principal,
+            &bound
+        ),
+        arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets
+    );
+    assert_eq!(
+        composer_selected_agent_mention_route(
+            arkret_sdk::AgentMentionComposerScope::Realm,
+            arkret_sdk::AgentMentionSendChoice::Shared,
+            &nodes,
+            &[],
+            principal,
+            &bound
+        ),
+        arkret_sdk::AgentMentionRoute::Shared
+    );
+    mixed.push(MentionNode::mention(arkret_sdk::Mention::new(
+        local_fixture_account("ak:did_core:web:bob.example"),
+    )));
+    assert_eq!(
+        composer_agent_mention_route(
+            arkret_sdk::AgentMentionComposerScope::Realm,
+            arkret_sdk::AgentMentionSendChoice::PrivateDefault,
+            &mixed,
+            &participants,
+            principal
+        ),
+        arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets
+    );
+    assert_eq!(
+        composer_agent_mention_route(
+            arkret_sdk::AgentMentionComposerScope::Realm,
+            arkret_sdk::AgentMentionSendChoice::Shared,
+            &mixed,
+            &participants,
+            principal
+        ),
+        arkret_sdk::AgentMentionRoute::Shared
+    );
+    let edited = draft.replace("@me/aa", "@me/aa-other @me/aa");
+    picker.edit(&draft, &edited);
+    assert!(
+        composer_mention_nodes(true, &edited, &picker.bound_candidates(&edited), principal)
+            .is_empty()
+    );
+}
+
+#[test]
 fn mention_candidate_for_current_user_uses_structured_me_alias() {
     let participant = SpaceParticipant {
         actor_id: Some(local_fixture_actor(
@@ -131,6 +242,7 @@ fn raw_agent_selector_text_does_not_create_target_or_notification() {
         insert_label: "me/summary".to_owned(),
         subtitle: String::new(),
         is_agent: true,
+        is_owned_agent: false,
         controller_subject_account_id: Some(local_fixture_account(controller)),
         controller_handle_at_time: "alice:example.com".to_owned(),
         agent_slug_at_time: "summary".to_owned(),

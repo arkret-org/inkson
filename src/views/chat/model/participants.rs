@@ -471,8 +471,8 @@ pub(crate) fn participant_mention_account(
 
 pub(crate) fn mention_candidate_for_participant(
     participant: &SpaceParticipant,
-    _participants: &[SpaceParticipant],
-    _principal_id: &str,
+    participants: &[SpaceParticipant],
+    principal_id: &str,
 ) -> Option<crate::messaging::mentions::MentionCandidate> {
     let subject_account_id = participant_mention_account(participant)?;
     if participant.is_agent {
@@ -491,12 +491,33 @@ pub(crate) fn mention_candidate_for_participant(
                     crate::i18n::tr("identity.tier.unresolved"),
                 )
             });
+        let is_owned_agent = participant.agent_metadata.as_ref().is_some_and(|metadata| {
+            same_principal_core(&metadata.controller_principal_id, principal_id)
+        });
+        let labels = participant.agent_metadata.as_ref().and_then(|metadata| {
+            let controller = participants.iter().find(|candidate| {
+                !candidate.is_agent
+                    && candidate.principal_id.as_str() == metadata.controller_principal_id
+                    && participant_mention_account(candidate).is_some()
+            })?;
+            let owned = controller.is_self && controller.principal_id.as_str() == principal_id;
+            // Use public roster labels, never the Contact petname overlay.
+            let public_holder = participant_handle_label(controller)
+                .unwrap_or_else(|| short_principal_label(controller.principal_id.as_str()));
+            Some(arkret_sdk::AgentMentionLabels::new(
+                &public_holder,
+                None,
+                owned,
+                &account_label,
+            ))
+        });
         return Some(crate::messaging::mentions::MentionCandidate {
             subject_account_id,
             display_name: account_label.clone(),
-            insert_label: account_label,
+            insert_label: labels.map(|labels| labels.shared).unwrap_or(account_label),
             subtitle,
             is_agent: true,
+            is_owned_agent,
             controller_subject_account_id: None,
             controller_handle_at_time: String::new(),
             agent_slug_at_time: String::new(),
@@ -512,6 +533,7 @@ pub(crate) fn mention_candidate_for_participant(
             insert_label: "me".to_owned(),
             subtitle: "You".to_owned(),
             is_agent: false,
+            is_owned_agent: false,
             controller_subject_account_id: None,
             controller_handle_at_time: String::new(),
             agent_slug_at_time: String::new(),
@@ -534,6 +556,7 @@ pub(crate) fn mention_candidate_for_participant(
         display_name,
         subtitle,
         is_agent: false,
+        is_owned_agent: false,
         controller_subject_account_id: None,
         controller_handle_at_time: String::new(),
         agent_slug_at_time: String::new(),
@@ -564,6 +587,7 @@ pub(crate) fn mention_candidate_for_explicit_target(
             insert_label: fallback_label,
             subtitle: String::new(),
             is_agent: false,
+            is_owned_agent: false,
             controller_subject_account_id: None,
             controller_handle_at_time: String::new(),
             agent_slug_at_time: String::new(),

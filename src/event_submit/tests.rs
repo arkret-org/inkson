@@ -155,6 +155,7 @@ async fn device_authoring_requeries_only_across_a_same_session_device_refresh() 
                         Err(error) => panic!("keys fixture listener failed: {error}"),
                     }
                 };
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();

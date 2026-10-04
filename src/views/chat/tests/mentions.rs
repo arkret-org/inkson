@@ -229,10 +229,16 @@ fn raw_agent_selector_text_does_not_trigger_private_sidecar_route() {
 
 #[test]
 fn owned_agent_mentions_do_not_reopen_sidecar_from_private_composer() {
-    assert!(should_route_owned_agent_to_sidecar(false, false, true));
-    assert!(!should_route_owned_agent_to_sidecar(true, false, true));
-    assert!(!should_route_owned_agent_to_sidecar(false, true, true));
-    assert!(!should_route_owned_agent_to_sidecar(false, false, false));
+    assert_eq!(
+        composer_agent_mention_route(
+            arkret_sdk::AgentMentionComposerScope::Sidecar,
+            arkret_sdk::AgentMentionSendChoice::PrivateDefault,
+            &[],
+            &[],
+            "ak:did_core:web:example.com:users:alice"
+        ),
+        arkret_sdk::AgentMentionRoute::Sidecar
+    );
 }
 
 #[test]
@@ -244,6 +250,7 @@ fn direct_chat_disables_mention_ui_triggers_and_send_metadata() {
         insert_label: "bob:example.com".to_owned(),
         subtitle: String::new(),
         is_agent: false,
+        is_owned_agent: false,
         controller_subject_account_id: None,
         controller_handle_at_time: String::new(),
         agent_slug_at_time: String::new(),

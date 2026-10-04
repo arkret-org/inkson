@@ -424,12 +424,70 @@ fn owned_agent_ids_from_composer(
     agent_ids
 }
 
-fn should_route_owned_agent_to_sidecar(
-    is_sidecar_composer: bool,
-    selected_channel_is_circle_scoped: bool,
-    has_owned_agent_ids: bool,
-) -> bool {
-    !is_sidecar_composer && !selected_channel_is_circle_scoped && has_owned_agent_ids
+fn composer_selected_agent_mention_route(
+    scope: arkret_sdk::AgentMentionComposerScope,
+    choice: arkret_sdk::AgentMentionSendChoice,
+    mentions: &[MentionNode],
+    participants: &[SpaceParticipant],
+    controller_principal_id: &str,
+    candidates: &[crate::messaging::mentions::MentionCandidate],
+) -> arkret_sdk::AgentMentionRoute {
+    let route = composer_agent_mention_route(
+        scope,
+        choice,
+        mentions,
+        participants,
+        controller_principal_id,
+    );
+    if scope == arkret_sdk::AgentMentionComposerScope::Realm
+        && choice == arkret_sdk::AgentMentionSendChoice::PrivateDefault
+        && candidates.iter().any(|candidate| candidate.is_owned_agent)
+        && route == arkret_sdk::AgentMentionRoute::Shared
+    {
+        return arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets;
+    }
+    route
+}
+
+fn composer_agent_mention_route(
+    scope: arkret_sdk::AgentMentionComposerScope,
+    choice: arkret_sdk::AgentMentionSendChoice,
+    mentions: &[MentionNode],
+    participants: &[SpaceParticipant],
+    controller_principal_id: &str,
+) -> arkret_sdk::AgentMentionRoute {
+    let is_owned = |account: &arkret_sdk::AccountId| {
+        participants.iter().any(|participant| {
+            participant.is_agent
+                && participant_mention_account(participant).as_ref() == Some(account)
+                && participant.agent_metadata.as_ref().is_some_and(|metadata| {
+                    same_principal_core(&metadata.controller_principal_id, controller_principal_id)
+                })
+        })
+    };
+    let self_account = crate::mls_api_helpers::local_account_actor_id(controller_principal_id)
+        .ok()
+        .and_then(|actor| actor.as_account_id().cloned());
+    let owned = mentions
+        .iter()
+        .filter_map(MentionNode::as_mention)
+        .any(|mention| is_owned(&mention.subject_account_id));
+    let outside = mentions
+        .iter()
+        .filter_map(MentionNode::as_mention)
+        .any(|mention| {
+            self_account.as_ref() != Some(&mention.subject_account_id)
+                && !is_owned(&mention.subject_account_id)
+        });
+    arkret_sdk::agent_mention_route(
+        scope,
+        choice,
+        owned,
+        outside,
+        mentions
+            .iter()
+            .any(|mention| mention.as_audience_mention().is_some()),
+    )
 }
 
 #[derive(Clone, Debug)]

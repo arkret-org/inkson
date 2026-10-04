@@ -24,6 +24,10 @@ pub struct MentionCandidate {
     pub subtitle: String,
     #[serde(default)]
     pub is_agent: bool,
+    /// Selection-time intent stays local and survives missing current roster
+    /// material, so a private draft cannot silently become a shared message.
+    #[serde(skip)]
+    pub is_owned_agent: bool,
     /// Complete controller account for an agent candidate; `None` for a
     /// non-agent row and for an agent whose controller account is not yet
     /// resolved.
@@ -60,6 +64,8 @@ pub struct MentionPickerState {
     /// this to render `mention-chip` rows above the textarea and to
     /// avoid suggesting the same actor twice.
     pub inserted: Vec<MentionCandidate>,
+    /// Local ranges exist only after explicit selection, never from text search.
+    bindings: Vec<arkret_sdk::MentionDraftBinding>,
 }
 
 impl MentionPickerState {
@@ -141,12 +147,87 @@ impl MentionPickerState {
     pub fn remove(&mut self, subject_account_id: &arkret_sdk::AccountId) {
         self.inserted
             .retain(|c| &c.subject_account_id != subject_account_id);
+        self.bindings
+            .retain(|binding| &binding.subject_account_id != subject_account_id);
+    }
+
+    pub fn select(
+        &mut self,
+        candidate: MentionCandidate,
+        draft: &str,
+        range: Option<(usize, usize)>,
+    ) -> String {
+        if self
+            .inserted
+            .iter()
+            .any(|existing| existing.subject_account_id == candidate.subject_account_id)
+        {
+            return draft.to_owned();
+        }
+        let updated = replace_active_mention_token(draft, range, candidate.insert_label());
+        let start = range
+            .filter(|(start, end)| {
+                start <= end
+                    && *end <= draft.len()
+                    && draft.is_char_boundary(*start)
+                    && draft.is_char_boundary(*end)
+            })
+            .map(|(start, _)| start)
+            .unwrap_or_else(|| {
+                draft.len()
+                    + usize::from(
+                        draft
+                            .chars()
+                            .next_back()
+                            .is_some_and(|ch| !ch.is_whitespace()),
+                    )
+            });
+        let token = format!(
+            "@{}",
+            candidate.insert_label().trim().trim_start_matches('@')
+        );
+        let Some(binding) = arkret_sdk::MentionDraftBinding::new(
+            candidate.subject_account_id.clone(),
+            start,
+            start + token.len(),
+            token,
+            &updated,
+        ) else {
+            return draft.to_owned();
+        };
+        self.edit(draft, &updated);
+        self.bindings.push(binding);
+        self.insert(candidate);
+        updated
+    }
+
+    pub fn edit(&mut self, old: &str, new: &str) {
+        self.bindings.retain_mut(|binding| binding.rebase(old, new));
+        self.inserted.retain(|candidate| {
+            self.bindings
+                .iter()
+                .any(|binding| binding.subject_account_id == candidate.subject_account_id)
+        });
+    }
+
+    pub fn bound_candidates(&self, draft: &str) -> Vec<MentionCandidate> {
+        self.inserted
+            .iter()
+            .filter(|candidate| {
+                self.bindings.iter().any(|binding| {
+                    binding.subject_account_id == candidate.subject_account_id
+                        && binding.is_visible_in(draft)
+                })
+            })
+            .cloned()
+            .collect()
     }
 
     /// Clear all picker state — typically called when the user has
     /// sent or discarded the draft.
     pub fn clear(&mut self) {
         self.inserted.clear();
+        self.bindings.clear();
         self.query.clear();
         self.open = false;
         self.active_range = None;
@@ -253,6 +334,7 @@ mod tests {
             insert_label: String::new(),
             subtitle: String::new(),
             is_agent: false,
+            is_owned_agent: false,
             controller_subject_account_id: None,
             controller_handle_at_time: String::new(),
             agent_slug_at_time: String::new(),
@@ -266,6 +348,7 @@ mod tests {
             insert_label: String::new(),
             subtitle: String::new(),
             is_agent: false,
+            is_owned_agent: false,
             controller_subject_account_id: None,
             controller_handle_at_time: String::new(),
             agent_slug_at_time: String::new(),
@@ -297,6 +380,7 @@ mod tests {
                 insert_label: "alice:example.com/summary".into(),
                 subtitle: "agent of alice:example.com".into(),
                 is_agent: true,
+                is_owned_agent: false,
                 controller_subject_account_id: Some(account(
                     "ak:did_core:web:example.com:users:alice",
                     STATION,
@@ -363,6 +447,7 @@ mod tests {
                 insert_label: format!("me/agent-{index}"),
                 subtitle: "Your agent".to_owned(),
                 is_agent: true,
+                is_owned_agent: false,
                 controller_subject_account_id: Some(account(
                     "ak:did_core:web:alice.example",
                     STATION,
@@ -431,5 +516,42 @@ mod tests {
             replace_active_mention_token("hello", None, "bob:local.host"),
             "hello @bob:local.host "
         );
+    }
+
+    #[test]
+    fn selected_ranges_survive_external_edits_but_not_token_edits_or_chip_removal() {
+        let mut state = MentionPickerState::new();
+        let mut candidate = alice();
+        candidate.is_agent = true;
+        candidate.insert_label = "me/aa".into();
+        let draft = state.select(candidate.clone(), "ask @me/a", Some((4, 9)));
+        assert_eq!(draft, "ask @me/aa ");
+        assert_eq!(state.bound_candidates(&draft), vec![candidate.clone()]);
+        let shifted = format!("prefix {draft}");
+        state.edit(&draft, &shifted);
+        assert_eq!(state.bound_candidates(&shifted).len(), 1);
+        let edited = shifted.replace("@me/aa", "@me/aa-extra @me/aa");
+        state.edit(&shifted, &edited);
+        assert!(state.bound_candidates(&edited).is_empty());
+        assert!(state.inserted.is_empty());
+        let selected_again = state.select(candidate.clone(), &edited, None);
+        assert_eq!(state.bound_candidates(&selected_again).len(), 1);
+        state.remove(&candidate.subject_account_id);
+        assert!(state.bound_candidates(&selected_again).is_empty());
+    }
+
+    #[test]
+    fn same_label_at_different_stations_has_separate_selected_ranges() {
+        let mut first = alice();
+        first.is_agent = true;
+        first.insert_label = "me/aa".into();
+        let mut second = first.clone();
+        second.subject_account_id.station_id = arkret_sdk::DidCoreId::new(OTHER_STATION).unwrap();
+        let mut state = MentionPickerState::new();
+        let draft = state.select(first.clone(), "", None);
+        let draft = state.select(second.clone(), &draft, None);
+        assert_eq!(state.bound_candidates(&draft).len(), 2);
+        state.remove(&first.subject_account_id);
+        assert_eq!(state.bound_candidates(&draft), vec![second]);
     }
 }
