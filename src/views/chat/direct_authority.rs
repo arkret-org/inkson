@@ -16,7 +16,7 @@ pub(super) fn use_direct_authority(
         let realm_epoch = realm_live_epoch();
         let peer = state_store.read().direct_conversation_peer(&realm_id);
         let Some(peer) = peer else { return };
-        let epoch = crate::identity::device_directory::cache_epoch();
+        let epoch = crate::identity::device_directory::session_cache_epoch();
         let key = format!(
             "{base_url}|{realm_id}|{authority:?}|{peer:?}|{epoch}|{cursor}|{realm_epoch}|{credential}"
         );

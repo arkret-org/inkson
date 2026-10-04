@@ -505,7 +505,7 @@ fn nested_peer_request_keeps_its_own_producer_and_original_event_signature_is_re
 }
 
 #[test]
-fn session_fence_rejects_same_principal_account_switch_and_signer_replacement() {
+fn session_fence_survives_device_refresh_but_rejects_session_account_or_signer_replacement() {
     let account = crate::test_support::authority("did:web:alice.example");
     let device =
         arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-0000000000a1").unwrap();
@@ -517,6 +517,15 @@ fn session_fence_rejects_same_principal_account_switch_and_signer_replacement() 
         device.as_str(),
     ));
     let _signer = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer.clone()));
+    let fence = AuthoringSessionFence::capture().unwrap();
+    fence.check().unwrap();
+    crate::identity::device_directory::fence_device_refresh();
+    fence.check().unwrap();
+    crate::identity::device_directory::reset_session_cache();
+    assert!(
+        fence.check().is_err(),
+        "the same signer cannot cross a replaced session"
+    );
     let fence = AuthoringSessionFence::capture().unwrap();
     fence.check().unwrap();
     let other = crate::test_support::authority_at_station(

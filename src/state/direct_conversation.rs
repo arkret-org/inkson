@@ -78,7 +78,7 @@ impl LocalStateStore {
         let context = self.cached.direct_message_contexts.get(realm)?;
         if actor.as_account_id() != Some(&context.account)
             || self.active_authority().as_ref() != Some(&context.account)
-            || context.session_epoch != crate::identity::device_directory::cache_epoch()
+            || context.session_epoch != crate::identity::device_directory::session_cache_epoch()
             || !self.cached.direct_conversation_peers.contains_key(realm)
         {
             return None;
@@ -131,7 +131,7 @@ mod tests {
             realm.into(),
             Some(DirectMessageContext {
                 account: authority.clone(),
-                session_epoch: crate::identity::device_directory::cache_epoch(),
+                session_epoch: crate::identity::device_directory::session_cache_epoch(),
                 query_sequence: sequence,
                 authority_source: arkret_wire::AuthoritySourceId::DirectConversationParticipantV1,
                 authority_event_ref: reference.clone(),
@@ -143,6 +143,19 @@ mod tests {
                 .direct_message_context(realm, &arkret_sdk::ActorId::account(authority.clone()))
                 .is_some()
         );
+        crate::identity::device_directory::fence_device_refresh();
+        let mut retained = store
+            .direct_message_context(realm, &arkret_sdk::ActorId::account(authority.clone()))
+            .expect("device directory refresh does not replace the Direct session");
+        crate::identity::device_directory::reset_session_cache();
+        assert!(
+            store
+                .direct_message_context(realm, &arkret_sdk::ActorId::account(authority.clone()))
+                .is_none(),
+            "the same account cannot reuse a Direct context after session replacement"
+        );
+        retained.session_epoch = crate::identity::device_directory::session_cache_epoch();
+        store.set_direct_message_context(realm.into(), Some(retained));
         assert!(
             store
                 .direct_message_context(
@@ -179,7 +192,7 @@ mod tests {
             realm.into(),
             Some(DirectMessageContext {
                 account: authority.clone(),
-                session_epoch: crate::identity::device_directory::cache_epoch(),
+                session_epoch: crate::identity::device_directory::session_cache_epoch(),
                 query_sequence: sequence,
                 authority_source: arkret_wire::AuthoritySourceId::DirectConversationParticipantV1,
                 authority_event_ref: arkret_sdk::EventId::from_digest(

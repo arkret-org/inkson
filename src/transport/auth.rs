@@ -9,7 +9,7 @@ use crate::transport::TransportClient;
 
 #[derive(Clone)]
 pub(crate) struct AuthoringSessionFence {
-    epoch: u64,
+    session_epoch: u64,
     pub(crate) signer: std::sync::Arc<crate::event_signer::InksonEventSigner>,
     scope: Option<crate::secure_key_store::ActiveDeviceSeedScope>,
 }
@@ -17,7 +17,7 @@ pub(crate) struct AuthoringSessionFence {
 impl AuthoringSessionFence {
     pub(crate) fn capture() -> anyhow::Result<Self> {
         Ok(Self {
-            epoch: crate::identity::device_directory::cache_epoch(),
+            session_epoch: crate::identity::device_directory::session_cache_epoch(),
             signer: crate::event_signer::active_signer()
                 .ok_or_else(|| anyhow::anyhow!("active authoring signer is required"))?,
             scope: crate::secure_key_store::active_device_seed_scope(),
@@ -27,7 +27,7 @@ impl AuthoringSessionFence {
     pub(crate) fn check(&self) -> anyhow::Result<()> {
         let active = crate::event_signer::active_signer();
         anyhow::ensure!(
-            self.epoch == crate::identity::device_directory::cache_epoch()
+            self.session_epoch == crate::identity::device_directory::session_cache_epoch()
                 && self.scope == crate::secure_key_store::active_device_seed_scope()
                 && active
                     .as_ref()

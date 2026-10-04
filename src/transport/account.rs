@@ -56,7 +56,7 @@ pub(crate) async fn current_principal_for_authority(
     http: &arkret_sdk::http_client::Client,
     authority: &arkret_sdk::AccountId,
 ) -> anyhow::Result<arkret_sdk::CurrentPrincipalOutcome> {
-    let generation = crate::identity::device_directory::cache_epoch();
+    let generation = crate::identity::device_directory::session_cache_epoch();
     let active_scope = crate::secure_key_store::active_device_seed_scope();
     let request = arkret_sdk::CurrentPrincipalRequestBody {
         request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
@@ -64,7 +64,7 @@ pub(crate) async fn current_principal_for_authority(
     };
     let result = http.current_principal(&request).await?;
     anyhow::ensure!(
-        generation == crate::identity::device_directory::cache_epoch(),
+        generation == crate::identity::device_directory::session_cache_epoch(),
         "current principal response belongs to an old identity session"
     );
     let current_scope = crate::secure_key_store::active_device_seed_scope();
@@ -557,7 +557,7 @@ pub async fn direct_conversation_resolve(
     let authority = state_store
         .read(|store| store.active_authority())
         .ok_or_else(|| anyhow::anyhow!("Direct Conversation requires active account"))?;
-    let epoch = crate::identity::device_directory::cache_epoch();
+    let epoch = crate::identity::device_directory::session_cache_epoch();
     let http = api.http();
     let peer_descriptor = direct_conversation_peer_descriptor(peer, peer_controller)?;
     let peer_actor = peer_descriptor.contact_actor_id();

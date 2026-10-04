@@ -390,7 +390,7 @@ fn direct_epoch_zero_send_requires_exact_verified_founder_bootstrap_context() {
     let sequence = crate::mls::direct_binding::begin_query(&authority, &peer).unwrap();
     let context = crate::state::DirectMessageContext {
         account: authority.clone(),
-        session_epoch: crate::identity::device_directory::cache_epoch(),
+        session_epoch: crate::identity::device_directory::session_cache_epoch(),
         query_sequence: sequence,
         authority_source: arkret_wire::AuthoritySourceId::DirectConversationBootstrapParticipantV1,
         authority_event_ref: arkret_sdk::EventId::new(realm.replace("ak:realm:", "ak:event:"))

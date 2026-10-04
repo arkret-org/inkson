@@ -178,7 +178,7 @@ pub(crate) async fn install_resolved_message_context(
     store.write(|state| -> anyhow::Result<()> {
         anyhow::ensure!(
             state.active_authority().as_ref() == Some(account)
-                && epoch == crate::identity::device_directory::cache_epoch()
+                && epoch == crate::identity::device_directory::session_cache_epoch()
                 && query_is_current(account, &peer, query_sequence),
             "Direct Conversation account or query changed"
         );
@@ -268,7 +268,7 @@ pub(crate) async fn install_resolved_message_context(
     store.write(|state| -> anyhow::Result<()> {
         anyhow::ensure!(
             state.active_authority().as_ref() == Some(account)
-                && epoch == crate::identity::device_directory::cache_epoch()
+                && epoch == crate::identity::device_directory::session_cache_epoch()
                 && query_is_current(account, &peer, query_sequence)
                 && state.direct_conversation_peer(realm.as_str()).as_ref() == Some(&peer),
             "Direct Conversation result arrived after session, query or peer changed"
