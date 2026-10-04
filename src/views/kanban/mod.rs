@@ -1089,9 +1089,8 @@ pub fn KanbanPanel(
                 decrypt_ctx.as_ref(),
                 &self_actor_id,
             );
-            let cols = overlay_pending_card_updates(
-                cols, &raw_operations, &entries, decrypt_ctx.as_ref(),
-            );
+            let cols =
+                overlay_pending_card_updates(cols, &raw_operations, &entries, decrypt_ctx.as_ref());
             overlay_local_card_assignment_records(cols, &raw_operations)
         }
     });
