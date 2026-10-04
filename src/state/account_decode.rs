@@ -1,4 +1,4 @@
-//! Account-local quarantine for retired producer Event records.
+//! Account-local quarantine for retired Event records and incomplete indexes.
 //!
 //! Never rewrite a signed legacy Event into the current wire contract. Only
 //! known local containers are separated; unrelated decode errors remain fatal.
@@ -20,6 +20,26 @@ fn retired_genesis(record: &Value) -> bool {
         .is_some_and(|events| events.iter().any(retired_event))
 }
 
+fn retired_message_coordinate(record: &Value) -> bool {
+    let Some(object) = record.as_object() else {
+        return false;
+    };
+    // The old local index had exactly these three fields. It cannot supply
+    // the Strand/track required by current consumers. Do not invent either
+    // coordinate or relax the current typed index; preserve it as opaque data
+    // until a verified history scan supplies a complete replacement.
+    object.len() == 3
+        && object.get("accepted_ref").is_some_and(|value| {
+            serde_json::from_value::<arkret_sdk::CommittedEventRef>(value.clone()).is_ok()
+        })
+        && object.get("actor_id").is_some_and(|value| {
+            serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).is_ok()
+        })
+        && object.get("scope_ref").is_some_and(|value| {
+            serde_json::from_value::<arkret_sdk::ScopeRef>(value.clone()).is_ok()
+        })
+}
+
 pub(super) fn decode_account_state(bytes: &[u8]) -> serde_json::Result<ClientLocalState> {
     let original_error = match serde_json::from_slice(bytes) {
         Ok(state) => return Ok(state),
@@ -30,6 +50,20 @@ pub(super) fn decode_account_state(bytes: &[u8]) -> serde_json::Result<ClientLoc
         return Err(original_error);
     };
     let mut retired = serde_json::Map::new();
+    if let Some(records) = object
+        .get_mut("verified_message_commits")
+        .and_then(Value::as_array_mut)
+    {
+        let old = records
+            .iter()
+            .filter(|record| retired_message_coordinate(record))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !old.is_empty() {
+            records.retain(|record| !retired_message_coordinate(record));
+            retired.insert("verified_message_commits".to_owned(), Value::Array(old));
+        }
+    }
     for field in ["verified_poll_inputs", "verified_reaction_assertions"] {
         if let Some(records) = object.get_mut(field).and_then(Value::as_array_mut) {
             let old = records
@@ -217,6 +251,88 @@ mod tests {
         state
     }
 
+    fn message_coordinate() -> Value {
+        let input = current_record();
+        serde_json::json!({
+            "accepted_ref": input["accepted_ref"],
+            "actor_id": input["event"]["actor_id"],
+            "scope_ref": input["event"]["scope_ref"],
+            "strand_id": arkret_sdk::StrandId::from_event_id(
+                &arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [34; 32])
+            ),
+            "track_name": "main"
+        })
+    }
+
+    fn incomplete_message_account() -> Value {
+        let mut state = serde_json::to_value(ClientLocalState::default()).unwrap();
+        let mut old = message_coordinate();
+        old.as_object_mut().unwrap().remove("strand_id");
+        old.as_object_mut().unwrap().remove("track_name");
+        state["primary_handle"] = serde_json::json!("alice");
+        state["verified_message_commits"] = serde_json::json!([old, message_coordinate()]);
+        state
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn incomplete_message_index_preserves_account_and_current_coordinates() {
+        let original = incomplete_message_account();
+        let decoded = decode_account_state(&serde_json::to_vec(&original).unwrap()).unwrap();
+        let encoded = serde_json::to_value(&decoded).unwrap();
+        assert_eq!(
+            encoded["verified_message_commits"],
+            serde_json::json!([message_coordinate()])
+        );
+        assert_eq!(
+            encoded["retired_event_records"]["verified_message_commits"],
+            serde_json::json!([original["verified_message_commits"][0]])
+        );
+        // All other account state, including private checkpoints and queues,
+        // must survive unchanged. Only the incomplete read-side index moves.
+        for (field, value) in original.as_object().unwrap() {
+            if field != "verified_message_commits" {
+                assert_eq!(&encoded[field], value, "account field changed: {field}");
+            }
+        }
+        assert_eq!(
+            decode_account_state(&serde_json::to_vec(&decoded).unwrap()).unwrap(),
+            decoded
+        );
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn incomplete_message_index_does_not_mask_corruption_or_archive_conflicts() {
+        for malformed in [
+            serde_json::json!({"accepted_ref": "invalid", "actor_id": "invalid", "scope_ref": "invalid"}),
+            {
+                let mut value = message_coordinate();
+                value.as_object_mut().unwrap().remove("strand_id");
+                value
+            },
+            {
+                let mut value = message_coordinate();
+                value["strand_id"] = serde_json::json!("invalid");
+                value
+            },
+        ] {
+            let mut original = incomplete_message_account();
+            original["verified_message_commits"]
+                .as_array_mut()
+                .unwrap()
+                .push(malformed);
+            assert!(decode_account_state(&serde_json::to_vec(&original).unwrap()).is_err());
+        }
+        let mut original = incomplete_message_account();
+        original["sync_cursor"] = serde_json::json!(42);
+        assert!(decode_account_state(&serde_json::to_vec(&original).unwrap()).is_err());
+        original = incomplete_message_account();
+        original["retired_event_records"] =
+            serde_json::json!({"verified_message_commits": ["different-original"]});
+        assert!(decode_account_state(&serde_json::to_vec(&original).unwrap()).is_err());
+    }
+
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn retired_account_events_are_archived_without_rewriting_or_losing_current_records() {
@@ -281,6 +397,29 @@ mod tests {
         original["retired_event_records"] =
             serde_json::json!({"verified_poll_inputs": ["different-original"]});
         assert!(decode_account_state(&serde_json::to_vec(&original).unwrap()).is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn incomplete_message_index_native_reopen_preserves_original_quarantine() {
+        let root = std::env::temp_dir().join(format!(
+            "inkson-incomplete-message-index-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        let mut store = LocalStateStore::with_path(root);
+        let path = store.account_state_path(super::super::ANONYMOUS_ACCOUNT_NAMESPACE);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let bytes = serde_json::to_vec(&incomplete_message_account()).unwrap();
+        let archive = path.with_extension("corrupt");
+        std::fs::write(&archive, &bytes).unwrap();
+        let state = store.load();
+        assert_eq!(state.primary_handle, "alice");
+        assert_eq!(state.verified_message_commits.len(), 1);
+        assert!(store.persist_error().is_none());
+        store.save(state.clone());
+        assert!(store.persist_error().is_none());
+        assert_eq!(std::fs::read(&archive).unwrap(), bytes);
+        assert_eq!(LocalStateStore::with_path(store.path.clone()).load(), state);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
