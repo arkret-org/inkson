@@ -384,6 +384,7 @@ pub fn RealmMembersPanel(
     // Invite is now a modal launched from the list header "+" button.
     let mut invite_modal_open = use_signal(|| false);
     let mut agent_add_modal_open = use_signal(|| false);
+    let mut agent_add_state = use_signal(AgentAddState::default);
     // Client-side member search + incremental paging. `member_filter`
     // narrows the projected roster; `member_visible` caps how many rows we
     // actually mount so a 10k-member Realm doesn't render 10k DOM nodes.
@@ -408,6 +409,7 @@ pub fn RealmMembersPanel(
         invite_target,
         invite_modal_open,
         agent_add_modal_open,
+        agent_add_state,
         selected_contacts,
         owned_agents,
         permissions,
@@ -500,6 +502,19 @@ pub fn RealmMembersPanel(
                             p { class: "muted",
                                 "Choose one of your active agents. It joins immediately under your control and does not receive an invitation."
                             }
+                            match agent_add_state() {
+                                AgentAddState::Pending(_) => rsx! {
+                                    div { role: "status", "aria-live": "polite", "data-testid": "add-realm-agent-status",
+                                        "Adding agent to Realm…"
+                                    }
+                                },
+                                AgentAddState::Failed(message) => rsx! {
+                                    div { class: "event error", role: "alert", "data-testid": "add-realm-agent-error",
+                                        "{message}"
+                                    }
+                                },
+                                AgentAddState::Idle => rsx! {},
+                            }
                             if available_self_agent_rows.is_empty() {
                                 div { class: "members-empty compact", "data-testid": "available-realm-agents-empty",
                                     div { class: "members-empty-icon", crate::components::UiIcon { name: "bot" } }
@@ -539,6 +554,8 @@ pub fn RealmMembersPanel(
                                                         variant: ButtonVariant::Primary,
                                                         size: ButtonSize::Sm,
                                                         "data-testid": "confirm-add-agent-to-realm",
+                                                        disabled: agent_add_state.read().is_pending(),
+                                                        "aria-busy": "{agent_add_state.read().is_pending()}",
                                                         onclick: {
                                                             let context = write_context.clone();
                                                             let target_id = owned_agent_actor_key(&agent_id).unwrap_or_default();
@@ -553,7 +570,12 @@ pub fn RealmMembersPanel(
                                                                 );
                                                             }
                                                         },
-                                                        "Add"
+                                                        if matches!(&*agent_add_state.read(), AgentAddState::Pending(target)
+                                                            if owned_agent_actor_key(&agent_id).as_ref() == Some(target)) {
+                                                            "Adding…"
+                                                        } else {
+                                                            "Add"
+                                                        }
                                                     }
                                                 }
                                             }
@@ -752,7 +774,12 @@ pub fn RealmMembersPanel(
                                     "data-testid": "open-add-realm-agent-modal-button",
                                     title: "Add one of my agents",
                                     "aria-label": "Add agent to Realm",
-                                    onclick: move |_| agent_add_modal_open.set(true),
+                                    onclick: move |_| {
+                                        if !agent_add_state.read().is_pending() {
+                                            agent_add_state.set(AgentAddState::Idle);
+                                        }
+                                        agent_add_modal_open.set(true);
+                                    },
                                     crate::components::UiIcon { name: "plus" }
                                     "Add agent"
                                 }
@@ -1095,7 +1122,12 @@ pub fn RealmMembersPanel(
                                                         variant: ButtonVariant::Primary,
                                                         size: ButtonSize::Sm,
                                                         "data-testid": "member-agent-empty-add",
-                                                        onclick: move |_| agent_add_modal_open.set(true),
+                                                        onclick: move |_| {
+                                                            if !agent_add_state.read().is_pending() {
+                                                                agent_add_state.set(AgentAddState::Idle);
+                                                            }
+                                                            agent_add_modal_open.set(true);
+                                                        },
                                                         "Add agent"
                                                     }
                                                 }

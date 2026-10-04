@@ -8,6 +8,28 @@
 
 use super::*;
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) enum AgentAddState {
+    #[default]
+    Idle,
+    Pending(String),
+    Failed(String),
+}
+
+impl AgentAddState {
+    pub(super) fn begin(&mut self, target: String) -> bool {
+        if matches!(self, Self::Pending(_)) {
+            return false;
+        }
+        *self = Self::Pending(target);
+        true
+    }
+
+    pub(super) fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending(_))
+    }
+}
+
 /// Number of member rows the list renders per page. The member list is
 /// hydrated from the full local sync projection (which can hold tens of
 /// thousands of entries for a large Realm), so we never mount every row
