@@ -1041,6 +1041,7 @@ async fn submit_source_routed_sidecar_message(
     }
     let content_value = sdk_payload_value(content.to_value(), "Sidecar routed content serialize")?;
     let content_bytes = serde_json::to_vec(&content_value)?;
+    let content_for_sidecar = String::from_utf8(content_bytes.clone())?;
     let addressed_strings = addressed
         .iter()
         .map(|agent_id| agent_id.as_str().to_owned())
@@ -1191,7 +1192,7 @@ async fn submit_source_routed_sidecar_message(
             source_realm_id,
             attached_source_strand_id,
             &format!("message:{protocol_message_id}"),
-            body,
+            &content_for_sidecar,
         );
         crate::sidecar::remove_pending_sidecar_submission(
             &mut store,
