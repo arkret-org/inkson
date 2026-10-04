@@ -88,7 +88,7 @@ fn card_owned_agent_rows(
     members: &[RealmMemberRow],
     inventory: &BTreeMap<String, String>,
     station: &arkret_sdk::DidCoreId,
-) -> Vec<(String, String, bool)> {
+) -> Vec<(String, String)> {
     let mut agents = inventory
         .iter()
         .filter_map(|(principal, slug)| {
@@ -98,12 +98,8 @@ fn card_owned_agent_rows(
                     && row.actor_id.as_account_id().is_some_and(|account| {
                         account.principal_id == principal && account.station_id == *station
                     })
-            });
-            // Inventory proves ownership, not a Realm membership or AccountId.
-            let identity = joined_actor
-                .map(|row| row.actor_id.to_string())
-                .unwrap_or_else(|| principal.to_string());
-            Some((identity, slug.clone(), joined_actor.is_some()))
+            })?;
+            Some((joined_actor.actor_id.to_string(), slug.clone()))
         })
         .collect::<Vec<_>>();
     agents.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
@@ -117,7 +113,6 @@ fn CardMemberMentionRow(
     #[props(default)] is_self: bool,
     agent_slug: Option<String>,
     #[props(default)] in_strand: bool,
-    #[props(default = true)] in_realm: bool,
     onmention: EventHandler<crate::views::chat::MentionInsertRequest>,
 ) -> Element {
     let dot_class = if in_strand {
@@ -127,25 +122,18 @@ fn CardMemberMentionRow(
     };
     let dot_title = if in_strand {
         "Participated in this Strand"
-    } else if in_realm {
-        "Realm member"
     } else {
-        "Not in this Realm"
+        "Realm member"
     };
     let mention_target = serde_json::from_str::<arkret_sdk::ActorId>(&member_id)
         .ok()
         .and_then(|actor| actor.as_account_id().cloned());
-    let mentionable = in_realm && mention_target.is_some();
+    let mentionable = mention_target.is_some();
     let require_agent_identity = agent_slug.is_some();
     let agent_id = agent_slug.as_ref().and_then(|_| {
         mention_target
             .as_ref()
             .map(|account| account.principal_id.to_string())
-            .or_else(|| {
-                arkret_sdk::DidCoreId::new(member_id.clone())
-                    .ok()
-                    .map(|id| id.to_string())
-            })
     });
     let row_class = format!(
         "card-detail-actor-row{}{}",
@@ -198,9 +186,6 @@ fn CardMemberMentionRow(
                     is_self,
                     agent_slug: agent_slug.clone(),
                 }
-            }
-            if !in_realm {
-                span { class: "card-detail-agent-membership", "Not in this Realm" }
             }
         }
     }
@@ -2736,14 +2721,13 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                             }
                                                                             if !agents.is_empty() {
                                                                                 div { class: "card-detail-agent-heading", "Your AI agents ({agents.len()})" }
-                                                                                for (actor, slug, in_realm) in agents {
+                                                                                for (actor, slug) in agents {
                                                                                     CardMemberMentionRow {
                                                                                         key: "{actor}",
                                                                                         member_id: actor.clone(),
                                                                                         label: slug.clone(),
                                                                                         agent_slug: Some(slug),
-                                                                                        in_realm,
-                                                                                        in_strand: in_realm && participant_set.contains(&actor),
+                                                                                        in_strand: participant_set.contains(&actor),
                                                                                         onmention: on_member_mention,
                                                                                     }
                                                                                 }
@@ -2771,7 +2755,7 @@ mod edit_identity_tests {
     use super::*;
 
     #[test]
-    fn owned_agent_inventory_is_visible_without_claiming_realm_membership() {
+    fn owned_agents_are_visible_only_after_joining_the_current_realm() {
         let local = arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap();
         let remote = arkret_sdk::DidCoreId::new("ak:did_core:web:remote.example").unwrap();
         let inventory = BTreeMap::from([
@@ -2802,20 +2786,14 @@ mod edit_identity_tests {
         ]});
         let members = realm_member_roster(Some(&projection));
         let rows = card_owned_agent_rows(&members, &inventory, &local);
-        assert_eq!(rows.len(), 3);
         assert_eq!(
-            rows.iter()
-                .map(|(_, slug, joined)| (slug.as_str(), *joined))
-                .collect::<Vec<_>>(),
-            vec![("alpha", true), ("beta", false), ("gamma", false)]
+            rows,
+            vec![(
+                actor("ak:did_core:web:joined.example", &local).to_string(),
+                "alpha".to_owned(),
+            )]
         );
-        assert_eq!(
-            rows[0].0,
-            actor("ak:did_core:web:joined.example", &local).to_string()
-        );
-        assert_eq!(rows[1].0, "ak:did_core:web:absent.example");
-        assert_eq!(rows[2].0, "ak:did_core:web:knocking.example");
-        assert_eq!(card_owned_agent_rows(&[], &inventory, &local).len(), 3);
+        assert!(card_owned_agent_rows(&[], &inventory, &local).is_empty());
     }
 
     #[test]

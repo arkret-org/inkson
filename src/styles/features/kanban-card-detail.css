@@ -313,14 +313,6 @@
   font-size: 12px;
   font-weight: 600;
 }
-.card-detail-agent-membership {
-  grid-column: 1 / -1;
-  color: var(--text-2);
-  font-size: 11px;
-}
-.card-detail-actor-mention-button:disabled {
-  cursor: default;
-}
 .card-detail-actor-mention-button {
   display: grid;
   grid-column: 1 / -1;
