@@ -1642,7 +1642,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 "data-testid": "card-discussion-pending-target",
                                                                 role: "status",
                                                                 "aria-live": "polite",
-                                                                "This card is still being created. Discussion will be available after the server assigns its Strand ID."
+                                                                "Discussion will be available when this card finishes syncing."
                                                             }
                                                         }
                                                     }

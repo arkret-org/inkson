@@ -148,7 +148,7 @@ fn accepted_card_route_migrates_only_its_local_handle_with_a_complete_basis() {
 }
 
 #[test]
-fn discussion_waits_for_event_derived_strand_identity() {
+fn discussion_waits_for_accepted_strand_current() {
     let mut pending = test_card("0196419b-0000-7000-8000-000000000001", "U");
     pending.primary_strand_id = "0196419b-0000-7000-8000-000000000001".to_owned();
     assert!(!card_discussion_target_ready(&pending));
@@ -158,7 +158,19 @@ fn discussion_waits_for_event_derived_strand_identity() {
     let canonical_strand_id = arkret_sdk::StrandId::from_event_id(&event_id);
     let mut canonical = test_card(canonical_strand_id.as_str(), "U");
     canonical.primary_strand_id = canonical_strand_id.to_string();
+    for state in [CardState::Queued, CardState::Submitted, CardState::Accepted] {
+        canonical.state = state;
+        assert!(!card_discussion_target_ready(&canonical));
+    }
+    canonical.state = CardState::Synced;
+    assert!(!card_discussion_target_ready(&canonical));
+    canonical.authoring_basis = Some(arkret_wire::CurrentRevision {
+        commit_id: arkret_wire::RealmCommitId::from_digest([0x24; 32]),
+        stream_position: 1,
+    });
     assert!(card_discussion_target_ready(&canonical));
+    canonical.state = CardState::Accepted;
+    assert!(!card_discussion_target_ready(&canonical));
 }
 
 #[test]

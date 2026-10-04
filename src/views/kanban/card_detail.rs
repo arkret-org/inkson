@@ -153,7 +153,11 @@ pub(super) fn card_task_route_after_acceptance(
 }
 
 pub(super) fn card_discussion_target_ready(card: &KanbanCard) -> bool {
-    arkret_sdk::StrandId::new(card.primary_strand_id.clone()).is_ok()
+    // A frozen create already has an Event-derived id before the Station
+    // accepts it. Discussion and Sidecar context need the accepted current,
+    // rather than that locally computed identity.
+    card_detail_write_ready(card)
+        && arkret_sdk::StrandId::new(card.primary_strand_id.clone()).is_ok()
 }
 
 pub(super) fn find_card_by_strand_id(
