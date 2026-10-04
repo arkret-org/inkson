@@ -382,7 +382,7 @@ async fn follow_subscription<F: Fn() -> bool>(
             // governance change needs directory discovery; a message hint on
             // an established private stream reads that stream alone.
             if matches!(view, CommittedEventView::Full(full) if matches!(full.event.kind,
-                arkret_sdk::EventKind::CircleCreate | arkret_sdk::EventKind::CircleMemberState | arkret_sdk::EventKind::MemberState | arkret_sdk::EventKind::InviteAccept))
+                arkret_sdk::EventKind::CircleCreate | arkret_sdk::EventKind::CircleMemberState | arkret_sdk::EventKind::MemberState | arkret_sdk::EventKind::InviteAccept | arkret_sdk::EventKind::SidecarCreate | arkret_sdk::EventKind::SidecarContextAttach))
             {
                 follow_once(authority, http, realm, projector, ctx, is_active, replica).await?;
             }
@@ -452,7 +452,35 @@ where
 {
     let (bundle, freshness) = refresh_verified_realm(authority, http, realm_id, replica).await?;
     let circles = http.circle_list(realm_id.as_str()).await?;
-    let streams = followed_streams(realm_id, ctx, &circles);
+    // An admitted controller device can discover its private streams before
+    // it has a local MLS checkpoint. Local key material is not a directory.
+    let mut streams = followed_streams(realm_id, ctx, &circles)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let mut cursor = None;
+    let mut seen_cursors = BTreeSet::new();
+    loop {
+        let page = http
+            .agent_sidecar_list(Some(realm_id), cursor.as_deref())
+            .await?;
+        for view in page.sidecars {
+            view.validate()?;
+            if view.sidecar.realm_id != *realm_id {
+                return Err(protocol("Sidecar directory crosses its requested Realm"));
+            }
+            if view.sidecar.state != arkret_sdk::AgentSidecarState::Tombstoned {
+                streams.insert(CommitStreamRef::Sidecar {
+                    realm_id: realm_id.clone(),
+                    sidecar_id: view.sidecar.id,
+                });
+            }
+        }
+        let Some(next) = page.next_cursor else { break };
+        if !seen_cursors.insert(next.to_string()) || seen_cursors.len() > 128 {
+            return Err(protocol("Sidecar directory pagination did not terminate"));
+        }
+        cursor = Some(next.to_string());
+    }
     let has_sidecar = streams
         .iter()
         .any(|stream| matches!(stream, CommitStreamRef::Sidecar { .. }));
@@ -4384,6 +4412,35 @@ mod tests {
         let path = directory.join("state.json");
         let mut store = LocalStateStore::with_path(&path);
         let mut snapshot = snapshot_at(&bundle, &items, bundle.bundle_issued_at);
+        let source_strand = arkret_sdk::StrandId::from_event_id(&bundle.genesis_event.event_id);
+        let controller = actor.as_account_id().unwrap().clone();
+        let revision = arkret_sdk::CurrentRevision {
+            commit_id: native[0].commit.commit_id.clone(),
+            stream_position: 0,
+        };
+        snapshot.current_state_entries.extend([
+            TypedCurrentResult::Value {
+                selector: arkret_sdk::CurrentSelector::Sidecar {
+                    sidecar_id: sidecar.clone(),
+                },
+                source_stream_ref: stream.clone(),
+                revision: revision.clone(),
+                value: json!({"id":sidecar,"schema":"ak.schema.agent_sidecar.v1",
+                    "realm_id":realm,"controller_account_id":controller,"state":"active",
+                    "created_at":"2026-01-01T00:00:00.000Z"}),
+            },
+            TypedCurrentResult::Value {
+                selector: arkret_sdk::CurrentSelector::SidecarContext {
+                    sidecar_id: sidecar.clone(),
+                    source_context_ref: arkret_sdk::SidecarContextRef::Strand {
+                        strand_id: source_strand.clone(),
+                    },
+                },
+                source_stream_ref: stream.clone(),
+                revision,
+                value: serde_json::to_value(&native[0].event.payload).unwrap(),
+            },
+        ]);
         snapshot
             .visible_stream_heads
             .push(arkret_sdk::CommitStreamHead {
@@ -4437,6 +4494,30 @@ mod tests {
         drop(store);
         let mut reopened = LocalStateStore::with_path(&path);
         assert_eq!(
+            reopened
+                .verified_sidecar_for_source(&controller, REALM_ID, &source_strand)
+                .unwrap()
+                .unwrap()
+                .id,
+            sidecar
+        );
+        let other_strand = arkret_sdk::StrandId::from_event_id(&native[0].event.event_id);
+        assert!(
+            reopened
+                .verified_sidecar_for_source(&controller, REALM_ID, &other_strand)
+                .unwrap()
+                .is_none()
+        );
+        let mut other_station = controller.clone();
+        other_station.station_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap();
+        assert!(
+            reopened
+                .verified_sidecar_for_source(&other_station, REALM_ID, &source_strand)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
             reopened.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
             vec![native[0].clone()]
         );
@@ -4457,6 +4538,11 @@ mod tests {
             .install_verified_sidecar_current(&VerifiedCurrentSnapshot { snapshot })
             .unwrap();
         assert!(reopened.verified_sidecar_inputs(REALM_ID).is_err());
+        assert!(
+            reopened
+                .verified_sidecar_for_source(&controller, REALM_ID, &source_strand)
+                .is_err()
+        );
         let scan = arkret_sdk::StreamScanRequest {
             direction: arkret_sdk::StreamScanDirection::After(Some(0)),
             ..scan

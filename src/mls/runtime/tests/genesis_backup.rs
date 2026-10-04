@@ -150,7 +150,7 @@ fn sidecar_add_keeps_exact_binding_and_stages_private_state_until_acceptance() {
         .record_mls_group_state_ref_for_scope(&scope, &checkpoint.group_id, 0, base.clone())
         .unwrap();
     let before = state.mls_checkpoint_for_scope(&scope).unwrap();
-    let member_actor = fixture::account_actor("did:web:bob.example");
+    let member_actor = arkret_sdk::ActorId::account(authority.clone());
     let member_device = fixture::device_id("ak:device:01904100-0000-7000-8000-000000000002");
     let member =
         arkret_sdk::ArkretMlsIdentity::new_test_human_device(member_actor.clone(), member_device)

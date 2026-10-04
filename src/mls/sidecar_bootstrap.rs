@@ -279,7 +279,7 @@ pub(crate) async fn ensure_sidecar_mls_genesis(
     Ok(current)
 }
 
-/// Add each missing current Agent runtime endpoint through the existing
+/// Add missing authorized controller devices and current Agent endpoints through the existing
 /// durable atomic Commit/Welcome lane. Effective access stays pending until
 /// the recipients have actually consumed their exact Welcome deliveries.
 pub(crate) async fn reconcile_sidecar_mls(
@@ -317,7 +317,31 @@ pub(crate) async fn reconcile_sidecar_mls(
     let secret =
         crate::mls::runtime::load_device_checkpoint_secret(secure.as_ref(), authority, device)
             .context("Sidecar checkpoint key is unavailable")?;
-    for agent in view.desired_agent_ids.clone() {
+    let devices = crate::transport::keys::list_devices(&http).await?;
+    let mut targets = devices
+        .devices
+        .iter()
+        .filter(|target| {
+            target.device_id != *device
+                && target.status == arkret_sdk::DeviceSummaryStatus::Active
+                && target.verification_state == arkret_sdk::DeviceSummaryVerificationState::Verified
+                && target.authorized_event_ref.is_some()
+                && target.validate().is_ok()
+        })
+        .map(|target| {
+            (
+                authority.principal_id.clone(),
+                Some(target.device_id.clone()),
+            )
+        })
+        .collect::<Vec<_>>();
+    targets.extend(
+        view.desired_agent_ids
+            .iter()
+            .cloned()
+            .map(|agent| (agent, None)),
+    );
+    for (agent, target_device) in targets {
         // Revalidate the exact scope and controller on each cut. A removed
         // Agent is never claimed from an earlier displayed desired set.
         view = http.agent_sidecar_get(&expected.sidecar.id).await?;
@@ -326,38 +350,58 @@ pub(crate) async fn reconcile_sidecar_mls(
             view.sidecar.realm_id == *scope.realm_id(),
             "Sidecar read changed its parent Realm"
         );
-        if !view.desired_agent_ids.contains(&agent) {
-            continue;
-        }
-        let agent_view = http.agent_get(agent.as_str()).await?;
-        anyhow::ensure!(
-            agent_view.agent.lifecycle == arkret_sdk::AgentLifecycleState::Active,
-            "Sidecar desired Agent is no longer active"
-        );
-        let keys = agent_view
-            .key_state
-            .ok_or_else(|| anyhow::anyhow!("Sidecar Agent runtime key is unavailable"))?;
-        anyhow::ensure!(
-            keys.controller_account_id == *authority && keys.agent_id == agent,
-            "Sidecar Agent runtime belongs to another controller or principal"
-        );
-        let key = keys
-            .active_authorizations
-            .iter()
-            .find(|key| {
-                Some(&key.authorized_event_ref) == keys.authorized_event_ref.as_ref()
-                    && key
-                        .expires_at
-                        .is_none_or(|expiry| expiry > crate::clock::now_utc())
-            })
-            .ok_or_else(|| {
-                anyhow::anyhow!("Sidecar Agent has no current authorized runtime key")
-            })?;
-        let endpoint = arkret_sdk::MlsEndpointIdentity::agent_runtime(
-            agent.clone(),
-            key.verification_method.clone(),
-            key.authorized_event_ref.clone(),
-        )?;
+        let endpoint = if let Some(target_device) = &target_device {
+            // Re-check device lifecycle at this cut. A stale account inventory
+            // cannot authorize a new leaf after revoke or generation fencing.
+            let devices = crate::transport::keys::list_devices(&http).await?;
+            if !devices.devices.iter().any(|target| {
+                target.device_id == *target_device
+                    && target.status == arkret_sdk::DeviceSummaryStatus::Active
+                    && target.verification_state
+                        == arkret_sdk::DeviceSummaryVerificationState::Verified
+                    && target.authorized_event_ref.is_some()
+                    && target.validate().is_ok()
+            }) {
+                continue;
+            }
+            arkret_sdk::MlsEndpointIdentity::human_device(
+                authority.principal_id.clone(),
+                target_device.clone(),
+            )
+        } else {
+            if !view.desired_agent_ids.contains(&agent) {
+                continue;
+            }
+            let agent_view = http.agent_get(agent.as_str()).await?;
+            anyhow::ensure!(
+                agent_view.agent.lifecycle == arkret_sdk::AgentLifecycleState::Active,
+                "Sidecar desired Agent is no longer active"
+            );
+            let keys = agent_view
+                .key_state
+                .ok_or_else(|| anyhow::anyhow!("Sidecar Agent runtime key is unavailable"))?;
+            anyhow::ensure!(
+                keys.controller_account_id == *authority && keys.agent_id == agent,
+                "Sidecar Agent runtime belongs to another controller or principal"
+            );
+            let key = keys
+                .active_authorizations
+                .iter()
+                .find(|key| {
+                    Some(&key.authorized_event_ref) == keys.authorized_event_ref.as_ref()
+                        && key
+                            .expires_at
+                            .is_none_or(|expiry| expiry > crate::clock::now_utc())
+                })
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Sidecar Agent has no current authorized runtime key")
+                })?;
+            arkret_sdk::MlsEndpointIdentity::agent_runtime(
+                agent.clone(),
+                key.verification_method.clone(),
+                key.authorized_event_ref.clone(),
+            )?
+        };
         let checkpoint = state
             .read(|store| store.mls_checkpoint_for_scope_and_group(&scope, group_id.as_str()))
             .ok_or_else(|| anyhow::anyhow!("Sidecar has no local MLS checkpoint"))?;
@@ -422,9 +466,9 @@ pub(crate) async fn reconcile_sidecar_mls(
                 device.as_str(),
                 Some(authority.station_id.as_str()),
                 &claim_id,
-                None,
+                target_device.as_ref().map(|device| device.as_str()),
                 group_id.as_str(),
-                Some(&endpoint),
+                target_device.is_none().then_some(&endpoint),
             )
             .await?;
         anyhow::ensure!(

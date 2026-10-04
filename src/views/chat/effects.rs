@@ -25,6 +25,16 @@ pub(super) fn ChatEffects(
 ) -> Element {
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
+    super::sidecar_restore::use_sidecar_restore(
+        base_url.clone(),
+        selected_realm_id.clone(),
+        (controller.selected_channel)(),
+        authority.clone(),
+        token,
+        sync_cursor,
+        realm_live_epoch,
+        state_store,
+    );
     super::direct_authority::use_direct_authority(
         base_url.clone(),
         selected_realm_id.clone(),

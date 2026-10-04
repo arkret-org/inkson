@@ -40,6 +40,7 @@ pub(crate) mod model;
 mod poll_submission;
 mod right_panel;
 mod scheduled_send_panel;
+mod sidecar_restore;
 mod timeline;
 mod timeline_surface;
 
@@ -1441,12 +1442,16 @@ pub fn ChatPanel(
     // projection, privacy gates, and the composer cannot diverge after an
     // in-place activation.
     let hosted_sidecar_session = sidecar_session_state();
-    let sidecar_session = sidecar_session.or_else(|| {
-        hosted_sidecar_session
-            .filter(|session| session.matches_route(&selected_realm_id, &initial_strand_id))
-    });
-    let navigator = use_navigator();
     let controller = use_chat_controller(&selected_realm_id, &initial_strand_id, &principal_id);
+    let selected_source_strand = (controller.selected_channel)();
+    let sidecar_session = sidecar_session
+        .or_else(|| {
+            hosted_sidecar_session.filter(|session| {
+                session.matches_route(&selected_realm_id, &selected_source_strand)
+            })
+        })
+        .filter(|session| session.controller_account_id == authority);
+    let navigator = use_navigator();
     let mut migrated_draft_applied_for = use_signal(String::new);
     {
         let state_store = state_store;
@@ -2669,6 +2674,8 @@ pub fn ChatPanel(
                             base_url: base_url.clone(),
                             api_token: token(),
                             device_id: device_id.clone(),
+                            source_realm_id: selected_realm_id.clone(),
+                            source_strand_id: selected_source_strand.clone(),
                         }
                     }
                     if !session.migrated_draft.trim().is_empty() {

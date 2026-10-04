@@ -917,6 +917,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                 base_url: base_url.clone(),
                                                 api_token: token(),
                                                 device_id: device_id.clone(),
+                                                source_realm_id: selected_realm_id.clone(),
+                                                source_strand_id: card.primary_strand_id.clone(),
                                             }
 
                                             section { class: "card-detail-section card-detail-tabs-section",

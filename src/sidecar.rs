@@ -827,7 +827,13 @@ pub fn cached_sidecar_display_mode(
 pub struct HostedSidecarStateContext(pub Signal<Option<HostedSidecarState>>);
 
 #[component]
-pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: String) -> Element {
+pub fn HostedSidecarContextBar(
+    base_url: String,
+    api_token: String,
+    device_id: String,
+    source_realm_id: String,
+    source_strand_id: String,
+) -> Element {
     let _ = device_id;
     let mut hosted_state = use_context::<HostedSidecarStateContext>().0;
     let session_context = crate::app::SessionContext::get();
@@ -835,7 +841,10 @@ pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: S
     let Some(active_account) = session_context.active_account.read().clone() else {
         return rsx! {};
     };
-    let Some(session) = hosted_state() else {
+    let Some(session) = hosted_state().filter(|session| {
+        session.controller_account_id == active_account.authority
+            && session.matches_route(&source_realm_id, &source_strand_id)
+    }) else {
         return rsx! {};
     };
     let security_label = if session.membership_ready() {
