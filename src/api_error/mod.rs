@@ -264,6 +264,9 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
     ) {
         return Some("error.invalid_protocol_data");
     }
+    if code == ErrorCode::FAILED_PRECONDITION {
+        return Some("error.precondition_not_met");
+    }
     if code == ErrorCode::STATE_MISMATCH {
         return Some("error.realm_state_conflict");
     }
@@ -747,6 +750,21 @@ mod tests {
             reason_code: reason_code.to_owned(),
         })
         .unwrap_err()
+    }
+
+    #[test]
+    fn failed_precondition_is_not_rendered_as_a_connectivity_failure() {
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 409,
+            error: Box::new(Problem::from_code(
+                arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
+                "Agent has no claimable membership KeyPackage",
+            )),
+        });
+        assert_eq!(
+            user_facing_error_key(&error),
+            Some("error.precondition_not_met")
+        );
     }
 
     #[test]

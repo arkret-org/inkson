@@ -160,7 +160,7 @@ fn CardMemberMentionRow(
             "data-strand-participant": "{in_strand}",
             button {
                 r#type: "button",
-                class: "card-detail-actor-mention-button",
+                class: if agent_slug.is_some() { "card-detail-actor-mention-button card-detail-agent-mention-button" } else { "card-detail-actor-mention-button" },
                 "data-testid": "card-detail-member-mention-button",
                 "aria-label": "Mention {label}",
                 disabled: !mentionable,
@@ -175,6 +175,13 @@ fn CardMemberMentionRow(
                         }
                     }
                 },
+                if agent_slug.is_some() {
+                    crate::components::AgentIdentity {
+                        agent_id: mention_target.as_ref().map(|account| account.principal_id.to_string()).unwrap_or_default(),
+                        label: label.clone(),
+                        label_test_id: Some("card-detail-member".to_owned()),
+                    }
+                } else {
                 span { class: "{dot_class}", title: "{dot_title}", "aria-label": "{dot_title}" }
                 ActorIdentityLabel {
                     label: label.clone(),
@@ -185,6 +192,7 @@ fn CardMemberMentionRow(
                     agent_badge_test_id: None,
                     is_self,
                     agent_slug: agent_slug.clone(),
+                }
                 }
             }
         }
@@ -2718,22 +2726,22 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             agent_slug: None,
                                                                                             onmention: on_member_mention,
                                                                                         }
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                            if !agents.is_empty() {
-                                                                                div { class: "card-detail-agent-heading", "Your AI agents ({agents.len()})" }
-                                                                                for (actor, slug) in agents {
+                                                                            if is_self && !agents.is_empty() {
+                                                                                for (actor, slug) in agents.iter() {
                                                                                     CardMemberMentionRow {
                                                                                         key: "{actor}",
                                                                                         member_id: actor.clone(),
                                                                                         label: slug.clone(),
-                                                                                        agent_slug: Some(slug),
-                                                                                        in_strand: participant_set.contains(&actor),
+                                                                                        agent_slug: Some(slug.clone()),
+                                                                                        in_strand: participant_set.contains(actor),
                                                                                         onmention: on_member_mention,
                                                                                     }
                                                                                 }
                                                                             }
+                                                                                    }
+                                                                                }
+                                                                            }
+
                                                                     } }
                                                                     }
                                                                 },

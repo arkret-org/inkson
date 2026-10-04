@@ -122,6 +122,10 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
 
 /// Generic API-error copy — zh counterparts of en.rs `add_generic_error_keys`.
 fn add_generic_error_keys_zh(dict: &mut TranslationDict) {
+    dict.set(
+        "error.precondition_not_met",
+        "服务器拒绝了此操作：所需条件尚未满足。请检查相关设置后重试。",
+    );
     dict.set("error.generic", "与服务器通信时出现问题。请重试。");
     dict.set(
         "error.realm_snapshot_capacity_exceeded",
