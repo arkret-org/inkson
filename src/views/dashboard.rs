@@ -171,14 +171,14 @@ pub fn DashboardPanel(
         &local_state_snapshot.raw_operations,
         &active_projection_realm_id,
     )
-        .into_iter()
-        // R11: the Strand state enum is exactly {active, archived, redacted}
-        // (strand.schema.json). "Recent strands" shows only `active`; `archived`
-        // and `redacted` are hidden here. There is NO `deleted` state in the
-        // spec, so it is intentionally not referenced.
-        .filter(|strand| strand.state == arkret_sdk::ObjectState::Active)
-        .take(5)
-        .collect::<Vec<_>>();
+    .into_iter()
+    // R11: the Strand state enum is exactly {active, archived, redacted}
+    // (strand.schema.json). "Recent strands" shows only `active`; `archived`
+    // and `redacted` are hidden here. There is NO `deleted` state in the
+    // spec, so it is intentionally not referenced.
+    .filter(|strand| strand.state == arkret_sdk::ObjectState::Active)
+    .take(5)
+    .collect::<Vec<_>>();
     let visible_notifications = notification_summaries
         .iter()
         .take(3)

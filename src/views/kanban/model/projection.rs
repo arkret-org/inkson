@@ -234,7 +234,7 @@ pub(crate) fn space_container_views_from_current(
                     space_id: space_id.to_string(),
                     realm_id: space.realm_id.to_string(),
                     kind: space.kind,
-                    title: space.title,
+                    title: space.title.unwrap_or_else(|| space_id.to_string()),
                     state: space.state?,
                     rank: space.rank,
                     parent_space_id: space.parent_space_id.map(|id| id.to_string()),

@@ -130,7 +130,7 @@ impl From<arkret_sdk::ProjectionSpaceRow> for SpaceContainerProjectionView {
             space_id: row.space_id.as_str().to_owned(),
             realm_id: row.realm_id.as_str().to_owned(),
             kind: row.kind,
-            title: row.title,
+            title: row.title.unwrap_or_else(|| row.space_id.to_string()),
             state: row.state,
             rank: row.rank,
             parent_space_id: row

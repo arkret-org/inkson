@@ -19,7 +19,7 @@ use crate::state::LocalStateStore;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::views::helpers::short_protocol_id;
 
-pub(super) fn rehydrate_notifications(
+pub(crate) fn rehydrate_notifications(
     store: &LocalStateStore,
     authority: &arkret_sdk::AccountId,
     principal_id: &str,
@@ -48,6 +48,7 @@ pub fn NotificationsPanel(
     principal_id: String,
     device_id: String,
     token: Signal<String>,
+    #[props(default)] on_open_chat: Option<EventHandler<()>>,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
@@ -275,6 +276,16 @@ pub fn NotificationsPanel(
                     div {
                         class: if notification.read { "muted" } else { "entity-title" },
                         "{notification.body}"
+                    }
+                    if let Some(route) = super::model::direct_notification_route(&state_store.read(), notification) {
+                        dioxus_router::Link {
+                            to: route,
+                            "data-testid": "notification-open-chat",
+                            onclick: move |_| {
+                                if let Some(handler) = on_open_chat { handler.call(()); }
+                            },
+                            "Open chat"
+                        }
                     }
                     if let Some(ref hint) = notification.watch_hint {
                         div {

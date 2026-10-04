@@ -747,12 +747,26 @@ fn ContactRow(
                                 let api_token = token();
                                 busy.set(true);
                                 row_status.set(tr("contacts.dm.opening"));
-                                spawn(async move {
+                                let initiating_account = crate::app::SessionContext::get().active_account();
+                                let fence = crate::transport::auth::AuthoringSessionFence::capture();
+                                dioxus::core::spawn_forever(async move {
+                                    let Ok(fence) = fence else {
+                                        if let Ok(mut value) = busy.try_write() { *value = false; }
+                                        return;
+                                    };
+                                    let completion_fence = fence.clone();
+                                    let feedback_fence = fence.clone();
+                                    let mut set_status = move |message: String| {
+                                        if feedback_fence.check().is_err() { return; }
+                                        if let Ok(mut status) = row_status.try_write() { *status = message; }
+                                    };
                                     let resolve_peer = peer.clone();
                                     let state_store =
                                         crate::app::runtime_adapter::state_store_handle(state_store);
                                     let resolve_store = state_store.clone();
+                                    let resolve_fence = fence.clone();
                                     match with_authed_api(&base, api_token.clone(), |api| async move {
+                                        resolve_fence.check()?;
                                         crate::transport::account::direct_conversation_resolve(
                                             &api,
                                             &resolve_store,
@@ -764,6 +778,7 @@ fn ContactRow(
                                     .await
                                     {
                                         Ok(outcome) => {
+                                            if fence.check().is_err() { return; }
                                             use crate::transport::account::DirectConversationEntry;
                                             let local_blockers = state_store.read(|store| {
                                                 crate::transport::account::direct_conversation_client_local_blockers(
@@ -779,21 +794,20 @@ fn ContactRow(
                                                 DirectConversationEntry::Openable => {
                                                     match crate::transport::account::direct_conversation_coordinates(&outcome) {
                                                         Some(coordinates) => {
-                                                            row_status.set(String::new());
+                                                            set_status(String::new());
                                                             nav.push(Route::DirectConversation {
                                                                 realm_id: coordinates.realm_id.to_string(),
                                                                 strand_id: coordinates.main_strand_id.to_string(),
                                                             });
                                                         }
-                                                        None => row_status.set(tr("contacts.dm.not_ready")),
+                                                        None => set_status(tr("contacts.dm.not_ready")),
                                                     }
                                                 }
                                                 DirectConversationEntry::Suspended => {
                                                     if local_blockers.is_empty() {
                                                         if let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(&outcome) {
                                                             let realm_id = coordinates.realm_id.clone();
-                                                            let actor = crate::app::SessionContext::get()
-                                                                .active_account()
+                                                            let actor = initiating_account.as_ref()
                                                                 .map(|account| account.did().clone());
                                                             match actor {
                                                                 Some(actor) => match with_authed_api(
@@ -807,16 +821,16 @@ fn ContactRow(
                                                                         ).await
                                                                     },
                                                                 ).await {
-                                                                    Ok(_) => row_status.set("Direct Conversation self-rejoin accepted; normal MLS Add/Welcome reconciliation is pending.".to_owned()),
-                                                                    Err(error) => row_status.set(format!("Direct Conversation self-rejoin unavailable: {}", error.display())),
+                                                                    Ok(_) => set_status("Direct Conversation self-rejoin accepted; normal MLS Add/Welcome reconciliation is pending.".to_owned()),
+                                                                    Err(error) => set_status(format!("Direct Conversation self-rejoin unavailable: {}", error.display())),
                                                                 },
-                                                                None => row_status.set(tr("contacts.dm.not_ready")),
+                                                                None => set_status(tr("contacts.dm.not_ready")),
                                                             }
                                                         } else {
-                                                            row_status.set(tr("contacts.dm.not_ready"));
+                                                            set_status(tr("contacts.dm.not_ready"));
                                                         }
                                                     } else {
-                                                        row_status.set(format!(
+                                                        set_status(format!(
                                                             "Direct Conversation is locally blocked: {}",
                                                             local_blockers
                                                                 .iter()
@@ -829,13 +843,12 @@ fn ContactRow(
                                                 // This user is the founder: the conversation is
                                                 // theirs to create.
                                                 DirectConversationEntry::ReadyToCreate => {
-                                                    let actor = crate::app::SessionContext::get()
-                                                        .active_account()
+                                                    let actor = initiating_account.as_ref()
                                                         .map(|account| account.authority.clone());
                                                     let peer_did = serde_json::from_str::<arkret_sdk::ActorId>(&peer).ok().and_then(|actor| actor.as_account_id().cloned());
                                                     match (actor, peer_did) {
                                                         (Some(actor), Some(peer_did)) => {
-                                                            row_status.set(tr("contacts.dm.creating"));
+                                                            set_status(tr("contacts.dm.creating"));
                                                             let resolve_for_create = outcome.clone();
                                                             let resolve_store = state_store.clone();
                                                             let resolve_peer = peer.clone();
@@ -843,62 +856,66 @@ fn ContactRow(
                                                                 &base,
                                                                 api_token.clone(),
                                                                 |api| async move {
-                                                                    crate::transport::account::create_direct_conversation_from_resolve(
+                                                                    let accepted = crate::transport::account::create_direct_conversation_from_resolve(
                                                                         &api.event_submitter()?,
                                                                         &resolve_for_create,
                                                                         &actor,
                                                                         &peer_did,
                                                                     )
                                                                     .await?;
-                                                                    crate::transport::account::direct_conversation_resolve(
+                                                                    fence.check()?;
+                                                                    nav.push(Route::DirectConversation { realm_id:accepted.realm_id.to_string(), strand_id:accepted.main_strand_id.to_string() });
+                                                                    let resolved = crate::transport::account::direct_conversation_resolve(
                                                                         &api,
                                                                         &resolve_store,
                                                                         &resolve_peer,
                                                                         None,
                                                                         false,
-                                                                    ).await
+                                                                    ).await?;
+                                                                    fence.check()?;
+                                                                    crate::app::direct_open::start_founder_genesis(&api, &resolve_store, &actor, &resolved, initiating_account.as_ref()).await;
+                                                                    Ok(resolved)
                                                                 },
                                                             )
                                                             .await
                                                             {
                                                                 Ok(resolved) => {
-                                                                    if let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(&resolved) {
-                                                                        row_status.set(String::new());
-                                                                        nav.push(Route::DirectConversation {
-                                                                            realm_id: coordinates.realm_id.to_string(),
-                                                                            strand_id: coordinates.main_strand_id.to_string(),
-                                                                        });
+                                                                    if crate::transport::account::direct_conversation_coordinates(&resolved).is_some() {
+                                                                        set_status(String::new());
+
                                                                     } else {
-                                                                        row_status.set(tr("contacts.dm.not_ready"));
+                                                                        set_status(tr("contacts.dm.not_ready"));
                                                                     }
                                                                 }
-                                                                Err(error) => row_status.set(format!(
+                                                                Err(error) => set_status(format!(
                                                                     "Direct Conversation creation failed: {}",
                                                                     error.display()
                                                                 )),
                                                             }
                                                         }
-                                                        _ => row_status.set(tr("contacts.dm.not_ready")),
+                                                        _ => set_status(tr("contacts.dm.not_ready")),
                                                     }
                                                 }
                                                 // The other participant is the founder. Waiting never
                                                 // grants create authority, so we show a waiting state
                                                 // instead of offering a create action.
                                                 DirectConversationEntry::AwaitingFounder => {
-                                                    row_status.set(tr("contacts.dm.awaiting_founder"));
+                                                    set_status(tr("contacts.dm.awaiting_founder"));
                                                 }
                                                 DirectConversationEntry::Unavailable => {
-                                                    row_status.set(tr("contacts.dm.not_ready"));
+                                                    set_status(tr("contacts.dm.not_ready"));
                                                 }
                                             }
                                         }
                                         Err(err) => {
-                                            row_status.set(
+                                            set_status(
                                                 tr("contacts.dm.open_failed").replace("{error}", &err.display()),
                                             )
                                         }
                                     }
-                                    busy.set(false);
+                                    if completion_fence.check().is_ok() {
+                                        if let Ok(mut value) = busy.try_write() { *value = false; }
+                                    }
                                 });
                             }
                         },

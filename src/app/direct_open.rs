@@ -69,11 +69,24 @@ pub(super) fn open_direct_conversation(
     // Dioxus signal: `crate::transport` is engine code on its way to garth and
     // must not name a UI runtime type. Wrapping here is the host's job.
     let state_store = super::runtime_adapter::state_store_handle(state_store);
-    spawn(async move {
+    let initiating_account = crate::app::SessionContext::get().active_account();
+    let session_fence = crate::transport::auth::AuthoringSessionFence::capture();
+    dioxus::core::spawn_forever(async move {
+        let Ok(session_fence) = session_fence else {
+            if let Ok(mut opening) = direct_chat_opening.try_write() {
+                *opening = None;
+            }
+            return;
+        };
+        let routed = std::rc::Rc::new(std::cell::Cell::new(false));
+        let early_routed = routed.clone();
+        let early_navigator = navigator.clone();
+        let final_fence = session_fence.clone();
         let subject = target.subject().to_owned();
         let failure_message = target.failure_message();
         let outcome =
             crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
+                session_fence.check()?;
                 match target {
                     DirectConversationTarget::OwnedAgent {
                         agent_id,
@@ -108,10 +121,20 @@ pub(super) fn open_direct_conversation(
                             let peer = agent_actor.as_account_id().ok_or_else(|| {
                                 anyhow::anyhow!("owned Agent requires an account-shaped actor id")
                             })?;
-                            crate::transport::account::create_direct_conversation_from_resolve(
-                                &submitter, &outcome, &founder, peer,
-                            )
-                            .await?;
+                            let accepted =
+                                crate::transport::account::create_direct_conversation_from_resolve(
+                                    &submitter, &outcome, &founder, peer,
+                                )
+                                .await?;
+                            session_fence.check()?;
+                            if let Ok(mut opening) = direct_chat_opening.try_write() {
+                                *opening = None;
+                            }
+                            early_navigator.push(Route::DirectConversation {
+                                realm_id: accepted.realm_id.to_string(),
+                                strand_id: accepted.main_strand_id.to_string(),
+                            });
+                            early_routed.set(true);
                             let founded = crate::transport::account::direct_conversation_resolve(
                                 &api,
                                 &state_store,
@@ -120,7 +143,15 @@ pub(super) fn open_direct_conversation(
                                 true,
                             )
                             .await?;
-                            start_founder_genesis(&api, &state_store, &founder, &founded).await;
+                            session_fence.check()?;
+                            start_founder_genesis(
+                                &api,
+                                &state_store,
+                                &founder,
+                                &founded,
+                                initiating_account.as_ref(),
+                            )
+                            .await;
                             return Ok(founded);
                         }
                         Ok(outcome)
@@ -157,10 +188,20 @@ pub(super) fn open_direct_conversation(
                             let peer = peer.as_account_id().ok_or_else(|| {
                                 anyhow::anyhow!("human Contact requires an AccountId")
                             })?;
-                            crate::transport::account::create_direct_conversation_from_resolve(
-                                &submitter, &outcome, &founder, peer,
-                            )
-                            .await?;
+                            let accepted =
+                                crate::transport::account::create_direct_conversation_from_resolve(
+                                    &submitter, &outcome, &founder, peer,
+                                )
+                                .await?;
+                            session_fence.check()?;
+                            if let Ok(mut opening) = direct_chat_opening.try_write() {
+                                *opening = None;
+                            }
+                            early_navigator.push(Route::DirectConversation {
+                                realm_id: accepted.realm_id.to_string(),
+                                strand_id: accepted.main_strand_id.to_string(),
+                            });
+                            early_routed.set(true);
                             let founded = crate::transport::account::direct_conversation_resolve(
                                 &api,
                                 &state_store,
@@ -169,7 +210,15 @@ pub(super) fn open_direct_conversation(
                                 false,
                             )
                             .await?;
-                            start_founder_genesis(&api, &state_store, &founder, &founded).await;
+                            session_fence.check()?;
+                            start_founder_genesis(
+                                &api,
+                                &state_store,
+                                &founder,
+                                &founded,
+                                initiating_account.as_ref(),
+                            )
+                            .await;
                             return Ok(founded);
                         }
                         Ok(outcome)
@@ -177,6 +226,14 @@ pub(super) fn open_direct_conversation(
                 }
             })
             .await;
+        if final_fence.check_session_identity().is_ok()
+            && let Ok(mut opening) = direct_chat_opening.try_write()
+        {
+            *opening = None;
+        }
+        if final_fence.check().is_err() {
+            return;
+        }
         let route = match outcome {
             Ok(ref response)
                 if let Some(coordinates) =
@@ -221,8 +278,12 @@ pub(super) fn open_direct_conversation(
                 None
             }
         };
-        direct_chat_opening.set(None);
-        if let Some(route) = route {
+        if let Ok(mut opening) = direct_chat_opening.try_write() {
+            *opening = None;
+        }
+        if !routed.get()
+            && let Some(route) = route
+        {
             let _ = navigator.push(route);
         }
     });
@@ -234,17 +295,18 @@ pub(super) fn open_direct_conversation(
 /// (`identity/contact-and-direct-conversation.md` 7.2 / 7.3). A failure here
 /// does not block opening the conversation; the background creator bootstrap
 /// resumes the founder's outstanding Genesis.
-async fn start_founder_genesis(
+pub(crate) async fn start_founder_genesis(
     api: &crate::transport::TransportClient,
     state_store: &crate::runtime::input::StateStoreHandle,
     founder: &arkret_sdk::AccountId,
     founded: &arkret_sdk::DirectConversationResolveOutcome,
+    initiating_account: Option<&crate::config::ActiveAccountContext>,
 ) {
     let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(founded)
     else {
         return;
     };
-    let Some(account) = crate::app::SessionContext::get().active_account() else {
+    let Some(account) = initiating_account else {
         return;
     };
     if &account.authority != founder {

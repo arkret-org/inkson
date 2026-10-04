@@ -275,6 +275,61 @@ pub(super) fn ChatEffects(
             };
             let top_event = plan.event_id;
             event_sink.emit(ChatProjectionEvent::ReadCursor(top_event.clone()));
+            let ordinary_direct_chat = state_store
+                .read()
+                .direct_conversation_peer(&realm)
+                .is_some()
+                && controller.channels.read().iter().any(|channel| {
+                    channel.strand_id == strand
+                        && channel.scope_circle.is_none()
+                        && !channel.is_private_sidecar
+                });
+            if ordinary_direct_chat {
+                let marker = state_store.read().build_read_cursor_candidate(
+                    authority_for_receipt.principal_id.to_string(),
+                    device.to_string(),
+                    realm.clone(),
+                    Some(strand.clone()),
+                    top_event.clone(),
+                );
+                if let Ok(marker) = marker {
+                    let base = base.clone();
+                    let credential = token();
+                    let fence = crate::transport::auth::AuthoringSessionFence::capture();
+                    spawn(async move {
+                        let Ok(fence) = fence else {
+                            return;
+                        };
+                        let result = crate::transport::auth::with_event_submitter(
+                            &base,
+                            credential,
+                            |submitter| async move {
+                                fence.check()?;
+                                let outcome =
+                                    crate::transport::account::submit_read_cursor_advance(
+                                        &submitter, &marker,
+                                    )
+                                    .await?;
+                                fence.check()?;
+                                Ok(outcome)
+                            },
+                        )
+                        .await;
+                        match result {
+                            Ok(outcome) => {
+                                if let Err(error) =
+                                    state_store.write().apply_read_cursor_outcome(outcome)
+                                {
+                                    tracing::warn!(%error, "visible Chat read cursor installation failed");
+                                }
+                            }
+                            Err(error) => {
+                                tracing::debug!(error = %error.display_diagnostic(), "visible Chat read cursor remains pending")
+                            }
+                        }
+                    });
+                }
+            }
             let Some(material) = plan.material else {
                 return;
             };
@@ -612,9 +667,10 @@ pub(super) fn ChatEffects(
                         Some(&store),
                         local_decrypt_identity,
                     ),
-                    channels_from_current_view(
+                    channels_from_current_view_with_store(
                         store.current_product_view().as_ref(),
                         &selected_realm_for_load,
+                        &store,
                     ),
                 )
             };
@@ -752,9 +808,10 @@ pub(super) fn ChatEffects(
                 }
 
                 event_sink.emit(ChatProjectionEvent::MergeChannels(
-                    channels_from_current_view(
+                    channels_from_current_view_with_store(
                         state_store.read().current_product_view().as_ref(),
                         &selected_realm_for_load,
+                        &state_store.read(),
                     ),
                 ));
                 if selected_channel().trim().is_empty()
@@ -830,8 +887,11 @@ pub(super) fn ChatEffects(
                     Some(&store),
                     decrypt_identity,
                 );
-                let channels =
-                    channels_from_current_view(store.current_product_view().as_ref(), &realm);
+                let channels = channels_from_current_view_with_store(
+                    store.current_product_view().as_ref(),
+                    &realm,
+                    &store,
+                );
                 (channels, messages, poll_cards)
             };
             if !next_channels.is_empty() {

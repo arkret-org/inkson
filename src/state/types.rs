@@ -102,6 +102,8 @@ pub(crate) struct VerifiedMessageCommit {
     pub accepted_ref: arkret_wire::CommittedEventRef,
     pub actor_id: arkret_sdk::ActorId,
     pub scope_ref: arkret_sdk::ScopeRef,
+    pub strand_id: arkret_sdk::StrandId,
+    pub track_name: String,
 }
 
 /// A reaction assertion admitted from a signature-verified Commit scan.

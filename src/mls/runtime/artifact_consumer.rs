@@ -226,7 +226,7 @@ pub(crate) async fn install_recovered_outbound_commit(
         .install_recovered_own_commit(item, base_ref)
         .map_err(describe)?;
     crate::mls::roster_install::install_welcome_roster_from_service(
-        api, &mut group, item, authority,
+        api, state, &mut group, item, authority,
     )
     .await?;
     persist_installed_group(
@@ -315,6 +315,7 @@ pub(crate) async fn install_accepted_welcome(
 
     crate::mls::roster_install::install_welcome_roster_from_service(
         api,
+        state,
         &mut group,
         accepted_commit,
         authority,
@@ -605,7 +606,7 @@ async fn recover_remote_tail(
             .install_recovered_remote_commit(item, &base_ref)
             .map_err(describe)?;
         crate::mls::roster_install::install_welcome_roster_from_service(
-            api, &mut group, item, authority,
+            api, state, &mut group, item, authority,
         )
         .await?;
         persist_installed_group(

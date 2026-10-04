@@ -139,8 +139,8 @@ impl MlsEndpoints<'_> {
     /// attestor and the RFC public tree before binding any MLS leaf.
     pub async fn unverified_member_roster_authority_page(
         &self,
-        request: &arkret_sdk::MlsRosterAuthorityReadRequestBody,
-    ) -> anyhow::Result<arkret_sdk::MlsRosterAuthorityReadOutcome> {
+        request: &arkret_sdk::MlsMemberRosterAuthorityReadRequestBody,
+    ) -> anyhow::Result<arkret_sdk::MlsSelfRosterAuthorityReadOutcome> {
         request.validate().map_err(anyhow::Error::from)?;
         let page = self
             .transport
@@ -148,8 +148,9 @@ impl MlsEndpoints<'_> {
             .self_mls_roster_authority(request)
             .await
             .map_err(anyhow::Error::from)?;
-        page.manifest
-            .validate_for_request(request)
+        page.roster
+            .manifest
+            .validate_for_member_request(request)
             .map_err(anyhow::Error::from)?;
         Ok(page)
     }
@@ -159,8 +160,8 @@ impl MlsEndpoints<'_> {
     /// and public MLS tree before using any record as a leaf authority.
     pub async fn unverified_member_roster_authority_pages(
         &self,
-        request: &arkret_sdk::MlsRosterAuthorityReadRequestBody,
-    ) -> anyhow::Result<Vec<arkret_sdk::MlsRosterAuthorityReadOutcome>> {
+        request: &arkret_sdk::MlsMemberRosterAuthorityReadRequestBody,
+    ) -> anyhow::Result<Vec<arkret_sdk::MlsSelfRosterAuthorityReadOutcome>> {
         let mut next_request = request.clone();
         let mut seen_cursors = std::collections::HashSet::new();
         let mut pages = Vec::new();
@@ -169,18 +170,18 @@ impl MlsEndpoints<'_> {
                 .unverified_member_roster_authority_page(&next_request)
                 .await?;
             let page_number = u64::try_from(pages.len())?;
-            if page.page_index != page_number
-                || page_number >= page.manifest.page_count
-                || pages
-                    .first()
-                    .is_some_and(|first: &arkret_sdk::MlsRosterAuthorityReadOutcome| {
-                        first.manifest.page_count != page.manifest.page_count
-                    })
+            if page.roster.page_index != page_number
+                || page_number >= page.roster.manifest.page_count
+                || pages.first().is_some_and(
+                    |first: &arkret_sdk::MlsSelfRosterAuthorityReadOutcome| {
+                        first.roster.manifest.page_count != page.roster.manifest.page_count
+                    },
+                )
             {
                 anyhow::bail!("MLS roster page order or count is inconsistent");
             }
-            let page_count = page.manifest.page_count;
-            let next_cursor = page.next_cursor.clone();
+            let page_count = page.roster.manifest.page_count;
+            let next_cursor = page.roster.next_cursor.clone();
             pages.push(page);
             match next_cursor {
                 Some(cursor) if u64::try_from(pages.len())? < page_count => {

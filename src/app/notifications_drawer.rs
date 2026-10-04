@@ -60,6 +60,7 @@ pub(crate) fn NotificationsDrawer(
                     principal_id,
                     device_id,
                     token,
+                    on_open_chat: move |_| open.set(false),
                 }
             }
         }

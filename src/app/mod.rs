@@ -81,7 +81,7 @@ mod connect;
 mod connection_effects;
 mod connection_handlers;
 mod context_bar;
-mod direct_open;
+pub(crate) mod direct_open;
 mod feature_gate;
 mod fold_evidence_effects;
 mod global_effects;

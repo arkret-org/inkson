@@ -528,12 +528,14 @@ fn session_fence_survives_device_refresh_but_rejects_session_account_or_signer_r
     );
     let fence = AuthoringSessionFence::capture().unwrap();
     fence.check().unwrap();
+    fence.check_session_identity().unwrap();
     let other = crate::test_support::authority_at_station(
         "did:web:alice.example",
         "did:web:another.example",
     );
     crate::secure_key_store::set_active_device_seed_scope(Some((&other, &device)));
     assert!(fence.check().is_err());
+    assert!(fence.check_session_identity().is_err());
     crate::secure_key_store::set_active_device_seed_scope(Some((&account, &device)));
     crate::event_signer::replace_active_signer(Some(std::sync::Arc::new(
         crate::event_signer::build_ed25519_device_signer(
@@ -543,4 +545,5 @@ fn session_fence_survives_device_refresh_but_rejects_session_account_or_signer_r
         ),
     )));
     assert!(fence.check().is_err());
+    assert!(fence.check_session_identity().is_err());
 }

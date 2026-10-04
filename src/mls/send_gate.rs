@@ -478,6 +478,61 @@ impl ApplicationBody {
                 .map_err(|error| anyhow::anyhow!("{} {field}: {error}", kind.as_str()))
         };
         match kind {
+            arkret_sdk::EventKind::SpaceCreate | arkret_sdk::EventKind::StrandCreate => {
+                let object = payload
+                    .get("object")
+                    .and_then(serde_json::Value::as_object)
+                    .ok_or_else(|| anyhow::anyhow!("invalid metadata create object"))?;
+                if let Some(encrypted) = object.get("encrypted_metadata") {
+                    let envelope = serde_json::from_value(encrypted.clone())?;
+                    Ok(Some(Self::Encrypted(vec![envelope])))
+                } else if ["title", "summary", "labels", "avatar_blob_ref", "metadata"]
+                    .iter()
+                    .any(|key| object.contains_key(*key))
+                {
+                    Ok(Some(Self::Plaintext))
+                } else {
+                    Ok(None)
+                }
+            }
+            arkret_sdk::EventKind::SpaceUpdate | arkret_sdk::EventKind::StrandUpdate => {
+                let Some(patch) = payload.get("patch").and_then(serde_json::Value::as_object)
+                else {
+                    return Ok(None);
+                };
+                let mut encrypted = Vec::new();
+                let mut plaintext = false;
+                for (path, operation) in patch {
+                    let root = path.split('.').next().unwrap_or_default();
+                    if root == "encrypted_metadata" {
+                        anyhow::ensure!(
+                            path == "encrypted_metadata"
+                                && operation.get("$op").and_then(serde_json::Value::as_str)
+                                    == Some("set"),
+                            "encrypted metadata requires whole-envelope set"
+                        );
+                        encrypted.push(serde_json::from_value(
+                            operation.get("value").cloned().unwrap_or_default(),
+                        )?);
+                    } else if matches!(
+                        root,
+                        "title" | "summary" | "labels" | "avatar_blob_ref" | "metadata"
+                    ) {
+                        plaintext = true;
+                    }
+                }
+                anyhow::ensure!(
+                    !plaintext || encrypted.is_empty(),
+                    "metadata write mixes plaintext and ciphertext"
+                );
+                Ok(if plaintext {
+                    Some(Self::Plaintext)
+                } else if encrypted.is_empty() {
+                    None
+                } else {
+                    Some(Self::Encrypted(encrypted))
+                })
+            }
             arkret_sdk::EventKind::MessageCreate | arkret_sdk::EventKind::MessageRevise => {
                 let content = envelope("encrypted_content")?;
                 let metadata = envelope("encrypted_metadata")?;

@@ -102,6 +102,53 @@ pub(crate) fn channels_from_current_view(
         .collect()
 }
 
+pub(crate) fn channels_from_current_view_with_store(
+    current: Option<&crate::current_projection::RealmCurrentView>,
+    realm: &str,
+    store: &LocalStateStore,
+) -> Vec<ChannelEntity> {
+    let mut channels = channels_from_current_view(current, realm);
+    let Some(identity) = crate::secure_key_store::active_device_seed_scope() else {
+        return channels;
+    };
+    if store.active_authority().as_ref() != Some(&identity.authority) {
+        return channels;
+    }
+    for channel in &mut channels {
+        let envelope = current
+            .and_then(|view| view.entries_for(realm))
+            .into_iter()
+            .flatten()
+            .find_map(|entry| {
+                let arkret_wire::TypedCurrentResult::Value {
+                    selector, value, ..
+                } = entry;
+                match selector {
+                    arkret_wire::CurrentSelector::Strand { strand_id }
+                        if strand_id.as_str() == channel.strand_id =>
+                    {
+                        value.get("encrypted_metadata").and_then(|value| {
+                            serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(value.clone())
+                                .ok()
+                        })
+                    }
+                    _ => None,
+                }
+            });
+        if envelope.is_some() {
+            channel.name = crate::views::chat::direct_structure::metadata_title(
+                store,
+                realm,
+                &channel.strand_id,
+                envelope.as_ref(),
+                &identity.authority,
+                &identity.device_id,
+            );
+        }
+    }
+    channels
+}
+
 pub(crate) fn merge_channels(target: &mut Vec<ChannelEntity>, incoming: Vec<ChannelEntity>) {
     for channel in incoming {
         if let Some(existing) = target

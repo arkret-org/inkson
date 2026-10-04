@@ -586,7 +586,9 @@ async fn bootstrap_creator_realm_mls_genesis(
     let _guard = lock.lock().await;
     let submitter = api
         .event_submitter()
-        .map_err(|error| format!("MLS genesis Event submitter: {error}"))?;
+        .map_err(|error| format!("MLS genesis Event submitter: {error}"))?
+        .with_state_store(state_store.clone())
+        .with_authority(authority.clone());
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm_id).map_err(|e| e.to_string())?,
     };

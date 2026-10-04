@@ -1378,7 +1378,9 @@ impl EventSubmitter {
     ) -> anyhow::Result<EventIntent> {
         if !matches!(
             intent.kind(),
-            arkret_sdk::EventKind::MlsCommit | arkret_sdk::EventKind::MessageCreate
+            arkret_sdk::EventKind::MlsCommit
+                | arkret_sdk::EventKind::MessageCreate
+                | arkret_sdk::EventKind::StrandWatchSet
         ) {
             return Ok(intent.clone());
         }
@@ -1393,7 +1395,10 @@ impl EventSubmitter {
         {
             return Ok(intent.clone());
         }
-        if intent.kind() == &arkret_sdk::EventKind::MessageCreate {
+        if matches!(
+            intent.kind(),
+            arkret_sdk::EventKind::MessageCreate | arkret_sdk::EventKind::StrandWatchSet
+        ) {
             let context = store
                 .read(|state| state.direct_message_context(realm.as_str(), intent.actor_id()))
                 .ok_or_else(|| {

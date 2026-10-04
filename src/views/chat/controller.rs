@@ -1683,10 +1683,149 @@ pub(super) struct StrandCreateDraft {
     pub frontier_state: Signal<String>,
 }
 
+/// Each mounted target owns its signals for the lifetime of the panel. Async
+/// send failures and uploads retain the original target's signals after a switch.
+#[derive(Clone, Copy, PartialEq)]
+struct ComposerState {
+    draft: Signal<String>,
+    reply_to_message: Signal<Option<String>>,
+    editing_message: Signal<Option<String>>,
+    edit_draft: Signal<String>,
+    compose_dragover: Signal<bool>,
+    compose_upload_status: Signal<String>,
+    message_context_menu: Signal<Option<String>>,
+    moderation_report_draft: Signal<Option<ModerationReportDraft>>,
+    moderation_report_pending: Signal<bool>,
+    status_msg: Signal<String>,
+    redact_confirm: Signal<Option<String>>,
+    reaction_picker: Signal<Option<String>>,
+    mention_picker_state: Signal<crate::messaging::mentions::MentionPickerState>,
+    attachment_menu_open: Signal<bool>,
+    poll_draft: Signal<Option<crate::messaging::polls::PollDraft>>,
+    latest_read_cursor: Signal<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ComposerTarget {
+    authority: arkret_sdk::AccountId,
+    device_id: arkret_sdk::DeviceId,
+    realm_id: String,
+    strand_id: String,
+    sidecar_id: Option<arkret_sdk::SidecarId>,
+}
+
+fn use_composer_state(target: ComposerTarget) -> ComposerState {
+    let mut targets = use_signal(std::collections::BTreeMap::<ComposerTarget, ComposerState>::new);
+    let existing = targets.peek().get(&target).copied();
+    if let Some(state) = existing {
+        return state;
+    }
+    let state = ComposerState {
+        draft: Signal::new(String::new()),
+        reply_to_message: Signal::new(None),
+        editing_message: Signal::new(None),
+        edit_draft: Signal::new(String::new()),
+        compose_dragover: Signal::new(false),
+        compose_upload_status: Signal::new(String::new()),
+        message_context_menu: Signal::new(None),
+        moderation_report_draft: Signal::new(None),
+        moderation_report_pending: Signal::new(false),
+        status_msg: Signal::new(String::new()),
+        redact_confirm: Signal::new(None),
+        reaction_picker: Signal::new(None),
+        mention_picker_state: Signal::new(crate::messaging::mentions::MentionPickerState::new()),
+        attachment_menu_open: Signal::new(false),
+        poll_draft: Signal::new(None),
+        latest_read_cursor: Signal::new(String::new()),
+    };
+    targets.write().insert(target, state);
+    state
+}
+
+#[cfg(test)]
+mod composer_target_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::*;
+
+    type Control = Rc<RefCell<Option<(Signal<ComposerTarget>, ComposerState)>>>;
+
+    fn harness(control: Control) -> Element {
+        let target = use_signal(|| target("a"));
+        let composer = use_composer_state(target());
+        *control.borrow_mut() = Some((target, composer));
+        rsx! { input { value: (composer.draft)() } }
+    }
+
+    fn target(strand: &str) -> ComposerTarget {
+        ComposerTarget {
+            authority: crate::test_support::authority("ak:did_core:web:alice.example"),
+            device_id: arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-0000000000f1")
+                .unwrap(),
+            realm_id: "realm".into(),
+            strand_id: strand.into(),
+            sidecar_id: None,
+        }
+    }
+
+    #[test]
+    fn composer_switch_keeps_draft_reply_edit_and_late_results_on_original_chat() {
+        let control = Rc::new(RefCell::new(None));
+        let mut dom = VirtualDom::new_with_props(harness, control.clone());
+        dom.rebuild_to_vec();
+        let (mut selected, mut a) = control.borrow().unwrap();
+        dom.in_runtime(|| {
+            a.draft.set("draft a".into());
+            a.reply_to_message.set(Some("message a".into()));
+            a.editing_message.set(Some("edit a".into()));
+            a.edit_draft.set("edited a".into());
+            selected.set(target("b"));
+        });
+        dom.render_immediate_to_vec();
+        let (_, mut b) = control.borrow().unwrap();
+        dom.in_runtime(|| {
+            assert!((b.draft)().is_empty());
+            assert!((b.reply_to_message)().is_none());
+            assert!((b.editing_message)().is_none());
+            b.draft.set("draft b".into());
+            // The old async operation retains these signals after navigation.
+            a.draft.set("restored a with attachment".into());
+            a.compose_upload_status.set("Upload complete".into());
+            assert_eq!((b.draft)(), "draft b");
+            assert!((b.compose_upload_status)().is_empty());
+            selected.set(target("a"));
+        });
+        dom.render_immediate_to_vec();
+        let (_, restored) = control.borrow().unwrap();
+        dom.in_runtime(|| {
+            assert_eq!((restored.draft)(), "restored a with attachment");
+            assert_eq!((restored.reply_to_message)().as_deref(), Some("message a"));
+            assert_eq!((restored.edit_draft)(), "edited a");
+        });
+        let mut isolated = vec![target("a"); 4];
+        isolated[0].authority = crate::test_support::authority("ak:did_core:web:bob.example");
+        isolated[1].device_id =
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-0000000000f2").unwrap();
+        isolated[2].realm_id = "other realm".into();
+        isolated[3].sidecar_id = Some(
+            arkret_sdk::SidecarId::new("ak:sidecar:Abbk-ALq9nZszIh8qJC26XasNIx9TYjU5-BzXWyqwDVx")
+                .unwrap(),
+        );
+        for target in isolated {
+            dom.in_runtime(|| selected.set(target));
+            dom.render_immediate_to_vec();
+            dom.in_runtime(|| assert!((control.borrow().unwrap().1.draft)().is_empty()));
+        }
+    }
+}
+
 pub(super) fn use_chat_controller(
     selected_realm_id: &str,
     initial_strand_id: &str,
-    _principal_id: &str,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    sidecar_id: Option<arkret_sdk::SidecarId>,
 ) -> ChatController {
     let initial_default_channel = (!selected_realm_id.trim().is_empty())
         .then(|| discussion_channel_for_strand(initial_strand_id))
@@ -1699,22 +1838,30 @@ pub(super) fn use_chat_controller(
         .clone()
         .into_iter()
         .collect::<Vec<_>>();
+    let selected_channel = use_signal(move || initial_selected_channel);
+    let composer = use_composer_state(ComposerTarget {
+        authority: authority.clone(),
+        device_id: device_id.clone(),
+        realm_id: selected_realm_id.to_owned(),
+        strand_id: selected_channel(),
+        sidecar_id,
+    });
     ChatController {
         channels: use_signal(move || initial_channels),
-        selected_channel: use_signal(move || initial_selected_channel),
+        selected_channel,
         messages: use_signal(Vec::<ChatMessage>::new),
-        draft: use_signal(String::new),
+        draft: composer.draft,
         typing_throttle: crate::perf::use_typing_throttle(3_000, 4_000),
-        compose_dragover: use_signal(|| false),
-        compose_upload_status: use_signal(String::new),
+        compose_dragover: composer.compose_dragover,
+        compose_upload_status: composer.compose_upload_status,
         shared_pins: use_signal(Vec::<SharedMessagePin>::new),
         private_saved_targets: use_signal(std::collections::BTreeSet::<String>::new),
         private_saved_account_data: use_signal(
             std::collections::BTreeMap::<String, serde_json::Value>::new,
         ),
-        message_context_menu: use_signal(|| None),
-        moderation_report_draft: use_signal(|| None),
-        moderation_report_pending: use_signal(|| false),
+        message_context_menu: composer.message_context_menu,
+        moderation_report_draft: composer.moderation_report_draft,
+        moderation_report_pending: composer.moderation_report_pending,
         new_channel_name: use_signal(String::new),
         new_channel_topic: use_signal(String::new),
         new_channel_create_card: use_signal(|| false),
@@ -1724,23 +1871,23 @@ pub(super) fn use_chat_controller(
         strand_watch_pending: use_signal(|| false),
         strand_watch_request: use_signal(|| 0),
         watch_level_menu_open: use_signal(|| false),
-        status_msg: use_signal(String::new),
+        status_msg: composer.status_msg,
         queued_outbound_local_operation_ids: use_signal(std::collections::BTreeSet::<String>::new),
         is_online: use_signal(navigator_online),
-        reply_to_message: use_signal(|| None),
-        editing_message: use_signal(|| None),
-        edit_draft: use_signal(String::new),
-        redact_confirm: use_signal(|| None),
-        reaction_picker: use_signal(|| None),
+        reply_to_message: composer.reply_to_message,
+        editing_message: composer.editing_message,
+        edit_draft: composer.edit_draft,
+        redact_confirm: composer.redact_confirm,
+        reaction_picker: composer.reaction_picker,
         initial_sync_requested: use_signal(|| false),
         initial_sync_finished: use_signal(|| false),
-        mention_picker_state: use_signal(crate::messaging::mentions::MentionPickerState::new),
+        mention_picker_state: composer.mention_picker_state,
         owned_agent_slugs: use_signal(std::collections::BTreeMap::<String, String>::new),
         owned_agent_sync_key_seen: use_signal(String::new),
         agent_participation_visibility: use_signal(std::collections::BTreeMap::<String, bool>::new),
         agent_participation_sync_key_seen: use_signal(String::new),
-        attachment_menu_open: use_signal(|| false),
-        poll_draft: use_signal(|| None),
+        attachment_menu_open: composer.attachment_menu_open,
+        poll_draft: composer.poll_draft,
         poll_cards: use_signal(Vec::<crate::messaging::polls::PollCard>::new),
         typing_actors: use_signal(Vec::<String>::new),
         typing_next_expires_at_ms: use_signal(|| None),
@@ -1754,7 +1901,7 @@ pub(super) fn use_chat_controller(
             crate::messaging::discussion_promote::PromoteDiscussionDraft::default,
         ),
         promoted_targets: use_signal(std::collections::BTreeMap::<String, String>::new),
-        latest_read_cursor: use_signal(String::new),
+        latest_read_cursor: composer.latest_read_cursor,
         blocked_show_anyway: use_signal(std::collections::BTreeSet::<String>::new),
         account_display_name: use_signal(String::new),
         track_filter: use_signal(|| "discussion_only".to_owned()),

@@ -626,8 +626,8 @@ pub async fn direct_conversation_found(
 ///
 /// The resolver's `CreationRequired.next_founding_input` carries the exact
 /// founding evidence for this authority-evaluated pair. Coordinates are read
-/// back by re-resolving after the last Event commits; the founding submission
-/// itself returns only its commits.
+/// back by re-resolving after acceptance. The accepted authored unit already
+/// provides the exact Realm/main coordinates for navigation; it grants no MLS readiness.
 fn founding_evidence_for_resolve(
     resolve: &arkret_sdk::DirectConversationResolveOutcome,
 ) -> anyhow::Result<&arkret_sdk::DirectConversationFoundingAuthorityEvidence> {
@@ -645,7 +645,7 @@ pub async fn create_direct_conversation_from_resolve(
     resolve: &arkret_sdk::DirectConversationResolveOutcome,
     founder_account: &arkret_sdk::AccountId,
     peer_account: &arkret_sdk::AccountId,
-) -> anyhow::Result<Vec<crate::models::SubmitEventResult>> {
+) -> anyhow::Result<arkret_sdk::direct_conversation::DirectConversationFoundingPlan> {
     let founding_authority = founding_evidence_for_resolve(resolve)?;
     anyhow::ensure!(
         submitter.authority()? == founder_account,
@@ -659,7 +659,30 @@ pub async fn create_direct_conversation_from_resolve(
         founding_authority,
     )?;
     let signed = submitter.author_event_unit(steps).await?;
-    direct_conversation_found(submitter, resolve, signed).await
+    anyhow::ensure!(
+        signed.len() == 4,
+        "Direct Conversation founding requires four Events"
+    );
+    let plan = arkret_sdk::direct_conversation::DirectConversationFoundingPlan::from_events([
+        signed[0].event(),
+        signed[1].event(),
+        signed[2].event(),
+        signed[3].event(),
+    ])?;
+    let ids = signed
+        .iter()
+        .map(|event| event.event_id().to_string())
+        .collect::<Vec<_>>();
+    let results = direct_conversation_found(submitter, resolve, signed).await?;
+    anyhow::ensure!(
+        results.len() == 4
+            && results
+                .iter()
+                .zip(&ids)
+                .all(|(result, id)| &result.event_id == id),
+        "accepted founding results differ from the exact authored unit"
+    );
+    Ok(plan)
 }
 
 fn direct_conversation_peer_descriptor(

@@ -75,6 +75,23 @@ pub(crate) struct UiNotificationReadTarget {
     pub(crate) timestamp: String,
 }
 
+pub(super) fn direct_notification_route(
+    store: &crate::state::LocalStateStore,
+    notification: &UiNotification,
+) -> Option<crate::routes::Route> {
+    store.direct_conversation_peer(&notification.realm_id)?;
+    let realm = arkret_sdk::RealmId::new(&notification.realm_id).ok()?;
+    let strand = arkret_sdk::StrandId::new(notification.strand_id.as_deref()?).ok()?;
+    let current = store.current_product_view()?;
+    let entries = current.entries_for(realm.as_str())?;
+    let view = garth::direct_structure::DirectStructureView::from_current(&realm, entries).ok()?;
+    view.chats.get(&strand)?;
+    Some(crate::routes::Route::DirectConversation {
+        realm_id: realm.to_string(),
+        strand_id: strand.to_string(),
+    })
+}
+
 pub(crate) fn read_cursor_targets(
     notifications: &[UiNotification],
 ) -> Vec<UiNotificationReadTarget> {

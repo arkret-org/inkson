@@ -35,6 +35,7 @@ mod circle_welcome;
 mod composer;
 mod controller;
 mod direct_authority;
+mod direct_structure;
 mod effects;
 pub(crate) mod model;
 mod poll_submission;
@@ -1503,15 +1504,21 @@ pub fn ChatPanel(
     // projection, privacy gates, and the composer cannot diverge after an
     // in-place activation.
     let hosted_sidecar_session = sidecar_session_state();
-    let controller = use_chat_controller(&selected_realm_id, &initial_strand_id, &principal_id);
+    let initial_sidecar_session = sidecar_session.or_else(|| {
+        hosted_sidecar_session
+            .filter(|session| session.matches_route(&selected_realm_id, &initial_strand_id))
+    }).filter(|session| session.controller_account_id == authority);
+    let controller = use_chat_controller(
+        &selected_realm_id,
+        &initial_strand_id,
+        &authority,
+        &account_device_id,
+        initial_sidecar_session.as_ref().map(|session| session.sidecar_id.clone()),
+    );
     let selected_source_strand = (controller.selected_channel)();
-    let sidecar_session = sidecar_session
-        .or_else(|| {
-            hosted_sidecar_session.filter(|session| {
-                session.matches_route(&selected_realm_id, &selected_source_strand)
-            })
-        })
-        .filter(|session| session.controller_account_id == authority);
+    let sidecar_session = initial_sidecar_session.filter(|session| {
+        session.matches_route(&selected_realm_id, &selected_source_strand)
+    });
     let navigator = use_navigator();
     let mut migrated_draft_applied_for = use_signal(String::new);
     {
@@ -1534,19 +1541,22 @@ pub fn ChatPanel(
     }
     {
         let session = sidecar_session.clone();
-        let mut draft = controller.draft;
-        use_effect(move || {
-            let Some(session) = session.as_ref() else {
-                return;
-            };
-            if session.migrated_draft.trim().is_empty()
-                || migrated_draft_applied_for.peek().as_str() == session.trace_id
-            {
-                return;
-            }
-            draft.set(session.migrated_draft.clone());
-            migrated_draft_applied_for.set(session.trace_id.clone());
-        });
+        let draft = controller.draft;
+        use_effect(use_reactive(
+            (&session, &draft),
+            move |(session, mut draft)| {
+                let Some(session) = session.as_ref() else {
+                    return;
+                };
+                if session.migrated_draft.trim().is_empty()
+                    || migrated_draft_applied_for.peek().as_str() == session.trace_id
+                {
+                    return;
+                }
+                draft.set(session.migrated_draft.clone());
+                migrated_draft_applied_for.set(session.trace_id.clone());
+            },
+        ));
     }
     let ChatController {
         channels,
@@ -2289,6 +2299,13 @@ pub fn ChatPanel(
                 has_remote_presence,
                 presence_sync_key: presence_sync_key.clone(),
                 token,
+            }
+            if direct_mode && !embedded {
+                direct_structure::DirectStructurePanel {
+                    realm: selected_realm_id.clone(), base: base_url.clone(), account: authority.clone(), device: account_device_id.clone(),
+                    token, selected: selected_channel, frontier: frontier_state, live_epoch: realm_live_epoch,
+                    on_select: move |id| controller.select_channel(id),
+                }
             }
             if left_open {
                 aside { class: "discussion-panel discussion-sidebar-panel", "data-testid": "discussion-list-panel",

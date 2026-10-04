@@ -93,15 +93,29 @@ pub(crate) fn participant_authoring_intent(
     anyhow::ensure!(
         matches!(
             intent.kind(),
-            arkret_sdk::EventKind::MessageCreate | arkret_sdk::EventKind::MlsCommit
-        ) && intent.executed_by().is_none()
+            arkret_sdk::EventKind::MessageCreate
+                | arkret_sdk::EventKind::MlsCommit
+                | arkret_sdk::EventKind::StrandWatchSet
+        ) || arkret_sdk::direct_conversation::direct_conversation_structure_action(intent.kind()),
+        "Direct intent is not a participant action"
+    );
+    if intent.kind() == &arkret_sdk::EventKind::StrandWatchSet {
+        let payload = intent.typed_payload::<arkret_sdk::event_spec::StrandWatchSet>()?;
+        anyhow::ensure!(
+            source == arkret_wire::AuthoritySourceId::DirectConversationParticipantV1
+                && &payload.watcher_actor_id == intent.actor_id(),
+            "Direct watch requires a stable participant writing its own cell"
+        );
+    }
+    anyhow::ensure!(
+        intent.executed_by().is_none()
             && intent.authorization_ref().is_none()
             && !intent
                 .semantic_refs()
                 .iter()
                 .any(|reference| reference.role == "direct_conversation_binding"
                     || reference.role == "direct_conversation_founding_unit"),
-        "Direct intent already carries an authority or is not a participant action"
+        "Direct intent already carries an authority"
     );
     Ok(intent
         .clone()

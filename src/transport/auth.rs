@@ -25,6 +25,12 @@ impl AuthoringSessionFence {
     }
 
     pub(crate) fn check(&self) -> anyhow::Result<()> {
+        self.check_session_identity()
+    }
+
+    /// UI cleanup may finish after authority evidence is refreshed, but it
+    /// must still belong to the same account, device and signer instance.
+    pub(crate) fn check_session_identity(&self) -> anyhow::Result<()> {
         let active = crate::event_signer::active_signer();
         anyhow::ensure!(
             self.session_epoch == crate::identity::device_directory::session_cache_epoch()

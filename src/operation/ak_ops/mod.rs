@@ -98,6 +98,7 @@ pub(crate) fn strand_create_payload(
             agent_participation: object.agent_participation,
             metadata: object.metadata,
             encrypted_metadata: object.encrypted_metadata,
+            topic: None,
             content: object.content,
             encrypted_content: object.encrypted_content,
             tracks: object.tracks,

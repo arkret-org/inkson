@@ -221,7 +221,7 @@ pub(crate) fn run_local_mls_encrypt(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_local_mls_encrypt_for_event(
+pub(crate) fn run_local_mls_encrypt_for_event(
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,

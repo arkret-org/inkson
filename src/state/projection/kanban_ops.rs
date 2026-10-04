@@ -196,7 +196,11 @@ fn kanban_operation_from_typed(event: &arkret_sdk::Event) -> Option<RawOperation
     // values alone cannot establish the sender, scope or ciphertext binding.
     if matches!(
         event.kind,
-        arkret_sdk::EventKind::StrandUpdate | arkret_sdk::EventKind::RsvpSet
+        arkret_sdk::EventKind::StrandCreate
+            | arkret_sdk::EventKind::StrandUpdate
+            | arkret_sdk::EventKind::SpaceCreate
+            | arkret_sdk::EventKind::SpaceUpdate
+            | arkret_sdk::EventKind::RsvpSet
     ) {
         payload
             .as_object_mut()?

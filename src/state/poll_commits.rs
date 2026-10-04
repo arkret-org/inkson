@@ -1,12 +1,11 @@
 //! Durable MessageCreate coordinates from a cryptographically verified scan.
 //!
 //! Only Garth's unforgeable `VerifiedScanPage` supplies original poll inputs.
-//! The bounded message-coordinate cache is independent from the poll archive:
+//! The message-coordinate index is independent from the poll archive:
 //! response history is retained so replay can rebuild the SDK partition reducer.
 
 use super::*;
 
-const VERIFIED_MESSAGE_COMMITS_MAX: usize = 512;
 const VERIFIED_REACTION_WINNERS_MAX: usize = 512;
 
 fn reaction_key(
@@ -90,12 +89,8 @@ fn merge_verified_message_commits(
         next.push(record);
         changed += 1;
     }
-    // An evicted coordinate becomes unknown, never a negative or a head.
-    // A later verified replay may reinsert it; conflict detection covers only
-    // the retained window. The scan verifier still checks every replayed row.
-    if next.len() > VERIFIED_MESSAGE_COMMITS_MAX {
-        next.drain(0..next.len() - VERIFIED_MESSAGE_COMMITS_MAX);
-    }
+    // Coordinates remain durable for private read cursors and dormant Chats.
+    // Global arrival-order eviction would silently erase their unread state.
     Ok(changed)
 }
 
@@ -312,6 +307,9 @@ impl LocalStateStore {
             {
                 return Err("verified message Commit and Event coordinates differ".to_owned());
             }
+            let payload: arkret_sdk::MessageCreatePayload = serde_json::to_value(&event.payload)
+                .and_then(serde_json::from_value)
+                .map_err(|error| format!("verified MessageCreate payload is invalid: {error}"))?;
             pending.push(VerifiedMessageCommit {
                 accepted_ref: arkret_sdk::CommittedEventRef {
                     event_id: event.event_id.clone(),
@@ -321,6 +319,8 @@ impl LocalStateStore {
                 },
                 actor_id: event.actor_id.clone(),
                 scope_ref: event.scope_ref.clone(),
+                strand_id: payload.strand_id,
+                track_name: payload.track_name,
             });
         }
         self.ensure_cached_loaded();
@@ -403,6 +403,67 @@ impl LocalStateStore {
 
     pub(crate) fn verified_poll_inputs(&self) -> Vec<VerifiedPollInput> {
         self.load().verified_poll_inputs
+    }
+
+    /// Unread ordinary Chat messages come from accepted stream coordinates,
+    /// independently of notification delivery or the currently visible Chat.
+    pub(crate) fn direct_chat_unread_counts(
+        &self,
+        realm: &arkret_sdk::RealmId,
+        actor: &arkret_sdk::ActorId,
+        chats: &BTreeSet<arkret_sdk::StrandId>,
+    ) -> BTreeMap<String, usize> {
+        let snapshot = self.load();
+        let stream = arkret_sdk::CommitStreamRef::Realm {
+            realm_id: realm.clone(),
+        };
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm.clone(),
+        };
+        let blocked = crate::account_data::blocked_message_actor_ids(&self.client_blocklist());
+        let mut cuts = BTreeMap::new();
+        for strand in chats {
+            let read_scope = read_scope_for_cursor(realm.as_str(), Some(strand.as_str()));
+            let marker = snapshot
+                .read_cursors
+                .get(&read_cursor_key(realm.as_str(), &read_scope));
+            let cut = match marker {
+                None => None,
+                Some(marker) => {
+                    let Some(input) = snapshot.verified_message_commits.iter().find(|input| {
+                        input.accepted_ref.event_id == marker.body.position.event_id
+                            && input.accepted_ref.stream_ref == stream
+                            && input.scope_ref == scope
+                            && input.strand_id == *strand
+                            && input.track_name == "discussion"
+                    }) else {
+                        continue;
+                    };
+                    Some(input.accepted_ref.stream_position)
+                }
+            };
+            cuts.insert(strand.clone(), cut);
+        }
+        let mut counts = BTreeMap::new();
+        for input in &snapshot.verified_message_commits {
+            if input.scope_ref != scope
+                || input.accepted_ref.stream_ref != stream
+                || input.actor_id == *actor
+                || blocked.contains(&input.actor_id.to_string())
+            {
+                continue;
+            }
+            if input.track_name != "discussion" {
+                continue;
+            }
+            let Some(cut) = cuts.get(&input.strand_id) else {
+                continue;
+            };
+            if cut.is_none_or(|position| input.accepted_ref.stream_position > position) {
+                *counts.entry(input.strand_id.to_string()).or_default() += 1;
+            }
+        }
+        counts
     }
 
     pub(crate) fn verified_poll_partition_complete(
@@ -527,6 +588,128 @@ fn merge_verified_poll_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_chat_unread_uses_signed_stream_positions_and_survives_reopen() {
+        let realm =
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap();
+        let chats = [1_u8, 2].map(|seed| {
+            arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [seed; 32],
+            ))
+        });
+        let events = [0, 1, 0].map(|index| {
+            (
+                arkret_sdk::EventKind::MessageCreate.as_str().to_owned(),
+                serde_json::json!({"strand_id":chats[index], "track_name":"discussion",
+                "content":{"kind":"ak.content.text", "body":"unread"}}),
+            )
+        });
+        let (bundle, keys, items) = crate::test_support::committed_event::verified_realm_fixture_as(
+            realm.clone(),
+            events.into(),
+            "bob.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        );
+        let request = arkret_sdk::AuthorityBundleRequest {
+            realm_id: realm.clone(),
+            nonce: bundle.current_assertion.nonce.clone(),
+        };
+        let freshness = arkret_identity::RealmAuthorityFreshness::new(
+            bundle.bundle_issued_at + chrono::Duration::seconds(50),
+            request.nonce.clone(),
+        );
+        let stream = arkret_sdk::CommitStreamRef::Realm {
+            realm_id: realm.clone(),
+        };
+        let mut replica = garth::RealmReplica::new(realm.clone());
+        replica
+            .install_verified_authority(&request, bundle.clone(), &freshness, &keys)
+            .unwrap();
+        let page = replica
+            .apply_verified_scan(
+                &arkret_sdk::StreamScanRequest {
+                    realm_id: realm.clone(),
+                    stream_ref: stream,
+                    direction: arkret_sdk::StreamScanDirection::After(None),
+                    limit: 4,
+                },
+                arkret_sdk::StreamScanOutcome {
+                    committed_events: std::iter::once(arkret_sdk::CommittedEventView::Full(
+                        arkret_sdk::CommittedEventFullView {
+                            commit: bundle.genesis_commit.clone(),
+                            event: bundle.genesis_event.clone(),
+                        },
+                    ))
+                    .chain(
+                        items
+                            .iter()
+                            .cloned()
+                            .map(arkret_sdk::CommittedEventView::Full),
+                    )
+                    .collect(),
+                    readable_floor: Some(arkret_sdk::ReadableFloor {
+                        oldest_position: 0,
+                        floor_commit_id: bundle.genesis_commit.commit_id.clone(),
+                        floor_reason: arkret_sdk::ReadableFloorReason::StreamStart,
+                    }),
+                    truncated: false,
+                },
+                &freshness,
+                &keys,
+            )
+            .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "inkson-direct-unread-{}",
+            crate::operation::uuid_v7()
+        ));
+        let mut store = LocalStateStore::with_path(&path);
+        store.ingest_verified_message_history(&page).unwrap();
+        let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let allowed = chats.iter().cloned().collect();
+        let counts = store.direct_chat_unread_counts(&realm, &actor, &allowed);
+        assert_eq!(counts.get(chats[0].as_str()), Some(&2));
+        assert_eq!(counts.get(chats[1].as_str()), Some(&1));
+        assert!(
+            store
+                .direct_chat_unread_counts(&realm, &items[0].event.actor_id, &allowed)
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .direct_chat_unread_counts(&realm, &actor, &BTreeSet::from([chats[0].clone()]))
+                .len(),
+            1
+        );
+        store
+            .apply_read_cursor_outcome(arkret_sdk::ReadMarkerOutcome {
+                realm_id: realm.clone(),
+                actor_id: actor.clone(),
+                device_id: arkret_sdk::DeviceId::new(
+                    "ak:device:0196419b-0000-7000-8000-000000000001",
+                )
+                .unwrap(),
+                read_scope: read_scope_for_cursor(realm.as_str(), Some(chats[0].as_str())),
+                position: serde_json::from_value(serde_json::json!({
+                    "event_id": items[0].event.event_id,
+                    "hlc": "01970e589d21-0001-a13f9c2e",
+                }))
+                .unwrap(),
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+        let restarted = LocalStateStore::with_path(&path);
+        let counts = restarted.direct_chat_unread_counts(&realm, &actor, &allowed);
+        assert_eq!(counts.get(chats[0].as_str()), Some(&1));
+        assert_eq!(counts.get(chats[1].as_str()), Some(&1));
+        assert!(restarted.notification_projection().is_empty());
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn verified_genesis_scope_persists_only_the_signed_direct_role() {
@@ -1012,6 +1195,11 @@ mod tests {
                 arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
             )),
             scope_ref: arkret_sdk::ScopeRef::Realm { realm_id: realm },
+            strand_id: arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [4; 32],
+            )),
+            track_name: "discussion".to_owned(),
         };
         let mut stored = Vec::new();
         assert_eq!(
