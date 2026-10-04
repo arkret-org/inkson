@@ -2317,6 +2317,10 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
 /// next action) and carries no protocol identifiers.
 fn add_generic_error_keys(dict: &mut TranslationDict) {
     dict.set(
+        "error.precondition_not_met",
+        "The server refused this operation because a required condition is not met. Check the related settings, then try again.",
+    );
+    dict.set(
         "error.generic",
         "Something went wrong while talking to the server. Try again.",
     );
