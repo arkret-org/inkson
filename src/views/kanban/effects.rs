@@ -254,6 +254,24 @@ pub(super) fn KanbanEffects(
     });
 
     {
+        let card_route = route.clone();
+        use_effect(move || {
+            let Some(card) = selected_card() else {
+                return;
+            };
+            let raw_operations = state_store.read().load().raw_operations;
+            let Some(accepted_route) =
+                card_task_route_after_acceptance(&card_route, &card, &raw_operations)
+            else {
+                return;
+            };
+            let tab = card_detail_tab();
+            let _ = navigator.replace(accepted_route);
+            replace_card_detail_tab_query(tab);
+        });
+    }
+
+    {
         let routed_strand_id = route_card_strand_id(&route);
         use_effect(move || {
             let Some(strand_id) = routed_strand_id.clone() else {

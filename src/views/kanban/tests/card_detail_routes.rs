@@ -31,6 +31,84 @@ fn card_edit_waits_for_the_complete_accepted_current() {
 }
 
 #[test]
+fn accepted_card_route_migrates_only_its_local_handle_with_a_complete_basis() {
+    let local_id = "0196419b-0000-7000-8000-000000000001";
+    let event_id =
+        arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [0x25; 32]);
+    let strand_id = arkret_sdk::StrandId::from_event_id(&event_id);
+    let mut card = test_card(strand_id.as_str(), "U");
+    card.state = CardState::Synced;
+    card.authoring_basis = Some(arkret_wire::CurrentRevision {
+        commit_id: arkret_wire::RealmCommitId::from_digest([0x25; 32]),
+        stream_position: 1,
+    });
+    let receipt = RawOperationRecord {
+        operation_id: local_id.to_owned(),
+        realm_id: Some(TEST_REALM_ID.to_owned()),
+        received_at: chrono::Utc::now(),
+        payload: json!({
+            "kind": "ak.strand.create",
+            "event_id": event_id,
+            "local_temporary_target_ref": local_id,
+            "write_state": "synced"
+        }),
+    };
+    let board_id = arkret_sdk::SpaceId::from_event_id(&event_id).to_string();
+    let route = Route::KanbanBoardTask {
+        realm_id: TEST_REALM_ID.to_owned(),
+        board_id: board_id.clone(),
+        task_id: local_id.to_owned(),
+    };
+    let accepted_route = Route::KanbanBoardTask {
+        realm_id: TEST_REALM_ID.to_owned(),
+        board_id,
+        task_id: strand_id.to_string(),
+    };
+    assert_eq!(card_task_route_after_acceptance(&route, &card, &[]), None);
+    assert_eq!(
+        card_task_route_after_acceptance(&route, &card, &[receipt.clone()]),
+        Some(accepted_route.clone())
+    );
+    assert_eq!(
+        card_task_route_after_acceptance(&accepted_route, &card, &[receipt.clone()]),
+        None
+    );
+    let without_board = Route::KanbanTask {
+        realm_id: TEST_REALM_ID.to_owned(),
+        task_id: local_id.to_owned(),
+    };
+    assert_eq!(
+        card_task_route_after_acceptance(&without_board, &card, &[receipt.clone()]),
+        Some(Route::KanbanTask {
+            realm_id: TEST_REALM_ID.to_owned(),
+            task_id: strand_id.to_string(),
+        })
+    );
+    let unrelated = Route::KanbanTask {
+        realm_id: TEST_REALM_ID.to_owned(),
+        task_id: "0196419b-0000-7000-8000-000000000002".to_owned(),
+    };
+    assert_eq!(
+        card_task_route_after_acceptance(&unrelated, &card, &[receipt.clone()]),
+        None
+    );
+    card.authoring_basis = None;
+    assert_eq!(
+        card_task_route_after_acceptance(&route, &card, &[receipt.clone()]),
+        None
+    );
+    card.authoring_basis = Some(arkret_wire::CurrentRevision {
+        commit_id: arkret_wire::RealmCommitId::from_digest([0x25; 32]),
+        stream_position: 1,
+    });
+    card.state = CardState::Accepted;
+    assert_eq!(
+        card_task_route_after_acceptance(&route, &card, &[receipt]),
+        None
+    );
+}
+
+#[test]
 fn discussion_waits_for_event_derived_strand_identity() {
     let mut pending = test_card("0196419b-0000-7000-8000-000000000001", "U");
     pending.primary_strand_id = "0196419b-0000-7000-8000-000000000001".to_owned();

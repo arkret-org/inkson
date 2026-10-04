@@ -83,6 +83,37 @@ pub(super) fn card_detail_write_ready(card: &KanbanCard) -> bool {
         && card.authoring_basis.is_some()
 }
 
+/// Replace only this holder's draft route once its exact accepted card has
+/// installed a complete current basis. A canonical link never follows aliases.
+pub(super) fn card_task_route_after_acceptance(
+    route: &Route,
+    card: &KanbanCard,
+    raw_operations: &[RawOperationRecord],
+) -> Option<Route> {
+    let routed_id = route_card_strand_id(route)?;
+    if arkret_sdk::StrandId::new(routed_id.clone()).is_ok() || !card_detail_write_ready(card) {
+        return None;
+    }
+    let aliases = event_derived_target_aliases(raw_operations);
+    if resolve_event_derived_target_alias(&aliases, &routed_id) != card.id {
+        return None;
+    }
+    match route {
+        Route::KanbanTask { realm_id, .. } => Some(Route::KanbanTask {
+            realm_id: realm_id.clone(),
+            task_id: card.id.clone(),
+        }),
+        Route::KanbanBoardTask {
+            realm_id, board_id, ..
+        } => Some(Route::KanbanBoardTask {
+            realm_id: realm_id.clone(),
+            board_id: board_id.clone(),
+            task_id: card.id.clone(),
+        }),
+        _ => None,
+    }
+}
+
 pub(super) fn card_discussion_target_ready(card: &KanbanCard) -> bool {
     arkret_sdk::StrandId::new(card.primary_strand_id.clone()).is_ok()
 }
