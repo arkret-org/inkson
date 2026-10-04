@@ -67,6 +67,7 @@ impl OpenedLink {
                 (Some(realm_id), Some(strand)) => Route::KanbanTask {
                     realm_id,
                     task_id: typed_strand(strand),
+                    tab: String::new(),
                 },
                 _ => Route::Directory,
             };

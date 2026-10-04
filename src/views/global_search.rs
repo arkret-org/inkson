@@ -175,6 +175,7 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
             route: Route::KanbanTask {
                 realm_id: realm_id.to_owned(),
                 task_id: task_id.clone(),
+                tab: String::new(),
             },
             seal: Some(task_id),
             label: "Open task".to_owned(),

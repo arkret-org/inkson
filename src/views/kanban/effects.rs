@@ -265,15 +265,14 @@ pub(super) fn KanbanEffects(
             else {
                 return;
             };
-            let tab = card_detail_tab();
             let _ = navigator.replace(accepted_route);
-            replace_card_detail_tab_query(tab);
         });
     }
 
     {
         let routed_strand_id = route_card_strand_id(&route);
         use_effect(move || {
+            let routed_tab = card_detail_tab_from_current_route();
             let Some(strand_id) = routed_strand_id.clone() else {
                 return;
             };
@@ -284,6 +283,16 @@ pub(super) fn KanbanEffects(
                 .as_ref()
                 .is_some_and(|card| card_matches_strand_id(card, &strand_id))
             {
+                if *card_detail_tab.peek() != routed_tab {
+                    card_detail_tab.set(routed_tab);
+                }
+                if routed_tab == CardDetailContentTab::Discussion
+                    && let Some(card) = selected_card.peek().as_ref()
+                    && card_detail_discussion_mounted_for.peek().as_deref()
+                        != Some(card.primary_strand_id.as_str())
+                {
+                    card_detail_discussion_mounted_for.set(Some(card.primary_strand_id.clone()));
+                }
                 return;
             }
             if let Some(card) = find_card_by_strand_id(&columns.read(), &strand_id) {
@@ -311,7 +320,6 @@ pub(super) fn KanbanEffects(
                 due_calendar_month.set(due_calendar_month_for_value(&card.due));
                 due_edit_status.set(String::new());
                 card_detail_actions_open.set(false);
-                let routed_tab = card_detail_tab_from_current_url();
                 if routed_tab == CardDetailContentTab::Discussion {
                     card_detail_discussion_mounted_for.set(Some(card.primary_strand_id.clone()));
                 }

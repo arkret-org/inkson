@@ -1106,6 +1106,7 @@ fn kanban_board_task_route_uses_realm_context_for_mls_bootstrap() {
         realm_id: "ak:realm:AUf2ZqXlKTr5IIncoCa4UlpeBVoaSUsvUwd8LUD9kCtw".to_owned(),
         board_id: "ak:space:AesqLH8RhGikjlM4RLUj-JoBx4kk_5wjP_27TFgpETVa".to_owned(),
         task_id: "ak:strand:AQt4LxD1aD9dynZHtoFAKW5nauq_7vWidI2B7LWO3IMY".to_owned(),
+        tab: String::new(),
     };
 
     assert!(route_uses_realm_context(&route));

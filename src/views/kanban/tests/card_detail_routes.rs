@@ -58,11 +58,13 @@ fn accepted_card_route_migrates_only_its_local_handle_with_a_complete_basis() {
         realm_id: TEST_REALM_ID.to_owned(),
         board_id: board_id.clone(),
         task_id: local_id.to_owned(),
+        tab: "discussion".to_owned(),
     };
     let accepted_route = Route::KanbanBoardTask {
         realm_id: TEST_REALM_ID.to_owned(),
         board_id,
         task_id: strand_id.to_string(),
+        tab: "discussion".to_owned(),
     };
     assert_eq!(card_task_route_after_acceptance(&route, &card, &[]), None);
     assert_eq!(
@@ -76,17 +78,20 @@ fn accepted_card_route_migrates_only_its_local_handle_with_a_complete_basis() {
     let without_board = Route::KanbanTask {
         realm_id: TEST_REALM_ID.to_owned(),
         task_id: local_id.to_owned(),
+        tab: "discussion".to_owned(),
     };
     assert_eq!(
         card_task_route_after_acceptance(&without_board, &card, &[receipt.clone()]),
         Some(Route::KanbanTask {
             realm_id: TEST_REALM_ID.to_owned(),
             task_id: strand_id.to_string(),
+            tab: "discussion".to_owned(),
         })
     );
     let unrelated = Route::KanbanTask {
         realm_id: TEST_REALM_ID.to_owned(),
         task_id: "0196419b-0000-7000-8000-000000000002".to_owned(),
+        tab: "discussion".to_owned(),
     };
     assert_eq!(
         card_task_route_after_acceptance(&unrelated, &card, &[receipt.clone()]),
@@ -168,29 +173,37 @@ fn card_detail_tab_deep_link_round_trips() {
 }
 
 #[test]
-fn card_detail_tab_reads_url_query() {
+fn card_detail_router_round_trip_preserves_deep_link_tabs() {
+    for prefix in [
+        "/kanban/ak:realm:r/task/ak:strand:f",
+        "/kanban/ak:realm:r/board/ak:space:b/task/ak:strand:f",
+    ] {
+        for tab in [
+            CardDetailContentTab::Description,
+            CardDetailContentTab::Synthesis,
+            CardDetailContentTab::Discussion,
+        ] {
+            let href = format!("{prefix}?tab={}", card_detail_tab_slug(tab));
+            let route: Route = href.parse().expect("card deep link must route");
+            assert_eq!(route.to_string(), href);
+            assert_eq!(card_detail_tab_from_route(&route), tab);
+            let restarted: Route = route.to_string().parse().unwrap();
+            assert_eq!(card_detail_tab_from_route(&restarted), tab);
+
+            let switched = card_task_route_with_tab(&route, CardDetailContentTab::Discussion)
+                .expect("the same card can switch its content tab");
+            assert_eq!(switched.to_string(), format!("{prefix}?tab=discussion"));
+        }
+        for suffix in ["", "?tab=invalid"] {
+            let route: Route = format!("{prefix}{suffix}").parse().unwrap();
+            assert_eq!(
+                card_detail_tab_from_route(&route),
+                CardDetailContentTab::Description
+            );
+        }
+    }
     assert_eq!(
-        card_detail_tab_from_href(
-            "http://127.0.0.1:8080/kanban/ak:realm:r/task/ak:strand:f?tab=description"
-        ),
-        Some(CardDetailContentTab::Description)
-    );
-    assert_eq!(
-        card_detail_tab_from_href(
-            "http://127.0.0.1:8080/kanban/ak:realm:r/task/ak:strand:f?tab=discussion"
-        ),
-        Some(CardDetailContentTab::Discussion)
-    );
-    assert_eq!(
-        card_detail_tab_from_href(
-            "http://127.0.0.1:8080/kanban/ak:realm:r/task/ak:strand:f?tab=synthesis"
-        ),
-        Some(CardDetailContentTab::Synthesis)
-    );
-    assert_eq!(
-        card_detail_tab_from_href(
-            "http://127.0.0.1:8080/kanban/ak:realm:r/task/ak:strand:f?tab=bad"
-        ),
+        card_task_route_with_tab(&Route::Kanban, CardDetailContentTab::Discussion),
         None
     );
 }
@@ -213,6 +226,7 @@ fn route_card_strand_id_reads_task_segment_only() {
         route_card_strand_id(&Route::KanbanTask {
             realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
             task_id: "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned(),
+            tab: "description".to_owned(),
         }),
         Some("ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned())
     );
@@ -221,6 +235,7 @@ fn route_card_strand_id_reads_task_segment_only() {
             realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
             board_id: "ak:space:board".to_owned(),
             task_id: "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned(),
+            tab: "description".to_owned(),
         }),
         Some("ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned())
     );
@@ -243,6 +258,7 @@ fn route_board_id_reads_board_segment_only() {
             realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
             board_id: board.to_owned(),
             task_id: "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned(),
+            tab: "description".to_owned(),
         }),
         parsed
     );
@@ -252,6 +268,7 @@ fn route_board_id_reads_board_segment_only() {
         route_board_id(&Route::KanbanTask {
             realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
             task_id: "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned(),
+            tab: "description".to_owned(),
         }),
         None
     );
@@ -318,6 +335,7 @@ fn kanban_card_task_route_carries_board_or_falls_back() {
             realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
             board_id: "ak:space:board".to_owned(),
             task_id: "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned(),
+            tab: "description".to_owned(),
         }
     );
     assert_eq!(
@@ -329,6 +347,7 @@ fn kanban_card_task_route_carries_board_or_falls_back() {
         Route::KanbanTask {
             realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
             task_id: "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned(),
+            tab: "description".to_owned(),
         }
     );
 }

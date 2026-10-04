@@ -120,7 +120,7 @@ pub(super) fn use_kanban_controller(
         card_edit_scope: use_signal(CardEditScope::default),
         card_detail_sidebar_visible: use_signal(|| true),
         card_detail_actions_open: use_signal(|| false),
-        card_detail_tab: use_signal(card_detail_tab_from_current_url),
+        card_detail_tab: use_signal(card_detail_tab_from_current_route),
         card_detail_discussion_mounted_for: use_signal(|| None),
         card_detail_sidebar_tab: use_signal(CardDetailSidebarTab::default),
         card_detail_docked: use_signal(read_card_detail_docked),

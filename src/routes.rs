@@ -119,18 +119,26 @@ pub enum Route {
     /// strand id so a refresh on an open card restores the right board
     /// even when the card is a locally-queued draft the server
     /// projection does not yet know about.
-    #[route("/kanban/:realm_id/board/:board_id/task/:task_id", KanbanBoardTaskPage)]
+    #[route(
+        "/kanban/:realm_id/board/:board_id/task/:task_id?:tab",
+        KanbanBoardTaskPage
+    )]
     KanbanBoardTask {
         realm_id: String,
         board_id: String,
         task_id: String,
+        tab: String,
     },
 
     /// Board-less card deep link. Retained for share links / global
     /// search results that only know the strand id; the board is resolved
     /// from the projection (or local queue) on arrival.
-    #[route("/kanban/:realm_id/task/:task_id", KanbanTaskPage)]
-    KanbanTask { realm_id: String, task_id: String },
+    #[route("/kanban/:realm_id/task/:task_id?:tab", KanbanTaskPage)]
+    KanbanTask {
+        realm_id: String,
+        task_id: String,
+        tab: String,
+    },
 
     #[route("/notifications", RoutePage)]
     Notifications,
@@ -245,8 +253,8 @@ fn KanbanRealmPage(realm_id: String) -> Element {
 }
 
 #[component]
-fn KanbanTaskPage(realm_id: String, task_id: String) -> Element {
-    let _ = (realm_id, task_id);
+fn KanbanTaskPage(realm_id: String, task_id: String, tab: String) -> Element {
+    let _ = (realm_id, task_id, tab);
     rsx! {}
 }
 
@@ -257,8 +265,13 @@ fn KanbanBoardPage(realm_id: String, board_id: String) -> Element {
 }
 
 #[component]
-fn KanbanBoardTaskPage(realm_id: String, board_id: String, task_id: String) -> Element {
-    let _ = (realm_id, board_id, task_id);
+fn KanbanBoardTaskPage(
+    realm_id: String,
+    board_id: String,
+    task_id: String,
+    tab: String,
+) -> Element {
+    let _ = (realm_id, board_id, task_id, tab);
     rsx! {}
 }
 

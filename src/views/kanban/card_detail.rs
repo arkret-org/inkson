@@ -61,13 +61,19 @@ pub(super) fn kanban_card_task_route(realm_id: &str, board_id: &str, task_id: &s
     let realm_id = card_detail_route_realm_id(realm_id);
     let board_id = board_id.trim();
     let task_id = task_id.trim().to_owned();
+    let tab = card_detail_tab_slug(CardDetailContentTab::default()).to_owned();
     if board_id.is_empty() {
-        Route::KanbanTask { realm_id, task_id }
+        Route::KanbanTask {
+            realm_id,
+            task_id,
+            tab,
+        }
     } else {
         Route::KanbanBoardTask {
             realm_id,
             board_id: board_id.to_owned(),
             task_id,
+            tab,
         }
     }
 }
@@ -99,16 +105,21 @@ pub(super) fn card_task_route_after_acceptance(
         return None;
     }
     match route {
-        Route::KanbanTask { realm_id, .. } => Some(Route::KanbanTask {
+        Route::KanbanTask { realm_id, tab, .. } => Some(Route::KanbanTask {
             realm_id: realm_id.clone(),
             task_id: card.id.clone(),
+            tab: tab.clone(),
         }),
         Route::KanbanBoardTask {
-            realm_id, board_id, ..
+            realm_id,
+            board_id,
+            tab,
+            ..
         } => Some(Route::KanbanBoardTask {
             realm_id: realm_id.clone(),
             board_id: board_id.clone(),
             task_id: card.id.clone(),
+            tab: tab.clone(),
         }),
         _ => None,
     }
@@ -1284,7 +1295,6 @@ pub(super) fn card_detail_tab_slug(tab: CardDetailContentTab) -> &'static str {
     }
 }
 
-#[cfg(any(test, target_arch = "wasm32"))]
 pub(super) fn card_detail_tab_from_slug(value: &str) -> Option<CardDetailContentTab> {
     match value.trim().to_ascii_lowercase().as_str() {
         "description" => Some(CardDetailContentTab::Description),
@@ -1294,46 +1304,44 @@ pub(super) fn card_detail_tab_from_slug(value: &str) -> Option<CardDetailContent
     }
 }
 
-#[cfg(any(test, target_arch = "wasm32"))]
-pub(super) fn card_detail_tab_from_href(href: &str) -> Option<CardDetailContentTab> {
-    let url = url::Url::parse(href).ok()?;
-    url.query_pairs()
-        .find_map(|(key, value)| (key == "tab").then(|| card_detail_tab_from_slug(&value)))
-        .flatten()
+pub(super) fn card_detail_tab_from_route(route: &Route) -> CardDetailContentTab {
+    match route {
+        Route::KanbanTask { tab, .. } | Route::KanbanBoardTask { tab, .. } => {
+            card_detail_tab_from_slug(tab).unwrap_or_default()
+        }
+        _ => CardDetailContentTab::default(),
+    }
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(super) fn card_detail_tab_from_current_url() -> CardDetailContentTab {
-    web_sys::window()
-        .and_then(|window| window.location().href().ok())
-        .as_deref()
-        .and_then(card_detail_tab_from_href)
+pub(super) fn card_detail_tab_from_current_route() -> CardDetailContentTab {
+    dioxus_router::try_router()
+        .map(|router| card_detail_tab_from_route(&router.current::<Route>()))
         .unwrap_or_default()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) fn card_detail_tab_from_current_url() -> CardDetailContentTab {
-    CardDetailContentTab::default()
+pub(super) fn card_task_route_with_tab(route: &Route, tab: CardDetailContentTab) -> Option<Route> {
+    let mut route = route.clone();
+    match &mut route {
+        Route::KanbanTask {
+            tab: routed_tab, ..
+        }
+        | Route::KanbanBoardTask {
+            tab: routed_tab, ..
+        } => {
+            *routed_tab = card_detail_tab_slug(tab).to_owned();
+        }
+        _ => return None,
+    }
+    Some(route)
 }
 
 pub(super) fn replace_card_detail_tab_query(tab: CardDetailContentTab) {
-    let Ok(encoded_slug) = serde_json::to_string(card_detail_tab_slug(tab)) else {
+    let Some(router) = dioxus_router::try_router() else {
         return;
     };
-    let script = format!(
-        r#"
-(() => {{
-  const tab = {encoded_slug};
-  const url = new URL(window.location.href);
-  if (!url.pathname.includes("/task/")) {{
-    return;
-  }}
-  url.searchParams.set("tab", tab);
-  window.history.replaceState(null, "", `${{url.pathname}}${{url.search}}${{url.hash}}`);
-}})();
-"#
-    );
-    let _ = document::eval(&script);
+    if let Some(route) = card_task_route_with_tab(&router.current::<Route>(), tab) {
+        let _ = router.replace(route);
+    }
 }
 
 pub(super) fn strand_detail_deep_link_path(realm_id: &str, strand_id: &str) -> String {
