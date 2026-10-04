@@ -2,7 +2,9 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+#[cfg(not(target_arch = "wasm32"))]
 use chacha20poly1305::aead::{Aead, Payload};
+#[cfg(not(target_arch = "wasm32"))]
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
 use hkdf::Hkdf;
 use sha2::Sha256;

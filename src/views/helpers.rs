@@ -1,5 +1,4 @@
 pub use arkret_sdk::MentionNode;
-use arkret_wire::{SchemaId, ServiceOperationId};
 use dioxus::prelude::*;
 // Single source in yoface (the projection layer needs
 // this label formatter without importing a views module). Re-exported so all
@@ -39,8 +38,6 @@ pub(crate) fn account_handles_display(handles: &[String], fallback: &str) -> Str
 }
 use crate::api_error::normalize_wait_for_sync_token;
 use crate::config::{ClientConfig, LocalConfigStore};
-use crate::transport::auth::with_endpoint_clients;
-use crate::ui::button::{Button, ButtonVariant};
 
 /// Persist the current authenticated configuration. Derived strings are
 /// checked against the typed context and never used to manufacture identity or

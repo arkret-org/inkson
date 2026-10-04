@@ -4,9 +4,9 @@ mod blob;
 pub mod circle;
 mod contacts;
 pub(crate) use contacts::DEFAULT_CONTACT_SCOPE_NAMES;
-pub(crate) use contacts::pending::{
-    SECRET_KEY as CONTACT_PENDING_COMMIT_SECRET_KEY, resume_pending_contact,
-};
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) use contacts::pending::SECRET_KEY as CONTACT_PENDING_COMMIT_SECRET_KEY;
+pub(crate) use contacts::pending::resume_pending_contact;
 mod context;
 pub(crate) mod describe_cache;
 pub mod directory;

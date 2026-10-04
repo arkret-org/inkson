@@ -3178,7 +3178,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use serde_json::{Value, json};
+    use serde_json::json;
 
     use super::*;
 

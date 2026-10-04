@@ -2,12 +2,10 @@
 //! minimal-metadata AAD policy enforcement.
 
 use arkret_sdk::{AccountId, DeviceId};
+#[cfg(test)]
 use arkret_wire::event_kind_str;
 
-use super::{
-    MlsRuntimeError, load_device_checkpoint_secret, load_mls_key_package_identity_state,
-    should_force_epoch_advance,
-};
+use super::{MlsRuntimeError, load_device_checkpoint_secret, should_force_epoch_advance};
 use crate::secure_key_store::SecureKeyStore;
 
 pub(crate) fn warn_mls_decrypt_once(

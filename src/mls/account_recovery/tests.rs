@@ -11,12 +11,12 @@ use super::backup_body::{
     decrypt_mls_private_plaintext_backup,
 };
 use super::restore::{mls_backup_prompt_required, verify_active_backup_series};
-use super::{
+use crate::key_backup::BackupKind;
+use crate::mls::runtime::{
     is_mls_account_secret_backup, is_mls_private_plaintext_backup,
     select_mls_account_secret_backup, select_mls_account_secret_recovery_public_key_backup,
     select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
-use crate::key_backup::BackupKind;
 use crate::recovery_crypto::derive_vault_kek;
 use crate::secure_key_store::MemorySecureKeyStore;
 
