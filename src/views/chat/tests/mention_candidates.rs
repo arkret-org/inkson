@@ -298,14 +298,29 @@ fn known_agent_account_candidate_uses_full_identity_not_selector_label() {
         )
         .expect("controller can select its current Agent member");
     assert_eq!(owned.subject_account_id, candidate.subject_account_id);
-    assert_eq!(
-        owned.insert_label(),
-        candidate.subject_account_id.to_string()
-    );
+    assert_eq!(owned.insert_label(), "Summary Assistant");
 
+    assert_eq!(candidate.insert_label(), "Summary Assistant");
     assert_eq!(
-        candidate.insert_label(),
-        local_fixture_account("ak:did_core:web:agents.example:summary").to_string()
+        candidate.subtitle,
+        crate::i18n::tr("identity.tier.name_only")
+    );
+    assert!(!candidate.insert_label().contains("principal_id"));
+    let mut nameless_agent = agent.clone();
+    nameless_agent.display_name = None;
+    let nameless = mention_candidate_for_participant(
+        &nameless_agent,
+        &participants,
+        "ak:did_core:web:example.com:users:alice",
+    )
+    .unwrap();
+    assert_eq!(
+        nameless.insert_label(),
+        short_principal_label(agent.principal_id.as_str())
+    );
+    assert_eq!(
+        nameless.subtitle,
+        crate::i18n::tr("identity.tier.unresolved")
     );
     assert!(candidate.controller_subject_account_id.is_none());
     assert!(candidate.agent_slug_at_time.is_empty());
@@ -320,6 +335,23 @@ fn known_agent_account_candidate_uses_full_identity_not_selector_label() {
     let mention = nodes[0].as_mention().expect("known full AccountId mention");
     assert_eq!(mention.subject_account_id, candidate.subject_account_id);
     assert!(mention.agent_slug_at_time.is_none());
+    assert_eq!(
+        mention.display_name_at_time.as_deref(),
+        Some("Summary Assistant")
+    );
+    assert!(
+        composer_mention_nodes(true, &draft, &[], "ak:did_core:web:example.com:users:alice")
+            .is_empty()
+    );
+    assert!(
+        composer_mention_nodes(
+            true,
+            "ask someone else",
+            &[candidate],
+            "ak:did_core:web:example.com:users:alice"
+        )
+        .is_empty()
+    );
 }
 
 #[test]
