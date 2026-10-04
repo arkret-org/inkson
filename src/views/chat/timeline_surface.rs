@@ -45,6 +45,7 @@ pub(super) struct ChatTimelineContext {
     pub selected_realm_id: String,
     pub selected_channel_id: String,
     pub sidecar_active: bool,
+    pub direct_mode: bool,
     pub device_id: arkret_sdk::DeviceId,
     pub base_url: String,
     pub focus_message_id: String,
@@ -72,6 +73,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
         selected_realm_id,
         selected_channel_id: selected_channel_value,
         sidecar_active,
+        direct_mode,
         device_id,
         base_url,
         focus_message_id,
@@ -99,6 +101,12 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
         token,
         sync_cursor,
         frontier_state,
+        known_agent_accounts: participants_for_messages
+            .iter()
+            .filter(|p| p.is_agent)
+            .filter_map(participant_mention_account)
+            .collect(),
+        private_agent_scope: sidecar_active || direct_mode,
     };
     // The parent folds durable lifecycle controls onto optimistic controller
     // rows before filtering this snapshot. Reading controller.messages here

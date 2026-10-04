@@ -1192,6 +1192,15 @@ pub fn RealmMembersPanel(
                                                                                     "Remove"
                                                                                 }
                                                                             }
+                                                                            div { class: "member-agent-interaction-mode", "data-testid": "member-agent-interaction-mode",
+                                                                                span { "Group interaction" }
+                                                                                for (label, mode) in [("Private", arkret_sdk::AgentInteractionMode::Private), ("Public", arkret_sdk::AgentInteractionMode::Public)] {
+                                                                                    button { r#type: "button", disabled: !can_enable,
+                                                                                        onclick: { let base = base_url.clone(); let realm = selected_realm_id.clone(); let agent = agent_id.clone(); move |_| spawn_set_agent_interaction(base.clone(), token(), realm.clone(), agent.clone(), mode, status_msg, agent_behavior_pending) },
+                                                                                        "{label}"
+                                                                                    }
+                                                                                }
+                                                                            }
                                                                             div { class: "member-agent-realm-behavior", "data-testid": "member-agent-realm-behavior",
                                                                                 label { class: "member-agent-behavior-toggle",
                                                                                     Checkbox {

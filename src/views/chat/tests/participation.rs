@@ -145,7 +145,7 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
             display_name: "Summary Assistant".to_owned(),
         }),
     };
-    let visible = std::collections::BTreeSet::from([agent.principal_id.to_string()]);
+    let visible = std::collections::BTreeSet::from([agent.roster_key()]);
     assert_eq!(
         participant_roster_display_label(&crate::state::LocalStateStore::default(), &controller,),
         "alice:example.com"

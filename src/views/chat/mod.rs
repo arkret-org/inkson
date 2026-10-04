@@ -425,69 +425,81 @@ fn owned_agent_ids_from_composer(
     agent_ids
 }
 
-fn composer_selected_agent_mention_route(
+fn composer_shared_agent_targets(
     scope: arkret_sdk::AgentMentionComposerScope,
-    choice: arkret_sdk::AgentMentionSendChoice,
     mentions: &[MentionNode],
     participants: &[SpaceParticipant],
-    controller_principal_id: &str,
     candidates: &[crate::messaging::mentions::MentionCandidate],
-) -> arkret_sdk::AgentMentionRoute {
-    let route = composer_agent_mention_route(
+) -> Vec<arkret_sdk::AccountId> {
+    if matches!(
         scope,
-        choice,
-        mentions,
-        participants,
-        controller_principal_id,
-    );
-    if scope == arkret_sdk::AgentMentionComposerScope::Realm
-        && choice == arkret_sdk::AgentMentionSendChoice::PrivateDefault
-        && candidates.iter().any(|candidate| candidate.is_owned_agent)
-        && route == arkret_sdk::AgentMentionRoute::Shared
-    {
-        return arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets;
+        arkret_sdk::AgentMentionComposerScope::Direct
+            | arkret_sdk::AgentMentionComposerScope::Sidecar
+    ) {
+        return Vec::new();
     }
-    route
+    mentions
+        .iter()
+        .filter_map(MentionNode::as_mention)
+        .filter(|m| {
+            participants.iter().any(|p| {
+                p.is_agent && participant_mention_account(p).as_ref() == Some(&m.subject_account_id)
+            }) || candidates
+                .iter()
+                .any(|c| c.is_agent && c.subject_account_id == m.subject_account_id)
+        })
+        .map(|m| m.subject_account_id.clone())
+        .collect()
 }
 
-fn composer_agent_mention_route(
+fn composer_agent_mode_route(
     scope: arkret_sdk::AgentMentionComposerScope,
-    choice: arkret_sdk::AgentMentionSendChoice,
     mentions: &[MentionNode],
     participants: &[SpaceParticipant],
-    controller_principal_id: &str,
+    controller: &arkret_sdk::AccountId,
+    candidates: &[crate::messaging::mentions::MentionCandidate],
+    modes: &std::collections::BTreeMap<arkret_sdk::AccountId, arkret_sdk::AgentInteractionMode>,
 ) -> arkret_sdk::AgentMentionRoute {
-    let is_owned = |account: &arkret_sdk::AccountId| {
-        participants.iter().any(|participant| {
-            participant.is_agent
-                && participant_mention_account(participant).as_ref() == Some(account)
-                && participant.agent_metadata.as_ref().is_some_and(|metadata| {
-                    same_principal_core(&metadata.controller_principal_id, controller_principal_id)
-                })
-        })
-    };
-    let self_account = crate::mls_api_helpers::local_account_actor_id(controller_principal_id)
-        .ok()
-        .and_then(|actor| actor.as_account_id().cloned());
-    let owned = mentions
-        .iter()
-        .filter_map(MentionNode::as_mention)
-        .any(|mention| is_owned(&mention.subject_account_id));
-    let outside = mentions
-        .iter()
-        .filter_map(MentionNode::as_mention)
-        .any(|mention| {
-            self_account.as_ref() != Some(&mention.subject_account_id)
-                && !is_owned(&mention.subject_account_id)
-        });
-    arkret_sdk::agent_mention_route(
-        scope,
-        choice,
-        owned,
-        outside,
-        mentions
+    let own = Some(controller.clone());
+    let mut selected = Vec::new();
+    let mut outside = false;
+    for mention in mentions.iter().filter_map(MentionNode::as_mention) {
+        let target = participants
             .iter()
-            .any(|mention| mention.as_audience_mention().is_some()),
+            .find(|p| participant_mention_account(p).as_ref() == Some(&mention.subject_account_id));
+        if target.is_some_and(|p| p.is_agent)
+            || candidates
+                .iter()
+                .any(|c| c.is_agent && c.subject_account_id == mention.subject_account_id)
+        {
+            let mode = modes.get(&mention.subject_account_id).copied();
+            let owned = target
+                .and_then(|p| p.agent_metadata.as_ref())
+                .is_some_and(|m| {
+                    same_principal_core(
+                        &m.controller_principal_id,
+                        controller.principal_id.as_str(),
+                    )
+                })
+                && own
+                    .as_ref()
+                    .is_some_and(|a| a.station_id == mention.subject_account_id.station_id);
+            selected.push(
+                if mode == Some(arkret_sdk::AgentInteractionMode::Private) && !owned {
+                    None
+                } else {
+                    mode
+                },
+            );
+        } else if own.as_ref() != Some(&mention.subject_account_id) {
+            outside = true;
+        }
+    }
+    arkret_sdk::agent_mention_route_with_modes(
+        scope,
+        &selected,
+        outside,
+        mentions.iter().any(|m| m.as_audience_mention().is_some()),
     )
 }
 
@@ -1504,21 +1516,24 @@ pub fn ChatPanel(
     // projection, privacy gates, and the composer cannot diverge after an
     // in-place activation.
     let hosted_sidecar_session = sidecar_session_state();
-    let initial_sidecar_session = sidecar_session.or_else(|| {
-        hosted_sidecar_session
-            .filter(|session| session.matches_route(&selected_realm_id, &initial_strand_id))
-    }).filter(|session| session.controller_account_id == authority);
+    let initial_sidecar_session = sidecar_session
+        .or_else(|| {
+            hosted_sidecar_session
+                .filter(|session| session.matches_route(&selected_realm_id, &initial_strand_id))
+        })
+        .filter(|session| session.controller_account_id == authority);
     let controller = use_chat_controller(
         &selected_realm_id,
         &initial_strand_id,
         &authority,
         &account_device_id,
-        initial_sidecar_session.as_ref().map(|session| session.sidecar_id.clone()),
+        initial_sidecar_session
+            .as_ref()
+            .map(|session| session.sidecar_id.clone()),
     );
     let selected_source_strand = (controller.selected_channel)();
-    let sidecar_session = initial_sidecar_session.filter(|session| {
-        session.matches_route(&selected_realm_id, &selected_source_strand)
-    });
+    let sidecar_session = initial_sidecar_session
+        .filter(|session| session.matches_route(&selected_realm_id, &selected_source_strand));
     let navigator = use_navigator();
     let mut migrated_draft_applied_for = use_signal(String::new);
     {
@@ -1594,7 +1609,7 @@ pub fn ChatPanel(
         mention_picker_state: _,
         owned_agent_slugs,
         owned_agent_sync_key_seen: _,
-        agent_participation_visibility,
+        agent_participation_visibility: _,
         agent_participation_sync_key_seen: _,
         attachment_menu_open: _,
         poll_draft: _,
@@ -2142,34 +2157,88 @@ pub fn ChatPanel(
         realm_live_epoch(),
         readable_participation_agent_ids.join(",")
     );
-    let mut public_agent_ids = std::collections::BTreeSet::new();
-    public_agent_ids.extend(
-        agent_participation_visibility()
-            .into_iter()
-            .filter_map(|(agent_id, visible)| visible.then_some(agent_id)),
+    let mut interaction_modes = use_signal(
+        std::collections::BTreeMap::<arkret_sdk::AccountId, arkret_sdk::AgentInteractionMode>::new,
     );
-    let known_agent_id_set = known_agent_ids
+    let mode_accounts = participants_for_messages
         .iter()
-        .map(String::as_str)
-        .collect::<std::collections::BTreeSet<_>>();
-    public_agent_ids.extend(
-        visible_messages
-            .iter()
-            .filter(|message| message.reply_to.is_some())
-            .map(|message| message.sender.trim())
-            .filter(|sender| known_agent_id_set.contains(sender))
-            .map(ToOwned::to_owned),
+        .filter(|p| p.is_agent)
+        .filter_map(participant_mention_account)
+        .collect::<Vec<_>>();
+    let mut mode_request_seen = use_signal(String::new);
+    let mode_key = format!(
+        "{}|{}|{}|{}",
+        selected_realm_id,
+        realm_live_epoch(),
+        crate::identity::device_directory::session_cache_epoch(),
+        serde_json::to_string(&mode_accounts).unwrap_or_default()
     );
+    {
+        let realm = selected_realm_id.clone();
+        let base = base_url.clone();
+        use_effect(use_reactive((&mode_key,), move |(key,)| {
+            interaction_modes.set(Default::default());
+            mode_request_seen.set(key.clone());
+            let expected_key = key.clone();
+            let realm = realm.clone();
+            let base = base.clone();
+            let accounts = mode_accounts.clone();
+            let epoch = crate::identity::device_directory::session_cache_epoch();
+            spawn(async move {
+                let result = crate::transport::auth::with_authed_sdk_client(
+                    &base,
+                    token(),
+                    |http| async move {
+                        let realm = arkret_sdk::RealmId::new(realm)?;
+                        let mut modes = std::collections::BTreeMap::new();
+                        for account in accounts {
+                            if let Ok((mode, ..)) =
+                                crate::transport::agent_interaction::read(&http, &realm, &account)
+                                    .await
+                            {
+                                modes.insert(account, mode);
+                            }
+                        }
+                        Ok::<_, anyhow::Error>(modes)
+                    },
+                )
+                .await;
+                if crate::identity::device_directory::session_cache_epoch() == epoch
+                    && mode_request_seen.peek().as_str() == expected_key
+                {
+                    if let Ok(modes) = result {
+                        interaction_modes.set(modes);
+                    }
+                }
+            });
+        }));
+    }
+    let interaction_modes_snapshot = interaction_modes();
+    let mut public_agent_accounts = participants_for_messages
+        .iter()
+        .filter(|p| {
+            participant_mention_account(p).is_some_and(|account| {
+                interaction_modes_snapshot.get(&account)
+                    == Some(&arkret_sdk::AgentInteractionMode::Public)
+            })
+        })
+        .filter_map(participant_mention_account)
+        .collect::<std::collections::BTreeSet<_>>();
     // A Sidecar's membership boundary is controller-private and the server
     // ensure operation already admits every eligible owned Agent. Do not run
     // those Agents through the public-participation filter used by ordinary
     // Realm discussions; doing so hid the exact principals that make up this
     // private Circle and left the panel showing only the controller.
     if sidecar_mode {
-        public_agent_ids.extend(known_agent_ids.iter().cloned());
+        public_agent_accounts.extend(
+            participants_for_messages
+                .iter()
+                .filter(|p| p.is_agent)
+                .filter_map(participant_mention_account),
+        );
     }
     if direct_mode {
-        public_agent_ids.extend(
+        public_agent_accounts.extend(
             participants_for_messages
                 .iter()
                 .filter(|participant| {
@@ -2180,9 +2249,13 @@ pub fn ChatPanel(
                             &projected_member_ids,
                         )
                 })
-                .map(|participant| participant.principal_id.to_string()),
+                .filter_map(participant_mention_account),
         );
     }
+    let public_agent_ids = public_agent_accounts
+        .iter()
+        .map(|a| arkret_sdk::ActorId::account(a.clone()).to_string())
+        .collect::<std::collections::BTreeSet<_>>();
     participants.retain(|participant| {
         !participant.is_agent
             || (if direct_mode {
@@ -2192,7 +2265,8 @@ pub fn ChatPanel(
                     &projected_member_ids,
                 )
             } else {
-                public_agent_ids.contains(participant.principal_id.as_str())
+                participant_mention_account(participant)
+                    .is_some_and(|a| public_agent_accounts.contains(&a))
             })
     });
     let sidecar_owned_agents = sidecar_owned_agent_participants(&participants, &principal_id);
@@ -2203,7 +2277,18 @@ pub fn ChatPanel(
     let composer_participants = if sidecar_mode {
         sidecar_owned_agents.clone()
     } else {
-        participants_for_messages.clone()
+        participants_for_messages
+            .iter()
+            .filter(|p| {
+                !p.is_agent
+                    || participant_mention_account(p)
+                        .is_some_and(|a| public_agent_accounts.contains(&a))
+                    || p.agent_metadata.as_ref().is_some_and(|m| {
+                        same_principal_core(&m.controller_principal_id, &principal_id)
+                    })
+            })
+            .cloned()
+            .collect()
     };
 
     let presence_participants = if sidecar_mode {
@@ -2974,6 +3059,7 @@ pub fn ChatPanel(
                             .map(|session| session.source_strand_id.clone())
                             .unwrap_or_else(|| selected_channel_value.clone()),
                         sidecar_active: sidecar_mode,
+                        direct_mode,
                         device_id: account_device_id.clone(),
                         base_url: base_url.clone(),
                         focus_message_id: focus_message_id.clone(),
@@ -3215,6 +3301,7 @@ pub fn ChatPanel(
                     active_sidecar_session: sidecar_session.clone(),
                     sidecar_send_block_reason: sidecar_send_block_reason.clone(),
                     public_agent_ids: public_agent_ids.clone(),
+                    interaction_modes: interaction_modes_snapshot.clone(),
                     mention_insert_request,
                     mentions_enabled: composer::chat_mentions_enabled(direct_mode),
                     token,

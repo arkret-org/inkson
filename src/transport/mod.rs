@@ -1,4 +1,5 @@
 pub mod account;
+pub(crate) mod agent_interaction;
 pub mod auth;
 mod blob;
 pub mod circle;

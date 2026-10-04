@@ -39,6 +39,8 @@ pub(super) struct ChatComposerContext {
     pub active_sidecar_session: Option<crate::sidecar::HostedSidecarState>,
     pub sidecar_send_block_reason: Option<String>,
     pub public_agent_ids: std::collections::BTreeSet<String>,
+    pub interaction_modes:
+        std::collections::BTreeMap<arkret_sdk::AccountId, arkret_sdk::AgentInteractionMode>,
     pub mention_insert_request: Option<Signal<Option<MentionInsertRequest>>>,
     pub mentions_enabled: bool,
     pub token: Signal<String>,
@@ -89,24 +91,6 @@ pub(super) fn chat_secure_send_blocked(
         || creator_mls_bootstrap_pending
         || sidecar_send_blocked
         || sidecar_route_pending
-}
-
-fn mention_send_intent_key(
-    scope_key: &str,
-    draft: &str,
-    candidates: &[crate::messaging::mentions::MentionCandidate],
-) -> String {
-    let accounts: Vec<_> = candidates
-        .iter()
-        .map(|candidate| &candidate.subject_account_id)
-        .collect();
-    serde_json::to_string(&(
-        scope_key,
-        crate::identity::device_directory::session_cache_epoch(),
-        draft,
-        accounts,
-    ))
-    .unwrap_or_default()
 }
 
 fn latest_source_event_anchor(
@@ -201,6 +185,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         active_sidecar_session,
         sidecar_send_block_reason,
         public_agent_ids,
+        interaction_modes,
         mention_insert_request,
         mentions_enabled,
         token,
@@ -258,7 +243,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let mut is_online = controller.is_online;
     let mut status_msg = controller.status_msg;
     let mut sidecar_route_pending = use_signal(|| false);
-    let mut shared_mention_choice = use_signal(|| None::<String>);
     let composer_scope = if active_sidecar_session.is_some() {
         arkret_sdk::AgentMentionComposerScope::Sidecar
     } else if !mentions_enabled {
@@ -268,48 +252,21 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     } else {
         arkret_sdk::AgentMentionComposerScope::Realm
     };
-    let choice_scope_key = format!(
-        "{}|{}|{}|{:?}",
-        principal_id, selected_realm_id, selected_channel_value, composer_scope
-    );
-    let choice_session_epoch = crate::identity::device_directory::session_cache_epoch();
-    use_effect(use_reactive(
-        (&choice_scope_key, &choice_session_epoch),
-        move |_| {
-            shared_mention_choice.set(None);
-        },
-    ));
     let preview_candidates = mention_picker_state.read().bound_candidates(&chat_draft());
-    let choice_key = mention_send_intent_key(&choice_scope_key, &chat_draft(), &preview_candidates);
-    let preview_choice = if shared_mention_choice.read().as_ref() == Some(&choice_key) {
-        arkret_sdk::AgentMentionSendChoice::Shared
-    } else {
-        arkret_sdk::AgentMentionSendChoice::PrivateDefault
-    };
     let preview_mentions = composer_mention_nodes(
         mentions_enabled,
         &chat_draft(),
         &preview_candidates,
         &principal_id,
     );
-    let preview_route = composer_selected_agent_mention_route(
+    let preview_route = composer_agent_mode_route(
         composer_scope,
-        preview_choice,
         &preview_mentions,
         &participants_for_messages,
-        &principal_id,
+        &sidecar_authority,
         &preview_candidates,
+        &interaction_modes,
     );
-    let preview_owned = preview_candidates
-        .iter()
-        .any(|candidate| candidate.is_owned_agent)
-        || !owned_agent_ids_from_composer(
-            mentions_enabled,
-            &preview_mentions,
-            &participants_for_messages,
-            &principal_id,
-        )
-        .is_empty();
     let has_bound_mentions = !preview_candidates.is_empty();
     let mut scheduled_send_panel_open = use_signal(|| false);
     let mut mention_insert_request_seen = use_signal(String::new);
@@ -349,6 +306,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
             None
         };
     let creator_mls_bootstrap_pending = creator_mls_bootstrap_pending_reason.is_some();
+    let plaintext_modes = interaction_modes.clone();
+    let encrypted_modes = interaction_modes.clone();
     let participants_for_plaintext_sidecar = participants_for_messages.clone();
     let participants_for_encrypted_sidecar = participants_for_messages.clone();
     let composer_placeholder = chat_composer_placeholder(mentions_enabled);
@@ -414,7 +373,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     .write()
                     .select(candidate, &current, None);
                 chat_draft.set(updated);
-                shared_mention_choice.set(None);
                 mention_picker_state.write().close();
                 let _ = dioxus::document::eval(
                     r#"
@@ -438,7 +396,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
         let actor = principal_id.clone();
-        let choice_scope_key = choice_scope_key.clone();
         let sidecar_device_id = device_id.clone();
         move |_| {
             let authority_for_sidecar = plaintext_sidecar_authority.clone();
@@ -465,23 +422,16 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 &participants_for_plaintext_sidecar,
                 &actor,
             );
-            let choice_key =
-                mention_send_intent_key(&choice_scope_key, &chat_draft(), &inserted_candidates);
-            let choice = if shared_mention_choice.read().as_ref() == Some(&choice_key) {
-                arkret_sdk::AgentMentionSendChoice::Shared
-            } else {
-                arkret_sdk::AgentMentionSendChoice::PrivateDefault
-            };
-            let route = composer_selected_agent_mention_route(
+            let route = composer_agent_mode_route(
                 composer_scope,
-                choice,
                 &mentions,
                 &participants_for_plaintext_sidecar,
-                &actor,
+                &authority_for_sidecar,
                 &inserted_candidates,
+                &plaintext_modes,
             );
             if route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets {
-                status_msg.set("These mentions cannot be delivered privately. Choose Send to group or edit the mentions; in a Sidecar, exit the private view first.".to_owned());
+                status_msg.set("Agent modes are unknown or these targets cannot share a scope. Keep the draft and edit the mentions; private Circle requests require a separate Realm draft.".to_owned());
                 return;
             }
             let targets_owned_agent =
@@ -591,6 +541,12 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     local_id,
                     body,
                     reply_to,
+                    shared_agent_targets: composer_shared_agent_targets(
+                        composer_scope,
+                        &mentions,
+                        &participants_for_plaintext_sidecar,
+                        &inserted_candidates,
+                    ),
                     mentions,
                 },
             );
@@ -605,7 +561,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         let realm = selected_realm_id.clone();
         let actor = principal_id.clone();
         let selected_strand = selected_channel_value.clone();
-        let choice_scope_key = choice_scope_key.clone();
         let selected_circle = selected_channel_info
             .as_ref()
             .and_then(|channel| channel.scope_circle.as_ref())
@@ -649,23 +604,16 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 &actor,
             );
             let active_sidecar_for_send = active_sidecar_session.clone();
-            let choice_key =
-                mention_send_intent_key(&choice_scope_key, &chat_draft(), &inserted_candidates);
-            let choice = if shared_mention_choice.read().as_ref() == Some(&choice_key) {
-                arkret_sdk::AgentMentionSendChoice::Shared
-            } else {
-                arkret_sdk::AgentMentionSendChoice::PrivateDefault
-            };
-            let route = composer_selected_agent_mention_route(
+            let route = composer_agent_mode_route(
                 composer_scope,
-                choice,
                 &mentions,
                 &participants_for_encrypted_sidecar,
-                &actor,
+                &authority_for_sidecar,
                 &inserted_candidates,
+                &encrypted_modes,
             );
             if route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets {
-                status_msg.set("These mentions cannot be delivered privately. Choose Send to group or edit the mentions; in a Sidecar, exit the private view first.".to_owned());
+                status_msg.set("Agent modes are unknown or these targets cannot share a scope. Keep the draft and edit the mentions; private Circle requests require a separate Realm draft.".to_owned());
                 return;
             }
             let targets_owned_agent = route == arkret_sdk::AgentMentionRoute::Sidecar
@@ -822,6 +770,12 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     message_id,
                     body,
                     reply_to,
+                    shared_agent_targets: composer_shared_agent_targets(
+                        composer_scope,
+                        &mentions,
+                        &participants_for_encrypted_sidecar,
+                        &inserted_candidates,
+                    ),
                     mentions,
                     backup_trigger_signal,
                 },
@@ -842,15 +796,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     } else {
                         span { "Group discussion: {selected_channel_value}. Members authorized to read this scope." }
                     }
-                    if composer_scope == arkret_sdk::AgentMentionComposerScope::Realm && preview_owned {
-                        button { r#type: "button", "data-testid": "mention-route-private", onclick: move |_| shared_mention_choice.set(None), "Private collaboration" }
-                        button { r#type: "button", "data-testid": "mention-route-shared",
-                            onclick: { let key = choice_key.clone(); move |_| shared_mention_choice.set(Some(key.clone())) },
-                            "Send to group"
-                        }
-                    }
                     if preview_route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets {
-                        span { role: "alert", "These mentions cannot be delivered in this private scope. Choose group sending or edit the mentions." }
+                        span { role: "alert", "Agent modes are unknown or these targets cannot share a scope. Edit the mentions to continue." }
                     }
                 }
                 // P3B.2.3 — Circle composer banner. Rendered
@@ -979,8 +926,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             move |event: FormEvent| {
                                 let value = event.value();
                                 mention_picker_state.write().edit(&chat_draft(), &value);
-                                shared_mention_choice.set(None);
-                                controller.update_draft(value.clone());
+                                                controller.update_draft(value.clone());
                                 // G3.Y2 — auto-open the mention picker
                                 // when the user types an `@`. The
                                 // composer reads `mention_picker_state.open`
@@ -1148,8 +1094,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                                     let range = mention_picker_state.read().active_range;
                                                                     let updated = mention_picker_state.write().select(candidate.clone(), &current, range);
                                                                     chat_draft.set(updated);
-                                                                    shared_mention_choice.set(None);
-                                                                    mention_picker_state.write().close();
+                                                                                                                        mention_picker_state.write().close();
                                                                 }
                                                             },
                                                             ActorIdentityLabel {
@@ -1292,8 +1237,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             let subject_account_id = chip.subject_account_id.clone();
                                             move |_| {
                                                 mention_picker_state.write().remove(&subject_account_id);
-                                                shared_mention_choice.set(None);
-                                            }
+                                                                            }
                                         },
                                         "\u{00d7}"
                                     }

@@ -5,23 +5,6 @@ use dioxus::dioxus_core::{AttributeValue, ElementId, Mutation};
 
 use super::*;
 
-#[test]
-fn explicit_shared_choice_is_bound_to_the_draft_and_current_scope() {
-    let original = mention_send_intent_key("alice|realm-a|strand-a|Realm", "ask @me/aa", &[]);
-    assert_ne!(
-        original,
-        mention_send_intent_key("alice|realm-a|strand-b|Realm", "ask @me/aa", &[])
-    );
-    assert_ne!(
-        original,
-        mention_send_intent_key("alice|realm-a|strand-a|Sidecar", "ask @me/aa", &[])
-    );
-    assert_ne!(
-        original,
-        mention_send_intent_key("alice|realm-a|strand-a|Realm", "ask @me/aa and @all", &[])
-    );
-}
-
 type SendState = Rc<RefCell<Option<Signal<(bool, bool, bool)>>>>;
 
 fn send_actions_harness(control: SendState) -> Element {

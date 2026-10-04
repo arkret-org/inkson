@@ -92,61 +92,53 @@ fn selected_owned_agent_uses_readable_name_only_token_without_guessing_a_slug() 
         nodes[0].as_mention().unwrap().subject_account_id,
         participant_mention_account(&agent).unwrap()
     );
-    assert_eq!(
-        composer_agent_mention_route(
+    let own = local_fixture_account(principal);
+    let account = participant_mention_account(&agent).unwrap();
+    let bound = picker.bound_candidates(&draft);
+    let private = std::collections::BTreeMap::from([(
+        account.clone(),
+        arkret_sdk::AgentInteractionMode::Private,
+    )]);
+    let public =
+        std::collections::BTreeMap::from([(account, arkret_sdk::AgentInteractionMode::Public)]);
+    let route = |nodes: &[MentionNode],
+                 rows: &[SpaceParticipant],
+                 modes: &std::collections::BTreeMap<_, _>| {
+        composer_agent_mode_route(
             arkret_sdk::AgentMentionComposerScope::Realm,
-            arkret_sdk::AgentMentionSendChoice::PrivateDefault,
-            &nodes,
-            &participants,
-            principal
-        ),
+            nodes,
+            rows,
+            &own,
+            &bound,
+            modes,
+        )
+    };
+    assert_eq!(
+        route(&nodes, &participants, &private),
         arkret_sdk::AgentMentionRoute::Sidecar
     );
-    let mut mixed = nodes.clone();
-    let bound = picker.bound_candidates(&draft);
     assert_eq!(
-        composer_selected_agent_mention_route(
-            arkret_sdk::AgentMentionComposerScope::Realm,
-            arkret_sdk::AgentMentionSendChoice::PrivateDefault,
-            &nodes,
-            &[],
-            principal,
-            &bound
-        ),
+        route(&nodes, &participants, &public),
+        arkret_sdk::AgentMentionRoute::Shared
+    );
+    assert_eq!(
+        route(&nodes, &[], &Default::default()),
         arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets
     );
     assert_eq!(
-        composer_selected_agent_mention_route(
-            arkret_sdk::AgentMentionComposerScope::Realm,
-            arkret_sdk::AgentMentionSendChoice::Shared,
-            &nodes,
-            &[],
-            principal,
-            &bound
-        ),
-        arkret_sdk::AgentMentionRoute::Shared
+        route(&nodes, &[], &private),
+        arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets
     );
+    let mut mixed = nodes.clone();
     mixed.push(MentionNode::mention(arkret_sdk::Mention::new(
         local_fixture_account("ak:did_core:web:bob.example"),
     )));
     assert_eq!(
-        composer_agent_mention_route(
-            arkret_sdk::AgentMentionComposerScope::Realm,
-            arkret_sdk::AgentMentionSendChoice::PrivateDefault,
-            &mixed,
-            &participants,
-            principal
-        ),
+        route(&mixed, &participants, &private),
         arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets
     );
     assert_eq!(
-        composer_agent_mention_route(
-            arkret_sdk::AgentMentionComposerScope::Realm,
-            arkret_sdk::AgentMentionSendChoice::Shared,
-            &mixed,
-            &participants,
-            principal
-        ),
+        route(&mixed, &participants, &public),
         arkret_sdk::AgentMentionRoute::Shared
     );
     let edited = draft.replace("@me/aa", "@me/aa-other @me/aa");
@@ -535,7 +527,7 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
     ));
     assert!(agent_candidate_is_visible(
         &remote_agent,
-        &std::collections::BTreeSet::from([remote_agent.principal_id.to_string()]),
+        &std::collections::BTreeSet::from([remote_agent.roster_key()]),
         principal_id
     ));
     let sidecar_mentions = sidecar_owned_agent_participants(

@@ -106,6 +106,59 @@ pub(super) async fn fetch_owned_agent_rows(
     Ok(rows)
 }
 
+pub(super) fn spawn_set_agent_interaction(
+    base: String,
+    api_token: String,
+    realm: String,
+    agent_id: String,
+    mode: arkret_sdk::AgentInteractionMode,
+    mut status_msg: Signal<String>,
+    mut pending: Signal<BTreeSet<String>>,
+) {
+    if !pending.with_mut(|agents| agents.insert(agent_id.clone())) {
+        return;
+    }
+    let account = crate::app::SessionContext::get()
+        .active_account()
+        .map(|a| a.authority);
+    status_msg.set("Updating Agent interaction mode…".into());
+    spawn(async move {
+        let result = crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| {
+            let agent_id = agent_id.clone();
+            async move {
+                let controller =
+                    account.ok_or_else(|| anyhow::anyhow!("account session is unavailable"))?;
+                let agent = arkret_sdk::AccountId::new(
+                    arkret_sdk::DidCoreId::new(agent_id)?,
+                    controller.station_id.clone(),
+                );
+                crate::transport::agent_interaction::write(
+                    &http,
+                    arkret_sdk::RealmId::new(realm)?,
+                    agent,
+                    controller,
+                    mode,
+                )
+                .await
+            }
+        })
+        .await;
+        match result {
+            Ok(value) => status_msg.set(format!(
+                "Agent group interaction is {:?}",
+                value.interaction_mode
+            )),
+            Err(error) => status_msg.set(format!(
+                "Agent interaction update failed: {}",
+                error.display()
+            )),
+        }
+        pending.with_mut(|agents| {
+            agents.remove(&agent_id);
+        });
+    });
+}
+
 pub(super) fn spawn_set_agent_realm_behavior(
     base: String,
     api_token: String,

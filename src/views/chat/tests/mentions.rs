@@ -230,12 +230,13 @@ fn raw_agent_selector_text_does_not_trigger_private_sidecar_route() {
 #[test]
 fn owned_agent_mentions_do_not_reopen_sidecar_from_private_composer() {
     assert_eq!(
-        composer_agent_mention_route(
+        composer_agent_mode_route(
             arkret_sdk::AgentMentionComposerScope::Sidecar,
-            arkret_sdk::AgentMentionSendChoice::PrivateDefault,
             &[],
             &[],
-            "ak:did_core:web:example.com:users:alice"
+            &local_fixture_account("ak:did_core:web:example.com:users:alice"),
+            &[],
+            &Default::default()
         ),
         arkret_sdk::AgentMentionRoute::Sidecar
     );

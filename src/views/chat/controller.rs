@@ -46,6 +46,8 @@ pub(super) struct ChatCommandContext {
     pub token: Signal<String>,
     pub sync_cursor: Signal<String>,
     pub frontier_state: Signal<String>,
+    pub known_agent_accounts: std::collections::BTreeSet<arkret_sdk::AccountId>,
+    pub private_agent_scope: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -914,6 +916,26 @@ impl ChatController {
     }
 
     pub fn retry_message(mut self, context: ChatCommandContext, message: ChatMessage) {
+        let Some(original_scope) = message.local_scope.clone() else {
+            self.status_msg.set("Original send scope is unavailable. Reopen the original private conversation to compose a request.".to_owned());
+            return;
+        };
+        if matches!(original_scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
+            self.status_msg
+                .set("Retry this request from its private Sidecar composer.".to_owned());
+            return;
+        }
+        let shared_agent_targets = if context.private_agent_scope {
+            Vec::new()
+        } else {
+            message
+                .mentions
+                .iter()
+                .filter_map(MentionNode::as_mention)
+                .filter(|m| context.known_agent_accounts.contains(&m.subject_account_id))
+                .map(|m| m.subject_account_id.clone())
+                .collect::<Vec<_>>()
+        };
         let local_id = message.id;
         let retry_message_id = message_id_or_new_local_id(&local_id);
         if let Some(found) = self
@@ -944,6 +966,23 @@ impl ChatController {
         let mut status_msg = self.status_msg;
         let message_id_for_lookup = retry_message_id.clone();
         spawn(async move {
+            if let Err(error) = crate::transport::agent_interaction::require_public_targets(
+                &base_url,
+                api_token.clone(),
+                &message.realm_id,
+                shared_agent_targets,
+            )
+            .await
+            {
+                mark_message_command_failed(
+                    &mut messages,
+                    &message_id_for_lookup,
+                    format!("Retry blocked: {error:#}"),
+                );
+                status_msg.set(format!("Retry blocked: {error:#}"));
+                return;
+            }
+
             let content = match chat_content_block_for_body_with_upload(
                 &base_url,
                 api_token.clone(),
@@ -1016,7 +1055,10 @@ impl ChatController {
                     message.reply_to.as_deref(),
                     &content_bytes,
                     None,
-                    None,
+                    match &original_scope {
+                        arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str()),
+                        _ => None,
+                    },
                     None,
                 )
                 .await
@@ -1138,18 +1180,7 @@ impl ChatController {
                     return;
                 }
             };
-            let scope = match arkret_sdk::RealmId::new(message.realm_id.clone()) {
-                Ok(realm_id) => arkret_sdk::ScopeRef::Realm { realm_id },
-                Err(error) => {
-                    mark_message_command_failed(
-                        &mut messages,
-                        &message_id_for_lookup,
-                        format!("send failed: {error}"),
-                    );
-                    status_msg.set(format!("send failed: {error}"));
-                    return;
-                }
-            };
+            let scope = original_scope;
             match send_ordinary_chat_message(
                 &api,
                 &message.realm_id,

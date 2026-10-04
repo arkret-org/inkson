@@ -158,10 +158,7 @@ pub(crate) fn participant_roster_rows(
     let mut agents_by_controller =
         std::collections::BTreeMap::<String, Vec<SpaceParticipant>>::new();
     for participant in participants.iter().filter(|participant| {
-        participant.is_agent
-            && visible_agent_ids
-                .iter()
-                .any(|visible| same_principal_core(visible, participant.principal_id.as_str()))
+        participant.is_agent && visible_agent_ids.contains(&participant.roster_key())
     }) {
         let Some(metadata) = participant.agent_metadata.as_ref() else {
             continue;
@@ -603,7 +600,7 @@ pub(crate) fn agent_candidate_is_visible(
     if !participant.is_agent {
         return true;
     }
-    public_agent_ids.contains(participant.principal_id.as_str())
+    public_agent_ids.contains(&participant.roster_key())
         || participant
             .agent_metadata
             .as_ref()

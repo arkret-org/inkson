@@ -1228,7 +1228,7 @@ where
             }
         }
     }
-    if changed > 0 || agent_evidence_changed {
+    if changed > 0 || agent_evidence_changed || batch.iter().any(|event| matches!(event, ClientEvent::Event(event) if event.kind == arkret_sdk::EventKind::AgentInteractionSet)) {
         projector
             .realm_live_epoch
             .update(|epoch| *epoch = epoch.wrapping_add(1));

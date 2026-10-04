@@ -431,6 +431,7 @@ pub(super) struct PlaintextSendRequest {
     pub body: String,
     pub reply_to: Option<String>,
     pub mentions: Vec<MentionNode>,
+    pub shared_agent_targets: Vec<arkret_sdk::AccountId>,
 }
 
 /// Send a message into a plaintext Strand.
@@ -461,6 +462,7 @@ pub(super) fn send_plaintext_message(
             body,
             reply_to,
             mentions,
+            shared_agent_targets,
         } = request;
         if let Some(found) = messages
             .write()
@@ -468,6 +470,24 @@ pub(super) fn send_plaintext_message(
             .find(|candidate| candidate.matches_id_or_protocol(&local_id))
         {
             found.mentions = mentions.clone();
+        }
+        if let Err(error) = crate::transport::agent_interaction::require_public_targets(
+            &base_url,
+            api_token.clone(),
+            &realm_id,
+            shared_agent_targets.clone(),
+        )
+        .await
+        {
+            fail_optimistic_chat_send(
+                messages,
+                chat_draft,
+                status_msg,
+                &local_id,
+                &body,
+                format!("Send blocked: {error:#}"),
+            );
+            return;
         }
         let content = match chat_content_block_for_body_with_upload(
             &base_url,
@@ -485,6 +505,24 @@ pub(super) fn send_plaintext_message(
                 return;
             }
         };
+        if let Err(error) = crate::transport::agent_interaction::require_public_targets(
+            &base_url,
+            api_token.clone(),
+            &realm_id,
+            shared_agent_targets,
+        )
+        .await
+        {
+            fail_optimistic_chat_send(
+                messages,
+                chat_draft,
+                status_msg,
+                &local_id,
+                &body,
+                format!("Send blocked: {error:#}"),
+            );
+            return;
+        }
         let content = match chat_content_with_mentions(&body, content, &mentions) {
             Ok(content) => content,
             Err(error) => {
@@ -769,6 +807,7 @@ pub(super) struct EncryptedSendRequest {
     pub body: String,
     pub reply_to: Option<String>,
     pub mentions: Vec<MentionNode>,
+    pub shared_agent_targets: Vec<arkret_sdk::AccountId>,
     /// Present only when the MLS backup prompt is mounted; a first encrypted
     /// write arms it.
     pub backup_trigger_signal: Option<Signal<bool>>,
@@ -797,6 +836,7 @@ pub(super) fn send_encrypted_message(
         body,
         reply_to,
         mentions,
+        shared_agent_targets,
         backup_trigger_signal,
     } = request;
     let base_for_backup_trigger = base.clone();
@@ -809,6 +849,10 @@ pub(super) fn send_encrypted_message(
             .find(|candidate| candidate.id == message_id)
         {
             found.mentions = mentions.clone();
+        }
+        if let Err(error) = crate::transport::agent_interaction::require_public_targets(&base, api_token.clone(), &realm, shared_agent_targets.clone()).await {
+            fail_optimistic_chat_send(messages, chat_draft, status_msg, &message_id, &body, format!("Send blocked: {error:#}"));
+            return;
         }
         // Encrypt the canonical Content Block JSON with
         // its structured mention nodes. The UI-only
@@ -1001,6 +1045,10 @@ pub(super) fn send_encrypted_message(
         // keyed on it.
         let msg_local_op_id = secure_build.message_local_operation_id.to_string();
         spawn(async move {
+            if let Err(error) = crate::transport::agent_interaction::require_public_targets(&base, api_token, &realm_for_record, shared_agent_targets).await {
+                fail_optimistic_chat_send(messages, chat_draft, status_msg, &message_id_for_failure, &body_for_restore, format!("Send blocked: {error:#}"));
+                return;
+            }
             // Shared submit: forced ak.mls.commit first
             // (persist-on-accept snapshot + §7.10 backup
             // schedule + move record), then the encrypted
