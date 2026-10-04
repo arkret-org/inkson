@@ -1503,3 +1503,16 @@ fn the_section_menu_marks_exactly_the_selected_entry() {
         "members-admin-menu-item"
     );
 }
+
+#[test]
+fn agent_add_state_blocks_duplicate_submits_and_allows_retry_after_failure() {
+    let mut state = AgentAddState::default();
+    assert!(state.begin("agent-one".to_owned()));
+    assert!(state.is_pending());
+    assert!(!state.begin("agent-two".to_owned()));
+    assert_eq!(state, AgentAddState::Pending("agent-one".to_owned()));
+    state = AgentAddState::Failed("server unavailable".to_owned());
+    assert!(!state.is_pending());
+    assert!(state.begin("agent-one".to_owned()));
+    assert_eq!(state, AgentAddState::Pending("agent-one".to_owned()));
+}

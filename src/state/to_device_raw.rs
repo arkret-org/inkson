@@ -868,6 +868,41 @@ impl LocalStateStore {
         true
     }
 
+    /// Receipt watermark for a holder-local card display overlay. A submit
+    /// receipt does not mean the product current view has reached this commit.
+    pub(crate) fn record_card_display_commit(
+        &mut self,
+        operation_id: &str,
+        commit: &arkret_wire::RealmCommit,
+    ) {
+        self.ensure_cached_loaded();
+        let Some(record) = self.cached.raw_operations.iter_mut().find(|record| {
+            record.operation_id == operation_id
+                || record.operation_id == commit.event_ref.as_str()
+                || raw_payload_string(&record.payload, "event_id").as_deref()
+                    == Some(commit.event_ref.as_str())
+        }) else {
+            return;
+        };
+        let Some(payload) = record.payload.as_object_mut() else {
+            return;
+        };
+        if raw_payload_is_signed_event(payload) {
+            return;
+        }
+        payload.insert(
+            "card_display_commit".to_owned(),
+            serde_json::json!({
+                "stream_ref": commit.stream_ref,
+                "revision": {
+                    "commit_id": commit.commit_id,
+                    "stream_position": commit.stream_position,
+                },
+            }),
+        );
+        let _ = self.flush();
+    }
+
     pub fn update_raw_operation_write_state(
         &mut self,
         operation_id: &str,
@@ -1071,6 +1106,13 @@ fn merge_synced_raw_operation_payload(existing: &Value, mut incoming: Value) -> 
             incoming_object.insert(key.to_owned(), value.clone());
         }
     }
+    if !incoming_redacted
+        && !raw_payload_is_signed_event(incoming_object)
+        && !incoming_object.contains_key("card_display_commit")
+        && let Some(marker) = existing_object.get("card_display_commit")
+    {
+        incoming_object.insert("card_display_commit".to_owned(), marker.clone());
+    }
     // A verified backfill stores the signed envelope, the only input for
     // authenticated decryption. A holder-local receipt of the same Event that
     // lands afterwards does not carry it and must not erase it. An incoming
@@ -1136,6 +1178,26 @@ mod durable_inbox_tests {
     use serde_json::json;
 
     use super::LocalStateStore;
+
+    #[test]
+    fn card_receipt_watermark_survives_backfill_only_as_local_metadata() {
+        let existing = json!({"kind":"ak.strand.update", "card_display_commit": {"revision": 2}});
+        let incoming = json!({"kind":"ak.strand.update", "write_state":"synced"});
+        let merged = super::merge_synced_raw_operation_payload(&existing, incoming);
+        assert_eq!(
+            merged["card_display_commit"],
+            existing["card_display_commit"]
+        );
+        for incoming in [
+            json!({"kind":"ak.strand.update", "producer_proof":{"kid":"k"}}),
+            json!({"kind":"ak.strand.update", "redacted":true}),
+        ] {
+            assert_eq!(
+                super::merge_synced_raw_operation_payload(&existing, incoming.clone()),
+                incoming
+            );
+        }
+    }
 
     fn temp_path() -> std::path::PathBuf {
         let nonce = SystemTime::now()

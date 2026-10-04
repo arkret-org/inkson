@@ -661,6 +661,11 @@ fn reconcile_settled_outbound_item(
     let Some(operation_id) = operation_id else {
         return false;
     };
+    if queued_event(item).kind == arkret_sdk::EventKind::StrandUpdate
+        && let garth::SubmissionState::Committed { commit, .. } = &item.submission.state
+    {
+        state_store.record_card_display_commit(&operation_id, commit);
+    }
     state_store.update_raw_operation_write_state(
         &operation_id,
         write_state,

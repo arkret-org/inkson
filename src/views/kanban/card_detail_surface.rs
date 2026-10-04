@@ -84,6 +84,28 @@ pub(super) fn content_edit_scope_for_tab(
     }
 }
 
+fn card_owned_agent_rows(
+    members: &[RealmMemberRow],
+    inventory: &BTreeMap<String, String>,
+    station: &arkret_sdk::DidCoreId,
+) -> Vec<(String, String)> {
+    let mut agents = inventory
+        .iter()
+        .filter_map(|(principal, slug)| {
+            let principal = arkret_sdk::DidCoreId::new(principal.clone()).ok()?;
+            let joined_actor = members.iter().find(|row| {
+                row.membership == Some(arkret_sdk::sync::MemberRosterMembership::Join)
+                    && row.actor_id.as_account_id().is_some_and(|account| {
+                        account.principal_id == principal && account.station_id == *station
+                    })
+            })?;
+            Some((joined_actor.actor_id.to_string(), slug.clone()))
+        })
+        .collect::<Vec<_>>();
+    agents.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
+    agents
+}
+
 #[component]
 fn CardMemberMentionRow(
     member_id: String,
@@ -91,9 +113,7 @@ fn CardMemberMentionRow(
     #[props(default)] is_self: bool,
     agent_slug: Option<String>,
     #[props(default)] in_strand: bool,
-    #[props(default)] grouped: bool,
     onmention: EventHandler<crate::views::chat::MentionInsertRequest>,
-    #[props(default)] children: Element,
 ) -> Element {
     let dot_class = if in_strand {
         "card-detail-actor-dot participant"
@@ -119,8 +139,6 @@ fn CardMemberMentionRow(
         "card-detail-actor-row{}{}",
         if agent_slug.is_some() {
             " participant-agent-row"
-        } else if grouped {
-            " card-detail-member-group"
         } else {
             ""
         },
@@ -128,8 +146,6 @@ fn CardMemberMentionRow(
     );
     let test_id = if agent_slug.is_some() {
         Some("card-detail-agent-row")
-    } else if grouped {
-        Some("card-detail-member-group")
     } else {
         None
     };
@@ -171,7 +187,6 @@ fn CardMemberMentionRow(
                     agent_slug: agent_slug.clone(),
                 }
             }
-            {children}
         }
     }
 }
@@ -2662,7 +2677,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             div { class: "card-detail-empty", "data-testid": "card-detail-realm-members",
                                                                 div { "No members yet for this Realm." }
                                                             }
-                                                        } else {
+                                                        }
                                                             match owned_agent_inventory_snapshot.as_ref() {
                                                                 None => rsx! {
                                                                     div { class: "card-detail-empty", "data-testid": "card-detail-member-identities-pending",
@@ -2676,79 +2691,53 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 },
                                                                 Some(Ok(owned_agent_slugs)) => rsx! {
                                                                     {
-                                                                        let mut members = Vec::new();
-                                                                        let mut agents = Vec::new();
-                                                                        for row in &realm_member_rows {
-                                                                            if let Some(slug) = owned_agent_slug(row, owned_agent_slugs) {
-                                                                                agents.push((row, slug));
-                                                                            } else {
-                                                                                members.push(row);
-                                                                            }
-                                                                        }
+                                                                        let mut members = realm_member_rows.iter()
+                                                                            .filter(|row| owned_agent_slug(row, owned_agent_slugs).is_none())
+                                                                            .collect::<Vec<_>>();
                                                                         members.sort_by_key(|row| !card_member_is_current_account(row, &principal_id));
-                                                                        agents.sort_by_key(|(row, slug)| (*slug, &row.actor_id));
-                                                                        let has_controller = members.iter().any(|row| {
-                                                                            card_member_is_current_account(row, &principal_id)
-                                                                        });
+                                                                        let agents = crate::operation::authoring_station_id().ok()
+                                                                            .map(|station| card_owned_agent_rows(&realm_member_rows, owned_agent_slugs, &station))
+                                                                            .unwrap_or_default();
                                                                         rsx! { div {
-                                                                        class: "card-detail-actor-list",
-                                                                        "data-testid": "card-detail-realm-members",
-                                                                        for row in members {
-                                                                            {
-                                                                                let member_id = row.actor_id.to_string();
-                                                                                let is_self = card_member_is_current_account(row, &principal_id);
-                                                                                let store = state_store.read();
-                                                                                 let label = crate::views::member_display::resolve_member_display(
-                                                                                     &store,
-                                                                                     &realm_context,
-                                                                                     row,
-                                                                                 ).label;
-                                                                                let in_strand = participant_set.contains(&member_id);
-                                                                                rsx! {
-                                                                                    CardMemberMentionRow {
-                                                                                        key: "{member_id}",
-                                                                                        member_id,
-                                                                                        label,
-                                                                                        is_self,
-                                                                                        agent_slug: None,
-                                                                                        in_strand,
-                                                                                        grouped: is_self && !agents.is_empty(),
-                                                                                        onmention: on_member_mention,
-                                                                                        if is_self && !agents.is_empty() {
-                                                                                            div { class: "participant-agent-children",
-                                                                                                for (agent, slug) in &agents {
-                                                                                                    CardMemberMentionRow {
-                                                                                                        key: "{agent.actor_id}",
-                                                                                                        member_id: agent.actor_id.to_string(),
-                                                                                                        label: (*slug).to_owned(),
-                                                                                                        agent_slug: Some((*slug).to_owned()),
-                                                                                                        in_strand: participant_set.contains(&agent.actor_id.to_string()),
-                                                                                                        onmention: on_member_mention,
-                                                                                                    }
-                                                                                                }
-                                                                                            }
+                                                                            class: "card-detail-actor-list",
+                                                                            "data-testid": "card-detail-realm-members",
+                                                                            for row in members {
+                                                                                {
+                                                                                    let member_id = row.actor_id.to_string();
+                                                                                    let is_self = card_member_is_current_account(row, &principal_id);
+                                                                                    let label = crate::views::member_display::resolve_member_display(
+                                                                                        &state_store.read(), &realm_context, row,
+                                                                                    ).label;
+                                                                                    rsx! {
+                                                                                        CardMemberMentionRow {
+                                                                                            key: "{member_id}",
+                                                                                            in_strand: participant_set.contains(&member_id),
+                                                                                            member_id,
+                                                                                            label,
+                                                                                            is_self,
+                                                                                            agent_slug: None,
+                                                                                            onmention: on_member_mention,
                                                                                         }
                                                                                     }
                                                                                 }
                                                                             }
-                                                                        }
-                                                                        if !has_controller {
-                                                                            for (agent, slug) in agents {
-                                                                                CardMemberMentionRow {
-                                                                                    key: "{agent.actor_id}",
-                                                                                    member_id: agent.actor_id.to_string(),
-                                                                                    label: slug.to_owned(),
-                                                                                    agent_slug: Some(slug.to_owned()),
-                                                                                    in_strand: participant_set.contains(&agent.actor_id.to_string()),
-                                                                                    onmention: on_member_mention,
+                                                                            if !agents.is_empty() {
+                                                                                div { class: "card-detail-agent-heading", "Your AI agents ({agents.len()})" }
+                                                                                for (actor, slug) in agents {
+                                                                                    CardMemberMentionRow {
+                                                                                        key: "{actor}",
+                                                                                        member_id: actor.clone(),
+                                                                                        label: slug.clone(),
+                                                                                        agent_slug: Some(slug),
+                                                                                        in_strand: participant_set.contains(&actor),
+                                                                                        onmention: on_member_mention,
+                                                                                    }
                                                                                 }
                                                                             }
-                                                                        }
                                                                     } }
                                                                     }
                                                                 },
                                                             }
-                                                        }
                                                     }
                                                 }
                                             }
@@ -2766,6 +2755,48 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
 #[cfg(test)]
 mod edit_identity_tests {
     use super::*;
+
+    #[test]
+    fn owned_agents_are_visible_only_after_joining_the_current_realm() {
+        let local = arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap();
+        let remote = arkret_sdk::DidCoreId::new("ak:did_core:web:remote.example").unwrap();
+        let inventory = BTreeMap::from([
+            (
+                "ak:did_core:web:joined.example".to_owned(),
+                "alpha".to_owned(),
+            ),
+            (
+                "ak:did_core:web:absent.example".to_owned(),
+                "beta".to_owned(),
+            ),
+            (
+                "ak:did_core:web:knocking.example".to_owned(),
+                "gamma".to_owned(),
+            ),
+            ("invalid".to_owned(), "invalid".to_owned()),
+        ]);
+        let actor = |principal: &str, station: &arkret_sdk::DidCoreId| {
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                arkret_sdk::DidCoreId::new(principal).unwrap(),
+                station.clone(),
+            ))
+        };
+        let projection = serde_json::json!({"member_roster_entries": [
+            {"actor_id": actor("ak:did_core:web:joined.example", &local), "membership": "join"},
+            {"actor_id": actor("ak:did_core:web:absent.example", &remote), "membership": "join"},
+            {"actor_id": actor("ak:did_core:web:knocking.example", &local), "membership": "knock"}
+        ]});
+        let members = realm_member_roster(Some(&projection));
+        let rows = card_owned_agent_rows(&members, &inventory, &local);
+        assert_eq!(
+            rows,
+            vec![(
+                actor("ak:did_core:web:joined.example", &local).to_string(),
+                "alpha".to_owned(),
+            )]
+        );
+        assert!(card_owned_agent_rows(&[], &inventory, &local).is_empty());
+    }
 
     #[test]
     fn card_identity_reconciliation_preserves_the_draft_only_for_its_resolved_target() {

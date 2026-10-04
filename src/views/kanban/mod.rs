@@ -1089,20 +1089,9 @@ pub fn KanbanPanel(
                 decrypt_ctx.as_ref(),
                 &self_actor_id,
             );
-            let pending = raw_operations
-                .iter()
-                .filter(|record| {
-                    matches!(
-                        record
-                            .payload
-                            .get("write_state")
-                            .and_then(serde_json::Value::as_str),
-                        Some("queued" | "submitting")
-                    )
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            let cols = overlay_local_card_update_records(cols, &pending, decrypt_ctx.as_ref());
+            let cols = overlay_pending_card_updates(
+                cols, &raw_operations, &entries, decrypt_ctx.as_ref(),
+            );
             overlay_local_card_assignment_records(cols, &raw_operations)
         }
     });

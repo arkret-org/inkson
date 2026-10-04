@@ -318,6 +318,7 @@ pub(super) struct RealmMembersController {
     pub(super) invite_target: Signal<String>,
     pub(super) invite_modal_open: Signal<bool>,
     pub(super) agent_add_modal_open: Signal<bool>,
+    pub(super) agent_add_state: Signal<AgentAddState>,
     pub(super) selected_contacts: Signal<BTreeSet<String>>,
     pub(super) owned_agents: Signal<Vec<MemberAgentRow>>,
     pub(super) permissions: Signal<RealmMemberCapabilities>,
@@ -334,7 +335,12 @@ impl RealmMembersController {
     ///
     /// The token is sampled here rather than inside the task: an event handler
     /// is the last point at which the value is the one the user acted on.
-    pub(super) fn dispatch(self, context: RealmWriteContext, command: RealmMembersCommand) {
+    pub(super) fn dispatch(mut self, context: RealmWriteContext, command: RealmMembersCommand) {
+        if let RealmMembersCommand::AddOwnedAgent { target_id, .. } = &command
+            && !self.agent_add_state.write().begin(target_id.clone())
+        {
+            return;
+        }
         let token = self.token;
         let api_token = token();
         spawn(async move { self.run(context, api_token, command).await });
@@ -559,19 +565,28 @@ impl RealmMembersController {
                      required",
                 );
                 self.sync_cursor.set(String::new());
+                self.agent_add_state.set(AgentAddState::Idle);
                 self.agent_add_modal_open.set(false);
                 self.status_msg
                     .set(format!("added agent {target_label} to Realm{suffix}"));
             }
-            Err(err) if crate::api_error::is_mls_keypackage_not_found_error(err.inner()) => {
-                self.status_msg.set(
-                    "agent add failed: Agent runtime has not completed E2EE KeyPackage publication"
-                        .to_owned(),
+            Err(err) => {
+                tracing::warn!(
+                    target: "realm_members",
+                    realm_id = %realm_id,
+                    error = %err.display_diagnostic(),
+                    "Agent add failed",
                 );
+                let message = if crate::api_error::is_mls_keypackage_not_found_error(err.inner()) {
+                    "agent add failed: Agent runtime has not completed E2EE KeyPackage publication"
+                        .to_owned()
+                } else {
+                    format!("agent add failed: {}", err.display())
+                };
+                self.agent_add_state
+                    .set(AgentAddState::Failed(message.clone()));
+                self.status_msg.set(message);
             }
-            Err(err) => self
-                .status_msg
-                .set(format!("agent add failed: {}", err.display())),
         }
     }
 

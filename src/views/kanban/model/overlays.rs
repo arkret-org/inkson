@@ -283,6 +283,103 @@ pub(crate) fn overlay_local_card_update_records(
     columns
 }
 
+/// Hand off local content to current only when that exact stream has reached
+/// the accepted write. Event backfill and submit receipts can arrive first.
+pub(crate) fn overlay_pending_card_updates(
+    mut columns: Vec<KanbanColumn>,
+    operations: &[RawOperationRecord],
+    entries: &[arkret_wire::TypedCurrentResult],
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+) -> Vec<KanbanColumn> {
+    for record in operations {
+        let state = record.payload.get("write_state").and_then(Value::as_str);
+        let waiting = match state {
+            Some("queued" | "submitting" | "submitted" | "pending_commit") => true,
+            Some("accepted" | "effective" | "synced") => {
+                let Some(marker) = record.payload.get("card_display_commit") else {
+                    continue;
+                };
+                let Some(strand) = raw_operation_strand_update_target_id(&record.payload)
+                    .and_then(|id| arkret_sdk::StrandId::new(id).ok())
+                else {
+                    continue;
+                };
+                let Some(stream) = marker.get("stream_ref").cloned().and_then(|value| {
+                    serde_json::from_value::<arkret_wire::CommitStreamRef>(value).ok()
+                }) else {
+                    continue;
+                };
+                let Some(accepted) = marker.get("revision").cloned().and_then(|value| {
+                    serde_json::from_value::<arkret_wire::CurrentRevision>(value).ok()
+                }) else {
+                    continue;
+                };
+                let selector = arkret_wire::CurrentSelector::Strand {
+                    strand_id: strand.clone(),
+                };
+                let mut matching = entries.iter().filter(|entry| {
+                    let arkret_wire::TypedCurrentResult::Value {
+                        selector: found, ..
+                    } = entry;
+                    found == &selector
+                });
+                match matching.next() {
+                    None => true,
+                    Some(arkret_wire::TypedCurrentResult::Value {
+                        source_stream_ref,
+                        revision,
+                        value,
+                        ..
+                    }) => {
+                        if matching.next().is_some()
+                            || value.is_null()
+                            || source_stream_ref != &stream
+                        {
+                            continue;
+                        }
+                        if revision.stream_position >= accepted.stream_position {
+                            for card in columns.iter_mut().flat_map(|column| &mut column.cards) {
+                                if card.id == strand.as_str()
+                                    && card.authoring_basis.is_some()
+                                    && matches!(
+                                        card.state,
+                                        CardState::Accepted | CardState::Submitted
+                                    )
+                                {
+                                    card.state = CardState::Synced;
+                                }
+                            }
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                }
+            }
+            _ => false,
+        };
+        if waiting {
+            let awaiting_current = matches!(state, Some("accepted" | "effective" | "synced"));
+            columns = overlay_local_card_update_records(
+                columns,
+                std::slice::from_ref(record),
+                decrypt_ctx,
+            );
+            if awaiting_current
+                && let Some(target) = raw_operation_strand_update_target_id(&record.payload)
+            {
+                for card in columns.iter_mut().flat_map(|column| &mut column.cards) {
+                    if card.id == target {
+                        card.state = CardState::Accepted;
+                        card.authoring_basis = None;
+                    }
+                }
+            }
+        }
+    }
+    columns
+}
+
 pub(crate) fn overlay_local_card_assignment_records(
     mut columns: Vec<KanbanColumn>,
     raw_operations: &[RawOperationRecord],
