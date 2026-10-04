@@ -7,6 +7,26 @@ use garth::OutboundQueueStore;
 
 use crate::runtime::input::StateStoreHandle;
 
+pub(crate) async fn creator_device_authorization(
+    submitter: &crate::event_submit::EventSubmitter,
+    authority: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+) -> anyhow::Result<arkret_sdk::EventId> {
+    submitter
+        .event_proof_context(arkret_sdk::DigestSuite::Sha256)
+        .await?;
+    anyhow::ensure!(
+        crate::secure_key_store::active_device_seed_scope()
+            .is_some_and(|scope| { &scope.authority == authority && &scope.device_id == device }),
+        "Sidecar creator device differs from the active authoring scope"
+    );
+    crate::identity::device_directory::cached_device_authorize_event_id(
+        &authority.to_string(),
+        device.as_str(),
+    )
+    .ok_or_else(|| anyhow::anyhow!("verified Sidecar creator device authorization is unavailable"))
+}
+
 fn genesis_binding(
     view: &arkret_sdk::AgentSidecarView,
     authority: &arkret_sdk::AccountId,
@@ -205,8 +225,18 @@ pub(crate) async fn ensure_sidecar_mls_genesis(
                     .is_none(),
                 "Sidecar without accepted Genesis holds incompatible later private state"
             );
+            // Directory notifications may fence the cached device root during
+            // the earlier current/secret awaits. Resolve it before the pure
+            // generation step and pin its exact accepted authorization.
+            let device_authorization =
+                creator_device_authorization(&submitter, authority, device).await?;
             let (checkpoint, summary) = crate::mls::runtime::generate_creator_epoch_zero(
-                &scope, authority, device, &binding, &secret, None,
+                &scope,
+                authority,
+                device,
+                &binding,
+                &secret,
+                Some(&device_authorization),
             )
             .map_err(|error| anyhow::anyhow!(error.user_message()))?;
             let barrier = state.write(|store| {

@@ -231,10 +231,11 @@ async fn device_authoring_requeries_only_across_a_same_session_device_refresh() 
             }
             expected_queries
         });
-        let result = EventSubmitter::new(http)
-            .with_authority(account.clone())
-            .event_proof_context(arkret_sdk::DigestSuite::Sha256)
-            .await;
+        let submitter = EventSubmitter::new(http).with_authority(account.clone());
+        let result = crate::mls::sidecar_bootstrap::creator_device_authorization(
+            &submitter, &account, &device,
+        )
+        .await;
         assert_eq!(server.join().unwrap(), expected_queries);
         let expects_success = matches!(fault, "device-refresh" | "device-refresh-negative");
         assert_eq!(result.is_ok(), expects_success, "{fault}");
@@ -246,6 +247,55 @@ async fn device_authoring_requeries_only_across_a_same_session_device_refresh() 
         assert_eq!(generation.is_some(), expects_success, "{fault}");
         if let Some(generation) = generation {
             assert_eq!(generation.generation_ref, "7");
+            let authorization = result.unwrap();
+            let realm = realm_id(REALM);
+            let create =
+                arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [17; 32]);
+            let sidecar = arkret_sdk::SidecarId::from_event_id(&create);
+            let scope = arkret_sdk::ScopeRef::Sidecar {
+                realm_id: realm.clone(),
+                sidecar_id: sidecar.clone(),
+            };
+            let digest =
+                arkret_sdk::sidecar_participant_authority_digest(&sidecar, &realm, &account, &[])
+                    .unwrap();
+            let binding = arkret_sdk::MlsGovernanceBindingPayload::sidecar(
+                realm,
+                sidecar,
+                None,
+                0,
+                0,
+                0,
+                digest,
+                vec![create],
+            )
+            .unwrap();
+            let (checkpoint, summary) = crate::mls::runtime::generate_creator_epoch_zero(
+                &scope,
+                &account,
+                &device,
+                &binding,
+                "local-test-checkpoint-secret",
+                Some(&authorization),
+            )
+            .unwrap();
+            assert_eq!(checkpoint.epoch, 0);
+            assert_eq!(
+                summary.creator_leaf_authority.authorization_event_ref,
+                authorization
+            );
+            assert_eq!(
+                summary.creator_leaf_authority.endpoint,
+                arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
+                    device_id: device.clone()
+                }
+            );
+            assert_eq!(
+                summary.group_id,
+                scope.canonical_mls_group_id().unwrap().as_str()
+            );
+            assert!(!summary.group_info_bytes.is_empty());
+            assert!(!summary.ratchet_tree_bytes.is_empty());
         }
         crate::identity::device_directory::reset_session_cache();
         crate::identity::authoring_generation::reset_verified_authoring_generations();
