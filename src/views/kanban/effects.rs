@@ -238,6 +238,7 @@ pub(super) fn KanbanEffects(
         state_store.write().project_pending_local_commands();
     });
 
+    let detail_realm = local_realm_id.clone();
     use_effect(move || {
         // Preserve an accepted editor basis while allowing a pending create's
         // receipt to install its event-derived identity. Editor signals retain
@@ -245,11 +246,27 @@ pub(super) fn KanbanEffects(
         let preserve_edit_basis =
             editing_card_detail() || due_picker_open() || assignee_picker_open();
         let raw_operations = state_store.read().load().raw_operations;
+        let refreshing_content = {
+            let store = state_store.read();
+            !store.current_reset_required()
+                && store.realm_tree_projection(&detail_realm).is_some()
+                && store.current_product_view().is_some_and(|view| {
+                    view.realm_id == detail_realm
+                        && !view.complete_cut
+                        && selected_card.peek().as_ref().is_some_and(|card| {
+                            arkret_sdk::StrandId::new(card.id.clone()).is_ok_and(|id| {
+                                strand_current_basis(&view.entries, &id)
+                                    == StrandCurrentBasis::Missing
+                            })
+                        })
+                })
+        };
         sync_selected_card_from_columns(
             selected_card,
             &columns(),
             &raw_operations,
             preserve_edit_basis,
+            refreshing_content,
         );
     });
 

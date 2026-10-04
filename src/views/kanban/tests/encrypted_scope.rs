@@ -371,6 +371,9 @@ async fn encrypted_private_patch_without_checkpoint_proven_snapshot_is_blocked_b
         "content": {"$op": "set", "value": {
             "kind": "ak.content.text", "format": "markdown", "body": "private description"
         }},
+        "tracks.synthesis.content": {"$op": "set", "value": {
+            "kind": "ak.content.text", "format": "markdown", "body": "private synthesis"
+        }},
     });
 
     let error = encrypt_private_card_detail_patch_values_with_store(
@@ -818,6 +821,9 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
         "content": {"$op": "set", "value": {
             "kind": "ak.content.text", "format": "markdown", "body": "private description"
         }},
+        "tracks.synthesis.content": {"$op": "set", "value": {
+            "kind": "ak.content.text", "format": "markdown", "body": "private synthesis"
+        }},
     });
 
     let strand_id = "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ";
@@ -859,6 +865,34 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
         base_group_state_ref
     );
     assert!(state.load().raw_operations.is_empty());
+    let queued = RawOperationRecord {
+        operation_id: "pending-description-synthesis".to_owned(),
+        realm_id: Some(realm.to_owned()),
+        received_at: chrono::Utc::now(),
+        payload: json!({
+            "kind": "ak.strand.update",
+            "write_state": "queued",
+            "encrypted_payload_local": true,
+            "body": {"strand_id": strand_id, "patch": patched},
+        }),
+    };
+    let ctx = MlsDecryptCtx {
+        state_store: &state,
+        realm_id: realm,
+        identity: None,
+    };
+    let update = local_card_update_from_raw_operation(&queued, Some(&ctx)).unwrap();
+    assert_eq!(
+        update.description_body,
+        Some(PrivateFieldOverlay::Set("private description".to_owned()))
+    );
+    assert_eq!(
+        update.synthesis,
+        Some(PrivateFieldOverlay::Set("private synthesis".to_owned()))
+    );
+    let queued_json = serde_json::to_string(&queued.payload).unwrap();
+    assert!(!queued_json.contains("private description"));
+    assert!(!queued_json.contains("private synthesis"));
 }
 
 #[tokio::test]
