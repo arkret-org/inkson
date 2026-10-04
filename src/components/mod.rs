@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 
+pub mod agent_identity;
 pub mod agent_runtime_approval_prompt;
 pub mod avatar_uploader;
 /// Generic single-flight / debounce / backoff / digest-dedupe scheduler for
@@ -51,6 +52,7 @@ pub mod theme_switcher;
 pub mod visibility_pill;
 pub mod write_state;
 
+pub use agent_identity::AgentIdentity;
 pub use agent_runtime_approval_prompt::AgentRuntimeApprovalPrompt;
 pub use avatar_uploader::{AvatarUploader, AvatarUploaderProps};
 pub use circle_scope_picker::{

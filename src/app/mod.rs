@@ -1889,16 +1889,7 @@ fn AppBootstrap() -> Element {
                                                                             );
                                                                         }
                                                                     },
-                                                                    span { class: "sidebar-nav-icon contact-sidebar-agent-avatar",
-                                                                        crate::components::IdentityAvatar {
-                                                                            seed: agent_id.clone(),
-                                                                            alt_text: agent_label.clone(),
-                                                                            blob_ref: Some(avatar_blob_ref),
-                                                                            class: "avatar-img".to_owned(),
-                                                                        }
-                                                                    }
-                                                                    span { class: "grow truncate", "{agent_label}" }
-                                                                    span { class: "pill muted xs", if is_opening { {crate::i18n::tr("app.sidebar.opening")} } else { {crate::i18n::tr("app.sidebar.agent_badge")} } }
+                                                                    crate::components::AgentIdentity { agent_id: agent_id.clone(), label: agent_label.clone(), avatar_blob_ref: Some(avatar_blob_ref), is_opening }
                                                                 }
                                                             }
                                                         }
@@ -2283,16 +2274,7 @@ fn AppBootstrap() -> Element {
                                                                         );
                                                                     }
                                                                 },
-                                                                span { class: "sidebar-nav-icon contact-sidebar-agent-avatar",
-                                                                    crate::components::IdentityAvatar {
-                                                                        seed: agent_id.clone(),
-                                                                        alt_text: agent_label.clone(),
-                                                                        blob_ref: Some(avatar_blob_ref),
-                                                                        class: "avatar-img".to_owned(),
-                                                                    }
-                                                                }
-                                                                span { class: "grow truncate", "{agent_label}" }
-                                                                span { class: "pill muted xs", if is_opening { {crate::i18n::tr("app.sidebar.opening")} } else { {crate::i18n::tr("app.sidebar.agent_badge")} } }
+                                                                crate::components::AgentIdentity { agent_id: agent_id.clone(), label: agent_label.clone(), avatar_blob_ref: Some(avatar_blob_ref), is_opening }
                                                             }
                                                         }
                                                     }
