@@ -89,6 +89,33 @@ pub(super) fn card_detail_write_ready(card: &KanbanCard) -> bool {
         && card.authoring_basis.is_some()
 }
 
+/// Opening a local draft does not submit a write. The save action separately
+/// requires the complete, accepted current value.
+pub(super) fn card_detail_edit_ready(card: &KanbanCard) -> bool {
+    arkret_sdk::StrandId::new(card.id.clone()).is_ok()
+}
+
+pub(super) fn card_detail_editor_basis(card: &KanbanCard) -> KanbanCard {
+    let mut card = card.clone();
+    if !card_detail_write_ready(&card) {
+        // An editor opened during a pending write/refresh has not captured an
+        // accepted basis. Let reconciliation install the next complete value
+        // without replacing the user's independent draft signals.
+        card.authoring_basis = None;
+    }
+    card
+}
+
+pub(super) fn prepare_selected_card_for_edit(mut selected: Signal<Option<KanbanCard>>) {
+    let current = selected.peek().clone();
+    if let Some(current) = current {
+        let next = card_detail_editor_basis(&current);
+        if next != current {
+            selected.set(Some(next));
+        }
+    }
+}
+
 /// Replace only this holder's draft route once its exact accepted card has
 /// installed a complete current basis. A canonical link never follows aliases.
 pub(super) fn card_task_route_after_acceptance(

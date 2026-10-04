@@ -650,10 +650,11 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             variant: ButtonVariant::Secondary,
                                                             class: "card-detail-action-menu-item",
                                                             "data-testid": "card-detail-menu-edit-button",
-                                                            disabled: !card_detail_write_ready(card),
+                                                            disabled: !card_detail_edit_ready(card),
                                                             onclick: {
                                                                 let current = card.clone();
                                                                 move |_| {
+                                                                    prepare_selected_card_for_edit(selected_card);
                                                                     let draft = card_detail_draft_from_card(&current);
                                                                     card_edit_title.set(draft.title);
                                                                     card_edit_description.set(draft.description);
@@ -789,10 +790,11 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             variant: ButtonVariant::Secondary,
                                                             class: "card-detail-mini-action card-detail-edit-action",
                                                             "data-testid": "card-detail-edit-button",
-                                                            disabled: !card_detail_write_ready(card),
+                                                            disabled: !card_detail_edit_ready(card),
                                                             onclick: {
                                                                 let current = card.clone();
                                                                 move |_| {
+                                                                    prepare_selected_card_for_edit(selected_card);
                                                                     let draft = card_detail_draft_from_card(&current);
                                                                     card_edit_title.set(draft.title);
                                                                     card_edit_description.set(draft.description);
@@ -1104,10 +1106,11 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         variant: ButtonVariant::Secondary,
                                                                         class: "card-detail-mini-action",
                                                                         "data-testid": "card-detail-edit-description-button",
-                                                                        disabled: !card_detail_write_ready(card),
+                                                                        disabled: !card_detail_edit_ready(card),
                                                                         onclick: {
                                                                             let current = card.clone();
                                                                             move |_| {
+                                                                                prepare_selected_card_for_edit(selected_card);
                                                                                 let draft = card_detail_draft_from_card(&current);
                                                                                 card_edit_title.set(draft.title);
                                                                                 card_edit_description.set(draft.description);
@@ -1352,12 +1355,13 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             r#type: "button",
                                                                                             class: "card-detail-mini-action card-synthesis-entry-edit",
                                                                                             "data-testid": "card-detail-edit-synthesis-button",
-                                                                                            disabled: !card_detail_write_ready(track_card),
+                                                                                            disabled: !card_detail_edit_ready(track_card),
                                                                                             onclick: {
                                                                                                 let current = track_card.clone();
                                                                                                 let entry_id = entry.id.clone();
                                                                                                 let entry_body = entry.body.clone();
                                                                                                 move |_| {
+                                                                                                    prepare_selected_card_for_edit(selected_card);
                                                                                                     let draft = card_detail_draft_from_card(&current);
                                                                                                     card_edit_title.set(draft.title);
                                                                                                     card_edit_description.set(draft.description);
@@ -1557,10 +1561,11 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     variant: ButtonVariant::Secondary,
                                                                     class: "card-detail-mini-action",
                                                                     "data-testid": "card-detail-new-synthesis-button",
-                                                                    disabled: !card_detail_write_ready(track_card),
+                                                                    disabled: !card_detail_edit_ready(track_card),
                                                                     onclick: {
                                                                         let current = track_card.clone();
                                                                         move |_| {
+                                                                            prepare_selected_card_for_edit(selected_card);
                                                                             let draft = card_detail_draft_from_card(&current);
                                                                             card_edit_title.set(draft.title);
                                                                             card_edit_description.set(draft.description);
@@ -2479,12 +2484,13 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             r#type: "button",
                                                                                             class: "card-detail-mini-action",
                                                                                             "data-testid": "card-detail-edit-calendar-button",
-                                                                                            disabled: !card_detail_write_ready(card),
+                                                                                            disabled: !card_detail_edit_ready(card),
                                                                                             "aria-haspopup": "dialog",
                                                                                             "aria-expanded": "false",
                                                                                             onclick: {
                                                                                                 let current = card.clone();
                                                                                                 move |_| {
+                                                                                                    prepare_selected_card_for_edit(selected_card);
                                                                                                     let draft = card_detail_draft_from_card(&current);
                                                                                                     let calendar = draft.calendar.clone();
                                                                                                     card_edit_calendar.set(calendar.clone());

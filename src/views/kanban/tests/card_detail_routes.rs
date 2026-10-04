@@ -31,6 +31,40 @@ fn card_edit_waits_for_the_complete_accepted_current() {
 }
 
 #[test]
+fn pending_card_can_open_a_draft_and_acquire_the_next_current_basis() {
+    let mut card = test_card(DEMO_STRAND_LEGAL_REVIEW_ID, "U");
+    card.authoring_basis = Some(arkret_wire::CurrentRevision {
+        commit_id: arkret_wire::RealmCommitId::from_digest([1; 32]),
+        stream_position: 1,
+    });
+    for state in [
+        CardState::Queued,
+        CardState::Submitted,
+        CardState::Accepted,
+        CardState::Quarantined,
+    ] {
+        card.state = state;
+        assert!(card_detail_edit_ready(&card));
+        assert!(!card_detail_write_ready(&card));
+        let editing = card_detail_editor_basis(&card);
+        assert!(editing.authoring_basis.is_none());
+        let mut accepted = card.clone();
+        accepted.state = CardState::Synced;
+        accepted.authoring_basis.as_mut().unwrap().stream_position = 2;
+        let mut columns = seed_columns();
+        columns[0].cards = vec![accepted.clone()];
+        assert_eq!(
+            selected_card_projection_update(&editing, &columns, &[], true),
+            Some(accepted.clone())
+        );
+        assert!(card_detail_write_ready(&accepted));
+        assert_eq!(card_detail_editor_basis(&accepted), accepted);
+    }
+    card.id = "0196419b-0000-7000-8000-000000000001".to_owned();
+    assert!(!card_detail_edit_ready(&card));
+}
+
+#[test]
 fn accepted_card_route_migrates_only_its_local_handle_with_a_complete_basis() {
     let local_id = "0196419b-0000-7000-8000-000000000001";
     let event_id =
