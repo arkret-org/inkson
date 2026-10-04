@@ -1170,13 +1170,14 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     "data-testid": "mention-chip",
                                     "data-mention-principal-id": "{chip.subject_account_id.principal_id}",
                                     "data-mention-station-id": "{chip.subject_account_id.station_id}",
-                                    span { "@{chip.insert_label()}" }
+                                    span { class: "mention-chip-label", "@{chip.insert_label()}" }
                                     if !chip.subtitle.is_empty() {
                                         span { class: "mention-chip-subtitle", "{chip.subtitle}" }
                                     }
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
+                                    button {
+                                        class: "mention-chip-remove",
                                         r#type: "button",
+                                        "aria-label": "Remove mention @{chip.insert_label()}",
                                         onclick: {
                                             let subject_account_id = chip.subject_account_id.clone();
                                             move |_| mention_picker_state

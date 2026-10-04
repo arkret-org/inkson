@@ -307,11 +307,19 @@
 .card-detail-actor-row.participant {
   background: color-mix(in srgb, var(--accent, var(--ak-brand)) 8%, var(--surface-2, var(--ak-bg-soft)) 70%);
 }
-.card-detail-member-group {
-  align-items: stretch;
+.card-detail-agent-heading {
+  margin-top: 10px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
 }
-.card-detail-member-group > .participant-agent-children {
+.card-detail-agent-membership {
   grid-column: 1 / -1;
+  color: var(--text-2);
+  font-size: 11px;
+}
+.card-detail-actor-mention-button:disabled {
+  cursor: default;
 }
 .card-detail-actor-mention-button {
   display: grid;
