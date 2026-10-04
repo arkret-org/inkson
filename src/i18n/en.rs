@@ -1281,10 +1281,7 @@ pub fn english_translations() -> TranslationDict {
         "chat.outbox.offline_banner",
         "You're offline. Messages are queued and will send on reconnect.",
     );
-    dict.set(
-        "chat.outbox.flushing",
-        "Sending queued messages...",
-    );
+    dict.set("chat.outbox.flushing", "Sending queued messages...");
     // Ordinary message send outcomes, one line per registered reason.
     dict.set(
         "chat.send.not_ready.authorization",
