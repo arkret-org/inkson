@@ -4418,7 +4418,32 @@ mod tests {
             commit_id: native[0].commit.commit_id.clone(),
             stream_position: 0,
         };
+        let mls_current = arkret_wire::MlsGroupCurrent {
+            effective_scope: scope.clone(),
+            genesis_event_ref: native[0].event.event_id.clone(),
+            cipher_suite: arkret_sdk::NonEmptyString::new(
+                "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+            )
+            .unwrap(),
+            current_mls_commit_event_ref: native[0].event.event_id.clone(),
+            epoch: 1,
+            current_key_access_revision: 0,
+            covered_key_access_revision: 0,
+            public_tree_ref: arkret_sdk::BlobRef::new(format!(
+                "ak:blob:sha256:{}",
+                "33".repeat(32)
+            ))
+            .unwrap(),
+        };
         snapshot.current_state_entries.extend([
+            TypedCurrentResult::Value {
+                selector: arkret_sdk::CurrentSelector::MlsGroup {
+                    scope_ref: scope.clone(),
+                },
+                source_stream_ref: stream.clone(),
+                revision: revision.clone(),
+                value: serde_json::to_value(&mls_current).unwrap(),
+            },
             TypedCurrentResult::Value {
                 selector: arkret_sdk::CurrentSelector::Sidecar {
                     sidecar_id: sidecar.clone(),
@@ -4465,6 +4490,7 @@ mod tests {
             })
             .unwrap();
         assert!(store.verified_sidecar_inputs(REALM_ID).is_err());
+        assert!(store.current_mls_group_for_scope(&scope).is_none());
         let mut replay = replica.fork_verified_authority().unwrap();
         let scan = arkret_sdk::StreamScanRequest {
             realm_id: realm.clone(),
@@ -4493,6 +4519,26 @@ mod tests {
         assert!(std::fs::read_dir(&directory).unwrap().next().is_some());
         drop(store);
         let mut reopened = LocalStateStore::with_path(&path);
+        assert_eq!(
+            reopened.current_mls_group_for_scope(&scope),
+            Some(mls_current.clone())
+        );
+        let group_id = scope.canonical_mls_group_id().unwrap();
+        let checkpoint = crate::mls::persistence::encrypt_state(
+            REALM_ID,
+            group_id.as_str(),
+            0,
+            b"provider state",
+            "test-secret",
+            &[7; 16],
+        );
+        reopened
+            .install_accepted_mls_transition(&scope, checkpoint, &native[0].event.event_id)
+            .unwrap();
+        assert_eq!(
+            reopened.mls_scopes_needing_tail_recovery(),
+            vec![scope.clone()]
+        );
         assert_eq!(
             reopened
                 .verified_sidecar_for_source(&controller, REALM_ID, &source_strand)
@@ -4538,6 +4584,8 @@ mod tests {
             .install_verified_sidecar_current(&VerifiedCurrentSnapshot { snapshot })
             .unwrap();
         assert!(reopened.verified_sidecar_inputs(REALM_ID).is_err());
+        assert!(reopened.current_mls_group_for_scope(&scope).is_none());
+        assert!(reopened.mls_scopes_needing_tail_recovery().is_empty());
         assert!(
             reopened
                 .verified_sidecar_for_source(&controller, REALM_ID, &source_strand)
@@ -4565,6 +4613,14 @@ mod tests {
             .unwrap();
         reopened.ingest_verified_message_history(&page).unwrap();
         assert_eq!(
+            reopened.current_mls_group_for_scope(&scope),
+            Some(mls_current)
+        );
+        assert_eq!(
+            reopened.mls_scopes_needing_tail_recovery(),
+            vec![scope.clone()]
+        );
+        assert_eq!(
             reopened.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
             native
         );
@@ -4575,6 +4631,7 @@ mod tests {
         );
         reopened.invalidate_sidecar_current(Some(REALM_ID));
         assert!(reopened.verified_sidecar_inputs(REALM_ID).is_err());
+        assert!(reopened.mls_scopes_needing_tail_recovery().is_empty());
         drop(reopened);
         std::fs::remove_dir_all(directory).unwrap();
     }

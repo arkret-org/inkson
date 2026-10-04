@@ -201,7 +201,16 @@ impl LocalStateStore {
         effective_scope: &arkret_sdk::ScopeRef,
     ) -> Option<arkret_wire::MlsGroupCurrent> {
         let realm_id = effective_scope.realm_id_opt()?;
-        let entries = self.realm_current_view_entries(realm_id.as_str())?;
+        let entries = if matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
+            // Private current must reach its own signed stream head. The
+            // ordinary product view is not a Sidecar authority source.
+            self.verified_sidecar_inputs(realm_id.as_str())
+                .ok()?
+                .0
+                .current_state_entries
+        } else {
+            self.realm_current_view_entries(realm_id.as_str())?
+        };
         crate::current_projection::current_mls_group(&entries, effective_scope)
     }
 
@@ -906,6 +915,7 @@ impl LocalStateStore {
     }
 
     /// Every local effective scope inside this Realm, the Realm first.
+    /// Enumeration neither admits an endpoint nor supplies an MLS current.
     pub(crate) fn local_mls_scopes_in_realm(&self, realm_id: &str) -> Vec<arkret_sdk::ScopeRef> {
         let Ok(realm) = arkret_sdk::RealmId::new(realm_id.trim().to_owned()) else {
             return Vec::new();
@@ -931,9 +941,36 @@ impl LocalStateStore {
         // A Circle scope keys its local checkpoint by the bare Circle id
         // (`canonical_effective_scope_key_bytes`), so a Circle group installed
         // on this device is visible even before its current entry arrives.
-        for key in self.load().mls_local_checkpoints.keys() {
+        let mut sidecars = std::collections::BTreeSet::new();
+        for (key, checkpoint) in &self.load().mls_local_checkpoints {
+            if checkpoint.realm_id != realm.as_str() {
+                continue;
+            }
             if let Ok(circle_id) = arkret_sdk::CircleId::new(key.clone()) {
                 circles.insert(circle_id);
+                continue;
+            }
+            let mut parts = key.split('\u{1f}');
+            if parts.next() != Some(realm.as_str()) {
+                continue;
+            }
+            let Some(sidecar_id) = parts
+                .next()
+                .and_then(|id| arkret_sdk::SidecarId::new(id.to_owned()).ok())
+            else {
+                continue;
+            };
+            let scope = arkret_sdk::ScopeRef::Sidecar {
+                realm_id: realm.clone(),
+                sidecar_id: sidecar_id.clone(),
+            };
+            if parts.next() == Some(checkpoint.group_id.as_str())
+                && parts.next().is_none()
+                && scope
+                    .canonical_mls_group_id()
+                    .is_ok_and(|id| id.as_str() == checkpoint.group_id)
+            {
+                sidecars.insert(sidecar_id);
             }
         }
         scopes.extend(
@@ -942,6 +979,14 @@ impl LocalStateStore {
                 .map(|circle_id| arkret_sdk::ScopeRef::Circle {
                     realm_id: realm.clone(),
                     circle_id,
+                }),
+        );
+        scopes.extend(
+            sidecars
+                .into_iter()
+                .map(|sidecar_id| arkret_sdk::ScopeRef::Sidecar {
+                    realm_id: realm.clone(),
+                    sidecar_id,
                 }),
         );
         scopes
@@ -1320,6 +1365,58 @@ mod tests {
 
     fn checkpoint(epoch: u64, body: &[u8]) -> crate::mls::persistence::MlsLocalCheckpointEnvelope {
         crate::mls::persistence::encrypt_state(REALM, "AQID", epoch, body, "test-secret", &[7; 16])
+    }
+
+    #[tokio::test]
+    async fn installed_sidecar_scopes_survive_restart_without_granting_current_authority() {
+        let (mut store, path) = temp_store("native-scopes");
+        let realm_id = arkret_sdk::RealmId::new(REALM).unwrap();
+        let sidecar_id = arkret_sdk::SidecarId::from_event_id(&event_id("aaaa"));
+        let scope = arkret_sdk::ScopeRef::Sidecar {
+            realm_id: realm_id.clone(),
+            sidecar_id: sidecar_id.clone(),
+        };
+        let group_id = scope.canonical_mls_group_id().unwrap();
+        let snapshot = crate::mls::persistence::encrypt_state(
+            REALM,
+            group_id.as_str(),
+            1,
+            b"installed provider state",
+            "test-secret",
+            &[7; 16],
+        );
+        store
+            .install_accepted_mls_transition(&scope, snapshot.clone(), &event_id("bbbb"))
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        drop(store);
+        let mut reopened = LocalStateStore::with_path(&path);
+        assert_eq!(
+            reopened.local_mls_scopes_in_realm(REALM),
+            vec![realm_scope(), scope.clone()]
+        );
+        assert!(reopened.current_mls_group_for_scope(&scope).is_none());
+        assert!(reopened.mls_scopes_needing_tail_recovery().is_empty());
+
+        let foreign = arkret_sdk::RealmId::from_event_id(&event_id("cccc"));
+        assert_eq!(
+            reopened.local_mls_scopes_in_realm(foreign.as_str()),
+            vec![arkret_sdk::ScopeRef::Realm { realm_id: foreign }]
+        );
+        let wrong_scope = arkret_sdk::ScopeRef::Sidecar {
+            realm_id,
+            sidecar_id: arkret_sdk::SidecarId::from_event_id(&event_id("cccc")),
+        };
+        reopened
+            .save_mls_checkpoint_for_scope(&wrong_scope, checkpoint(1, b"wrong group"))
+            .unwrap();
+        assert_eq!(
+            reopened.local_mls_scopes_in_realm(REALM),
+            vec![realm_scope(), scope]
+        );
+        let _ = std::fs::remove_file(path);
     }
 
     #[tokio::test]
