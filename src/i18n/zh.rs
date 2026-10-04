@@ -1299,7 +1299,7 @@ pub fn chinese_translations() -> TranslationDict {
         "chat.outbox.offline_banner",
         "你已离线。消息已排队,重新联网后将自动发送。",
     );
-    dict.set("chat.outbox.flushing", "已恢复联网 - 正在发送排队的消息…");
+    dict.set("chat.outbox.flushing", "正在发送排队的消息…");
     // Ordinary message send outcomes, one line per registered reason.
     dict.set(
         "chat.send.not_ready.authorization",

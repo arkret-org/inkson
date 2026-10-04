@@ -1283,7 +1283,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "chat.outbox.flushing",
-        "Back online - sending queued messages...",
+        "Sending queued messages...",
     );
     // Ordinary message send outcomes, one line per registered reason.
     dict.set(

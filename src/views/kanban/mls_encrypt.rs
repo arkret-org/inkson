@@ -473,6 +473,16 @@ pub(super) async fn dispatch_card_detail_update(
         .map(Some)
         .unwrap_or(scope_security_encrypted);
 
+    // Publish the full overlay before the editor closes, rather than waiting
+    // for the detached submit task's first poll to populate its content.
+    let sealed_patch = match patch_plan.seal(None, None) {
+        Ok(patch) => patch,
+        Err(error) => {
+            board_status.set(format!("cannot seal card update: {error}"));
+            return false;
+        }
+    };
+
     // Do not mutate the detail signal before acceptance. The durable queued
     // record drives the board overlay; terminal failures are excluded there,
     // so a rejected Event cannot leave UI state that never existed remotely.
@@ -503,8 +513,13 @@ pub(super) async fn dispatch_card_detail_update(
             "synthesis_entry_id": synthesis_entry_id,
             "synthesis_revision_body": local_synthesis_revision_body,
             "encrypted_payload_local": effective_security_encrypted,
+            "body": {
+                "strand_id": current.id,
+                "patch": sealed_patch,
+            },
         }),
     );
+    state_store.write().project_pending_local_commands();
     board_status.set(format!(
         "submitting {kind} operation {}",
         short_protocol_id(&operation_id)
@@ -557,21 +572,6 @@ pub(super) async fn dispatch_card_detail_update(
     // awaits; component UI signals are deliberately not captured.
     let submit_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
     dioxus::core::spawn_forever(async move {
-        let sealed_patch = match patch_plan.seal(None, None) {
-            Ok(patch) => patch,
-            Err(error) => {
-                submit_state_store.write(|store| {
-                    store.update_raw_operation_write_state(
-                        &operation_id,
-                        "failed",
-                        None,
-                        Some(error.clone()),
-                    );
-                });
-                tracing::warn!(%error, "cannot seal encrypted card update");
-                return;
-            }
-        };
         let submit_event = match build_card_detail_update_operation(
             &update_realm_id,
             &update_actor_id,

@@ -53,15 +53,35 @@ pub(crate) fn sync_selected_card_from_columns(
     columns: &[KanbanColumn],
     raw_operations: &[RawOperationRecord],
     preserve_edit_basis: bool,
+    refreshing_content: bool,
 ) {
     let Some(current) = selected_card.read().clone() else {
         return;
     };
-    if let Some(next) =
+    if let Some(mut next) =
         selected_card_projection_update(&current, columns, raw_operations, preserve_edit_basis)
     {
+        if refreshing_content {
+            retain_selected_card_presentation(&current, &mut next);
+        }
         selected_card.set(Some(next));
     }
+}
+
+/// Keep the open detail readable while a replacement cut is arriving. This
+/// retains presentation only: the replacement's write state and missing
+/// authoring basis still prevent editing against an obsolete revision.
+pub(crate) fn retain_selected_card_presentation(current: &KanbanCard, next: &mut KanbanCard) {
+    if current.id != next.id
+        || next.authoring_basis.is_some()
+        || next.state != CardState::Quarantined
+    {
+        return;
+    }
+    let state = next.state;
+    *next = current.clone();
+    next.authoring_basis = None;
+    next.state = state;
 }
 
 pub(crate) fn selected_card_projection_update(

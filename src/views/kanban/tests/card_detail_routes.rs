@@ -31,6 +31,40 @@ fn card_edit_waits_for_the_complete_accepted_current() {
 }
 
 #[test]
+fn pending_card_can_open_a_draft_and_acquire_the_next_current_basis() {
+    let mut card = test_card(DEMO_STRAND_LEGAL_REVIEW_ID, "U");
+    card.authoring_basis = Some(arkret_wire::CurrentRevision {
+        commit_id: arkret_wire::RealmCommitId::from_digest([1; 32]),
+        stream_position: 1,
+    });
+    for state in [
+        CardState::Queued,
+        CardState::Submitted,
+        CardState::Accepted,
+        CardState::Quarantined,
+    ] {
+        card.state = state;
+        assert!(card_detail_edit_ready(&card));
+        assert!(!card_detail_write_ready(&card));
+        let editing = card_detail_editor_basis(&card);
+        assert!(editing.authoring_basis.is_none());
+        let mut accepted = card.clone();
+        accepted.state = CardState::Synced;
+        accepted.authoring_basis.as_mut().unwrap().stream_position = 2;
+        let mut columns = seed_columns();
+        columns[0].cards = vec![accepted.clone()];
+        assert_eq!(
+            selected_card_projection_update(&editing, &columns, &[], true),
+            Some(accepted.clone())
+        );
+        assert!(card_detail_write_ready(&accepted));
+        assert_eq!(card_detail_editor_basis(&accepted), accepted);
+    }
+    card.id = "0196419b-0000-7000-8000-000000000001".to_owned();
+    assert!(!card_detail_edit_ready(&card));
+}
+
+#[test]
 fn accepted_card_route_migrates_only_its_local_handle_with_a_complete_basis() {
     let local_id = "0196419b-0000-7000-8000-000000000001";
     let event_id =
@@ -447,4 +481,45 @@ fn open_pending_card_editor_resolves_its_receipt_without_rebasing_accepted_edits
         selected_card_projection_update(&accepted, &columns, &[], false),
         Some(columns[0].cards[0].clone())
     );
+}
+
+#[test]
+fn detail_refresh_retains_content_without_retaining_write_authority() {
+    let mut current = test_card(DEMO_STRAND_LEGAL_REVIEW_ID, "U");
+    current.description_body = "saved description".to_owned();
+    current.synthesis = "saved synthesis".to_owned();
+    current.authoring_basis = Some(arkret_wire::CurrentRevision {
+        commit_id: arkret_wire::RealmCommitId::from_digest([1; 32]),
+        stream_position: 1,
+    });
+    let mut columns = seed_columns();
+    columns[0].cards = vec![current.clone()];
+    install_current_card_sources(&mut columns, &[], &[], &[], None, "");
+    let mut refreshing = columns[0].cards[0].clone();
+    assert!(refreshing.description_body.is_empty());
+    retain_selected_card_presentation(&current, &mut refreshing);
+    assert_eq!(refreshing.description_body, "saved description");
+    assert_eq!(refreshing.synthesis, "saved synthesis");
+    assert!(refreshing.authoring_basis.is_none());
+    assert!(!card_detail_write_ready(&refreshing));
+
+    let mut replacement = current.clone();
+    replacement.description_body.clear();
+    replacement.synthesis.clear();
+    replacement
+        .authoring_basis
+        .as_mut()
+        .unwrap()
+        .stream_position = 2;
+    retain_selected_card_presentation(&refreshing, &mut replacement);
+    assert!(replacement.description_body.is_empty());
+    assert!(replacement.synthesis.is_empty());
+    assert!(card_detail_write_ready(&replacement));
+
+    let mut queued = current.clone();
+    queued.authoring_basis = None;
+    queued.state = CardState::Queued;
+    queued.description_body = "next local draft".to_owned();
+    retain_selected_card_presentation(&current, &mut queued);
+    assert_eq!(queued.description_body, "next local draft");
 }
