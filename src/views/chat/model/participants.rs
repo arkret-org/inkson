@@ -479,12 +479,23 @@ pub(crate) fn mention_candidate_for_participant(
         // No verified current selector claim is available on this path.
         // The roster ActorId is complete, so the picker may still select the
         // exact account without disclosing or consuming a guessed slug.
-        let account_label = subject_account_id.to_string();
+        let (account_label, subtitle) = participant
+            .display_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(|name| (name.to_owned(), crate::i18n::tr("identity.tier.name_only")))
+            .unwrap_or_else(|| {
+                (
+                    short_principal_label(subject_account_id.principal_id.as_str()),
+                    crate::i18n::tr("identity.tier.unresolved"),
+                )
+            });
         return Some(crate::messaging::mentions::MentionCandidate {
             subject_account_id,
             display_name: account_label.clone(),
             insert_label: account_label,
-            subtitle: "Agent account".to_owned(),
+            subtitle,
             is_agent: true,
             controller_subject_account_id: None,
             controller_handle_at_time: String::new(),

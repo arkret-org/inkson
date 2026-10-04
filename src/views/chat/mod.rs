@@ -1315,7 +1315,9 @@ fn composer_mention_nodes(
         // a complete AccountId and its visible inserted text. A stale chip or
         // raw controller/slug token must not become a target.
         if chip.is_agent
-            && (insert_label != chip.subject_account_id.to_string()
+            && (!chip.agent_slug_at_time.is_empty()
+                || !chip.controller_handle_at_time.is_empty()
+                || chip.controller_subject_account_id.is_some()
                 || !body.contains(&format!("@{insert_label}")))
         {
             continue;
