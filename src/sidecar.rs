@@ -22,7 +22,6 @@ pub struct HostedSidecarState {
     /// native `(realm_id, sidecar_id, mls_group_id)` scope. A server `ready`
     /// projection alone must never authorize a store this device cannot open.
     pub native_mls_ready: bool,
-    pub display_mode: arkret_sdk::AgentSidecarDisplayMode,
     pub migrated_draft: String,
     pub opened_at: chrono::DateTime<chrono::Utc>,
 }
@@ -91,6 +90,37 @@ pub(crate) fn validate_agent_sidecar_view(
         ));
     }
     Ok(())
+}
+
+pub(crate) fn native_mls_ready_for_view(
+    store: &crate::state::LocalStateStore,
+    view: &arkret_sdk::AgentSidecarView,
+) -> bool {
+    let scope = arkret_sdk::ScopeRef::Sidecar {
+        realm_id: view.sidecar.realm_id.clone(),
+        sidecar_id: view.sidecar.id.clone(),
+    };
+    view.mls_context.mls_group_id.as_ref().is_some_and(|group| {
+        let current = store
+            .verified_sidecar_inputs(view.sidecar.realm_id.as_str())
+            .ok()
+            .and_then(|(snapshot, _)| {
+                crate::current_projection::current_mls_group(
+                    &snapshot.current_state_entries,
+                    &scope,
+                )
+            });
+        store
+            .mls_checkpoint_for_scope_and_group(&scope, group)
+            .is_some_and(|checkpoint| {
+                Some(checkpoint.epoch) == view.mls_context.epoch
+                    && current.is_some_and(|current| {
+                        current.epoch == checkpoint.epoch
+                            && checkpoint.group_state_event_id.as_ref()
+                                == Some(&current.current_mls_commit_event_ref)
+                    })
+            })
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -256,15 +286,6 @@ fn cache_sidecar_view_state_with_namespace(
         store.save_plain_local_data(key, serde_json::to_string(view_state)?);
     }
     Ok(should_replace)
-}
-
-fn cache_sidecar_view_state(
-    store: &mut crate::state::LocalStateStore,
-    authority: &arkret_sdk::AccountId,
-    view_state: &arkret_sdk::AgentSidecarViewState,
-) -> anyhow::Result<bool> {
-    let namespace_key = crate::account_data::account_data_namespace_key(authority)?;
-    cache_sidecar_view_state_with_namespace(store, authority, &namespace_key, view_state)
 }
 
 pub fn ingest_sidecar_view_state_account_data(
@@ -793,7 +814,8 @@ pub(crate) fn pending_sidecar_submissions(
         .collect()
 }
 
-pub fn cached_sidecar_display_mode(
+#[cfg(test)]
+fn cached_sidecar_display_mode(
     store: &crate::state::LocalStateStore,
     session: &HostedSidecarState,
 ) -> Option<arkret_sdk::AgentSidecarDisplayMode> {
@@ -825,279 +847,6 @@ pub fn cached_sidecar_display_mode(
 
 #[derive(Clone, Copy)]
 pub struct HostedSidecarStateContext(pub Signal<Option<HostedSidecarState>>);
-
-#[component]
-pub fn HostedSidecarContextBar(
-    base_url: String,
-    api_token: String,
-    device_id: String,
-    source_realm_id: String,
-    source_strand_id: String,
-) -> Element {
-    let _ = device_id;
-    let mut hosted_state = use_context::<HostedSidecarStateContext>().0;
-    let session_context = crate::app::SessionContext::get();
-    let mut state_store = session_context.state_store;
-    let Some(active_account) = session_context.active_account.read().clone() else {
-        return rsx! {};
-    };
-    let Some(session) = hosted_state().filter(|session| {
-        session.controller_account_id == active_account.authority
-            && session.matches_route(&source_realm_id, &source_strand_id)
-    }) else {
-        return rsx! {};
-    };
-    let security_label = if session.membership_ready() {
-        "E2EE"
-    } else {
-        "Reconciling access"
-    };
-    let merged_base = base_url.clone();
-    let merged_token = api_token.clone();
-    let merged_authority = active_account.authority.clone();
-    let merged_did = active_account.did().clone();
-    let merged_device = active_account.device_id.clone();
-    let sidecar_base = base_url;
-    let sidecar_token = api_token;
-    let sidecar_authority = active_account.authority.clone();
-    let sidecar_did = active_account.did().clone();
-    let sidecar_device = active_account.device_id.clone();
-    // Fold-cache evidence deliberately does NOT ride on this strip.
-    //
-    // A `data-*` attribute here is ordinary shared DOM: it is serialized into
-    // the document, readable by anything else running on the page, captured by
-    // DOM snapshots and screenshots, and present only while this strand's strip
-    // happens to be rendered. The evidence surface is
-    // `__inkson_sidecar_fold_evidence_v1` instead — read-only, controller-only,
-    // reachable only by an explicit call, covering the whole Realm rather than
-    // the visible strand, and compiled out of production builds. See
-    // `sidecar_fold_evidence`.
-    rsx! {
-        div {
-            class: "sidecar-context-strip",
-            "data-testid": "sidecar-context-strip",
-            div { class: "sidecar-context-main",
-                strong { "Private Sidecar active" }
-                span { class: "muted", "Only you and your eligible AI Agents · E2EE" }
-                span {
-                    class: "badge sidecar-write-target",
-                    "data-testid": "sidecar-write-target",
-                    "data-write-target": "private",
-                    "Editing: Private Sidecar"
-                }
-            }
-            div { class: "sidecar-display-mode", role: "group", "aria-label": "Private Sidecar display mode",
-                button {
-                    r#type: "button",
-                    class: if session.display_mode == arkret_sdk::AgentSidecarDisplayMode::ContextMerged { "active" } else { "" },
-                    "data-testid": "sidecar-mode-context-merged",
-                    onclick: move |_| {
-                        if let Some(mut current) = hosted_state() {
-                            crate::views::chat::capture_chat_feed_scroll_position(
-                                &current.source_realm_id,
-                                &current.source_strand_id,
-                            );
-                            current.display_mode = arkret_sdk::AgentSidecarDisplayMode::ContextMerged;
-                            push_sidecar_display_mode(
-                                &mut state_store.write(),
-                                merged_base.clone(),
-                                merged_token.clone(),
-                                merged_authority.clone(),
-                                merged_did.clone(),
-                                merged_device.clone(),
-                                &current,
-                            );
-                            let realm_id = current.source_realm_id.clone();
-                            let strand_id = current.source_strand_id.clone();
-                            hosted_state.set(Some(current));
-                            crate::views::chat::restore_chat_feed_scroll_position(
-                                &realm_id,
-                                &strand_id,
-                            );
-                        }
-                    },
-                    "Original Strand + Sidecar"
-                }
-                button {
-                    r#type: "button",
-                    class: if session.display_mode == arkret_sdk::AgentSidecarDisplayMode::SidecarOnly { "active" } else { "" },
-                    "data-testid": "sidecar-mode-sidecar-only",
-                    onclick: move |_| {
-                        if let Some(mut current) = hosted_state() {
-                            crate::views::chat::capture_chat_feed_scroll_position(
-                                &current.source_realm_id,
-                                &current.source_strand_id,
-                            );
-                            current.display_mode = arkret_sdk::AgentSidecarDisplayMode::SidecarOnly;
-                            push_sidecar_display_mode(
-                                &mut state_store.write(),
-                                sidecar_base.clone(),
-                                sidecar_token.clone(),
-                                sidecar_authority.clone(),
-                                sidecar_did.clone(),
-                                sidecar_device.clone(),
-                                &current,
-                            );
-                            let realm_id = current.source_realm_id.clone();
-                            let strand_id = current.source_strand_id.clone();
-                            hosted_state.set(Some(current));
-                            crate::views::chat::restore_chat_feed_scroll_position(
-                                &realm_id,
-                                &strand_id,
-                            );
-                        }
-                    },
-                    "Sidecar only"
-                }
-                button {
-                    r#type: "button",
-                    "data-testid": "sidecar-exit",
-                    onclick: move |_| hosted_state.set(None),
-                    "Exit Private Sidecar"
-                }
-            }
-            div { class: "sidecar-addressed-now", "data-testid": "sidecar-addressed-now",
-                span { class: "muted", "Addressed now" }
-                strong { "{session.addressed_agent_label}" }
-                span { class: "badge", "{security_label}" }
-            }
-        }
-    }
-}
-
-/// Best-effort encrypted cross-device persistence for the hosted Strand-level
-/// display mode. The local signal is authoritative for the current frame; a
-/// failed network write is retried naturally by a later user change/account
-/// stream reconciliation and never mutates shared Strand state.
-pub fn push_sidecar_display_mode(
-    store: &mut crate::state::LocalStateStore,
-    base_url: String,
-    api_token: String,
-    authority: arkret_sdk::AccountId,
-    controller_did: arkret_sdk::Did,
-    device_id: arkret_sdk::DeviceId,
-    session: &HostedSidecarState,
-) {
-    let context_ref = match (
-        arkret_sdk::RealmId::new(session.source_realm_id.clone()),
-        arkret_sdk::StrandId::new(session.source_strand_id.clone()),
-        device_id,
-    ) {
-        (Ok(realm_id), Ok(strand_id), origin_device_id) => (realm_id, strand_id, origin_device_id),
-        _ => {
-            tracing::warn!("Sidecar view-state contains an invalid typed identifier");
-            return;
-        }
-    };
-    let updated_hlc = match crate::signing_stamp::issue_account_data_hlc(
-        controller_did.as_str(),
-        context_ref.2.as_str(),
-    ) {
-        Ok(hlc) => hlc,
-        Err(error) => {
-            tracing::warn!(%error, "Sidecar view-state HLC allocation failed");
-            return;
-        }
-    };
-    let view_state = arkret_sdk::AgentSidecarViewState {
-        schema: arkret_sdk::SchemaId::AGENT_SIDECAR_VIEW_STATE_V1.to_owned(),
-        controller_account_id: authority.clone(),
-        sidecar_id: session.sidecar_id.clone(),
-        context_ref: arkret_sdk::SidecarStrandContextRef {
-            realm_id: context_ref.0,
-            strand_id: context_ref.1,
-        },
-        display_mode: session.display_mode,
-        pinned: None,
-        collapsed: None,
-        updated_hlc,
-        origin_device_id: context_ref.2,
-    };
-    let namespace_key = match crate::account_data::account_data_namespace_key(&authority) {
-        Ok(key) => key,
-        Err(error) => {
-            tracing::warn!(%error, "Sidecar view-state namespace derivation failed");
-            return;
-        }
-    };
-    let account_data_key = match sidecar_view_state_account_data_key(&namespace_key, &view_state) {
-        Ok(key) => key,
-        Err(error) => {
-            tracing::warn!(%error, "Sidecar view-state account-data key derivation failed");
-            return;
-        }
-    };
-    if let Err(error) = cache_sidecar_view_state(store, &authority, &view_state) {
-        tracing::warn!(%error, "Sidecar view-state local cache failed");
-    }
-    let plaintext = match serde_json::to_value(&view_state) {
-        Ok(value) => value,
-        Err(error) => {
-            tracing::warn!(%error, "Sidecar view-state serialization failed");
-            return;
-        }
-    };
-    let body = match crate::account_data::encrypt_account_data_value(
-        &authority,
-        &account_data_key,
-        &plaintext,
-    ) {
-        Ok(body) => body,
-        Err(error) => {
-            tracing::warn!(%error, "Sidecar view-state encryption failed");
-            return;
-        }
-    };
-    spawn(async move {
-        match crate::transport::auth::with_event_submitter(
-            &base_url,
-            api_token,
-            |submitter| async move {
-                crate::transport::account::update_account_data_with_conditional_merge(
-                    &submitter,
-                    &account_data_key,
-                    |snapshot| {
-                        let Some(current) = snapshot.entry.as_ref() else {
-                            return Ok(
-                                crate::transport::account::AccountDataMergeDecision::Replace(
-                                    body.clone(),
-                                ),
-                            );
-                        };
-                        let current_plaintext = crate::account_data::decrypt_account_data_entry(
-                            &authority,
-                            &account_data_key,
-                            current,
-                        )?;
-                        match sidecar_view_state_merge_decision(
-                            Some(&current_plaintext),
-                            &namespace_key,
-                            &account_data_key,
-                            &view_state,
-                        )? {
-                            SidecarViewStateMergeDecision::UseCandidate => Ok(
-                                crate::transport::account::AccountDataMergeDecision::Replace(
-                                    body.clone(),
-                                ),
-                            ),
-                            SidecarViewStateMergeDecision::UseCurrent => Ok(
-                                crate::transport::account::AccountDataMergeDecision::KeepCurrent,
-                            ),
-                        }
-                    },
-                )
-                .await
-            },
-        )
-        .await
-        {
-            Ok(_) => {}
-            Err(error) => {
-                tracing::warn!(error = %error.display_diagnostic(), "Sidecar view-state sync failed")
-            }
-        }
-    });
-}
 
 #[cfg(test)]
 mod tests {
@@ -1150,7 +899,6 @@ mod tests {
                 current_controller_device_ready: false,
             },
             native_mls_ready: true,
-            display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
             migrated_draft: String::new(),
             opened_at: chrono::Utc::now(),
         }

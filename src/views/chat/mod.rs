@@ -236,7 +236,7 @@ fn project_visible_messages(
     messages: &[ChatMessage],
     selected_channel_id: &str,
     selected_realm_id: &str,
-    sidecar_projection: Option<(&str, arkret_sdk::AgentSidecarDisplayMode)>,
+    sidecar_projection: Option<&str>,
     exchange_projections: &[arkret_sdk::AgentSidecarExchangeProjection],
     sidecar_current_available: bool,
 ) -> Vec<ChatMessage> {
@@ -266,11 +266,7 @@ fn project_visible_messages(
         let is_source_echo = echo_projection_by_event.contains_key(&message.id);
         let strand_matches = sidecar_projection.map_or_else(
             || message.strand_id == selected_channel_id || is_source_echo,
-            |(source_strand_id, display_mode)| {
-                is_source_echo
-                    || (display_mode == arkret_sdk::AgentSidecarDisplayMode::ContextMerged
-                        && message.strand_id == source_strand_id)
-            },
+            |source_strand_id| is_source_echo || message.strand_id == source_strand_id,
         );
         if !strand_matches {
             continue;
@@ -282,29 +278,22 @@ fn project_visible_messages(
             visible.push(message.clone());
         }
     }
-    let source_strand_id = sidecar_projection
-        .map(|(source_strand_id, _)| source_strand_id)
-        .unwrap_or(selected_channel_id);
+    let source_strand_id = sidecar_projection.unwrap_or(selected_channel_id);
     let visible_source_ids = visible
         .iter()
         .filter(|message| message.strand_id == source_strand_id)
         .map(|message| message.id.clone())
         .collect::<std::collections::BTreeSet<_>>();
-    let wait_for_source_anchor = !sidecar_projection.is_some_and(|(_, display_mode)| {
-        display_mode == arkret_sdk::AgentSidecarDisplayMode::SidecarOnly
+    visible.retain(|message| {
+        echo_projection_by_event
+            .get(&message.id)
+            .is_none_or(|projection| {
+                projection
+                    .source_event_id
+                    .as_ref()
+                    .is_none_or(|anchor| visible_source_ids.contains(anchor.as_str()))
+            })
     });
-    if wait_for_source_anchor {
-        visible.retain(|message| {
-            echo_projection_by_event
-                .get(&message.id)
-                .is_none_or(|projection| {
-                    projection
-                        .source_event_id
-                        .as_ref()
-                        .is_none_or(|anchor| visible_source_ids.contains(anchor.as_str()))
-                })
-        });
-    }
     let mut echoes = visible
         .iter()
         .filter_map(|message| {
@@ -1510,7 +1499,7 @@ pub fn ChatPanel(
     let account_device_id = active_account.device_id.clone();
     let principal_core_id = principal_id.clone();
     let principal_id = principal_id.as_str().to_owned();
-    let mut sidecar_session_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
+    let sidecar_session_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     // Embedded Strand shells do not receive a route-owned Sidecar prop. Read
     // the same hosted session that renders the context bar so message
     // projection, privacy gates, and the composer cannot diverge after an
@@ -1536,24 +1525,6 @@ pub fn ChatPanel(
         .filter(|session| session.matches_route(&selected_realm_id, &selected_source_strand));
     let navigator = use_navigator();
     let mut migrated_draft_applied_for = use_signal(String::new);
-    {
-        let state_store = state_store;
-        use_effect(move || {
-            let _account_cursor = sync_cursor();
-            let Some(mut session) = sidecar_session_state() else {
-                return;
-            };
-            let Some(remote_mode) =
-                crate::sidecar::cached_sidecar_display_mode(&state_store.read(), &session)
-            else {
-                return;
-            };
-            if session.display_mode != remote_mode {
-                session.display_mode = remote_mode;
-                sidecar_session_state.set(Some(session));
-            }
-        });
-    }
     {
         let session = sidecar_session.clone();
         let draft = controller.draft;
@@ -2008,9 +1979,9 @@ pub fn ChatPanel(
             .collect();
         merge_chat_messages(&mut all_messages_snapshot, private_messages);
     }
-    let sidecar_projection: Option<(&str, arkret_sdk::AgentSidecarDisplayMode)> = sidecar_session
+    let sidecar_projection: Option<&str> = sidecar_session
         .as_ref()
-        .map(|session| (session.source_strand_id.as_str(), session.display_mode));
+        .map(|session| session.source_strand_id.as_str());
     let visible_messages = project_visible_messages(
         &all_messages_snapshot,
         &selected_channel_value,
@@ -2832,15 +2803,6 @@ pub fn ChatPanel(
                 }
 
                 if let Some(session) = sidecar_session.as_ref() {
-                    if !embedded {
-                        crate::sidecar::HostedSidecarContextBar {
-                            base_url: base_url.clone(),
-                            api_token: token(),
-                            device_id: device_id.clone(),
-                            source_realm_id: selected_realm_id.clone(),
-                            source_strand_id: selected_source_strand.clone(),
-                        }
-                    }
                     if !session.migrated_draft.trim().is_empty() {
                         div { class: "event info sidecar-draft-notice", "data-testid": "sidecar-draft-migrated", role: "status",
                             strong { "Message moved to this private composer" }

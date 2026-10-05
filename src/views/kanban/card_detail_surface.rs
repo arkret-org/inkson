@@ -395,9 +395,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                     let private_track_card: Option<KanbanCard> = None;
                     let track_card = private_track_card.as_ref().unwrap_or(card);
                     let sidecar_track_active = active_sidecar_session.is_some();
-                    let show_shared_track_base = active_sidecar_session.as_ref().is_some_and(|session| {
-                        session.display_mode == arkret_sdk::AgentSidecarDisplayMode::ContextMerged
-                    });
+                    let show_shared_track_base = sidecar_track_active;
                     let board_route_after_close =
                         kanban_card_detail_board_route(&selected_realm_id, selected_board().as_ref());
                     let route_is_card_detail = matches!(
@@ -934,14 +932,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         "{summary_text}"
                                                     }
                                                 }
-                                            }
-
-                                            crate::sidecar::HostedSidecarContextBar {
-                                                base_url: base_url.clone(),
-                                                api_token: token(),
-                                                device_id: device_id.clone(),
-                                                source_realm_id: selected_realm_id.clone(),
-                                                source_strand_id: card.primary_strand_id.clone(),
                                             }
 
                                             section { class: "card-detail-section card-detail-tabs-section",

@@ -252,15 +252,8 @@ fn unscoped_chat_seed_cannot_enter_ordinary_realm_projection() {
     assert!(scoped_seed.is_empty());
     assert!(project_visible_messages(&scoped_seed, source, realm, None, &[], false).is_empty());
     assert!(
-        project_visible_messages(
-            &[private_seed],
-            source,
-            realm,
-            Some((source, arkret_sdk::AgentSidecarDisplayMode::ContextMerged)),
-            &[],
-            false,
-        )
-        .is_empty(),
+        project_visible_messages(&[private_seed], source, realm, Some(source), &[], false,)
+            .is_empty(),
         "unavailable exchange current hides even an active Sidecar timeline"
     );
 }

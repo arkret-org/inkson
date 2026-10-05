@@ -35,6 +35,16 @@ pub(super) fn ChatEffects(
         realm_live_epoch,
         state_store,
     );
+    super::sidecar_restore::use_sidecar_reconciliation(
+        base_url.clone(),
+        selected_realm_id.clone(),
+        (controller.selected_channel)(),
+        authority.clone(),
+        device_id.clone(),
+        token,
+        state_store,
+        controller.status_msg,
+    );
     super::direct_authority::use_direct_authority(
         base_url.clone(),
         selected_realm_id.clone(),

@@ -2157,6 +2157,17 @@ fn validate_floor_rows_at_genesis(
             CurrentSelector::MemberState { .. } => {
                 closed_value::<arkret_wire::MemberStateCurrent>(value, "member_state")?;
             }
+            CurrentSelector::Sidecar { sidecar_id } => {
+                // The Sidecar object is created in the parent Realm stream;
+                // its private context, exchanges and MLS retain their own stream.
+                let sidecar: arkret_sdk::AgentSidecar = closed_value(value, "sidecar")?;
+                sidecar.validate_shape().map_err(protocol)?;
+                if sidecar.id != *sidecar_id || sidecar.realm_id != *realm_id {
+                    return Err(protocol(
+                        "signed Sidecar differs from its parent Realm subject",
+                    ));
+                }
+            }
             CurrentSelector::Circle { circle_id } => {
                 // Circle configuration is created in the parent Realm stream.
                 // Membership and MLS state retain their own Circle stream.
@@ -3454,6 +3465,74 @@ mod tests {
     }
 
     #[test]
+    fn signed_parent_floor_installs_sidecar_and_rejects_foreign_or_open_values() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let (bundle, _, items) =
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&creator)
+                    .into_iter()
+                    .chain([("ak.sidecar.create".to_owned(), json!({}))])
+                    .collect(),
+                "alice.example",
+                DEVICE_ID,
+            );
+        let created = items.last().unwrap();
+        let head = arkret_wire::CommitStreamHead {
+            stream_ref: created.commit.stream_ref.clone(),
+            stream_position: created.commit.stream_position,
+            commit_id: created.commit.commit_id.clone(),
+        };
+        let rows = soland_bootstrap_rows(&bundle, &items);
+        let validate = |rows: &[TypedCurrentResult]| {
+            validate_signed_floor_rows(
+                &realm_id,
+                &bundle,
+                &head,
+                arkret_sdk::HistoryAccess::SinceJoin,
+                rows,
+            )
+        };
+        validate(&rows).unwrap();
+        for (field, invalid) in [
+            (
+                "id",
+                json!(arkret_sdk::SidecarId::from_event_id(
+                    &bundle.genesis_event.event_id
+                )),
+            ),
+            (
+                "realm_id",
+                json!(arkret_sdk::RealmId::from_event_id(&created.event.event_id)),
+            ),
+            ("schema", json!(arkret_sdk::SchemaId::CIRCLE_V1)),
+            ("controller_account_id", json!({"principal_id": ACTOR_ID})),
+            ("state", json!("suspended")),
+            ("extra", json!(true)),
+        ] {
+            let mut forged = rows.clone();
+            let TypedCurrentResult::Value { value, .. } = forged.last_mut().unwrap();
+            value[field] = invalid;
+            assert!(validate(&forged).is_err(), "accepted invalid {field}");
+        }
+        let mut private_source = rows.clone();
+        let TypedCurrentResult::Value {
+            source_stream_ref, ..
+        } = private_source.last_mut().unwrap();
+        *source_stream_ref = CommitStreamRef::Sidecar {
+            realm_id: realm_id.clone(),
+            sidecar_id: arkret_sdk::SidecarId::from_event_id(&created.event.event_id),
+        };
+        assert!(validate(&private_source).is_err());
+    }
+
+    #[test]
     fn signed_parent_floor_installs_exact_circle_configuration_without_child_state() {
         let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
@@ -4478,6 +4557,24 @@ mod tests {
                     let mut value = payload["object"].clone();
                     value["id"] = json!(circle_id);
                     row(CurrentSelector::Circle { circle_id }, commit, value)
+                }
+                "ak.sidecar.create" => {
+                    let sidecar_id = arkret_sdk::SidecarId::from_event_id(&item.event.event_id);
+                    let sidecar = arkret_sdk::AgentSidecar {
+                        id: sidecar_id.clone(),
+                        schema: arkret_sdk::SchemaId::AGENT_SIDECAR_V1.to_owned(),
+                        realm_id: item.event.realm_id.clone(),
+                        controller_account_id: item.event.actor_id.as_account_id().unwrap().clone(),
+                        state: arkret_sdk::AgentSidecarState::Active,
+                        state_changed_at: None,
+                        created_at: item.event.created_at,
+                        updated_at: None,
+                    };
+                    row(
+                        CurrentSelector::Sidecar { sidecar_id },
+                        commit,
+                        json!(sidecar),
+                    )
                 }
                 "ak.strand.create" => {
                     let strand_id = arkret_sdk::StrandId::from_event_id(&item.event.event_id);
