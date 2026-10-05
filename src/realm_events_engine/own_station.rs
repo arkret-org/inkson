@@ -234,7 +234,10 @@ pub(super) async fn drain_stream<F: Fn() -> bool>(
     }
     candidate.release_verified_rows();
     *replica = candidate;
-    if changed > 0 || resolve_stream_agent_keys(http, &projector.state_store).await? {
+    // New message rows may introduce Agent candidates. Resolve their evidence
+    // even when the product fold already requires a timeline invalidation.
+    let agent_evidence_changed = resolve_stream_agent_keys(http, &projector.state_store).await?;
+    if changed > 0 || agent_evidence_changed {
         projector
             .realm_live_epoch
             .update(|epoch| *epoch = epoch.wrapping_add(1));

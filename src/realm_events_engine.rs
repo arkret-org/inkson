@@ -2302,6 +2302,26 @@ fn validate_floor_rows_at_genesis(
                 // Only the separate exact read can supply a self-watch CAS preimage.
                 closed_value::<arkret_sdk::StrandWatchCurrentValue>(value, "strand_watch")?;
             }
+            CurrentSelector::ModerationFrankingProof { event_id } => {
+                // This is authenticated current state of the receipt, not an
+                // independently verified moderation evidence package. Garth
+                // has already verified the Station's signed snapshot cut.
+                let proof: arkret_models_collaboration::events_payloads::moderation::FrankingProof =
+                    closed_value(value, "moderation_franking_proof")?;
+                if proof.realm_id != *realm_id
+                    || proof.event_id != *event_id
+                    || !(16..=256).contains(&proof.replay_nonce.len())
+                    || !proof
+                        .replay_nonce
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+                    || proof.signature.is_empty()
+                {
+                    return Err(protocol(
+                        "signed franking receipt differs from its Realm, target Event or closed proof shape",
+                    ));
+                }
+            }
             CurrentSelector::DirectConversationBinding { pair_key } => {
                 // The pair's endorsement set: one binding digest, and every
                 // endorsement binds this pair inside this Realm
@@ -3983,6 +4003,74 @@ mod tests {
         for rows in forged {
             assert!(
                 validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &rows).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn signed_floor_franking_receipt_binds_the_proven_event_and_closed_value() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let (bundle, _, items) =
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&creator),
+                "alice.example",
+                DEVICE_ID,
+            );
+        let commit = &items.last().unwrap().commit;
+        let head = arkret_wire::CommitStreamHead {
+            stream_ref: commit.stream_ref.clone(),
+            stream_position: commit.stream_position,
+            commit_id: commit.commit_id.clone(),
+        };
+        let proven_event = items[2].event.event_id.clone();
+        let value = json!({
+            "realm_id": realm_id,
+            "event_id": proven_event,
+            "received_by": "ak:did_core:web:station.example",
+            "verification_method": "did:web:station.example#receipt",
+            "received_at": "2026-10-05T03:03:49.000Z",
+            "replay_nonce": "opaque_receipt_nonce",
+            "signature": "signed-receipt"
+        });
+        let mut rows = soland_bootstrap_rows(&bundle, &items);
+        rows.push(TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::ModerationFrankingProof {
+                event_id: proven_event,
+            },
+            source_stream_ref: head.stream_ref.clone(),
+            revision: arkret_wire::CurrentRevision {
+                commit_id: head.commit_id.clone(),
+                stream_position: head.stream_position,
+            },
+            value: value.clone(),
+        });
+        let access = arkret_sdk::HistoryAccess::SinceJoin;
+        validate_signed_floor_rows(&realm_id, &bundle, &head, access, &rows).unwrap();
+        for (key, invalid) in [
+            ("event_id", json!(items[3].event.event_id)),
+            (
+                "realm_id",
+                json!(arkret_sdk::RealmId::from_event_id(&items[3].event.event_id)),
+            ),
+            ("replay_nonce", json!("too-short")),
+            ("replay_nonce", json!("invalid nonce with spaces")),
+            ("signature", json!("")),
+            ("plaintext", json!("must not appear in receipts")),
+        ] {
+            let mut bad = value.clone();
+            bad[key] = invalid;
+            let mut forged = rows.clone();
+            set_row_value(forged.last_mut().unwrap(), bad);
+            assert!(
+                validate_signed_floor_rows(&realm_id, &bundle, &head, access, &forged).is_err(),
+                "{key}"
             );
         }
     }
