@@ -677,6 +677,7 @@ pub fn chinese_translations() -> TranslationDict {
     // T5.2 — signer DID / key id / freshness panel
     dict.set("settings.signer.label", "活跃签名者");
     dict.set("kanban.archive_action", "归档");
+    dict.set("kanban.title_pending", "标题待同步");
     dict.set("kanban.card.draft", "草稿");
     dict.set(
         "kanban.card.draft_hint",

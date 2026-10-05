@@ -958,12 +958,7 @@ pub fn KanbanPanel(
                 .map(|option| option.id.clone())
         }
     });
-    let controller = use_kanban_controller(
-        initial_board_options.clone(),
-        initial_board,
-        seed_fallback_allowed,
-        event_write_ready,
-    );
+    let controller = use_kanban_controller(initial_board_options.clone(), initial_board);
     let KanbanController {
         board_space_options,
         mut selected_board,
@@ -1135,6 +1130,13 @@ pub fn KanbanPanel(
         selected_board_value.as_ref(),
         &board_space_options(),
         pending_board_creates(),
+    );
+    let selected_board_title = kanban_title_label(
+        &selected_board_title,
+        selected_board_value
+            .as_ref()
+            .map_or("", arkret_sdk::SpaceId::as_str),
+        &crate::i18n::tr("kanban.title_pending"),
     );
     let board_status_text =
         kanban_operation_status_text(&board_status(), &state_store.read().load().raw_operations);
@@ -1315,8 +1317,8 @@ pub fn KanbanPanel(
                                             SelectOption::<String> {
                                                 index: i + 1,
                                                 value: board_option.id.to_string(),
-                                                text_value: "{board_option.title}",
-                                                "{board_option.title}"
+                                                text_value: kanban_title_label(&board_option.title, board_option.id.as_str(), &crate::i18n::tr("kanban.title_pending")),
+                                                {kanban_title_label(&board_option.title, board_option.id.as_str(), &crate::i18n::tr("kanban.title_pending"))}
                                             }
                                         }
                                     }
@@ -1373,7 +1375,7 @@ pub fn KanbanPanel(
                                     for board_option in board_space_options().iter() {
                                         {
                                             let option_id = board_option.id.clone();
-                                            let option_title = board_option.title.clone();
+                                            let option_title = kanban_title_label(&board_option.title, board_option.id.as_str(), &crate::i18n::tr("kanban.title_pending"));
                                             let option_is_active =
                                                 selected_board().as_ref() == Some(&option_id);
                                             let board_route_realm_id_for_option = board_route_realm_id.clone();
@@ -1789,11 +1791,10 @@ pub fn KanbanPanel(
                 } else {
                 for column in visible_columns.iter() {
                     {
-                    // One id clone shared by both drop/drag closures (each takes its
-                    // own clone at the `move ||` boundary). The title is read-only in
-                    // the aria/title attributes, so we format `column.title` directly
-                    // instead of cloning it twice.
+                    // Share the id across drop/drag closures; localize the display
+                    // title separately so a pending label never becomes an edit.
                     let column_id = column.id.clone();
+                    let column_title = kanban_title_label(&column.title, &column.id, &crate::i18n::tr("kanban.title_pending"));
                     let active_cards = column
                         .cards
                         .iter()
@@ -1875,8 +1876,8 @@ pub fn KanbanPanel(
                         div {
                             class: "column-drop-target-before",
                             "data-testid": "column-drop-target-before",
-                            "aria-label": "Drop column before {column.title}",
-                            title: "Drop column before {column.title}",
+                            "aria-label": "Drop column before {column_title}",
+                            title: "Drop column before {column_title}",
                             ondragover: move |event| event.prevent_default(),
                             ondrop: {
                                 let target_column_id = column_id.clone();
@@ -1932,8 +1933,8 @@ pub fn KanbanPanel(
                                     "data-testid": "column-drag-handle",
                                     disabled: columns().iter().filter(|column| column.state == SpaceContainerLifecycleState::Active).any(|column| arkret_sdk::SpaceId::new(column.id.clone()).is_err()),
                                     draggable: if columns().iter().filter(|column| column.state == SpaceContainerLifecycleState::Active).all(|column| arkret_sdk::SpaceId::new(column.id.clone()).is_ok()) { "true" } else { "false" },
-                                    title: "Drag column {column.title}",
-                                    "aria-label": "Drag column {column.title}",
+                                    title: "Drag column {column_title}",
+                                    "aria-label": "Drag column {column_title}",
                                     ondragstart: {
                                         let column_id = column_id.clone();
                                         move |event| {
@@ -2024,7 +2025,7 @@ pub fn KanbanPanel(
                                                 editing_column_id.set(Some(column_id.clone()));
                                             }
                                         },
-                                        "{column.title}"
+                                        "{column_title}"
                                     }
                                 }
                             }
@@ -2171,7 +2172,11 @@ pub fn KanbanPanel(
                                     }
                                 },
                                 div { class: "event-head board-card-title-row",
-                                    span { class: "entity-title board-card-title", title: "{card.title}", "{card.title}" }
+                                    span {
+                                        class: "entity-title board-card-title",
+                                        title: kanban_title_label(&card.title, &card.id, &crate::i18n::tr("kanban.title_pending")),
+                                        {kanban_title_label(&card.title, &card.id, &crate::i18n::tr("kanban.title_pending"))}
+                                    }
                                     if !displayed_card_state(card, &projected_strand_ids).is_settled() {
                                         span {
                                             class: "badge blue board-card-draft-badge",

@@ -574,7 +574,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                 compact: true,
                                                 test_id: Some("strand-detail-security-state".to_owned()),
                                             }
-                                            h2 { "{card.title}" }
+                                            h2 { {kanban_title_label(&card.title, &card.id, &crate::i18n::tr("kanban.title_pending"))} }
                                             div { class: "card-detail-title-meta",
                                                 WriteStateBadge { state: displayed_card_state(card, &projected_strand_ids) }
                                                 for label in &card.labels {

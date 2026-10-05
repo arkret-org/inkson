@@ -423,9 +423,8 @@ pub(crate) struct BoardHeader {
 /// The active surface is either the confirmed selection or, while no confirmed
 /// Board is selected, the most recent pending create — so the user sees their
 /// titled Board surface from the moment they click Create, without the pending
-/// write ever borrowing a protocol identity. A confirmed Board whose title has
-/// not arrived in the options list yet falls back to its short id rather than
-/// rendering blank.
+/// write ever borrowing a protocol identity. An unresolved title stays empty;
+/// the surface supplies a localized pending label instead of an object id.
 pub(crate) fn board_header(
     selected_board: Option<&arkret_sdk::SpaceId>,
     board_space_options: &[BoardSpaceOption],
@@ -448,6 +447,14 @@ pub(crate) fn board_header(
             .iter()
             .find(|option| option.id == *board_id)
             .map(|option| option.title.clone())
-            .unwrap_or_else(|| crate::views::helpers::short_protocol_id(board_id.as_str())),
+            .unwrap_or_default(),
+    }
+}
+
+pub(crate) fn kanban_title_label(title: &str, id: &str, pending_label: &str) -> String {
+    if title.trim().is_empty() || title == id {
+        pending_label.to_owned()
+    } else {
+        title.to_owned()
     }
 }

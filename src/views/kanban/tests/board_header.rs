@@ -49,16 +49,27 @@ fn a_confirmed_board_is_named_by_its_option_title() {
 }
 
 #[test]
-fn a_confirmed_board_whose_title_has_not_arrived_falls_back_to_its_short_id() {
-    // The option list is a projection and can lag the selection by a sync.
-    // Rendering blank there would look like a broken board rather than a
-    // pending one.
+fn a_confirmed_board_whose_title_has_not_arrived_keeps_the_title_unresolved() {
     let header = board_header(Some(&space_id(BOARD_A)), &[], Vec::new());
+    assert!(header.title.is_empty());
     assert_eq!(
-        header.title,
-        crate::views::helpers::short_protocol_id(BOARD_A)
+        kanban_title_label(&header.title, BOARD_A, "Title pending sync"),
+        "Title pending sync"
     );
-    assert!(!header.title.is_empty());
+}
+
+#[test]
+fn kanban_titles_do_not_render_projection_ids_while_metadata_is_pending() {
+    for title in ["", "  ", BOARD_A] {
+        assert_eq!(
+            kanban_title_label(title, BOARD_A, "Title pending sync"),
+            "Title pending sync"
+        );
+    }
+    assert_eq!(
+        kanban_title_label("Sprint", BOARD_A, "Title pending sync"),
+        "Sprint"
+    );
 }
 
 #[test]

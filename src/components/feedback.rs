@@ -436,7 +436,7 @@ impl AppBannerKind {
     }
 }
 
-/// Single-slot persistent banner pinned to the top of the app shell.
+/// Single-slot persistent banner in the main content flow above the topbar.
 /// Unlike toasts it has no lifecycle — it shows exactly while its
 /// condition holds.
 #[component]

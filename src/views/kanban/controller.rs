@@ -99,8 +99,6 @@ impl KanbanController {
 pub(super) fn use_kanban_controller(
     initial_board_options: Vec<BoardSpaceOption>,
     initial_board: Option<arkret_sdk::SpaceId>,
-    seed_fallback_allowed: bool,
-    event_write_ready: bool,
 ) -> KanbanController {
     KanbanController {
         board_space_options: use_signal(move || initial_board_options),
@@ -155,15 +153,7 @@ pub(super) fn use_kanban_controller(
         drop_target_column: use_signal(|| None),
         editing_column_id: use_signal(|| None),
         editing_column_title: use_signal(String::new),
-        board_status: use_signal(move || {
-            if !seed_fallback_allowed {
-                "Board data unavailable; sample fallback disabled for this server".to_owned()
-            } else if event_write_ready {
-                "Event write plane ready".to_owned()
-            } else {
-                "Event write plane unavailable; board writes queue locally".to_owned()
-            }
-        }),
+        board_status: use_signal(String::new),
         command_queue: use_signal(std::collections::VecDeque::new),
     }
 }

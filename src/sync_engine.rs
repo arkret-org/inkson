@@ -1484,6 +1484,14 @@ pub async fn run_sync_engine(
     generation: crate::runtime::input::ValueReader<u64>,
     ctx: SyncEngineContext,
 ) {
+    let provider = AccountTransportProvider {
+        ctx: ctx.clone(),
+        generation: generation.clone(),
+        start_generation,
+    };
+    if !provider.is_active() {
+        return;
+    }
     ctx.state_store.write(|store| {
         store.restore_contact_remarks_from_retained_account_data(&ctx.account.authority);
     });
@@ -1497,11 +1505,6 @@ pub async fn run_sync_engine(
             });
             return;
         }
-    };
-    let provider = AccountTransportProvider {
-        ctx: ctx.clone(),
-        generation: generation.clone(),
-        start_generation,
     };
     let mut backoff = garth::RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING);
     let mut terminal: Option<SyncStatusEvent> = None;
@@ -1620,11 +1623,20 @@ pub async fn run_sync_engine(
             }
         }
     }
-    let status = terminal.unwrap_or(SyncStatusEvent::Offline);
+    let Some(status) = sync_exit_status(provider.is_active(), terminal) else {
+        return;
+    };
     if let SyncStatusEvent::Terminal { reason } = &status {
         tracing::warn!(reason, "account subscription stopped at a terminal error");
     }
     ctx.projection_sink.sync_status(status);
+}
+
+fn sync_exit_status(active: bool, terminal: Option<SyncStatusEvent>) -> Option<SyncStatusEvent> {
+    // Cancellation and generation replacement are lifecycle transitions, not
+    // evidence that the Station is offline. A retired run must not overwrite
+    // the connection state owned by its replacement.
+    active.then_some(terminal).flatten()
 }
 
 async fn reconnect_after(
@@ -3202,6 +3214,28 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn cancelled_sync_run_never_overwrites_the_replacement_connection_status() {
+        assert_eq!(sync_exit_status(false, None), None);
+        assert_eq!(sync_exit_status(true, None), None);
+        assert_eq!(
+            sync_exit_status(
+                false,
+                Some(SyncStatusEvent::Terminal {
+                    reason: "old run".to_owned()
+                })
+            ),
+            None
+        );
+        let terminal = SyncStatusEvent::Terminal {
+            reason: "active run".to_owned(),
+        };
+        assert_eq!(
+            sync_exit_status(true, Some(terminal.clone())),
+            Some(terminal)
+        );
+    }
 
     #[test]
     fn local_device_revocation_rotates_the_live_device_id() {

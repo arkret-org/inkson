@@ -446,7 +446,7 @@ fn AppBootstrap() -> Element {
     // Connection-lifecycle status only (offline / restoring / online / session
     // expired). Operation feedback now goes through the toast queue in
     // `crate::components::feedback` — never through this signal.
-    let connection_status = use_signal(|| ConnectionState::Offline.label().to_owned());
+    let connection_status = use_signal(|| ConnectionState::Loading.label().to_owned());
     let initial_sync_cursor = initial_sync_cursor(initial_local_state.sync_cursor.clone());
     let initial_selected_realm_id = initial_realm_tree_nodes
         .iter()
@@ -484,7 +484,7 @@ fn AppBootstrap() -> Element {
     let push_state = use_signal(move || initial_push_state);
     let frontier_state = use_signal(|| "Not loaded".to_owned());
     let crypto_state = use_signal(|| "No authenticated session".to_owned());
-    let network_state = use_signal(|| "offline".to_owned());
+    let network_state = use_signal(|| "reconnecting".to_owned());
 
     // Realm-tree nodes are an in-memory account projection. Invalidate them as
     // soon as the account signal changes; connect() will repopulate them from
@@ -1347,15 +1347,6 @@ fn AppBootstrap() -> Element {
                     }
                     sidebar_resizing.set(false);
                 },
-                // Unified feedback (docs/design/unified-feedback-system.md
-                // Wave 0). AppBanner: single-slot persistent banner; the
-                // offline condition is derived from the sync engine's
-                // network state ("offline"/"reconnecting"/"online") and
-                // gated on an active session so the pre-connect boot frame
-                // does not flash the banner.
-                crate::components::AppBanner {
-                    offline: !token().is_empty() && network_state() == "offline",
-                }
                 // ToastHost: stacked transient toasts. Drains the generic
                 // toast queue plus the policy-deny queue (fed by
                 // `api_error::decode_arkret_error`'s policy-deny dispatch,
@@ -2720,6 +2711,9 @@ fn AppBootstrap() -> Element {
                     }
 
                 main { class: "main realm", "data-testid": "main-view", role: "main", "aria-label": crate::i18n::tr("app.main_content"),
+                    crate::components::AppBanner {
+                        offline: !token().is_empty() && network_state() == "offline",
+                    }
                     div { class: "topbar realm-header",
                         div { class: "topbar-left",
                             Button {

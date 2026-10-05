@@ -593,6 +593,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.register_push", "Register Push");
     dict.set("settings.unregister_push", "Unregister Push");
     dict.set("kanban.archive_action", "Archive");
+    dict.set("kanban.title_pending", "Title pending sync");
     dict.set("kanban.card.draft", "draft");
     dict.set(
         "kanban.card.draft_hint",
