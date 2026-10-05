@@ -696,6 +696,15 @@ fn ordinary_chat_event_scope(
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> bool {
+    ordinary_chat_event_proof(realm_id, event, state_store, decrypt_identity).is_some()
+}
+
+fn ordinary_chat_event_proof(
+    realm_id: &str,
+    event: &Value,
+    state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
+) -> Option<ChatProofVerdict> {
     let Some(envelope) = message_candidates(event).into_iter().find(|candidate| {
         candidate
             .get("producer_proof")
@@ -706,25 +715,27 @@ fn ordinary_chat_event_scope(
                 .and_then(actor_principal_from_value)
                 .is_some_and(|actor| !actor.trim().is_empty())
     }) else {
-        return false;
+        return None;
     };
     let Some(signed_realm_id) = envelope.get("realm_id").and_then(Value::as_str) else {
-        return false;
+        return None;
     };
     if !realm_id.is_empty() && realm_id != signed_realm_id {
-        return false;
+        return None;
     }
+    let proof =
+        verify_chat_envelope_proof_for_realm(signed_realm_id, event, state_store, decrypt_identity);
     if !matches!(
-        verify_chat_envelope_proof_for_realm(signed_realm_id, event, state_store, decrypt_identity),
+        proof,
         ChatProofVerdict::Verified | ChatProofVerdict::Unresolved
     ) {
-        return false;
+        return None;
     }
     let Some(scope) = envelope
         .get("scope_ref")
         .and_then(|value| serde_json::from_value::<arkret_sdk::ScopeRef>(value.clone()).ok())
     else {
-        return false;
+        return None;
     };
     match scope {
         arkret_sdk::ScopeRef::Realm {
@@ -733,9 +744,8 @@ fn ordinary_chat_event_scope(
         | arkret_sdk::ScopeRef::Circle {
             realm_id: scope_realm_id,
             ..
-        } => scope_realm_id.as_str() == signed_realm_id,
-        arkret_sdk::ScopeRef::Sidecar { .. } | arkret_sdk::ScopeRef::RealmGenesis => false,
-        _ => false,
+        } if scope_realm_id.as_str() == signed_realm_id => Some(proof),
+        _ => None,
     }
 }
 
@@ -784,22 +794,30 @@ fn fold_event_list_into_chat_messages(
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
     let mut ordinary_events = Vec::new();
+    let mut ordinary_proofs = Vec::new();
     let mut suppressed_targets = std::collections::BTreeSet::new();
     for event in events {
-        if ordinary_chat_event_scope(realm_id, event, state_store, decrypt_identity) {
+        if let Some(proof) =
+            ordinary_chat_event_proof(realm_id, event, state_store, decrypt_identity)
+        {
             ordinary_events.push(event.clone());
+            ordinary_proofs.push(proof);
         } else if let Some(target) = unverified_tombstone_suppression_target(realm_id, event) {
             suppressed_targets.insert(target);
         }
     }
     let mut durable_messages = Vec::new();
     let mut pending_revisions = BTreeMap::<String, Vec<ChatMessage>>::new();
-    for event in &ordinary_events {
+    for (event, proof) in ordinary_events.iter().zip(ordinary_proofs) {
         let candidates = message_candidates(event);
         let revision_target_ref = message_revision_target_ref_from_candidates(&candidates);
-        let Some(message) =
-            chat_message_from_event_with_sidecar(realm_id, event, state_store, decrypt_identity)
-        else {
+        let Some(message) = chat_message_from_event_with_proof(
+            realm_id,
+            event,
+            state_store,
+            decrypt_identity,
+            proof,
+        ) else {
             continue;
         };
         if let Some(target_ref) = revision_target_ref {
@@ -1260,6 +1278,10 @@ pub(crate) fn verified_chat_sender_domain_for_realm(
     {
         return None;
     }
+    chat_sender_domain_from_verified_event(event)
+}
+
+fn chat_sender_domain_from_verified_event(event: &Value) -> Option<Vec<u8>> {
     // Standard content AAD uses the sender leaf's canonical ActorId
     // credential, preserving its Station. The device remains a proof selector
     // and must not replace the credential identity.
@@ -1331,13 +1353,25 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Option<ChatMessage> {
+    let proof =
+        verify_chat_envelope_proof_for_realm(realm_id, event, state_store, decrypt_identity);
+    chat_message_from_event_with_proof(realm_id, event, state_store, decrypt_identity, proof)
+}
+
+/// Reuse only the verdict obtained for these exact immutable bytes within this
+/// synchronous fold. No verdict is persisted or shared across security cuts.
+fn chat_message_from_event_with_proof(
+    realm_id: &str,
+    event: &Value,
+    state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
+    mut proof_verdict: ChatProofVerdict,
+) -> Option<ChatMessage> {
     let candidates = message_candidates(event);
     let is_redaction_tombstone = message_is_redaction_tombstone(&candidates);
     // Receiver proof gate (server-trusted-results.md §2, fail-closed): a
     // producer proof that is not self-consistent MUST NOT enter the
     // conversation view.
-    let mut proof_verdict =
-        verify_chat_envelope_proof_for_realm(realm_id, event, state_store, decrypt_identity);
     let server_projection_tombstone = is_redaction_tombstone
         && event
             .pointer("/unsigned/projection_only")
@@ -1355,9 +1389,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         return None;
     }
     let verified_sender_domain = (proof_verdict == ChatProofVerdict::Verified)
-        .then(|| {
-            verified_chat_sender_domain_for_realm(realm_id, event, state_store, decrypt_identity)
-        })
+        .then(|| chat_sender_domain_from_verified_event(event))
         .flatten();
     let effective_scope = candidates
         .iter()

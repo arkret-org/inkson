@@ -44,6 +44,7 @@ mod scheduled_send_panel;
 mod sidecar_projection;
 mod sidecar_restore;
 mod timeline;
+mod timeline_projection;
 mod timeline_surface;
 
 const PRESENCE_HEARTBEAT_SECS: u64 = 25;
@@ -313,67 +314,8 @@ fn project_visible_messages(
                     .is_none_or(|anchor| visible_source_ids.contains(anchor.as_str()))
             })
     });
-    let mut echoes = visible
-        .iter()
-        .filter_map(|message| {
-            echo_projection_by_event
-                .get(&message.id)
-                .map(|projection| (message.id.clone(), (*projection).clone()))
-        })
-        .collect::<Vec<_>>();
-    if !echoes.is_empty() {
-        let echo_ids = echoes
-            .iter()
-            .map(|(event_id, _)| event_id.as_str())
-            .collect::<std::collections::BTreeSet<_>>();
-        let original = std::mem::take(&mut visible);
-        let mut by_id = original
-            .iter()
-            .cloned()
-            .map(|message| (message.id.clone(), message))
-            .collect::<std::collections::BTreeMap<_, _>>();
-        let mut ordered = original
-            .into_iter()
-            .filter(|message| !echo_ids.contains(message.id.as_str()))
-            .collect::<Vec<_>>();
-        echoes.sort_by(|left, right| {
-            (
-                left.1.source_hlc.to_string(),
-                left.1.exchange_id.as_str(),
-                left.0.as_str(),
-            )
-                .cmp(&(
-                    right.1.source_hlc.to_string(),
-                    right.1.exchange_id.as_str(),
-                    right.0.as_str(),
-                ))
-        });
-        for (event_id, projection) in echoes {
-            let Some(message) = by_id.remove(&event_id) else {
-                continue;
-            };
-            let mut insert_at = projection
-                .source_event_id
-                .as_ref()
-                .and_then(|anchor| {
-                    ordered
-                        .iter()
-                        .rposition(|candidate| candidate.id == anchor.as_str())
-                        .map(|position| position + 1)
-                })
-                .unwrap_or(ordered.len());
-            while projection.source_event_id.is_some()
-                && insert_at < ordered.len()
-                && echo_projection_by_event
-                    .get(&ordered[insert_at].id)
-                    .is_some_and(|existing| existing.source_event_id == projection.source_event_id)
-            {
-                insert_at += 1;
-            }
-            ordered.insert(insert_at, message);
-        }
-        visible = ordered;
-    }
+    visible =
+        timeline_projection::interleave_private_timeline_rows(visible, &echo_projection_by_event);
     visible
 }
 
@@ -1798,8 +1740,11 @@ pub fn ChatPanel(
         }
     });
     let all_channels = channels();
+    let timeline_basis =
+        timeline_projection::use_timeline_projection_basis(state_store, realm_live_epoch);
     let sidecar_timeline = sidecar_projection::use_sidecar_timeline_projection(
         state_store,
+        timeline_basis,
         authority.clone(),
         account_device_id.clone(),
         selected_realm_id.clone(),
@@ -2050,44 +1995,15 @@ pub fn ChatPanel(
     // those unrelated edges can monopolize the WASM main thread once an
     // account has a substantial history, making the entire browser appear
     // hung even though network traffic stays quiet.
-    let all_messages_snapshot = use_memo({
-        let principal_id = principal_id.clone();
-        let authority = authority.clone();
-        let device_id = account_device_id.clone();
-        move || {
-            // These are the durable invalidation edges. `peek` below avoids
-            // treating unrelated LocalStateStore writes (backup metadata,
-            // settings, presence preferences) as a timeline invalidation.
-            let _account_cursor = sync_cursor();
-            let _realm_epoch = realm_live_epoch();
-            // Offline enqueue can persist the final Event identity without
-            // changing the optimistic row or receiving a stream update.
-            let _queued_ids = queued_outbound_local_operation_ids();
-            // Local send completion persists its signed Event and author
-            // sidecar before updating these rows. Observe that edge even when
-            // no account cursor or Realm stream revision has arrived yet.
-            let local_rows = messages.read();
-            let store = state_store.peek();
-            let snapshot = store.load();
-            let decrypt_identity = Some((&authority, principal_id.as_str(), &device_id));
-            let mut folded = fold_local_state_into_chat_messages_with_sidecar(
-                verified_scope_timeline_seed(local_rows.as_slice()),
-                &snapshot,
-                Some(&store),
-                decrypt_identity,
-            );
-            // Account sync also carries the server-folded timeline (notably a
-            // revise event rewritten into a redacted create tombstone). Merge
-            // it after local controls so an older revision cannot win.
-            let server_folded = chat_messages_from_sync_realms_with_sidecar(
-                &snapshot.realm_tree_projections,
-                Some(&store),
-                decrypt_identity,
-            );
-            merge_chat_messages(&mut folded, server_folded);
-            position_local_timeline_rows(folded)
-        }
-    });
+    let all_messages_snapshot = timeline_projection::use_ordinary_timeline_projection(
+        state_store,
+        timeline_basis,
+        messages,
+        principal_id.clone(),
+        authority.clone(),
+        account_device_id.clone(),
+        crate::identity::device_directory::session_cache_epoch(),
+    );
     let mut all_messages_snapshot = all_messages_snapshot.read().clone();
     merge_chat_messages(&mut all_messages_snapshot, private_timeline.messages);
     let sidecar_projection: Option<&str> = sidecar_session
@@ -2129,12 +2045,7 @@ pub fn ChatPanel(
         if left_open { "" } else { " left-collapsed" },
         if right_open { "" } else { " right-collapsed" }
     );
-    let participant_projection = state_store
-        .read()
-        .load()
-        .realm_tree_projections
-        .get(&selected_realm_id)
-        .cloned();
+    let participant_projection = state_store.read().realm_tree_projection(&selected_realm_id);
     let account_display_label = account_display_name();
     let mut participants = space_participants(
         participant_projection.as_ref(),

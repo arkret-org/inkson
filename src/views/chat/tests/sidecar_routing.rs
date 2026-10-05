@@ -464,3 +464,189 @@ fn sidecar_native_message_never_appears_in_the_source_without_a_projection() {
 
     assert!(project_visible_messages(&messages, source, realm, None, &[], true).is_empty());
 }
+
+fn timeline_exchange_fixture(
+    request: &str,
+    response: &str,
+) -> arkret_sdk::AgentSidecarExchangeProjection {
+    let request = arkret_sdk::EventId::new(request).unwrap();
+    let response = arkret_sdk::EventId::new(response).unwrap();
+    let agent =
+        crate::mls_api_helpers::principal_core_id("did:web:example.test:agents:assistant").unwrap();
+    arkret_sdk::AgentSidecarExchangeProjection {
+        schema: arkret_sdk::SchemaId::AGENT_SIDECAR_EXCHANGE_PROJECTION_V1.to_owned(),
+        controller_account_id: local_fixture_account("did:web:alice.example"),
+        sidecar_id: arkret_sdk::SidecarId::new(
+            "ak:sidecar:AWea2MtI5dOI1LSRyI266_gQVrWUd0po0dxZiJNsH8kN",
+        )
+        .unwrap(),
+        exchange_id: "exchange-display-fixture".to_owned(),
+        source_track_ref: arkret_sdk::SidecarSourceTrackRef {
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5",
+            )
+            .unwrap(),
+            strand_id: arkret_sdk::StrandId::new(
+                "ak:strand:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N",
+            )
+            .unwrap(),
+            track_name: "discussion".to_owned(),
+        },
+        source_event_id: None,
+        source_hlc: arkret_sdk::Hlc::from_components(10_000, 0, "a13f9c2e").unwrap(),
+        client_order_key: "display-fixture".to_owned(),
+        addressed_agent_ids: vec![agent.clone()],
+        coordinator_agent_id: agent.clone(),
+        coordinator_assignment_event_id: request.clone(),
+        participating_agent_ids: vec![agent],
+        private_request_event_id: request.clone(),
+        user_facing_response_event_ids: vec![response.clone()],
+        status: arkret_sdk::AgentSidecarExchangeStatus::Responding,
+        failure_reason_code: None,
+        terminal_event_id: None,
+        folded_checkpoint: arkret_sdk::AgentSidecarFoldedCheckpoint {
+            event_ids: vec![request, response],
+            event_set_digest: arkret_sdk::Hash::new(format!("sha256:{}", "00".repeat(32))).unwrap(),
+            max_hlc: arkret_sdk::Hlc::from_components(15_000, 0, "a13f9c2e").unwrap(),
+        },
+    }
+}
+
+#[test]
+fn new_ordinary_messages_follow_older_private_history_in_the_merged_feed() {
+    let request = "ak:event:ATrYU3cGlcWkAcHXWgJ8sIYfraoV9pIwEHNNStEqHvFh";
+    let response = "ak:event:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc";
+    let projection = timeline_exchange_fixture(request, response);
+    projection.validate_shape().unwrap();
+    let realm = projection.source_track_ref.realm_id.as_str();
+    let source = projection.source_track_ref.strand_id.as_str();
+    let row = |id, seconds| {
+        let mut row = sidecar_projection_message_for_realm(realm, id, source, id);
+        row.created_at = chrono::DateTime::from_timestamp(seconds, 0);
+        row
+    };
+    let mut request_row = row(request, 10);
+    request_row.created_at = None;
+    let rows = vec![
+        row("ordinary-old", 20),
+        row("ordinary-new", 30),
+        request_row,
+        row(response, 15),
+    ];
+    let projected = project_visible_messages(
+        &rows,
+        source,
+        realm,
+        None,
+        std::slice::from_ref(&projection),
+        true,
+    );
+    assert_eq!(
+        projected
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![request, response, "ordinary-old", "ordinary-new"]
+    );
+    assert_eq!(
+        project_visible_messages(
+            &rows,
+            source,
+            realm,
+            None,
+            std::slice::from_ref(&projection),
+            false
+        )
+        .iter()
+        .map(|row| row.id.as_str())
+        .collect::<Vec<_>>(),
+        vec!["ordinary-old", "ordinary-new"]
+    );
+}
+
+#[test]
+fn merged_feed_preserves_both_stream_orders_despite_clock_skew() {
+    let request = "ak:event:ATrYU3cGlcWkAcHXWgJ8sIYfraoV9pIwEHNNStEqHvFh";
+    let response = "ak:event:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc";
+    let projection = timeline_exchange_fixture(request, response);
+    let realm = projection.source_track_ref.realm_id.as_str();
+    let source = projection.source_track_ref.strand_id.as_str();
+    let row = |id, seconds| {
+        let mut row = sidecar_projection_message_for_realm(realm, id, source, id);
+        row.created_at = chrono::DateTime::from_timestamp(seconds, 0);
+        row
+    };
+    let rows = vec![
+        row("ordinary-first", 20),
+        row("ordinary-second", 5),
+        row(request, 10),
+        row(response, 1),
+    ];
+    let projected = project_visible_messages(
+        &rows,
+        source,
+        realm,
+        None,
+        std::slice::from_ref(&projection),
+        true,
+    );
+    assert_eq!(
+        projected
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![request, response, "ordinary-first", "ordinary-second"]
+    );
+}
+
+#[test]
+fn private_echo_stays_after_its_source_anchor_but_before_future_ordinary_messages() {
+    let request = "ak:event:ATrYU3cGlcWkAcHXWgJ8sIYfraoV9pIwEHNNStEqHvFh";
+    let response = "ak:event:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc";
+    let anchor_id = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [11; 32]);
+    let anchor = anchor_id.as_str();
+    let mut projection = timeline_exchange_fixture(request, response);
+    projection.source_event_id = Some(anchor_id.clone());
+    let realm = projection.source_track_ref.realm_id.as_str();
+    let source = projection.source_track_ref.strand_id.as_str();
+    let row = |id, seconds| {
+        let mut row = sidecar_projection_message_for_realm(realm, id, source, id);
+        row.created_at = chrono::DateTime::from_timestamp(seconds, 0);
+        row
+    };
+    let rows = vec![
+        row(anchor, 20),
+        row("ordinary-new", 30),
+        row(request, 10),
+        row(response, 15),
+    ];
+    let projected = project_visible_messages(
+        &rows,
+        source,
+        realm,
+        None,
+        std::slice::from_ref(&projection),
+        true,
+    );
+    assert_eq!(
+        projected
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![anchor, request, response, "ordinary-new"]
+    );
+    let without_anchor = rows
+        .into_iter()
+        .filter(|row| row.id != anchor)
+        .collect::<Vec<_>>();
+    let projected = project_visible_messages(
+        &without_anchor,
+        source,
+        realm,
+        None,
+        std::slice::from_ref(&projection),
+        true,
+    );
+    assert_eq!(projected.len(), 1);
+    assert_eq!(projected[0].id, "ordinary-new");
+}

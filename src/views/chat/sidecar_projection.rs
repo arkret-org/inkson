@@ -22,6 +22,7 @@ thread_local! {
 /// panel and send-status repaints must not restore and verify private history.
 pub(super) fn use_sidecar_timeline_projection(
     state_store: SyncSignal<LocalStateStore>,
+    timeline_basis: Memo<super::timeline_projection::TimelineProjectionBasis>,
     authority: arkret_sdk::AccountId,
     device: arkret_sdk::DeviceId,
     realm: String,
@@ -30,9 +31,10 @@ pub(super) fn use_sidecar_timeline_projection(
     use_memo(use_reactive(
         (&authority, &device, &realm, &evidence_epoch),
         move |(authority, device, realm, _)| {
+            let _basis = timeline_basis.read();
             #[cfg(test)]
             PROJECTION_BUILDS.with(|count| count.set(count.get() + 1));
-            let store = state_store.read();
+            let store = state_store.peek();
             let (current, closes) =
                 match crate::sidecar_fold::rebuild_with_closes(&store, &authority, &realm) {
                     Ok((projections, closes)) => (Ok(projections), closes),

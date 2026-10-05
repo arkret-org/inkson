@@ -90,10 +90,15 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
     let scroll_offset_key_for_event = scroll_offset_key.clone();
     let mut scroll_restored = use_signal(|| false);
     let state_store = crate::app::SessionContext::get().state_store;
-    let queued_message_identities = crate::event_submit::pending_chat_message_identities(
-        &(controller.queued_outbound_local_operation_ids)(),
-        &state_store.peek().load(),
-    );
+    let queued_local_ids = (controller.queued_outbound_local_operation_ids)();
+    let queued_message_identities = if queued_local_ids.is_empty() {
+        std::collections::BTreeSet::new()
+    } else {
+        crate::event_submit::pending_chat_message_identities(
+            &queued_local_ids,
+            &state_store.peek().load(),
+        )
+    };
     let command_context = ChatCommandContext {
         base_url: base_url.clone(),
         authority,

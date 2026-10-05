@@ -308,17 +308,30 @@ impl LocalStateStore {
         match effective_scope {
             arkret_sdk::ScopeRef::Sidecar { .. } => {
                 let prefix = format!("{}\u{1f}", mls_scope_checkpoint_key(effective_scope).ok()?);
-                self.load()
-                    .mls_local_checkpoints
-                    .iter()
-                    .filter(|(key, _)| key.starts_with(&prefix))
-                    .map(|(_, snapshot)| snapshot)
-                    .max_by_key(|snapshot| snapshot.epoch)
-                    .cloned()
+                self.with_mls_receive_fields(|state, overlay| {
+                    state
+                        .mls_local_checkpoints
+                        .iter()
+                        .filter(|(key, _)| !overlay.snapshots.contains_key(*key))
+                        .chain(overlay.snapshots.iter())
+                        .filter(|(key, _)| key.starts_with(&prefix))
+                        .max_by(|(left_key, left), (right_key, right)| {
+                            left.epoch
+                                .cmp(&right.epoch)
+                                .then_with(|| left_key.cmp(right_key))
+                        })
+                        .map(|(_, snapshot)| snapshot.clone())
+                })
             }
             _ => {
                 let key = mls_scope_checkpoint_key(effective_scope).ok()?;
-                self.load().mls_local_checkpoints.get(&key).cloned()
+                self.with_mls_receive_fields(|state, overlay| {
+                    overlay
+                        .snapshots
+                        .get(&key)
+                        .or_else(|| state.mls_local_checkpoints.get(&key))
+                        .cloned()
+                })
             }
         }
     }
@@ -375,7 +388,13 @@ impl LocalStateStore {
         group_id: &str,
     ) -> Option<crate::mls::persistence::MlsLocalCheckpointEnvelope> {
         let key = mls_scope_checkpoint_key_for_group(effective_scope, group_id).ok()?;
-        self.load().mls_local_checkpoints.get(&key).cloned()
+        self.with_mls_receive_fields(|state, overlay| {
+            overlay
+                .snapshots
+                .get(&key)
+                .or_else(|| state.mls_local_checkpoints.get(&key))
+                .cloned()
+        })
     }
 
     pub(crate) fn staged_mls_checkpoint_for_scope_and_group(
@@ -383,8 +402,7 @@ impl LocalStateStore {
         effective_scope: &arkret_sdk::ScopeRef,
         group_id: &str,
     ) -> Option<crate::mls::persistence::MlsLocalCheckpointEnvelope> {
-        let key = mls_scope_checkpoint_key_for_group(effective_scope, group_id).ok()?;
-        self.load().mls_local_checkpoints.get(&key).cloned()
+        self.mls_checkpoint_for_scope_and_group(effective_scope, group_id)
     }
 
     pub fn historical_mls_checkpoint_for_scope(
@@ -395,10 +413,9 @@ impl LocalStateStore {
     ) -> Option<crate::mls::persistence::MlsLocalCheckpointEnvelope> {
         let scope_key = mls_scope_checkpoint_key_for_group(effective_scope, group_id).ok()?;
         let history_key = historical_mls_state_key(&scope_key, group_id, epoch);
-        self.load()
-            .mls_historical_checkpoints
-            .get(&history_key)
-            .cloned()
+        self.with_unoverlaid_account_fields(|state| {
+            state.mls_historical_checkpoints.get(&history_key).cloned()
+        })
     }
 
     /// Snapshot of every persisted MLS envelope. Used by the boot
@@ -462,23 +479,19 @@ impl LocalStateStore {
         payload_digest: &str,
     ) -> Option<Vec<u8>> {
         use base64::Engine as _;
-        let encoded = {
-            let overlay = self.lock_mls_receive_overlay();
+        let encoded = self.with_mls_receive_fields(|state, overlay| {
             overlay
                 .plaintexts
                 .get(realm_id)
                 .and_then(|entries| entries.get(payload_digest))
+                .or_else(|| {
+                    state
+                        .mls_decrypted_plaintext
+                        .get(realm_id)?
+                        .get(payload_digest)
+                })
                 .cloned()
-        };
-        let encoded = match encoded {
-            Some(encoded) => encoded,
-            None => self
-                .load()
-                .mls_decrypted_plaintext
-                .get(realm_id)?
-                .get(payload_digest)?
-                .clone(),
-        };
+        })?;
         base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(encoded.as_bytes())
             .ok()
@@ -811,50 +824,52 @@ impl LocalStateStore {
         epoch: u64,
     ) -> Result<arkret_sdk::EventId, String> {
         let key = mls_scope_checkpoint_key_for_group(effective_scope, group_id)?;
-        let state = self.load();
-        let record = state
-            .mls_group_state_refs
-            .get(&key)
-            .filter(|record| record.group_id == group_id && record.epoch == epoch)
-            .cloned()
-            .or_else(|| {
-                let history_key = historical_mls_state_key(&key, group_id, epoch);
-                state
-                    .mls_historical_group_state_refs
-                    .get(&history_key)
-                    .cloned()
-            })
-            .or_else(|| {
-                state
-                    .mls_local_checkpoints
-                    .get(&key)
-                    .filter(|snapshot| snapshot.group_id == group_id && snapshot.epoch == epoch)
-                    .and_then(|snapshot| {
-                        snapshot.group_state_event_id.clone().map(|event_id| {
-                            MlsGroupStateRefRecord {
-                                group_id: snapshot.group_id.clone(),
-                                epoch: snapshot.epoch,
-                                event_id,
-                            }
+        let record = self.with_mls_receive_fields(|state, overlay| {
+            state
+                .mls_group_state_refs
+                .get(&key)
+                .filter(|record| record.group_id == group_id && record.epoch == epoch)
+                .cloned()
+                .or_else(|| {
+                    let history_key = historical_mls_state_key(&key, group_id, epoch);
+                    state
+                        .mls_historical_group_state_refs
+                        .get(&history_key)
+                        .cloned()
+                })
+                .or_else(|| {
+                    overlay
+                        .snapshots
+                        .get(&key)
+                        .or_else(|| state.mls_local_checkpoints.get(&key))
+                        .filter(|snapshot| snapshot.group_id == group_id && snapshot.epoch == epoch)
+                        .and_then(|snapshot| {
+                            snapshot.group_state_event_id.clone().map(|event_id| {
+                                MlsGroupStateRefRecord {
+                                    group_id: snapshot.group_id.clone(),
+                                    epoch: snapshot.epoch,
+                                    event_id,
+                                }
+                            })
                         })
-                    })
-            })
-            .or_else(|| {
-                let history_key = historical_mls_state_key(&key, group_id, epoch);
-                state
-                    .mls_historical_checkpoints
-                    .get(&history_key)
-                    .filter(|snapshot| snapshot.group_id == group_id && snapshot.epoch == epoch)
-                    .and_then(|snapshot| {
-                        snapshot.group_state_event_id.clone().map(|event_id| {
-                            MlsGroupStateRefRecord {
-                                group_id: snapshot.group_id.clone(),
-                                epoch: snapshot.epoch,
-                                event_id,
-                            }
+                })
+                .or_else(|| {
+                    let history_key = historical_mls_state_key(&key, group_id, epoch);
+                    state
+                        .mls_historical_checkpoints
+                        .get(&history_key)
+                        .filter(|snapshot| snapshot.group_id == group_id && snapshot.epoch == epoch)
+                        .and_then(|snapshot| {
+                            snapshot.group_state_event_id.clone().map(|event_id| {
+                                MlsGroupStateRefRecord {
+                                    group_id: snapshot.group_id.clone(),
+                                    epoch: snapshot.epoch,
+                                    event_id,
+                                }
+                            })
                         })
-                    })
-            });
+                })
+        });
         let record = record.ok_or_else(|| {
             format!(
                 "accepted MLS group-state Event is unavailable for scope {key} at epoch {epoch}"
@@ -1135,13 +1150,15 @@ impl LocalStateStore {
         strand_id: &str,
         field_path: &str,
     ) -> Option<String> {
-        self.load()
-            .mls_private_plaintext
-            .get(realm_id.trim())
-            .and_then(|strands| strands.get(strand_id.trim()))
-            .and_then(|fields| fields.get(field_path.trim()))
-            .filter(|plaintext| !plaintext.is_empty())
-            .cloned()
+        self.with_unoverlaid_account_fields(|state| {
+            state
+                .mls_private_plaintext
+                .get(realm_id.trim())
+                .and_then(|strands| strands.get(strand_id.trim()))
+                .and_then(|fields| fields.get(field_path.trim()))
+                .filter(|plaintext| !plaintext.is_empty())
+                .cloned()
+        })
     }
 
     /// X5.3 — serialize the ENTIRE local-plaintext sidecar map
@@ -1150,14 +1167,16 @@ impl LocalStateStore {
     /// when no sidecar entries exist, so callers can cheaply detect "nothing to
     /// back up" via [`Self::private_plaintext_is_empty`] first.
     pub fn private_plaintext_snapshot_json(&self) -> Vec<u8> {
-        serde_json::to_vec(&self.load().mls_private_plaintext).unwrap_or_else(|_| b"{}".to_vec())
+        self.with_unoverlaid_account_fields(|state| {
+            serde_json::to_vec(&state.mls_private_plaintext).unwrap_or_else(|_| b"{}".to_vec())
+        })
     }
 
     /// X5.3 — true when the sidecar holds no plaintext for any Realm/strand/field.
     /// Used to skip the cross-device backup upload when there is nothing to
     /// protect.
     pub fn private_plaintext_is_empty(&self) -> bool {
-        self.load().mls_private_plaintext.is_empty()
+        self.with_unoverlaid_account_fields(|state| state.mls_private_plaintext.is_empty())
     }
 
     /// X5.3 — merge an incoming sidecar map (decrypted from a cross-device
@@ -1365,6 +1384,218 @@ mod tests {
 
     fn checkpoint(epoch: u64, body: &[u8]) -> crate::mls::persistence::MlsLocalCheckpointEnvelope {
         crate::mls::persistence::encrypt_state(REALM, "AQID", epoch, body, "test-secret", &[7; 16])
+    }
+
+    #[test]
+    fn field_reads_borrow_only_the_hydrated_active_account() {
+        let (mut store, _) = temp_store("borrowed-fields");
+        store.ensure_cached_loaded();
+        store.with_unoverlaid_account_fields(|state| {
+            assert!(std::ptr::eq(state, &store.cached));
+        });
+        store.with_mls_receive_fields(|state, _| {
+            assert!(std::ptr::eq(state, &store.cached));
+        });
+
+        store.cached.realm_tree_projections.insert(
+            REALM.to_owned(),
+            json!({"retired": "ak.profile.mls.minimal_metadata_realm.v1"}),
+        );
+        store.cached.mls_private_plaintext.insert(
+            REALM.to_owned(),
+            std::collections::BTreeMap::from([(
+                "strand".to_owned(),
+                std::collections::BTreeMap::from([("body".to_owned(), "author text".to_owned())]),
+            )]),
+        );
+        assert!(store.realm_projection_has_retired_minimal_metadata_marker(REALM));
+        assert!(store.realm_tree_projection(REALM).is_some());
+        assert_eq!(
+            store.private_plaintext_for(&format!(" {REALM} "), " strand ", " body "),
+            Some("author text".to_owned())
+        );
+        assert!(!store.private_plaintext_is_empty());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&store.private_plaintext_snapshot_json())
+                .unwrap(),
+            json!({REALM: {"strand": {"body": "author text"}}})
+        );
+
+        store
+            .loaded
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        assert!(!store.realm_projection_has_retired_minimal_metadata_marker(REALM));
+        assert!(store.realm_tree_projection(REALM).is_none());
+        assert!(
+            store
+                .private_plaintext_for(REALM, "strand", "body")
+                .is_none()
+        );
+        store
+            .loaded
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        store.cached_account_key = Some("another-account".to_owned());
+        *store.current_view.lock().unwrap() = Some(super::super::CurrentProductView {
+            account_key: store.cached_account_key.clone(),
+            view: crate::current_projection::RealmCurrentView {
+                realm_id: REALM.to_owned(),
+                entries: Vec::new(),
+                complete_cut: true,
+            },
+            required_ready: true,
+        });
+        assert!(store.current_product_view().is_none());
+        assert!(!store.current_product_view_ready(REALM));
+        store.with_unoverlaid_account_fields(|state| {
+            assert!(!std::ptr::eq(state, &store.cached));
+        });
+        store.with_mls_receive_fields(|state, _| {
+            assert!(!std::ptr::eq(state, &store.cached));
+        });
+        assert!(!store.realm_projection_has_retired_minimal_metadata_marker(REALM));
+        assert!(store.realm_tree_projection(REALM).is_none());
+        assert!(
+            store
+                .private_plaintext_for(REALM, "strand", "body")
+                .is_none()
+        );
+        assert!(store.private_plaintext_is_empty());
+    }
+
+    #[test]
+    fn receive_field_reads_preserve_overlay_precedence_without_absorbing_it() {
+        use base64::Engine as _;
+        let (mut store, _) = temp_store("overlay-fields");
+        store.ensure_cached_loaded();
+        let scope = realm_scope();
+        let key = super::mls_scope_checkpoint_key(&scope).unwrap();
+        store
+            .cached
+            .mls_local_checkpoints
+            .insert(key.clone(), checkpoint(1, b"base"));
+        let historical_key = super::historical_mls_state_key(&key, "AQID", 0);
+        store
+            .cached
+            .mls_historical_checkpoints
+            .insert(historical_key, checkpoint(0, b"historical"));
+        let encode = |text: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(text);
+        store.cached.mls_decrypted_plaintext.insert(
+            REALM.to_owned(),
+            std::collections::BTreeMap::from([
+                ("digest".to_owned(), encode(b"base text")),
+                ("base-only".to_owned(), encode(b"base only")),
+            ]),
+        );
+        let mut advanced = checkpoint(2, b"advanced");
+        advanced.group_state_event_id = Some(event_id("bbbb"));
+        {
+            let mut overlay = store.lock_mls_receive_overlay();
+            overlay.snapshots.insert(key.clone(), advanced);
+            overlay.plaintexts.insert(
+                REALM.to_owned(),
+                std::collections::BTreeMap::from([("digest".to_owned(), encode(b"overlay text"))]),
+            );
+        }
+        assert_eq!(store.mls_checkpoint_for_scope(&scope).unwrap().epoch, 2);
+        assert_eq!(
+            store
+                .historical_mls_checkpoint_for_scope(&scope, "AQID", 0)
+                .unwrap()
+                .epoch,
+            0
+        );
+        assert_eq!(
+            store
+                .mls_checkpoint_for_scope_and_group(&scope, "AQID")
+                .unwrap()
+                .epoch,
+            2
+        );
+        assert_eq!(
+            store
+                .staged_mls_checkpoint_for_scope_and_group(&scope, "AQID")
+                .unwrap()
+                .epoch,
+            2
+        );
+        assert_eq!(
+            store
+                .mls_group_state_ref_for_scope(&scope, "AQID", 2)
+                .unwrap(),
+            event_id("bbbb")
+        );
+        assert_eq!(
+            store.mls_decrypted_plaintext_for(REALM, "digest"),
+            Some(b"overlay text".to_vec())
+        );
+        assert_eq!(
+            store.mls_decrypted_plaintext_for(REALM, "base-only"),
+            Some(b"base only".to_vec())
+        );
+        assert!(
+            store
+                .mls_decrypted_plaintext_for("foreign-realm", "digest")
+                .is_none()
+        );
+        assert_eq!(
+            store.cached.mls_local_checkpoints.get(&key).unwrap().epoch,
+            1
+        );
+        assert!(!store.lock_mls_receive_overlay().is_empty());
+
+        store.cached_account_key = Some("another-account".to_owned());
+        assert_eq!(store.mls_checkpoint_for_scope(&scope).unwrap().epoch, 2);
+        assert!(
+            store
+                .historical_mls_checkpoint_for_scope(&scope, "AQID", 0)
+                .is_none()
+        );
+        assert!(
+            store
+                .mls_decrypted_plaintext_for(REALM, "base-only")
+                .is_none()
+        );
+        assert_eq!(
+            store.mls_decrypted_plaintext_for(REALM, "digest"),
+            Some(b"overlay text".to_vec())
+        );
+    }
+
+    #[test]
+    fn sidecar_checkpoint_overlay_selection_matches_the_merged_snapshot_order() {
+        let (mut store, _) = temp_store("sidecar-overlay-order");
+        store.ensure_cached_loaded();
+        let scope = arkret_sdk::ScopeRef::Sidecar {
+            realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+            sidecar_id: arkret_sdk::SidecarId::from_event_id(&event_id("aaaa")),
+        };
+        let prefix = super::mls_scope_checkpoint_key(&scope).unwrap();
+        let first = format!("{prefix}\u{1f}a");
+        let last = format!("{prefix}\u{1f}z");
+        store
+            .cached
+            .mls_local_checkpoints
+            .insert(first.clone(), checkpoint(9, b"shadowed"));
+        store
+            .cached
+            .mls_local_checkpoints
+            .insert(last.clone(), checkpoint(2, b"last"));
+        store
+            .lock_mls_receive_overlay()
+            .snapshots
+            .insert(first, checkpoint(2, b"first"));
+        let expected = store
+            .load()
+            .mls_local_checkpoints
+            .get(&last)
+            .unwrap()
+            .clone();
+        let actual = store.mls_checkpoint_for_scope(&scope).unwrap();
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        assert!(store.mls_checkpoint_for_scope(&realm_scope()).is_none());
     }
 
     #[tokio::test]

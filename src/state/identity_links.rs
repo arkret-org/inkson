@@ -13,7 +13,13 @@ impl LocalStateStore {
         leaf_index: u64,
     ) -> Option<LocallyAuthenticatedIdentityLink> {
         let key = identity_link_cache_key(realm_id.as_str(), group_id, epoch, leaf_index);
-        self.load().authenticated_identity_links.get(&key).cloned()
+        self.with_mls_receive_fields(|state, overlay| {
+            overlay
+                .identity_links
+                .get(&key)
+                .or_else(|| state.authenticated_identity_links.get(&key))
+                .cloned()
+        })
     }
 
     pub(crate) fn cache_locally_authenticated_identity_link(

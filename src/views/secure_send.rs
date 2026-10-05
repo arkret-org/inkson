@@ -650,6 +650,7 @@ pub(crate) async fn submit_secure_send(
             };
             return match crate::views::chat::model::send_ordinary_chat_message(
                 api,
+                crate::app::runtime_adapter::state_store_handle(state_store),
                 realm_id,
                 effective_scope,
                 &authoring.strand_id,

@@ -547,183 +547,222 @@ pub(super) fn send_plaintext_message(
     let mut state_store = crate::app::SessionContext::get().state_store;
     // A verified-current refresh can replace the composer send Button.
     // Its in-flight write belongs to the controller's message list.
-    dioxus::core::Runtime::current().spawn(messages.origin_scope(), async move {
-        let PlaintextSendRequest {
-            base_url,
-            api_token,
-            wait_for,
-            realm_id,
-            circle_id,
-            strand_id,
-            actor,
-            local_id,
-            body,
-            reply_to,
-            mentions,
-            shared_agent_targets,
-        } = request;
-        if let Some(found) = messages
-            .write()
-            .iter_mut()
-            .find(|candidate| candidate.matches_id_or_protocol(&local_id))
-        {
-            found.mentions = mentions.clone();
-        }
-        if let Err(error) = crate::transport::agent_interaction::require_public_targets(
-            &base_url,
-            api_token.clone(),
-            &realm_id,
-            shared_agent_targets.clone(),
-        )
-        .await
-        {
-            fail_optimistic_chat_send(
-                messages,
-                chat_draft,
-                status_msg,
-                &local_id,
+    dioxus::core::Runtime::current().in_scope(messages.origin_scope(), || {
+        dioxus::core::spawn(async move {
+            let PlaintextSendRequest {
+                base_url,
+                api_token,
+                wait_for,
+                realm_id,
+                circle_id,
+                strand_id,
+                actor,
+                local_id,
+                body,
+                reply_to,
+                mentions,
+                shared_agent_targets,
+            } = request;
+            if let Some(found) = messages
+                .write()
+                .iter_mut()
+                .find(|candidate| candidate.matches_id_or_protocol(&local_id))
+            {
+                found.mentions = mentions.clone();
+            }
+            if let Err(error) = crate::transport::agent_interaction::require_public_targets(
+                &base_url,
+                api_token.clone(),
+                &realm_id,
+                shared_agent_targets.clone(),
+            )
+            .await
+            {
+                fail_optimistic_chat_send(
+                    messages,
+                    chat_draft,
+                    status_msg,
+                    &local_id,
+                    &body,
+                    format!("Send blocked: {error:#}"),
+                );
+                return;
+            }
+            let content = match chat_content_block_for_body_with_upload(
+                &base_url,
+                api_token.clone(),
+                wait_for.clone(),
+                &realm_id,
                 &body,
-                format!("Send blocked: {error:#}"),
-            );
-            return;
-        }
-        let content = match chat_content_block_for_body_with_upload(
-            &base_url,
-            api_token.clone(),
-            wait_for.clone(),
-            &realm_id,
-            &body,
-        )
-        .await
-        {
-            Ok(content) => content,
-            Err(error) => {
-                fail_optimistic_send_row(messages, &local_id, format!("send failed: {error:#}"));
-                status_msg.set(format!("send failed: {error:#}"));
-                return;
-            }
-        };
-        if let Err(error) = crate::transport::agent_interaction::require_public_targets(
-            &base_url,
-            api_token.clone(),
-            &realm_id,
-            shared_agent_targets,
-        )
-        .await
-        {
-            fail_optimistic_chat_send(
-                messages,
-                chat_draft,
-                status_msg,
-                &local_id,
-                &body,
-                format!("Send blocked: {error:#}"),
-            );
-            return;
-        }
-        let content = match chat_content_with_mentions(&body, content, &mentions) {
-            Ok(content) => content,
-            Err(error) => {
-                fail_optimistic_send_row(messages, &local_id, format!("send failed: {error:#}"));
-                status_msg.set(format!("send failed: {error:#}"));
-                return;
-            }
-        };
-        let content_for_store = serde_json::to_value(&content).unwrap_or(serde_json::Value::Null);
-        let local_operation_id =
-            crate::operation::LocalOperationId::from_holder_key(local_id.clone()).to_string();
-        let api = match authed_api_with_sync(&base_url, api_token, wait_for) {
-            Ok(api) => api,
-            Err(error) => {
-                fail_optimistic_send_row(messages, &local_id, format!("send failed: {error:#}"));
-                status_msg.set(format!("send failed: {error:#}"));
-                return;
-            }
-        };
-        let scope =
-            match arkret_sdk::RealmId::new(realm_id.clone()).and_then(|realm_id| match circle_id {
-                Some(circle_id) => arkret_sdk::CircleId::new(circle_id).map(|circle_id| {
-                    arkret_sdk::ScopeRef::Circle {
-                        realm_id,
-                        circle_id,
-                    }
-                }),
-                None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
-            }) {
-                Ok(scope) => scope,
+            )
+            .await
+            {
+                Ok(content) => content,
                 Err(error) => {
-                    fail_optimistic_send_row(messages, &local_id, format!("send failed: {error}"));
-                    status_msg.set(format!("send failed: {error}"));
+                    fail_optimistic_send_row(
+                        messages,
+                        &local_id,
+                        format!("send failed: {error:#}"),
+                    );
+                    status_msg.set(format!("send failed: {error:#}"));
                     return;
                 }
             };
-        // The §4.5 mention-routing sidecar exists so an encrypted Realm can
-        // route a notification without revealing the mentioned DID. A
-        // plaintext send already carries `mentions` in the clear, so it gets
-        // no sidecar.
-        let mention_values_for_store = mention_nodes_to_values(&mentions);
-        match send_ordinary_chat_message(
-            &api,
-            &realm_id,
-            scope,
-            &strand_id,
-            arkret_sdk::MessageAuthoringContent::Plaintext {
-                content,
-                metadata: None,
-            },
-            reply_to.as_deref(),
-            local_operation_id.clone(),
-        )
-        .await
-        {
-            Ok(resp) => {
-                match serde_json::to_value(AcceptedChatMessageOperation {
-                    event_id: &resp.event_id,
-                    kind: event_kind_str::MESSAGE_CREATE,
-                    actor_id: &actor,
-                    body: &body,
-                    content: &content_for_store,
-                    strand_id: &strand_id,
-                    message_id: &local_id,
-                    mentions: &mention_values_for_store,
-                    reply_to: reply_to.as_deref(),
-                    status: &resp.status,
-                }) {
-                    Ok(raw_operation) => state_store.write().append_raw_operation(
-                        local_operation_id.clone(),
-                        Some(realm_id),
-                        raw_operation,
-                    ),
-                    Err(error) => tracing::error!(
-                        %error,
-                        event_id = %resp.event_id,
-                        "accepted chat operation could not be cached"
-                    ),
-                }
-                if let Some(found) = messages
-                    .write()
-                    .iter_mut()
-                    .find(|candidate| candidate.matches_id_or_protocol(&local_id))
-                {
-                    found.id = resp.event_id.clone();
-                    found.pending = false;
-                    found.failed = false;
-                    found.error = None;
-                }
-                frontier_state.set(resp.event_id.clone());
-                status_msg.set("Message sent".to_owned());
-            }
-            Err(failure) => {
-                tracing::warn!(
-                    event_id = %local_id,
-                    error = %failure,
-                    "chat send did not reach an accepted result"
+            if let Err(error) = crate::transport::agent_interaction::require_public_targets(
+                &base_url,
+                api_token.clone(),
+                &realm_id,
+                shared_agent_targets,
+            )
+            .await
+            {
+                fail_optimistic_chat_send(
+                    messages,
+                    chat_draft,
+                    status_msg,
+                    &local_id,
+                    &body,
+                    format!("Send blocked: {error:#}"),
                 );
-                present_chat_send_failure(
-                    messages, status_msg, chat_draft, &local_id, &body, &failure,
-                );
+                return;
             }
-        }
+            let content = match chat_content_with_mentions(&body, content, &mentions) {
+                Ok(content) => content,
+                Err(error) => {
+                    fail_optimistic_send_row(
+                        messages,
+                        &local_id,
+                        format!("send failed: {error:#}"),
+                    );
+                    status_msg.set(format!("send failed: {error:#}"));
+                    return;
+                }
+            };
+            let content_for_store =
+                serde_json::to_value(&content).unwrap_or(serde_json::Value::Null);
+            let local_operation_id =
+                crate::operation::LocalOperationId::from_holder_key(local_id.clone()).to_string();
+            let api = match authed_api_with_sync(&base_url, api_token, wait_for) {
+                Ok(api) => api,
+                Err(error) => {
+                    fail_optimistic_send_row(
+                        messages,
+                        &local_id,
+                        format!("send failed: {error:#}"),
+                    );
+                    status_msg.set(format!("send failed: {error:#}"));
+                    return;
+                }
+            };
+            let scope =
+                match arkret_sdk::RealmId::new(realm_id.clone()).and_then(
+                    |realm_id| match circle_id {
+                        Some(circle_id) => arkret_sdk::CircleId::new(circle_id).map(|circle_id| {
+                            arkret_sdk::ScopeRef::Circle {
+                                realm_id,
+                                circle_id,
+                            }
+                        }),
+                        None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
+                    },
+                ) {
+                    Ok(scope) => scope,
+                    Err(error) => {
+                        fail_optimistic_send_row(
+                            messages,
+                            &local_id,
+                            format!("send failed: {error}"),
+                        );
+                        status_msg.set(format!("send failed: {error}"));
+                        return;
+                    }
+                };
+            // The §4.5 mention-routing sidecar exists so an encrypted Realm can
+            // route a notification without revealing the mentioned DID. A
+            // plaintext send already carries `mentions` in the clear, so it gets
+            // no sidecar.
+            let mention_values_for_store = mention_nodes_to_values(&mentions);
+            match send_ordinary_chat_message(
+                &api,
+                crate::app::runtime_adapter::state_store_handle(state_store),
+                &realm_id,
+                scope,
+                &strand_id,
+                arkret_sdk::MessageAuthoringContent::Plaintext {
+                    content,
+                    metadata: None,
+                },
+                reply_to.as_deref(),
+                local_operation_id.clone(),
+            )
+            .await
+            {
+                Ok(resp) => {
+                    match serde_json::to_value(AcceptedChatMessageOperation {
+                        event_id: &resp.event_id,
+                        kind: event_kind_str::MESSAGE_CREATE,
+                        actor_id: &actor,
+                        body: &body,
+                        content: &content_for_store,
+                        strand_id: &strand_id,
+                        message_id: &local_id,
+                        mentions: &mention_values_for_store,
+                        reply_to: reply_to.as_deref(),
+                        status: &resp.status,
+                    }) {
+                        Ok(raw_operation) => state_store.write().append_raw_operation(
+                            local_operation_id.clone(),
+                            Some(realm_id),
+                            raw_operation,
+                        ),
+                        Err(error) => tracing::error!(
+                            %error,
+                            event_id = %resp.event_id,
+                            "accepted chat operation could not be cached"
+                        ),
+                    }
+                    if let Some(found) = messages
+                        .write()
+                        .iter_mut()
+                        .find(|candidate| candidate.matches_id_or_protocol(&local_id))
+                    {
+                        found.id = resp.event_id.clone();
+                        found.pending = resp.status != garth::SendQueueStatus::Committed;
+                        found.failed = false;
+                        found.error = None;
+                    }
+                    if resp.status == garth::SendQueueStatus::Committed {
+                        frontier_state.set(resp.event_id.clone());
+                        let barrier = state_store.read().begin_durable_flush();
+                        let persisted = match barrier {
+                            Ok(barrier) => barrier.wait().await,
+                            Err(error) => Err(error),
+                        };
+                        if let Err(error) = persisted {
+                            status_msg.set(format!(
+                                "Message committed, but this device could not save its history: {error}"
+                            ));
+                            return;
+                        }
+                    }
+                    status_msg.set(if resp.status == garth::SendQueueStatus::Committed {
+                        "Message sent".to_owned()
+                    } else {
+                        "Message queued; waiting for server confirmation".to_owned()
+                    });
+                }
+                Err(failure) => {
+                    tracing::warn!(
+                        event_id = %local_id,
+                        error = %failure,
+                        "chat send did not reach an accepted result"
+                    );
+                    present_chat_send_failure(
+                        messages, status_msg, chat_draft, &local_id, &body, &failure,
+                    );
+                }
+            }
+        });
     });
 }
 
@@ -1145,7 +1184,8 @@ pub(super) fn send_encrypted_message(
     let base_for_backup_trigger = base.clone();
     let token_for_backup_trigger = api_token.clone();
     let actor_for_backup_trigger = actor.clone();
-    dioxus::core::Runtime::current().spawn(messages.origin_scope(), async move {
+    dioxus::core::Runtime::current().in_scope(messages.origin_scope(), || {
+      dioxus::core::spawn(async move {
         if let Some(found) = messages
             .write()
             .iter_mut()
@@ -1515,12 +1555,18 @@ pub(super) fn send_encrypted_message(
             {
                 found.id = resp_event_id.clone();
                 found.protocol_message_id = Some(protocol_message_id.clone());
-                found.pending = false;
+                found.pending = resp_status != "committed";
                 found.failed = false;
                 found.error = None;
             }
-            frontier_state.set(resp_event_id.clone());
-            status_msg.set("Encrypted message sent".to_owned());
+            if resp_status == "committed" {
+                frontier_state.set(resp_event_id.clone());
+            }
+            status_msg.set(if resp_status == "committed" {
+                "Encrypted message sent".to_owned()
+            } else {
+                "Encrypted message queued; waiting for server confirmation".to_owned()
+            });
             crate::components::schedule_mls_recovery_backups_after_encrypted_write(
                 base_for_backup_trigger.clone(),
                 token_for_backup_trigger.clone(),
@@ -1553,5 +1599,6 @@ pub(super) fn send_encrypted_message(
             // client MUST NOT manufacture one after an ordinary
             // message send, including inside a Direct Conversation.
         });
+      });
     });
 }

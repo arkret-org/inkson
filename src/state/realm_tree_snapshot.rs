@@ -1,6 +1,37 @@
 use super::*;
 
 impl LocalStateStore {
+    /// Borrow fields untouched by receive-chain overlays when the loaded cache
+    /// still belongs to the active account. A namespace mismatch must take the
+    /// same persistence path as `load`, never read the previous account's cache.
+    pub(super) fn with_unoverlaid_account_fields<R>(
+        &self,
+        read: impl FnOnce(&ClientLocalState) -> R,
+    ) -> R {
+        if self.loaded.load(Ordering::Relaxed)
+            && self.cached_account_key.as_deref() == Some(self.effective_account_key().as_str())
+        {
+            read(&self.cached)
+        } else {
+            read(&self.load())
+        }
+    }
+
+    /// Read receive-managed fields without cloning unrelated account state.
+    /// Callers explicitly apply overlay precedence to the fields they inspect.
+    pub(super) fn with_mls_receive_fields<R>(
+        &self,
+        read: impl FnOnce(&ClientLocalState, &MlsReceiveOverlay) -> R,
+    ) -> R {
+        if self.loaded.load(Ordering::Relaxed)
+            && self.cached_account_key.as_deref() == Some(self.effective_account_key().as_str())
+        {
+            read(&self.cached, &self.lock_mls_receive_overlay())
+        } else {
+            read(&self.load(), &MlsReceiveOverlay::default())
+        }
+    }
+
     pub(crate) fn set_product_current_demand(
         &self,
         authority: &arkret_sdk::AccountId,
@@ -63,7 +94,9 @@ impl LocalStateStore {
     }
 
     pub(crate) fn realm_tree_projection(&self, realm_id: &str) -> Option<Value> {
-        self.cached.realm_tree_projections.get(realm_id).cloned()
+        self.with_unoverlaid_account_fields(|state| {
+            state.realm_tree_projections.get(realm_id).cloned()
+        })
     }
 
     /// Install the selected Realm's product view read from the durable
@@ -105,6 +138,9 @@ impl LocalStateStore {
     pub(crate) fn current_product_view(
         &self,
     ) -> Option<crate::current_projection::RealmCurrentView> {
+        if self.cached_account_key.as_deref() != Some(self.effective_account_key().as_str()) {
+            return None;
+        }
         self.current_view
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -115,6 +151,9 @@ impl LocalStateStore {
 
     /// Whether the installed view of `realm_id` carries every required value.
     pub(crate) fn current_product_view_ready(&self, realm_id: &str) -> bool {
+        if self.cached_account_key.as_deref() != Some(self.effective_account_key().as_str()) {
+            return false;
+        }
         self.current_view
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -360,10 +399,12 @@ impl LocalStateStore {
     /// such registered profile, and callers must fail closed instead of
     /// treating the Realm as ordinary or authoring under the old pairwise path.
     pub fn realm_projection_has_retired_minimal_metadata_marker(&self, realm_id: &str) -> bool {
-        self.load()
-            .realm_tree_projections
-            .get(realm_id)
-            .is_some_and(realm_tree_projection_has_retired_minimal_metadata_marker)
+        self.with_unoverlaid_account_fields(|state| {
+            state
+                .realm_tree_projections
+                .get(realm_id)
+                .is_some_and(realm_tree_projection_has_retired_minimal_metadata_marker)
+        })
     }
 
     /// Transitional old callers still use this predicate; each authoring and

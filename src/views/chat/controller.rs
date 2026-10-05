@@ -1177,12 +1177,18 @@ impl ChatController {
                         }) {
                             found.id = event_id.clone();
                             found.protocol_message_id = Some(protocol_message_id);
-                            found.pending = false;
+                            found.pending = status != "committed";
                             found.failed = false;
                             found.error = None;
                         }
-                        frontier_state.set(event_id);
-                        status_msg.set("Message sent".to_owned());
+                        if status == "committed" {
+                            frontier_state.set(event_id);
+                        }
+                        status_msg.set(if status == "committed" {
+                            "Message sent".to_owned()
+                        } else {
+                            "Message queued; waiting for server confirmation".to_owned()
+                        });
                     }
                     crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
                         mark_message_command_failed(
@@ -1240,6 +1246,7 @@ impl ChatController {
             let scope = original_scope;
             match send_ordinary_chat_message(
                 &api,
+                crate::app::runtime_adapter::state_store_handle(state_store),
                 &message.realm_id,
                 scope,
                 &message.strand_id,
@@ -1287,12 +1294,29 @@ impl ChatController {
                         .find(|candidate| candidate.matches_id_or_protocol(&message_id_for_lookup))
                     {
                         found.id = submitted.event_id.clone();
-                        found.pending = false;
+                        found.pending = submitted.status != garth::SendQueueStatus::Committed;
                         found.failed = false;
                         found.error = None;
                     }
-                    frontier_state.set(submitted.event_id);
-                    status_msg.set("Message sent".to_owned());
+                    if submitted.status == garth::SendQueueStatus::Committed {
+                        frontier_state.set(submitted.event_id);
+                        let barrier = state_store.read().begin_durable_flush();
+                        let persisted = match barrier {
+                            Ok(barrier) => barrier.wait().await,
+                            Err(error) => Err(error),
+                        };
+                        if let Err(error) = persisted {
+                            status_msg.set(format!(
+                                "Message committed, but this device could not save its history: {error}"
+                            ));
+                            return;
+                        }
+                    }
+                    status_msg.set(if submitted.status == garth::SendQueueStatus::Committed {
+                        "Message sent".to_owned()
+                    } else {
+                        "Message queued; waiting for server confirmation".to_owned()
+                    });
                 }
                 Err(failure) => {
                     present_retry_send_failure(

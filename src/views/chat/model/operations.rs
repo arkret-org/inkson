@@ -532,6 +532,7 @@ pub(crate) fn chat_authoring_failure_message(
 /// another sender counter.
 pub(crate) async fn send_ordinary_chat_message(
     api: &TransportClient,
+    state_store: crate::runtime::input::StateStoreHandle,
     realm_id: &str,
     scope: arkret_sdk::ScopeRef,
     strand_id: &str,
@@ -543,7 +544,10 @@ pub(crate) async fn send_ordinary_chat_message(
         code: "failed_precondition".to_owned(),
         detail: format!("{error:#}"),
     };
-    let submitter = api.event_submitter().map_err(refused)?;
+    let submitter = api
+        .event_submitter()
+        .map_err(refused)?
+        .with_state_store(state_store);
     let intent = chat_message_authoring_intent(strand_id, content, reply_to).map_err(refused)?;
     let session = submitter.message_authoring_session(
         realm_id,

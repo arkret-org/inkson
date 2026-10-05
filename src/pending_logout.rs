@@ -24,27 +24,25 @@
 //! embeds the grant-binding seed, so it is classified seed-grade
 //! (`PENDING_LOGOUT_SECRET_KEY_PREFIX`): IndexedDB-only on wasm with no localStorage
 //! unload-race mirror, OS keyring on native. The record is cleared only once
-//! the Account Authority logout has definitively succeeded (or the grant is already
-//! gone). A wall-clock TTL bounds the record so a permanently-unreachable
-//! authority can't leave a poison entry forever — and crucially the grant's
-//! own 8h TTL means the chain self-heals well before the 24h record TTL.
+//! Account Authority logout termination is confirmed. Holder refusal or an old
+//! captured grant stops automatic presentation without deleting the journal:
+//! expiry/rotation of that one grant does not prove its browser chain is dead.
 
 use arkret_sdk::http_client::{Auth, ClientBuilder};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize as _;
 
+mod retry;
+
 /// Secure-key-store key for the journalled logout intent. Defined in
 /// `secure_key_store` so its seed-grade (IndexedDB-only, no localStorage
 /// mirror) classification stays in lockstep with the key string.
 use crate::secure_key_store::PENDING_LOGOUT_SECRET_KEY_PREFIX as PENDING_LOGOUT_STORAGE_PREFIX;
 
-/// How long a pending-logout record stays actionable. Past this we drop it
-/// without further retries: the session grant's own TTL (8h, see
-/// `coauth` `SESSION_GRANT_TTL_MICROS`) is far shorter, so by 24h the
-/// rotation chain is already dead from natural expiry and there is nothing
-/// left to revoke.
-const RECORD_TTL_HOURS: i64 = 24;
+/// Maximum age for automatic presentation of the original captured holder.
+/// Passing this boundary does not authorize deletion or prove chain termination.
+const AUTOMATIC_RETRY_MAX_AGE_HOURS: i64 = 24;
 
 /// The journalled intent to terminate a server-side session, persisted so
 /// it survives a tab close or a transient coauth outage.
@@ -55,10 +53,8 @@ pub struct PendingLogout {
     /// Exact account device whose grant-binding material is journalled.
     pub device_id: arkret_sdk::DeviceId,
     /// The grant JWT to revoke at coauth. `None` when the store held no
-    /// session grant at the moment "Log out" was pressed — there is then no
-    /// rotation chain to terminate, so only the soland courtesy logout runs.
-    /// This is a live state, not a historical record shape: the journal is
-    /// written from whatever `session_grant()` returns at logout time.
+    /// session grant at the moment "Log out" was pressed. Missing captured
+    /// holder material cannot authorize a network call or prove termination.
     #[serde(default)]
     pub grant_jwt: Option<String>,
     /// Base64url seed of the device DPoP key whose thumbprint is bound
@@ -87,7 +83,7 @@ pub struct PendingLogout {
     pub session_credential: String,
     /// Stable account identity, for diagnostics only.
     pub principal_id: arkret_sdk::DidCoreId,
-    /// When the record was journalled. Drives the [`RECORD_TTL_HOURS`] bound.
+    /// When the intent was journalled. Bounds automatic holder presentation.
     pub created_at: DateTime<Utc>,
 }
 
@@ -115,11 +111,10 @@ impl PendingLogout {
         ))
     }
 
-    /// True once the record is past its actionable window — the grant has
-    /// long since expired by natural TTL and there is nothing left to
-    /// revoke, so a stale entry should be dropped rather than retried.
-    pub fn is_expired(&self, now: DateTime<Utc>) -> bool {
-        now - self.created_at >= Duration::hours(RECORD_TTL_HOURS)
+    /// True when automatic presentation must stop. The original journal is
+    /// retained because an old grant's age says nothing about its successor chain.
+    pub fn automatic_retry_expired(&self, now: DateTime<Utc>) -> bool {
+        now - self.created_at >= Duration::hours(AUTOMATIC_RETRY_MAX_AGE_HOURS)
     }
 
     /// True when there is a server-side grant chain to terminate. Requires the
@@ -136,7 +131,7 @@ impl PendingLogout {
 }
 
 /// Outcome of running a pending-logout record once.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogoutRunOutcome {
     /// The server-side context is terminated (or was already gone). The
     /// record has been cleared; nothing further to do.
@@ -144,6 +139,9 @@ pub enum LogoutRunOutcome {
     /// coauth could not be reached / failed transiently. The record is
     /// retained for the next retry or boot.
     Retain,
+    /// The captured holder cannot authorize this request. Keep the journal,
+    /// but do not repeatedly present the same rejected credential this runtime.
+    Blocked,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,34 +150,132 @@ enum AccountLogoutRunOutcome {
 }
 
 /// Run one pending-logout record to completion via the SINGLE Account
-/// Authority hard logout (T1.Y3). Success — or a "grant already gone" error —
-/// clears the record. A still-live failure keeps the record so a later boot
-/// retries it; the [`RECORD_TTL_HOURS`] bound (checked by
-/// [`execute_pending_logout`]) prevents an immortal poison entry.
+/// Authority hard logout (T1.Y3). Confirmed termination clears the record.
+/// Holder refusal keeps the record without repeated automatic presentation;
+/// transient failure is subject to the SDK cadence and shared retry budget.
 pub async fn execute_pending_logout(
     record: &PendingLogout,
     store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> LogoutRunOutcome {
-    if !record.has_coauth_revoke() {
-        // No grant / grant-binding material to terminate server-side — nothing to do.
-        let _ = clear_pending_logout(record, store);
-        return LogoutRunOutcome::Completed;
+    execute_pending_logout_with(record, store, Utc::now(), || {
+        hard_logout_at_authority(record)
+    })
+    .await
+}
+
+async fn execute_pending_logout_with<
+    F: std::future::Future<Output = anyhow::Result<AccountLogoutRunOutcome>>,
+>(
+    record: &PendingLogout,
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+    now: DateTime<Utc>,
+    perform: impl FnOnce() -> F,
+) -> LogoutRunOutcome {
+    if record.automatic_retry_expired(now) {
+        return LogoutRunOutcome::Blocked;
     }
-    match hard_logout_at_authority(record).await {
-        // The SDK logout wrapper below classifies the HTTP result: a terminal
-        // outcome (revoked / already-gone) → `Ok`, any real failure → `Err`.
-        Ok(AccountLogoutRunOutcome::Terminated) => {
-            let _ = clear_pending_logout(record, store);
-            LogoutRunOutcome::Completed
+    let mut attempt = match retry::claim(record, now) {
+        Ok(retry::Admission::Attempt(attempt)) => attempt,
+        Ok(retry::Admission::Deferred) => return LogoutRunOutcome::Retain,
+        Ok(retry::Admission::Blocked) => return LogoutRunOutcome::Blocked,
+        Ok(retry::Admission::Terminated) => return clear_completed_logout(record, store).await,
+        Err(error) => {
+            tracing::warn!(?error, "pending logout: retry admission failed");
+            return LogoutRunOutcome::Retain;
         }
+    };
+    if !record.has_coauth_revoke() {
+        attempt.finish(LogoutRunOutcome::Blocked, now, None);
+        tracing::warn!(
+            "pending logout: captured holder material is incomplete; journal retained without automatic retry"
+        );
+        return LogoutRunOutcome::Blocked;
+    }
+    match perform().await {
+        // Only a logout receipt or SessionLoggedOut proves termination.
+        Ok(AccountLogoutRunOutcome::Terminated) => {
+            attempt.finish(LogoutRunOutcome::Completed, now, None);
+            clear_completed_logout(record, store).await
+        }
+        Err(error) => {
+            let sdk_error = error.downcast_ref::<arkret_sdk::http_client::Error>();
+            let invalid_holder = error
+                .downcast_ref::<crate::identity::account_auth::grant_dpop::AuthDpopError>()
+                .is_some_and(|error| {
+                    matches!(
+                        error,
+                        crate::identity::account_auth::grant_dpop::AuthDpopError::PersistedSeed(_)
+                    )
+                });
+            let outcome =
+                if invalid_holder || sdk_error.is_some_and(account_logout_error_requires_repair) {
+                    LogoutRunOutcome::Blocked
+                } else {
+                    LogoutRunOutcome::Retain
+                };
+            let retry_after = sdk_error.and_then(|error| match error {
+                arkret_sdk::http_client::Error::Api { error, .. } => {
+                    error.retry_after_ms().map(std::time::Duration::from_millis)
+                }
+                _ => None,
+            });
+            attempt.finish(outcome, now.max(Utc::now()), retry_after);
+            tracing::warn!(
+                code = ?sdk_error.and_then(arkret_sdk::http_client::Error::error_code),
+                ?outcome,
+                "pending logout: authority did not confirm termination; journal retained"
+            );
+            outcome
+        }
+    }
+}
+
+async fn clear_completed_logout(
+    record: &PendingLogout,
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> LogoutRunOutcome {
+    match pending_logout_slot_matches(record, store) {
+        // Completion of an older captured intent must never clear a newer
+        // logout journal written for the same account/device secure-store slot.
+        Ok(false) => return LogoutRunOutcome::Completed,
+        Ok(true) => {}
         Err(error) => {
             tracing::warn!(
                 ?error,
-                "pending logout: authority logout failed, will retry"
+                "pending logout: confirmed termination journal identity check failed"
+            );
+            return LogoutRunOutcome::Retain;
+        }
+    }
+    let result = match record.storage_key() {
+        Ok(key) => store
+            .delete_secret_durable(&key)
+            .await
+            .map_err(anyhow::Error::from),
+        Err(error) => Err(error),
+    };
+    match result {
+        Ok(()) => LogoutRunOutcome::Completed,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "pending logout: confirmed termination journal cleanup failed"
             );
             LogoutRunOutcome::Retain
         }
     }
+}
+
+fn pending_logout_slot_matches(
+    record: &PendingLogout,
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<bool> {
+    let Some(mut encoded) = store.get_secret(&record.storage_key()?)? else {
+        return Ok(false);
+    };
+    let decoded = serde_json::from_str::<PendingLogout>(&encoded);
+    encoded.zeroize();
+    Ok(decoded? == *record)
 }
 
 /// T1.Y3 — single hard logout to `{gate_account_base_url}/logout` with the grant
@@ -203,7 +299,7 @@ async fn hard_logout_at_authority(
         .ok_or_else(|| anyhow::anyhow!("pending logout missing device jkt"))?;
 
     let handle = crate::identity::account_auth::grant_dpop::device_handle_from_seed(seed, jkt)
-        .map_err(|error| anyhow::anyhow!("rebuild device handle: {error}"))?;
+        .map_err(|error| anyhow::Error::new(error).context("rebuild captured logout holder"))?;
     // Prefer the journalled gate_account_base_url; re-resolve from the principal
     // server only if it was not captured.
     let gate_account_base_url = match record.gate_account_base_url.as_ref() {
@@ -235,19 +331,31 @@ async fn hard_logout_at_authority(
         Err(error) if account_logout_error_is_terminal(&error) => {
             Ok(AccountLogoutRunOutcome::Terminated)
         }
-        Err(error) => Err(anyhow::anyhow!("account authority logout failed: {error}")),
+        Err(error) => Err(anyhow::Error::new(error).context("account authority logout failed")),
     }
 }
 
 fn account_logout_error_is_terminal(error: &arkret_sdk::http_client::Error) -> bool {
+    error.error_code() == Some(arkret_sdk::ErrorCode::SessionLoggedOut)
+}
+
+fn account_logout_error_requires_repair(error: &arkret_sdk::http_client::Error) -> bool {
     match error {
-        arkret_sdk::http_client::Error::Api { error, .. } => matches!(
-            error.code(),
-            "grant_already_consumed"
-                | "session_logged_out"
-                | "session_grant_not_found"
-                | "authorized_grant_revoked"
-        ),
+        arkret_sdk::http_client::Error::Api { status, error } => {
+            matches!(
+                error.error_code(),
+                Some(
+                    arkret_sdk::ErrorCode::Unauthenticated
+                        | arkret_sdk::ErrorCode::AuthExpired
+                        | arkret_sdk::ErrorCode::GrantAlreadyConsumed
+                        | arkret_sdk::ErrorCode::SessionGrantNotFound
+                )
+            ) || matches!(*status, 400 | 401 | 403 | 404 | 422)
+        }
+        arkret_sdk::http_client::Error::InsecureUrl(_)
+        | arkret_sdk::http_client::Error::Url(_)
+        | arkret_sdk::http_client::Error::Identifier(_)
+        | arkret_sdk::http_client::Error::Signature(_) => true,
         _ => false,
     }
 }
@@ -294,6 +402,9 @@ pub fn clear_pending_logout(
     record: &PendingLogout,
     store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> anyhow::Result<()> {
+    if !pending_logout_slot_matches(record, store)? {
+        return Ok(());
+    }
     store
         .delete_secret(&record.storage_key()?)
         .map_err(|error| anyhow::anyhow!("failed to clear pending logout: {error}"))?;
@@ -313,9 +424,7 @@ pub async fn run_pending_logout_with_store(
         }
     };
     for record in records {
-        if record.is_expired(now) {
-            tracing::info!("pending logout: record past TTL, dropping (grant self-expired)");
-            let _ = clear_pending_logout(&record, store);
+        if record.automatic_retry_expired(now) {
             continue;
         }
         let _ = execute_pending_logout(&record, store).await;
@@ -326,7 +435,7 @@ pub async fn run_pending_logout_with_store(
 mod tests {
     use super::*;
 
-    fn base_record(created_at: DateTime<Utc>) -> PendingLogout {
+    pub(super) fn base_record(created_at: DateTime<Utc>) -> PendingLogout {
         PendingLogout {
             authority: arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
@@ -349,6 +458,15 @@ mod tests {
             .unwrap(),
             created_at,
         }
+    }
+
+    fn isolated_record(now: DateTime<Utc>, case: &str) -> PendingLogout {
+        let mut record = base_record(now);
+        record.authority = arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(format!("ak:did_core:web:logout-{case}.example")).unwrap(),
+            record.authority.station_id.clone(),
+        );
+        record
     }
 
     #[test]
@@ -375,13 +493,20 @@ mod tests {
     }
 
     #[test]
-    fn record_expires_after_ttl() {
+    fn automatic_retry_age_does_not_prove_chain_termination() {
         let now = Utc::now();
         let fresh = base_record(now);
-        assert!(!fresh.is_expired(now));
-        assert!(!fresh.is_expired(now + Duration::hours(RECORD_TTL_HOURS - 1)));
-        assert!(fresh.is_expired(now + Duration::hours(RECORD_TTL_HOURS)));
-        assert!(fresh.is_expired(now + Duration::hours(RECORD_TTL_HOURS + 1)));
+        assert!(!fresh.automatic_retry_expired(now));
+        assert!(
+            !fresh
+                .automatic_retry_expired(now + Duration::hours(AUTOMATIC_RETRY_MAX_AGE_HOURS - 1))
+        );
+        assert!(
+            fresh.automatic_retry_expired(now + Duration::hours(AUTOMATIC_RETRY_MAX_AGE_HOURS))
+        );
+        assert!(
+            fresh.automatic_retry_expired(now + Duration::hours(AUTOMATIC_RETRY_MAX_AGE_HOURS + 1))
+        );
     }
 
     #[test]
@@ -414,29 +539,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_returns_completed_when_no_coauth_revoke_needed() {
+    async fn missing_grant_is_not_treated_as_confirmed_logout() {
         use crate::secure_key_store::MemorySecureKeyStore;
-        // A record with no grant material and an empty base URL has nothing
-        // to do over the network — it should clear immediately, including
-        // removing any journalled copy from the store.
+        // Missing captured material must neither initiate a request nor claim
+        // the server-side chain was terminated.
         let store = MemorySecureKeyStore::default();
         let mut record = base_record(Utc::now());
         record.grant_jwt = None;
         record.base_url = url::Url::parse("https://unused.example").unwrap();
         persist_pending_logout(&record, &store).unwrap();
         let outcome = execute_pending_logout(&record, &store).await;
-        assert_eq!(outcome, LogoutRunOutcome::Completed);
-        assert!(restore_pending_logouts(&store).unwrap().is_empty());
+        assert_eq!(outcome, LogoutRunOutcome::Blocked);
+        assert_eq!(restore_pending_logouts(&store).unwrap(), vec![record]);
     }
 
     #[test]
     fn account_logout_terminal_errors_complete_pending_logout() {
-        for (status, code) in [
-            (400, "grant_already_consumed"),
-            (401, "session_logged_out"),
-            (404, "session_grant_not_found"),
-            (403, "authorized_grant_revoked"),
-        ] {
+        for (status, code) in [(401, "session_logged_out")] {
             let error = arkret_sdk::http_client::Error::Api {
                 status,
                 error: Box::new(arkret_sdk::Problem::from_code(code, "terminal")),
@@ -462,11 +581,252 @@ mod tests {
             };
             assert!(
                 !account_logout_error_is_terminal(&error),
-                "{status} {code} should be retryable"
+                "{status} {code} does not prove logout completion"
             );
         }
         assert!(!account_logout_error_is_terminal(
             &arkret_sdk::http_client::Error::Protocol("network boundary".to_owned())
         ));
+    }
+
+    #[tokio::test]
+    async fn missing_holder_refusal_is_retained_once_without_touching_current_credentials() {
+        use std::cell::Cell;
+
+        use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
+        let now = Utc::now();
+        let record = isolated_record(now, "holder-refusal");
+        let store = MemorySecureKeyStore::default();
+        store
+            .store_secret("auth.session_grant.v1", "current authenticated grant")
+            .unwrap();
+        persist_pending_logout(&record, &store).unwrap();
+        let calls = Cell::new(0);
+        for later in [now, now + Duration::seconds(1), now + Duration::minutes(10)] {
+            let result = execute_pending_logout_with(&record, &store, later, || async {
+                calls.set(calls.get() + 1);
+                Err(anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+                    status: 401,
+                    error: Box::new(arkret_sdk::Problem::from_code(
+                        arkret_sdk::ErrorCode::Unauthenticated.as_str(),
+                        "session grant logout has no verifiable holder metadata",
+                    )),
+                }))
+            })
+            .await;
+            assert_eq!(result, LogoutRunOutcome::Blocked);
+        }
+        assert_eq!(
+            calls.get(),
+            1,
+            "remounts cannot re-present the same refused holder"
+        );
+        assert_eq!(restore_pending_logouts(&store).unwrap(), vec![record]);
+        assert_eq!(
+            store
+                .get_secret("auth.session_grant.v1")
+                .unwrap()
+                .as_deref(),
+            Some("current authenticated grant")
+        );
+    }
+
+    #[tokio::test]
+    async fn transient_logout_failure_obeys_server_hint_and_does_not_fake_completion() {
+        use std::cell::Cell;
+
+        use crate::secure_key_store::MemorySecureKeyStore;
+        let now = Utc::now();
+        let record = isolated_record(now, "transient");
+        let store = MemorySecureKeyStore::default();
+        persist_pending_logout(&record, &store).unwrap();
+        let calls = Cell::new(0);
+        let first = execute_pending_logout_with(&record, &store, now, || async {
+            calls.set(calls.get() + 1);
+            Err(anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+                status: 503,
+                error: Box::new(
+                    arkret_sdk::Problem::from_code("temporarily_unavailable", "dependency offline")
+                        .with_retry_after_ms(Some(120_000)),
+                ),
+            }))
+        })
+        .await;
+        assert_eq!(first, LogoutRunOutcome::Retain);
+        let early =
+            execute_pending_logout_with(&record, &store, now + Duration::seconds(119), || async {
+                panic!("must not retry before the server hint")
+            })
+            .await;
+        assert_eq!(early, LogoutRunOutcome::Retain);
+        assert_eq!(
+            restore_pending_logouts(&store).unwrap(),
+            vec![record.clone()]
+        );
+        let done =
+            execute_pending_logout_with(&record, &store, now + Duration::seconds(121), || async {
+                calls.set(calls.get() + 1);
+                Ok(AccountLogoutRunOutcome::Terminated)
+            })
+            .await;
+        assert_eq!(done, LogoutRunOutcome::Completed);
+        assert_eq!(calls.get(), 2);
+        assert!(restore_pending_logouts(&store).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_captured_key_is_not_treated_as_confirmed_logout() {
+        use crate::secure_key_store::MemorySecureKeyStore;
+        let now = Utc::now();
+        let mut record = isolated_record(now, "missing-key");
+        record.device_seed_b64 = None;
+        let store = MemorySecureKeyStore::default();
+        persist_pending_logout(&record, &store).unwrap();
+        let result = execute_pending_logout_with(&record, &store, now, || async {
+            panic!("incomplete holder must not produce an HTTP request")
+        })
+        .await;
+        assert_eq!(result, LogoutRunOutcome::Blocked);
+        assert_eq!(restore_pending_logouts(&store).unwrap(), vec![record]);
+    }
+
+    #[tokio::test]
+    async fn expired_capture_retains_journal_without_presenting_holder_or_current_credentials() {
+        use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
+        let now = Utc::now();
+        let record = isolated_record(
+            now - Duration::hours(AUTOMATIC_RETRY_MAX_AGE_HOURS),
+            "expired",
+        );
+        let store = MemorySecureKeyStore::default();
+        store
+            .store_secret("auth.session_grant.v1", "current authenticated grant")
+            .unwrap();
+        persist_pending_logout(&record, &store).unwrap();
+        let result = execute_pending_logout_with(&record, &store, now, || async {
+            panic!("expired captured holder must not produce an HTTP request")
+        })
+        .await;
+        assert_eq!(result, LogoutRunOutcome::Blocked);
+        assert_eq!(
+            execute_pending_logout(&record, &store).await,
+            LogoutRunOutcome::Blocked
+        );
+        run_pending_logout_with_store(now, &store).await;
+        assert_eq!(restore_pending_logouts(&store).unwrap(), vec![record]);
+        assert_eq!(
+            store
+                .get_secret("auth.session_grant.v1")
+                .unwrap()
+                .as_deref(),
+            Some("current authenticated grant")
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_logout_releases_single_flight_without_losing_the_journal() {
+        use std::future::Future;
+
+        use crate::secure_key_store::MemorySecureKeyStore;
+        let now = Utc::now();
+        let record = isolated_record(now, "cancelled");
+        let store = MemorySecureKeyStore::default();
+        persist_pending_logout(&record, &store).unwrap();
+        let mut running = Box::pin(execute_pending_logout_with(
+            &record,
+            &store,
+            now,
+            || async {
+                std::future::pending::<()>().await;
+                Ok(AccountLogoutRunOutcome::Terminated)
+            },
+        ));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(running.as_mut().poll(&mut context).is_pending());
+        let concurrent = execute_pending_logout_with(&record, &store, now, || async {
+            panic!("another logout presentation is already running")
+        })
+        .await;
+        assert_eq!(concurrent, LogoutRunOutcome::Retain);
+        drop(running);
+        assert_eq!(
+            restore_pending_logouts(&store).unwrap(),
+            vec![record.clone()]
+        );
+        let complete = execute_pending_logout_with(
+            &record,
+            &store,
+            Utc::now() + Duration::seconds(2),
+            || async { Ok(AccountLogoutRunOutcome::Terminated) },
+        )
+        .await;
+        assert_eq!(complete, LogoutRunOutcome::Completed);
+        assert!(restore_pending_logouts(&store).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn invalid_captured_seed_blocks_before_any_authority_request() {
+        use crate::secure_key_store::MemorySecureKeyStore;
+        let record = isolated_record(Utc::now(), "invalid-seed");
+        let store = MemorySecureKeyStore::default();
+        persist_pending_logout(&record, &store).unwrap();
+        assert_eq!(
+            execute_pending_logout(&record, &store).await,
+            LogoutRunOutcome::Blocked
+        );
+        assert_eq!(
+            execute_pending_logout(&record, &store).await,
+            LogoutRunOutcome::Blocked
+        );
+        assert_eq!(restore_pending_logouts(&store).unwrap(), vec![record]);
+    }
+
+    #[tokio::test]
+    async fn completion_of_an_old_logout_does_not_clear_a_new_captured_holder() {
+        use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
+        let now = Utc::now();
+        let old = isolated_record(now, "replacement");
+        let mut newer = old.clone();
+        newer.grant_jwt = Some("new captured grant".into());
+        newer.created_at = now + Duration::seconds(1);
+        let store = MemorySecureKeyStore::default();
+        store
+            .store_secret("auth.session_grant.v1", "current authenticated grant")
+            .unwrap();
+        persist_pending_logout(&old, &store).unwrap();
+        let result = execute_pending_logout_with(&old, &store, now, || async {
+            persist_pending_logout(&newer, &store).unwrap();
+            Ok(AccountLogoutRunOutcome::Terminated)
+        })
+        .await;
+        assert_eq!(result, LogoutRunOutcome::Completed);
+        assert_eq!(restore_pending_logouts(&store).unwrap(), vec![newer]);
+        assert_eq!(
+            store
+                .get_secret("auth.session_grant.v1")
+                .unwrap()
+                .as_deref(),
+            Some("current authenticated grant")
+        );
+    }
+
+    #[test]
+    fn consumed_or_missing_grant_does_not_prove_browser_chain_termination() {
+        for (status, code) in [
+            (400, "grant_already_consumed"),
+            (404, "session_grant_not_found"),
+            (401, "auth_expired"),
+            (403, "capability_denied"),
+        ] {
+            let error = arkret_sdk::http_client::Error::Api {
+                status,
+                error: Box::new(arkret_sdk::Problem::from_code(
+                    code,
+                    "not a completion receipt",
+                )),
+            };
+            assert!(!account_logout_error_is_terminal(&error));
+            assert!(account_logout_error_requires_repair(&error));
+        }
     }
 }
