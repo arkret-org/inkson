@@ -392,6 +392,7 @@ dependencies = [
  "arkret-canonical",
  "arkret-egress-policy",
  "arkret-keystore",
+ "arkret-models-collaboration",
  "arkret-models-identity",
  "arkret-signatures",
  "arkret-wire",
