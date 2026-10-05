@@ -1,6 +1,7 @@
 /target
 /target-*/
 /docker-context
+/artifacts
 
 /node_modules
 _*.md
