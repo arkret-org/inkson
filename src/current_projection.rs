@@ -450,6 +450,11 @@ mod tests {
         assert_eq!(group.epoch, 4);
         let view = RealmCurrentView::new(REALM, activated, false).unwrap();
         assert_eq!(
+            crate::views::helpers::scope_mls_activation(&Default::default(), Some(&view), REALM,),
+            Some(true),
+            "accepted Realm MLS does not require a navigation projection"
+        );
+        assert_eq!(
             view.scope_mls_current(&realm_scope()),
             ScopeMlsCurrent::Activated(group)
         );

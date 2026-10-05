@@ -463,6 +463,9 @@ pub(crate) fn scope_mls_activation(
     if scope_id.is_empty() {
         return None;
     }
+    if arkret_sdk::RealmId::new(scope_id.to_owned()).is_ok() {
+        return realm_mls_activation(current, scope_id);
+    }
     let projection = projections.get(scope_id)?;
     realm_mls_activation(current, &projection_home_realm_id(projection, scope_id))
 }

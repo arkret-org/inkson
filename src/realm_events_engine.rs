@@ -46,7 +46,6 @@ pub(crate) async fn own_realm_prefix(
 ) -> garth::Result<Vec<arkret_sdk::CommittedEventFullView>> {
     let epoch = crate::identity::device_directory::session_cache_epoch();
     let consumer = own_station::authenticate(http, account.clone(), epoch).await?;
-    let cut = consumer.snapshot_head(realm).await?;
     let stream = CommitStreamRef::Realm {
         realm_id: realm.clone(),
     };
@@ -56,17 +55,20 @@ pub(crate) async fn own_realm_prefix(
         direction: arkret_wire::StreamScanDirection::After(None),
         limit: count,
     };
-    let mut replica = RealmReplica::new(realm.clone());
-    let page = consumer.scan(&mut replica, &request, &cut).await?;
+    // Immutable original prefix reads do not install current. A freshly
+    // accepted founding unit can be readable while snapshot issuance races
+    // with its bootstrap writes; that cut is not a second finality gate.
+    let page = http.scan_commit_stream(&request).await?;
+    page.validate_for_request(&request)?;
     consumer.require_context(
         account,
         crate::identity::device_directory::session_cache_epoch(),
     )?;
-    if page.rows().len() != usize::from(count) {
+    if page.committed_events.len() != usize::from(count) {
         return Err(protocol("immutable Realm prefix is incomplete"));
     }
-    let mut originals = Vec::with_capacity(page.rows().len());
-    for (position, row) in page.rows().iter().enumerate() {
+    let mut originals = Vec::with_capacity(page.committed_events.len());
+    for (position, row) in page.committed_events.iter().enumerate() {
         let CommittedEventView::Full(full) = row else {
             return Err(protocol("immutable Realm prefix is withheld"));
         };
@@ -74,6 +76,23 @@ pub(crate) async fn own_realm_prefix(
             return Err(protocol(
                 "readable history is not the immutable Realm prefix",
             ));
+        }
+        full.commit.validate_content_address().map_err(protocol)?;
+        let suite = full.event.event_id.digest_suite_code().digest_suite();
+        full.event
+            .verify_event_id_matches_content_with_digest_suite(suite)
+            .map_err(protocol)?;
+        full.event
+            .validate_proof_bindings_with_digest_suite(suite)
+            .map_err(protocol)?;
+        if let Some(previous) = originals.last() {
+            let previous: &arkret_sdk::CommittedEventFullView = previous;
+            if full.commit.governance_generation < previous.commit.governance_generation
+                || (full.commit.governance_generation == previous.commit.governance_generation
+                    && full.commit.authority_ref != previous.commit.authority_ref)
+            {
+                return Err(protocol("immutable prefix substitutes its governance term"));
+            }
         }
         originals.push(full.clone());
     }
