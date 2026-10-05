@@ -154,8 +154,8 @@ use effects::ChatEffects;
 pub(crate) use model::message_operations_from_events;
 use model::*;
 pub(crate) use model::{
-    confirmed_sidecar_publish_message_operation, default_discussion_strand_id,
-    verified_chat_sender_domain_for_realm, verify_chat_envelope_proof_for_realm,
+    default_discussion_strand_id, verified_chat_sender_domain_for_realm,
+    verify_chat_envelope_proof_for_realm,
 };
 use right_panel::{DiscussionSettingsPanel, DiscussionUsersPanel, SidecarDeliveryDiagnostics};
 use timeline::*;
@@ -1614,9 +1614,6 @@ pub fn ChatPanel(
         eligible_circle_scope_request_key_seen: _,
         eligible_circle_scope_request_in_flight: _,
         mut new_channel_scope,
-        mut sidecar_publish_open,
-        mut sidecar_publish_draft,
-        mut sidecar_publish_pending,
         sidecar_send_pending: _,
         member_handle_fetching: _,
     } = controller;
@@ -2017,20 +2014,6 @@ pub fn ChatPanel(
         })
         .collect();
     let visible_message_count = visible_messages.len();
-    let latest_sidecar_publish_body = sidecar_exchange_projections
-        .iter()
-        .filter(|projection| {
-            projection.source_track_ref.strand_id.as_str() == selected_channel_value
-        })
-        .flat_map(|projection| &projection.user_facing_response_event_ids)
-        .filter_map(|event_id| {
-            all_messages_snapshot
-                .iter()
-                .find(|message| message.id == event_id.as_str())
-        })
-        .filter(|message| !message.body.is_empty() && !message.crypto_state.is_pending())
-        .max_by_key(|message| message.created_at)
-        .map(|message| message.body.clone());
     let messages_for_reply_lookup = &all_messages_snapshot;
     let left_open = !embedded && !direct_mode && left_panel_open();
     let active_right_panel = if embedded { None } else { right_panel() };
@@ -2826,26 +2809,6 @@ pub fn ChatPanel(
                             span { "{reason}" }
                         }
                     }
-                    if let Some(publish_body) = latest_sidecar_publish_body.as_ref() {
-                        div { class: "event info sidecar-publish-action",
-                            strong { "Publish is explicit" }
-                            span { "Copy the latest private result into a normal shared message only after reviewing and confirming its final text." }
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                r#type: "button",
-                                "data-testid": "sidecar-publish-open",
-                                disabled: sidecar_publish_pending(),
-                                onclick: {
-                                    let publish_body = publish_body.clone();
-                                    move |_| {
-                                        sidecar_publish_draft.set(publish_body.clone());
-                                        sidecar_publish_open.set(true);
-                                    }
-                                },
-                                "Review shared publish"
-                            }
-                        }
-                    }
                 }
 
                 // Offline queue banner. Visible while the browser is offline or
@@ -3089,94 +3052,6 @@ pub fn ChatPanel(
                     },
                 }
             }
-            if sidecar_publish_open() {
-                if let Some(session) = sidecar_session.as_ref() {
-                    div {
-                        class: "discussion-modal-backdrop",
-                        "data-testid": "sidecar-publish-modal",
-                        div {
-                            class: "discussion-modal",
-                            role: "dialog",
-                            "aria-modal": "true",
-                            "aria-labelledby": "sidecar-publish-title",
-                            div { class: "discussion-modal-head",
-                                h2 { id: "sidecar-publish-title", "Publish to shared Strand" }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    r#type: "button",
-                                    "data-testid": "sidecar-publish-cancel",
-                                    disabled: sidecar_publish_pending(),
-                                    onclick: move |_| {
-                                        sidecar_publish_open.set(false);
-                                        sidecar_publish_draft.set(String::new());
-                                    },
-                                    "Cancel"
-                                }
-                            }
-                            div { class: "discussion-modal-body workflow-form",
-                                p {
-                                    "This creates a normal shared message in the source Strand. Sidecar identifiers, private history, exchange metadata, and locators are never copied."
-                                }
-                                label { class: "form-row",
-                                    span { "Final shared text" }
-                                    textarea {
-                                        "data-testid": "sidecar-publish-body",
-                                        value: "{sidecar_publish_draft}",
-                                        disabled: sidecar_publish_pending(),
-                                        oninput: move |event| sidecar_publish_draft.set(event.value()),
-                                    }
-                                }
-                            }
-                            div { class: "discussion-modal-actions",
-                                Button {
-                                    variant: ButtonVariant::Primary,
-                                    r#type: "button",
-                                    "data-testid": "sidecar-publish-confirm",
-                                    disabled: sidecar_publish_pending()
-                                        || sidecar_publish_draft().trim().is_empty(),
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        let realm = session.source_realm_id.clone();
-                                        let actor = principal_id.clone();
-                                        let target_strand = session.source_strand_id.clone();
-                                        move |_| {
-                                            let body = sidecar_publish_draft().trim().to_owned();
-                                            let gate = crate::sidecar::SidecarPrivacyGate::from_store(
-                                                &state_store.read(),
-                                                &actor,
-                                            );
-                                            let operation =
-                                                match confirmed_sidecar_publish_message_operation(
-                                                    &gate,
-                                                    true,
-                                                    &realm,
-                                                    &actor,
-                                                    &target_strand,
-                                                    &new_chat_local_id(),
-                                                    &body,
-                                                ) {
-                                                    Ok(operation) => operation,
-                                                    Err(error) => {
-                                                        status_msg.set(format!(
-                                                            "Shared publish blocked: {error:#}"
-                                                        ));
-                                                        return;
-                                                    }
-                                                };
-                                            sidecar_publish_pending.set(true);
-                                            let credential = token();
-                                            let base = base.clone();
-                                            controller.publish_sidecar_to_shared_strand(base, credential, operation);
-                                        }
-                                    },
-                                    "Confirm shared publish"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
             // Experimental private-discussion workflow. It remains feature
             // gated until the multi-event operation can resume safely after a
             // partial failure.

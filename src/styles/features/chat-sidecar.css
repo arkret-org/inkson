@@ -72,25 +72,6 @@
   margin: 0.6rem 1rem 0;
 }
 
-.sidecar-mode > .discussion-main-panel {
-  position: relative;
-}
-
-.sidecar-mode > .discussion-main-panel > .sidecar-publish-action {
-  position: absolute;
-  right: 1rem;
-  bottom: 0.75rem;
-  left: 1rem;
-  z-index: 4;
-  margin: 0;
-}
-
-.sidecar-mode
-  > .discussion-main-panel:has(> .sidecar-publish-action)
-  > .discussion-chat-feed {
-  padding-bottom: 9rem;
-}
-
 .sidecar-mode .discussion-users-panel .discussion-detail-section:not(.sidecar-access-section),
 .sidecar-mode .discussion-settings-panel .discussion-detail-section:not(.sidecar-diagnostics-section) {
   display: none;

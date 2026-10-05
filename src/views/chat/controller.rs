@@ -237,9 +237,6 @@ pub(super) struct ChatController {
     pub eligible_circle_scope_request_key_seen: Signal<String>,
     pub eligible_circle_scope_request_in_flight: Signal<bool>,
     pub new_channel_scope: Signal<crate::circle::CircleScope>,
-    pub sidecar_publish_open: Signal<bool>,
-    pub sidecar_publish_draft: Signal<String>,
-    pub sidecar_publish_pending: Signal<bool>,
     pub sidecar_send_pending: Signal<bool>,
     /// Member handle lookups already in flight, so a re-render does not issue
     /// the same Directory request twice.
@@ -1553,65 +1550,6 @@ impl ChatController {
         });
     }
 
-    /// Publish a private sidecar message into the shared Strand.
-    ///
-    /// A durably queued submit is retried twice before it is reported as
-    /// queued rather than failed — the Event is accepted locally either way,
-    /// and telling the author it failed would invite a duplicate.
-    pub fn publish_sidecar_to_shared_strand(
-        mut self,
-        base_url: String,
-        api_token: String,
-        operation: crate::operation::LocalOperation,
-    ) {
-        spawn(async move {
-            let result =
-                crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
-                    let submitter = api.event_submitter()?;
-                    let mut attempt = 0_u8;
-                    loop {
-                        match submitter.submit_sdk_event(&operation).await {
-                            Ok(result) => {
-                                break Ok(Some(result));
-                            }
-                            Err(error)
-                                if crate::event_submit::is_durably_queued_error(&error)
-                                    && attempt < 2 =>
-                            {
-                                attempt += 1;
-                                crate::runtime_helpers::sleep_for(
-                                    std::time::Duration::from_millis(1_100),
-                                )
-                                .await;
-                            }
-                            Err(error) if crate::event_submit::is_durably_queued_error(&error) => {
-                                break Ok(None);
-                            }
-                            Err(error) => break Err(error),
-                        }
-                    }
-                })
-                .await;
-            self.sidecar_publish_pending.set(false);
-            match result {
-                Ok(Some(_)) => {
-                    self.sidecar_publish_open.set(false);
-                    self.sidecar_publish_draft.set(String::new());
-                    self.status_msg.set("Published to shared Strand".to_owned());
-                }
-                Ok(None) => {
-                    self.sidecar_publish_open.set(false);
-                    self.sidecar_publish_draft.set(String::new());
-                    self.status_msg
-                        .set("Shared publish queued for retry".to_owned());
-                }
-                Err(error) => self
-                    .status_msg
-                    .set(format!("Shared publish failed: {}", error.display())),
-            }
-        });
-    }
-
     /// Author the Circle + Strand unit that promotes a message into a private
     /// discussion.
     ///
@@ -1942,9 +1880,6 @@ pub(super) fn use_chat_controller(
         eligible_circle_scope_request_key_seen: use_signal(String::new),
         eligible_circle_scope_request_in_flight: use_signal(|| false),
         new_channel_scope: use_signal(crate::circle::CircleScope::default),
-        sidecar_publish_open: use_signal(|| false),
-        sidecar_publish_draft: use_signal(String::new),
-        sidecar_publish_pending: use_signal(|| false),
         sidecar_send_pending: use_signal(|| false),
         member_handle_fetching: use_signal(std::collections::BTreeSet::new),
     }

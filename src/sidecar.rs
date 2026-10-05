@@ -1390,37 +1390,21 @@ mod tests {
         let pending = exchange_pending_submission(&session);
         save_pending_sidecar_submission(&mut store, "explicit-publish", &pending).unwrap();
         let gate = SidecarPrivacyGate::from_store(&store, EXCHANGE_ACCOUNT);
-        let message_id = "ak:message:AdV6KuD51EMEm2yZtha8GGZ_MPcUJG4GYRr_EwV86ycE";
 
-        let unconfirmed = crate::views::chat::confirmed_sidecar_publish_message_operation(
-            &gate,
-            false,
-            &session.source_realm_id,
-            EXCHANGE_ACCOUNT,
-            &session.source_strand_id,
-            message_id,
-            "approved summary",
-        );
+        let unconfirmed =
+            gate.validate_shared_publish(false, &session.source_strand_id, "approved summary");
         assert!(unconfirmed.is_err());
 
-        let leaked_identifier = crate::views::chat::confirmed_sidecar_publish_message_operation(
-            &gate,
+        let leaked_identifier = gate.validate_shared_publish(
             true,
-            &session.source_realm_id,
-            EXCHANGE_ACCOUNT,
             &session.source_strand_id,
-            message_id,
             &format!("internal {}", session.sidecar_id),
         );
         assert!(leaked_identifier.is_err());
 
-        let blocked = crate::views::chat::confirmed_sidecar_publish_message_operation(
-            &gate,
+        let blocked = gate.validate_shared_publish(
             true,
-            &session.source_realm_id,
-            EXCHANGE_ACCOUNT,
             &session.source_strand_id,
-            message_id,
             "controller-approved shared summary",
         );
         assert!(blocked.is_err());
