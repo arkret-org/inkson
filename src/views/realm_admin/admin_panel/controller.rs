@@ -16,6 +16,8 @@ pub(super) struct RealmAdminController {
     pub(super) state_store: SyncSignal<LocalStateStore>,
     pub(super) metadata_alias: Signal<String>,
     pub(super) admin_grant_id: Signal<String>,
+    pub(super) capability_grant_pending: Signal<bool>,
+    pub(super) capability_grant_id: Signal<String>,
 }
 
 impl RealmAdminController {
@@ -320,46 +322,53 @@ impl RealmAdminController {
         });
     }
 
-    /// Submit a locally built capability Event and report it by op id.
-    ///
-    /// `report_durable_queue` exists because only the grant path tells the
-    /// operator that a durably queued submit will retry; revoke reports the
-    /// same condition as a plain failure. Both behaviours are preserved here
-    /// rather than silently unified.
-    pub(super) fn submit_capability_event(
+    /// Admit one capability grant at a time and expose its actual outcome.
+    pub(super) fn submit_capability_grant(
         mut self,
         base_url: String,
         api_token: String,
         envelope: crate::operation::LocalOperation,
-        op_id: String,
-        event_kind: &'static str,
-        failure_prefix: &'static str,
-        report_durable_queue: bool,
     ) {
+        if (self.capability_grant_pending)() {
+            return;
+        }
+        self.capability_grant_pending.set(true);
+        self.status_msg
+            .set(crate::i18n::tr("realm_admin.grant_capability_pending"));
+        let op_id = envelope.local_operation_id().to_string();
         spawn(async move {
             match crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
                 api.event_submitter()?.submit_sdk_event(&envelope).await
             })
             .await
             {
-                Ok(resp) => self.status_msg.set(format!(
-                    "{event_kind} event {}: event_id={}",
-                    short_protocol_id(&op_id),
-                    short_protocol_id(&resp.event_id)
-                )),
-                Err(err)
-                    if report_durable_queue
-                        && crate::event_submit::is_durably_queued_error(err.inner()) =>
-                {
+                Ok(resp) => {
+                    if let Ok(event_id) = arkret_sdk::EventId::new(resp.event_id.clone()) {
+                        let grant_id = arkret_sdk::GrantId::from_event_id(&event_id).to_string();
+                        self.capability_grant_id.set(grant_id.clone());
+                        self.status_msg.set(format!(
+                            "{} {}",
+                            crate::i18n::tr("realm_admin.capability_granted"),
+                            short_protocol_id(&grant_id)
+                        ));
+                    } else {
+                        self.status_msg.set(format!(
+                            "capability grant accepted: event_id={}",
+                            short_protocol_id(&resp.event_id)
+                        ));
+                    }
+                }
+                Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
                     self.status_msg.set(format!(
-                        "{event_kind} event {} queued for retry",
+                        "capability grant {} queued for retry",
                         short_protocol_id(&op_id)
                     ));
                 }
                 Err(err) => self
                     .status_msg
-                    .set(format!("{failure_prefix} submit failed: {}", err.display())),
+                    .set(format!("capability grant failed: {}", err.display())),
             }
+            self.capability_grant_pending.set(false);
         });
     }
 

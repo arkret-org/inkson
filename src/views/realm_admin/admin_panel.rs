@@ -57,6 +57,7 @@ pub fn RealmAdminPanel(
     let mut cap_tag = use_signal(|| CapabilityActionId::MESSAGE_CREATE.to_owned());
     let mut cap_subject = use_signal(String::new);
     let mut cap_revoke_reason = use_signal(|| "rotation policy".to_owned());
+    let capability_grant_pending = use_signal(|| false);
     let mut archive_confirm_open = use_signal(|| false);
     let mut destroy_confirm_open = use_signal(|| false);
     let mut danger_confirm_text = use_signal(String::new);
@@ -165,6 +166,8 @@ pub fn RealmAdminPanel(
         state_store,
         metadata_alias,
         admin_grant_id,
+        capability_grant_pending,
+        capability_grant_id: cap_grant_id,
     };
     rsx! {
         div { class: "settings realm-settings", "data-testid": "realm-admin-panel",
@@ -1040,12 +1043,16 @@ pub fn RealmAdminPanel(
                     Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "cap-grant-submit-button",
+                        disabled: capability_grant_pending(),
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
                             let actor_principal_id = principal_id.clone();
                             let issuer_authority_basis = issuer_authority_basis.clone();
                             move |_| {
+                                if capability_grant_pending() {
+                                    return;
+                                }
                                 let base = base.clone();
                                 let realm = realm.clone();
                                 let api_token = token();
@@ -1156,23 +1163,23 @@ pub fn RealmAdminPanel(
                                         return;
                                     }
                                 };
-                                let op_id = envelope.local_operation_id().to_string();
-                                controller.submit_capability_event(
+                                controller.submit_capability_grant(
                                     base,
                                     api_token,
                                     envelope,
-                                    op_id,
-                                    "ak.capability.grant",
-                                    "capability.grant",
-                                    true,
                                 );
                             }
                         },
-                        {crate::i18n::tr("realm_admin.grant_capability_move")}
+                        if capability_grant_pending() {
+                            {crate::i18n::tr("realm_admin.grant_capability_pending")}
+                        } else {
+                            {crate::i18n::tr("realm_admin.grant_capability_move")}
+                        }
                     }
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "cap-revoke-submit-button",
+                        disabled: capability_grant_pending(),
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
@@ -1232,6 +1239,15 @@ pub fn RealmAdminPanel(
                             }
                         },
                         {crate::i18n::tr("realm_admin.revoke_capability_move")}
+                    }
+                }
+                if !status_msg().is_empty() {
+                    div {
+                        class: "muted",
+                        role: "status",
+                        "aria-live": "polite",
+                        "data-testid": "capability-grant-status",
+                        "{status_msg}"
                     }
                 }
             }

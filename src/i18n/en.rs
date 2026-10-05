@@ -548,13 +548,15 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.cancel_card", "Cancel");
     dict.set("kanban.rename_list_hint", "Double-click to rename");
     dict.set("realm_admin.apply_policy", "Apply Policy");
+    dict.set("realm_admin.grant_capability_move", "Grant capability");
+    dict.set("realm_admin.revoke_capability_move", "Revoke capability");
     dict.set(
-        "realm_admin.grant_capability_move",
-        "Grant capability (Move)",
+        "realm_admin.grant_capability_pending",
+        "Granting permission…",
     );
     dict.set(
-        "realm_admin.revoke_capability_move",
-        "Revoke capability (Move)",
+        "realm_admin.capability_granted",
+        "Permission granted. Grant ID:",
     );
     dict.set("realm_admin.admin_grant_title", "Realm administrators");
     dict.set(

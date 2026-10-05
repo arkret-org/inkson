@@ -343,8 +343,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.cancel_card", "取消");
     dict.set("kanban.rename_list_hint", "双击重命名");
     dict.set("realm_admin.apply_policy", "应用策略");
-    dict.set("realm_admin.grant_capability_move", "授予权限（Move）");
-    dict.set("realm_admin.revoke_capability_move", "撤销权限（Move）");
+    dict.set("realm_admin.grant_capability_move", "授予权限");
+    dict.set("realm_admin.grant_capability_pending", "正在授予权限…");
+    dict.set("realm_admin.capability_granted", "权限已授予。授权 ID：");
+    dict.set("realm_admin.revoke_capability_move", "撤销权限");
     dict.set("realm_admin.admin_grant_title", "Realm 管理员");
     dict.set(
         "realm_admin.admin_grant_hint",
