@@ -32,7 +32,7 @@ fn describe(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
-/// Install one accepted `ak.mls.genesis` or `ak.mls.commit`.
+/// Install this device's accepted `ak.mls.genesis` or staged `ak.mls.commit`.
 ///
 /// `authority_hints` carry the checked KeyPackage claim evidence for every leaf
 /// this transition newly occupies; a membership-changing commit without them
@@ -138,31 +138,18 @@ pub(crate) async fn install_accepted_transition(
             let base_event_id = base.group_state_event_id.as_ref().ok_or_else(|| {
                 "accepted MLS Commit base checkpoint has no accepted Event".to_owned()
             })?;
-            let station_base = state
-                .read(|store| store.current_mls_group_for_scope(&transition.effective_scope))
-                .ok_or_else(|| {
-                    "accepted MLS Commit has no pinned Station base current result".to_owned()
-                })?;
-            validate_station_base_current(
-                &station_base,
-                &transition.effective_scope,
-                base_event_id,
-                transition.previous_epoch,
-            )?;
             let mut group =
                 crate::mls::persistence::restore_envelope(&base, &snapshot_secret, base.epoch)
                     .map_err(describe)?;
-            let previous = group.verified_leaf_bindings().map_err(describe)?;
-            // This merges the committer's own staged commit as well as a remote
-            // one: the staged pending commit travels inside the durable group
-            // state, so an author that restarted between submission and
-            // acceptance still installs exactly the epoch it authored.
-            group
-                .install_accepted_commit(item, &station_base)
-                .map_err(describe)?;
-            crate::mls::governance_proof::install_post_transition_leaf_bindings(
+            // The durable own pending Commit pins its historical GroupContext.
+            // A moving current may already describe the accepted next epoch or
+            // await stream catch-up; neither is the original authoring base.
+            install_staged_outbound_commit(
                 &mut group,
-                &previous,
+                item,
+                base_event_id,
+                authority,
+                device_id,
                 authority_hints,
             )?;
             group
@@ -841,21 +828,34 @@ fn validate_installed_coordinate(
     Ok(())
 }
 
-fn validate_station_base_current(
-    current: &arkret_wire::MlsGroupCurrent,
-    effective_scope: &arkret_sdk::ScopeRef,
+fn install_staged_outbound_commit(
+    group: &mut arkret_sdk::ArkretMlsGroup,
+    item: &CommittedEventFullView,
     base_event_id: &arkret_sdk::EventId,
-    previous_epoch: u64,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    authority_hints: &[MlsLeafAuthorityHint],
 ) -> Result<(), String> {
-    if &current.effective_scope != effective_scope
-        || &current.current_mls_commit_event_ref != base_event_id
-        || current.epoch != previous_epoch
+    let actor = arkret_sdk::ActorId::account(authority.clone());
+    if group.identity().actor_id != actor
+        || item.event.actor_id != actor
+        || group.identity().endpoint
+            != arkret_sdk::MlsEndpointIdentity::human_device(
+                authority.principal_id.clone(),
+                device_id.clone(),
+            )
     {
-        return Err(
-            "pinned Station MLS current result is not the exact transition base".to_owned(),
-        );
+        return Err("staged outbound MLS Commit belongs to another endpoint".to_owned());
     }
-    Ok(())
+    let previous = group.verified_leaf_bindings().map_err(describe)?;
+    group
+        .install_recovered_own_commit(item, base_event_id)
+        .map_err(describe)?;
+    crate::mls::governance_proof::install_post_transition_leaf_bindings(
+        group,
+        &previous,
+        authority_hints,
+    )
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -1140,55 +1140,110 @@ mod tests {
     }
 
     #[test]
-    fn station_current_must_be_the_exact_pre_transition_base() {
-        let scope = arkret_sdk::ScopeRef::Realm {
+    fn staged_sidecar_commit_installs_from_immutable_base_after_restart() {
+        let account = authority();
+        let device = device_id();
+        let actor = arkret_sdk::ActorId::account(account.clone());
+        let create = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [51; 32]);
+        let sidecar = arkret_sdk::SidecarId::from_event_id(&create);
+        let scope = arkret_sdk::ScopeRef::Sidecar {
             realm_id: realm_id(),
+            sidecar_id: sidecar.clone(),
         };
-        let genesis = arkret_sdk::EventId::new(
-            "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk".to_owned(),
+        let identity =
+            arkret_sdk::ArkretMlsIdentity::new_test_human_device(actor.clone(), device.clone())
+                .unwrap();
+        let mut group = identity.create_group(&scope).unwrap();
+        group
+            .install_local_creator_binding(actor.clone(), Some(create.clone()))
+            .unwrap();
+        let base = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [52; 32]);
+        let binding = arkret_sdk::MlsGovernanceBindingPayload::sidecar(
+            realm_id(),
+            sidecar.clone(),
+            Some(base.clone()),
+            0,
+            1,
+            0,
+            arkret_sdk::sidecar_participant_authority_digest(&sidecar, &realm_id(), &account, &[])
+                .unwrap(),
+            vec![create],
         )
         .unwrap();
-        let base = arkret_sdk::EventId::new(
-            "ak:event:AbhX3-n_FG8scl_4zkFai8VRhqvIwjOeWHvA8D3mQ9V7".to_owned(),
-        )
-        .unwrap();
-        let current = arkret_wire::MlsGroupCurrent {
-            effective_scope: scope.clone(),
-            genesis_event_ref: genesis,
-            cipher_suite: arkret_wire::NonEmptyString::new(
-                "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+        let before = group.export_state_record().unwrap();
+        let envelope = group
+            .self_update_commit_with_governance_binding(&binding)
+            .unwrap();
+        let accepted =
+            crate::test_support::accepted_mls_commit_with_binding(actor, &envelope, binding, 53);
+        let pending = serde_json::to_vec(&group.export_state_record().unwrap()).unwrap();
+        let restore = || {
+            arkret_sdk::ArkretMlsGroup::restore_from_state_record(
+                &serde_json::from_slice(&pending).unwrap(),
             )
-            .unwrap(),
-            current_mls_commit_event_ref: base.clone(),
-            epoch: 7,
-            current_key_access_revision: 11,
-            covered_key_access_revision: 11,
-            public_tree_ref: arkret_sdk::BlobRef::new(format!(
-                "ak:blob:sha256:{}",
-                "22".repeat(32)
-            ))
-            .unwrap(),
+            .unwrap()
         };
-
-        assert!(validate_station_base_current(&current, &scope, &base, 7).is_ok());
-
-        let mut post_state = current.clone();
-        post_state.epoch = 8;
-        assert!(validate_station_base_current(&post_state, &scope, &base, 7).is_err());
-
-        let another_event = arkret_sdk::EventId::new(
-            "ak:event:AZk4PXzJ6MpkxXnYTUmgXzeIYNd0Wfnz3N0hwLHNV6Xq".to_owned(),
-        )
-        .unwrap();
-        assert!(validate_station_base_current(&current, &scope, &another_event, 7).is_err());
-
-        let another_scope = arkret_sdk::ScopeRef::Circle {
-            realm_id: realm_id(),
-            circle_id: arkret_sdk::CircleId::new(
-                "ak:circle:AcQajqaKFvyDoMpqpSlBvMh0d4gheZsVPhbHaTlqXtkV".to_owned(),
+        let mut restarted = restore();
+        let wrong_base =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [54; 32]);
+        assert!(
+            install_staged_outbound_commit(
+                &mut restarted,
+                &accepted,
+                &wrong_base,
+                &account,
+                &device,
+                &[]
             )
-            .unwrap(),
-        };
-        assert!(validate_station_base_current(&current, &another_scope, &base, 7).is_err());
+            .is_err()
+        );
+        assert_eq!(restarted.epoch(), 0);
+        let mut wrong_account = account.clone();
+        wrong_account.station_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:another.example").unwrap();
+        assert!(
+            install_staged_outbound_commit(
+                &mut restarted,
+                &accepted,
+                &base,
+                &wrong_account,
+                &device,
+                &[]
+            )
+            .is_err()
+        );
+        let wrong_device =
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002").unwrap();
+        assert!(
+            install_staged_outbound_commit(
+                &mut restarted,
+                &accepted,
+                &base,
+                &account,
+                &wrong_device,
+                &[]
+            )
+            .is_err()
+        );
+        let mut unstaged = arkret_sdk::ArkretMlsGroup::restore_from_state_record(&before).unwrap();
+        assert!(
+            install_staged_outbound_commit(&mut unstaged, &accepted, &base, &account, &device, &[])
+                .is_err()
+        );
+        install_staged_outbound_commit(&mut restarted, &accepted, &base, &account, &device, &[])
+            .unwrap();
+        assert_eq!(restarted.epoch(), 1);
+        assert_eq!(restarted.verified_leaf_bindings().unwrap().len(), 1);
+        assert!(
+            install_staged_outbound_commit(
+                &mut restarted,
+                &accepted,
+                &base,
+                &account,
+                &device,
+                &[]
+            )
+            .is_err()
+        );
     }
 }

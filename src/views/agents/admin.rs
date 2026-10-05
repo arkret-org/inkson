@@ -737,6 +737,7 @@ pub fn AgentAdminPanel(
                                         Switch {
                                             "data-testid": "agent-admin-enabled-switch",
                                             checked: selected_status == "active",
+                                            disabled: !selected_has_pcr_binding,
                                             on_checked_change: {
                                                 let base = base_url.clone();
                                                 move |enabled: bool| {

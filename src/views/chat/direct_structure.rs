@@ -2,6 +2,108 @@
 
 use super::*;
 
+fn owned_direct_agent(
+    peer: &arkret_sdk::contact_operations::ContactPeer,
+    account: &arkret_sdk::AccountId,
+) -> Option<arkret_sdk::AccountId> {
+    match peer {
+        arkret_sdk::contact_operations::ContactPeer::Agent {
+            actor_id,
+            controller_account_id,
+        } if controller_account_id == account => actor_id.as_account_id().cloned(),
+        _ => None,
+    }
+}
+
+#[component]
+fn DirectAgentReplyPreference(
+    realm: String,
+    chat: String,
+    base: String,
+    account: arkret_sdk::AccountId,
+    device: arkret_sdk::DeviceId,
+    agent: arkret_sdk::AccountId,
+    token: Signal<String>,
+    live_epoch: Signal<u64>,
+) -> Element {
+    let store = crate::app::SessionContext::get().state_store;
+    let mut pending = use_signal(|| false);
+    let mut status = use_signal(String::new);
+    let key = format!("{realm}|{chat}|{account}|{device}|{agent}");
+    let mut current_key = use_signal(|| key.clone());
+    use_effect(use_reactive((&key,), move |(key,)| {
+        current_key.set(key);
+        pending.set(false);
+        status.set(String::new());
+    }));
+    rsx! {
+        div { "data-testid": "direct-agent-reply-preference",
+            p { "Reply preference applies only to the selected Chat. Other permissions and encryption readiness are checked separately." }
+            button {
+                disabled: pending(),
+                onclick: move |_| {
+                    if pending() { return; }
+                    pending.set(true);
+                    status.set("Saving reply preference…".into());
+                    let realm = realm.clone(); let chat = chat.clone(); let base = base.clone();
+                    let account = account.clone(); let device = device.clone(); let agent = agent.clone();
+                    let request_key = current_key();
+                    spawn(async move {
+                        let result = async {
+                            let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+                            anyhow::ensure!(crate::secure_key_store::active_device_seed_scope()
+                                .is_some_and(|scope| scope.authority == account && scope.device_id == device),
+                                "Reply preference belongs to another account or device");
+                            let scope = arkret_sdk::ParticipationScope::Strand {
+                                realm_id: arkret_sdk::RealmId::new(&realm)?,
+                                strand_id: arkret_sdk::StrandId::new(&chat)?,
+                            };
+                            let checked_key = request_key.clone();
+                            crate::transport::auth::with_authed_sdk_client(&base, token(), |http| async move {
+                                let existing = http.agent_participation_get(agent.principal_id.as_str()).await?;
+                                fence.check()?;
+                                anyhow::ensure!(current_key() == checked_key, "Selected Chat changed");
+                                {
+                                    let state = store.read();
+                                    let context = state.direct_message_context(&realm, &arkret_sdk::ActorId::account(account.clone()));
+                                    anyhow::ensure!(context.is_some_and(|context| context.authority_source == arkret_wire::AuthoritySourceId::DirectConversationParticipantV1)
+                                        && state.direct_conversation_peer(&realm).as_ref().and_then(|peer| owned_direct_agent(peer, &account)).as_ref() == Some(&agent),
+                                        "Direct Conversation ownership is pending");
+                                }
+                                anyhow::ensure!(existing.agent_id == agent.principal_id.as_str(), "Participation belongs to another Agent");
+                                let entry = existing.agent_participation_entries.iter().find(|entry| entry.scope == scope);
+                                let mut selection = entry.map(|entry| entry.selection).unwrap_or_default();
+                                selection.reply_message = true;
+                                let request = arkret_sdk::ParticipationReplaceRequestBody {
+                                    target_scope: scope.clone(), selection,
+                                    expected_version: entry.map(|entry| entry.version).unwrap_or(0),
+                                };
+                                let accepted = http.agent_participation_replace(agent.principal_id.as_str(), &request).await?;
+                                fence.check()?;
+                                anyhow::ensure!(accepted.agent_id == agent.principal_id.as_str()
+                                    && accepted.agent_participation_entries.iter().any(|entry| entry.scope == scope && entry.selection == selection),
+                                    "Reply preference was not confirmed");
+                                Ok(())
+                            }).await.map_err(|error| anyhow::anyhow!(error.display()))
+                        }.await;
+                        if current_key() != request_key { return; }
+                        match result {
+                            Ok(()) => {
+                                status.set("Reply preference saved for this Chat".into());
+                                live_epoch.set(live_epoch().wrapping_add(1));
+                            }
+                            Err(error) => status.set(format!("{error:#}")),
+                        }
+                        pending.set(false);
+                    });
+                },
+                "Allow Agent replies in this Chat"
+            }
+            p { role: "status", "{status}" }
+        }
+    }
+}
+
 pub(super) fn metadata_title(
     store: &LocalStateStore,
     realm: &str,
@@ -26,6 +128,46 @@ pub(super) fn metadata_title(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_reply_preference_requires_the_complete_controller_account() {
+        let account = arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        );
+        let agent = arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
+            account.station_id.clone(),
+        );
+        let peer = arkret_sdk::contact_operations::ContactPeer::Agent {
+            actor_id: arkret_sdk::ActorId::account(agent.clone()),
+            controller_account_id: account.clone(),
+        };
+        assert_eq!(owned_direct_agent(&peer, &account), Some(agent));
+        let mut another_station = account.clone();
+        another_station.station_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap();
+        assert_eq!(owned_direct_agent(&peer, &another_station), None);
+        assert_eq!(
+            owned_direct_agent(
+                &arkret_sdk::contact_operations::ContactPeer::Human {
+                    account_id: account.clone(),
+                },
+                &account
+            ),
+            None
+        );
+        assert_eq!(
+            owned_direct_agent(
+                &arkret_sdk::contact_operations::ContactPeer::Agent {
+                    actor_id: arkret_sdk::ActorId::service(account.principal_id.clone()),
+                    controller_account_id: account.clone(),
+                },
+                &account
+            ),
+            None
+        );
+    }
 
     fn sample_write(action: &str) -> StructureWrite {
         let token = "ASOv-EoZPg5yuM1Pv__u1K8vD3Q9342GxwoWmkKwjqOn";
@@ -466,6 +608,11 @@ pub(super) fn DirectStructurePanel(
     let stable = context.as_ref().is_some_and(|c| {
         c.authority_source == arkret_wire::AuthoritySourceId::DirectConversationParticipantV1
     });
+    let owned_agent = stable
+        .then(|| store.read().direct_conversation_peer(&realm))
+        .flatten()
+        .as_ref()
+        .and_then(|peer| owned_direct_agent(peer, &account));
     let binding = context
         .map(|c| c.authority_event_ref.to_string())
         .unwrap_or_default();
@@ -584,6 +731,12 @@ pub(super) fn DirectStructurePanel(
         || (target_is_main && matches!(action().as_str(), "archive_chat" | "restore_chat"));
     rsx! {
         div { class: "discussion-direct-structure", "data-testid": "direct-structure",
+            if let Some(agent) = owned_agent {
+                DirectAgentReplyPreference {
+                    realm: realm.clone(), chat: selected(), base: base.clone(),
+                    account: account.clone(), device: device.clone(), agent, token, live_epoch,
+                }
+            }
             if chat_rows.len() > 1 {
                 select { "aria-label": "Chat", value: selected(), onchange: move |e| on_select.call(e.value()),
                     for (id, name, state, classification) in &chat_rows {
@@ -659,7 +812,7 @@ pub(super) fn DirectStructurePanel(
                         }
                     }, "Save"
                 }
-                p { role: "status", "{status}" }
+                p { role: "status", "data-testid": "direct-structure-status", "{status}" }
             }
         }
     }

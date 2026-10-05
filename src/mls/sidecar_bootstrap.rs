@@ -279,7 +279,7 @@ pub(crate) async fn ensure_sidecar_mls_genesis(
     Ok(current)
 }
 
-/// Add missing authorized controller devices and current Agent endpoints through the existing
+/// Withdraw departed Agents, rotate the access cut, and add missing endpoints through the existing
 /// durable atomic Commit/Welcome lane. Effective access stays pending until
 /// the recipients have actually consumed their exact Welcome deliveries.
 pub(crate) async fn reconcile_sidecar_mls(
@@ -317,6 +317,7 @@ pub(crate) async fn reconcile_sidecar_mls(
     let secret =
         crate::mls::runtime::load_device_checkpoint_secret(secure.as_ref(), authority, device)
             .context("Sidecar checkpoint key is unavailable")?;
+    view = reconcile_sidecar_withdrawals(api, state, authority, device, &view, &secret).await?;
     let devices = crate::transport::keys::list_devices(&http).await?;
     let mut targets = devices
         .devices
@@ -516,6 +517,136 @@ pub(crate) async fn reconcile_sidecar_mls(
     // A controller current read reports actual recipient consume/readiness;
     // local staging or a successful Commit never substitutes for that gate.
     http.agent_sidecar_get(&expected.sidecar.id)
+        .await
+        .map_err(Into::into)
+}
+
+async fn reconcile_sidecar_withdrawals(
+    api: &crate::transport::TransportClient,
+    state: &StateStoreHandle,
+    authority: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    view: &arkret_sdk::AgentSidecarView,
+    secret: &str,
+) -> anyhow::Result<arkret_sdk::AgentSidecarView> {
+    let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+    let scope = arkret_sdk::ScopeRef::Sidecar {
+        realm_id: view.sidecar.realm_id.clone(),
+        sidecar_id: view.sidecar.id.clone(),
+    };
+    let group_id = scope.canonical_mls_group_id()?;
+    let checkpoint = state
+        .read(|store| store.mls_checkpoint_for_scope_and_group(&scope, group_id.as_str()))
+        .ok_or_else(|| anyhow::anyhow!("Sidecar has no local MLS checkpoint"))?;
+    let group = crate::mls::persistence::restore_envelope(&checkpoint, secret, checkpoint.epoch)?;
+    let mut removed = Vec::new();
+    for leaf in group.verified_leaf_bindings()? {
+        if let arkret_sdk::MlsEndpointIdentity::AgentRuntime { agent_id, .. } = &leaf.endpoint {
+            anyhow::ensure!(
+                leaf.actor_id.as_account_id().is_some_and(|account| {
+                    account.station_id == authority.station_id && account.principal_id == *agent_id
+                }),
+                "Sidecar Agent leaf differs from its complete controller-Station identity"
+            );
+            if !view.desired_agent_ids.contains(agent_id) {
+                removed.push(leaf.actor_id.clone());
+            }
+        }
+    }
+    removed.sort();
+    removed.dedup();
+    let (group_info, tree) = group.public_group_state_bytes()?;
+    let installed_binding = arkret_sdk::MlsPublicGroupTracker::from_external(
+        &group_info,
+        &tree,
+        group_id.as_str(),
+        group.epoch(),
+    )?
+    .governance_binding()?;
+    let cut_covered = installed_binding.sidecar_binding().is_some_and(|binding| {
+        binding.participant_authority_digest == view.mls_context.participant_authority_digest
+            && binding.authority_stream_head == view.mls_context.authority_stream_head
+    });
+    let current = crate::realm_events_engine::verified_sidecar_mls_current(api, &scope).await?;
+    if removed.is_empty()
+        && current.current_key_access_revision == current.covered_key_access_revision
+        && cut_covered
+    {
+        return Ok(view.clone());
+    }
+    let http = api.sdk_http_client()?;
+    let after = http.agent_sidecar_get(&view.sidecar.id).await?;
+    genesis_binding(&after, authority)?;
+    fence.check()?;
+    anyhow::ensure!(
+        after.sidecar.id == view.sidecar.id
+            && after.sidecar.realm_id == *scope.realm_id()
+            && after.desired_agent_ids == view.desired_agent_ids
+            && after.mls_context.participant_authority_digest
+                == view.mls_context.participant_authority_digest
+            && after.mls_context.authority_stream_head == view.mls_context.authority_stream_head
+            && after.mls_context.epoch == Some(current.epoch)
+            && after.mls_context.genesis_event_ref.as_deref()
+                == Some(current.genesis_event_ref.as_str())
+            && checkpoint.epoch == current.epoch
+            && checkpoint.group_state_event_id.as_ref()
+                == Some(&current.current_mls_commit_event_ref),
+        "Sidecar withdrawal authority cut or private base changed"
+    );
+    let binding = arkret_sdk::MlsGovernanceBindingPayload::sidecar(
+        scope.realm_id().clone(),
+        view.sidecar.id.clone(),
+        Some(current.current_mls_commit_event_ref),
+        current.epoch,
+        current
+            .epoch
+            .checked_add(1)
+            .context("Sidecar MLS epoch overflow")?,
+        current.current_key_access_revision,
+        view.mls_context.participant_authority_digest.clone(),
+        view.mls_context.authority_stream_head.clone(),
+    )?;
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    let (staged, operation) = state.read(|store| {
+        anyhow::ensure!(
+            store.mls_checkpoint_for_scope(&scope).as_ref() == Some(&checkpoint),
+            "Sidecar withdrawal checkpoint changed before authoring"
+        );
+        let staged = crate::mls::runtime::build_sidecar_access_commit(
+            store,
+            secure.as_ref(),
+            authority,
+            device,
+            &binding,
+            &removed,
+        )
+        .map_err(|error| anyhow::anyhow!(error.user_message()))?;
+        let operation = crate::mls::group_events::mls_commit_event_with_binding(
+            store,
+            authority.principal_id.as_str(),
+            &staged.envelope,
+            &binding,
+        )
+        .map_err(anyhow::Error::msg)?;
+        Ok::<_, anyhow::Error>((staged, operation))
+    })?;
+    let submitter = api
+        .event_submitter()?
+        .with_authority(authority.clone())
+        .with_state_store(state.clone());
+    let authored = submitter.author_for_direct_submission(&operation).await?;
+    fence.check()?;
+    submitter
+        .submit_mls_commit(
+            authored,
+            Vec::new(),
+            device.clone(),
+            Vec::new(),
+            state,
+            staged.staged_checkpoint,
+        )
+        .await?;
+    http.agent_sidecar_get(&view.sidecar.id)
         .await
         .map_err(Into::into)
 }
