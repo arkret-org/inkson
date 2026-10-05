@@ -127,78 +127,110 @@ pub(super) async fn drain_stream<F: Fn() -> bool>(
     replica: &mut RealmReplica,
 ) -> garth::Result<()> {
     let cut = consumer.snapshot_head(realm).await?;
-    let head = cut
+    let private_cut = matches!(stream, CommitStreamRef::Sidecar { .. });
+    if !cut
         .snapshot()
         .visible_stream_heads
         .iter()
-        .find(|head| &head.stream_ref == stream)
-        .ok_or_else(|| protocol("own Station cut omits followed stream"))?;
-    let saved = projector
-        .state_store
-        .read(|store| store.verified_commit_stream_cursor(stream))
-        .map_err(protocol)?;
-    let anchor = projector
-        .state_store
-        .read(|store| store.verified_commit_stream_anchor(stream))
-        .map_err(protocol)?;
+        .any(|head| &head.stream_ref == stream)
+    {
+        return Err(protocol("own Station cut omits followed stream"));
+    }
+    // A complete private current cut covers all visible Sidecar streams. Read
+    // those exact heads before publishing it; a separately fetched newer cut
+    // or a history-only live update cannot settle the exchange fold.
+    let streams = if private_cut {
+        cut.snapshot()
+            .visible_stream_heads
+            .iter()
+            .filter(|head| matches!(head.stream_ref, CommitStreamRef::Sidecar { .. }))
+            .map(|head| head.stream_ref.clone())
+            .collect::<Vec<_>>()
+    } else {
+        vec![stream.clone()]
+    };
     let mut candidate = replica.clone();
-    if candidate.verified_head(stream).is_none()
-        && let (Some(saved), Some(anchor)) = (&saved, &anchor)
-    {
-        if anchor.stream_ref != saved.stream_ref
-            || anchor.stream_position != saved.stream_position
-            || anchor.commit_id != saved.commit_id
-        {
-            return Err(protocol(
-                "durable anchor differs from its Account stream head",
-            ));
+    let mut pages = Vec::new();
+    let mut rows = Vec::new();
+    for stream in &streams {
+        if !active() {
+            return Ok(());
         }
-        consumer.restore_anchor(&mut candidate, anchor, &cut)?;
-    }
-    let predecessor = candidate.verified_head(stream).cloned();
-    if predecessor.is_none()
-        && consumer
-            .readable_floor(realm, stream)
-            .await?
-            .oldest_position
-            > 0
-    {
-        // Current/head is the existing live bootstrap surface. This never
-        // clears an Account historical preview or claims unavailable rows.
-        consumer.bootstrap_stream(&mut candidate, stream, &cut)?;
-    }
-    let end = head
-        .stream_position
-        .checked_add(1)
-        .ok_or_else(|| protocol("stream head overflow"))?;
-    let (pages, _) = scan_window(consumer, &mut candidate, &cut, stream, None, end).await?;
-    let pages = pages.ok_or_else(above_genesis_without_basis)?;
-    if candidate.verified_head(stream) != Some(head) {
-        return Err(protocol("follow does not reach exact original head"));
-    }
-    if let Some(saved) = &saved {
-        let found = pages
+        let head = cut
+            .snapshot()
+            .visible_stream_heads
+            .iter()
+            .find(|head| &head.stream_ref == stream)
+            .ok_or_else(|| protocol("own Station cut omits followed stream"))?;
+        let saved = projector
+            .state_store
+            .read(|store| store.verified_commit_stream_cursor(stream))
+            .map_err(protocol)?;
+        let anchor = projector
+            .state_store
+            .read(|store| store.verified_commit_stream_anchor(stream))
+            .map_err(protocol)?;
+        if candidate.verified_head(stream).is_none()
+            && let (Some(saved), Some(anchor)) = (&saved, &anchor)
+        {
+            if anchor.stream_ref != saved.stream_ref
+                || anchor.stream_position != saved.stream_position
+                || anchor.commit_id != saved.commit_id
+            {
+                return Err(protocol(
+                    "durable anchor differs from its Account stream head",
+                ));
+            }
+            consumer.restore_anchor(&mut candidate, anchor, &cut)?;
+        }
+        let predecessor = candidate.verified_head(stream).cloned();
+        if predecessor.is_none()
+            && consumer
+                .readable_floor(realm, stream)
+                .await?
+                .oldest_position
+                > 0
+        {
+            // Current/head is the existing live bootstrap surface. This never
+            // clears an Account historical preview or claims unavailable rows.
+            consumer.bootstrap_stream(&mut candidate, stream, &cut)?;
+        }
+        let end = head
+            .stream_position
+            .checked_add(1)
+            .ok_or_else(|| protocol("stream head overflow"))?;
+        let (stream_pages, _) =
+            scan_window(consumer, &mut candidate, &cut, stream, None, end).await?;
+        let stream_pages = stream_pages.ok_or_else(above_genesis_without_basis)?;
+        if candidate.verified_head(stream) != Some(head) {
+            return Err(protocol("follow does not reach exact original head"));
+        }
+        if let Some(saved) = &saved {
+            let found = stream_pages
+                .iter()
+                .flat_map(|page| page.rows())
+                .find(|row| row.commit().stream_position == saved.stream_position);
+            if predecessor.as_ref() != Some(saved)
+                && found.is_none_or(|row| row.commit().commit_id != saved.commit_id)
+            {
+                return Err(protocol(
+                    "own Station replay substitutes the durable cursor",
+                ));
+            }
+        }
+        let new_rows = stream_pages
             .iter()
             .flat_map(|page| page.rows())
-            .find(|row| row.commit().stream_position == saved.stream_position);
-        if predecessor.as_ref() != Some(saved)
-            && found.is_none_or(|row| row.commit().commit_id != saved.commit_id)
-        {
-            return Err(protocol(
-                "own Station replay substitutes the durable cursor",
-            ));
-        }
+            .filter(|row| {
+                saved
+                    .as_ref()
+                    .is_none_or(|saved| row.commit().stream_position > saved.stream_position)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        rows.extend(new_rows);
+        pages.extend(stream_pages);
     }
-    let rows = pages
-        .iter()
-        .flat_map(|page| page.rows())
-        .filter(|row| {
-            saved
-                .as_ref()
-                .is_none_or(|saved| row.commit().stream_position > saved.stream_position)
-        })
-        .cloned()
-        .collect();
     let batch = committed_views_to_client_events(realm, rows)?;
     if !active() {
         return Ok(());
@@ -215,8 +247,18 @@ pub(super) async fn drain_stream<F: Fn() -> bool>(
                     )?;
                 }
                 changed += ingest_realm_batch(store, &projector.realm_id, &batch);
-                if candidate.verified_anchor(stream).is_some() {
-                    store.stage_verified_commit_stream_checkpoint(&candidate, stream)?;
+                if private_cut {
+                    changed += install_followed_sidecar_current(
+                        store,
+                        &VerifiedCurrentSnapshot {
+                            snapshot: cut.snapshot().clone(),
+                        },
+                    )?;
+                }
+                for stream in &streams {
+                    if candidate.verified_anchor(stream).is_some() {
+                        store.stage_verified_commit_stream_checkpoint(&candidate, stream)?;
+                    }
                 }
                 Ok(changed)
             })
@@ -242,6 +284,19 @@ pub(super) async fn drain_stream<F: Fn() -> bool>(
             .update(|epoch| *epoch = epoch.wrapping_add(1));
     }
     Ok(())
+}
+
+/// Called inside the history/checkpoint transaction so readers never observe
+/// a live Sidecar suffix paired with a different signed current cut.
+pub(super) fn install_followed_sidecar_current(
+    store: &mut crate::state::LocalStateStore,
+    proof: &VerifiedCurrentSnapshot,
+) -> Result<usize, String> {
+    let changed = store.install_verified_sidecar_current(proof)?;
+    store
+        .verified_sidecar_inputs(proof.snapshot().realm_id.as_str())
+        .map_err(|error| format!("followed Sidecar cut is incomplete: {error:#}"))?;
+    Ok(changed)
 }
 
 /// The host fences the full Account and request epoch before durable projection.

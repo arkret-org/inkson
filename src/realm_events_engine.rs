@@ -5006,6 +5006,22 @@ mod tests {
         current_verifier
             .install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)
             .unwrap();
+        let live_proof = VerifiedCurrentSnapshot {
+            snapshot: snapshot.clone(),
+        };
+        let mut live_follow = LocalStateStore::with_path(&path);
+        assert!(
+            live_follow
+                .verified_projection_transaction(|store| {
+                    own_station::install_followed_sidecar_current(store, &live_proof)
+                })
+                .is_err(),
+            "a newer cut cannot replace the readable cut before its complete tail arrives"
+        );
+        assert_eq!(
+            live_follow.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            vec![native[0].clone()]
+        );
         reopened
             .install_verified_sidecar_current(&VerifiedCurrentSnapshot { snapshot })
             .unwrap();
@@ -5037,6 +5053,21 @@ mod tests {
                 &keys,
             )
             .unwrap();
+        live_follow
+            .verified_projection_transaction(|store| {
+                let changed = store.ingest_verified_message_history(&page)?;
+                assert!(
+                    store.verified_sidecar_inputs(REALM_ID).is_err(),
+                    "history-only live updates leave the prior signed cut behind"
+                );
+                own_station::install_followed_sidecar_current(store, &live_proof)
+                    .map(|current_changed| changed + current_changed)
+            })
+            .unwrap();
+        assert_eq!(
+            live_follow.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            native
+        );
         reopened.ingest_verified_message_history(&page).unwrap();
         assert_eq!(
             reopened.current_mls_group_for_scope(&scope),
