@@ -374,6 +374,108 @@ pub(super) fn route_to_owned_agent_sidecar(
                         opened_at: chrono::Utc::now(),
                     };
                     sidecar_session.set(Some(session.clone()));
+                    let readiness_fence = PendingSidecarDraftFence::capture_in_scope(
+                        controller.draft,
+                        controller.mention_picker_state,
+                        controller.selected_channel,
+                        sidecar_route_pending.origin_scope(),
+                    );
+                    let ready = wait_for_sidecar_access(
+                        || async {
+                            let api = crate::transport::auth::authed_api_ready(
+                                &base_url,
+                                api_token.clone(),
+                            )
+                            .await?;
+                            let view = api
+                                .sdk_http_client()?
+                                .agent_sidecar_get(&sidecar_id)
+                                .await?;
+                            crate::sidecar::validate_agent_sidecar_view(&view)?;
+                            anyhow::ensure!(
+                                view.sidecar.id == sidecar_id
+                                    && view.sidecar.realm_id.as_str() == realm_id
+                                    && view.sidecar.controller_account_id == authority
+                                    && addressed_agent_ids.iter().all(|id| view
+                                        .desired_agent_ids
+                                        .iter()
+                                        .any(|agent| agent.as_str() == id)),
+                                "Private Sidecar access or addressed Agent changed"
+                            );
+                            let ready = view.access_readiness
+                                == arkret_sdk::AgentSidecarAccessReadiness::Ready
+                                && view.mls_context.current_controller_device_ready
+                                && crate::sidecar::native_mls_ready_for_view(
+                                    &state_store.read(),
+                                    &view,
+                                );
+                            Ok(ready.then_some(view))
+                        },
+                        || {
+                            session_fence.check()?;
+                            anyhow::ensure!(
+                                readiness_fence.is_current()
+                                    && controller.draft.peek().as_str() == draft_at_send
+                                    && controller.selected_channel.peek().as_str() == strand_id
+                                    && sidecar_session.peek().as_ref().is_some_and(|open| {
+                                        open.trace_id == session.trace_id
+                                            && open.controller_account_id == authority
+                                            && open.matches_route(&realm_id, &strand_id)
+                                    }),
+                                "Private Sidecar ready. The edited draft has not been sent"
+                            );
+                            Ok(())
+                        },
+                        60,
+                    )
+                    .await;
+                    let mode = if ready.is_ok() {
+                        require_current_private_targets(
+                            &base_url,
+                            api_token.clone(),
+                            &realm_id,
+                            &authority,
+                            &mentions,
+                            &addressed_agent_ids,
+                        )
+                        .await
+                        .and_then(|_| session_fence.check())
+                    } else {
+                        Ok(())
+                    };
+                    let unchanged = readiness_fence.finish()
+                        && sidecar_session.peek().as_ref().is_some_and(|open| {
+                            open.trace_id == session.trace_id
+                                && open.controller_account_id == authority
+                                && open.matches_route(&realm_id, &strand_id)
+                        });
+                    if session_fence.check_session_identity().is_err() {
+                        sidecar_route_pending.set(false);
+                        return;
+                    }
+                    let ready_view = match ready.and_then(|view| mode.map(|_| view)) {
+                        Ok(view) if unchanged => view,
+                        outcome => {
+                            sidecar_route_pending.set(false);
+                            status_msg.set(match outcome {
+                                Err(error) => {
+                                    format!("Private Sidecar message was not sent: {error:#}")
+                                }
+                                Ok(_) => {
+                                    "Private Sidecar ready. The edited draft has not been sent."
+                                        .to_owned()
+                                }
+                            });
+                            return;
+                        }
+                    };
+                    let mut session = session;
+                    session.access_readiness = ready_view.access_readiness;
+                    session.pending_access_reconciliations =
+                        ready_view.pending_access_reconciliations;
+                    session.mls_context = ready_view.mls_context;
+                    session.native_mls_ready = true;
+                    sidecar_session.set(Some(session.clone()));
                     sidecar_route_pending.set(false);
                     let source_event_id = latest_source_event_anchor(
                         &controller.messages.peek(),
@@ -505,8 +607,36 @@ impl PendingSidecarDraftFence {
 
     fn finish(self) -> bool {
         self.context.clear_subscribers();
+        self.is_current()
+    }
+
+    fn is_current(&self) -> bool {
         !self.changed.load(std::sync::atomic::Ordering::SeqCst)
     }
+}
+
+async fn wait_for_sidecar_access<T, Read, ReadFuture, Check>(
+    mut read: Read,
+    mut check: Check,
+    attempts: usize,
+) -> anyhow::Result<T>
+where
+    Read: FnMut() -> ReadFuture,
+    ReadFuture: std::future::Future<Output = anyhow::Result<Option<T>>>,
+    Check: FnMut() -> anyhow::Result<()>,
+{
+    for attempt in 0..attempts {
+        check()?;
+        let ready = read().await?;
+        check()?;
+        if let Some(ready) = ready {
+            return Ok(ready);
+        }
+        if attempt + 1 < attempts {
+            crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(2)).await;
+        }
+    }
+    anyhow::bail!("Private Sidecar access did not become ready; the draft has not been sent")
 }
 
 /// One plaintext chat send, from the optimistic row to the accepted receipt.
@@ -1124,6 +1254,64 @@ mod pending_sidecar_draft_tests {
             let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
             assert!(fence.finish());
         });
+    }
+
+    #[tokio::test]
+    async fn pending_access_resumes_only_the_unchanged_private_send() {
+        for edit_during_wait in [false, true] {
+            let control = Rc::new(RefCell::new(None));
+            let mut dom = VirtualDom::new_with_props(harness, control.clone());
+            dom.rebuild_to_vec();
+            let (mut draft, picker, strand, mut background) = control.borrow().unwrap();
+            let fence = dom.in_runtime(|| PendingSidecarDraftFence::capture(draft, picker, strand));
+            let reads = std::cell::Cell::new(0);
+            let result = wait_for_sidecar_access(
+                || {
+                    let call = reads.get() + 1;
+                    reads.set(call);
+                    dom.in_runtime(|| {
+                        background.set(true);
+                        if call == 2 && edit_during_wait {
+                            draft.set("edited ordinary draft".into());
+                            draft.set("original private draft".into());
+                        }
+                    });
+                    std::future::ready(Ok((call == 2).then_some(true)))
+                },
+                || {
+                    anyhow::ensure!(fence.is_current(), "draft intent changed");
+                    Ok(())
+                },
+                2,
+            )
+            .await;
+            assert_eq!(reads.get(), 2);
+            if edit_during_wait {
+                assert!(
+                    result.is_err(),
+                    "readiness must not revive a revoked Send intent"
+                );
+                assert!(!fence.finish());
+            } else {
+                assert!(result.unwrap());
+                assert!(
+                    fence.finish(),
+                    "background access preparation preserves intent"
+                );
+            }
+        }
+        let reads = std::cell::Cell::new(0);
+        let timeout = wait_for_sidecar_access(
+            || {
+                reads.set(reads.get() + 1);
+                std::future::ready(Ok::<Option<bool>, anyhow::Error>(None))
+            },
+            || Ok(()),
+            1,
+        )
+        .await;
+        assert!(timeout.is_err());
+        assert_eq!(reads.get(), 1, "access waits have a finite read budget");
     }
 }
 
