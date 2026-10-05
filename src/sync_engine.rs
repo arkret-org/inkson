@@ -1430,10 +1430,31 @@ impl InksonAccountProjector {
         next_checkpoint: Option<(garth::CursorScope, garth::AccountCursorCheckpoint)>,
     ) -> garth::Result<()> {
         let http = self.transport.http().http();
+        let binding = crate::station_connection::enrolled(http.base_url().as_str())
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let consumer = garth::own_station::OwnStationConsumer::authenticate(
+            http.clone(),
+            &binding,
+            self.ctx.account.authority.clone(),
+            self.start_generation,
+        )
+        .await?;
+        if !self.active() {
+            return Err(garth::Error::Protocol(
+                "Account consumption epoch changed".into(),
+            ));
+        }
         let mut verified = Vec::with_capacity(batch.frames.len());
         for frame in &batch.frames {
             verified
-                .push(crate::realm_events_engine::verify_account_frame_commits(http, frame).await?);
+                .push(crate::realm_events_engine::consume_account_frame(&consumer, frame).await?);
+        }
+        consumer.require_context(&self.ctx.account.authority, self.generation.get())?;
+        if !self.active() {
+            return Err(garth::Error::Protocol(
+                "Account consumption epoch changed".into(),
+            ));
         }
         self.validate_station_cas_batch(batch).await?;
         for (index, (frame, proof)) in batch.frames.iter().zip(verified.iter()).enumerate() {

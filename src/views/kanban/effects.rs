@@ -157,12 +157,26 @@ pub(super) fn KanbanEffects(
         use_effect(move || {
             let raw_operations = state_store.read().load().raw_operations;
             let entries = state_store.read().realm_current_state_entries(&realm);
-            let containers = space_container_views_from_projection_and_ops(
+            let mut containers = space_container_views_from_projection_and_ops(
                 &lifecycle_container_projection(),
                 &raw_operations,
                 &realm,
                 &entries,
             );
+            if let Some(endpoint) = crate::secure_key_store::active_device_seed_scope() {
+                let state = state_store.read();
+                for view in &mut containers {
+                    if let Some(title) = crate::views::metadata::current_title(
+                        &state,
+                        &realm,
+                        &view.space_id,
+                        &endpoint.authority,
+                        &endpoint.device_id,
+                    ) {
+                        view.title = title;
+                    }
+                }
+            }
             // `board_space_options_from_projection` fails closed on non-SpaceId
             // rows, so a pending Board create never enters the confirmed option
             // set; it is rendered from `pending_board_creates_from_ops` until

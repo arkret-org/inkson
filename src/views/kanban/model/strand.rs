@@ -165,7 +165,20 @@ pub(crate) fn card_from_strand_projection_for_actor(
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
     self_actor_id: &str,
 ) -> KanbanCard {
-    let title = if strand.title.trim().is_empty() {
+    let opened_title = decrypt_ctx.and_then(|ctx| {
+        let (account, device) = ctx.identity?;
+        let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;
+        crate::views::metadata::current_title(
+            ctx.state_store,
+            ctx.realm_id,
+            &strand.strand_id,
+            account,
+            &device,
+        )
+    });
+    let title = if let Some(title) = opened_title {
+        title
+    } else if strand.title.trim().is_empty() {
         strand.strand_id.clone()
     } else {
         strand.title.clone()

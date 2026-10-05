@@ -56,6 +56,7 @@ pub mod kanban;
 pub mod login;
 pub(crate) mod member_display;
 pub mod message_streams;
+pub(crate) mod metadata;
 /// Admin-scope moderation decision/lift workbench.
 pub mod moderation;
 pub mod notifications;

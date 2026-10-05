@@ -542,7 +542,7 @@ async fn recover_remote_tail(
     device_id: &arkret_sdk::DeviceId,
     scope: &arkret_sdk::ScopeRef,
 ) -> Result<usize, String> {
-    let rows = crate::realm_events_engine::verified_mls_recovery_tail(api, scope)
+    let rows = crate::realm_events_engine::verified_mls_recovery_tail(api, authority, scope)
         .await
         .map_err(describe)?;
     let _install = welcome_install_lock().lock().await;

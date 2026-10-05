@@ -182,13 +182,14 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let principal = Did::new(actor_id.to_owned())?;
     let control_realm =
         crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
-    // The active-series pointer binds the exact accepted PCR RealmCommit that
-    // was current when the replacement series was selected.
-    let source_realm_commit_id = submitter
-        .current_stream_head_for(&arkret_sdk::ScopeRef::Realm {
-            realm_id: control_realm.clone(),
-        })
-        .await?;
+    let source_realm_commit_id = current_backup_checkpoint(
+        &http,
+        authority,
+        &control_realm,
+        current_device_id,
+        &trust_anchor,
+    )
+    .await?;
     let revoke = crate::operation::ak_ops::device_revoke(
         control_realm.as_str(),
         actor_id,
@@ -598,6 +599,59 @@ pub(super) async fn current_controller_backup_trust_anchor(
     let outcome = crate::transport::keys::query_keys(http, &account_id, device_id).await?;
     resolve_controller_backup_trust_anchor(&outcome, &account_id, &device)
         .map_err(|error| anyhow!("controller backup trust anchor unavailable: {error}"))
+}
+
+/// The current device authorization names an accepted PCR checkpoint at this
+/// generation. Later Commits in the same generation do not stale it.
+pub(super) async fn current_backup_checkpoint(
+    http: &arkret_sdk::http_client::Client,
+    account: &arkret_sdk::AccountId,
+    realm: &arkret_sdk::RealmId,
+    device_id: &str,
+    anchor: &ControllerBackupTrustAnchor,
+) -> Result<arkret_sdk::RealmCommitId> {
+    let epoch = crate::identity::device_directory::session_cache_epoch();
+    let binding = crate::station_connection::enrolled(http.base_url().as_str()).await?;
+    let consumer = garth::own_station::OwnStationConsumer::authenticate(
+        http.clone(),
+        &binding,
+        account.clone(),
+        epoch,
+    )
+    .await?;
+    let original = http.committed_event_get(&anchor.authorize_event_id).await?;
+    original.validate_shape()?;
+    original.commit().validate_content_address()?;
+    let arkret_sdk::CommittedEventView::Full(full) = original else {
+        return Err(anyhow!("current device authorization original is withheld"));
+    };
+    let event = &full.event;
+    let suite = event.event_id.digest_suite_code().digest_suite();
+    event.verify_event_id_matches_content_with_digest_suite(suite)?;
+    event.validate_proof_bindings_with_digest_suite(suite)?;
+    let payload: arkret_sdk::DeviceAuthorizePayload =
+        serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+    payload
+        .validate_wire_constraints()
+        .map_err(anyhow::Error::msg)?;
+    anyhow::ensure!(
+        event.event_id == anchor.authorize_event_id
+            && event.kind == arkret_sdk::EventKind::DeviceAuthorize
+            && event.actor_id == arkret_sdk::ActorId::account(account.clone())
+            && event.realm_id == *realm
+            && full.commit.stream_ref
+                == arkret_sdk::CommitStreamRef::Realm {
+                    realm_id: realm.clone()
+                }
+            && payload.device_id.as_str() == device_id
+            && payload.authorized_generation_ref == anchor.generation_ref,
+        "current device authorization checkpoint has mixed Account, PCR, device or generation"
+    );
+    consumer.require_context(
+        account,
+        crate::identity::device_directory::session_cache_epoch(),
+    )?;
+    Ok(full.commit.commit_id)
 }
 
 fn active_pointer_version(list_payload: &Value, kind: BackupRotationKind) -> Result<u64> {

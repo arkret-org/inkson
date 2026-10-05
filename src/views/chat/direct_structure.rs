@@ -10,80 +10,10 @@ pub(super) fn metadata_title(
     account: &arkret_sdk::AccountId,
     device: &arkret_sdk::DeviceId,
 ) -> String {
-    let Some(envelope) = envelope else {
-        return id.to_owned();
-    };
-    let Ok(digest) = envelope.payload_digest() else {
-        return id.to_owned();
-    };
-    let path = format!("encrypted_metadata:{digest}");
-    let local = store
-        .private_plaintext_for(realm, id, &path)
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
-    let opened = local.or_else(|| {
-        let cipher = serde_json::to_value(envelope).ok()?;
-        let snapshot = store.load();
-        let event = snapshot.raw_operations.iter().find_map(|record| {
-            let event = record.payload.get("event").unwrap_or(&record.payload);
-            let body = event.get("payload")?;
-            let target = body.get("target_ref").or_else(|| body.get("space_id"));
-            let creation = event
-                .get("event_id")
-                .and_then(Value::as_str)
-                .and_then(|event_id| arkret_sdk::EventId::new(event_id).ok())
-                .is_some_and(|event_id| {
-                    if id.starts_with("ak:strand:") {
-                        arkret_sdk::StrandId::from_event_id(&event_id).as_str() == id
-                    } else {
-                        arkret_sdk::SpaceId::from_event_id(&event_id).as_str() == id
-                    }
-                });
-            let candidate = body
-                .pointer("/object/encrypted_metadata")
-                .or_else(|| body.pointer("/patch/encrypted_metadata/value"));
-            ((creation || target.and_then(Value::as_str) == Some(id)) && candidate == Some(&cipher))
-                .then_some(event)
-        })?;
-        let sender = model::verified_chat_sender_domain_for_realm(
-            realm,
-            event,
-            Some(store),
-            Some((account, "", device)),
-        )?;
-        let signed: arkret_sdk::Event = serde_json::from_value(event.clone()).ok()?;
-        let scope = arkret_sdk::ScopeRef::Realm {
-            realm_id: signed.realm_id.clone(),
-        };
-        let payload = crate::mls::runtime::encrypted_payload_from_verified_event_context(
-            store,
-            envelope,
-            &scope,
-            signed.kind.as_str(),
-            &sender,
-            None,
-        )?;
-        let secure = crate::secure_key_store::default_secure_key_store("inkson");
-        let bytes =
-            crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
-                store,
-                secure.as_ref(),
-                realm,
-                account,
-                device,
-                &payload,
-                &scope,
-                &sender,
-            )?;
-        if id.starts_with("ak:space:") {
-            let metadata: arkret_sdk::SpaceMetadata = serde_json::from_slice(&bytes).ok()?;
-            metadata.validate().ok()?;
-            serde_json::to_value(metadata).ok()
-        } else {
-            let metadata: arkret_sdk::StrandMetadata = serde_json::from_slice(&bytes).ok()?;
-            serde_json::to_value(metadata).ok()
-        }
-    });
-    opened
+    envelope
+        .and_then(|envelope| {
+            crate::views::metadata::open_metadata(store, realm, id, envelope, account, device)
+        })
         .and_then(|metadata| {
             metadata
                 .get("title")

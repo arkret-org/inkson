@@ -51,12 +51,14 @@ async fn current_backup_source_commit_ref(
         &http, authority, device_id,
     )
     .await?;
-    let realm_commit_id = api
-        .event_submitter()?
-        .current_stream_head_for(&arkret_sdk::ScopeRef::Realm {
-            realm_id: control_realm.clone(),
-        })
-        .await?;
+    let realm_commit_id = super::rotation_transaction::current_backup_checkpoint(
+        &http,
+        authority,
+        control_realm,
+        device_id,
+        &trust_anchor,
+    )
+    .await?;
     key_backup_source_commit_ref(realm_commit_id, trust_anchor.generation_ref)
 }
 
@@ -182,17 +184,16 @@ async fn ensure_initial_active_series(
     }
 
     let submitter = api.event_submitter()?;
-    // This is a new ordinary PCR Control authoring boundary. Resolve the
-    // authenticated Realm stream head immediately before authoring so the
-    // signed active-series record names the exact RealmCommit checkpoint it
-    // observed, rather than carrying a removed Seal/frontier surrogate.
-    let source_realm_commit_id = submitter
-        .current_stream_head_for(&arkret_sdk::ScopeRef::Realm {
-            realm_id: control_realm.clone(),
-        })
-        .await?;
     let trust_anchor = super::rotation_transaction::current_controller_backup_trust_anchor(
         &http, authority, device_id,
+    )
+    .await?;
+    let source_realm_commit_id = super::rotation_transaction::current_backup_checkpoint(
+        &http,
+        authority,
+        control_realm,
+        device_id,
+        &trust_anchor,
     )
     .await?;
     let event = super::rotation_transaction::build_active_series_event(

@@ -976,7 +976,7 @@ async fn encrypted_write_rejects_did_for_a_different_active_identity() {
 }
 
 #[test]
-fn encrypted_scope_allows_content_only_metadata_create_payloads() {
+fn kanban_metadata_intents_reach_the_shared_sealing_boundary() {
     let strand = crate::operation::ak_ops::kanban_card_strand_create(
         TEST_REALM_ID,
         "ak:did_core:web:alice.example",
@@ -999,15 +999,11 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     assert!(kanban_plaintext_block_reason(Some(true), &space).is_none());
 }
 
-/// X13 regression: in an encrypted scope, container creation/update
-/// (`ak.space.create` for BOTH board and list, plus `ak.space.update` rank
-/// patches) MUST NOT be blocked — title/kind/parent/rank are non-secret
-/// metadata that has to reach the server so a second device can render the real
-/// Board/List name and order. By contrast a `ak.strand.update` carrying
-/// plaintext private body MUST stay blocked (only E2EE may leave the client for
-/// that field).
+/// This UI guard rejects unprepared private bodies. Metadata intents proceed
+/// to the shared producer boundary, which seals complete user metadata before
+/// the generic send gate. Structural rank remains readable by the Station.
 #[test]
-fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_content() {
+fn kanban_structural_intents_proceed_but_unprepared_private_bodies_are_blocked() {
     let board = crate::operation::ak_ops::space_create(
         TEST_REALM_ID,
         "ak:did_core:web:alice.example",

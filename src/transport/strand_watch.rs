@@ -62,11 +62,10 @@ pub(crate) fn current_level(current: &StrandWatchCurrentOutcome) -> StrandWatchL
     }
 }
 
-fn validate_authority_observation(
+fn validate_own_observation(
     current: &StrandWatchCurrentOutcome,
-    before: &arkret_sdk::RealmAuthorityBundle,
-    after: &arkret_sdk::RealmAuthorityBundle,
-    endpoint_station: &arkret_sdk::DidCoreId,
+    before: &arkret_sdk::RealmStateSnapshot,
+    after: &arkret_sdk::RealmStateSnapshot,
 ) -> anyhow::Result<()> {
     let (realm, generation, head) = match current {
         StrandWatchCurrentOutcome::NeverWritten {
@@ -82,18 +81,33 @@ fn validate_authority_observation(
             ..
         } => (realm_id, *governance_generation, stream_head),
     };
+    let after_head = after
+        .visible_stream_heads
+        .iter()
+        .find(|candidate| candidate.stream_ref == head.stream_ref)
+        .ok_or_else(|| anyhow::anyhow!("watch current has no original Realm head"))?;
     anyhow::ensure!(
         before.realm_id == *realm
             && after.realm_id == *realm
-            && endpoint_station == &before.current_service_id
-            && before.current_generation == after.current_generation
-            && before.current_service_id == after.current_service_id
-            && generation == after.current_generation
-            && head.stream_position <= after.realm_stream_head.stream_position
-            && (head.stream_position != after.realm_stream_head.stream_position
-                || head.commit_id == after.realm_stream_head.commit_id),
-        "watch current observation crossed an authority generation, Station or unconfirmed head"
+            && before.governance_generation == after.governance_generation
+            && generation == after.governance_generation
+            && head.stream_position <= after_head.stream_position
+            && (head.stream_position != after_head.stream_position
+                || head.commit_id == after_head.commit_id),
+        "watch current observation crossed a generation or original head"
     );
+    if head == after_head {
+        if let StrandWatchCurrentOutcome::Current { result, .. } = current {
+            let original = serde_json::to_value(result)?;
+            anyhow::ensure!(
+                after
+                    .current_state_entries
+                    .iter()
+                    .any(|row| serde_json::to_value(row).ok().as_ref() == Some(&original)),
+                "watch current differs from the original same-cut row"
+            );
+        }
+    }
     Ok(())
 }
 
@@ -101,21 +115,28 @@ pub(crate) async fn read(
     http: &arkret_sdk::http_client::Client,
     request: &StrandWatchCurrentRequestBody,
 ) -> anyhow::Result<StrandWatchCurrentOutcome> {
-    let authority = garth::AuthorityClient::new(http.clone());
-    let (before, ..) =
-        crate::realm_events_engine::fresh_verified_realm(&authority, http, &request.realm_id)
-            .await?;
-    let describe = http.describe().await?;
-    anyhow::ensure!(
-        describe.service_id == before.current_service_id,
-        "watch current endpoint is not the verified governing Station"
-    );
+    let account = request
+        .watcher_actor_id
+        .as_account_id()
+        .ok_or_else(|| anyhow::anyhow!("self watch requires a complete Account"))?;
+    let epoch = crate::identity::device_directory::session_cache_epoch();
+    let binding = crate::station_connection::enrolled(http.base_url().as_str()).await?;
+    let consumer = garth::own_station::OwnStationConsumer::authenticate(
+        http.clone(),
+        &binding,
+        account.clone(),
+        epoch,
+    )
+    .await?;
+    let before = consumer.snapshot_head(&request.realm_id).await?;
     let current = http.strand_watch_current(request).await?;
     payload_from_current(request, &current, None)?;
-    let (after, ..) =
-        crate::realm_events_engine::fresh_verified_realm(&authority, http, &request.realm_id)
-            .await?;
-    validate_authority_observation(&current, &before, &after, &describe.service_id)?;
+    let after = consumer.snapshot_head(&request.realm_id).await?;
+    consumer.require_context(
+        account,
+        crate::identity::device_directory::session_cache_epoch(),
+    )?;
+    validate_own_observation(&current, before.snapshot(), after.snapshot())?;
     Ok(current)
 }
 
@@ -297,27 +318,42 @@ mod tests {
         assert!(payload_from_current(&request, &circle, None).is_err());
     }
 
+    fn cut(bundle: &arkret_sdk::RealmAuthorityBundle) -> arkret_sdk::RealmStateSnapshot {
+        let mut signature = bundle.current_assertion.signature.clone();
+        signature.context = arkret_sdk::DetachedSignatureContext::RealmSnapshot;
+        // Shape fixture for observation checks, not authenticated origin proof.
+        arkret_sdk::RealmStateSnapshot {
+            snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([3; 32]),
+            realm_id: bundle.realm_id.clone(),
+            governance_generation: bundle.current_generation,
+            visible_stream_heads: vec![bundle.realm_stream_head.clone()],
+            current_state_entries: vec![],
+            retention_and_history_floor: arkret_sdk::RetentionAndHistoryFloor {
+                history_access: arkret_sdk::HistoryAccess::SinceJoin,
+                stream_floors: vec![arkret_sdk::StreamHistoryFloor {
+                    stream_ref: bundle.realm_stream_head.stream_ref.clone(),
+                    oldest_position: 0,
+                }],
+            },
+            created_at: bundle.bundle_issued_at,
+            signature,
+        }
+    }
+
     #[test]
-    fn current_observation_requires_verified_generation_station_and_confirmed_head() {
+    fn current_observation_keeps_original_generation_and_head_without_governing_endpoint_discovery()
+    {
         let (_, current, bundle) = observation(None);
-        assert_eq!(bundle.current_generation, 0);
-        assert!(
-            validate_authority_observation(&current, &bundle, &bundle, &bundle.current_service_id)
-                .is_ok()
-        );
-        let mut handoff = bundle.clone();
-        handoff.current_generation += 1;
-        assert!(
-            validate_authority_observation(&current, &bundle, &handoff, &bundle.current_service_id)
-                .is_err()
-        );
-        let other = arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap();
-        assert!(validate_authority_observation(&current, &bundle, &bundle, &other).is_err());
-        let mut behind = bundle.clone();
-        behind.realm_stream_head.stream_position = 0;
-        assert!(
-            validate_authority_observation(&current, &behind, &behind, &bundle.current_service_id)
-                .is_err()
-        );
+        let original = cut(&bundle);
+        assert!(validate_own_observation(&current, &original, &original).is_ok());
+        let mut changed = original.clone();
+        changed.governance_generation += 1;
+        assert!(validate_own_observation(&current, &original, &changed).is_err());
+        changed = original.clone();
+        changed.visible_stream_heads[0].commit_id = arkret_sdk::RealmCommitId::from_digest([4; 32]);
+        assert!(validate_own_observation(&current, &original, &changed).is_err());
+        changed = original.clone();
+        changed.visible_stream_heads[0].stream_position = 0;
+        assert!(validate_own_observation(&current, &original, &changed).is_err());
     }
 }

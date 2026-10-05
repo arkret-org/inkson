@@ -34,6 +34,7 @@ use crate::outbound_store::{InksonOutboundStore, OutboundLane};
 mod authoring_unit;
 mod authority;
 mod message_authoring;
+mod metadata;
 
 #[cfg(test)]
 pub(crate) use authoring_unit::author_event_unit_for_test;
@@ -68,7 +69,7 @@ impl garth::HostClock for InksonHostClock {
 }
 
 type InksonOutboundEngine = OutboundEngine<InksonOutboundStore, InksonHostClock>;
-type InksonAuthorityClient = garth::AuthorityClient<arkret_sdk::http_client::Client>;
+type InksonAuthorityClient = garth::AuthorityClient<garth::own_station::OwnStationConsumer>;
 
 /// The write is safely persisted and will be retried.
 ///
@@ -615,6 +616,42 @@ fn local_operation_for_event(
         .map(|record| record.operation_id.clone())
 }
 
+/// Join the durable queue's holder IDs to the frozen Event identities used
+/// by the timeline fold. The queue count still counts holder operations once.
+pub(crate) fn pending_chat_message_identities(
+    local_ids: &BTreeSet<String>,
+    state: &crate::state::ClientLocalState,
+) -> BTreeSet<String> {
+    let mut identities = local_ids.clone();
+    for record in &state.raw_operations {
+        if !local_ids.contains(&record.operation_id) {
+            continue;
+        }
+        let Some(event) = record
+            .payload
+            .get("event")
+            .and_then(|value| serde_json::from_value::<arkret_sdk::Event>(value.clone()).ok())
+        else {
+            continue;
+        };
+        if event.kind != arkret_sdk::EventKind::MessageCreate
+            || record.payload.get("event_id").and_then(Value::as_str)
+                != Some(event.event_id.as_str())
+            || record.realm_id.as_deref() != Some(event.realm_id.as_str())
+            || event
+                .verify_event_id_matches_content_with_digest_suite(
+                    event.event_id.digest_suite_code().digest_suite(),
+                )
+                .is_err()
+        {
+            continue;
+        }
+        identities.insert(event.event_id.to_string());
+        identities.insert(arkret_sdk::MessageId::from_event_id(&event.event_id).to_string());
+    }
+    identities
+}
+
 /// Move the optimistic row to its terminal write state once the Station has
 /// answered for the Event it names.
 fn reconcile_settled_outbound_item(
@@ -1026,8 +1063,21 @@ impl EventSubmitter {
         }
     }
 
-    fn authority_client(&self) -> InksonAuthorityClient {
-        garth::AuthorityClient::new(self.http.clone())
+    async fn authority_client(&self) -> anyhow::Result<InksonAuthorityClient> {
+        let binding = crate::station_connection::enrolled(self.http.base_url().as_str()).await?;
+        let epoch = crate::identity::device_directory::session_cache_epoch();
+        let consumer = garth::own_station::OwnStationConsumer::authenticate(
+            self.http.clone(),
+            &binding,
+            self.authority()?.clone(),
+            epoch,
+        )
+        .await?;
+        anyhow::ensure!(
+            epoch == crate::identity::device_directory::session_cache_epoch(),
+            "submission Account epoch changed"
+        );
+        Ok(garth::AuthorityClient::new(consumer))
     }
 
     fn outbound(&self, lane: OutboundLane) -> anyhow::Result<InksonOutboundEngine> {
@@ -1171,17 +1221,11 @@ impl EventSubmitter {
         // genesis Event of the Realm's verified chain. A readable-history scan
         // is not the source: its first row need not be position 0.
         let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
-        let (bundle, ..) = crate::realm_events_engine::fresh_verified_realm(
-            &garth::AuthorityClient::new(self.http.clone()),
-            &self.http,
-            &realm,
-        )
-        .await
-        .map_err(anyhow::Error::from)?;
-        let resolved = realm_create_authority_from_events(
-            std::slice::from_ref(&bundle.genesis_event),
-            realm_id,
-        );
+        let originals =
+            crate::realm_events_engine::own_realm_prefix(&self.http, self.authority()?, &realm, 1)
+                .await?;
+        let resolved =
+            realm_create_authority_from_events(std::slice::from_ref(&originals[0].event), realm_id);
         if let Some(authority) = &resolved {
             realm_create_authority_cache()
                 .lock()
@@ -1413,19 +1457,16 @@ impl EventSubmitter {
         let peer = store
             .read(|state| state.direct_conversation_peer(realm.as_str()))
             .ok_or_else(|| anyhow::anyhow!("Direct MLS admission requires its exact peer"))?;
-        let (bundle, ..) = crate::realm_events_engine::fresh_verified_realm(
-            &garth::AuthorityClient::new(self.http.clone()),
-            &self.http,
-            realm,
-        )
-        .await?;
+        let originals =
+            crate::realm_events_engine::own_realm_prefix(&self.http, self.authority()?, realm, 1)
+                .await?;
         let outcome = self
             .http
             .direct_conversation_resolve(
                 &arkret_sdk::direct_conversation::DirectConversationResolveRequestBody { peer },
             )
             .await?;
-        crate::mls::direct_binding::mls_authoring_intent(intent, &bundle.genesis_event, &outcome)
+        crate::mls::direct_binding::mls_authoring_intent(intent, &originals[0].event, &outcome)
     }
 
     fn sign_authored_event(
@@ -1576,6 +1617,8 @@ impl EventSubmitter {
     ) -> anyhow::Result<SubmitEventResult> {
         let intent = operation.intent().clone();
         self.ensure_recovery_material_ready(&intent).await?;
+        self.await_application_current(&intent).await?;
+        let intent = self.prepare_metadata(intent).await?;
         self.ensure_application_send_gate(&intent).await?;
         self.refresh_direct_message_authority(&intent, None).await?;
         let local_operation_id = operation.local_operation_id().to_string();
@@ -2370,7 +2413,7 @@ impl EventSubmitter {
         let event_id = submission.event_id;
 
         self.cancel_quarantined_creator_items(&outbound).await?;
-        let authority_client = self.authority_client();
+        let authority_client = self.authority_client().await?;
         let options = arkret_sdk::http_client::ClientRequestOptions::new()
             .request_id(event_id.to_string())
             .idempotency_key(event_id.to_string());
@@ -2659,7 +2702,7 @@ impl EventSubmitter {
                 }
             });
         }
-        let authority_client = self.authority_client();
+        let authority_client = self.authority_client().await?;
         let mut completed = 0usize;
         loop {
             completed =
@@ -2705,6 +2748,60 @@ impl EventSubmitter {
 
     // ------------------------------------------------------------- authoring
     //                                                                 gates
+
+    /// A newly selected Realm may hydrate after its composer mounts. Wait
+    /// within the existing 15-second current-refresh window before sealing
+    /// or authoring; an incomplete cut never means plaintext permission.
+    async fn await_application_current(&self, intent: &EventIntent) -> anyhow::Result<()> {
+        if !matches!(
+            intent.scope_ref(),
+            arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+        ) || crate::mls::send_gate::ApplicationBody::of_event(intent.kind(), intent.payload())?
+            .is_none()
+        {
+            return Ok(());
+        }
+        let Some(store) = self.state_store.as_ref() else {
+            return Ok(());
+        };
+        let authority = self.authority()?;
+        let realm = intent
+            .realm_id_opt()
+            .ok_or_else(|| anyhow::anyhow!("application scope has no Realm"))?;
+        for _ in 0..60 {
+            anyhow::ensure!(
+                store.read(|state| state.active_authority().as_ref() == Some(authority)),
+                "application current crossed its Account fence"
+            );
+            if store.read(crate::state::LocalStateStore::current_reset_required) {
+                crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
+                continue;
+            }
+            let location = store.read(crate::state::LocalStateStore::current_index_location);
+            let index = crate::state::CurrentIndex::open_committed(authority, location, || {
+                store.read(|state| {
+                    anyhow::ensure!(
+                        state.active_authority().as_ref() == Some(authority),
+                        "application current crossed its Account fence"
+                    );
+                    Ok(state.current_generation())
+                })
+            })
+            .await?;
+            if index.read_complete_cut(realm.as_str()).await?.is_some() {
+                anyhow::ensure!(
+                    store.read(|state| state.active_authority().as_ref() == Some(authority)),
+                    "application current crossed its Account fence"
+                );
+                if store.read(crate::state::LocalStateStore::current_reset_required) {
+                    continue;
+                }
+                return Ok(());
+            }
+            crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
+        }
+        anyhow::bail!("application current is unavailable: Realm baseline is still incomplete")
+    }
 
     /// Refuse to activate or enter end-to-end encryption before this account
     /// can recover its MLS material.
@@ -3085,8 +3182,7 @@ impl EventSubmitter {
     /// The current head of the commit stream a Signal is scoped to.
     ///
     /// `signal.md` binds an envelope to the stream head its sender observed,
-    /// and the current governance Station's authority bundle is where that
-    /// head is authenticated.
+    /// read from the enrolled own Station's original current snapshot.
     pub(crate) async fn current_stream_head_for(
         &self,
         scope_ref: &arkret_sdk::ScopeRef,
@@ -3098,42 +3194,27 @@ impl EventSubmitter {
         let stream_ref =
             arkret_wire::CommitStreamRef::from_scope(scope_ref, Some(realm_id.clone()))
                 .map_err(anyhow::Error::from)?;
-        if matches!(stream_ref, arkret_wire::CommitStreamRef::Realm { .. }) {
-            // The Realm stream head travels inside the signed authority
-            // bundle, so one authenticated read answers for it.
-            let bundle = self
-                .authority_client()
-                .resolve_authority(&arkret_wire::AuthorityBundleRequest {
-                    realm_id,
-                    nonce: arkret_wire::Base64UrlString::new(uuid_v7().replace('-', ""))
-                        .map_err(|error| anyhow::anyhow!("authority bundle nonce: {error}"))?,
-                })
-                .await
-                .map_err(anyhow::Error::from)?;
-            return Ok(bundle.realm_stream_head.commit_id);
-        }
-        // A Circle or Sidecar keeps its own independent stream and the bundle
-        // does not carry its head, so the head is the tail of that one stream.
-        let mut after_position = None;
-        let mut head = None;
-        loop {
-            let page = self
-                .scan_stream(&stream_ref, after_position, STREAM_SCAN_PAGE)
-                .await?;
-            if let Some(last) = page.committed_refs().pop() {
-                head = Some(last.commit_id);
-            }
-            match page.last_position() {
-                Some(position) if page.truncated() => after_position = Some(position),
-                _ => {
-                    return head.ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "this scope's commit stream has no head to bind a Signal to"
-                        )
-                    });
-                }
-            }
-        }
+        let binding = crate::station_connection::enrolled(self.http.base_url().as_str()).await?;
+        let epoch = crate::identity::device_directory::session_cache_epoch();
+        let consumer = garth::own_station::OwnStationConsumer::authenticate(
+            self.http.clone(),
+            &binding,
+            self.authority()?.clone(),
+            epoch,
+        )
+        .await?;
+        let snapshot = consumer.snapshot_head(&realm_id).await?;
+        anyhow::ensure!(
+            epoch == crate::identity::device_directory::session_cache_epoch(),
+            "head read Account epoch changed"
+        );
+        snapshot
+            .snapshot()
+            .visible_stream_heads
+            .iter()
+            .find(|head| head.stream_ref == stream_ref)
+            .map(|head| head.commit_id.clone())
+            .ok_or_else(|| anyhow::anyhow!("own Station current omits the requested stream head"))
     }
 
     /// [`Self::send_signal`] with the scope header assembled from the current

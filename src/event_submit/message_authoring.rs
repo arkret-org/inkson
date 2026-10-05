@@ -133,6 +133,9 @@ impl EventSubmitter {
         self.ensure_recovery_material_ready(&event_intent)
             .await
             .map_err(|error| classify_presubmit_failure(&error))?;
+        self.await_application_current(&event_intent)
+            .await
+            .map_err(|error| classify_presubmit_failure(&error))?;
         self.ensure_application_send_gate(&event_intent)
             .await
             .map_err(|error| classify_presubmit_failure(&error))?;

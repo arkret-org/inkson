@@ -253,13 +253,9 @@ pub(crate) async fn install_resolved_message_context(
             group_state_ref: Some(group_state_ref),
             ..
         } => {
-            let (bundle, ..) = crate::realm_events_engine::fresh_verified_realm(
-                &garth::AuthorityClient::new(http.clone()),
-                http,
-                &realm,
-            )
-            .await?;
-            let genesis = &bundle.genesis_event;
+            let original =
+                crate::realm_events_engine::own_realm_prefix(http, account, &realm, 1).await?;
+            let genesis = &original[0].event;
             let payload: arkret_sdk::RealmCreatePayload =
                 serde_json::from_value(serde_json::to_value(&genesis.payload)?)?;
             anyhow::ensure!(
@@ -333,6 +329,7 @@ pub(crate) fn accepted_pair_commit<'a>(
 /// Only the genesis-prefix commits of this Realm stream may define the
 /// founding digest. A time sort or a filtered founder-authored subset can
 /// silently select later Events, especially when authored timestamps tie.
+#[cfg(test)]
 fn founding_genesis_prefix(
     backfill: &crate::models::BackfillView,
     realm_id: &str,
@@ -409,14 +406,14 @@ pub(crate) async fn ensure_binding(
         .ok_or_else(|| anyhow::anyhow!("active account is unavailable"))?;
     let http = api.sdk_http_client()?;
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
-    let (bundle, freshness, _) = crate::realm_events_engine::fresh_verified_realm(
-        &garth::AuthorityClient::new(http.clone()),
-        &http,
-        &realm,
-    )
-    .await?;
-    let keys = garth::fetch_historical_station_key_directory(&http, &bundle, None, None).await?;
-    let exact = founding_genesis_prefix(backfill, realm_id, &bundle, &freshness, &keys)?;
+    let originals =
+        crate::realm_events_engine::own_realm_prefix(&http, &account.authority, &realm, 4).await?;
+    let exact: [arkret_sdk::Event; 4] = originals
+        .into_iter()
+        .map(|row| row.event)
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Direct founding unit is incomplete"))?;
     let create = &exact[0];
     // The four committed genesis-prefix Events, never timestamps or an
     // arbitrary founder-authored subset, bind the exact Realm/Strand unit.

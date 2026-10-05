@@ -110,23 +110,6 @@ pub(super) fn kanban_event_carries_plaintext_private_content(
     }
 }
 
-/// Event kinds that carry ONLY non-secret structural metadata (container
-/// title / kind / parent / rank) and therefore MUST submit to the server as
-/// plaintext even inside an encrypted Realm. Container creation (`ak.space.create`
-/// for Board and List) and structural updates (`ak.space.update`) are the
-/// canonical examples: a second device needs the plaintext title/rank to
-/// render the Board/List name and order instead of falling back to
-/// `generated_board_fallback_title` (`ak:space:...`) or stale rank order. Only
-/// Strand private content (Description and the Synthesis track) is E2EE —
-/// never the container scaffold. Exempting these kinds here is a hard
-/// invariant: it guarantees the plaintext-block decision can never silently
-/// drop a container create/update, regardless of what
-/// `kanban_event_carries_plaintext_private_content` matches in the future.
-pub(super) const KANBAN_PLAINTEXT_METADATA_KINDS: &[arkret_sdk::EventKind] = &[
-    arkret_sdk::EventKind::SpaceCreate,
-    arkret_sdk::EventKind::SpaceUpdate,
-];
-
 /// R4 fail-closed reason surfaced when the Realm security projection has not
 /// synced yet and we cannot prove the scope is plaintext. Mirrors the
 /// `kanban.security_not_ready` i18n key.
@@ -150,13 +133,10 @@ pub(super) fn kanban_plaintext_block_reason(
         // Known plaintext Realm — legitimate plaintext write, never block.
         Some(false) => None,
         // Unknown security state — fail-closed: block plaintext private
-        // content until the projection is ready. Container scaffold writes
-        // (non-secret metadata) are still exempt below.
+        // content until the projection is ready. Standard metadata is sealed
+        // at the shared producer boundary; this UI guard covers private bodies.
         None => {
             if !kanban_event_carries_plaintext_private_content(event) {
-                return None;
-            }
-            if KANBAN_PLAINTEXT_METADATA_KINDS.contains(event.kind()) {
                 return None;
             }
             // NB: kept as a plain string (not `i18n::tr`) so this pure guard
@@ -168,12 +148,6 @@ pub(super) fn kanban_plaintext_block_reason(
         // Known encrypted Realm — block plaintext private content.
         Some(true) => {
             if !kanban_event_carries_plaintext_private_content(event) {
-                return None;
-            }
-            // Container scaffold writes (board/list title, kind, parent,
-            // rank) are non-secret metadata and ALWAYS submit via the normal
-            // plaintext event path even in an encrypted Realm. Never block.
-            if KANBAN_PLAINTEXT_METADATA_KINDS.contains(event.kind()) {
                 return None;
             }
             kanban_plaintext_block_reason_for_kind(true, event.kind().as_str())

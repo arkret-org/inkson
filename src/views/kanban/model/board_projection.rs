@@ -715,12 +715,29 @@ pub(crate) fn project_board_with_projection_for_actor(
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
     let aliases = event_derived_target_aliases(ops);
     let preferred_board_id = resolve_event_derived_target_alias(&aliases, preferred_board_id);
-    let containers = space_container_views_from_projection_and_ops(
+    let mut containers = space_container_views_from_projection_and_ops(
         projected_containers,
         ops,
         realm_id,
         current_entries,
     );
+    if let Some(ctx) = decrypt_ctx {
+        if let Some((account, device)) = ctx.identity {
+            if let Ok(device) = arkret_sdk::DeviceId::new(device.to_owned()) {
+                for view in &mut containers {
+                    if let Some(title) = crate::views::metadata::current_title(
+                        ctx.state_store,
+                        realm_id,
+                        &view.space_id,
+                        account,
+                        &device,
+                    ) {
+                        view.title = title;
+                    }
+                }
+            }
+        }
+    }
     let strands = strand_views_from_projection_and_ops(projected_strands, ops);
     let (columns, board_options, board_id) = columns_from_lifecycle_projection_for_actor(
         &containers,
@@ -898,7 +915,21 @@ pub(crate) fn install_current_card_sources(
                     }))
                     .expect("complete lifecycle view defaults")
                 });
-            let metadata = strand.metadata.unwrap_or_default();
+            let opened_metadata = decrypt_ctx.and_then(|ctx| {
+                let (account, device) = ctx.identity?;
+                let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;
+                let envelope = strand.encrypted_metadata.as_ref()?;
+                let value = crate::views::metadata::open_metadata(
+                    ctx.state_store,
+                    ctx.realm_id,
+                    &card.id,
+                    envelope,
+                    account,
+                    &device,
+                )?;
+                serde_json::from_value::<arkret_sdk::StrandMetadata>(value).ok()
+            });
+            let metadata = opened_metadata.or(strand.metadata).unwrap_or_default();
             view.title = metadata.title.unwrap_or_default();
             view.summary = metadata.summary;
             view.fields = metadata.fields.into_iter().collect();

@@ -870,6 +870,22 @@ fn a_memory_only_chat_bubble_joins_the_durable_queue_without_faking_acceptance()
         pending[0].pending,
         "frozen producer bytes alone are never accepted authority"
     );
+    let queued_ids = pending_chat_local_operation_ids_from_snapshot(&queued, REALM, strand, &state);
+    assert_eq!(queued_ids.len(), 1, "one durable send is counted once");
+    let identities = pending_chat_message_identities(&queued_ids, &state);
+    assert!(
+        identities
+            .iter()
+            .any(|id| pending[0].matches_id_or_protocol(id)),
+        "the timeline's final Event identity must retain its queued indication"
+    );
+    let mut substituted = state.clone();
+    substituted.raw_operations[0].payload["event"]["payload"]["content"]["body"] =
+        serde_json::json!("substituted");
+    assert!(
+        !pending_chat_message_identities(&queued_ids, &substituted)
+            .contains(event.event_id().as_str())
+    );
     let committed = snapshot_of(vec![(event.clone(), SendQueueStatus::Committed)]);
     assert!(reconcile_settled_outbound_item(
         &mut store,

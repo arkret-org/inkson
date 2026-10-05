@@ -33,6 +33,64 @@ use garth::{
 };
 
 use crate::config::MultiProfileConfig;
+mod own_station;
+pub(crate) use own_station::consume_account_frame;
+
+/// Original immutable Realm prefix on the enrolled authenticated Account
+/// transport. This is not an independent governance audit.
+pub(crate) async fn own_realm_prefix(
+    http: &arkret_sdk::http_client::Client,
+    account: &arkret_sdk::AccountId,
+    realm: &arkret_sdk::RealmId,
+    count: u16,
+) -> garth::Result<Vec<arkret_sdk::CommittedEventFullView>> {
+    let epoch = crate::identity::device_directory::session_cache_epoch();
+    let consumer = own_station::authenticate(http, account.clone(), epoch).await?;
+    let cut = consumer.snapshot_head(realm).await?;
+    let stream = CommitStreamRef::Realm {
+        realm_id: realm.clone(),
+    };
+    let request = StreamScanRequest {
+        realm_id: realm.clone(),
+        stream_ref: stream,
+        direction: arkret_wire::StreamScanDirection::After(None),
+        limit: count,
+    };
+    let mut replica = RealmReplica::new(realm.clone());
+    let page = consumer.scan(&mut replica, &request, &cut).await?;
+    consumer.require_context(
+        account,
+        crate::identity::device_directory::session_cache_epoch(),
+    )?;
+    if page.rows().len() != usize::from(count) {
+        return Err(protocol("immutable Realm prefix is incomplete"));
+    }
+    let mut originals = Vec::with_capacity(page.rows().len());
+    for (position, row) in page.rows().iter().enumerate() {
+        let CommittedEventView::Full(full) = row else {
+            return Err(protocol("immutable Realm prefix is withheld"));
+        };
+        if full.commit.stream_position != position as u64 {
+            return Err(protocol(
+                "readable history is not the immutable Realm prefix",
+            ));
+        }
+        originals.push(full.clone());
+    }
+    let genesis = &originals[0].event;
+    if genesis.kind != arkret_sdk::EventKind::RealmCreate
+        || genesis.scope_ref != arkret_sdk::ScopeRef::RealmGenesis
+        || arkret_sdk::RealmId::from_event_id(&genesis.event_id) != *realm
+    {
+        return Err(protocol("original prefix does not bind the Realm genesis"));
+    }
+    let payload: arkret_sdk::RealmCreatePayload =
+        serde_json::from_value(serde_json::to_value(&genesis.payload).map_err(protocol)?)
+            .map_err(protocol)?;
+    payload.object.validate().map_err(protocol)?;
+    Ok(originals)
+}
+
 // Native hosts share the app's verifier and durable projector through these
 // narrow adapters, without exposing UI or the rest of the transport internals.
 pub use crate::runtime::effects::{EffectKey, EffectOwner, EffectRegistry};
@@ -275,9 +333,25 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
                 continue;
             }
         };
-        let authority = AuthorityClient::new(http.clone());
+        let account = ctx
+            .state_store
+            .read(|store| store.active_authority())
+            .ok_or_else(|| protocol("Realm follow has no active Account"));
+        let consumer = match account {
+            Ok(account) => own_station::authenticate(&http, account, start_generation).await,
+            Err(error) => Err(error),
+        };
+        let consumer = match consumer {
+            Ok(consumer) => consumer,
+            Err(error) => {
+                if !retry_after(&mut backoff, is_active(), &error.to_string()).await {
+                    break;
+                }
+                continue;
+            }
+        };
         match follow_subscription(
-            &authority,
+            &consumer,
             &http,
             &realm_id_typed,
             &projector,
@@ -328,7 +402,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
 }
 
 async fn follow_subscription<F: Fn() -> bool>(
-    authority: &AuthorityClient<arkret_sdk::http_client::Client>,
+    consumer: &garth::own_station::OwnStationConsumer,
     http: &arkret_sdk::http_client::Client,
     realm: &arkret_sdk::RealmId,
     projector: &RealmIngestProjector,
@@ -348,7 +422,7 @@ async fn follow_subscription<F: Fn() -> bool>(
     )
     .await?;
     if resume.is_none() {
-        follow_once(authority, http, realm, projector, ctx, is_active, replica).await?;
+        own_station::follow_once(consumer, http, realm, projector, ctx, is_active, replica).await?;
     }
     while is_active() {
         let frame = loop {
@@ -372,10 +446,8 @@ async fn follow_subscription<F: Fn() -> bool>(
             if stream_ref.realm_id() != realm {
                 return Err(protocol("subscription names another Realm"));
             }
-            let (bundle, freshness) =
-                refresh_verified_realm(authority, http, realm, replica).await?;
-            drain_stream(
-                authority, http, replica, &bundle, &freshness, realm, stream_ref, projector,
+            own_station::drain_stream(
+                consumer, http, realm, stream_ref, projector, is_active, replica,
             )
             .await?;
             // The Realm stream can introduce or invalidate a Circle. Only a
@@ -384,7 +456,8 @@ async fn follow_subscription<F: Fn() -> bool>(
             if matches!(view, CommittedEventView::Full(full) if matches!(full.event.kind,
                 arkret_sdk::EventKind::CircleCreate | arkret_sdk::EventKind::CircleMemberState | arkret_sdk::EventKind::MemberState | arkret_sdk::EventKind::InviteAccept | arkret_sdk::EventKind::SidecarCreate | arkret_sdk::EventKind::SidecarContextAttach))
             {
-                follow_once(authority, http, realm, projector, ctx, is_active, replica).await?;
+                own_station::follow_once(consumer, http, realm, projector, ctx, is_active, replica)
+                    .await?;
             }
         }
         match frame.kind {
@@ -541,33 +614,21 @@ where
 /// live projection; a shape-only scan cannot authorize private MLS mutation.
 pub(crate) async fn verified_mls_recovery_tail(
     api: &crate::transport::TransportClient,
+    authority: &arkret_sdk::AccountId,
     scope: &arkret_sdk::ScopeRef,
 ) -> garth::Result<Vec<arkret_sdk::CommittedEventFullView>> {
     let realm = scope
         .realm_id_opt()
-        .ok_or_else(|| garth::Error::Protocol("MLS recovery scope has no Realm".to_owned()))?;
+        .ok_or_else(|| protocol("MLS recovery scope has no Realm"))?;
     let stream = CommitStreamRef::from_scope(scope, Some(realm.clone()))?;
-    let http = api.http();
-    let authority = AuthorityClient::new(http.clone());
-    let (bundle, freshness, mut replica) = fresh_verified_realm(&authority, http, realm).await?;
-    let (pages, _) = verified_stream_pages(
-        &authority,
-        http,
-        &mut replica,
-        &bundle,
-        &freshness,
-        realm,
-        &stream,
-        ReplayStart::ReadableFloor,
-        None,
-    )
-    .await?
-    .into_verified()?;
-    let final_freshness =
-        arkret_identity::RealmAuthorityFreshness::new(chrono::Utc::now(), freshness.expected_nonce);
-    let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
-    arkret_identity::verify_realm_authority_bundle(&bundle, &final_freshness, &keys)
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    let epoch = crate::identity::device_directory::session_cache_epoch();
+    let consumer = own_station::authenticate(api.http(), authority.clone(), epoch).await?;
+    let cut = consumer.snapshot_head(realm).await?;
+    let pages = own_station::readable_pages(&consumer, &cut, &stream).await?;
+    consumer.require_context(
+        authority,
+        crate::identity::device_directory::session_cache_epoch(),
+    )?;
     Ok(pages
         .iter()
         .flat_map(|page| page.rows())
@@ -1815,8 +1876,6 @@ fn validate_signed_floor_rows(
     history_access: arkret_sdk::HistoryAccess,
     rows: &[arkret_wire::TypedCurrentResult],
 ) -> garth::Result<()> {
-    use arkret_wire::CurrentSelector;
-
     let realm_stream = CommitStreamRef::Realm {
         realm_id: realm_id.clone(),
     };
@@ -1835,6 +1894,37 @@ fn validate_signed_floor_rows(
         commit_id: genesis_commit.commit_id.clone(),
         stream_position: 0,
     };
+    let payload = serde_json::to_value(&bundle.genesis_event.payload).map_err(protocol)?;
+    let genesis_value = payload
+        .get("object")
+        .ok_or_else(|| protocol("genesis has no object"))?;
+    validate_floor_rows_at_genesis(
+        realm_id,
+        signed_head,
+        history_access,
+        rows,
+        &genesis_revision,
+        genesis_value,
+        &bundle.genesis_event.actor_id,
+    )
+}
+
+fn validate_floor_rows_at_genesis(
+    realm_id: &arkret_sdk::RealmId,
+    signed_head: &arkret_wire::CommitStreamHead,
+    history_access: arkret_sdk::HistoryAccess,
+    rows: &[arkret_wire::TypedCurrentResult],
+    genesis_revision: &arkret_wire::CurrentRevision,
+    genesis_value: &serde_json::Value,
+    founder: &arkret_sdk::ActorId,
+) -> garth::Result<()> {
+    use arkret_wire::CurrentSelector;
+    let realm_stream = CommitStreamRef::Realm {
+        realm_id: realm_id.clone(),
+    };
+    if signed_head.stream_ref != realm_stream || genesis_revision.stream_position != 0 {
+        return Err(protocol("floor does not name the immutable Realm genesis"));
+    }
     let policy = rows.iter().find_map(|row| match row {
         arkret_wire::TypedCurrentResult::Value {
             selector: CurrentSelector::RealmPolicyBundle,
@@ -1877,16 +1967,15 @@ fn validate_signed_floor_rows(
                 "signed floor row source is not the signed Realm stream prefix",
             ));
         }
-        let genesis_projection = matches!(
-            selector,
-            CurrentSelector::RealmGenesis | CurrentSelector::RealmAuthorityRoot
-        );
+        let genesis_projection = matches!(selector, CurrentSelector::RealmGenesis);
         // A Direct Conversation genesis also writes `realm_history_access`
         // `null -> since_join` in its own covering Commit
         // (`models/realm-and-space.md` 2.5.1 step 5).
-        let genesis_history = matches!(selector, CurrentSelector::RealmHistoryAccess)
-            && revision == &genesis_revision;
-        if !genesis_history && genesis_projection != (revision == &genesis_revision) {
+        let genesis_history =
+            matches!(selector, CurrentSelector::RealmHistoryAccess) && revision == genesis_revision;
+        let mutable_root = matches!(selector, CurrentSelector::RealmAuthorityRoot);
+        if !genesis_history && !mutable_root && genesis_projection != (revision == genesis_revision)
+        {
             return Err(protocol(
                 "signed floor row revision differs from its genesis covering Commit",
             ));
@@ -1895,8 +1984,6 @@ fn validate_signed_floor_rows(
             CurrentSelector::RealmGenesis => {
                 let parsed: arkret_sdk::RealmGenesis = closed_value(value, "realm_genesis")?;
                 parsed.validate().map_err(protocol)?;
-                let payload =
-                    serde_json::to_value(&bundle.genesis_event.payload).map_err(protocol)?;
                 // A Collaboration Realm is founded with genesis purpose
                 // `collaboration` or `direct_conversation`
                 // (`models/realm-and-space.md` 2.8.2).
@@ -1904,7 +1991,7 @@ fn validate_signed_floor_rows(
                     parsed.purpose,
                     arkret_sdk::RealmPurpose::Collaboration
                         | arkret_sdk::RealmPurpose::DirectConversation
-                ) || payload.get("object") != Some(value)
+                ) || value != genesis_value
                 {
                     return Err(protocol(
                         "signed genesis row is not the verified collaboration genesis object",
@@ -1915,12 +2002,24 @@ fn validate_signed_floor_rows(
                 genesis = true;
             }
             CurrentSelector::RealmAuthorityRoot => {
-                if *value
-                    != serde_json::json!({
-                        "controller_actor_id": bundle.genesis_event.actor_id,
-                        "controller_epoch": 0,
-                        "authority_generation": 0,
-                    })
+                let parsed: arkret_wire::RealmAuthorityRootValue =
+                    closed_value(value, "realm_authority_root")?;
+                parsed.validate().map_err(protocol)?;
+                if revision != genesis_revision
+                    && parsed.controller_epoch == 0
+                    && parsed.authority_generation == 0
+                {
+                    return Err(protocol(
+                        "non-genesis root revision has no registered counter successor",
+                    ));
+                }
+                if revision == genesis_revision
+                    && *value
+                        != serde_json::json!({
+                            "controller_actor_id": founder,
+                            "controller_epoch": 0,
+                            "authority_generation": 0,
+                        })
                 {
                     return Err(protocol(
                         "signed authority root is not the generation-zero creator controller",
@@ -3487,6 +3586,46 @@ mod tests {
             assert!(
                 validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &rows).is_err(),
                 "{rows:?}"
+            );
+        }
+
+        // A later registered owner transfer/reset changes this mutable current
+        // root. Its immutable Realm genesis projection remains at position 0.
+        let later_head = arkret_wire::CommitStreamHead {
+            stream_ref: stream_ref.clone(),
+            stream_position: items[0].commit.stream_position,
+            commit_id: items[0].commit.commit_id.clone(),
+        };
+        for (epoch, generation) in [(1, 0), (0, 1)] {
+            let mut advanced = root.clone();
+            let TypedCurrentResult::Value {
+                revision, value, ..
+            } = &mut advanced;
+            *revision = arkret_wire::CurrentRevision {
+                commit_id: later_head.commit_id.clone(),
+                stream_position: later_head.stream_position,
+            };
+            value["controller_epoch"] = json!(epoch);
+            value["authority_generation"] = json!(generation);
+            validate_signed_floor_rows(
+                &realm_id,
+                &bundle,
+                &later_head,
+                since_join,
+                &[row.clone(), advanced.clone()],
+            )
+            .unwrap();
+            let TypedCurrentResult::Value { value, .. } = &mut advanced;
+            value["controller_epoch"] = json!(9_007_199_254_740_992_u64);
+            assert!(
+                validate_signed_floor_rows(
+                    &realm_id,
+                    &bundle,
+                    &later_head,
+                    since_join,
+                    &[row.clone(), advanced]
+                )
+                .is_err()
             );
         }
     }

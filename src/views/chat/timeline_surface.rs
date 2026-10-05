@@ -90,6 +90,10 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
     let scroll_offset_key_for_event = scroll_offset_key.clone();
     let mut scroll_restored = use_signal(|| false);
     let state_store = crate::app::SessionContext::get().state_store;
+    let queued_message_identities = crate::event_submit::pending_chat_message_identities(
+        &(controller.queued_outbound_local_operation_ids)(),
+        &state_store.peek().load(),
+    );
     let command_context = ChatCommandContext {
         base_url: base_url.clone(),
         authority,
@@ -137,7 +141,6 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
         .iter()
         .map(|pin| pin.target_ref.clone())
         .collect();
-    let queued_outbound_local_operation_ids = (controller.queued_outbound_local_operation_ids)();
     let private_saved_target_set = (controller.private_saved_targets)();
     let ChatController {
         messages: _,
@@ -253,7 +256,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                             // The queue answers with holder-local ids, which the
                             // optimistic row carries as its own id until an
                             // accepted Event renames it.
-                            let message_is_queued_offline = queued_outbound_local_operation_ids
+                            let message_is_queued_offline = queued_message_identities
                                 .iter()
                                 .any(|local_id| msg.matches_id_or_protocol(local_id));
                             let sender_is_own =

@@ -32,6 +32,17 @@ pub(crate) async fn discover(base_url: &str) -> anyhow::Result<ServiceDescribe> 
     Ok(description)
 }
 
+/// Return the connection only after the durable enrollment CAS succeeded.
+pub(crate) async fn enrolled(base_url: &str) -> anyhow::Result<StationConnectionBinding> {
+    let description = discover(base_url).await?;
+    let base = crate::config::validate_server_url(base_url)?;
+    Ok(StationConnectionBinding::from_description(
+        &base,
+        &description,
+        true,
+    )?)
+}
+
 /// Called only after the user reviews this exact old/new pair and elects a new login.
 pub(crate) async fn confirm_change(change: &ConnectionTrustChange) -> anyhow::Result<()> {
     compare_and_store(&change.candidate, Some(&change.previous)).await?;
