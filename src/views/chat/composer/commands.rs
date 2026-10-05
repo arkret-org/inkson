@@ -610,6 +610,8 @@ pub(super) struct SidecarSendRequest {
     pub base_url: String,
     pub api_token: String,
     pub session: crate::sidecar::HostedSidecarState,
+    pub addressed_agent_ids: Vec<String>,
+    pub draft_at_send: String,
     /// Strand the routed copy is addressed to inside the sidecar.
     pub sidecar_strand_id: String,
     /// Newest source-Strand Event the routed message anchors to, when one has
@@ -626,13 +628,23 @@ pub(super) struct SidecarSendRequest {
 pub(super) fn send_sidecar_message(controller: ChatController, request: SidecarSendRequest) {
     let mut messages = controller.messages;
     let mut status_msg = controller.status_msg;
-    let chat_draft = controller.draft;
+    let mut chat_draft = controller.draft;
+    let mut picker = controller.mention_picker_state;
+    let picker_at_send = picker.peek().clone();
+    let mut hosted = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
+    let mut sending = controller.sidecar_send_pending;
+    if *sending.peek() {
+        return;
+    }
+    sending.set(true);
     let state_store = crate::app::SessionContext::get().state_store;
-    spawn(async move {
+    dioxus::core::Runtime::current().spawn(messages.origin_scope(), async move {
         let SidecarSendRequest {
             base_url,
             api_token,
             session,
+            addressed_agent_ids,
+            draft_at_send,
             sidecar_strand_id,
             source_event_id,
             actor,
@@ -667,7 +679,7 @@ pub(super) fn send_sidecar_message(controller: ChatController, request: SidecarS
                     source_event_id.as_deref(),
                     &body,
                     &resolved_mentions,
-                    &session.addressed_agent_ids,
+                    &addressed_agent_ids,
                     state_store,
                     &view,
                 )
@@ -689,6 +701,28 @@ pub(super) fn send_sidecar_message(controller: ChatController, request: SidecarS
                     found.mentions = resolved_mentions;
                 }
                 status_msg.set("Private Sidecar message sent".to_owned());
+                let open_snapshot = hosted.peek().clone();
+                if let Some(mut open) = open_snapshot.filter(|open| {
+                    open.sidecar_id == session.sidecar_id
+                        && open.controller_account_id == session.controller_account_id
+                        && open.matches_route(&session.source_realm_id, &session.source_strand_id)
+                }) {
+                    open.addressed_agent_ids = addressed_agent_ids;
+                    hosted.set(Some(open));
+                }
+                if chat_draft.peek().as_str() == draft_at_send
+                    && *picker.peek() == picker_at_send
+                    && (controller.selected_channel)() == session.source_strand_id
+                    && hosted.peek().as_ref().is_some_and(|open| {
+                        open.sidecar_id == session.sidecar_id
+                            && open.controller_account_id == session.controller_account_id
+                            && open
+                                .matches_route(&session.source_realm_id, &session.source_strand_id)
+                    })
+                {
+                    chat_draft.set(String::new());
+                    picker.write().clear();
+                }
             }
             Err(error) => fail_optimistic_chat_send(
                 messages,
@@ -699,6 +733,7 @@ pub(super) fn send_sidecar_message(controller: ChatController, request: SidecarS
                 format!("Private Sidecar message was not sent: {error:#}"),
             ),
         }
+        sending.set(false);
     });
 }
 

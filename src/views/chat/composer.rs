@@ -109,6 +109,26 @@ fn latest_source_event_anchor(
         .map(|message| message.id.clone())
 }
 
+pub(super) fn sidecar_request_targets(
+    mentions_enabled: bool,
+    mentions: &[MentionNode],
+    participants: &[SpaceParticipant],
+    principal_id: &str,
+    session: Option<&crate::sidecar::HostedSidecarState>,
+) -> Vec<String> {
+    let addressed =
+        owned_agent_ids_from_composer(mentions_enabled, mentions, participants, principal_id);
+    if addressed.is_empty() {
+        // A follow-up keeps an explicit selection or the last verified request
+        // restored from this source track. Never invent a target from text.
+        session
+            .map(|session| session.addressed_agent_ids.clone())
+            .unwrap_or_default()
+    } else {
+        addressed
+    }
+}
+
 #[component]
 fn OrdinarySendActions(
     plaintext: bool,
@@ -118,6 +138,7 @@ fn OrdinarySendActions(
     creator_bootstrap_pending: bool,
     secure_title: String,
     opening: bool,
+    #[props(default)] sending: bool,
     #[props(default)] readiness_checking: bool,
     on_plaintext: Callback<MouseEvent>,
     on_secure: Callback<MouseEvent>,
@@ -131,7 +152,7 @@ fn OrdinarySendActions(
             "data-mls-binding-pending": mls_binding_pending.to_string(),
             "data-creator-bootstrap-pending": creator_bootstrap_pending.to_string(),
             "data-readiness-checking": readiness_checking.to_string(),
-            "aria-busy": readiness_checking.to_string(),
+            "aria-busy": (readiness_checking || sending).to_string(),
             title: if plaintext { String::new() } else { secure_title.clone() },
             disabled: if plaintext { plaintext_disabled } else { secure_disabled },
             onclick: move |event| {
@@ -141,7 +162,9 @@ fn OrdinarySendActions(
                     on_secure.call(event);
                 }
             },
-            if opening {
+            if sending {
+                "Sending…"
+            } else if opening {
                 "Opening…"
             } else {
                 {crate::i18n::tr("chat.send")}
@@ -243,6 +266,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let mut is_online = controller.is_online;
     let mut status_msg = controller.status_msg;
     let mut sidecar_route_pending = use_signal(|| false);
+    let sidecar_send_pending = controller.sidecar_send_pending;
     let composer_scope = if active_sidecar_session.is_some() {
         arkret_sdk::AgentMentionComposerScope::Sidecar
     } else if !mentions_enabled {
@@ -280,6 +304,15 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
             .iter()
             .any(|channel| channel.strand_id == selected_channel());
     let sidecar_send_blocked = sidecar_send_block_reason.is_some();
+    let preview_sidecar_targets = sidecar_request_targets(
+        mentions_enabled,
+        &preview_mentions,
+        &participants_for_messages,
+        &principal_id,
+        active_sidecar_session.as_ref(),
+    );
+    let sidecar_target_missing =
+        active_sidecar_session.is_some() && preview_sidecar_targets.is_empty();
     let active_sidecar_present = active_sidecar_session.is_some();
     // content-types section 4.9 permits formal polls only in plaintext scopes.
     let polls_available = !selected_channel_security_encrypted && !active_sidecar_present;
@@ -416,12 +449,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 status_msg.set("select a discussion first".to_owned());
                 return;
             };
-            let local_owned_agent_ids = owned_agent_ids_from_composer(
-                mentions_enabled,
-                &mentions,
-                &participants_for_plaintext_sidecar,
-                &actor,
-            );
             let route = composer_agent_mode_route(
                 composer_scope,
                 &mentions,
@@ -597,12 +624,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 return;
             }
             let strand_id = selected_strand.clone();
-            let local_owned_agent_ids = owned_agent_ids_from_composer(
-                mentions_enabled,
-                &mentions,
-                &participants_for_encrypted_sidecar,
-                &actor,
-            );
             let active_sidecar_for_send = active_sidecar_session.clone();
             let route = composer_agent_mode_route(
                 composer_scope,
@@ -652,8 +673,24 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 return;
             }
             if let Some(session) = active_sidecar_for_send {
+                if sidecar_send_pending() {
+                    return;
+                }
                 if !session.membership_ready() {
                     status_msg.set("Private Sidecar MLS access is not ready".to_owned());
+                    return;
+                }
+                let addressed_agent_ids = sidecar_request_targets(
+                    mentions_enabled,
+                    &mentions,
+                    &participants_for_encrypted_sidecar,
+                    &actor,
+                    Some(&session),
+                );
+                if addressed_agent_ids.is_empty() {
+                    status_msg.set(
+                        "Select an Agent with @ before sending this private message".to_owned(),
+                    );
                     return;
                 }
                 let local_id = new_chat_local_id();
@@ -683,8 +720,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     mentions: mentions.clone(),
                     crypto_state: MessageCryptoState::Plaintext,
                 });
-                chat_draft.set(String::new());
-                mention_picker_state.write().clear();
                 reply_to_message.set(None);
 
                 let base = base.clone();
@@ -700,6 +735,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         base_url: base,
                         api_token,
                         session,
+                        addressed_agent_ids,
+                        draft_at_send: chat_draft(),
                         sidecar_strand_id: source_strand_id,
                         source_event_id,
                         actor,
@@ -1436,13 +1473,16 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             creator_mls_bootstrap_pending,
                             sidecar_send_blocked,
                             sidecar_route_pending(),
-                        ) || (!active_sidecar_present && selected_channel_unavailable),
+                        ) || sidecar_send_pending() || sidecar_target_missing || (!active_sidecar_present && selected_channel_unavailable),
                         mls_binding_pending: selected_realm_pending_mls_binding,
                         creator_bootstrap_pending: creator_mls_bootstrap_pending,
-                        secure_title: selected_realm_pending_mls_binding_reason.clone().unwrap_or_else(|| {
+                        secure_title: if sidecar_target_missing {
+                            "Select an Agent with @ before sending this private message".to_owned()
+                        } else { selected_realm_pending_mls_binding_reason.clone().unwrap_or_else(|| {
                             creator_mls_bootstrap_pending_reason.unwrap_or_default().to_owned()
-                        }),
+                        }) },
                         opening: sidecar_route_pending(),
+                        sending: sidecar_send_pending(),
                         readiness_checking: send_readiness_checking,
                         on_plaintext: plaintext_send,
                         on_secure: secure_send,

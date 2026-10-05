@@ -240,6 +240,7 @@ pub(super) struct ChatController {
     pub sidecar_publish_open: Signal<bool>,
     pub sidecar_publish_draft: Signal<String>,
     pub sidecar_publish_pending: Signal<bool>,
+    pub sidecar_send_pending: Signal<bool>,
     /// Member handle lookups already in flight, so a re-render does not issue
     /// the same Directory request twice.
     pub member_handle_fetching: Signal<std::collections::BTreeSet<String>>,
@@ -1944,6 +1945,7 @@ pub(super) fn use_chat_controller(
         sidecar_publish_open: use_signal(|| false),
         sidecar_publish_draft: use_signal(String::new),
         sidecar_publish_pending: use_signal(|| false),
+        sidecar_send_pending: use_signal(|| false),
         member_handle_fetching: use_signal(std::collections::BTreeSet::new),
     }
 }

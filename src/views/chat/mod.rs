@@ -385,6 +385,13 @@ fn owned_agent_ids_from_composer(
     if !mentions_enabled {
         return Vec::new();
     }
+    let Some(controller_account) =
+        crate::mls_api_helpers::local_account_actor_id(controller_principal_id)
+            .ok()
+            .and_then(|actor| actor.as_account_id().cloned())
+    else {
+        return Vec::new();
+    };
     // Route only a structured, complete AccountId selected from an actor row
     // that the current controller-owned Agent inventory also names. Historic
     // selector metadata, slug text and a principal-only match are insufficient.
@@ -394,6 +401,7 @@ fn owned_agent_ids_from_composer(
         .filter(|mention| {
             participants.iter().any(|participant| {
                 participant.is_agent
+                    && mention.subject_account_id.station_id == controller_account.station_id
                     && participant
                         .actor_id
                         .as_ref()
@@ -1077,10 +1085,12 @@ async fn submit_source_routed_sidecar_message(
         .collect::<Result<Vec<_>, _>>()?;
     addressed.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     addressed.dedup();
-    if addressed.is_empty()
-        || addressed
-            .iter()
-            .any(|agent_id| !view.effective_agent_ids.contains(agent_id))
+    if addressed.is_empty() {
+        anyhow::bail!("Select an Agent with @ before sending this private message");
+    }
+    if addressed
+        .iter()
+        .any(|agent_id| !view.effective_agent_ids.contains(agent_id))
     {
         anyhow::bail!("every addressed Agent must have effective native Sidecar MLS access");
     }
@@ -1607,6 +1617,7 @@ pub fn ChatPanel(
         mut sidecar_publish_open,
         mut sidecar_publish_draft,
         mut sidecar_publish_pending,
+        sidecar_send_pending: _,
         member_handle_fetching: _,
     } = controller;
     let blocked_actor_id_set =

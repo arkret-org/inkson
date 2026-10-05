@@ -488,26 +488,44 @@ pub(crate) fn mention_candidate_for_participant(
                     crate::i18n::tr("identity.tier.unresolved"),
                 )
             });
+        let own_account = crate::mls_api_helpers::local_account_actor_id(principal_id)
+            .ok()
+            .and_then(|actor| actor.as_account_id().cloned());
         let is_owned_agent = participant.agent_metadata.as_ref().is_some_and(|metadata| {
-            same_principal_core(&metadata.controller_principal_id, principal_id)
+            own_account.as_ref().is_some_and(|own| {
+                same_principal_core(&metadata.controller_principal_id, own.principal_id.as_str())
+                    && subject_account_id.station_id == own.station_id
+            })
         });
-        let labels = participant.agent_metadata.as_ref().and_then(|metadata| {
-            let controller = participants.iter().find(|candidate| {
-                !candidate.is_agent
-                    && candidate.principal_id.as_str() == metadata.controller_principal_id
-                    && participant_mention_account(candidate).is_some()
-            })?;
-            let owned = controller.is_self && controller.principal_id.as_str() == principal_id;
-            // Use public roster labels, never the Contact petname overlay.
-            let public_holder = participant_handle_label(controller)
-                .unwrap_or_else(|| short_principal_label(controller.principal_id.as_str()));
+        let labels = if is_owned_agent {
+            // Private pickers contain only Agents. The active complete Account,
+            // rather than a separately rendered controller row, owns `@me`.
             Some(arkret_sdk::AgentMentionLabels::new(
-                &public_holder,
+                "me",
                 None,
-                owned,
+                true,
                 &account_label,
             ))
-        });
+        } else {
+            participant.agent_metadata.as_ref().and_then(|metadata| {
+                let controller = participants.iter().find(|candidate| {
+                    !candidate.is_agent
+                        && candidate.principal_id.as_str() == metadata.controller_principal_id
+                        && participant_mention_account(candidate).is_some_and(|account| {
+                            account.station_id == subject_account_id.station_id
+                        })
+                })?;
+                // Use public roster labels, never the Contact petname overlay.
+                let public_holder = participant_handle_label(controller)
+                    .unwrap_or_else(|| short_principal_label(controller.principal_id.as_str()));
+                Some(arkret_sdk::AgentMentionLabels::new(
+                    &public_holder,
+                    None,
+                    false,
+                    &account_label,
+                ))
+            })
+        };
         return Some(crate::messaging::mentions::MentionCandidate {
             subject_account_id,
             display_name: account_label.clone(),

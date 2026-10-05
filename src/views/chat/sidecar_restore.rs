@@ -211,6 +211,31 @@ pub(super) fn use_sidecar_restore(
                     "Sidecar source mapping changed during restore"
                 );
                 let native_ready = crate::sidecar::native_mls_ready_for_view(&store, &view);
+                let last_addressed = crate::sidecar::cached_sidecar_exchange_projections(
+                    &store, &authority, &realm_id,
+                )
+                .ok()
+                .and_then(|projections| {
+                    projections
+                        .into_iter()
+                        .filter(|projection| {
+                            projection.sidecar_id == candidate.id
+                                && projection.source_track_ref.strand_id == strand
+                        })
+                        .max_by(|left, right| {
+                            left.source_hlc
+                                .cmp(&right.source_hlc)
+                                .then_with(|| left.client_order_key.cmp(&right.client_order_key))
+                        })
+                })
+                .map(|projection| {
+                    projection
+                        .addressed_agent_ids
+                        .into_iter()
+                        .map(|agent| agent.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
                 let existing = hosted.peek().clone().filter(|session| {
                     session.controller_account_id == authority
                         && session.sidecar_id == candidate.id
@@ -219,7 +244,7 @@ pub(super) fn use_sidecar_restore(
                 let mut session = existing.unwrap_or_else(|| crate::sidecar::HostedSidecarState {
                     trace_id: uuid_v7(),
                     controller_account_id: authority,
-                    addressed_agent_ids: Vec::new(),
+                    addressed_agent_ids: last_addressed,
                     addressed_agent_label: "No agents addressed".to_owned(),
                     source_realm_id: realm_id,
                     source_strand_id: strand_id,

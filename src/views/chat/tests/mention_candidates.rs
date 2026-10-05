@@ -85,12 +85,42 @@ fn selected_owned_agent_uses_readable_name_only_token_without_guessing_a_slug() 
         crate::i18n::tr("identity.tier.name_only")
     );
     assert!(candidate.agent_slug_at_time.is_empty());
+    let private_rows = sidecar_owned_agent_participants(&participants, principal);
+    assert_eq!(private_rows, vec![agent.clone()]);
+    let candidate = mention_candidate_for_participant(&agent, &private_rows, principal).unwrap();
+    assert_eq!(candidate.insert_label(), "me/aa");
+    assert!(candidate.is_owned_agent);
+    let mut remote_agent = agent.clone();
+    remote_agent.actor_id = Some(arkret_sdk::ActorId::account(fixture_account(
+        agent_id,
+        REMOTE_STATION_ID,
+    )));
+    let remote_candidate =
+        mention_candidate_for_participant(&remote_agent, &[remote_agent.clone()], principal)
+            .unwrap();
+    assert!(!remote_candidate.is_owned_agent);
+    assert!(!remote_candidate.insert_label().starts_with("me/"));
     let mut picker = crate::messaging::mentions::MentionPickerState::new();
     let draft = picker.select(candidate, "ask @me/a", Some((4, 9)));
     let nodes = composer_mention_nodes(true, &draft, &picker.bound_candidates(&draft), principal);
     assert_eq!(
         nodes[0].as_mention().unwrap().subject_account_id,
         participant_mention_account(&agent).unwrap()
+    );
+    assert_eq!(
+        composer::sidecar_request_targets(true, &nodes, &private_rows, principal, None),
+        vec![agent_id.to_owned()],
+        "a restored Sidecar addresses the current bound selection without an opening-time target",
+    );
+    assert!(
+        composer::sidecar_request_targets(
+            true,
+            &composer_mention_nodes(true, "@me/aa", &[], principal),
+            &private_rows,
+            principal,
+            None,
+        )
+        .is_empty()
     );
     let own = local_fixture_account(principal);
     let account = participant_mention_account(&agent).unwrap();
@@ -402,7 +432,7 @@ fn known_agent_account_candidate_uses_full_identity_not_selector_label() {
         )
         .expect("controller can select its current Agent member");
     assert_eq!(owned.subject_account_id, candidate.subject_account_id);
-    assert_eq!(owned.insert_label(), "Summary Assistant");
+    assert_eq!(owned.insert_label(), "me/Summary Assistant");
 
     assert_eq!(candidate.insert_label(), "Summary Assistant");
     assert_eq!(
