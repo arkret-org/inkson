@@ -1133,7 +1133,10 @@ pub(crate) async fn issue_bound_handoff_session(
         .build()
         .map_err(|error| format!("Build Account Authority handoff client: {error}"))?;
     let session_engine = SessionEngine::new(http);
-    if let Err(first_error) = session_engine.login_request(request.clone(), now).await {
+    if let Err(first_error) = session_engine
+        .login_request(request.clone(), garth::SystemClock)
+        .await
+    {
         let first_error = classify_returning_session_exchange_error(first_error);
         if !matches!(first_error, ReturningSessionExchangeError::Retryable(_)) {
             return Err(first_error);
@@ -1143,7 +1146,7 @@ pub(crate) async fn issue_bound_handoff_session(
             "returning-session response was retryable; replaying the exact signed request once"
         );
         session_engine
-            .login_request(request, now)
+            .login_request(request, garth::SystemClock)
             .await
             .map_err(classify_returning_session_exchange_error)?;
     }

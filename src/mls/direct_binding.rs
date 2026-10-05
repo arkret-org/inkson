@@ -51,6 +51,10 @@ pub(crate) fn mls_authoring_intent(
     let (source, reference) = match outcome {
         DirectConversationResolveOutcome::Provisional { .. } => {
             anyhow::ensure!(
+                outcome.provisional_history_send_allowed(),
+                "Direct founding completion only permits its binding endorsement"
+            );
+            anyhow::ensure!(
                 intent.actor_id() == &genesis.actor_id,
                 "only the Direct founder may author provisional MLS"
             );
@@ -214,12 +218,19 @@ pub(crate) async fn install_resolved_message_context(
             DirectConversationResolveOutcome::Provisional {
                 group_state_ref: Some(_),
                 ..
-            } => state
-                .direct_message_context(&realm, &arkret_sdk::ActorId::account(account.clone()))
-                .is_some_and(|context| {
-                    context.authority_source
+            } if outcome.provisional_history_send_allowed()
+                && !matches!(
+                    peer,
+                    arkret_sdk::contact_operations::ContactPeer::Agent { .. }
+                ) =>
+            {
+                state
+                    .direct_message_context(&realm, &arkret_sdk::ActorId::account(account.clone()))
+                    .is_some_and(|context| {
+                        context.authority_source
                         == arkret_wire::AuthoritySourceId::DirectConversationBootstrapParticipantV1
-                }),
+                    })
+            }
             _ => false,
         };
         if !retain {
@@ -252,7 +263,15 @@ pub(crate) async fn install_resolved_message_context(
         DirectConversationResolveOutcome::Provisional {
             group_state_ref: Some(group_state_ref),
             ..
-        } => {
+        } if outcome.provisional_history_send_allowed()
+            && !matches!(
+                peer,
+                arkret_sdk::contact_operations::ContactPeer::Agent { .. }
+            ) =>
+        {
+            // Ordinary owned-Agent chat waits for the accepted binding. Its
+            // runtime consumes the Welcome independently, so messages need not
+            // race the short bootstrap-to-participant authority transition.
             let original =
                 crate::realm_events_engine::own_realm_prefix(http, account, &realm, 1).await?;
             let genesis = &original[0].event;
@@ -536,6 +555,143 @@ mod tests {
 
     use super::*;
 
+    #[tokio::test]
+    async fn cold_agent_chat_waits_for_binding_and_durable_peer_closes_human_bootstrap() {
+        use arkret_sdk::direct_conversation::{
+            DirectConversationPeerMlsAdmission as Admission,
+            DirectConversationResolveOutcome as Outcome,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let account = crate::test_support::authority_at_station(
+            "ak:did_core:web:cold-controller.example",
+            crate::test_support::SERVER_STATION_ID,
+        );
+        let agent = crate::test_support::authority_at_station(
+            "ak:did_core:web:cold-agent.example",
+            crate::test_support::SERVER_STATION_ID,
+        );
+        let path = directory.path().join("state.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&crate::state::RootIndex {
+                active_profile_id: Some("cold".into()),
+                known_profiles: vec![crate::state::AccountIndexEntry {
+                    profile_id: "cold".into(),
+                    authority: account.clone(),
+                }],
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let state = crate::state::LocalStateStore::with_path(path);
+        let state = std::sync::Arc::new(std::sync::Mutex::new(state));
+        let read = state.clone();
+        let write = state.clone();
+        let handle = crate::runtime::input::StateStoreHandle::new(
+            move |callback| callback(&read.lock().unwrap()),
+            move |callback| callback(&mut write.lock().unwrap()),
+        );
+        // No server is listening: completion must not fetch a founding prefix
+        // and accidentally reinstall bootstrap application authority.
+        let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
+            .allow_insecure_localhost()
+            .build()
+            .unwrap();
+        let realm = "ak:realm:ASOv-EoZPg5yuM1Pv__u1K8vD3Q9342GxwoWmkKwjqOn";
+        let founding =
+            arkret_sdk::EventId::new("ak:event:ASOv-EoZPg5yuM1Pv__u1K8vD3Q9342GxwoWmkKwjqOn")
+                .unwrap();
+        let group = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [21; 32]);
+        let binding = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [22; 32]);
+        let actor = arkret_sdk::ActorId::account(account.clone());
+        let epoch = crate::identity::device_directory::session_cache_epoch();
+        for (peer, admission) in [
+            (
+                arkret_sdk::contact_operations::ContactPeer::Agent {
+                    actor_id: arkret_sdk::ActorId::account(agent.clone()),
+                    controller_account_id: account.clone(),
+                },
+                Admission::Pending,
+            ),
+            (
+                arkret_sdk::contact_operations::ContactPeer::Agent {
+                    actor_id: arkret_sdk::ActorId::account(agent.clone()),
+                    controller_account_id: account.clone(),
+                },
+                Admission::Durable,
+            ),
+            (
+                arkret_sdk::contact_operations::ContactPeer::Human {
+                    account_id: agent.clone(),
+                },
+                Admission::Durable,
+            ),
+        ] {
+            handle
+                .write(|state| state.save_direct_conversation_peer(realm.into(), peer.clone()))
+                .unwrap();
+            let sequence = begin_query(&account, &peer).unwrap();
+            handle.write(|state| state.set_direct_message_context(realm.into(), Some(crate::state::DirectMessageContext {
+                account: account.clone(), session_epoch: epoch, query_sequence: sequence,
+                authority_source: arkret_wire::AuthoritySourceId::DirectConversationBootstrapParticipantV1,
+                authority_event_ref: founding.clone(), group_state_ref: group.clone(),
+            })));
+            let coordinates = serde_json::from_value(json!({
+                "pair_key":format!("sha256:{}", "ab".repeat(32)), "realm_id":realm,
+                "main_strand_id":"ak:strand:AcoR1oH31En1_7UqsmGtCAr0ByQ_638Axv43HIC06sGg"
+            }))
+            .unwrap();
+            let provisional = Outcome::Provisional {
+                coordinates,
+                authorization_basis:
+                    arkret_sdk::DirectConversationAuthorizationBasis::agent_controller(vec![
+                        founding.clone(),
+                        binding.clone(),
+                    ]),
+                group_state_ref: Some(group.clone()),
+                initial_exact_pair_group_state_ref: Some(group.clone()),
+                peer_mls_admission: admission,
+            };
+            install_resolved_message_context(
+                &http,
+                &handle,
+                &account,
+                epoch,
+                sequence,
+                peer.clone(),
+                &provisional,
+            )
+            .await
+            .unwrap();
+            assert!(
+                handle
+                    .read(|state| state.direct_message_context(realm, &actor))
+                    .is_none()
+            );
+            let mut coordinates = provisional.coordinates().unwrap().clone();
+            coordinates.binding_event_ref = Some(binding.clone());
+            let found = Outcome::Found {
+                coordinates,
+                group_state_ref: group.clone(),
+                send_blockers: vec![],
+            };
+            install_resolved_message_context(
+                &http, &handle, &account, epoch, sequence, peer, &found,
+            )
+            .await
+            .unwrap();
+            let context = handle
+                .read(|state| state.direct_message_context(realm, &actor))
+                .unwrap();
+            assert_eq!(
+                context.authority_source,
+                arkret_wire::AuthoritySourceId::DirectConversationParticipantV1
+            );
+            assert_eq!(context.authority_event_ref, binding);
+        }
+    }
+
     fn founding_fixture() -> (
         arkret_sdk::RealmAuthorityBundle,
         arkret_identity::RealmAuthorityKeyMap,
@@ -726,7 +882,7 @@ mod tests {
                         )
                         .unwrap(),
                     ]),
-                group_state_ref: None,
+                group_state_ref: Some(create.event_id.clone()),
                 initial_exact_pair_group_state_ref: None,
                 peer_mls_admission:
                     arkret_sdk::direct_conversation::DirectConversationPeerMlsAdmission::Missing,
@@ -756,6 +912,18 @@ mod tests {
                 .event_id
         );
         assert!(mls_authoring_intent(&authorized, &create, &provisional).is_err());
+        let mut completing = provisional.clone();
+        if let arkret_sdk::direct_conversation::DirectConversationResolveOutcome::Provisional {
+            initial_exact_pair_group_state_ref,
+            peer_mls_admission,
+            ..
+        } = &mut completing
+        {
+            *initial_exact_pair_group_state_ref = Some(create.event_id.clone());
+            *peer_mls_admission =
+                arkret_sdk::direct_conversation::DirectConversationPeerMlsAdmission::Durable;
+        }
+        assert!(mls_authoring_intent(&intent, &create, &completing).is_err());
         let mut other = create.clone();
         other.actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
