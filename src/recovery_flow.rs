@@ -437,6 +437,7 @@ async fn publish_recovery_policy(
     recovery_payload.validate_shape()?;
     let payload = arkret_sdk::PolicySetStatePayload {
         policy_id: recovery_payload.policy_id.clone(),
+        expected_revision: None,
         value: arkret_sdk::PolicySetValue::Recovery(Box::new(recovery_payload.value)),
     };
     let event = crate::operation::TypedOperationBuilder::new_for_station::<
