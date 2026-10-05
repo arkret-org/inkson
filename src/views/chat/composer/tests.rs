@@ -100,3 +100,98 @@ fn primary_send_keeps_its_dom_identity_across_scope_probe_and_encryption_changes
         }
     }
 }
+
+type FailureState = Rc<RefCell<Option<(Signal<Vec<ChatMessage>>, Signal<String>, Signal<String>)>>>;
+
+fn send_failure_harness(control: FailureState) -> Element {
+    let messages = use_signal(|| {
+        vec![ChatMessage {
+            local_scope: None,
+            realm_id: String::new(),
+            id: "local-send".to_owned(),
+            protocol_message_id: Some("protocol-send".to_owned()),
+            actor_id: None,
+            sender: String::new(),
+            executed_by: None,
+            body: "original draft".to_owned(),
+            content_format: None,
+            timestamp: String::new(),
+            created_at: None,
+            strand_id: String::new(),
+            reply_to: None,
+            reactions: Vec::new(),
+            redacted: false,
+            edited: false,
+            revisions: Vec::new(),
+            revision_source: None,
+            pending: true,
+            failed: false,
+            error: None,
+            mentions: Vec::new(),
+            crypto_state: MessageCryptoState::Plaintext,
+        }]
+    });
+    let status = use_signal(String::new);
+    let draft = use_signal(String::new);
+    *control.borrow_mut() = Some((messages, status, draft));
+    rsx! {}
+}
+
+#[test]
+fn encryption_context_refusal_restores_plaintext_for_fresh_authoring() {
+    for next_draft in ["", "next message"] {
+        let control = Rc::new(RefCell::new(None));
+        let mut dom = VirtualDom::new_with_props(send_failure_harness, control.clone());
+        dom.rebuild_to_vec();
+        dom.in_scope(dioxus::dioxus_core::ScopeId::ROOT, || {
+            let (messages, status, mut draft) = control.borrow().unwrap();
+            draft.set(next_draft.to_owned());
+            commands::present_chat_send_failure(
+                messages,
+                status,
+                draft,
+                "protocol-send",
+                "original draft",
+                &garth::MessageAuthoringFailure::EncryptionContextChanged {
+                    detail: "epoch_mismatch".to_owned(),
+                },
+            );
+            let rows = messages.read();
+            assert!(!rows[0].pending);
+            assert!(rows[0].failed);
+            assert_eq!(rows[0].error.as_deref(), Some(status().as_str()));
+            assert_eq!(
+                draft(),
+                if next_draft.is_empty() {
+                    "original draft"
+                } else {
+                    next_draft
+                }
+            );
+        });
+    }
+}
+
+#[test]
+fn unknown_submission_remains_pending_without_inviting_duplicate_authoring() {
+    let control = Rc::new(RefCell::new(None));
+    let mut dom = VirtualDom::new_with_props(send_failure_harness, control.clone());
+    dom.rebuild_to_vec();
+    dom.in_scope(dioxus::dioxus_core::ScopeId::ROOT, || {
+        let (messages, status, draft) = control.borrow().unwrap();
+        commands::present_chat_send_failure(
+            messages,
+            status,
+            draft,
+            "protocol-send",
+            "original draft",
+            &garth::MessageAuthoringFailure::SubmissionOutcomeUnknown {
+                detail: "connection lost after submission".to_owned(),
+            },
+        );
+        assert!(messages.read()[0].pending);
+        assert!(!messages.read()[0].failed);
+        assert!(draft().is_empty());
+        assert!(!status().is_empty());
+    });
+}

@@ -666,8 +666,9 @@ pub(super) fn present_chat_send_failure(
         status_msg.set(message);
         return;
     }
-    fail_optimistic_send_row(messages, local_id, message.clone());
-    status_msg.set(message);
+    super::super::model::fail_optimistic_chat_send(
+        messages, chat_draft, status_msg, local_id, body, message,
+    );
 }
 
 /// Mark the optimistic row for `local_id` failed with `error`.
