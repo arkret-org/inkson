@@ -61,9 +61,9 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         anyhow::bail!("an exact durable MLS admission unit is still converging for this Realm");
     }
     let mls_actor_id = actor_id.clone();
-    let is_direct = state_store.read().realm_collaboration_role(&realm_id)
-        == Some(arkret_sdk::CollaborationRealmRole::DirectConversation);
-    let target_agent = if is_direct && target_device_id_override.is_none() {
+    // An owned Agent is a runtime endpoint in ordinary Realms as well as
+    // Direct Conversations; it has no human invite-accepting device route.
+    let target_agent = if target_device_id_override.is_none() {
         let http = api.sdk_http_client()?;
         current_owned_agent_endpoint(&http, &invitee_actor, &account.authority).await?
     } else {
