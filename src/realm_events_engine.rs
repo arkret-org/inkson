@@ -1242,7 +1242,7 @@ where
     if batch.is_empty() && saved_anchor.as_ref() == candidate.verified_anchor(stream_ref) {
         candidate.release_verified_rows();
         *replica = candidate;
-        if resolve_stream_agent_keys(http, &projector.state_store).await? {
+        if resolve_stream_projection_dependencies(http, &projector.state_store, false).await? {
             projector
                 .realm_live_epoch
                 .update(|epoch| *epoch = epoch.wrapping_add(1));
@@ -1294,7 +1294,8 @@ where
     *replica = candidate;
     // This stream owns these verified candidates. Account frames need not
     // contain Realm messages, so they cannot drive this evidence dependency.
-    let agent_evidence_changed = resolve_stream_agent_keys(http, &projector.state_store).await?;
+    let projection_changed =
+        resolve_stream_projection_dependencies(http, &projector.state_store, changed > 0).await?;
     let finals = projector.state_store.read(|store| {
         batch
             .iter()
@@ -1308,7 +1309,7 @@ where
             }
         }
     }
-    if changed > 0 || agent_evidence_changed || batch.iter().any(|event| matches!(event, ClientEvent::Event(event) if event.kind == arkret_sdk::EventKind::AgentInteractionSet)) {
+    if projection_changed || batch.iter().any(|event| matches!(event, ClientEvent::Event(event) if event.kind == arkret_sdk::EventKind::AgentInteractionSet)) {
         projector
             .realm_live_epoch
             .update(|epoch| *epoch = epoch.wrapping_add(1));
@@ -1316,9 +1317,12 @@ where
     Ok(())
 }
 
-pub(crate) async fn resolve_stream_agent_keys(
+/// Finish evidence work before combining the product and dependency changes.
+/// A newly projected row is a reason to resolve its signer, never to skip it.
+pub(crate) async fn resolve_stream_projection_dependencies(
     http: &arkret_sdk::http_client::Client,
     state_store: &crate::runtime::input::StateStoreHandle,
+    projection_changed: bool,
 ) -> garth::Result<bool> {
     let changed = crate::identity::agent_signer_evidence::prefetch_durable_historical_agent_keys(
         http,
@@ -1331,7 +1335,7 @@ pub(crate) async fn resolve_stream_agent_keys(
         .wait()
         .await
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-    Ok(changed)
+    Ok(changed || projection_changed)
 }
 
 /// The exact signed predecessor a limited Account window names, and the own

@@ -761,7 +761,7 @@ mod historical_result_tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
-    async fn realm_stream_resolves_agent_reply_without_an_account_frame() {
+    async fn changed_realm_projection_resolves_agent_reply_without_an_account_frame() {
         use std::io::{Read, Write};
 
         let (selector, mut entry, _) = fixture();
@@ -857,9 +857,11 @@ mod historical_result_tests {
             CachedAgentEventVerdict::Unresolved
         );
         assert!(
-            crate::realm_events_engine::resolve_stream_agent_keys(&http, &handle)
-                .await
-                .unwrap()
+            crate::realm_events_engine::resolve_stream_projection_dependencies(
+                &http, &handle, true
+            )
+            .await
+            .unwrap()
         );
         server.join().unwrap();
         assert_eq!(
@@ -885,9 +887,11 @@ mod historical_result_tests {
             ));
         });
         assert!(
-            !crate::realm_events_engine::resolve_stream_agent_keys(&http, &handle)
-                .await
-                .unwrap()
+            !crate::realm_events_engine::resolve_stream_projection_dependencies(
+                &http, &handle, false
+            )
+            .await
+            .unwrap()
         );
     }
 
