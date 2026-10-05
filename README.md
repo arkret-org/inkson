@@ -89,9 +89,12 @@ The `just` recipes wrap the underlying Dioxus commands:
 - Desktop Windows/Linux: `python scripts/dev_dioxus.py --platform desktop`
 - iOS/mobile: `python scripts/dev_dioxus.py --platform mobile`
 
-The wrapper fails fast when the generated Arkret SDK registry does not match
-the canonical `registry/contract-registry.json` spec artifact used by the SDK
-generator. It also bridges changes from sibling Cargo path
+The wrapper automatically runs the SDK's `tools/sync-spec.ps1` when the generated
+Arkret SDK registry does not match the canonical `registry/contract-registry.json`
+spec artifact, then verifies alignment before starting or rebuilding. PowerShell
+(`pwsh` or `powershell`) and the SDK generation toolchain must be available.
+`python scripts/dev_dioxus.py --check` validates without changing generated sources.
+The wrapper also bridges changes from sibling Cargo path
 dependencies into Inkson's workspace so Dioxus performs a full Rust rebuild;
 running bare `dx serve` can miss those changes with Dioxus 0.7.
 

@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -73,6 +74,40 @@ def require_registry_alignment() -> None:
         "`powershell -File ../arkret-rust-sdk/tools/sync-spec.ps1 "
         "-ArtifactsDir ../arkret-spec/spec/v1/artifacts` before starting Dioxus."
     )
+
+
+def ensure_registry_alignment() -> None:
+    """Repair stale SDK projections before starting or rebuilding Dioxus."""
+    # A missing canonical input cannot be repaired by the SDK generator.
+    SPEC_REGISTRY.read_bytes()
+    try:
+        require_registry_alignment()
+        return
+    except (FileNotFoundError, RuntimeError):
+        pass
+
+    shell = shutil.which("pwsh") or shutil.which("powershell")
+    if shell is None:
+        raise RuntimeError("PowerShell is required to synchronize Arkret SDK sources")
+    print("[inkson-dev] SDK registry missing or stale; synchronizing from the local spec", flush=True)
+    output = run_captured(
+        [
+            shell,
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(WORKSPACE_ROOT / "arkret-rust-sdk" / "tools" / "sync-spec.ps1"),
+            "-ArtifactsDir",
+            str(SPEC_REGISTRY.parent.parent),
+        ],
+        cwd=PROJECT_ROOT,
+    )
+    if output.strip():
+        print(output.rstrip(), flush=True)
+    require_registry_alignment()
+    print("[inkson-dev] Arkret SDK registry synchronized and verified", flush=True)
 
 
 def run_captured(command: list[str], cwd: Path | None = None) -> str:
@@ -181,10 +216,12 @@ def dependency_watch_loop(
             continue
         pending_since = None
         try:
-            require_registry_alignment()
+            ensure_registry_alignment()
         except Exception as error:
             print(f"[inkson-dev] rebuild withheld: {error}", file=sys.stderr, flush=True)
             continue
+        # Include generated writes in this rebuild instead of scheduling another.
+        snapshot = watched_files(roots, build_dirs)
         REBUILD_STAMP.write_text(REBUILD_STAMP_CONTENT, encoding="utf-8")
         print(
             "[inkson-dev] local dependency changed; requested a full Dioxus rebuild",
@@ -228,7 +265,10 @@ def web_bootstrap_watch_loop(path: Path, stop: threading.Event) -> None:
 def main() -> int:
     args = parse_args()
     try:
-        require_registry_alignment()
+        if args.check:
+            require_registry_alignment()
+        else:
+            ensure_registry_alignment()
         metadata = cargo_metadata()
         roots = local_dependency_roots(metadata)
         build_dirs = build_directories(metadata)
