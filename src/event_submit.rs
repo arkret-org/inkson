@@ -908,19 +908,13 @@ impl EventSubmitter {
     pub(crate) fn from_current_session(http: arkret_sdk::http_client::Client) -> Self {
         match dioxus::prelude::try_consume_context::<crate::app::SessionContext>() {
             Some(context) => {
-                use dioxus::prelude::ReadableExt as _;
-                let authority = context
-                    .active_account
-                    .peek()
-                    .as_ref()
-                    .map(|account| account.authority.clone());
-                let mut submitter = Self::new(http).with_state_store(
-                    crate::app::runtime_adapter::state_store_handle(context.state_store),
-                );
-                if let Some(authority) = authority {
-                    submitter = submitter.with_authority(authority);
-                }
-                submitter
+                // Accepted onboarding promotes the secure authoring scope and
+                // account store before publishing the runtime account. The UI
+                // may still retain the previous account until recovery is ready;
+                // it must not replace the exact scope captured by `new`.
+                Self::new(http).with_state_store(crate::app::runtime_adapter::state_store_handle(
+                    context.state_store,
+                ))
             }
             None => Self::new(http),
         }

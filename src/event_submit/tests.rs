@@ -70,6 +70,212 @@ fn test_signer() -> crate::event_signer::InksonEventSigner {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
+async fn accepted_setup_policy_uses_promoted_account_before_runtime_commit() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    use dioxus::prelude::*;
+
+    let account = test_authority();
+    let device = arkret_sdk::DeviceId::new(DEVICE).unwrap();
+    let _scope =
+        crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((&account, &device)));
+    let signer = Arc::new(test_signer());
+    let _signer = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer.clone()));
+    let previous_proof_mode = crate::operation::current_proof_mode();
+    crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
+    crate::identity::device_directory::reset_session_cache();
+    let now = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
+    let persisted: crate::state::PersistedDeviceAuthoringAuthority =
+        serde_json::from_value(json!({
+            "account_id": account,
+            "device_id": device,
+            "device_projection": {
+                "device_signing_key_did": format!("did:key:{}", signer.public_key_multibase().unwrap()),
+                "hpke_key": "hpke-test",
+                "device_authorize_event_id": arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [12; 32]),
+                "authorized_generation_ref": 7,
+                "device_status": "active",
+                "authorization_window": {"not_before": now, "expires_at": null},
+                "attested_at": now,
+                "expires_at": now + chrono::Duration::minutes(5)
+            },
+            "authoring_generation": {
+                "authority_model": "accepted_device",
+                "authority_principal_id": account.principal_id,
+                "generation_ref": "7"
+            }
+        }))
+        .unwrap();
+    assert!(
+        crate::identity::device_directory::restore_persisted_device_authoring_authority(
+            crate::identity::device_directory::cache_epoch(),
+            &account,
+            &device,
+            &persisted,
+        )
+    );
+
+    let principal = arkret_sdk::Did::new(PRINCIPAL).unwrap();
+    let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+        &crate::recovery_crypto::format_recovery_key(&[7; 32]),
+        "",
+        0,
+    )
+    .unwrap();
+    let policy: arkret_sdk::RecoveryPolicy = serde_json::from_value(
+        crate::recovery_flow::build_signed_genesis_recovery_policy_for_session_device(
+            &principal,
+            &account,
+            "ak:trust_domain:test",
+            &device,
+            &key_material,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let operation = crate::operation::TypedOperationBuilder::new_for_station::<
+        arkret_sdk::event_spec::PolicySet,
+    >(
+        REALM,
+        account.principal_id.as_str(),
+        account.station_id.clone(),
+        arkret_sdk::PolicySetStatePayload {
+            policy_id: policy.policy_id.clone(),
+            value: arkret_sdk::PolicySetValue::Recovery(Box::new(policy)),
+        },
+    )
+    .build_sdk_event("inkson-recovery-policy")
+    .unwrap();
+
+    for previous_principal in ["did:web:previous-account.example", PRINCIPAL] {
+        let previous_did = arkret_sdk::Did::new(previous_principal).unwrap();
+        let previous_authority = arkret_sdk::AccountId::new(
+            arkret_sdk::project_did_to_core_id(&previous_did).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:previous-station.example").unwrap(),
+        );
+        let previous = crate::config::ActiveAccountContext::new(
+            "ak:profile:previous".to_owned(),
+            previous_authority,
+            realm_id(REALM),
+            arkret_sdk::PrincipalResolutionProjection {
+                did: previous_did,
+                method_history_head: "previous-head".into(),
+                version_id: "previous-version".into(),
+                resolution_event_ref: "previous-event".into(),
+                updated_at: now,
+            },
+            device.clone(),
+            url::Url::parse("https://previous-station.example/").unwrap(),
+        )
+        .unwrap();
+        let accepted = crate::config::ActiveAccountContext::new(
+            "ak:profile:accepted".to_owned(),
+            account.clone(),
+            realm_id(REALM),
+            arkret_sdk::PrincipalResolutionProjection {
+                did: principal.clone(),
+                method_history_head: "accepted-head".into(),
+                version_id: "accepted-version".into(),
+                resolution_event_ref: "accepted-event".into(),
+                updated_at: now,
+            },
+            device.clone(),
+            url::Url::parse("https://accepted-station.example/").unwrap(),
+        )
+        .unwrap();
+        let mut state = crate::state::isolated_store_for_tests("accepted-policy-runtime-handoff");
+        state.begin_pending_login(&device, None);
+        state.switch_active_account(&accepted).unwrap();
+        state.set_device_authoring_authority(Some(persisted.clone()));
+        crate::secure_key_store::UserLocalStore::new(account.clone(), device.clone())
+            .unwrap()
+            .activate();
+        crate::event_signer::activate_device_signer_from_seed_for_device(
+            [73; 32],
+            None,
+            Some(device.as_str()),
+        )
+        .unwrap();
+        crate::event_signer::bind_active_signer_principal_device_id(&principal, device.as_str())
+            .unwrap();
+        let captured = Rc::new(RefCell::new(None));
+        let target = captured.clone();
+        let state = Rc::new(RefCell::new(Some(state)));
+        let mut dom = VirtualDom::new_with_props(
+            move |_: ()| {
+                let store = use_hook(|| {
+                    SyncSignal::new_maybe_sync_in_scope(
+                        state.borrow_mut().take().unwrap(),
+                        ScopeId::ROOT,
+                    )
+                });
+                let active_account = use_signal(|| Some(previous.clone()));
+                let base_url = use_signal(|| "https://previous-station.example/".to_owned());
+                let session_generation = use_signal(|| 0);
+                let owned_agents_rev = use_signal(|| 0);
+                use_context_provider(|| crate::app::SessionContext {
+                    active_account,
+                    state_store: store,
+                    base_url,
+                    session_generation,
+                    owned_agents_rev,
+                });
+                let api = crate::transport::TransportClient::unauthenticated("http://127.0.0.1:9/")
+                    .unwrap();
+                *target.borrow_mut() = Some(api.event_submitter().unwrap());
+                rsx! {}
+            },
+            (),
+        );
+        dom.rebuild_in_place();
+        let submitter = captured.borrow_mut().take().unwrap();
+        let authored = submitter.author_for_direct_submission(&operation).await
+            .expect("accepted setup must sign its recovery policy while the previous runtime account is retained");
+        assert_eq!(
+            authored.event().actor_id,
+            arkret_sdk::ActorId::account(account.clone())
+        );
+        assert_eq!(authored.event().kind, arkret_sdk::EventKind::PolicySet);
+        let submissions = submitter
+            .prepare_initial_submissions(&[authored])
+            .await
+            .unwrap();
+        assert_eq!(submissions.len(), 1);
+
+        // A real replacement after capture remains fenced even with cached evidence.
+        let other = arkret_sdk::AccountId::new(
+            account.principal_id.clone(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:replaced-station.example").unwrap(),
+        );
+        crate::secure_key_store::set_active_device_seed_scope(Some((&other, &device)));
+        assert!(
+            submitter
+                .author_for_direct_submission(&operation)
+                .await
+                .is_err()
+        );
+        crate::secure_key_store::set_active_device_seed_scope(Some((&account, &device)));
+        let mut other_account = accepted.clone();
+        other_account.authority = other;
+        other_account.profile_id = "ak:profile:replaced".to_owned();
+        submitter.state_store.as_ref().unwrap().write(|state| {
+            state.switch_active_account(&other_account).unwrap();
+        });
+        let error = submitter
+            .author_for_direct_submission(&operation)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("account fence"));
+    }
+    crate::identity::device_directory::reset_session_cache();
+    crate::identity::authoring_generation::reset_verified_authoring_generations();
+    crate::operation::set_proof_mode(previous_proof_mode);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
 async fn device_authoring_requeries_only_across_a_same_session_device_refresh() {
     use std::io::{Read, Write};
     use std::sync::Arc;
