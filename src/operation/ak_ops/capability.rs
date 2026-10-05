@@ -104,6 +104,33 @@ pub fn capability_revoke_from_effective_row(
     )
 }
 
+/// Dedicated issuer withdrawal accepts an ineffective current row, but never
+/// a terminal grant, another issuer's grant or a guessed CAS revision.
+pub fn capability_revoke_from_owned_current(
+    realm_id: &str,
+    actor: &str,
+    row: &arkret_sdk::exact_current_results::CapabilityGrantExactCurrentResult,
+    reason: Option<&str>,
+) -> anyhow::Result<TypedOperationBuilder> {
+    let realm = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    let signer = super::actor_id(actor)?;
+    if row.value.realm_id.as_ref() != Some(&realm)
+        || row.source_stream_ref
+            != (arkret_sdk::CommitStreamRef::Realm {
+                realm_id: realm.clone(),
+            })
+        || row.selector.grant_id != row.value.id
+        || row.value.owned_agent_issuer() != signer.as_account_id()
+        || row.value.owned_agent_issuer().is_none()
+        || row.value.status != arkret_sdk::CapabilityGrantStatus::Active
+    {
+        anyhow::bail!(
+            "owned Agent revoke requires the original issuer's exact nonterminal current"
+        );
+    }
+    capability_revoke_exact(realm.as_str(), actor, &row.value.id, &row.revision, reason)
+}
+
 /// Author an Applet revoke Event by copying the exact revision and reason from
 /// the canonical preview intent. The caller must submit these unchanged with
 /// the preview plan digest so the Station can recompute and compare the plan.

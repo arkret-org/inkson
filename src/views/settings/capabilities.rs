@@ -110,6 +110,12 @@ fn decode_capability_row(
             .issuer_authority_refs
             .iter()
             .map(|authority| match authority {
+                IssuerAuthorityRef::OwnedAgent {
+                    controller_account_id,
+                    ..
+                } => {
+                    format!("owned Agent controller {}", controller_account_id)
+                }
                 IssuerAuthorityRef::Grant { grant_id } => {
                     format!("grant {}", grant_id.as_str())
                 }

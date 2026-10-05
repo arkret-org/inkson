@@ -63,6 +63,48 @@ fn effective_grants() -> GrantList {
 }
 
 #[test]
+fn owned_issuer_revoke_uses_exact_current_even_without_effective_grant_list() {
+    select_authoring_station();
+    let effective = effective_grants().grants.remove(0);
+    let mut value = serde_json::to_value(&effective.grant).unwrap();
+    let authority = json!({
+        "kind":"owned_agent", "realm_id":REALM_ID,
+        "controller_account_id":value["issuer_id"]["account_id"],
+        "controller_join_event_id":"ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        "agent_join_event_id":"ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+    });
+    value["issuer_authority_refs"] = json!([authority.clone()]);
+    value["authority_root_refs"] = json!([authority]);
+    value["authority_depth"] = json!(1);
+    value["constraints"] = json!([{"constraint_kind":"authority_control","effect":"allow","max_authority_depth":0,"authority_regrant_allowed":false}]);
+    let mut row: arkret_sdk::exact_current_results::CapabilityGrantExactCurrentResult =
+        serde_json::from_value(json!({
+            "selector":{"kind":"capability_grant","grant_id":GRANT_ID},
+            "source_stream_ref":{"kind":"realm","realm_id":REALM_ID},
+            "revision":effective.revision, "value":value
+        }))
+        .unwrap();
+    let build = |row: &arkret_sdk::exact_current_results::CapabilityGrantExactCurrentResult,
+                 actor: &str| {
+        inkson::operation::ak_ops::capability_revoke_from_owned_current(REALM_ID, actor, row, None)
+    };
+    let operation = build(&row, "did:web:alice.example")
+        .unwrap()
+        .build_sdk_event("inkson")
+        .unwrap();
+    assert_eq!(
+        operation.payload()["expected_revision"],
+        serde_json::to_value(&row.revision).unwrap()
+    );
+    assert!(build(&row, "did:web:bob.example").is_err());
+    row.value.status = arkret_sdk::CapabilityGrantStatus::Revoked;
+    assert!(build(&row, "did:web:alice.example").is_err());
+    row.value.status = arkret_sdk::CapabilityGrantStatus::Active;
+    row.value.issuer_authority_refs.clear();
+    assert!(build(&row, "did:web:alice.example").is_err());
+}
+
+#[test]
 fn manual_revoke_uses_only_the_effective_row_revision() {
     select_authoring_station();
     let grants = effective_grants();
