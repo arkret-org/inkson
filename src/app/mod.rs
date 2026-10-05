@@ -967,11 +967,6 @@ fn AppBootstrap() -> Element {
                 "data-theme": theme_attr,
                 "data-testid": "auth-shell",
                 div { class: "auth-card",
-                    if matches!(auth_surface, AuthSurface::Login) {
-                        if let Some(error) = last_error() {
-                            div { role: "alert", class: "auth-status", "{error}" }
-                        }
-                    }
                     match auth_surface {
                         AuthSurface::Callback => rsx! {
                             crate::views::login::LoginPanel {
@@ -1036,6 +1031,7 @@ fn AppBootstrap() -> Element {
                                 config_store,
                                 locale,
                                 auto_capture_callback: false,
+                                session_error: last_error(),
                                 on_login: move |_| {
                                     login_bootstrap_pending.set(true);
                                     transition_session_boot_state(

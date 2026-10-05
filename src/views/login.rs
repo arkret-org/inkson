@@ -53,6 +53,7 @@ pub fn LoginPanel(
     config_store: Signal<LocalConfigStore>,
     mut locale: Signal<crate::i18n::UiLocale>,
     auto_capture_callback: bool,
+    #[props(default)] session_error: Option<String>,
     on_login: EventHandler<()>,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
@@ -401,6 +402,14 @@ pub fn LoginPanel(
 
     rsx! {
         Card { class: "auth-panel", "data-testid": "login-panel", role: "region", "aria-label": crate::i18n::tr("login.title"),
+            if let Some(error) = session_error {
+                div { class: "auth-error", role: "alert", "data-testid": "login-session-error",
+                    div { class: "auth-error-mark", "aria-hidden": "true", "!" }
+                    div { class: "auth-error-content",
+                        p { "{error}" }
+                    }
+                }
+            }
             div { class: "auth-brand",
                 div { class: "auth-logo", "C" }
                 div {

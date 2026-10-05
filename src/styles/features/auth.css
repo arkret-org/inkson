@@ -14,9 +14,10 @@
 .auth-status { color: var(--text-2); font-size: 13px; overflow-wrap: anywhere; }
 .auth-error { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; padding: 12px; border: 1px solid var(--danger); border-radius: 8px; background: var(--danger-soft); color: var(--danger-ink); }
 .auth-error-mark { width: 20px; height: 20px; border-radius: 999px; display: grid; place-items: center; background: var(--danger); color: var(--text-on-accent); font-size: 13px; font-weight: 800; line-height: 1; }
-.auth-error-content { min-width: 0; }
+.auth-error-content { min-width: 0; overflow-wrap: anywhere; }
 .auth-error-content strong { display: block; font-size: 14px; line-height: 1.35; }
 .auth-error-content p { margin: 3px 0 0; font-size: 13px; line-height: 1.45; }
+.auth-error-content > :first-child { margin-top: 0; }
 .auth-error-content details { margin-top: 8px; font-size: 12px; }
 .auth-error-content summary { width: fit-content; cursor: pointer; color: inherit; font-weight: 700; }
 .auth-error-content code { display: block; margin-top: 6px; padding: 8px; border-radius: 6px; background: color-mix(in srgb, var(--danger) 10%, transparent); color: inherit; font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; white-space: pre-wrap; }
