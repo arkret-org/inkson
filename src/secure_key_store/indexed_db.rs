@@ -95,6 +95,7 @@ pub struct IndexedDbSecureKeyStore {
     db_name: String,
     cache: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     mutations: Arc<Mutex<HashMap<String, u64>>>,
+    write_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     /// Non-extractable AES-GCM CryptoKey, cloned cheaply via JsValue
     /// reference counting. Used by spawn_local persistence tasks. The
     /// The boundary enforces same-thread access at runtime while satisfying
@@ -116,6 +117,16 @@ pub struct IndexedDbSecureKeyStore {
 struct IndexedDbSendBoundary<T>(send_wrapper::SendWrapper<std::sync::Arc<T>>);
 
 impl IndexedDbSecureKeyStore {
+    fn write_lock(&self, key: &str) -> Result<Arc<tokio::sync::Mutex<()>>, SecureKeyStoreError> {
+        Ok(self
+            .write_locks
+            .lock()
+            .map_err(|error| SecureKeyStoreError::Backend(format!("write lock: {error}")))?
+            .entry(key.to_owned())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone())
+    }
+
     fn begin_mutation(&self, key: &str) -> Result<u64, SecureKeyStoreError> {
         let mut mutations = self
             .mutations
@@ -131,15 +142,23 @@ impl IndexedDbSecureKeyStore {
         key: &str,
         revision: u64,
     ) -> Result<(), SecureKeyStoreError> {
-        let current = mutations
-            .lock()
-            .map_err(|err| SecureKeyStoreError::Backend(format!("mutation lock: {err}")))?;
-        if current.get(key).copied() != Some(revision) {
+        if !Self::mutation_is_current(mutations, key, revision)? {
             return Err(SecureKeyStoreError::Backend(
                 "secret mutation superseded".into(),
             ));
         }
         Ok(())
+    }
+
+    fn mutation_is_current(
+        mutations: &Mutex<HashMap<String, u64>>,
+        key: &str,
+        revision: u64,
+    ) -> Result<bool, SecureKeyStoreError> {
+        let current = mutations
+            .lock()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("mutation lock: {err}")))?;
+        Ok(current.get(key).copied() == Some(revision))
     }
     #[cfg(feature = "wasm-localstorage-secrets-test")]
     #[doc(hidden)]
@@ -181,6 +200,7 @@ impl IndexedDbSecureKeyStore {
             db_name,
             cache: Arc::new(Mutex::new(cache)),
             mutations: Arc::new(Mutex::new(HashMap::new())),
+            write_locks: Arc::new(Mutex::new(HashMap::new())),
             crypto_key: IndexedDbSendBoundary(send_wrapper::SendWrapper::new(Arc::new(crypto_key))),
             db: IndexedDbSendBoundary(send_wrapper::SendWrapper::new(Arc::new(db))),
         })
@@ -803,6 +823,9 @@ impl IndexedDbSecureKeyStore {
         use wasm_bindgen::closure::Closure;
         use wasm_bindgen::{JsCast, JsValue};
 
+        let write_lock = self.write_lock(key)?;
+        let _write_guard = write_lock.lock().await;
+
         let snapshot = Self::idb_get_value(&self.db.0, Self::OBJECT_STORE_ENTRIES, key)
             .await?
             .as_ref()
@@ -815,6 +838,7 @@ impl IndexedDbSecureKeyStore {
         if plain.as_deref() != expected {
             return Ok(false);
         }
+        let revision = self.begin_mutation(key)?;
         // WebCrypto finishes before opening the readwrite transaction. Its
         // callback then compares exact ciphertext and queues put without await.
         let (iv, ciphertext) = Self::subtle_encrypt(&self.crypto_key.0, replacement).await?;
@@ -919,7 +943,7 @@ impl IndexedDbSecureKeyStore {
             _ = crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(12)) =>
                 Err(SecureKeyStoreError::Backend("secret compare exchange completion timeout".into())),
         }?;
-        if committed {
+        if committed && Self::mutation_is_current(&self.mutations, key, revision)? {
             self.cache
                 .lock()
                 .map_err(|error| SecureKeyStoreError::Backend(format!("cache lock: {error}")))?
@@ -1238,9 +1262,15 @@ impl IndexedDbSecureKeyStore {
         plain: &[u8],
         mutations: &Mutex<HashMap<String, u64>>,
         revision: u64,
+        write_lock: &tokio::sync::Mutex<()>,
     ) -> Result<(), SecureKeyStoreError> {
         use js_sys::{Object, Reflect, Uint8Array};
         use wasm_bindgen::JsValue;
+        // Serialize encryption and the IndexedDB transaction together. A
+        // stale WebCrypto result must never create a transaction after a newer
+        // write/delete has already committed. Skip stale tasks before crypto.
+        let _write_guard = write_lock.lock().await;
+        Self::check_mutation(mutations, key, revision)?;
         let (iv, ct) = Self::subtle_encrypt(crypto_key, plain).await?;
         let entry = Object::new();
         let iv_array = Uint8Array::new_with_length(iv.len() as u32);
@@ -1290,6 +1320,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         }
         let revision = self.begin_mutation(key)?;
         let mutations = self.mutations.clone();
+        let write_lock = self.write_lock(key)?;
         // The byte-store contract includes binary MLS secrets. AES-GCM wraps
         // their exact bytes; text callers use the same representation.
         {
@@ -1318,6 +1349,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
                 &value_for_async,
                 &mutations,
                 revision,
+                &write_lock,
             )
             .await
             {
@@ -1344,6 +1376,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
             // depends on the secret (e.g. the MLS KeyPackage init key before the
             // KeyPackage is advertised to the server).
             let revision = self.begin_mutation(key)?;
+            let write_lock = self.write_lock(key)?;
             Self::persist_entry_value(
                 &self.db.0,
                 &self.crypto_key.0,
@@ -1351,6 +1384,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
                 value,
                 &self.mutations,
                 revision,
+                &write_lock,
             )
             .await?;
             // A durable caller must never observe an uncommitted value through
@@ -1414,6 +1448,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
         let revision = self.begin_mutation(key)?;
         let mutations = self.mutations.clone();
+        let write_lock = self.write_lock(key)?;
         {
             let mut guard = self
                 .cache
@@ -1425,6 +1460,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         let key_for_async = key.to_owned();
         let db = self.db.clone();
         wasm_bindgen_futures::spawn_local(async move {
+            let _write_guard = write_lock.lock().await;
             if Self::check_mutation(&mutations, &key_for_async, revision).is_err() {
                 return;
             }
@@ -1444,6 +1480,9 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
     {
         Box::pin(async move {
             let revision = self.begin_mutation(key)?;
+            let write_lock = self.write_lock(key)?;
+            let _write_guard = write_lock.lock().await;
+            Self::check_mutation(&self.mutations, key, revision)?;
             Self::idb_delete_value(&self.db.0, Self::OBJECT_STORE_ENTRIES, key).await?;
             Self::check_mutation(&self.mutations, key, revision)?;
             self.cache

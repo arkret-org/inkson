@@ -41,6 +41,7 @@ pub(crate) mod model;
 mod poll_submission;
 mod right_panel;
 mod scheduled_send_panel;
+mod sidecar_projection;
 mod sidecar_restore;
 mod timeline;
 mod timeline_surface;
@@ -1307,6 +1308,82 @@ fn sidecar_agent_label(agent_ids: &[String], participants: &[SpaceParticipant]) 
     }
 }
 
+#[derive(Clone, PartialEq)]
+pub(super) struct SidecarCloseCutFence {
+    authority: arkret_sdk::AccountId,
+    device: arkret_sdk::DeviceId,
+    realm: String,
+    generation: u64,
+    authoring_digest: String,
+    cut_digest: String,
+}
+
+impl SidecarCloseCutFence {
+    /// Capture the same complete verified cut used by the read projection.
+    /// This is a disposable authoring fence, never a persisted authority.
+    pub(super) fn capture(
+        store: &LocalStateStore,
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        realm: &str,
+    ) -> Option<Self> {
+        if store.active_authority().as_ref() != Some(authority)
+            || store.current_reset_required()
+            || store.realm_detail_invalidated(realm)
+        {
+            return None;
+        }
+        let local = store.load().device_authoring_authority?;
+        if &local.account_id != authority || &local.device_id != device {
+            return None;
+        }
+        let (snapshot, _) = store.verified_sidecar_inputs(realm).ok()?;
+        Some(Self {
+            authority: authority.clone(),
+            device: device.clone(),
+            realm: realm.to_owned(),
+            generation: store.current_generation(),
+            authoring_digest: arkret_sdk::canonical::canonical_sha256(&local).ok()?,
+            cut_digest: arkret_sdk::canonical::canonical_sha256(&snapshot).ok()?,
+        })
+    }
+
+    fn check(
+        &self,
+        store: &LocalStateStore,
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        realm: &str,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            Self::capture(store, authority, device, realm).as_ref() == Some(self),
+            "Sidecar close belongs to a replaced account, device or verified current cut"
+        );
+        Ok(())
+    }
+}
+
+fn check_sidecar_close_authoring(
+    cut: &SidecarCloseCutFence,
+    session: &crate::transport::auth::AuthoringSessionFence,
+    store: &LocalStateStore,
+    authority: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    realm: &str,
+) -> anyhow::Result<()> {
+    session.check()?;
+    anyhow::ensure!(
+        crate::secure_key_store::active_device_seed_scope()
+            .is_some_and(|scope| { &scope.authority == authority && &scope.device_id == device }),
+        "Sidecar close signer belongs to another account or device"
+    );
+    cut.check(store, authority, device, realm)
+}
+
+#[cfg(test)]
+#[path = "tests/sidecar_close_fence.rs"]
+mod sidecar_close_fence_tests;
+
 async fn drive_sidecar_completion_closes(
     base_url: String,
     token: String,
@@ -1314,10 +1391,35 @@ async fn drive_sidecar_completion_closes(
     device_id: arkret_sdk::DeviceId,
     realm: String,
     state_store: SyncSignal<LocalStateStore>,
+    closes: Vec<(
+        arkret_sdk::AgentSidecarExchangeProjection,
+        arkret_sdk::AgentSidecarExchangeControl,
+    )>,
+    close_cut: Option<SidecarCloseCutFence>,
 ) -> anyhow::Result<()> {
-    let closes = crate::sidecar_fold::pending_closes(&state_store.read(), &authority, &realm)?;
+    let Some(close_cut) = close_cut else {
+        return Ok(());
+    };
+    let session = crate::transport::auth::AuthoringSessionFence::capture()?;
+    if check_sidecar_close_authoring(
+        &close_cut,
+        &session,
+        &state_store.read(),
+        &authority,
+        &device_id,
+        &realm,
+    )
+    .is_err()
+    {
+        return Ok(());
+    }
     let api = crate::transport::auth::authed_api_with_sync(&base_url, token, None)?;
     for (projection, control) in closes {
+        anyhow::ensure!(
+            projection.controller_account_id == authority
+                && projection.source_track_ref.realm_id.as_str() == realm,
+            "Sidecar close projection crosses its controller or source Realm"
+        );
         let digest = arkret_sdk::canonical::canonical_sha256(&control)?;
         let Some(_guard) = crate::sidecar::try_begin_sidecar_submission(
             authority.principal_id.as_str(),
@@ -1337,7 +1439,22 @@ async fn drive_sidecar_completion_closes(
         {
             continue;
         }
-        let build = crate::views::secure_send::build_sidecar_exchange_control_send(
+        // The retained queue lookup can suspend while another device closes
+        // this exchange or the foreground account is replaced. Never author
+        // the frozen proposal after either boundary has changed.
+        if check_sidecar_close_authoring(
+            &close_cut,
+            &session,
+            &state_store.read(),
+            &authority,
+            &device_id,
+            &realm,
+        )
+        .is_err()
+        {
+            return Ok(());
+        }
+        let mut build = crate::views::secure_send::build_sidecar_exchange_control_send(
             state_store,
             &realm,
             &authority,
@@ -1349,6 +1466,37 @@ async fn drive_sidecar_completion_closes(
         )
         .await
         .map_err(anyhow::Error::msg)?;
+        check_sidecar_close_authoring(
+            &close_cut,
+            &session,
+            &state_store.read(),
+            &authority,
+            &device_id,
+            &realm,
+        )?;
+        let crate::views::secure_send::SecureWritePlan::Control(plan) = build.message_plan else {
+            anyhow::bail!("Sidecar close must remain a controller control Event");
+        };
+        let plan_cut = close_cut.clone();
+        let plan_session = session.clone();
+        let plan_authority = authority.clone();
+        let plan_device = device_id.clone();
+        let plan_realm = realm.clone();
+        // submit_secure_send awaits the sender-ratchet durability barrier
+        // before invoking this plan. Recheck at that actual authoring point.
+        build.message_plan =
+            crate::views::secure_send::SecureWritePlan::Control(Box::new(move |accepted| {
+                check_sidecar_close_authoring(
+                    &plan_cut,
+                    &plan_session,
+                    &state_store.read(),
+                    &plan_authority,
+                    &plan_device,
+                    &plan_realm,
+                )
+                .map_err(|error| error.to_string())?;
+                plan(accepted)
+            }));
         match crate::views::secure_send::submit_secure_send(&api, state_store, build, &realm, None)
             .await
         {
@@ -1576,6 +1724,7 @@ pub fn ChatPanel(
         strand_watch_current: _,
         strand_watch_pending: _,
         strand_watch_request: _,
+        strand_watch_refresh: _,
         watch_level_menu_open: _,
         mut status_msg,
         queued_outbound_local_operation_ids,
@@ -1654,39 +1803,31 @@ pub fn ChatPanel(
         }
     });
     let all_channels = channels();
-    // Read-only lookup. Taking a `write()` guard here mark-dirties every
-    // `state_store` subscriber on each render — including this component —
-    // which spins ChatPanel into an infinite re-render that hangs the page
-    // as soon as the panel mounts (e.g. the card-detail Discussion tab).
-    let sidecar_exchange_current = crate::sidecar::cached_sidecar_exchange_projections(
-        &state_store.read(),
-        &authority,
-        &selected_realm_id,
+    let sidecar_timeline = sidecar_projection::use_sidecar_timeline_projection(
+        state_store,
+        authority.clone(),
+        account_device_id.clone(),
+        selected_realm_id.clone(),
+        crate::identity::device_directory::session_cache_epoch(),
     );
+    let private_timeline = sidecar_timeline.read().clone();
+    let sidecar_exchange_current = private_timeline.current;
     let sidecar_exchange_projections = sidecar_exchange_current
         .as_ref()
         .cloned()
         .unwrap_or_default();
-    let private_sidecar_event_ids = sidecar_exchange_projections
-        .iter()
-        .flat_map(|projection| {
-            std::iter::once(projection.private_request_event_id.to_string()).chain(
-                projection
-                    .user_facing_response_event_ids
-                    .iter()
-                    .map(ToString::to_string),
-            )
-        })
-        .collect::<std::collections::BTreeSet<_>>();
+    let private_sidecar_event_ids = private_timeline.private_event_ids;
     use_effect({
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
         let authority = authority.clone();
         let device = account_device_id.clone();
         move || {
-            let closes =
-                crate::sidecar_fold::pending_closes(&state_store.read(), &authority, &realm);
-            if !closes.is_ok_and(|closes| !closes.is_empty()) {
+            let projection = sidecar_timeline.read();
+            let closes = projection.closes.clone();
+            let close_cut = projection.close_cut.clone();
+            drop(projection);
+            if closes.is_empty() {
                 return;
             }
             let base = base.clone();
@@ -1702,6 +1843,8 @@ pub fn ChatPanel(
                     device,
                     realm,
                     state_store,
+                    closes,
+                    close_cut,
                 )
                 .await
                 .is_err()
@@ -1713,8 +1856,7 @@ pub fn ChatPanel(
             });
         }
     });
-    let sidecar_privacy_gate =
-        crate::sidecar::SidecarPrivacyGate::from_store(&state_store.read(), &principal_id);
+    let sidecar_privacy_gate = private_timeline.privacy_gate;
     let filter_value = track_filter();
     let (visible_channels, selected_channel_info) =
         discussion_channels_for_surface(&all_channels, &selected_channel_value, &filter_value);
@@ -1965,28 +2107,7 @@ pub fn ChatPanel(
         }
     });
     let mut all_messages_snapshot = all_messages_snapshot.read().clone();
-    if sidecar_exchange_current.is_ok()
-        && let Ok((_, histories)) = state_store
-            .read()
-            .verified_sidecar_inputs(&selected_realm_id)
-    {
-        let store = state_store.read();
-        let private_messages = histories
-            .values()
-            .flatten()
-            .filter(|full| private_sidecar_event_ids.contains(full.event.event_id.as_str()))
-            .filter_map(|full| serde_json::to_value(&full.event).ok())
-            .filter_map(|event| {
-                chat_message_from_event_with_sidecar(
-                    &selected_realm_id,
-                    &event,
-                    Some(&store),
-                    Some((&authority, &principal_id, &account_device_id)),
-                )
-            })
-            .collect();
-        merge_chat_messages(&mut all_messages_snapshot, private_messages);
-    }
+    merge_chat_messages(&mut all_messages_snapshot, private_timeline.messages);
     let sidecar_projection: Option<&str> = sidecar_session
         .as_ref()
         .map(|session| session.source_strand_id.as_str());

@@ -11,7 +11,7 @@
 //!   `default_secure_key_store` can hand out before `initialize_wasm_secure_key_store_async` has
 //!   run.
 //!
-//! Every write therefore mirrors into the fallback tier: the reader of that
+//! Only non-sensitive writes mirror into the fallback tier: the reader of that
 //! mirror is the *next* page load's pre-initialization seam, which can see
 //! nothing but `localStorage`. Dropping the mirror would make first-paint
 //! reads miss values this session wrote.
@@ -19,8 +19,8 @@
 //! Durability is the only thing the mirror buys, never a weaker protection
 //! level: `is_wasm_indexeddb_required_secret_key` makes the fallback tier
 //! *refuse* signing seeds, identity seeds, account MLS material, session
-//! credentials and the account state blob, so those keys stay IndexedDB-only
-//! and the mirror silently no-ops for them (`let _ =`). Reads resolve
+//! credentials and the account state blob, so those keys stay IndexedDB-only.
+//! Primary failures for those keys propagate without trying the weaker tier. Reads resolve
 //! primary-first, so an entry present in both always answers from IndexedDB.
 
 #![cfg(target_arch = "wasm32")]
@@ -58,6 +58,9 @@ impl std::fmt::Debug for FallbackSecureKeyStore {
 
 impl SecureKeyStore for FallbackSecureKeyStore {
     fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
+        if super::is_wasm_indexeddb_required_secret_key(key) {
+            return self.primary.store_secret_bytes(key, value);
+        }
         match self.primary.store_secret_bytes(key, value) {
             Ok(()) => {
                 // Best-effort mirror for the next boot's synchronous seam (see
@@ -83,6 +86,9 @@ impl SecureKeyStore for FallbackSecureKeyStore {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>>
     {
         Box::pin(async move {
+            if super::is_wasm_indexeddb_required_secret_key(key) {
+                return self.primary.store_secret_bytes_durable(key, value).await;
+            }
             // Await the primary (IndexedDB) durable write. Required-IndexedDB
             // keys (e.g. the MLS KeyPackage init key) only live in the primary;
             // the localStorage fallback refuses them, so a best-effort mirror is
@@ -103,6 +109,9 @@ impl SecureKeyStore for FallbackSecureKeyStore {
     }
 
     fn get_secret_bytes(&self, key: &str) -> Result<Option<KeyBytes>, SecureKeyStoreError> {
+        if super::is_wasm_indexeddb_required_secret_key(key) {
+            return self.primary.get_secret_bytes(key);
+        }
         match self.primary.get_secret_bytes(key) {
             Ok(Some(secret)) => Ok(Some(secret)),
             Ok(None) => match self.fallback.get_secret_bytes(key) {

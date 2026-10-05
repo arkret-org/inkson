@@ -83,7 +83,11 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                 // cache write after normal effects have started. The
                                 // underlying WebCrypto and IndexedDB awaits are
                                 // timeout-bounded, so this barrier cannot hang forever.
-                                match secure_store.store_secret_durable(&key, &json).await {
+                                match crate::state::LocalStateStore::persist_e2ee_plaintext_cache_write_durable(
+                                    secure_store.as_ref(),
+                                    &key,
+                                    Some(&json),
+                                ).await {
                                     Ok(()) => {
                                         // Clear pre-decrypt recovery checkpoints only
                                         // after the exact combined snapshot + plaintext
@@ -114,7 +118,11 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                 }
                             }
                             Ok(Some((key, None))) => {
-                                if let Err(error) = secure_store.delete_secret(&key) {
+                                if let Err(error) = crate::state::LocalStateStore::persist_e2ee_plaintext_cache_write_durable(
+                                    secure_store.as_ref(),
+                                    &key,
+                                    None,
+                                ).await {
                                     tracing::warn!(
                                         ?error,
                                         "empty IndexedDB E2EE state cleanup failed",

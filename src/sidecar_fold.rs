@@ -191,15 +191,7 @@ pub(crate) fn rebuild(
     Ok(rebuild_with_closes(store, controller, realm)?.0)
 }
 
-pub(crate) fn pending_closes(
-    store: &LocalStateStore,
-    controller: &AccountId,
-    realm: &str,
-) -> anyhow::Result<Vec<(AgentSidecarExchangeProjection, AgentSidecarExchangeControl)>> {
-    Ok(rebuild_with_closes(store, controller, realm)?.1)
-}
-
-fn rebuild_with_closes(
+pub(crate) fn rebuild_with_closes(
     store: &LocalStateStore,
     controller: &AccountId,
     realm: &str,

@@ -716,6 +716,7 @@ async fn run_signal_receive_loop(
     let mut restart_backoff = RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING)
         .with_jitter(0.2, u64::from_le_bytes(jitter_seed));
     while signal_engine_is_active(ctx, generation, start_generation, start_profile_id) {
+        let mut healthy_progress = false;
         let result = run_signal_receive_attempt(
             ctx,
             generation,
@@ -724,6 +725,7 @@ async fn run_signal_receive_loop(
             &mut receiver,
             decryptor,
             sink,
+            &mut healthy_progress,
         )
         .await;
         if matches!(result, Ok(SignalStreamStopReason::Unauthorized { .. })) {
@@ -746,14 +748,15 @@ async fn run_signal_receive_loop(
         if !signal_engine_is_active(ctx, generation, start_generation, start_profile_id) {
             break;
         }
-        let retry_delay = match &result {
-            Ok(SignalStreamStopReason::ReconnectAfter {
-                reconnect_after_ms: Some(reconnect_after_ms),
-            }) => restart_backoff
-                .next_delay_with_hint(Some(Duration::from_millis(*reconnect_after_ms))),
-            _ => restart_backoff.next_delay(),
-        };
+        let retry_delay =
+            signal_receive_restart_delay(&result, healthy_progress, &mut restart_backoff);
         match result {
+            Ok(SignalStreamStopReason::ReconnectAfter { .. }) if healthy_progress => {
+                tracing::info!(
+                    retry_delay_ms = retry_delay.as_millis(),
+                    "healthy Signal subscription window completed; reconnecting"
+                )
+            }
             Ok(reason) => tracing::warn!(
                 reason = ?reason,
                 retry_delay_ms = retry_delay.as_millis(),
@@ -767,6 +770,23 @@ async fn run_signal_receive_loop(
         }
         crate::runtime_helpers::sleep_for(retry_delay).await;
     }
+}
+
+fn signal_receive_restart_delay(
+    result: &garth::Result<SignalStreamStopReason>,
+    healthy_progress: bool,
+    backoff: &mut RetrySchedule,
+) -> Duration {
+    if healthy_progress {
+        backoff.reset();
+    }
+    let hint = match result {
+        Ok(SignalStreamStopReason::ReconnectAfter { reconnect_after_ms }) => {
+            reconnect_after_ms.map(Duration::from_millis)
+        }
+        _ => None,
+    };
+    backoff.next_delay_with_hint(hint)
 }
 
 fn signal_engine_is_active(
@@ -789,6 +809,7 @@ async fn run_signal_receive_attempt(
     receiver: &mut SignalReceiver,
     decryptor: &MlsSignalDecryptor,
     sink: &InksonSignalSink,
+    healthy_progress: &mut bool,
 ) -> garth::Result<SignalStreamStopReason> {
     let client = crate::identity::session_refresh::provide_authenticated_sdk_client(
         ctx.account.server_url.as_str(),
@@ -798,6 +819,7 @@ async fn run_signal_receive_attempt(
     let mut stream =
         crate::transport::websocket_rail::SignalRailSource::open(&client, &ctx.websocket_rail)
             .await?;
+    let mut received_heartbeat = false;
     while signal_engine_is_active(ctx, generation, start_generation, start_profile_id) {
         let frame = loop {
             use futures_util::future::{Either, select};
@@ -840,8 +862,15 @@ async fn run_signal_receive_attempt(
                     )
                     .await?;
                 sink.handle(outcome).await?;
+                *healthy_progress = true;
             }
             arkret_wire::SignalStreamFrame::Heartbeat => {
+                // The initial heartbeat alone must not reset a rapid failure
+                // loop. A later heartbeat proves a sustained live window.
+                if received_heartbeat {
+                    *healthy_progress = true;
+                }
+                received_heartbeat = true;
                 let now = crate::clock::now_utc();
                 sink.expire_live_bodies(now);
                 sink.products.advance_clock(now);
@@ -864,6 +893,42 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn healthy_signal_windows_do_not_accumulate_failure_backoff() {
+        let drain = Ok(SignalStreamStopReason::ReconnectAfter {
+            reconnect_after_ms: Some(250),
+        });
+        let mut backoff = RetrySchedule::new(Duration::from_secs(1), Duration::from_secs(60));
+        for _ in 0..12 {
+            assert_eq!(
+                signal_receive_restart_delay(&drain, true, &mut backoff),
+                Duration::from_secs(1)
+            );
+        }
+        for seconds in [2, 4, 8] {
+            assert_eq!(
+                signal_receive_restart_delay(&drain, false, &mut backoff),
+                Duration::from_secs(seconds)
+            );
+        }
+        let failure = Err(garth::Error::Http("fixture disconnect".into()));
+        assert_eq!(
+            signal_receive_restart_delay(&failure, false, &mut backoff),
+            Duration::from_secs(16)
+        );
+        assert_eq!(
+            signal_receive_restart_delay(&drain, true, &mut backoff),
+            Duration::from_secs(1)
+        );
+        let server_hint = Ok(SignalStreamStopReason::ReconnectAfter {
+            reconnect_after_ms: Some(5_000),
+        });
+        assert_eq!(
+            signal_receive_restart_delay(&server_hint, true, &mut backoff),
+            Duration::from_secs(5)
+        );
+    }
 
     fn at(seconds: i64) -> chrono::DateTime<chrono::Utc> {
         chrono::DateTime::from_timestamp(1_800_000_000 + seconds, 0).unwrap()

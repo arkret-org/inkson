@@ -20,6 +20,64 @@ struct SharedPinOperationRecord<'a> {
     payload: SharedPinOperationBody,
 }
 
+#[derive(Clone, PartialEq)]
+pub(super) struct WatchRefreshTarget {
+    base_url: String,
+    credential: String,
+    session_epoch: u64,
+    request: arkret_sdk::StrandWatchCurrentRequestBody,
+}
+
+#[derive(Clone, Default, PartialEq)]
+pub(super) struct WatchRefreshQueue {
+    latest: Option<(u64, WatchRefreshTarget)>,
+    running: bool,
+}
+
+impl WatchRefreshQueue {
+    fn enqueue(&mut self, target: Option<(u64, WatchRefreshTarget)>) -> bool {
+        self.latest = target;
+        if self.running || self.latest.is_none() {
+            return false;
+        }
+        self.running = true;
+        true
+    }
+
+    fn has_newer(&self, sequence: u64) -> bool {
+        self.latest
+            .as_ref()
+            .is_some_and(|(latest, _)| *latest != sequence)
+    }
+}
+
+fn watch_read_retry_delay(
+    error: &anyhow::Error,
+    attempts: u32,
+    backoff: &mut garth::RetrySchedule,
+) -> Option<std::time::Duration> {
+    if attempts >= 3 {
+        return None;
+    }
+    let (status, problem) = crate::api_error::api_error_status_and_envelope(error)?;
+    if !(status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+        && matches!(
+            problem.code(),
+            "revision_unavailable" | "temporarily_unavailable"
+        ))
+        && !(status == reqwest::StatusCode::TOO_MANY_REQUESTS && problem.code() == "rate_limited")
+    {
+        return None;
+    }
+    Some(
+        backoff.next_delay_with_hint(
+            problem
+                .retry_after_ms()
+                .map(std::time::Duration::from_millis),
+        ),
+    )
+}
+
 fn shared_pin_operation_body(
     operation: &crate::operation::LocalOperation,
 ) -> anyhow::Result<SharedPinOperationBody> {
@@ -191,6 +249,7 @@ pub(super) struct ChatController {
     pub strand_watch_current: Signal<Option<arkret_sdk::StrandWatchCurrentOutcome>>,
     pub strand_watch_pending: Signal<bool>,
     pub strand_watch_request: Signal<u64>,
+    pub strand_watch_refresh: Signal<WatchRefreshQueue>,
     pub watch_level_menu_open: Signal<bool>,
     pub status_msg: Signal<String>,
     /// Holder-local ids of the sends still sitting in the durable queue.
@@ -1467,28 +1526,101 @@ impl ChatController {
         self.strand_watch_request.set(sequence);
         self.strand_watch_current.set(None);
         self.watch_level_menu_open.set(false);
-        self.strand_watch_pending.set(false);
-        let Some(request) = request else {
-            return;
-        };
-        self.strand_watch_pending.set(true);
-        spawn(async move {
-            let result = crate::transport::auth::with_authed_sdk_client(
-                &base_url,
-                api_token,
-                |http| async move { crate::transport::strand_watch::read(&http, &request).await },
+        let target = request.map(|request| {
+            (
+                sequence,
+                WatchRefreshTarget {
+                    base_url,
+                    credential: api_token,
+                    session_epoch: crate::identity::device_directory::session_cache_epoch(),
+                    request,
+                },
             )
-            .await;
-            if *self.strand_watch_request.peek() != sequence {
-                return;
+        });
+        let mut queue = self.strand_watch_refresh.peek().clone();
+        let start = queue.enqueue(target);
+        self.strand_watch_pending.set(queue.latest.is_some());
+        self.strand_watch_refresh.set(queue);
+        if !start {
+            return;
+        }
+        // One owner-scoped worker drains only the latest requested cut. Live
+        // message bursts cannot launch concurrent authentication/snapshot reads.
+        dioxus::core::Runtime::current().spawn(self.messages.origin_scope(), async move {
+            let mut attempted_target = None;
+            let mut attempts = 0u32;
+            let mut backoff = garth::RetrySchedule::new(
+                std::time::Duration::from_secs(1),
+                std::time::Duration::from_secs(4),
+            );
+            loop {
+                let Some((sequence, target)) = self.strand_watch_refresh.peek().latest.clone()
+                else {
+                    break;
+                };
+                if target.session_epoch != crate::identity::device_directory::session_cache_epoch()
+                {
+                    break;
+                }
+                if attempted_target.as_ref() != Some(&target) {
+                    attempted_target = Some(target.clone());
+                    attempts = 0;
+                    backoff.reset();
+                }
+                attempts += 1;
+                let request = target.request.clone();
+                let result =
+                    crate::transport::auth::with_authed_sdk_client(
+                        &target.base_url,
+                        target.credential.clone(),
+                        |http| async move {
+                            crate::transport::strand_watch::read(&http, &request).await
+                        },
+                    )
+                    .await;
+                if target.session_epoch != crate::identity::device_directory::session_cache_epoch()
+                {
+                    let latest = self.strand_watch_refresh.peek().latest.clone();
+                    if latest.as_ref().is_some_and(|(_, latest)| {
+                        latest.session_epoch
+                            == crate::identity::device_directory::session_cache_epoch()
+                    }) {
+                        continue;
+                    }
+                    break;
+                }
+                let latest = self.strand_watch_refresh.peek().latest.clone();
+                if latest.as_ref().is_none_or(|(_, latest)| latest != &target) {
+                    continue;
+                }
+                match result {
+                    Ok(current) => {
+                        attempts = 0;
+                        if self.strand_watch_refresh.peek().has_newer(sequence) {
+                            continue;
+                        }
+                        self.strand_watch_level.set(super::watch_level_from_wire(
+                            crate::transport::strand_watch::current_level(&current),
+                        ));
+                        self.strand_watch_current.set(Some(current));
+                        break;
+                    }
+                    Err(error) => {
+                        tracing::warn!(error = %error.display_diagnostic(), attempt = attempts,
+                            "self watch current observation failed");
+                        let Some(delay) =
+                            watch_read_retry_delay(error.inner(), attempts, &mut backoff)
+                        else {
+                            break;
+                        };
+                        crate::runtime_helpers::sleep_for(delay).await;
+                    }
+                }
             }
+            let mut queue = self.strand_watch_refresh.peek().clone();
+            queue.running = false;
+            self.strand_watch_refresh.set(queue);
             self.strand_watch_pending.set(false);
-            if let Ok(current) = result {
-                self.strand_watch_level.set(super::watch_level_from_wire(
-                    crate::transport::strand_watch::current_level(&current),
-                ));
-                self.strand_watch_current.set(Some(current));
-            }
         });
     }
 
@@ -1719,6 +1851,76 @@ mod composer_target_tests {
 
     use super::*;
 
+    #[test]
+    fn watch_refresh_coalesces_live_changes_and_keeps_latest_scope() {
+        let target = WatchRefreshTarget {
+            base_url: "https://station.example".into(),
+            credential: "fixture".into(),
+            session_epoch: 1,
+            request: arkret_sdk::StrandWatchCurrentRequestBody {
+                realm_id: arkret_sdk::RealmId::new(
+                    "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+                )
+                .unwrap(),
+                strand_id: arkret_sdk::StrandId::new(
+                    "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
+                )
+                .unwrap(),
+                watcher_actor_id: arkret_sdk::ActorId::account(crate::test_support::authority(
+                    "ak:did_core:web:alice.example",
+                )),
+            },
+        };
+        let mut queue = WatchRefreshQueue::default();
+        assert!(queue.enqueue(Some((1, target.clone()))));
+        for sequence in 2..20 {
+            assert!(!queue.enqueue(Some((sequence, target.clone()))));
+        }
+        assert!(queue.has_newer(1));
+        assert_eq!(queue.latest.as_ref().unwrap().0, 19);
+        let mut replacement = target.clone();
+        replacement.session_epoch += 1;
+        assert!(!queue.enqueue(Some((20, replacement.clone()))));
+        assert!(
+            queue
+                .latest
+                .as_ref()
+                .is_some_and(|(_, latest)| latest == &replacement)
+        );
+        assert!(!queue.enqueue(None));
+        assert!(queue.latest.is_none());
+        queue.running = false;
+        assert!(queue.enqueue(Some((21, target))));
+    }
+
+    #[test]
+    fn watch_read_retries_are_bounded_and_observe_server_delay() {
+        let temporary = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 503,
+            error: Box::new(
+                arkret_sdk::Problem::from_code("revision_unavailable", "fixture")
+                    .with_retry_after_ms(Some(5_000)),
+            ),
+        });
+        let mut backoff = garth::RetrySchedule::new(
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(4),
+        );
+        assert_eq!(
+            watch_read_retry_delay(&temporary, 1, &mut backoff),
+            Some(std::time::Duration::from_secs(5))
+        );
+        assert!(watch_read_retry_delay(&temporary, 3, &mut backoff).is_none());
+        let denied = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 403,
+            error: Box::new(arkret_sdk::Problem::from_code("not_found", "fixture")),
+        });
+        assert!(watch_read_retry_delay(&denied, 1, &mut backoff).is_none());
+        assert!(
+            watch_read_retry_delay(&anyhow::anyhow!("invalid proof"), 1, &mut backoff).is_none()
+        );
+    }
+
     type Control = Rc<RefCell<Option<(Signal<ComposerTarget>, ComposerState)>>>;
 
     fn harness(control: Control) -> Element {
@@ -1840,6 +2042,7 @@ pub(super) fn use_chat_controller(
         strand_watch_current: use_signal(|| None),
         strand_watch_pending: use_signal(|| false),
         strand_watch_request: use_signal(|| 0),
+        strand_watch_refresh: use_signal(WatchRefreshQueue::default),
         watch_level_menu_open: use_signal(|| false),
         status_msg: composer.status_msg,
         queued_outbound_local_operation_ids: use_signal(std::collections::BTreeSet::<String>::new),

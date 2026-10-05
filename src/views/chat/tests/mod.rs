@@ -23,6 +23,7 @@ mod presence;
 mod read_receipts;
 mod sender_display;
 mod sidecar_ensure;
+mod sidecar_projection;
 mod sidecar_restore;
 mod sidecar_routing;
 

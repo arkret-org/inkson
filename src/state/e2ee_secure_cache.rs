@@ -38,10 +38,13 @@ impl PendingE2eePlaintextClear {
         &self,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     ) -> anyhow::Result<()> {
-        secure_store
-            .store_secret_durable(&self.key, &self.json)
-            .await
-            .context("persist cleared E2EE plaintext cache")
+        LocalStateStore::persist_e2ee_plaintext_cache_write_durable(
+            secure_store,
+            &self.key,
+            Some(&self.json),
+        )
+        .await
+        .context("persist cleared E2EE plaintext cache")
     }
 }
 
@@ -229,7 +232,7 @@ impl LocalStateStore {
         Ok(Some((key, json)))
     }
 
-    #[cfg(any(test, target_arch = "wasm32"))]
+    #[cfg(test)]
     pub(crate) fn persist_e2ee_plaintext_cache_with_secure_store(
         &self,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -247,6 +250,29 @@ impl LocalStateStore {
                 .context("delete E2EE plaintext cache from secure store")?;
         }
         Ok(true)
+    }
+
+    /// Wait for this exact cache snapshot, including an explicit clear, to
+    /// commit. Background snapshots share the same writer, but cannot replace
+    /// an awaited snapshot or satisfy its barrier with different bytes.
+    pub(crate) async fn persist_e2ee_plaintext_cache_write_durable(
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+        key: &str,
+        json: Option<&str>,
+    ) -> anyhow::Result<()> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = secure_store;
+            cache_persist_driver::persist_exact(key.to_owned(), json.map(str::to_owned)).await
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            match json {
+                Some(json) => secure_store.store_secret_durable(key, json).await?,
+                None => secure_store.delete_secret_durable(key).await?,
+            }
+            Ok(())
+        }
     }
 
     pub(crate) fn e2ee_plaintext_cache_usage(&self) -> E2eePlaintextCacheUsage {
@@ -429,6 +455,9 @@ impl LocalStateStore {
         // live cache contains newer or additional entries, persist the merged
         // result now without allowing the older stored value to overwrite it.
         if merged != persisted {
+            #[cfg(target_arch = "wasm32")]
+            self.persist_e2ee_plaintext_cache_if_ready();
+            #[cfg(not(target_arch = "wasm32"))]
             self.persist_e2ee_plaintext_cache_with_secure_store(secure_store)?;
         }
         Ok(changed)
@@ -495,24 +524,7 @@ impl LocalStateStore {
                     return;
                 }
             };
-            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            match write {
-                (key, Some(json)) => {
-                    wasm_bindgen_futures::spawn_local(async move {
-                        if let Err(error) = secure_store.store_secret_durable(&key, &json).await {
-                            tracing::warn!(
-                                ?error,
-                                "E2EE plaintext cache durable IndexedDB persist failed",
-                            );
-                        }
-                    });
-                }
-                (key, None) => {
-                    if let Err(error) = secure_store.delete_secret(&key) {
-                        tracing::warn!(?error, "E2EE plaintext cache secure-store delete failed");
-                    }
-                }
-            }
+            cache_persist_driver::enqueue_background(write.0, write.1);
         }
         #[cfg(not(target_arch = "wasm32"))]
         let _ = self;
@@ -535,6 +547,287 @@ impl LocalStateStore {
         }
         #[cfg(not(target_arch = "wasm32"))]
         let _ = self;
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+type CachePersistReply = tokio::sync::oneshot::Sender<Result<(), String>>;
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Default)]
+struct CachePersistLane {
+    active: Option<CachePersistWrite>,
+    pending: std::collections::VecDeque<CachePersistWrite>,
+    committed: Option<Option<[u8; 32]>>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+struct CachePersistWrite {
+    json: Option<String>,
+    replies: Vec<CachePersistReply>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Default)]
+struct CachePersistQueue {
+    lanes: BTreeMap<String, CachePersistLane>,
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+impl CachePersistQueue {
+    fn digest(json: &Option<String>) -> Option<[u8; 32]> {
+        use sha2::{Digest as _, Sha256};
+        json.as_ref()
+            .map(|json| Sha256::digest(json.as_bytes()).into())
+    }
+
+    /// Coalesce only background tail writes. A waiter makes its exact bytes
+    /// immutable until they commit; it never accepts a newer snapshot instead.
+    fn enqueue(
+        &mut self,
+        key: String,
+        json: Option<String>,
+        reply: Option<CachePersistReply>,
+        durable_matches: bool,
+    ) -> bool {
+        let lane = self.lanes.entry(key).or_default();
+        if lane.active.is_none()
+            && lane.pending.is_empty()
+            && lane.committed == Some(Self::digest(&json))
+            && durable_matches
+        {
+            if let Some(reply) = reply {
+                let _ = reply.send(Ok(()));
+            }
+            return false;
+        }
+        if let Some(tail) = lane.pending.back_mut() {
+            if tail.json == json {
+                tail.replies.extend(reply);
+                return false;
+            }
+            if tail.replies.is_empty() {
+                lane.pending.pop_back();
+            }
+        } else if let Some(active) = &mut lane.active
+            && active.json == json
+        {
+            active.replies.extend(reply);
+            return false;
+        }
+        let start = lane.active.is_none() && lane.pending.is_empty();
+        lane.pending.push_back(CachePersistWrite {
+            json,
+            replies: reply.into_iter().collect(),
+        });
+        start
+    }
+
+    fn take_next(&mut self, key: &str) -> Option<Option<String>> {
+        let lane = self.lanes.get_mut(key)?;
+        assert!(lane.active.is_none());
+        lane.active = lane.pending.pop_front();
+        lane.active.as_ref().map(|write| write.json.clone())
+    }
+
+    fn complete(&mut self, key: &str, result: Result<(), String>) {
+        let lane = self.lanes.get_mut(key).expect("active cache lane");
+        let write = lane.active.take().expect("active cache write");
+        // A failed write invalidates the byte shortcut. The next publication
+        // must retry rather than claiming the previous cache entry is durable.
+        lane.committed = if result.is_ok() {
+            Some(Self::digest(&write.json))
+        } else {
+            None
+        };
+        for reply in write.replies {
+            let _ = reply.send(result.clone());
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod cache_persist_driver {
+    use std::sync::{Mutex, OnceLock};
+
+    use anyhow::Context as _;
+
+    use super::CachePersistQueue;
+
+    fn queue() -> &'static Mutex<CachePersistQueue> {
+        static QUEUE: OnceLock<Mutex<CachePersistQueue>> = OnceLock::new();
+        QUEUE.get_or_init(|| Mutex::new(CachePersistQueue::default()))
+    }
+
+    fn enqueue(key: String, json: Option<String>, reply: Option<super::CachePersistReply>) {
+        let store = crate::secure_key_store::default_secure_key_store("inkson");
+        let durable_matches = store.get_secret(&key).ok().as_ref() == Some(&json);
+        let start = queue()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .enqueue(key.clone(), json, reply, durable_matches);
+        if start {
+            // Reserve the active slot before spawning so two synchronous
+            // publications cannot launch competing writers for the same key.
+            let next = queue()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take_next(&key)
+                .expect("new cache drain has a pending write");
+            wasm_bindgen_futures::spawn_local(drain(key, next));
+        }
+    }
+
+    pub(super) fn enqueue_background(key: String, json: Option<String>) {
+        enqueue(key, json, None);
+    }
+
+    pub(super) async fn persist_exact(key: String, json: Option<String>) -> anyhow::Result<()> {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        enqueue(key, json, Some(sender));
+        receiver
+            .await
+            .context("E2EE cache durable writer stopped")?
+            .map_err(|error| anyhow::anyhow!(error))
+    }
+
+    async fn drain(key: String, mut json: Option<String>) {
+        loop {
+            let store = crate::secure_key_store::default_secure_key_store("inkson");
+            let result = match &json {
+                Some(json) => store.store_secret_durable(&key, json).await,
+                None => store.delete_secret_durable(&key).await,
+            }
+            .map_err(|error| error.to_string());
+            if let Err(error) = &result {
+                tracing::warn!(%error, "E2EE plaintext cache durable IndexedDB persist failed");
+            }
+            let next = {
+                let mut queue = queue()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                queue.complete(&key, result);
+                queue.take_next(&key)
+            };
+            let Some(next) = next else { return };
+            json = next;
+        }
+    }
+}
+
+#[cfg(test)]
+mod cache_persist_tests {
+    use super::*;
+
+    fn json(value: &str) -> Option<String> {
+        Some(value.to_owned())
+    }
+
+    #[tokio::test]
+    async fn cache_single_writer_coalesces_background_burst_and_waits_for_exact_tail() {
+        use crate::secure_key_store::SecureKeyStore as _;
+
+        let mut queue = CachePersistQueue::default();
+        let store = crate::secure_key_store::MemorySecureKeyStore::default();
+        let key = "account-a";
+        assert!(queue.enqueue(key.into(), json("first"), None, false));
+        assert_eq!(queue.take_next(key), Some(json("first")));
+        assert!(!queue.enqueue(key.into(), json("middle"), None, false));
+        assert!(!queue.enqueue(key.into(), json("latest"), None, false));
+        let (sender, mut latest) = tokio::sync::oneshot::channel();
+        assert!(!queue.enqueue(key.into(), json("latest"), Some(sender), false));
+        store.store_secret_durable(key, "first").await.unwrap();
+        queue.complete(key, Ok(()));
+        assert!(matches!(
+            latest.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        assert_eq!(queue.take_next(key), Some(json("latest")));
+        store.store_secret_durable(key, "latest").await.unwrap();
+        queue.complete(key, Ok(()));
+        latest.await.unwrap().unwrap();
+        assert_eq!(queue.take_next(key), None);
+        assert_eq!(store.get_secret(key).unwrap(), json("latest"));
+    }
+
+    #[tokio::test]
+    async fn cache_clear_barrier_is_not_replaced_by_a_new_receive() {
+        let mut queue = CachePersistQueue::default();
+        let key = "account-a";
+        assert!(queue.enqueue(key.into(), json("old"), None, false));
+        assert_eq!(queue.take_next(key), Some(json("old")));
+        let (sender, mut cleared) = tokio::sync::oneshot::channel();
+        queue.enqueue(key.into(), json("{}"), Some(sender), false);
+        queue.enqueue(key.into(), json("received-after-clear"), None, false);
+        queue.complete(key, Ok(()));
+        assert!(matches!(
+            cleared.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        assert_eq!(queue.take_next(key), Some(json("{}")));
+        queue.complete(key, Ok(()));
+        cleared.await.unwrap().unwrap();
+        assert_eq!(queue.take_next(key), Some(json("received-after-clear")));
+        queue.complete(key, Ok(()));
+        assert_eq!(queue.take_next(key), None);
+    }
+
+    #[tokio::test]
+    async fn cache_identical_inflight_barriers_share_a_commit_and_real_failure() {
+        let mut queue = CachePersistQueue::default();
+        let key = "account-a";
+        let (sender, first) = tokio::sync::oneshot::channel();
+        assert!(queue.enqueue(key.into(), json("snapshot"), Some(sender), false));
+        assert_eq!(queue.take_next(key), Some(json("snapshot")));
+        let (sender, duplicate) = tokio::sync::oneshot::channel();
+        assert!(!queue.enqueue(key.into(), json("snapshot"), Some(sender), false));
+        queue.complete(key, Err("IndexedDB quota denied".into()));
+        assert_eq!(first.await.unwrap(), Err("IndexedDB quota denied".into()));
+        assert_eq!(
+            duplicate.await.unwrap(),
+            Err("IndexedDB quota denied".into())
+        );
+        assert_eq!(queue.take_next(key), None);
+        let (sender, retried) = tokio::sync::oneshot::channel();
+        assert!(queue.enqueue(key.into(), json("snapshot"), Some(sender), true));
+        assert_eq!(queue.take_next(key), Some(json("snapshot")));
+        queue.complete(key, Ok(()));
+        retried.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn cache_commit_shortcut_is_account_scoped_and_invalidated_by_backend_change() {
+        let mut queue = CachePersistQueue::default();
+        queue.enqueue("account-a".into(), json("snapshot"), None, false);
+        queue.take_next("account-a");
+        queue.complete("account-a", Ok(()));
+        assert_eq!(queue.take_next("account-a"), None);
+        let (sender, committed) = tokio::sync::oneshot::channel();
+        assert!(!queue.enqueue("account-a".into(), json("snapshot"), Some(sender), true));
+        committed.await.unwrap().unwrap();
+        assert!(queue.enqueue("account-b".into(), json("snapshot"), None, true));
+        assert!(queue.enqueue("account-a".into(), json("snapshot"), None, false));
+        assert_eq!(queue.take_next("account-b"), Some(json("snapshot")));
+        assert_eq!(queue.take_next("account-a"), Some(json("snapshot")));
+    }
+
+    #[tokio::test]
+    async fn cache_delete_and_replacement_have_distinct_exact_barriers() {
+        let mut queue = CachePersistQueue::default();
+        let (sender, deleted) = tokio::sync::oneshot::channel();
+        assert!(queue.enqueue("account-a".into(), None, Some(sender), false));
+        assert_eq!(queue.take_next("account-a"), Some(None));
+        let (sender, mut replacement) = tokio::sync::oneshot::channel();
+        assert!(!queue.enqueue("account-a".into(), json("new"), Some(sender), false));
+        queue.complete("account-a", Ok(()));
+        deleted.await.unwrap().unwrap();
+        assert!(matches!(
+            replacement.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        assert_eq!(queue.take_next("account-a"), Some(json("new")));
+        queue.complete("account-a", Ok(()));
+        replacement.await.unwrap().unwrap();
     }
 }
 

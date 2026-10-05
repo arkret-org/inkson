@@ -470,7 +470,7 @@ pub(crate) enum SidecarDisclosureSurface {
 /// One controller-device-local privacy boundary shared by every ordinary
 /// disclosure surface. It is derived only from accepted/recovered local
 /// Sidecar facts and is never uploaded.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SidecarPrivacyGate {
     private_identifiers: std::collections::BTreeSet<String>,
     verified_publish_targets: std::collections::BTreeSet<String>,
@@ -480,6 +480,16 @@ impl SidecarPrivacyGate {
     pub(crate) fn from_store(
         store: &crate::state::LocalStateStore,
         controller_principal_id: &str,
+    ) -> Self {
+        Self::from_store_with_projection(store, controller_principal_id, None)
+    }
+
+    /// Reuse the fold obtained from this same store read. A failed fold supplies
+    /// an empty slice, so it cannot authorize a shared publish target.
+    pub(crate) fn from_store_with_projection(
+        store: &crate::state::LocalStateStore,
+        controller_principal_id: &str,
+        known: Option<(&str, &[arkret_sdk::AgentSidecarExchangeProjection])>,
     ) -> Self {
         let mut private_identifiers = std::collections::BTreeSet::new();
         let mut verified_publish_targets = std::collections::BTreeSet::new();
@@ -509,9 +519,16 @@ impl SidecarPrivacyGate {
                         }
                     }
                 }
-                if let Ok(projections) =
-                    cached_sidecar_exchange_projections(store, &local.account_id, realm)
+                let rebuilt;
+                let projections = if let Some((known_realm, projections)) = known
+                    && known_realm == realm
                 {
+                    Some(projections)
+                } else {
+                    rebuilt = cached_sidecar_exchange_projections(store, &local.account_id, realm);
+                    rebuilt.as_deref().ok()
+                };
+                if let Some(projections) = projections {
                     for projection in projections {
                         private_identifiers.insert(projection.exchange_id.clone());
                         if !projection.user_facing_response_event_ids.is_empty() {
@@ -814,37 +831,6 @@ pub(crate) fn pending_sidecar_submissions(
         .collect()
 }
 
-#[cfg(test)]
-fn cached_sidecar_display_mode(
-    store: &crate::state::LocalStateStore,
-    session: &HostedSidecarState,
-) -> Option<arkret_sdk::AgentSidecarDisplayMode> {
-    let realm_id = arkret_sdk::RealmId::new(session.source_realm_id.clone()).ok()?;
-    let strand_id = arkret_sdk::StrandId::new(session.source_strand_id.clone()).ok()?;
-    let view_state = store
-        .sidecar_view_state(&session.controller_account_id, &realm_id, &strand_id)
-        .or_else(|| {
-            let namespace_key =
-                crate::account_data::account_data_namespace_key(&session.controller_account_id)
-                    .ok()?;
-            let key = sidecar_view_state_account_data_key_for_context(
-                &namespace_key,
-                &session.controller_account_id,
-                &realm_id,
-                &strand_id,
-            )
-            .ok()?;
-            store.load_plain_local_data(&key).and_then(|raw| {
-                serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok()
-            })
-        })?;
-    (view_state.controller_account_id == session.controller_account_id
-        && view_state.sidecar_id == session.sidecar_id
-        && view_state.context_ref.realm_id.as_str() == session.source_realm_id
-        && view_state.context_ref.strand_id.as_str() == session.source_strand_id)
-        .then_some(view_state.display_mode)
-}
-
 #[derive(Clone, Copy)]
 pub struct HostedSidecarStateContext(pub Signal<Option<HostedSidecarState>>);
 
@@ -906,7 +892,7 @@ mod tests {
 
     fn view_state(
         session: &HostedSidecarState,
-        display_mode: arkret_sdk::AgentSidecarDisplayMode,
+        pinned: bool,
         hlc: &str,
         device: &str,
     ) -> arkret_sdk::AgentSidecarViewState {
@@ -918,8 +904,7 @@ mod tests {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
                 strand_id: arkret_sdk::StrandId::new(session.source_strand_id.clone()).unwrap(),
             },
-            display_mode,
-            pinned: None,
+            pinned: Some(pinned),
             collapsed: None,
             updated_hlc: arkret_sdk::Hlc::new(hlc).unwrap(),
             origin_device_id: arkret_sdk::DeviceId::new(device).unwrap(),
@@ -1031,13 +1016,13 @@ mod tests {
         let session = session(Vec::new());
         let newer = view_state(
             &session,
-            arkret_sdk::AgentSidecarDisplayMode::SidecarOnly,
+            true,
             "01970e589d21-0002-a13f9c2e",
             "ak:device:01964137-0000-7000-8000-000000000001",
         );
         let older = view_state(
             &session,
-            arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
+            false,
             "01970e589d21-0001-a13f9c2e",
             "ak:device:01964137-0000-7000-8000-000000000002",
         );
@@ -1070,22 +1055,19 @@ mod tests {
             .unwrap()
         );
         assert_eq!(
-            cached_sidecar_display_mode(&store, &session),
-            Some(arkret_sdk::AgentSidecarDisplayMode::SidecarOnly)
+            store.sidecar_view_state(
+                &newer.controller_account_id,
+                &newer.context_ref.realm_id,
+                &newer.context_ref.strand_id,
+            ),
+            Some(newer)
         );
     }
 
     #[test]
     fn sidecar_view_state_lww_uses_device_tie_break_and_is_idempotent() {
         let session = session(Vec::new());
-        let state = |device| {
-            view_state(
-                &session,
-                arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
-                "01970e589d21-0001-a13f9c2e",
-                device,
-            )
-        };
+        let state = |device| view_state(&session, false, "01970e589d21-0001-a13f9c2e", device);
         let lower = state("ak:device:01964137-0000-7000-8000-000000000001");
         let higher = state("ak:device:01964137-0000-7000-8000-000000000002");
 
@@ -1103,7 +1085,7 @@ mod tests {
         );
 
         let mut divergent = lower.clone();
-        divergent.display_mode = arkret_sdk::AgentSidecarDisplayMode::SidecarOnly;
+        divergent.pinned = Some(true);
         assert!(merge_decision(&lower, &divergent).is_err());
 
         let mut wrong_sidecar = higher;
@@ -1157,7 +1139,7 @@ mod tests {
         let session = session(Vec::new());
         let candidate = view_state(
             &session,
-            arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
+            false,
             "01970e589d21-0001-a13f9c2e",
             "ak:device:01964137-0000-7000-8000-000000000001",
         );
