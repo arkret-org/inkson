@@ -72,6 +72,69 @@ fn restore_for_commit(
     Ok((group, secret))
 }
 
+/// Stage the native Sidecar's derived member withdrawal or access rotation.
+/// The caller supplies the exact verified authority cut, never Circle membership.
+pub(crate) fn build_sidecar_access_commit(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    authority: &AccountId,
+    device_id: &DeviceId,
+    binding: &arkret_sdk::MlsGovernanceBindingPayload,
+    removed_actors: &[arkret_sdk::ActorId],
+) -> Result<StagedMlsCommit, MlsRuntimeError> {
+    binding
+        .validate()
+        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
+    let scope = binding.effective_scope();
+    if !matches!(scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
+        return Err(MlsRuntimeError::Commit(
+            "Sidecar access rotation requires its native scope".into(),
+        ));
+    }
+    let (mut group, secret) = restore_for_commit(
+        state_store,
+        secure_store,
+        scope,
+        scope.realm_id().as_str(),
+        authority,
+        device_id,
+    )?;
+    let base = state_store
+        .mls_group_state_ref_for_scope(scope, &group.group_id(), group.epoch())
+        .map_err(MlsRuntimeError::Commit)?;
+    if binding.base_group_state_ref() != Some(&base)
+        || binding.previous_epoch() != group.epoch()
+        || binding.next_epoch() != group.epoch().checked_add(1).unwrap_or(0)
+        || group.group_id()
+            != scope
+                .canonical_mls_group_id()
+                .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?
+        || removed_actors.contains(&arkret_sdk::ActorId::account(authority.clone()))
+        || group.identity().actor_id != arkret_sdk::ActorId::account(authority.clone())
+        || group.identity().endpoint
+            != arkret_sdk::MlsEndpointIdentity::human_device(
+                authority.principal_id.clone(),
+                device_id.clone(),
+            )
+    {
+        return Err(MlsRuntimeError::Commit(
+            "Sidecar access rotation differs from its exact private base or controller".into(),
+        ));
+    }
+    let envelope = if removed_actors.is_empty() {
+        group.self_update_commit_with_governance_binding(binding)
+    } else {
+        group
+            .remove_members_by_actor_with_governance_binding(removed_actors, binding)
+            .map(|removed| removed.commit)
+    }
+    .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
+    Ok(StagedMlsCommit {
+        envelope,
+        staged_checkpoint: staged_checkpoint(&group, scope.realm_id().as_str(), &secret)?,
+    })
+}
+
 fn scope_for(
     realm_id: &str,
     circle_id: Option<&str>,

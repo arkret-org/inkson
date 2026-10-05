@@ -334,6 +334,264 @@ fn build_mls_genesis_payload_has_required_fields() {
 }
 
 #[test]
+fn sidecar_withdrawal_keeps_the_other_agent_and_recovers_the_pending_commit() {
+    let mut state = temp_state_store("sidecar-withdrawal");
+    let secure = MemorySecureKeyStore::new();
+    let authority = fixture::authority("did:web:alice.example");
+    let device = fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001");
+    let realm = genesis_governance_binding()
+        .effective_scope()
+        .realm_id()
+        .clone();
+    super::seed_human_creator_authorization("did:web:alice.example", device.as_str());
+    ensure_creator_mls_checkpoint(&mut state, &secure, realm.as_str(), &authority, &device)
+        .unwrap();
+    let secret = load_device_checkpoint_secret(&secure, &authority, &device).unwrap();
+    let event =
+        |seed| arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [seed; 32]);
+    let sidecar = arkret_sdk::SidecarId::from_event_id(&event(71));
+    let scope = arkret_sdk::ScopeRef::Sidecar {
+        realm_id: realm.clone(),
+        sidecar_id: sidecar.clone(),
+    };
+    let agents = [
+        "ak:did_core:web:first-agent.example",
+        "ak:did_core:web:second-agent.example",
+    ]
+    .map(|id| arkret_sdk::DidCoreId::new(id).unwrap());
+    let digest = |desired: &[arkret_sdk::DidCoreId]| {
+        arkret_sdk::sidecar_participant_authority_digest(&sidecar, &realm, &authority, desired)
+            .unwrap()
+    };
+    let binding = |base, epoch, desired: &[arkret_sdk::DidCoreId]| {
+        arkret_sdk::MlsGovernanceBindingPayload::sidecar(
+            realm.clone(),
+            sidecar.clone(),
+            base,
+            epoch,
+            if epoch == 0 && desired.is_empty() {
+                0
+            } else {
+                epoch + 1
+            },
+            0,
+            digest(desired),
+            vec![event(71)],
+        )
+        .unwrap()
+    };
+    let genesis = binding(None, 0, &[]);
+    let (checkpoint, _) =
+        generate_creator_epoch_zero(&scope, &authority, &device, &genesis, &secret, None).unwrap();
+    let mut group = crate::mls::persistence::restore_envelope(&checkpoint, &secret, 0).unwrap();
+    let mut base = event(72);
+    let mut agent_actors = Vec::new();
+    for (index, agent) in agents.iter().enumerate() {
+        let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            agent.clone(),
+            authority.station_id.clone(),
+        ));
+        agent_actors.push(actor.clone());
+        let identity = arkret_sdk::ArkretMlsIdentity::new_agent(
+            actor,
+            arkret_sdk::DidUrl::new(format!(
+                "did:web:{}#runtime",
+                if index == 0 {
+                    "first-agent.example"
+                } else {
+                    "second-agent.example"
+                }
+            ))
+            .unwrap(),
+            event(73 + index as u8),
+            arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(
+                ed25519_dalek::SigningKey::from_bytes(&[74 + index as u8; 32]),
+            ),
+        )
+        .unwrap();
+        let key_package = fixture::claimed_mls_key_package(
+            identity.key_package_record().unwrap(),
+            1_760_000_000_011 + index as u64,
+        );
+        let leaf = arkret_sdk::mls::author_leaf_from_key_package_bytes(
+            &arkret_sdk::base64url_decode(key_package.keypackage.as_bytes()).unwrap(),
+            0,
+        )
+        .unwrap();
+        let hint = crate::mls::governance_proof::MlsLeafAuthorityHint {
+            actor_id: identity.actor_id.clone(),
+            signature_key: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+                &leaf.signature_key,
+            ))
+            .unwrap(),
+            endpoint: key_package.endpoint.clone(),
+            device_authorize_event_id: None,
+        };
+        let previous = group.verified_leaf_bindings().unwrap();
+        let transition = binding(Some(base.clone()), group.epoch(), &agents);
+        let add = group
+            .add_member_with_governance_binding(&key_package, &transition)
+            .unwrap();
+        let accepted = fixture::accepted_mls_commit_with_binding(
+            arkret_sdk::ActorId::account(authority.clone()),
+            &add.commit,
+            transition,
+            76 + index as u8,
+        );
+        group
+            .install_recovered_own_commit(&accepted, &base)
+            .unwrap();
+        crate::mls::governance_proof::install_post_transition_leaf_bindings(
+            &mut group,
+            &previous,
+            &[hint],
+        )
+        .unwrap();
+        base = accepted.event.event_id;
+    }
+    assert_eq!(group.verified_leaf_bindings().unwrap().len(), 3);
+    let encoded = serde_json::to_vec(&group.export_state_record().unwrap()).unwrap();
+    let checkpoint = crate::mls::persistence::encrypt_state(
+        realm.as_str(),
+        &group.group_id(),
+        group.epoch(),
+        &encoded,
+        &secret,
+        &[78; 16],
+    );
+    state
+        .save_mls_checkpoint_for_scope(&scope, checkpoint)
+        .unwrap();
+    state
+        .record_mls_group_state_ref_for_scope(
+            &scope,
+            &group.group_id(),
+            group.epoch(),
+            base.clone(),
+        )
+        .unwrap();
+    let before = state.mls_checkpoint_for_scope(&scope).unwrap();
+    let transition = binding(Some(base.clone()), 2, &agents[1..]);
+    let wrong_base = binding(Some(event(79)), 2, &agents[1..]);
+    assert!(
+        build_sidecar_access_commit(
+            &state,
+            &secure,
+            &authority,
+            &device,
+            &wrong_base,
+            &agent_actors[..1]
+        )
+        .is_err()
+    );
+    assert!(
+        build_sidecar_access_commit(
+            &state,
+            &secure,
+            &authority,
+            &device,
+            &transition,
+            &[arkret_sdk::ActorId::account(authority.clone())]
+        )
+        .is_err()
+    );
+    let staged = build_sidecar_access_commit(
+        &state,
+        &secure,
+        &authority,
+        &device,
+        &transition,
+        &agent_actors[..1],
+    )
+    .unwrap();
+    assert_eq!(state.mls_checkpoint_for_scope(&scope).unwrap(), before);
+    let previous = group.verified_leaf_bindings().unwrap();
+    let mut restarted =
+        crate::mls::persistence::restore_envelope(&staged.staged_checkpoint, &secret, 2).unwrap();
+    assert_eq!(restarted.epoch(), 2);
+    let accepted = fixture::accepted_mls_commit_with_binding(
+        arkret_sdk::ActorId::account(authority.clone()),
+        &staged.envelope,
+        transition,
+        80,
+    );
+    assert!(
+        restarted
+            .install_recovered_own_commit(&accepted, &event(79))
+            .is_err()
+    );
+    assert_eq!(restarted.epoch(), 2);
+    restarted
+        .install_recovered_own_commit(&accepted, &base)
+        .unwrap();
+    crate::mls::governance_proof::install_post_transition_leaf_bindings(
+        &mut restarted,
+        &previous,
+        &[],
+    )
+    .unwrap();
+    let leaves = restarted.verified_leaf_bindings().unwrap();
+    assert_eq!(restarted.epoch(), 3);
+    assert_eq!(leaves.len(), 2);
+    assert!(leaves.iter().all(|leaf| leaf.actor_id != agent_actors[0]));
+    assert!(leaves.iter().any(|leaf| leaf.actor_id == agent_actors[1]));
+    let encoded = serde_json::to_vec(&restarted.export_state_record().unwrap()).unwrap();
+    let checkpoint = crate::mls::persistence::encrypt_state(
+        realm.as_str(),
+        &restarted.group_id(),
+        3,
+        &encoded,
+        &secret,
+        &[81; 16],
+    );
+    state
+        .save_mls_checkpoint_for_scope(&scope, checkpoint)
+        .unwrap();
+    state
+        .record_mls_group_state_ref_for_scope(
+            &scope,
+            &restarted.group_id(),
+            3,
+            accepted.event.event_id.clone(),
+        )
+        .unwrap();
+    let rotation = arkret_sdk::MlsGovernanceBindingPayload::sidecar(
+        realm.clone(),
+        sidecar.clone(),
+        Some(accepted.event.event_id.clone()),
+        3,
+        4,
+        0,
+        digest(&agents[1..]),
+        vec![event(71), event(82)],
+    )
+    .unwrap();
+    let before = state.mls_checkpoint_for_scope(&scope).unwrap();
+    let staged =
+        build_sidecar_access_commit(&state, &secure, &authority, &device, &rotation, &[]).unwrap();
+    assert_eq!(state.mls_checkpoint_for_scope(&scope).unwrap(), before);
+    let mut rotated =
+        crate::mls::persistence::restore_envelope(&staged.staged_checkpoint, &secret, 3).unwrap();
+    let rotated_commit = fixture::accepted_mls_commit_with_binding(
+        arkret_sdk::ActorId::account(authority),
+        &staged.envelope,
+        rotation.clone(),
+        83,
+    );
+    rotated
+        .install_recovered_own_commit(&rotated_commit, &accepted.event.event_id)
+        .unwrap();
+    crate::mls::governance_proof::install_post_transition_leaf_bindings(&mut rotated, &leaves, &[])
+        .unwrap();
+    assert_eq!(rotated.verified_leaf_bindings().unwrap().len(), 2);
+    let (info, tree) = rotated.public_group_state_bytes().unwrap();
+    let public =
+        arkret_sdk::MlsPublicGroupTracker::from_external(&info, &tree, &rotated.group_id(), 4)
+            .unwrap();
+    assert_eq!(public.governance_binding().unwrap(), rotation);
+}
+
+#[test]
 fn existing_epoch_zero_snapshot_restores_genesis_summary() {
     let mut state = temp_state_store("genesis-summary-restore");
     let secure = MemorySecureKeyStore::new();
