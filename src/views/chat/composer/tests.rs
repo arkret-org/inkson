@@ -5,6 +5,149 @@ use dioxus::dioxus_core::{AttributeValue, ElementId, Mutation};
 
 use super::*;
 
+fn prior_private_session(controller: arkret_sdk::AccountId) -> crate::sidecar::HostedSidecarState {
+    crate::sidecar::HostedSidecarState {
+        trace_id: "prior-private-request".into(),
+        controller_account_id: controller,
+        addressed_agent_ids: vec!["ak:did_core:web:agents.example:previous".into()],
+        addressed_agent_label: "Previous".into(),
+        source_realm_id: "ak:realm:AUqzNZlfuL-7z087TbZhKOdYyKUNPAa2o_neyoFRh3o2".into(),
+        source_strand_id: "ak:strand:AUvEs_-d1tc81yDszBZAVWapgIr3Gs6ofbmtZSLQNejL".into(),
+        sidecar_id: arkret_sdk::SidecarId::new(
+            "ak:sidecar:Abbk-ALq9nZszIh8qJC26XasNIx9TYjU5-BzXWyqwDVx",
+        )
+        .unwrap(),
+        access_readiness: arkret_sdk::AgentSidecarAccessReadiness::KeyMaterialPending,
+        pending_access_reconciliations: vec![],
+        mls_context: arkret_sdk::AgentSidecarMlsContext {
+            participant_authority_digest: arkret_sdk::Hash::new(format!(
+                "sha256:{}",
+                "1".repeat(64)
+            ))
+            .unwrap(),
+            authority_stream_head: vec![],
+            mls_group_id: None,
+            epoch: None,
+            genesis_event_ref: None,
+            current_controller_device_ready: false,
+        },
+        native_mls_ready: false,
+        migrated_draft: "an old private draft".into(),
+        opened_at: chrono::Utc::now(),
+    }
+}
+
+#[test]
+fn private_history_does_not_supply_a_draft_target_or_block_original_send() {
+    use crate::views::chat::tests::{local_fixture_account, local_fixture_actor};
+    let principal = "ak:did_core:web:alice.example";
+    let authority = local_fixture_account(principal);
+    let session = prior_private_session(authority.clone());
+    assert!(!session.membership_ready());
+    let agent_principal = "ak:did_core:web:agents.example:current";
+    let agent = SpaceParticipant {
+        actor_id: Some(local_fixture_actor(agent_principal)),
+        principal_id: arkret_sdk::DidCoreId::new(agent_principal).unwrap(),
+        display_name: Some("current".into()),
+        handle_label: None,
+        display_name_rank: 1,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: true,
+        agent_metadata: Some(AgentParticipantMetadata {
+            controller_principal_id: principal.into(),
+            controller_handle: "alice.example".into(),
+            agent_slug: "".into(),
+            display_name: "current".into(),
+        }),
+    };
+    let participants = vec![agent.clone()];
+    let candidate = mention_candidate_for_participant(&agent, &participants, principal).unwrap();
+    let mut picker = crate::messaging::mentions::MentionPickerState::new();
+    let private_modes = std::collections::BTreeMap::from([(
+        candidate.subject_account_id.clone(),
+        arkret_sdk::AgentInteractionMode::Private,
+    )]);
+    let route_for = |draft: &str,
+                     picker: &crate::messaging::mentions::MentionPickerState,
+                     modes: &std::collections::BTreeMap<_, _>| {
+        let bound = picker.bound_candidates(draft);
+        let mentions = composer_mention_nodes(true, draft, &bound, principal);
+        let route = composer_agent_mode_route(
+            arkret_sdk::AgentMentionComposerScope::Realm,
+            &mentions,
+            &participants,
+            &authority,
+            &bound,
+            modes,
+        );
+        (route, mentions, bound)
+    };
+    let private_draft = picker.select(candidate.clone(), "@", Some((0, 1)));
+    let (private_route, mentions, _) = route_for(&private_draft, &picker, &private_modes);
+    assert_eq!(private_route, arkret_sdk::AgentMentionRoute::Sidecar);
+    assert!(sidecar_session_for_draft(private_route, Some(&session)).is_some());
+    assert_eq!(
+        sidecar_request_targets(true, &mentions, &participants, principal),
+        vec![agent_principal.to_owned()]
+    );
+    assert!(draft_scope_send_blocked(private_route, false, true));
+    assert!(!draft_scope_send_blocked(private_route, true, false));
+
+    let public_modes = std::collections::BTreeMap::from([(
+        candidate.subject_account_id.clone(),
+        arkret_sdk::AgentInteractionMode::Public,
+    )]);
+    let (route, mentions, bound) = route_for(&private_draft, &picker, &public_modes);
+    assert_eq!(route, arkret_sdk::AgentMentionRoute::Shared);
+    assert!(sidecar_session_for_draft(route, Some(&session)).is_none());
+    assert_eq!(
+        composer_shared_agent_targets(
+            arkret_sdk::AgentMentionComposerScope::Realm,
+            &mentions,
+            &participants,
+            &bound
+        ),
+        vec![candidate.subject_account_id]
+    );
+    assert!(!draft_scope_send_blocked(route, false, true));
+
+    picker.edit(&private_draft, "ordinary message");
+    for draft in ["ordinary message", "@me/current raw text", ""] {
+        let (route, mentions, bound) = route_for(draft, &picker, &Default::default());
+        assert_eq!(route, arkret_sdk::AgentMentionRoute::Shared);
+        assert!(sidecar_session_for_draft(route, Some(&session)).is_none());
+        assert!(sidecar_request_targets(true, &mentions, &participants, principal).is_empty());
+        assert!(
+            composer_shared_agent_targets(
+                arkret_sdk::AgentMentionComposerScope::Realm,
+                &mentions,
+                &participants,
+                &bound
+            )
+            .is_empty()
+        );
+        assert!(
+            !draft_scope_send_blocked(route, false, true),
+            "old private readiness and mode failures cannot gate an ordinary draft"
+        );
+        assert!(
+            draft_scope_send_blocked(route, true, false),
+            "ordinary scope readiness still applies"
+        );
+    }
+    assert!(draft_scope_send_blocked(
+        arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets,
+        false,
+        false
+    ));
+    assert!(!draft_scope_send_blocked(
+        arkret_sdk::AgentMentionRoute::Direct,
+        false,
+        true
+    ));
+}
+
 type SendState = Rc<RefCell<Option<Signal<(bool, bool, bool)>>>>;
 
 fn send_actions_harness(control: SendState) -> Element {

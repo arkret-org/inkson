@@ -244,11 +244,12 @@ pub(super) struct OwnedAgentSidecarRoute {
     pub mentions_enabled: bool,
     pub mentions: Vec<MentionNode>,
     pub body: String,
+    pub draft_at_send: String,
     pub participants: Vec<SpaceParticipant>,
 }
 
 /// Reserve (or reuse) a private sidecar for already-structured, exact Agent
-/// AccountId mentions and hand the draft over to it.
+/// AccountId mentions, then submit the same unchanged draft in this Send action.
 pub(super) fn route_to_owned_agent_sidecar(
     controller: ChatController,
     mut sidecar_session: Signal<Option<crate::sidecar::HostedSidecarState>>,
@@ -257,74 +258,255 @@ pub(super) fn route_to_owned_agent_sidecar(
 ) {
     let mut status_msg = controller.status_msg;
     let state_store = crate::app::SessionContext::get().state_store;
-    dioxus::core::Runtime::current().spawn(status_msg.origin_scope(), async move {
-        let OwnedAgentSidecarRoute {
-            base_url,
-            api_token,
-            trace_id,
-            realm_id,
-            strand_id,
-            actor,
-            authority,
-            controller_did,
-            device_id,
-            mentions_enabled,
-            mentions,
-            body,
-            participants,
-        } = route;
-        let addressed_agent_ids =
-            owned_agent_ids_from_composer(mentions_enabled, &mentions, &participants, &actor);
-        let sidecar_outcome = ensure_owned_agent_sidecar(
-            &base_url,
-            api_token.clone(),
-            &trace_id,
-            &authority,
-            &controller_did,
-            &device_id,
-            &realm_id,
-            &strand_id,
-            &addressed_agent_ids,
-            state_store,
-        )
-        .await;
-        match sidecar_outcome {
-            Ok(Some(sidecar)) => {
-                let OwnedAgentSidecarEnsureResult {
-                    sidecar_id,
-                    view: sidecar_view,
-                } = sidecar;
-                let native_mls_ready =
-                    crate::sidecar::native_mls_ready_for_view(&state_store.read(), &sidecar_view);
-                let addressed_agent_label =
-                    sidecar_agent_label(&addressed_agent_ids, &participants);
-                status_msg.set("Native Sidecar reserved".to_owned());
+    let session_fence = match crate::transport::auth::AuthoringSessionFence::capture() {
+        Ok(fence) => fence,
+        Err(error) => {
+            sidecar_route_pending.set(false);
+            status_msg.set(format!("Private Sidecar message was not sent: {error:#}"));
+            return;
+        }
+    };
+    let draft_fence = PendingSidecarDraftFence::capture_in_scope(
+        controller.draft,
+        controller.mention_picker_state,
+        controller.selected_channel,
+        sidecar_route_pending.origin_scope(),
+    );
+    dioxus::core::Runtime::current().in_scope(sidecar_route_pending.origin_scope(), || {
+        dioxus::core::spawn(async move {
+            let OwnedAgentSidecarRoute {
+                base_url,
+                api_token,
+                trace_id,
+                realm_id,
+                strand_id,
+                actor,
+                authority,
+                controller_did,
+                device_id,
+                mentions_enabled,
+                mentions,
+                body,
+                draft_at_send,
+                participants,
+            } = route;
+            let addressed_agent_ids =
+                owned_agent_ids_from_composer(mentions_enabled, &mentions, &participants, &actor);
+            let sidecar_outcome = ensure_owned_agent_sidecar(
+                &base_url,
+                api_token.clone(),
+                &trace_id,
+                &authority,
+                &controller_did,
+                &device_id,
+                &realm_id,
+                &strand_id,
+                &addressed_agent_ids,
+                state_store,
+            )
+            .await;
+            let current_private_mode = if matches!(&sidecar_outcome, Ok(Some(_))) {
+                require_current_private_targets(
+                    &base_url,
+                    api_token.clone(),
+                    &realm_id,
+                    &authority,
+                    &mentions,
+                    &addressed_agent_ids,
+                )
+                .await
+            } else {
+                Ok(())
+            };
+            let draft_unchanged = draft_fence.finish();
+            let same_session = session_fence.check().is_ok()
+                && crate::app::SessionContext::get()
+                    .active_account()
+                    .is_some_and(|active| {
+                        active.authority == authority && active.device_id == device_id
+                    });
+            if !same_session {
                 sidecar_route_pending.set(false);
-                sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
-                    trace_id,
-                    controller_account_id: sidecar_view.sidecar.controller_account_id.clone(),
-                    addressed_agent_ids,
-                    addressed_agent_label,
-                    source_realm_id: realm_id,
-                    source_strand_id: strand_id,
-                    sidecar_id: sidecar_id.clone(),
-                    access_readiness: sidecar_view.access_readiness,
-                    pending_access_reconciliations: sidecar_view
-                        .pending_access_reconciliations
-                        .clone(),
-                    mls_context: sidecar_view.mls_context.clone(),
-                    native_mls_ready,
-                    migrated_draft: body,
-                    opened_at: chrono::Utc::now(),
-                }));
                 return;
             }
-            Ok(None) => status_msg
-                .set("Could not resolve an owned agent for the private sidecar.".to_owned()),
-            Err(error) => status_msg.set(format!("Could not open private AI sidecar: {error:#}")),
-        }
-        sidecar_route_pending.set(false);
+            if let Err(error) = current_private_mode {
+                sidecar_route_pending.set(false);
+                status_msg.set(format!("Private Sidecar message was not sent: {error:#}"));
+                return;
+            }
+            match sidecar_outcome {
+                Ok(Some(sidecar)) => {
+                    let OwnedAgentSidecarEnsureResult {
+                        sidecar_id,
+                        view: sidecar_view,
+                    } = sidecar;
+                    if !draft_unchanged
+                        || controller.draft.peek().as_str() != draft_at_send
+                        || controller.selected_channel.peek().as_str() != strand_id
+                    {
+                        sidecar_route_pending.set(false);
+                        status_msg.set(
+                            "Private Sidecar ready. The edited draft has not been sent.".to_owned(),
+                        );
+                        return;
+                    }
+                    let native_mls_ready = crate::sidecar::native_mls_ready_for_view(
+                        &state_store.read(),
+                        &sidecar_view,
+                    );
+                    let addressed_agent_label =
+                        sidecar_agent_label(&addressed_agent_ids, &participants);
+                    let session = crate::sidecar::HostedSidecarState {
+                        trace_id,
+                        controller_account_id: sidecar_view.sidecar.controller_account_id.clone(),
+                        addressed_agent_ids: addressed_agent_ids.clone(),
+                        addressed_agent_label,
+                        source_realm_id: realm_id.clone(),
+                        source_strand_id: strand_id.clone(),
+                        sidecar_id: sidecar_id.clone(),
+                        access_readiness: sidecar_view.access_readiness,
+                        pending_access_reconciliations: sidecar_view
+                            .pending_access_reconciliations
+                            .clone(),
+                        mls_context: sidecar_view.mls_context.clone(),
+                        native_mls_ready,
+                        migrated_draft: String::new(),
+                        opened_at: chrono::Utc::now(),
+                    };
+                    sidecar_session.set(Some(session.clone()));
+                    sidecar_route_pending.set(false);
+                    let source_event_id = latest_source_event_anchor(
+                        &controller.messages.peek(),
+                        &realm_id,
+                        &strand_id,
+                    );
+                    send_sidecar_message_with_hosted(
+                        controller,
+                        sidecar_session,
+                        SidecarSendRequest {
+                            base_url,
+                            api_token,
+                            session,
+                            addressed_agent_ids,
+                            draft_at_send,
+                            sidecar_strand_id: strand_id,
+                            source_event_id,
+                            actor,
+                            authority,
+                            device_id,
+                            local_id: new_chat_local_id(),
+                            body,
+                            mentions,
+                        },
+                    );
+                    return;
+                }
+                Ok(None) => status_msg
+                    .set("Could not resolve an owned agent for the private sidecar.".to_owned()),
+                Err(error) => {
+                    status_msg.set(format!("Could not open private AI sidecar: {error:#}"))
+                }
+            }
+            sidecar_route_pending.set(false);
+        })
     });
+}
+
+async fn require_current_private_targets(
+    base: &str,
+    credential: String,
+    realm: &str,
+    controller: &arkret_sdk::AccountId,
+    mentions: &[MentionNode],
+    addressed_agent_ids: &[String],
+) -> anyhow::Result<()> {
+    let agents = mentions
+        .iter()
+        .filter_map(MentionNode::as_mention)
+        .map(|mention| mention.subject_account_id.clone())
+        .filter(|account| {
+            addressed_agent_ids
+                .iter()
+                .any(|id| id == account.principal_id.as_str())
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    anyhow::ensure!(
+        !agents.is_empty()
+            && addressed_agent_ids
+                .iter()
+                .all(|id| agents.iter().any(|agent| agent.principal_id.as_str() == id)),
+        "private Agent targets require current structured AccountId mentions"
+    );
+    let realm = arkret_sdk::RealmId::new(realm.to_owned())?;
+    let controller = controller.clone();
+    crate::transport::auth::with_authed_sdk_client(base, credential, |http| async move {
+        for agent in agents {
+            let (mode, _, owner) =
+                crate::transport::agent_interaction::read(&http, &realm, &agent).await?;
+            anyhow::ensure!(
+                private_target_mode_matches(mode, owner.as_ref(), &controller),
+                "Agent mode or controller changed; keep the draft and review its current audience"
+            );
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!(error.display()))
+}
+
+fn private_target_mode_matches(
+    mode: arkret_sdk::AgentInteractionMode,
+    owner: Option<&arkret_sdk::AccountId>,
+    controller: &arkret_sdk::AccountId,
+) -> bool {
+    mode == arkret_sdk::AgentInteractionMode::Private
+        && owner.is_none_or(|owner| owner == controller)
+}
+
+/// Any intervening draft/binding/Strand write cancels delayed automatic Send,
+/// including editing and restoring exactly the same visible text.
+struct PendingSidecarDraftFence {
+    context: dioxus::dioxus_core::ReactiveContext,
+    changed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl PendingSidecarDraftFence {
+    #[cfg(test)]
+    fn capture(
+        draft: Signal<String>,
+        picker: Signal<crate::messaging::mentions::MentionPickerState>,
+        strand: Signal<String>,
+    ) -> Self {
+        Self::capture_in_scope(draft, picker, strand, draft.origin_scope())
+    }
+
+    fn capture_in_scope(
+        draft: Signal<String>,
+        picker: Signal<crate::messaging::mentions::MentionPickerState>,
+        strand: Signal<String>,
+        owner: ScopeId,
+    ) -> Self {
+        let changed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let dirty = changed.clone();
+        let context = dioxus::dioxus_core::ReactiveContext::new_with_callback(
+            move || {
+                dirty.store(true, std::sync::atomic::Ordering::SeqCst);
+            },
+            owner,
+            std::panic::Location::caller(),
+        );
+        context.run_in(|| {
+            let _ = draft.read();
+            let _ = picker.read();
+            let _ = strand.read();
+        });
+        Self { context, changed }
+    }
+
+    fn finish(self) -> bool {
+        self.context.clear_subscribers();
+        !self.changed.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 /// One plaintext chat send, from the optimistic row to the accepted receipt.
@@ -626,38 +808,93 @@ pub(super) struct SidecarSendRequest {
 }
 
 pub(super) fn send_sidecar_message(controller: ChatController, request: SidecarSendRequest) {
+    let hosted = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
+    send_sidecar_message_with_hosted(controller, hosted, request);
+}
+
+fn send_sidecar_message_with_hosted(
+    controller: ChatController,
+    mut hosted: Signal<Option<crate::sidecar::HostedSidecarState>>,
+    request: SidecarSendRequest,
+) {
     let mut messages = controller.messages;
     let mut status_msg = controller.status_msg;
     let mut chat_draft = controller.draft;
     let mut picker = controller.mention_picker_state;
     let picker_at_send = picker.peek().clone();
-    let mut hosted = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     let mut sending = controller.sidecar_send_pending;
     if *sending.peek() {
         return;
     }
+    let authoring_fence = match crate::transport::auth::AuthoringSessionFence::capture() {
+        Ok(fence)
+            if crate::app::SessionContext::get()
+                .active_account()
+                .is_some_and(|active| {
+                    active.authority == request.authority && active.device_id == request.device_id
+                }) =>
+        {
+            fence
+        }
+        _ => {
+            status_msg
+                .set("Private Sidecar message was not sent: account session changed".to_owned());
+            return;
+        }
+    };
     sending.set(true);
+    messages.write().push(ChatMessage {
+        local_scope: None,
+        realm_id: request.session.source_realm_id.clone(),
+        id: request.local_id.clone(),
+        protocol_message_id: Some(request.local_id.clone()),
+        actor_id: crate::mls_api_helpers::local_account_actor_id(&request.actor).ok(),
+        sender: request.actor.clone(),
+        executed_by: None,
+        body: request.body.clone(),
+        content_format: Some(arkret_sdk::TextFormat::Markdown),
+        timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+        created_at: Some(chrono::Utc::now()),
+        strand_id: request.session.source_strand_id.clone(),
+        reply_to: None,
+        reactions: Vec::new(),
+        redacted: false,
+        edited: false,
+        revisions: Vec::new(),
+        revision_source: None,
+        pending: true,
+        failed: false,
+        error: None,
+        mentions: request.mentions.clone(),
+        crypto_state: MessageCryptoState::Plaintext,
+    });
+    let mut reply_to = controller.reply_to_message;
+    reply_to.set(None);
     let state_store = crate::app::SessionContext::get().state_store;
-    dioxus::core::Runtime::current().spawn(messages.origin_scope(), async move {
-        let SidecarSendRequest {
-            base_url,
-            api_token,
-            session,
-            addressed_agent_ids,
-            draft_at_send,
-            sidecar_strand_id,
-            source_event_id,
-            actor,
-            authority,
-            device_id,
-            local_id,
-            body,
-            mentions,
-        } = request;
-        let resolved_mentions = mentions;
-        let view =
-            match crate::transport::auth::authed_api_with_sync(&base_url, api_token.clone(), None)
-                .and_then(|api| api.sdk_http_client())
+    dioxus::core::Runtime::current().in_scope(messages.origin_scope(), || {
+        dioxus::core::spawn(async move {
+            let SidecarSendRequest {
+                base_url,
+                api_token,
+                session,
+                addressed_agent_ids,
+                draft_at_send,
+                sidecar_strand_id,
+                source_event_id,
+                actor,
+                authority,
+                device_id,
+                local_id,
+                body,
+                mentions,
+            } = request;
+            let resolved_mentions = mentions;
+            let view = match crate::transport::auth::authed_api_with_sync(
+                &base_url,
+                api_token.clone(),
+                None,
+            )
+            .and_then(|api| api.sdk_http_client())
             {
                 Ok(http) => http
                     .agent_sidecar_get(&session.sidecar_id)
@@ -665,76 +902,190 @@ pub(super) fn send_sidecar_message(controller: ChatController, request: SidecarS
                     .map_err(anyhow::Error::from),
                 Err(error) => Err(error),
             };
-        let outcome = match view {
-            Ok(view) => {
-                super::submit_source_routed_sidecar_message(
-                    &base_url,
-                    api_token,
-                    &actor,
-                    &authority,
-                    &device_id,
-                    &session.source_realm_id,
-                    &session.source_strand_id,
-                    &sidecar_strand_id,
-                    source_event_id.as_deref(),
-                    &body,
-                    &resolved_mentions,
-                    &addressed_agent_ids,
-                    state_store,
-                    &view,
-                )
-                .await
-            }
-            Err(error) => Err(error),
-        };
-        match outcome {
-            Ok(routed) => {
-                if let Some(found) = messages
-                    .write()
-                    .iter_mut()
-                    .find(|candidate| candidate.matches_id_or_protocol(&local_id))
-                {
-                    found.id = routed.event_id;
-                    found.pending = false;
-                    found.failed = false;
-                    found.error = None;
-                    found.mentions = resolved_mentions;
+            let outcome = match view {
+                Ok(view) => {
+                    let modes = require_current_private_targets(
+                        &base_url,
+                        api_token.clone(),
+                        &session.source_realm_id,
+                        &authority,
+                        &resolved_mentions,
+                        &addressed_agent_ids,
+                    )
+                    .await
+                    .and_then(|_| authoring_fence.check());
+                    match modes {
+                        Err(error) => Err(error),
+                        Ok(()) => {
+                            super::submit_source_routed_sidecar_message(
+                                &base_url,
+                                api_token,
+                                &actor,
+                                &authority,
+                                &device_id,
+                                &session.source_realm_id,
+                                &session.source_strand_id,
+                                &sidecar_strand_id,
+                                source_event_id.as_deref(),
+                                &body,
+                                &resolved_mentions,
+                                &addressed_agent_ids,
+                                state_store,
+                                &view,
+                            )
+                            .await
+                        }
+                    }
                 }
-                status_msg.set("Private Sidecar message sent".to_owned());
-                let open_snapshot = hosted.peek().clone();
-                if let Some(mut open) = open_snapshot.filter(|open| {
-                    open.sidecar_id == session.sidecar_id
-                        && open.controller_account_id == session.controller_account_id
-                        && open.matches_route(&session.source_realm_id, &session.source_strand_id)
-                }) {
-                    open.addressed_agent_ids = addressed_agent_ids;
-                    hosted.set(Some(open));
-                }
-                if chat_draft.peek().as_str() == draft_at_send
-                    && *picker.peek() == picker_at_send
-                    && (controller.selected_channel)() == session.source_strand_id
-                    && hosted.peek().as_ref().is_some_and(|open| {
-                        open.sidecar_id == session.sidecar_id
+                Err(error) => Err(error),
+            };
+            match outcome {
+                Ok(routed) => {
+                    if let Some(found) = messages
+                        .write()
+                        .iter_mut()
+                        .find(|candidate| candidate.matches_id_or_protocol(&local_id))
+                    {
+                        found.id = routed.event_id;
+                        found.pending = false;
+                        found.failed = false;
+                        found.error = None;
+                        found.mentions = resolved_mentions;
+                    }
+                    status_msg.set("Private Sidecar message sent".to_owned());
+                    let open_snapshot = hosted.peek().clone();
+                    if let Some(mut open) = open_snapshot.filter(|open| {
+                        authoring_fence.check_session_identity().is_ok()
+                            && open.sidecar_id == session.sidecar_id
                             && open.controller_account_id == session.controller_account_id
                             && open
                                 .matches_route(&session.source_realm_id, &session.source_strand_id)
-                    })
-                {
-                    chat_draft.set(String::new());
-                    picker.write().clear();
+                    }) {
+                        open.addressed_agent_ids = addressed_agent_ids;
+                        hosted.set(Some(open));
+                    }
+                    if authoring_fence.check_session_identity().is_ok()
+                        && chat_draft.peek().as_str() == draft_at_send
+                        && *picker.peek() == picker_at_send
+                        && (controller.selected_channel)() == session.source_strand_id
+                        && hosted.peek().as_ref().is_some_and(|open| {
+                            open.sidecar_id == session.sidecar_id
+                                && open.controller_account_id == session.controller_account_id
+                                && open.matches_route(
+                                    &session.source_realm_id,
+                                    &session.source_strand_id,
+                                )
+                        })
+                    {
+                        chat_draft.set(String::new());
+                        picker.write().clear();
+                    }
                 }
+                Err(error) => fail_optimistic_chat_send(
+                    messages,
+                    chat_draft,
+                    status_msg,
+                    &local_id,
+                    &body,
+                    format!("Private Sidecar message was not sent: {error:#}"),
+                ),
             }
-            Err(error) => fail_optimistic_chat_send(
-                messages,
-                chat_draft,
-                status_msg,
-                &local_id,
-                &body,
-                format!("Private Sidecar message was not sent: {error:#}"),
-            ),
-        }
-        sending.set(false);
+            sending.set(false);
+        })
     });
+}
+
+#[cfg(test)]
+mod pending_sidecar_draft_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::*;
+
+    type Signals = (
+        Signal<String>,
+        Signal<crate::messaging::mentions::MentionPickerState>,
+        Signal<String>,
+        Signal<bool>,
+    );
+    type Control = Rc<RefCell<Option<Signals>>>;
+
+    fn harness(control: Control) -> Element {
+        let draft = use_signal(|| "original private draft".to_owned());
+        let picker = use_signal(crate::messaging::mentions::MentionPickerState::new);
+        let strand = use_signal(|| "source strand".to_owned());
+        let background_ready = use_signal(|| false);
+        *control.borrow_mut() = Some((draft, picker, strand, background_ready));
+        rsx! { input { value: draft() } }
+    }
+
+    #[test]
+    fn delayed_private_send_rejects_a_changed_mode_or_controller() {
+        let controller = crate::test_support::authority("ak:did_core:web:alice.example");
+        let replacement = crate::test_support::authority("ak:did_core:web:bob.example");
+        assert!(private_target_mode_matches(
+            arkret_sdk::AgentInteractionMode::Private,
+            None,
+            &controller
+        ));
+        assert!(private_target_mode_matches(
+            arkret_sdk::AgentInteractionMode::Private,
+            Some(&controller),
+            &controller
+        ));
+        assert!(!private_target_mode_matches(
+            arkret_sdk::AgentInteractionMode::Public,
+            Some(&controller),
+            &controller
+        ));
+        assert!(!private_target_mode_matches(
+            arkret_sdk::AgentInteractionMode::Private,
+            Some(&replacement),
+            &controller
+        ));
+    }
+
+    #[test]
+    fn delayed_sidecar_send_requires_unchanged_draft_binding_and_source_revision() {
+        let control = Rc::new(RefCell::new(None));
+        let mut dom = VirtualDom::new_with_props(harness, control.clone());
+        dom.rebuild_to_vec();
+        let (mut draft, mut picker, mut strand, mut background) = control.borrow().unwrap();
+        dom.in_runtime(|| {
+            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
+            background.set(true);
+            assert!(
+                fence.finish(),
+                "background readiness must not cancel the frozen draft"
+            );
+
+            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
+            draft.set("ordinary edited message".into());
+            draft.set("original private draft".into());
+            assert!(
+                !fence.finish(),
+                "restoring the same text cannot restore the old Send authorization"
+            );
+
+            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
+            picker.write().clear();
+            assert!(
+                !fence.finish(),
+                "mention binding writes invalidate delayed Send"
+            );
+
+            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
+            strand.set("different source".into());
+            strand.set("source strand".into());
+            assert!(
+                !fence.finish(),
+                "returning to the same Strand cannot resume an old Send"
+            );
+
+            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
+            assert!(fence.finish());
+        });
+    }
 }
 
 /// One encrypted chat send: build the MLS payload, submit it, and persist the

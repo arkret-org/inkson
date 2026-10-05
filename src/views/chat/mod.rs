@@ -241,11 +241,6 @@ fn project_visible_messages(
     exchange_projections: &[arkret_sdk::AgentSidecarExchangeProjection],
     sidecar_current_available: bool,
 ) -> Vec<ChatMessage> {
-    if sidecar_projection.is_some() && !sidecar_current_available {
-        // Unknown Sidecar current is not an empty exchange. Do not render a
-        // private-session timeline without a verified projection.
-        return Vec::new();
-    }
     let mut visible = Vec::new();
     let mut positions = std::collections::BTreeMap::<String, usize>::new();
     let mut echo_projection_by_event = std::collections::BTreeMap::new();
@@ -264,7 +259,30 @@ fn project_visible_messages(
         if !selected_realm_id.trim().is_empty() && message.realm_id != selected_realm_id {
             continue;
         }
-        let is_source_echo = echo_projection_by_event.contains_key(&message.id);
+        let is_private_echo = echo_projection_by_event.contains_key(&message.id);
+        if matches!(
+            message.local_scope,
+            Some(arkret_sdk::ScopeRef::Sidecar { .. })
+        ) && (!sidecar_current_available || !is_private_echo)
+        {
+            continue;
+        }
+        if !sidecar_current_available {
+            // Durable source rows arrive through the independently verified
+            // ordinary fold. Only explicitly ordinary-scoped optimistic rows
+            // may join them while private history verification is unavailable.
+            let ordinary_local_scope = message.local_scope.as_ref().is_some_and(|scope| {
+                matches!(scope, arkret_sdk::ScopeRef::Realm { realm_id } | arkret_sdk::ScopeRef::Circle { realm_id, .. } if realm_id.as_str() == selected_realm_id)
+            });
+            let durable_source_row =
+                message.id.starts_with("ak:event:") && !message.pending && !message.failed;
+            if is_private_echo
+                || (sidecar_projection.is_some() && !ordinary_local_scope && !durable_source_row)
+            {
+                continue;
+            }
+        }
+        let is_source_echo = sidecar_current_available && is_private_echo;
         let strand_matches = sidecar_projection.map_or_else(
             || message.strand_id == selected_channel_id || is_source_echo,
             |source_strand_id| is_source_echo || message.strand_id == source_strand_id,
@@ -1674,34 +1692,11 @@ pub fn ChatPanel(
         &initial_strand_id,
         &authority,
         &account_device_id,
-        initial_sidecar_session
-            .as_ref()
-            .map(|session| session.sidecar_id.clone()),
     );
     let selected_source_strand = (controller.selected_channel)();
     let sidecar_session = initial_sidecar_session
         .filter(|session| session.matches_route(&selected_realm_id, &selected_source_strand));
     let navigator = use_navigator();
-    let mut migrated_draft_applied_for = use_signal(String::new);
-    {
-        let session = sidecar_session.clone();
-        let draft = controller.draft;
-        use_effect(use_reactive(
-            (&session, &draft),
-            move |(session, mut draft)| {
-                let Some(session) = session.as_ref() else {
-                    return;
-                };
-                if session.migrated_draft.trim().is_empty()
-                    || migrated_draft_applied_for.peek().as_str() == session.trace_id
-                {
-                    return;
-                }
-                draft.set(session.migrated_draft.clone());
-                migrated_draft_applied_for.set(session.trace_id.clone());
-            },
-        ));
-    }
     let ChatController {
         channels,
         selected_channel,
@@ -1900,11 +1895,10 @@ pub fn ChatPanel(
     );
     let scope_readiness_checking = scope_send_probe.checking;
     let scope_send_gate = scope_send_probe.gate;
-    // The first-class Sidecar contract requires an independent MLS backing scope.
-    // The private Strand only carries its internal scope id, so ordinary Realm
-    // inheritance would incorrectly downgrade a Sidecar opened from a
-    // plaintext principal-control Realm and expose the plaintext Send path.
-    let selected_channel_security_encrypted = if sidecar_mode || direct_mode {
+    // This probe belongs to the selected original Strand. A private Agent
+    // draft has its own native Sidecar probe in ChatComposer; merely showing
+    // private history must not change ordinary message encryption or readiness.
+    let selected_channel_security_encrypted = if direct_mode {
         true
     } else {
         !matches!(
@@ -1930,7 +1924,6 @@ pub fn ChatPanel(
         None
     };
     if (selected_channel_security_encrypted || direct_mode)
-        && !sidecar_mode
         && selected_realm_pending_mls_binding_reason.is_none()
     {
         let installed = match scope_send_gate.as_ref() {
@@ -2009,8 +2002,7 @@ pub fn ChatPanel(
             }
         }
     }
-    if !sidecar_mode
-        && selected_realm_pending_mls_binding_reason.is_none()
+    if selected_realm_pending_mls_binding_reason.is_none()
         && (direct_mode
             || state_store
                 .read()
@@ -2022,10 +2014,9 @@ pub fn ChatPanel(
             Some("Waiting for verified conversation authority and encryption keys.".to_owned());
     }
     let scope_send_ready = scope_send_gate.is_some();
-    let send_readiness_checking = scope_readiness_checking
-        && selected_realm_pending_mls_binding_reason.is_none()
-        && !sidecar_mode;
-    if !sidecar_mode && !scope_send_ready && selected_realm_pending_mls_binding_reason.is_none() {
+    let send_readiness_checking =
+        scope_readiness_checking && selected_realm_pending_mls_binding_reason.is_none();
+    if !scope_send_ready && selected_realm_pending_mls_binding_reason.is_none() {
         selected_realm_pending_mls_binding_reason = Some(
             "Waiting for this scope's verified send state and this device's local encryption keys."
                 .to_owned(),
@@ -2035,12 +2026,8 @@ pub fn ChatPanel(
     let sidecar_security_label = sidecar_session.as_ref().map(|session| {
         if !session.membership_ready() {
             "Reconciling access"
-        } else if selected_channel_security_encrypted && selected_realm_pending_mls_binding {
-            "Preparing encryption"
-        } else if selected_channel_security_encrypted {
-            "E2EE"
         } else {
-            "Encryption unavailable"
+            "E2EE"
         }
     });
     let sidecar_send_block_reason = sidecar_session.as_ref().and_then(|session| {
@@ -2051,11 +2038,6 @@ pub fn ChatPanel(
                 "Private access is still reconciling for {} principal(s). Sending is disabled until the native Sidecar MLS snapshot is available on this device.",
                 session.pending_reconciliation_count()
             ))
-        } else if selected_channel_security_encrypted && selected_realm_pending_mls_binding {
-            Some(
-                "Encryption membership is still being prepared. Sending is disabled until this device and the addressed Agent are ready."
-                    .to_owned(),
-            )
         } else {
             None
         }
@@ -2310,19 +2292,6 @@ pub fn ChatPanel(
         })
         .filter_map(participant_mention_account)
         .collect::<std::collections::BTreeSet<_>>();
-    // A Sidecar's membership boundary is controller-private and the server
-    // ensure operation already admits every eligible owned Agent. Do not run
-    // those Agents through the public-participation filter used by ordinary
-    // Realm discussions; doing so hid the exact principals that make up this
-    // private Circle and left the panel showing only the controller.
-    if sidecar_mode {
-        public_agent_accounts.extend(
-            participants_for_messages
-                .iter()
-                .filter(|p| p.is_agent)
-                .filter_map(participant_mention_account),
-        );
-    }
     if direct_mode {
         public_agent_accounts.extend(
             participants_for_messages
@@ -2355,27 +2324,23 @@ pub fn ChatPanel(
                     .is_some_and(|a| public_agent_accounts.contains(&a))
             })
     });
-    let sidecar_owned_agents = sidecar_owned_agent_participants(&participants, &principal_id);
-    // Actor mentions in a Sidecar are intentionally narrower than the Realm
-    // roster: only controller-owned Agents may be selected. The controller is
-    // already the sender, and unrelated Realm members are outside the private
-    // Circle's collaboration boundary.
-    let composer_participants = if sidecar_mode {
-        sidecar_owned_agents.clone()
-    } else {
-        participants_for_messages
-            .iter()
-            .filter(|p| {
-                !p.is_agent
-                    || participant_mention_account(p)
-                        .is_some_and(|a| public_agent_accounts.contains(&a))
-                    || p.agent_metadata.as_ref().is_some_and(|m| {
-                        same_principal_core(&m.controller_principal_id, &principal_id)
-                    })
-            })
-            .cloned()
-            .collect()
-    };
+    let sidecar_owned_agents =
+        sidecar_owned_agent_participants(&participants_for_messages, &principal_id);
+    // The source composer keeps both ordinary members and selectable owned
+    // Agents. Current structured mentions choose the write audience; private
+    // history neither narrows the picker nor grants public Agent participation.
+    let composer_participants: Vec<_> = participants_for_messages
+        .iter()
+        .filter(|p| {
+            !p.is_agent
+                || participant_mention_account(p)
+                    .is_some_and(|a| public_agent_accounts.contains(&a))
+                || p.agent_metadata
+                    .as_ref()
+                    .is_some_and(|m| same_principal_core(&m.controller_principal_id, &principal_id))
+        })
+        .cloned()
+        .collect();
 
     let presence_participants = if sidecar_mode {
         sidecar_presence_participants(&participants, &principal_id)
@@ -2917,21 +2882,6 @@ pub fn ChatPanel(
                     }
                 }
 
-                if let Some(session) = sidecar_session.as_ref() {
-                    if !session.migrated_draft.trim().is_empty() {
-                        div { class: "event info sidecar-draft-notice", "data-testid": "sidecar-draft-migrated", role: "status",
-                            strong { "Message moved to this private composer" }
-                            span { "It has not been sent. Review it before sending." }
-                        }
-                    }
-                    if let Some(reason) = sidecar_send_block_reason.as_ref() {
-                        div { class: "event warning-banner", "data-testid": "sidecar-readiness-gate", role: "alert",
-                            strong { {sidecar_security_label.unwrap_or("Not ready")} }
-                            span { "{reason}" }
-                        }
-                    }
-                }
-
                 // Offline queue banner. Visible while the browser is offline or
                 // Garth still has pending chat events for this actor.
                 {
@@ -3095,9 +3045,9 @@ pub fn ChatPanel(
                         class: "event warning-banner",
                         "data-testid": "sidecar-timeline-current-pending",
                         role: "status",
-                        "Private exchange history is unavailable until its Sidecar Commit history is verified. No conversation result is being shown as current."
+                        "Private exchange history is awaiting verified Sidecar history. Original Strand messages remain available."
                     }
-                } else {
+                }
                 ChatTimeline {
                     key: "{timeline_scope_key}",
                     controller,
@@ -3129,7 +3079,6 @@ pub fn ChatPanel(
                         sync_cursor,
                         frontier_state,
                     }
-                }
                 }
             }
 

@@ -108,7 +108,7 @@ fn selected_owned_agent_uses_readable_name_only_token_without_guessing_a_slug() 
         participant_mention_account(&agent).unwrap()
     );
     assert_eq!(
-        composer::sidecar_request_targets(true, &nodes, &private_rows, principal, None),
+        composer::sidecar_request_targets(true, &nodes, &private_rows, principal),
         vec![agent_id.to_owned()],
         "a restored Sidecar addresses the current bound selection without an opening-time target",
     );
@@ -118,7 +118,6 @@ fn selected_owned_agent_uses_readable_name_only_token_without_guessing_a_slug() 
             &composer_mention_nodes(true, "@me/aa", &[], principal),
             &private_rows,
             principal,
-            None,
         )
         .is_empty()
     );

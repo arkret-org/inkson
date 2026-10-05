@@ -71,41 +71,99 @@ fn after_parents(event: &Event, exchange: &Exchange) -> BTreeSet<EventId> {
         .collect()
 }
 
+type GroupViewKey = (String, String, u64, String);
+
+/// Disposable within one verified fold. Restore each historical MLS tree once,
+/// while still checking every Event's proof, signer and encrypted payload.
+struct FoldValidationCache {
+    device: Option<crate::state::PersistedDeviceAuthoringAuthority>,
+    agents: BTreeMap<GroupViewKey, arkret_sdk::mls::AgentMlsSignerView>,
+    authors: BTreeMap<GroupViewKey, arkret_sdk::mls::AuthorGroupStateView>,
+}
+
+impl FoldValidationCache {
+    fn new(store: &LocalStateStore) -> Self {
+        Self {
+            device: store.load().device_authoring_authority,
+            agents: BTreeMap::new(),
+            authors: BTreeMap::new(),
+        }
+    }
+
+    fn key(event: &Event, envelope: &EncryptedEnvelope) -> anyhow::Result<GroupViewKey> {
+        Ok((
+            arkret_sdk::canonical::canonical_json_string(&event.scope_ref)?,
+            event.scope_ref.canonical_mls_group_id()?.to_string(),
+            envelope.encryption_context.epoch(),
+            envelope.encryption_context.group_state_ref().to_string(),
+        ))
+    }
+}
+
 fn decrypt(
     store: &LocalStateStore,
     controller: &AccountId,
     event: &Event,
     envelope: &EncryptedEnvelope,
+    validation: &mut FoldValidationCache,
+) -> anyhow::Result<Vec<u8>> {
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    decrypt_with_secure_store(
+        store,
+        controller,
+        event,
+        envelope,
+        validation,
+        secure_store.as_ref(),
+    )
+}
+
+fn decrypt_with_secure_store(
+    store: &LocalStateStore,
+    controller: &AccountId,
+    event: &Event,
+    envelope: &EncryptedEnvelope,
+    validation: &mut FoldValidationCache,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> anyhow::Result<Vec<u8>> {
     envelope.validate()?;
     event.validate_proof_bindings_with_digest_suite(
         event.realm_id.digest_suite_code().digest_suite(),
     )?;
-    let local = store
-        .load()
-        .device_authoring_authority
+    let local = validation
+        .device
+        .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Sidecar fold awaits its local authorized device"))?;
     anyhow::ensure!(
         &local.account_id == controller,
         "Sidecar fold belongs to another controller Account"
     );
     let sender = arkret_sdk::mls_basic_credential_identity(event.actual_signer())?;
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     if event.human_device_producer()?.is_none() {
         let group_id = event.scope_ref.canonical_mls_group_id()?;
-        let view = crate::mls::runtime::ordinary_agent_mls_author_view_for_scope(
-            store,
-            secure_store.as_ref(),
-            controller,
-            &local.device_id,
-            &event.scope_ref,
-            group_id.as_str(),
-            envelope.encryption_context.epoch(),
-            envelope.encryption_context.group_state_ref().as_str(),
-        )
-        .ok_or_else(|| {
-            anyhow::anyhow!("Sidecar fact awaits its exact historical Agent MLS leaf")
-        })?;
+        let key = FoldValidationCache::key(event, envelope)?;
+        let view = if let Some(view) = validation.agents.get(&key) {
+            view.clone()
+        } else {
+            let view = crate::mls::runtime::ordinary_agent_mls_author_view_for_scope(
+                store,
+                secure_store,
+                controller,
+                &local.device_id,
+                &event.scope_ref,
+                group_id.as_str(),
+                envelope.encryption_context.epoch(),
+                envelope.encryption_context.group_state_ref().as_str(),
+            )
+            .ok_or_else(|| {
+                anyhow::anyhow!("Sidecar fact awaits its exact historical Agent MLS leaf")
+            })?;
+            validation
+                .authors
+                .insert(key.clone(), view.group_state.clone());
+            validation.agents.insert(key, view.clone());
+            view
+        };
         let binding = crate::identity::agent_signer_evidence::OrdinaryAgentMlsBinding {
             view: &view,
             group_id: group_id.as_str(),
@@ -132,7 +190,7 @@ fn decrypt(
     .ok_or_else(|| anyhow::anyhow!("Sidecar fact awaits its exact accepted MLS state"))?;
     crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
         store,
-        secure_store.as_ref(),
+        secure_store,
         event.realm_id.as_str(),
         controller,
         &local.device_id,
@@ -149,26 +207,54 @@ fn eligible_agents(
     event: &Event,
     envelope: &EncryptedEnvelope,
     agents: &[arkret_sdk::DidCoreId],
+    validation: &mut FoldValidationCache,
 ) -> anyhow::Result<bool> {
-    let local = store
-        .load()
-        .device_authoring_authority
-        .ok_or_else(|| anyhow::anyhow!("Sidecar fold awaits its local authorized device"))?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let group_id = event.scope_ref.canonical_mls_group_id()?;
-    let view = crate::mls::runtime::verified_author_group_view_for_scope(
+    eligible_agents_with_secure_store(
         store,
-        secure_store.as_ref(),
         controller,
-        &local.device_id,
-        &event.scope_ref,
-        group_id.as_str(),
-        envelope.encryption_context.epoch(),
-        envelope.encryption_context.group_state_ref().as_str(),
+        event,
+        envelope,
+        agents,
+        validation,
+        secure_store.as_ref(),
     )
-    .ok_or_else(|| {
-        anyhow::anyhow!("Sidecar eligibility awaits its exact historical MLS leaf set")
-    })?;
+}
+
+fn eligible_agents_with_secure_store(
+    store: &LocalStateStore,
+    controller: &AccountId,
+    event: &Event,
+    envelope: &EncryptedEnvelope,
+    agents: &[arkret_sdk::DidCoreId],
+    validation: &mut FoldValidationCache,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<bool> {
+    let local = validation
+        .device
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Sidecar fold awaits its local authorized device"))?;
+    let group_id = event.scope_ref.canonical_mls_group_id()?;
+    let key = FoldValidationCache::key(event, envelope)?;
+    let view = if let Some(view) = validation.authors.get(&key) {
+        view.clone()
+    } else {
+        let view = crate::mls::runtime::verified_author_group_view_for_scope(
+            store,
+            secure_store,
+            controller,
+            &local.device_id,
+            &event.scope_ref,
+            group_id.as_str(),
+            envelope.encryption_context.epoch(),
+            envelope.encryption_context.group_state_ref().as_str(),
+        )
+        .ok_or_else(|| {
+            anyhow::anyhow!("Sidecar eligibility awaits its exact historical MLS leaf set")
+        })?;
+        validation.authors.insert(key, view.clone());
+        view
+    };
     Ok(agents.iter().all(|agent| {
         view.active_leaves.iter().any(|leaf| {
             let arkret_sdk::mls::AuthorLeafCredential::Basic { identity } = &leaf.credential else {
@@ -200,6 +286,7 @@ pub(crate) fn rebuild_with_closes(
     Vec<(AgentSidecarExchangeProjection, AgentSidecarExchangeControl)>,
 )> {
     let (snapshot, histories) = store.verified_sidecar_inputs(realm)?;
+    let mut validation = FoldValidationCache::new(store);
     let mut result = Vec::new();
     let mut closes = Vec::new();
     for row in &snapshot.current_state_entries {
@@ -324,8 +411,13 @@ pub(crate) fn rebuild_with_closes(
                     continue;
                 };
                 let envelope: EncryptedEnvelope = serde_json::from_value(encrypted.clone())?;
-                let metadata: MessageMetadata =
-                    serde_json::from_slice(&decrypt(store, controller, event, &envelope)?)?;
+                let metadata: MessageMetadata = serde_json::from_slice(&decrypt(
+                    store,
+                    controller,
+                    event,
+                    &envelope,
+                    &mut validation,
+                )?)?;
                 let Some(binding) = crate::sidecar::sidecar_exchange_binding(&metadata) else {
                     continue;
                 };
@@ -378,6 +470,7 @@ pub(crate) fn rebuild_with_closes(
                             event,
                             &envelope,
                             &context.addressed_agent_ids,
+                            &mut validation,
                         )? {
                             continue;
                         }
@@ -444,6 +537,7 @@ pub(crate) fn rebuild_with_closes(
                     controller,
                     event,
                     &payload.encrypted_payload,
+                    &mut validation,
                 )?)?;
                 control.validate_shape()?;
                 if let Some(coordinator) = &control.coordinator_agent_id {
@@ -453,7 +547,8 @@ pub(crate) fn rebuild_with_closes(
                             controller,
                             event,
                             &payload.encrypted_payload,
-                            std::slice::from_ref(coordinator)
+                            std::slice::from_ref(coordinator),
+                            &mut validation,
                         )?,
                         "Sidecar reassignment names no eligible Agent at its accepted MLS cut"
                     );
@@ -561,6 +656,10 @@ fn accept_response(
     }
     exchange.contribute(event, parents)
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "sidecar_fold/tests_mls.rs"]
+mod mls_tests;
 
 #[cfg(test)]
 mod tests {

@@ -194,6 +194,51 @@ fn signed_sidecar_event_with_source_strand_id_never_enters_ordinary_timeline() {
         1,
         "an ordinary Realm view still displays verified durable rows"
     );
+    let mut private_pending = sidecar_projection_message_for_realm(
+        realm,
+        "local-message:unverified-private",
+        source,
+        "private optimistic body",
+    );
+    private_pending.pending = true;
+    let mut original_pending = sidecar_projection_message_for_realm(
+        realm,
+        "local-message:ordinary-queued",
+        source,
+        "ordinary queued body",
+    );
+    original_pending.pending = true;
+    original_pending.local_scope = Some(arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+    });
+    let mut wrong_realm = synced[0].clone();
+    wrong_realm.realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".into();
+    let mut mixed_rows = synced.clone();
+    let mut accepted_private = synced[0].clone();
+    accepted_private.id = "ak:event:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc".into();
+    accepted_private.body = "private accepted body".into();
+    accepted_private.local_scope = Some(arkret_sdk::ScopeRef::Sidecar {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+        sidecar_id: arkret_sdk::SidecarId::new(
+            "ak:sidecar:AWea2MtI5dOI1LSRyI266_gQVrWUd0po0dxZiJNsH8kN",
+        )
+        .unwrap(),
+    });
+    assert!(
+        project_visible_messages(&[accepted_private.clone()], source, realm, None, &[], true)
+            .is_empty()
+    );
+    mixed_rows.extend([
+        private_pending,
+        accepted_private,
+        original_pending.clone(),
+        wrong_realm,
+    ]);
+    assert_eq!(
+        project_visible_messages(&mixed_rows, source, realm, Some(source), &[], false),
+        vec![synced[0].clone(), original_pending],
+        "private verification failure must preserve verified original history and ordinary scoped pending rows, without exposing a private optimistic row or another Realm"
+    );
 
     let records = message_operations_from_events(realm, &events);
     assert_eq!(
@@ -254,7 +299,7 @@ fn unscoped_chat_seed_cannot_enter_ordinary_realm_projection() {
     assert!(
         project_visible_messages(&[private_seed], source, realm, Some(source), &[], false,)
             .is_empty(),
-        "unavailable exchange current hides even an active Sidecar timeline"
+        "unavailable exchange current hides an unscoped private row without treating it as ordinary history"
     );
 }
 

@@ -1813,7 +1813,6 @@ struct ComposerTarget {
     device_id: arkret_sdk::DeviceId,
     realm_id: String,
     strand_id: String,
-    sidecar_id: Option<arkret_sdk::SidecarId>,
 }
 
 fn use_composer_state(target: ComposerTarget) -> ComposerState {
@@ -1937,7 +1936,68 @@ mod composer_target_tests {
                 .unwrap(),
             realm_id: "realm".into(),
             strand_id: strand.into(),
-            sidecar_id: None,
+        }
+    }
+
+    type HistoryControl = Rc<RefCell<Option<(Signal<bool>, ComposerState)>>>;
+
+    fn history_harness(control: HistoryControl) -> Element {
+        let private_history_visible = use_signal(|| false);
+        let composer = use_composer_state(target("a"));
+        *control.borrow_mut() = Some((private_history_visible, composer));
+        rsx! {
+            div { "data-private-history": private_history_visible().to_string(),
+                input { value: (composer.draft)() }
+            }
+        }
+    }
+
+    #[test]
+    fn hosted_history_activation_preserves_current_draft_and_structured_binding() {
+        let control = Rc::new(RefCell::new(None));
+        let mut dom = VirtualDom::new_with_props(history_harness, control.clone());
+        dom.rebuild_to_vec();
+        let (mut visible, mut original) = control.borrow().unwrap();
+        let candidate = crate::messaging::mentions::MentionCandidate {
+            subject_account_id: crate::test_support::authority("ak:did_core:web:agent.example"),
+            display_name: "aa".into(),
+            insert_label: "me/aa".into(),
+            subtitle: String::new(),
+            is_agent: true,
+            is_owned_agent: true,
+            controller_subject_account_id: Some(target("a").authority),
+            controller_handle_at_time: String::new(),
+            agent_slug_at_time: String::new(),
+        };
+        dom.in_runtime(|| {
+            let draft = original
+                .mention_picker_state
+                .write()
+                .select(candidate, "@", Some((0, 1)));
+            original.draft.set(draft);
+            original.reply_to_message.set(Some("source-reply".into()));
+        });
+        dom.render_immediate_to_vec();
+        for value in [true, false, true] {
+            dom.in_runtime(|| visible.set(value));
+            dom.render_immediate_to_vec();
+            let current = control.borrow().unwrap().1;
+            dom.in_runtime(|| {
+                assert_eq!(current.draft, original.draft);
+                assert_eq!((current.draft)(), "@me/aa ");
+                assert_eq!(
+                    current
+                        .mention_picker_state
+                        .read()
+                        .bound_candidates(&(current.draft)())
+                        .len(),
+                    1
+                );
+                assert_eq!(
+                    (current.reply_to_message)().as_deref(),
+                    Some("source-reply")
+                );
+            });
         }
     }
 
@@ -1975,15 +2035,11 @@ mod composer_target_tests {
             assert_eq!((restored.reply_to_message)().as_deref(), Some("message a"));
             assert_eq!((restored.edit_draft)(), "edited a");
         });
-        let mut isolated = vec![target("a"); 4];
+        let mut isolated = vec![target("a"); 3];
         isolated[0].authority = crate::test_support::authority("ak:did_core:web:bob.example");
         isolated[1].device_id =
             arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-0000000000f2").unwrap();
         isolated[2].realm_id = "other realm".into();
-        isolated[3].sidecar_id = Some(
-            arkret_sdk::SidecarId::new("ak:sidecar:Abbk-ALq9nZszIh8qJC26XasNIx9TYjU5-BzXWyqwDVx")
-                .unwrap(),
-        );
         for target in isolated {
             dom.in_runtime(|| selected.set(target));
             dom.render_immediate_to_vec();
@@ -1997,7 +2053,6 @@ pub(super) fn use_chat_controller(
     initial_strand_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-    sidecar_id: Option<arkret_sdk::SidecarId>,
 ) -> ChatController {
     let initial_default_channel = (!selected_realm_id.trim().is_empty())
         .then(|| discussion_channel_for_strand(initial_strand_id))
@@ -2016,7 +2071,6 @@ pub(super) fn use_chat_controller(
         device_id: device_id.clone(),
         realm_id: selected_realm_id.to_owned(),
         strand_id: selected_channel(),
-        sidecar_id,
     });
     ChatController {
         channels: use_signal(move || initial_channels),

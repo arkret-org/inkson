@@ -114,18 +114,28 @@ pub(super) fn sidecar_request_targets(
     mentions: &[MentionNode],
     participants: &[SpaceParticipant],
     principal_id: &str,
-    session: Option<&crate::sidecar::HostedSidecarState>,
 ) -> Vec<String> {
-    let addressed =
-        owned_agent_ids_from_composer(mentions_enabled, mentions, participants, principal_id);
-    if addressed.is_empty() {
-        // A follow-up keeps an explicit selection or the last verified request
-        // restored from this source track. Never invent a target from text.
-        session
-            .map(|session| session.addressed_agent_ids.clone())
-            .unwrap_or_default()
-    } else {
-        addressed
+    owned_agent_ids_from_composer(mentions_enabled, mentions, participants, principal_id)
+}
+
+fn sidecar_session_for_draft(
+    route: arkret_sdk::AgentMentionRoute,
+    session: Option<&crate::sidecar::HostedSidecarState>,
+) -> Option<&crate::sidecar::HostedSidecarState> {
+    session.filter(|_| route == arkret_sdk::AgentMentionRoute::Sidecar)
+}
+
+fn draft_scope_send_blocked(
+    route: arkret_sdk::AgentMentionRoute,
+    original_blocked: bool,
+    private_blocked: bool,
+) -> bool {
+    match route {
+        arkret_sdk::AgentMentionRoute::Sidecar => private_blocked,
+        arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets => true,
+        arkret_sdk::AgentMentionRoute::Shared | arkret_sdk::AgentMentionRoute::Direct => {
+            original_blocked
+        }
     }
 }
 
@@ -223,32 +233,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let state_store = crate::app::SessionContext::get().state_store;
     let messages_snapshot = (controller.messages)();
     let messages_for_composer_lookup = &messages_snapshot;
-    let selected_channel_value = active_sidecar_session
-        .as_ref()
-        .map(|session| session.source_strand_id.clone())
-        .unwrap_or_else(|| (controller.selected_channel)());
-    let selected_channel_info = active_sidecar_session
-        .as_ref()
-        .map(|session| {
-            let mut channel = selected_channel_info.clone().unwrap_or(ChannelEntity {
-                strand_id: session.source_strand_id.clone(),
-                name: "Private Sidecar".to_owned(),
-                kind: "discussion".to_owned(),
-                category: "discussion".to_owned(),
-                topic: None,
-                unread: 0,
-                is_default: false,
-                is_private_sidecar: true,
-                security_encrypted: Some(true),
-                scope_circle: None,
-            });
-            channel.strand_id = session.source_strand_id.clone();
-            channel.is_private_sidecar = true;
-            channel.security_encrypted = Some(true);
-            channel.scope_circle = None;
-            channel
-        })
-        .or(selected_channel_info);
+    let selected_channel_value = (controller.selected_channel)();
     let selected_channel_is_circle_scoped = selected_channel_info
         .as_ref()
         .is_some_and(|channel| channel.scope_circle.is_some());
@@ -267,9 +252,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let mut status_msg = controller.status_msg;
     let mut sidecar_route_pending = use_signal(|| false);
     let sidecar_send_pending = controller.sidecar_send_pending;
-    let composer_scope = if active_sidecar_session.is_some() {
-        arkret_sdk::AgentMentionComposerScope::Sidecar
-    } else if !mentions_enabled {
+    let composer_scope = if !mentions_enabled {
         arkret_sdk::AgentMentionComposerScope::Direct
     } else if selected_channel_is_circle_scoped {
         arkret_sdk::AgentMentionComposerScope::Circle
@@ -303,26 +286,43 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         || !channels()
             .iter()
             .any(|channel| channel.strand_id == selected_channel());
-    let sidecar_send_blocked = sidecar_send_block_reason.is_some();
+    let private_draft = preview_route == arkret_sdk::AgentMentionRoute::Sidecar;
+    let mixed_draft = preview_route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets;
+    let private_scope = sidecar_session_for_draft(preview_route, active_sidecar_session.as_ref())
+        .and_then(|session| {
+            Some(arkret_sdk::ScopeRef::Sidecar {
+                realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).ok()?,
+                sidecar_id: session.sidecar_id.clone(),
+            })
+        });
+    let private_probe = crate::views::secure_send::use_scope_send_probe(
+        state_store,
+        private_scope,
+        device_id.clone(),
+    );
+    let sidecar_send_blocked = private_draft
+        && active_sidecar_session.is_some()
+        && (sidecar_send_block_reason.is_some()
+            || !matches!(
+                private_probe.gate,
+                Some(crate::mls::send_gate::MlsSendGate::Encrypted(_))
+            ));
     let preview_sidecar_targets = sidecar_request_targets(
         mentions_enabled,
         &preview_mentions,
         &participants_for_messages,
         &principal_id,
-        active_sidecar_session.as_ref(),
     );
-    let sidecar_target_missing =
-        active_sidecar_session.is_some() && preview_sidecar_targets.is_empty();
-    let active_sidecar_present = active_sidecar_session.is_some();
+    let sidecar_target_missing = private_draft && preview_sidecar_targets.is_empty();
     // content-types section 4.9 permits formal polls only in plaintext scopes.
-    let polls_available = !selected_channel_security_encrypted && !active_sidecar_present;
+    let polls_available = !selected_channel_security_encrypted && !private_draft && !mixed_draft;
     // Realm creation exposes the discussion surface as soon as the Genesis
     // Event is accepted, while the background verifier may still be advancing
     // the locally pinned governance checkpoint to the Seal that covers it.
     // Keep encrypted send disabled during that convergence window; the
     // state-store Signal rerenders this component when bootstrap completes.
     let creator_mls_bootstrap_pending_reason =
-        if selected_channel_security_encrypted && !active_sidecar_present {
+        if selected_channel_security_encrypted && !private_draft {
             selected_channel_info
                 .as_ref()
                 .and_then(|channel| channel.effective_scope(&selected_realm_id))
@@ -461,8 +461,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 status_msg.set("Agent modes are unknown or these targets cannot share a scope. Keep the draft and edit the mentions; private Circle requests require a separate Realm draft.".to_owned());
                 return;
             }
-            let targets_owned_agent =
-                route == arkret_sdk::AgentMentionRoute::Sidecar && !active_sidecar_present;
+            let targets_owned_agent = route == arkret_sdk::AgentMentionRoute::Sidecar;
             if targets_owned_agent {
                 sidecar_route_pending.set(true);
                 status_msg.set("Activating Private Sidecar…".to_owned());
@@ -491,6 +490,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         mentions_enabled,
                         mentions,
                         body: body.clone(),
+                        draft_at_send: chat_draft(),
                         participants: participants_for_plaintext_sidecar.clone(),
                     },
                 );
@@ -599,13 +599,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
             let authority_for_sidecar = secure_sidecar_authority.clone();
             let did_for_sidecar = secure_sidecar_did.clone();
             let device_id_for_sidecar = sidecar_device_id.clone();
-            if pending_mls_binding {
-                status_msg.set(pending_mls_binding_reason.clone().unwrap_or_else(|| {
-                    "epoch_update_required: membership frontier changed; MLS commit required"
-                        .to_owned()
-                }));
-                return;
-            }
             let body = chat_draft().trim().to_owned();
             if body.is_empty() {
                 status_msg.set("Type a message before secure send".to_owned());
@@ -624,7 +617,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 return;
             }
             let strand_id = selected_strand.clone();
-            let active_sidecar_for_send = active_sidecar_session.clone();
             let route = composer_agent_mode_route(
                 composer_scope,
                 &mentions,
@@ -637,8 +629,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 status_msg.set("Agent modes are unknown or these targets cannot share a scope. Keep the draft and edit the mentions; private Circle requests require a separate Realm draft.".to_owned());
                 return;
             }
+            let active_sidecar_for_send =
+                sidecar_session_for_draft(route, active_sidecar_session.as_ref()).cloned();
             let targets_owned_agent = route == arkret_sdk::AgentMentionRoute::Sidecar
-                && !active_sidecar_for_send.is_some();
+                && active_sidecar_for_send.is_none();
             if targets_owned_agent {
                 sidecar_route_pending.set(true);
                 status_msg.set("Activating Private Sidecar…".to_owned());
@@ -667,6 +661,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         mentions_enabled,
                         mentions,
                         body: body.clone(),
+                        draft_at_send: chat_draft(),
                         participants: participants_for_encrypted_sidecar.clone(),
                     },
                 );
@@ -685,7 +680,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     &mentions,
                     &participants_for_encrypted_sidecar,
                     &actor,
-                    Some(&session),
                 );
                 if addressed_agent_ids.is_empty() {
                     status_msg.set(
@@ -695,33 +689,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 }
                 let local_id = new_chat_local_id();
                 let source_strand_id = session.source_strand_id.clone();
-                messages.write().push(ChatMessage {
-                    local_scope: None,
-                    realm_id: session.source_realm_id.clone(),
-                    id: local_id.clone(),
-                    protocol_message_id: Some(local_id.clone()),
-                    actor_id: crate::mls_api_helpers::local_account_actor_id(&actor).ok(),
-                    sender: actor.clone(),
-                    executed_by: None,
-                    body: body.clone(),
-                    content_format: Some(arkret_sdk::TextFormat::Markdown),
-                    timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                    created_at: Some(chrono::Utc::now()),
-                    strand_id: source_strand_id.clone(),
-                    reply_to: None,
-                    reactions: Vec::new(),
-                    redacted: false,
-                    edited: false,
-                    revisions: Vec::new(),
-                    revision_source: None,
-                    pending: true,
-                    failed: false,
-                    error: None,
-                    mentions: mentions.clone(),
-                    crypto_state: MessageCryptoState::Plaintext,
-                });
-                reply_to_message.set(None);
-
                 let base = base.clone();
                 let api_token = token();
                 let source_event_id = latest_source_event_anchor(
@@ -747,6 +714,13 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         mentions,
                     },
                 );
+                return;
+            }
+            if pending_mls_binding {
+                status_msg.set(pending_mls_binding_reason.clone().unwrap_or_else(|| {
+                    "epoch_update_required: membership frontier changed; MLS commit required"
+                        .to_owned()
+                }));
                 return;
             }
             // P2: preserve the composer's reply target on the
@@ -831,10 +805,16 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     } else if composer_scope == arkret_sdk::AgentMentionComposerScope::Direct {
                         span { "Direct conversation: {selected_channel_value}. The two conversation participants." }
                     } else {
-                        span { "Group discussion: {selected_channel_value}. Members authorized to read this scope." }
+                        span { "Original Strand: {selected_channel_value}. Members authorized to read this scope." }
                     }
                     if preview_route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets {
                         span { role: "alert", "Agent modes are unknown or these targets cannot share a scope. Edit the mentions to continue." }
+                    }
+                }
+                if private_draft && sidecar_send_blocked {
+                    div { class: "event warning-banner", "data-testid": "sidecar-readiness-gate", role: "alert",
+                        strong { "Private Sidecar not ready" }
+                        span { {sidecar_send_block_reason.clone().unwrap_or_else(|| "Waiting for this device's private Sidecar encryption keys.".to_owned())} }
                     }
                 }
                 // P3B.2.3 — Circle composer banner. Rendered
@@ -960,10 +940,13 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let realm = selected_realm_id.clone();
                             let typing_device_id = device_id.clone();
                             let selected_strand = selected_channel_value.clone();
+                            let typing_participants = participants_for_messages.clone();
+                            let typing_modes = interaction_modes.clone();
+                            let typing_principal = principal_id.clone();
                             move |event: FormEvent| {
                                 let value = event.value();
                                 mention_picker_state.write().edit(&chat_draft(), &value);
-                                                controller.update_draft(value.clone());
+                                controller.update_draft(value.clone());
                                 // G3.Y2 — auto-open the mention picker
                                 // when the user types an `@`. The
                                 // composer reads `mention_picker_state.open`
@@ -977,6 +960,12 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         .set_active_token(query, start, end);
                                 } else if mention_picker_state.read().open {
                                     mention_picker_state.write().close();
+                                }
+                                let candidates = mention_picker_state.read().bound_candidates(&value);
+                                let mentions = composer_mention_nodes(mentions_enabled, &value, &candidates, &typing_principal);
+                                let route = composer_agent_mode_route(composer_scope, &mentions, &typing_participants, &typing_authority, &candidates, &typing_modes);
+                                if matches!(route, arkret_sdk::AgentMentionRoute::Sidecar | arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets) {
+                                    return;
                                 }
                                 // G3.Y2 — typing signal, fire-and-forget so the
                                 // composer never blocks; failures fall back
@@ -1220,7 +1209,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         // plan stores the future `ak.message.create` payload,
                         // and the MLS-encrypted send path would need
                         // dispatch-time encryption, which v1 does not wire.
-                        if !selected_channel_security_encrypted && active_sidecar_session.is_none() && !has_bound_mentions {
+                        if !selected_channel_security_encrypted && !private_draft && !mixed_draft && !has_bound_mentions {
                             Button {
                                 variant: ButtonVariant::Secondary,
                                 r#type: "button",
@@ -1449,7 +1438,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 }
                 if scheduled_send_panel_open()
                     && !selected_channel_security_encrypted
-                    && active_sidecar_session.is_none()
+                    && !private_draft && !mixed_draft
                     && !has_bound_mentions
                 {
                     super::scheduled_send_panel::ScheduledSendPanel {
@@ -1466,24 +1455,25 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 }
                 div { class: "actions",
                     OrdinarySendActions {
-                        plaintext: !selected_channel_security_encrypted && !active_sidecar_present,
-                        plaintext_disabled: sidecar_send_blocked || sidecar_route_pending() || selected_channel_unavailable || selected_realm_pending_mls_binding,
-                        secure_disabled: chat_secure_send_blocked(
-                            selected_realm_pending_mls_binding,
-                            creator_mls_bootstrap_pending,
-                            sidecar_send_blocked,
-                            sidecar_route_pending(),
-                        ) || sidecar_send_pending() || sidecar_target_missing || (!active_sidecar_present && selected_channel_unavailable),
-                        mls_binding_pending: selected_realm_pending_mls_binding,
-                        creator_bootstrap_pending: creator_mls_bootstrap_pending,
+                        plaintext: !selected_channel_security_encrypted && !private_draft,
+                        plaintext_disabled: selected_channel_unavailable || draft_scope_send_blocked(preview_route, selected_realm_pending_mls_binding, sidecar_send_blocked || sidecar_route_pending() || sidecar_send_pending()),
+                        secure_disabled: selected_channel_unavailable || draft_scope_send_blocked(
+                            preview_route,
+                            selected_realm_pending_mls_binding || creator_mls_bootstrap_pending,
+                            sidecar_send_blocked || sidecar_route_pending() || sidecar_send_pending() || sidecar_target_missing,
+                        ),
+                        mls_binding_pending: !private_draft && selected_realm_pending_mls_binding,
+                        creator_bootstrap_pending: !private_draft && creator_mls_bootstrap_pending,
                         secure_title: if sidecar_target_missing {
                             "Select an Agent with @ before sending this private message".to_owned()
-                        } else { selected_realm_pending_mls_binding_reason.clone().unwrap_or_else(|| {
+                        } else if private_draft { sidecar_send_block_reason.clone().unwrap_or_else(|| {
+                            "Waiting for this device's verified private encryption state.".to_owned()
+                        }) } else { selected_realm_pending_mls_binding_reason.clone().unwrap_or_else(|| {
                             creator_mls_bootstrap_pending_reason.unwrap_or_default().to_owned()
                         }) },
-                        opening: sidecar_route_pending(),
-                        sending: sidecar_send_pending(),
-                        readiness_checking: send_readiness_checking,
+                        opening: private_draft && sidecar_route_pending(),
+                        sending: private_draft && sidecar_send_pending(),
+                        readiness_checking: if private_draft { private_probe.checking } else { send_readiness_checking },
                         on_plaintext: plaintext_send,
                         on_secure: secure_send,
                     }

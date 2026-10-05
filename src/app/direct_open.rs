@@ -12,6 +12,18 @@ use dioxus_router::Navigator;
 use crate::routes::Route;
 use crate::state::LocalStateStore;
 
+fn spawn_direct_open_task(
+    opening: Signal<Option<String>>,
+    task: impl std::future::Future<Output = ()> + 'static,
+) {
+    // Navigation leaves the application shell mounted. Keep its task with the
+    // shell's state, so unmount cancels it instead of accessing dropped
+    // signals from the root scope.
+    dioxus::core::Runtime::current().in_scope(opening.origin_scope(), || {
+        dioxus::core::spawn(task);
+    });
+}
+
 /// Which subject a direct conversation is being opened with.
 pub(super) enum DirectConversationTarget {
     /// One of the signed-in account's own agents.
@@ -71,7 +83,7 @@ pub(super) fn open_direct_conversation(
     let state_store = super::runtime_adapter::state_store_handle(state_store);
     let initiating_account = crate::app::SessionContext::get().active_account();
     let session_fence = crate::transport::auth::AuthoringSessionFence::capture();
-    dioxus::core::spawn_forever(async move {
+    spawn_direct_open_task(direct_chat_opening, async move {
         let Ok(session_fence) = session_fence else {
             if let Ok(mut opening) = direct_chat_opening.try_write() {
                 *opening = None;
@@ -287,6 +299,86 @@ pub(super) fn open_direct_conversation(
             let _ = navigator.push(route);
         }
     });
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    use super::*;
+
+    #[derive(Clone, PartialEq)]
+    struct Probe {
+        mounted: Rc<RefCell<Option<Signal<bool>>>>,
+        scope: Rc<Cell<Option<(ScopeId, ScopeId)>>>,
+        dropped: Rc<Cell<bool>>,
+    }
+
+    struct OpeningTask {
+        opening: Signal<Option<String>>,
+        probe: Probe,
+    }
+
+    impl std::future::Future for OpeningTask {
+        type Output = ();
+
+        fn poll(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<()> {
+            self.probe.scope.set(Some((
+                dioxus::core::current_scope_id(),
+                self.opening.origin_scope(),
+            )));
+            *self.opening.write() = None;
+            std::task::Poll::Pending
+        }
+    }
+
+    impl Drop for OpeningTask {
+        fn drop(&mut self) {
+            self.probe.dropped.set(true);
+        }
+    }
+
+    #[component]
+    fn OpeningShell(probe: Probe) -> Element {
+        let opening = use_signal(|| Some("opening".to_owned()));
+        use_hook(move || {
+            spawn_direct_open_task(opening, OpeningTask { opening, probe });
+        });
+        rsx! { div { "shell" } }
+    }
+
+    fn lifecycle_harness(probe: Probe) -> Element {
+        let mounted = use_signal(|| true);
+        *probe.mounted.borrow_mut() = Some(mounted);
+        rsx! {
+            if mounted() {
+                OpeningShell { probe }
+            }
+        }
+    }
+
+    #[test]
+    fn direct_open_task_uses_shell_scope_and_is_cancelled_on_shell_unmount() {
+        let probe = Probe {
+            mounted: Rc::new(RefCell::new(None)),
+            scope: Rc::new(Cell::new(None)),
+            dropped: Rc::new(Cell::new(false)),
+        };
+        let mut dom = VirtualDom::new_with_props(lifecycle_harness, probe.clone());
+        dom.rebuild_in_place();
+        dom.render_immediate_to_vec();
+        let (task_scope, state_scope) = probe.scope.get().expect("opening task was polled");
+        assert_eq!(task_scope, state_scope);
+        assert_ne!(task_scope, ScopeId::ROOT);
+        assert!(!probe.dropped.get());
+        dom.in_runtime(|| probe.mounted.borrow().unwrap().set(false));
+        dom.render_immediate_to_vec();
+        assert!(probe.dropped.get(), "unmounted shell must cancel its task");
+    }
 }
 
 /// The founder authors the Direct Conversation's one scope-derived MLS Genesis

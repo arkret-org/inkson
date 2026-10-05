@@ -110,7 +110,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
             .filter(|p| p.is_agent)
             .filter_map(participant_mention_account)
             .collect(),
-        private_agent_scope: sidecar_active || direct_mode,
+        private_agent_scope: direct_mode,
     };
     // The parent folds durable lifecycle controls onto optimistic controller
     // rows before filtering this snapshot. Reading controller.messages here
@@ -231,8 +231,9 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                         {
                             let message_is_private_sidecar =
                                 private_sidecar_event_ids.contains(&msg.id);
-                            let message_is_read_only_shared =
-                                sidecar_active && !message_is_private_sidecar;
+                            let message_is_read_only_private = message_is_private_sidecar;
+                            let mut command_context = command_context.clone();
+                            command_context.private_agent_scope = direct_mode || message_is_private_sidecar;
                             let scope_circle = (!message_is_private_sidecar)
                                 .then(|| strand_scope_lookup.get(&msg.strand_id).cloned())
                                 .flatten();
@@ -355,8 +356,6 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                             "data-circle-scope-id": "{scope_attr}",
                             "data-sidecar-provenance": if message_is_private_sidecar {
                                 "private"
-                            } else if sidecar_active {
-                                "shared-read-only"
                             } else {
                                 "shared"
                             },
@@ -438,7 +437,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         let strand_for_pin = msg.strand_id.clone();
                                         let target_for_pin = target_ref.clone();
                                         rsx! {
-                                            if !msg.redacted && !message_is_read_only_shared {
+                                            if !msg.redacted && !message_is_read_only_private {
                                                 Button {
                                                     variant: ButtonVariant::Secondary,
                                                     r#type: "button",
@@ -486,7 +485,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                     {crate::i18n::tr("common.edit")}
                                                 }
                                             }
-                                            if !message_is_read_only_shared {
+                                            if !message_is_read_only_private {
                                             Button {
                                                 variant: ButtonVariant::Secondary,
                                                 r#type: "button",
@@ -562,7 +561,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                     {crate::i18n::tr("moderation.report.action")}
                                                 }
                                             }
-                                            if !msg.redacted && !message_is_read_only_shared {
+                                            if !msg.redacted && !message_is_read_only_private {
                                                 Button {
                                                     variant: ButtonVariant::Destructive,
                                                     r#type: "button",
@@ -694,12 +693,11 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                             } else if sidecar_active {
                                                 span {
                                                     class: "message-provenance-badge message-provenance-badge--shared",
-                                                    "data-testid": "message-shared-read-only-badge",
+                                                    "data-testid": "message-original-strand-badge",
                                                     "data-provenance": "shared",
-                                                    title: "Original Strand · read only while Private Sidecar is active",
-                                                    "aria-label": "Original Strand message, read only while Private Sidecar is active",
-                                                    UiIcon { name: "lock" }
-                                                    span { "Original Strand · read only" }
+                                                    title: "Original Strand message",
+                                                    "aria-label": "Original Strand message",
+                                                    span { "Original Strand" }
                                                 }
                                             }
                                         }
@@ -864,7 +862,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         span { class: "badge", "{emoji} {senders.len()}" }
                                     }
                                 }
-                                if msg.failed && !message_is_read_only_shared {
+                                if msg.failed && !message_is_read_only_private {
                                     div { class: "message-error-row", "data-testid": "chat-message-error",
                                         span { class: "message-error-mark", "!" }
                                         if let Some(error) = &msg.error {
@@ -1041,7 +1039,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                                     "data-testid": "poll-result-row",
                                                                     "data-option-index": "{option_index_attr}",
                                                                     "data-option-text": "{option_label}",
-                                                                    if !card_closed && !message_is_read_only_shared {
+                                                                    if !card_closed && !message_is_read_only_private {
                                                                         Button {
                                                                             variant: ButtonVariant::Secondary,
                                                                             class: "poll-option poll-vote-button",
@@ -1078,7 +1076,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                             }
                                                         }
                                                     }
-                                                    if !card.closed && !message_is_read_only_shared {
+                                                    if !card.closed && !message_is_read_only_private {
                                                         Button {
                                                             variant: ButtonVariant::Secondary,
                                                             r#type: "button",
@@ -1147,7 +1145,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         None => rsx! {},
                                     }
                                 }
-                                if !message_is_read_only_shared
+                                if !message_is_read_only_private
                                     && reaction_picker() == Some(msg.id.clone())
                                 {
                                     div { class: "actions chat-chip-row", "data-testid": "chat-reaction-picker",
@@ -1172,7 +1170,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         }
                                     }
                                 }
-                                if !message_is_read_only_shared
+                                if !message_is_read_only_private
                                     && editing_message() == Some(msg.id.clone())
                                 {
                                     div { class: "composer compact-composer", "data-testid": "chat-edit-composer",
@@ -1205,7 +1203,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         }
                                     }
                                 }
-                                if !message_is_read_only_shared
+                                if !message_is_read_only_private
                                     && redact_confirm() == Some(msg.id.clone())
                                 {
                                     div { class: "chat-redact-confirm", "data-testid": "chat-redact-confirm",
