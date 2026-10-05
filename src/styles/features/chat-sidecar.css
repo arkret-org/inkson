@@ -172,18 +172,19 @@
 .message-privacy-badge--sidecar {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   min-height: 20px;
-  padding: 2px 7px;
-  border: 1px solid color-mix(in srgb, var(--warning) 56%, var(--border));
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--info) 56%, var(--border));
   border-radius: 999px;
-  background: color-mix(in srgb, var(--warning) 13%, var(--surface));
-  color: var(--warning-ink);
-  font-size: 10px;
-  font-weight: 800;
+  background: var(--info-soft);
+  color: var(--info-ink);
+  font-size: 11px;
+  font-weight: 700;
   line-height: 1.2;
   letter-spacing: 0.015em;
   white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .message-provenance-badge--shared {
@@ -214,9 +215,17 @@
   flex: 0 0 auto;
 }
 
-.discussion-message.is-private-sidecar .msg-body {
-  border-style: dashed;
-  border-color: color-mix(in srgb, var(--warning) 42%, var(--border));
+/* Provenance stays distinct from sender attribution and failure status. */
+.discussion-message.is-private-sidecar:not(.is-failed) .msg-body {
+  border-color: color-mix(in srgb, var(--info) 45%, var(--border));
+  background: color-mix(in srgb, var(--info) 8%, var(--surface));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--info) 78%, var(--border));
+}
+
+.discussion-message.is-private-sidecar.is-own:not(.is-failed) .msg-body {
+  box-shadow:
+    inset -3px 0 0 color-mix(in srgb, var(--info) 78%, var(--border)),
+    var(--shadow-xs);
 }
 
 @media (max-width: 760px) {
