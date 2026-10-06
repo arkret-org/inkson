@@ -85,21 +85,25 @@ pub(super) fn content_edit_scope_for_tab(
 }
 
 fn card_owned_agent_rows(
-    members: &[RealmMemberRow],
+    joined_members: Option<&BTreeSet<arkret_sdk::ActorId>>,
     inventory: &BTreeMap<String, String>,
     station: &arkret_sdk::DidCoreId,
 ) -> Vec<(String, String)> {
+    // Display roster pages are demand-loaded. Only the complete verified
+    // current cut can enumerate joined owned Agents independently of them.
+    let Some(joined_members) = joined_members else {
+        return Vec::new();
+    };
     let mut agents = inventory
         .iter()
         .filter_map(|(principal, slug)| {
             let principal = arkret_sdk::DidCoreId::new(principal.clone()).ok()?;
-            let joined_actor = members.iter().find(|row| {
-                row.membership == Some(arkret_sdk::sync::MemberRosterMembership::Join)
-                    && row.actor_id.as_account_id().is_some_and(|account| {
-                        account.principal_id == principal && account.station_id == *station
-                    })
+            let joined_actor = joined_members.iter().find(|actor| {
+                actor.as_account_id().is_some_and(|account| {
+                    account.principal_id == principal && account.station_id == *station
+                })
             })?;
-            Some((joined_actor.actor_id.to_string(), slug.clone()))
+            Some((joined_actor.to_string(), slug.clone()))
         })
         .collect::<Vec<_>>();
     agents.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
@@ -1659,6 +1663,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                 let realm_member_rows = realm_member_roster(
                                                     projection,
                                                 );
+                                                let joined_members = state_store.read()
+                                                    .complete_joined_member_hint_for_realm(&selected_realm_id)
+                                                    .ok().flatten();
                                                 let realm_member_count = realm_member_rows.len();
                                                 let participant_set: BTreeSet<String> = strand_participant_ids(
                                                     &store.raw_operations,
@@ -2677,7 +2684,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                 }
                                                     }
                                                     if active_sidebar_tab == CardDetailSidebarTab::Members {
-                                                        if realm_member_rows.is_empty() {
+                                                        if realm_member_rows.is_empty() && joined_members.as_ref().is_some_and(BTreeSet::is_empty) {
                                                             div { class: "card-detail-empty", "data-testid": "card-detail-realm-members",
                                                                 div { "No members yet for this Realm." }
                                                             }
@@ -2700,8 +2707,16 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                             .collect::<Vec<_>>();
                                                                         members.sort_by_key(|row| !card_member_is_current_account(row, &principal_id));
                                                                         let agents = crate::operation::authoring_station_id().ok()
-                                                                            .map(|station| card_owned_agent_rows(&realm_member_rows, owned_agent_slugs, &station))
+                                                                            .map(|station| card_owned_agent_rows(joined_members.as_ref(), owned_agent_slugs, &station))
                                                                             .unwrap_or_default();
+                                                                        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                                                                        tracing::warn!(
+                                                                            display_roster_count = realm_member_rows.len(),
+                                                                            joined_current_count = joined_members.as_ref().map(BTreeSet::len),
+                                                                            owned_inventory_count = owned_agent_slugs.len(),
+                                                                            owned_joined_agent_count = agents.len(),
+                                                                            "joint card member current eligibility"
+                                                                        );
                                                                         rsx! { div {
                                                                             class: "card-detail-actor-list",
                                                                             "data-testid": "card-detail-realm-members",
@@ -2761,7 +2776,7 @@ mod edit_identity_tests {
     use super::*;
 
     #[test]
-    fn owned_agents_are_visible_only_after_joining_the_current_realm() {
+    fn owned_agents_use_complete_joined_current_independently_of_display_roster() {
         let local = arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap();
         let remote = arkret_sdk::DidCoreId::new("ak:did_core:web:remote.example").unwrap();
         let inventory = BTreeMap::from([
@@ -2785,13 +2800,12 @@ mod edit_identity_tests {
                 station.clone(),
             ))
         };
-        let projection = serde_json::json!({"member_roster_entries": [
-            {"actor_id": actor("ak:did_core:web:joined.example", &local), "membership": "join"},
-            {"actor_id": actor("ak:did_core:web:absent.example", &remote), "membership": "join"},
-            {"actor_id": actor("ak:did_core:web:knocking.example", &local), "membership": "knock"}
-        ]});
-        let members = realm_member_roster(Some(&projection));
-        let rows = card_owned_agent_rows(&members, &inventory, &local);
+        let joined = BTreeSet::from([
+            actor("ak:did_core:web:joined.example", &local),
+            actor("ak:did_core:web:absent.example", &remote),
+            actor("ak:did_core:web:unowned.example", &local),
+        ]);
+        let rows = card_owned_agent_rows(Some(&joined), &inventory, &local);
         assert_eq!(
             rows,
             vec![(
@@ -2799,7 +2813,8 @@ mod edit_identity_tests {
                 "alpha".to_owned(),
             )]
         );
-        assert!(card_owned_agent_rows(&[], &inventory, &local).is_empty());
+        assert!(card_owned_agent_rows(None, &inventory, &local).is_empty());
+        assert!(card_owned_agent_rows(Some(&BTreeSet::new()), &inventory, &local).is_empty());
     }
 
     #[test]
