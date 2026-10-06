@@ -150,6 +150,7 @@ fn OrdinarySendActions(
     opening: bool,
     #[props(default)] sending: bool,
     #[props(default)] readiness_checking: bool,
+    #[props(default)] blocker_diagnostic: Option<String>,
     on_plaintext: Callback<MouseEvent>,
     on_secure: Callback<MouseEvent>,
 ) -> Element {
@@ -162,6 +163,7 @@ fn OrdinarySendActions(
             "data-mls-binding-pending": mls_binding_pending.to_string(),
             "data-creator-bootstrap-pending": creator_bootstrap_pending.to_string(),
             "data-readiness-checking": readiness_checking.to_string(),
+            "data-send-blockers": blocker_diagnostic,
             "aria-busy": (readiness_checking || sending).to_string(),
             title: if plaintext { String::new() } else { secure_title.clone() },
             disabled: if plaintext { plaintext_disabled } else { secure_disabled },
@@ -314,6 +316,18 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         &principal_id,
     );
     let sidecar_target_missing = private_draft && preview_sidecar_targets.is_empty();
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    let send_blocker_diagnostic = Some(format!(
+        "channel_unavailable={},private_gate={},target_missing={},route_pending={},send_pending={},private_draft={}",
+        selected_channel_unavailable,
+        sidecar_send_blocked,
+        sidecar_target_missing,
+        sidecar_route_pending(),
+        sidecar_send_pending(),
+        private_draft,
+    ));
+    #[cfg(not(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")))]
+    let send_blocker_diagnostic: Option<String> = None;
     // content-types section 4.9 permits formal polls only in plaintext scopes.
     let polls_available = !selected_channel_security_encrypted && !private_draft && !mixed_draft;
     // Realm creation exposes the discussion surface as soon as the Genesis
@@ -1473,6 +1487,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         opening: private_draft && sidecar_route_pending(),
                         sending: private_draft && sidecar_send_pending(),
                         readiness_checking: if private_draft { private_probe.checking } else { send_readiness_checking },
+                        blocker_diagnostic: send_blocker_diagnostic,
                         on_plaintext: plaintext_send,
                         on_secure: secure_send,
                     }

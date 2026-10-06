@@ -52,6 +52,12 @@ mod timeline_window;
 const PRESENCE_HEARTBEAT_SECS: u64 = 25;
 const PRESENCE_STARTUP_RETRY_SECS: u64 = 2;
 
+#[inline(always)]
+fn trace_private_send_stage(_stage: &'static str) {
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    tracing::warn!(target: "sidecar", stage = _stage, "joint Sidecar preparation stage");
+}
+
 fn presence_heartbeat_delay_secs(heartbeat_tick: u64) -> u64 {
     if heartbeat_tick == 0 {
         PRESENCE_STARTUP_RETRY_SECS
@@ -423,6 +429,9 @@ fn composer_agent_mode_route(
     let own = Some(controller.clone());
     let mut selected = Vec::new();
     let mut outside = false;
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    let (mut unknown_mode_count, mut unowned_private_count, mut missing_participant_count) =
+        (0, 0, 0);
     for mention in mentions.iter().filter_map(MentionNode::as_mention) {
         let target = participants
             .iter()
@@ -444,6 +453,13 @@ fn composer_agent_mode_route(
                 && own
                     .as_ref()
                     .is_some_and(|a| a.station_id == mention.subject_account_id.station_id);
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            {
+                unknown_mode_count += usize::from(mode.is_none());
+                unowned_private_count +=
+                    usize::from(mode == Some(arkret_sdk::AgentInteractionMode::Private) && !owned);
+                missing_participant_count += usize::from(target.is_none());
+            }
             selected.push(
                 if mode == Some(arkret_sdk::AgentInteractionMode::Private) && !owned {
                     None
@@ -455,12 +471,26 @@ fn composer_agent_mode_route(
             outside = true;
         }
     }
-    arkret_sdk::agent_mention_route_with_modes(
+    let route = arkret_sdk::agent_mention_route_with_modes(
         scope,
         &selected,
         outside,
         mentions.iter().any(|m| m.as_audience_mention().is_some()),
-    )
+    );
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    if route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets {
+        tracing::warn!(
+            ?scope,
+            selected_agent_count = selected.len(),
+            unknown_mode_count,
+            unowned_private_count,
+            missing_participant_count,
+            outside,
+            audience = mentions.iter().any(|m| m.as_audience_mention().is_some()),
+            "joint private mention route blocked"
+        );
+    }
+    route
 }
 
 #[derive(Clone, Debug)]
@@ -1686,6 +1716,23 @@ pub fn ChatPanel(
     focus_message_id: String,
     mention_insert_request: Option<Signal<Option<MentionInsertRequest>>>,
 ) -> Element {
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    {
+        use_hook(move || {
+            trace_private_send_stage(if embedded {
+                "embedded_chat_mounted"
+            } else {
+                "chat_mounted"
+            });
+        });
+        use_drop(move || {
+            trace_private_send_stage(if embedded {
+                "embedded_chat_unmounted"
+            } else {
+                "chat_unmounted"
+            });
+        });
+    }
     // A4 — base_url / state_store from session context instead of props.
     let session_context = crate::app::SessionContext::get();
     let base_url = session_context.base_url.read().clone();

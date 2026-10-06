@@ -64,7 +64,10 @@ pub(crate) fn sync_selected_card_from_columns(
         if refreshing_content {
             retain_selected_card_presentation(&current, &mut next);
         }
-        selected_card.set(Some(next));
+        // Retaining presentation can erase the original projection difference.
+        if next != current {
+            selected_card.set(Some(next));
+        }
     }
 }
 

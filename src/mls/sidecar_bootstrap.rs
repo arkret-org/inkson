@@ -7,6 +7,12 @@ use garth::OutboundQueueStore;
 
 use crate::runtime::input::StateStoreHandle;
 
+#[inline(always)]
+fn trace_preparation_stage(_stage: &'static str) {
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    tracing::warn!(target: "sidecar", stage = _stage, "joint Sidecar preparation stage");
+}
+
 pub(crate) async fn creator_device_authorization(
     submitter: &crate::event_submit::EventSubmitter,
     authority: &arkret_sdk::AccountId,
@@ -91,6 +97,7 @@ async fn ensure_sidecar_mls_genesis(
     expected: &arkret_sdk::AgentSidecarView,
     guard: &ReconciliationGuard,
 ) -> anyhow::Result<arkret_sdk::AgentSidecarView> {
+    trace_preparation_stage("genesis_entered");
     guard()?;
     let scope = arkret_sdk::ScopeRef::Sidecar {
         realm_id: expected.sidecar.realm_id.clone(),
@@ -99,7 +106,9 @@ async fn ensure_sidecar_mls_genesis(
     let group_id = scope.canonical_mls_group_id()?;
     let lock_key = format!("{authority}|{device}|{group_id}");
     let lock = crate::mls::admission::mls_admission_authoring_lock(&lock_key);
+    trace_preparation_stage("genesis_lock_wait");
     let _guard = lock.lock().await;
+    trace_preparation_stage("genesis_lock_acquired");
     guard()?;
     let submitter = api
         .event_submitter()?
@@ -107,7 +116,9 @@ async fn ensure_sidecar_mls_genesis(
         .with_state_store(state.clone());
     // A lost response must replay its original signed unit before any new
     // material is generated. No Sidecar creator-FSM record is opened here.
+    trace_preparation_stage("genesis_outbound_drain_started");
     submitter.drain_outbound().await?;
+    trace_preparation_stage("genesis_outbound_drain_finished");
     guard()?;
     let http = api.sdk_http_client()?;
     let view = http.agent_sidecar_get(&expected.sidecar.id).await?;
@@ -119,9 +130,11 @@ async fn ensure_sidecar_mls_genesis(
     );
     let binding = genesis_binding(&view, authority)?;
     let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    trace_preparation_stage("genesis_secret_started");
     let secret =
         crate::mls::runtime::ensure_existing_account_mls_secret_durable(secure.as_ref(), authority)
             .await?;
+    trace_preparation_stage("genesis_secret_finished");
     guard()?;
 
     if let Some(accepted) = view.mls_context.genesis_event_ref.as_ref() {
@@ -141,6 +154,7 @@ async fn ensure_sidecar_mls_genesis(
                     || checkpoint.group_state_event_id.as_ref() == Some(&accepted),
                 "local Sidecar Genesis differs from the accepted winner"
             );
+            trace_preparation_stage("genesis_existing_checkpoint_ready");
             return Ok(view);
         }
         // Acceptance may have landed just before a crash interrupted local
@@ -205,7 +219,9 @@ async fn ensure_sidecar_mls_genesis(
                 && payload.creator_leaf_authority == restored.creator_leaf_authority,
             "accepted Sidecar Genesis does not bind the original private checkpoint"
         );
+        trace_preparation_stage("genesis_recovery_publish_started");
         publish_genesis(state, &scope, &accepted).await?;
+        trace_preparation_stage("genesis_recovery_publish_finished");
         guard()?;
         return Ok(view);
     }
@@ -278,10 +294,14 @@ async fn ensure_sidecar_mls_genesis(
         .await
         .map_err(|error| anyhow::anyhow!(error.user_message()))?;
     guard()?;
+    trace_preparation_stage("genesis_submit_started");
     let result = submitter.submit_sdk_event(&operation).await?;
+    trace_preparation_stage("genesis_submit_finished");
     guard()?;
     let accepted = arkret_sdk::EventId::new(result.event_id)?;
+    trace_preparation_stage("genesis_publish_started");
     publish_genesis(state, &scope, &accepted).await?;
+    trace_preparation_stage("genesis_publish_finished");
     guard()?;
     let current = http.agent_sidecar_get(&view.sidecar.id).await?;
     guard()?;
@@ -500,11 +520,13 @@ async fn reconcile_existing_sidecar_leaves(
             None,
         ));
     }
+    trace_preparation_stage("roster_signed_current_started");
     let (current, current_source) = sidecar_snapshot_read(
         crate::realm_events_engine::verified_sidecar_mls_current(api, &scope)
             .await
             .map_err(anyhow::Error::from),
     )?;
+    trace_preparation_stage("roster_signed_current_verified");
     let original_guard = &guard;
     let guard = || -> anyhow::Result<()> {
         original_guard()?;
@@ -553,6 +575,7 @@ async fn reconcile_existing_sidecar_leaves(
         view.mls_context.participant_authority_digest.clone(),
         view.mls_context.authority_stream_head.clone(),
     )?;
+    trace_preparation_stage("roster_history_check_started");
     let staged = state.read(
         |store| -> anyhow::Result<Option<crate::mls::runtime::StagedMlsCommit>> {
             let checkpoint = store
@@ -605,6 +628,7 @@ async fn reconcile_existing_sidecar_leaves(
             )
         },
     )?;
+    trace_preparation_stage("roster_history_check_finished");
     let Some(staged) = staged else { return Ok(()) };
     guard()?;
     let operation = state
@@ -733,10 +757,12 @@ async fn reconcile_sidecar_mls_attempt(
     expected: &arkret_sdk::AgentSidecarView,
     guard: ReconciliationGuard,
 ) -> anyhow::Result<arkret_sdk::AgentSidecarView> {
+    trace_preparation_stage("reconciliation_entered");
     guard()?;
     let mut view = ensure_sidecar_mls_genesis(api, state, authority, device, expected, &guard)
         .await
         .context("Sidecar Genesis preparation failed")?;
+    trace_preparation_stage("reconciliation_genesis_ready");
     guard()?;
     let scope = arkret_sdk::ScopeRef::Sidecar {
         realm_id: view.sidecar.realm_id.clone(),
@@ -746,14 +772,18 @@ async fn reconcile_sidecar_mls_attempt(
     let lock = crate::mls::admission::mls_admission_authoring_lock(&format!(
         "{authority}|{device}|{group_id}"
     ));
+    trace_preparation_stage("reconciliation_lock_wait");
     let _guard = lock.lock().await;
+    trace_preparation_stage("reconciliation_lock_acquired");
     guard()?;
     let http = api.sdk_http_client()?;
     let submitter = api
         .event_submitter()?
         .with_authority(authority.clone())
         .with_state_store(state.clone());
+    trace_preparation_stage("mls_outbound_drain_started");
     submitter.drain_mls_outbound().await?;
+    trace_preparation_stage("mls_outbound_drain_finished");
     guard()?;
     anyhow::ensure!(
         !submitter
@@ -762,8 +792,10 @@ async fn reconcile_sidecar_mls_attempt(
         "an original durable MLS transition is still converging"
     );
     guard()?;
+    trace_preparation_stage("roster_repair_started");
     reconcile_existing_sidecar_leaves(api, state, authority, device, &view.sidecar.id, &guard)
         .await?;
+    trace_preparation_stage("roster_repair_finished");
     guard()?;
     view = http.agent_sidecar_get(&expected.sidecar.id).await?;
     guard()?;
@@ -884,12 +916,14 @@ async fn reconcile_sidecar_mls_attempt(
         {
             continue;
         }
+        trace_preparation_stage("endpoint_signed_current_started");
         let (current, current_source) = sidecar_snapshot_read(
             crate::realm_events_engine::verified_sidecar_mls_current(api, &scope)
                 .await
                 .map_err(anyhow::Error::from),
         )
         .context("Sidecar signed MLS current could not be verified")?;
+        trace_preparation_stage("endpoint_signed_current_verified");
         let original_guard = &guard;
         let guard = || -> anyhow::Result<()> {
             original_guard()?;
@@ -931,6 +965,7 @@ async fn reconcile_sidecar_mls_attempt(
         )?;
         let claim_id = crate::mls_api_helpers::generate_mls_claim_request_id()?;
         let clients = crate::transport::EndpointClients::from_http(http.clone());
+        trace_preparation_stage("endpoint_claim_started");
         let outcome = clients
             .mls()
             .claim_key_package(
@@ -945,6 +980,7 @@ async fn reconcile_sidecar_mls_attempt(
                 target_device.is_none().then_some(&endpoint),
             )
             .await?;
+        trace_preparation_stage("endpoint_claim_finished");
         guard()?;
         anyhow::ensure!(
             outcome.claims.len() == 1,

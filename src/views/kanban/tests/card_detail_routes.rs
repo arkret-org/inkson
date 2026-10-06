@@ -535,3 +535,73 @@ fn detail_refresh_retains_content_without_retaining_write_authority() {
     retain_selected_card_presentation(&current, &mut queued);
     assert_eq!(queued.description_body, "next local draft");
 }
+
+#[test]
+fn selected_card_refresh_does_not_publish_an_unchanged_retained_presentation() {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    #[derive(Clone)]
+    struct Harness {
+        initial: KanbanCard,
+        selected: Rc<RefCell<Option<Signal<Option<KanbanCard>>>>>,
+        renders: Rc<Cell<usize>>,
+        observed: Rc<RefCell<Option<KanbanCard>>>,
+    }
+
+    fn harness(props: Harness) -> Element {
+        let selected = use_signal(|| Some(props.initial.clone()));
+        *props.selected.borrow_mut() = Some(selected);
+        props.renders.set(props.renders.get() + 1);
+        *props.observed.borrow_mut() = selected();
+        rsx! { div {} }
+    }
+
+    let mut current = test_card(DEMO_STRAND_LEGAL_REVIEW_ID, "U");
+    current.description_body = "saved description".to_owned();
+    current.synthesis = "saved synthesis".to_owned();
+    current.authoring_basis = None;
+    current.state = CardState::Quarantined;
+    let mut columns = seed_columns();
+    let mut replacement = current.clone();
+    replacement.description_body.clear();
+    replacement.synthesis.clear();
+    columns[0].cards = vec![replacement.clone()];
+    let props = Harness {
+        initial: current.clone(),
+        selected: Rc::new(RefCell::new(None)),
+        renders: Rc::new(Cell::new(0)),
+        observed: Rc::new(RefCell::new(None)),
+    };
+    let mut dom = VirtualDom::new_with_props(harness, props.clone());
+    dom.rebuild_in_place();
+    let selected = props.selected.borrow().unwrap();
+    for _ in 0..4 {
+        dom.in_runtime(|| sync_selected_card_from_columns(selected, &columns, &[], false, true));
+        dom.render_immediate_to_vec();
+    }
+    assert_eq!(
+        props.renders.get(),
+        1,
+        "retaining identical presentation must not wake its subscribed reconciliation effect"
+    );
+    assert_eq!(props.observed.borrow().as_ref(), Some(&current));
+    assert!(!card_detail_write_ready(
+        props.observed.borrow().as_ref().unwrap()
+    ));
+
+    // A genuinely new complete accepted basis still publishes and replaces old content.
+    replacement.state = CardState::Synced;
+    replacement.authoring_basis = Some(arkret_wire::CurrentRevision {
+        commit_id: arkret_wire::RealmCommitId::from_digest([3; 32]),
+        stream_position: 3,
+    });
+    columns[0].cards = vec![replacement.clone()];
+    dom.in_runtime(|| sync_selected_card_from_columns(selected, &columns, &[], false, true));
+    dom.render_immediate_to_vec();
+    assert_eq!(props.renders.get(), 2);
+    assert_eq!(props.observed.borrow().as_ref(), Some(&replacement));
+    assert!(card_detail_write_ready(
+        props.observed.borrow().as_ref().unwrap()
+    ));
+}

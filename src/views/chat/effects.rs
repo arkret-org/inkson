@@ -2,12 +2,120 @@ use super::*;
 
 const CHAT_INITIAL_BACKFILL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
+async fn read_owned_agents_with_retry<T, Read, ReadFuture, Wait, WaitFuture>(
+    current: impl Fn() -> anyhow::Result<()>,
+    mut read: Read,
+    mut wait: Wait,
+) -> anyhow::Result<T>
+where
+    Read: FnMut() -> ReadFuture,
+    ReadFuture: std::future::Future<Output = anyhow::Result<T>>,
+    Wait: FnMut(u64) -> WaitFuture,
+    WaitFuture: std::future::Future<Output = ()>,
+{
+    for attempt in 0..8 {
+        current()?;
+        let result = read().await;
+        current()?;
+        match result {
+            Ok(agents) => return Ok(agents),
+            Err(error) if attempt == 7 => return Err(error),
+            Err(error) => {
+                tracing::warn!(attempt, reason = %error, "owned Agent inventory read will resume");
+                wait((500_u64 << attempt.min(2)).min(2_000)).await;
+            }
+        }
+    }
+    unreachable!("bounded inventory read returns on the final attempt")
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn owned_agent_inventory_read_recovers_without_inventing_entries() {
+        let reads = Cell::new(0);
+        let waits = RefCell::new(Vec::new());
+        let result = read_owned_agents_with_retry(
+            || Ok(()),
+            || {
+                reads.set(reads.get() + 1);
+                std::future::ready(if reads.get() == 1 {
+                    Err(anyhow::anyhow!("temporary read failure"))
+                } else {
+                    Ok(std::collections::BTreeMap::<String, String>::new())
+                })
+            },
+            |ms| {
+                waits.borrow_mut().push(ms);
+                std::future::ready(())
+            },
+        )
+        .await
+        .unwrap();
+        assert!(result.is_empty(), "verified empty inventory remains empty");
+        assert_eq!(reads.get(), 2);
+        assert_eq!(*waits.borrow(), vec![500]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn owned_agent_inventory_read_failure_is_bounded_and_not_an_empty_success() {
+        let reads = Cell::new(0);
+        let waits = RefCell::new(Vec::new());
+        let error = read_owned_agents_with_retry(
+            || Ok(()),
+            || {
+                reads.set(reads.get() + 1);
+                std::future::ready(Err::<(), _>(anyhow::anyhow!("unavailable")))
+            },
+            |ms| {
+                waits.borrow_mut().push(ms);
+                std::future::ready(())
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "unavailable");
+        assert_eq!(reads.get(), 8);
+        assert_eq!(
+            *waits.borrow(),
+            vec![500, 1000, 2000, 2000, 2000, 2000, 2000]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn owned_agent_inventory_read_cannot_publish_or_retry_after_fence_change() {
+        for change_during_read in [true, false] {
+            let valid = Cell::new(true);
+            let reads = Cell::new(0);
+            let result = read_owned_agents_with_retry(
+                || {
+                    anyhow::ensure!(valid.get(), "account, Station or session changed");
+                    Ok(())
+                },
+                || {
+                    reads.set(reads.get() + 1);
+                    if change_during_read {
+                        valid.set(false);
+                        std::future::ready(Ok(1))
+                    } else {
+                        std::future::ready(Err(anyhow::anyhow!("temporary failure")))
+                    }
+                },
+                |_| {
+                    valid.set(false);
+                    std::future::ready(())
+                },
+            )
+            .await;
+            assert!(result.unwrap_err().to_string().contains("session changed"));
+            assert_eq!(reads.get(), 1, "stale read must never publish or retry");
+        }
+    }
 
     #[derive(Clone)]
     struct TimelineControl {
@@ -327,40 +435,72 @@ pub(super) fn ChatEffects(
 
     {
         let base = base_url.clone();
-        let account = principal_id.clone();
-        use_effect(move || {
-            let api_token = token();
-            let request_key = account.trim().to_owned();
-            if account.trim().is_empty()
-                || api_token.trim().is_empty()
-                || owned_agent_sync_key_seen.peek().as_str() == request_key
-            {
-                return;
-            }
-            owned_agent_sync_key_seen.set(request_key.clone());
-            event_sink.emit(ChatProjectionEvent::OwnedAgents(
-                std::collections::BTreeMap::new(),
-            ));
-            let base = base.clone();
-            spawn(async move {
-                let result = crate::transport::auth::with_authed_sdk_client(
-                    &base,
-                    api_token,
-                    |http| async move {
-                        let list = http.agent_list().await?;
-                        Ok::<_, anyhow::Error>(crate::views::agents::mentionable_owned_agent_slugs(
-                            list.agents,
-                        ))
-                    },
-                )
-                .await;
-                if owned_agent_sync_key_seen.peek().as_str() == request_key
-                    && let Ok(agents) = result
-                {
-                    event_sink.emit(ChatProjectionEvent::OwnedAgents(agents));
+        let account = authority.clone();
+        let session_epoch = crate::identity::device_directory::session_cache_epoch();
+        let mut read_generation = use_signal(|| 0_u64);
+        use_effect(use_reactive(
+            (&base, &account, &session_epoch),
+            move |(base, account, session_epoch)| {
+                let api_token = token();
+                let request_key = format!("{base}|{account}|{session_epoch}|{api_token}");
+                if owned_agent_sync_key_seen.peek().as_str() == request_key {
+                    return;
                 }
-            });
-        });
+                owned_agent_sync_key_seen.set(request_key.clone());
+                let generation = read_generation.peek().wrapping_add(1);
+                read_generation.set(generation);
+                event_sink.emit(ChatProjectionEvent::OwnedAgents(
+                    std::collections::BTreeMap::new(),
+                ));
+                if api_token.trim().is_empty() {
+                    return;
+                }
+                let Ok(fence) = crate::transport::auth::AuthoringSessionFence::capture() else {
+                    return;
+                };
+                spawn(async move {
+                    let current = || -> anyhow::Result<()> {
+                        fence.check()?;
+                        anyhow::ensure!(
+                            crate::secure_key_store::active_device_seed_scope()
+                                .is_some_and(|scope| scope.authority == account)
+                                && owned_agent_sync_key_seen.peek().as_str() == request_key
+                                && *read_generation.peek() == generation,
+                            "owned Agent inventory account or session changed"
+                        );
+                        Ok(())
+                    };
+                    let result = read_owned_agents_with_retry(
+                        &current,
+                        || async {
+                            crate::transport::auth::with_authed_sdk_client(
+                                &base,
+                                api_token.clone(),
+                                |http| async move {
+                                    let list = http.agent_list().await?;
+                                    Ok::<_, anyhow::Error>(
+                                        crate::views::agents::mentionable_owned_agent_slugs(
+                                            list.agents,
+                                        ),
+                                    )
+                                },
+                            )
+                            .await
+                            .map_err(|error| anyhow::anyhow!(error.display()))
+                        },
+                        |ms| {
+                            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(ms))
+                        },
+                    )
+                    .await;
+                    if current().is_ok()
+                        && let Ok(agents) = result
+                    {
+                        event_sink.emit(ChatProjectionEvent::OwnedAgents(agents));
+                    }
+                });
+            },
+        ));
     }
 
     {
