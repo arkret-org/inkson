@@ -293,14 +293,17 @@ impl LocalStateStore {
         RealmStateSnapshot,
         BTreeMap<String, Vec<arkret_sdk::CommittedEventFullView>>,
     )> {
-        let state = self.load();
-        let snapshot = state
-            .verified_sidecar_current
-            .get(realm)
-            .ok_or_else(|| {
-                anyhow::anyhow!("Sidecar exchange current requires a verified signed current cut")
-            })?
-            .clone();
+        let snapshot = self.with_unoverlaid_account_fields(|state| {
+            state
+                .verified_sidecar_current
+                .get(realm)
+                .cloned()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Sidecar exchange current requires a verified signed current cut"
+                    )
+                })
+        })?;
         let histories = self.sidecar_history_at_snapshot(&snapshot)?;
         Ok((snapshot, histories))
     }
@@ -311,59 +314,64 @@ impl LocalStateStore {
         &self,
         snapshot: &RealmStateSnapshot,
     ) -> anyhow::Result<BTreeMap<String, Vec<arkret_sdk::CommittedEventFullView>>> {
-        let state = self.load();
-        let mut histories = BTreeMap::new();
-        for head in &snapshot.visible_stream_heads {
-            let CommitStreamRef::Sidecar { sidecar_id, .. } = &head.stream_ref else {
-                continue;
-            };
-            let key = serde_json::to_string(&head.stream_ref)?;
-            let rows = state.verified_sidecar_history.get(&key).ok_or_else(|| {
-                anyhow::anyhow!("Sidecar exchange current requires verified Sidecar Commit history")
-            })?;
-            let mut full_rows = Vec::with_capacity(rows.len());
-            let mut previous = None;
-            for (position, row) in rows.iter().enumerate() {
-                if row.commit().stream_position > head.stream_position {
-                    break;
-                }
-                let CommittedEventView::Full(full) = row else {
-                    anyhow::bail!("Sidecar exchange history contains an undisclosed Event");
+        self.with_unoverlaid_account_fields(|state| {
+            let mut histories = BTreeMap::new();
+            for head in &snapshot.visible_stream_heads {
+                let CommitStreamRef::Sidecar { sidecar_id, .. } = &head.stream_ref else {
+                    continue;
                 };
+                let key = serde_json::to_string(&head.stream_ref)?;
+                let rows = state.verified_sidecar_history.get(&key).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Sidecar exchange current requires verified Sidecar Commit history"
+                    )
+                })?;
+                let mut full_rows = Vec::with_capacity(rows.len());
+                let mut previous = None;
+                for (position, row) in rows.iter().enumerate() {
+                    if row.commit().stream_position > head.stream_position {
+                        break;
+                    }
+                    let CommittedEventView::Full(full) = row else {
+                        anyhow::bail!("Sidecar exchange history contains an undisclosed Event");
+                    };
+                    anyhow::ensure!(
+                        full.commit.stream_ref == head.stream_ref
+                            && full.commit.stream_position == u64::try_from(position)?
+                            && full.commit.previous_commit_ref == previous
+                            && full.commit.event_ref == full.event.event_id
+                            && full.event.realm_id == snapshot.realm_id,
+                        "Sidecar exchange history is not a complete native Commit chain"
+                    );
+                    previous = Some(full.commit.commit_id.clone());
+                    full_rows.push(full.clone());
+                }
                 anyhow::ensure!(
-                    full.commit.stream_ref == head.stream_ref
-                        && full.commit.stream_position == u64::try_from(position)?
-                        && full.commit.previous_commit_ref == previous
-                        && full.commit.event_ref == full.event.event_id
-                        && full.event.realm_id == snapshot.realm_id,
-                    "Sidecar exchange history is not a complete native Commit chain"
+                    full_rows
+                        .last()
+                        .is_some_and(|row| row.commit.commit_id == head.commit_id
+                            && row.commit.stream_position == head.stream_position),
+                    "Sidecar exchange history and signed current head differ"
                 );
-                previous = Some(full.commit.commit_id.clone());
-                full_rows.push(full.clone());
+                histories.insert(sidecar_id.to_string(), full_rows);
             }
-            anyhow::ensure!(
-                full_rows
-                    .last()
-                    .is_some_and(|row| row.commit.commit_id == head.commit_id
-                        && row.commit.stream_position == head.stream_position),
-                "Sidecar exchange history and signed current head differ"
-            );
-            histories.insert(sidecar_id.to_string(), full_rows);
-        }
-        Ok(histories)
+            Ok(histories)
+        })
     }
 
     pub(crate) fn has_pending_sidecar_history(&self, realm: &str) -> bool {
-        self.load()
-            .verified_sidecar_current
-            .get(realm)
-            .is_some_and(|snapshot| {
-                snapshot
-                    .visible_stream_heads
-                    .iter()
-                    .any(|head| matches!(head.stream_ref, CommitStreamRef::Sidecar { .. }))
-                    && self.sidecar_history_at_snapshot(snapshot).is_err()
-            })
+        self.with_unoverlaid_account_fields(|state| {
+            state
+                .verified_sidecar_current
+                .get(realm)
+                .is_some_and(|snapshot| {
+                    snapshot
+                        .visible_stream_heads
+                        .iter()
+                        .any(|head| matches!(head.stream_ref, CommitStreamRef::Sidecar { .. }))
+                        && self.sidecar_history_at_snapshot(snapshot).is_err()
+                })
+        })
     }
 }
 

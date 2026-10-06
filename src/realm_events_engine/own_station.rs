@@ -11,6 +11,119 @@ const MAX_PREFIX_BYTES: usize = 64 * 1024 * 1024;
 type SnapshotResponse =
     BoundOwnStationResponse<arkret_sdk::RealmId, arkret_sdk::RealmStateSnapshot>;
 
+/// Read back an accepted private write without depending on a live hint rail.
+/// The existing follower owns original-cut admission, complete native tails,
+/// transactional current/history installation and its durable barrier.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn refresh_accepted_sidecar<F: Fn() -> bool>(
+    http: &arkret_sdk::http_client::Client,
+    account: &arkret_sdk::AccountId,
+    request_epoch: u64,
+    realm: &arkret_sdk::RealmId,
+    sidecar: &arkret_sdk::SidecarId,
+    event: &arkret_sdk::EventId,
+    state_store: crate::runtime::input::StateStoreHandle,
+    active: F,
+) -> garth::Result<()> {
+    if !active() {
+        return Err(protocol(
+            "accepted Sidecar readback belongs to a replaced session",
+        ));
+    }
+    let client = crate::transport::own_station_results::client_for_http(http).await?;
+    require_readback_session(&client, account, request_epoch)?;
+    if !active() {
+        return Err(protocol(
+            "accepted Sidecar readback belongs to a replaced session",
+        ));
+    }
+    // Store writes directly invalidate the UI's exact timeline basis. This
+    // local notification value lets the same follower resolve dependencies
+    // without creating another app-wide epoch or persistent checkpoint.
+    let revision = std::rc::Rc::new(std::cell::Cell::new(0_u64));
+    let read_revision = revision.clone();
+    let write_revision = revision.clone();
+    let projector = RealmIngestProjector {
+        state_store,
+        realm_id: realm.to_string(),
+        digest_suite: realm_live_digest_suite(realm),
+        realm_live_epoch: crate::runtime::input::ValueCell::new(
+            move || read_revision.get(),
+            move |value| write_revision.set(value),
+            move |update| {
+                let mut value = revision.get();
+                update(&mut value);
+                revision.set(value);
+            },
+        ),
+        message_stream_hub: None,
+    };
+    let mut replica = OwnStationReplica::new(realm.clone());
+    // The follower also checks its callback while holding the store write
+    // guard. Its bound host session covers Account, Device and ABA generation
+    // without re-borrowing the caller's store signal; current installation
+    // additionally checks the actual account namespace in that transaction.
+    let session_active = || require_readback_session(&client, account, request_epoch).is_ok();
+    super::own_live::refresh_sidecars(
+        &client,
+        http,
+        realm,
+        &projector,
+        &session_active,
+        &mut replica,
+    )
+    .await?;
+    require_readback_session(&client, account, request_epoch)?;
+    if !active() {
+        return Err(protocol(
+            "accepted Sidecar readback belongs to a replaced session",
+        ));
+    }
+    projector
+        .state_store
+        .read(|store| require_accepted_sidecar_event(store, account, realm, sidecar, event))
+}
+
+fn require_readback_session(
+    client: &OwnStationResultClient,
+    account: &arkret_sdk::AccountId,
+    request_epoch: u64,
+) -> garth::Result<()> {
+    client.check_session()?;
+    if client.session()?.account_id() != account
+        || crate::identity::device_directory::session_cache_epoch() != request_epoch
+    {
+        return Err(protocol(
+            "accepted Sidecar readback belongs to a replaced session",
+        ));
+    }
+    Ok(())
+}
+
+fn require_accepted_sidecar_event(
+    store: &crate::state::LocalStateStore,
+    account: &arkret_sdk::AccountId,
+    realm: &arkret_sdk::RealmId,
+    sidecar: &arkret_sdk::SidecarId,
+    event: &arkret_sdk::EventId,
+) -> garth::Result<()> {
+    let projections =
+        crate::sidecar::cached_sidecar_exchange_projections(store, account, realm.as_str())
+            .map_err(protocol)?;
+    if !projections.iter().any(|projection| {
+        projection.sidecar_id == *sidecar && projection.private_request_event_id == *event
+    }) {
+        return Err(protocol(
+            "accepted private request is awaiting its verified native history",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "own_station_readback_tests.rs"]
+mod accepted_readback_tests;
+
 pub(super) async fn account_frame(
     http: &arkret_sdk::http_client::Client,
     frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,

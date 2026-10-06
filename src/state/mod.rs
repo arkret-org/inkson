@@ -91,6 +91,13 @@ pub(crate) use current_index::CurrentIndex;
 pub(crate) use current_index::CurrentIndexLocation;
 
 mod e2ee_secure_cache;
+#[cfg(test)]
+mod projection_read_tests;
+
+#[cfg(test)]
+thread_local! {
+    static FULL_STATE_READ_COPIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 pub(crate) use e2ee_secure_cache::{
     BrowserStorageEstimate, E2eePlaintextCacheClearScope, E2eePlaintextCacheUsage,
     browser_storage_estimate,
@@ -442,6 +449,8 @@ impl LocalStateStore {
     }
 
     pub fn load(&self) -> ClientLocalState {
+        #[cfg(test)]
+        FULL_STATE_READ_COPIES.with(|count| count.set(count.get() + 1));
         // Once reconciled with persistence, `cached` is authoritative (single
         // process) — skip the full-state `!= default` compare and the repeated
         // backing-store read that an empty account used to pay on every call.
@@ -537,6 +546,8 @@ impl LocalStateStore {
     /// that a decrypt recorded via the overlay (a §5.6 violation: the next
     /// boot would replay the ratchet from the stale snapshot).
     fn effective_state_for_persist(&self) -> ClientLocalState {
+        #[cfg(test)]
+        FULL_STATE_READ_COPIES.with(|count| count.set(count.get() + 1));
         let mut state = self.cached.clone();
         {
             let overlay = self.lock_mls_receive_overlay();

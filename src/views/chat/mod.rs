@@ -47,6 +47,7 @@ mod sidecar_restore;
 mod timeline;
 mod timeline_projection;
 mod timeline_surface;
+mod timeline_window;
 
 const PRESENCE_HEARTBEAT_SECS: u64 = 25;
 const PRESENCE_STARTUP_RETRY_SECS: u64 = 2;
@@ -991,7 +992,21 @@ fn sidecar_mls_scope(view: &arkret_sdk::AgentSidecarView) -> arkret_sdk::Sidecar
 
 struct SourceRoutedSidecarMessageOutcome {
     event_id: String,
+    history_pending: Option<String>,
 }
+
+impl SourceRoutedSidecarMessageOutcome {
+    fn after_accept(event_id: String, history: anyhow::Result<()>) -> Self {
+        Self {
+            event_id,
+            history_pending: history.err().map(|error| format!("{error:#}")),
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "tests/sidecar_accepted_readback.rs"]
+mod sidecar_accepted_readback_tests;
 
 #[allow(clippy::too_many_arguments)]
 async fn submit_source_routed_sidecar_message(
@@ -1010,6 +1025,22 @@ async fn submit_source_routed_sidecar_message(
     mut state_store: SyncSignal<LocalStateStore>,
     view: &arkret_sdk::AgentSidecarView,
 ) -> anyhow::Result<SourceRoutedSidecarMessageOutcome> {
+    let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+    let request_epoch = crate::identity::device_directory::session_cache_epoch();
+    let active_account = consume_context::<crate::app::SessionContext>().active_account;
+    let active_store = state_store;
+    let active = move || {
+        fence.check_session_identity().is_ok()
+            && crate::identity::device_directory::session_cache_epoch() == request_epoch
+            && active_store.peek().active_authority().as_ref() == Some(authority)
+            && active_account.peek().as_ref().is_some_and(|account| {
+                &account.authority == authority && &account.device_id == device_id
+            })
+    };
+    anyhow::ensure!(
+        active(),
+        "private send belongs to a replaced account session"
+    );
     crate::sidecar::validate_agent_sidecar_view(view)?;
     crate::sidecar::cached_sidecar_exchange_projections(
         &state_store.read(),
@@ -1164,6 +1195,10 @@ async fn submit_source_routed_sidecar_message(
         local_operation_id: local_operation_id.clone(),
     };
     {
+        anyhow::ensure!(
+            active(),
+            "private send belongs to a replaced account session"
+        );
         let barrier = {
             let mut store = state_store.write();
             crate::sidecar::save_pending_sidecar_submission(&mut store, &intent_digest, &pending)?;
@@ -1171,6 +1206,10 @@ async fn submit_source_routed_sidecar_message(
         };
         barrier.wait().await?;
     }
+    anyhow::ensure!(
+        active(),
+        "private send belongs to a replaced account session"
+    );
     let outcome = crate::views::secure_send::submit_secure_send(
         &api,
         state_store,
@@ -1192,48 +1231,89 @@ async fn submit_source_routed_sidecar_message(
             ))
         }
     };
-    {
-        let mut store = state_store.write();
-        // The read-side projection derives the protocol message id from the
-        // accepted event id (`MessageId::from_event_id`); the raw-op record
-        // and the author plaintext sidecar must key on that same derived id,
-        // not the pre-submit local id, or the author's own body is orphaned
-        // on echo / reload.
-        let protocol_message_id = arkret_sdk::EventId::new(event_id.clone())
-            .ok()
-            .map(|accepted_event_id| {
-                arkret_sdk::MessageId::from_event_id(&accepted_event_id)
-                    .as_str()
-                    .to_owned()
-            })
-            .unwrap_or_else(|| message_id.clone());
-        store.append_raw_operation(
-            local_operation_id,
-            Some(source_realm_id.to_owned()),
-            json!({
-                "event_id": event_id.clone(),
-                "kind": event_kind_str::MESSAGE_CREATE,
-                "actor_id": controller_principal_id,
-                "strand_id": attached_source_strand_id,
-                "message_id": protocol_message_id,
-                "encrypted_content": true,
-                "status": status,
-            }),
+    let history = async {
+        anyhow::ensure!(
+            active(),
+            "accepted private write belongs to a replaced account session"
         );
-        store.save_private_plaintext(
-            source_realm_id,
-            attached_source_strand_id,
-            &format!("message:{protocol_message_id}"),
-            &content_for_sidecar,
+        let (barrier, plaintext_write) = {
+            let mut store = state_store.write();
+            // The read-side projection derives the protocol message id from the
+            // accepted event id (`MessageId::from_event_id`); the raw-op record
+            // and the author plaintext sidecar must key on that same derived id,
+            // not the pre-submit local id, or the author's own body is orphaned
+            // on echo / reload.
+            let protocol_message_id = arkret_sdk::EventId::new(event_id.clone())
+                .ok()
+                .map(|accepted_event_id| {
+                    arkret_sdk::MessageId::from_event_id(&accepted_event_id)
+                        .as_str()
+                        .to_owned()
+                })
+                .unwrap_or_else(|| message_id.clone());
+            store.append_raw_operation(
+                local_operation_id,
+                Some(source_realm_id.to_owned()),
+                json!({
+                    "event_id": event_id.clone(),
+                    "kind": event_kind_str::MESSAGE_CREATE,
+                    "actor_id": controller_principal_id,
+                    "strand_id": attached_source_strand_id,
+                    "message_id": protocol_message_id,
+                    "encrypted_content": true,
+                    "status": status,
+                }),
+            );
+            store.save_private_plaintext(
+                source_realm_id,
+                attached_source_strand_id,
+                &format!("message:{protocol_message_id}"),
+                &content_for_sidecar,
+            );
+            crate::sidecar::remove_pending_sidecar_submission(
+                &mut store,
+                controller_principal_id,
+                attached_source_strand_id,
+                &intent_digest,
+            );
+            (
+                store.begin_durable_flush()?,
+                store.e2ee_plaintext_cache_secure_write()?,
+            )
+        };
+        barrier.wait().await?;
+        if let Some((key, Some(bytes))) = plaintext_write {
+            crate::secure_key_store::default_secure_key_store("inkson")
+                .store_secret_durable(&key, &bytes)
+                .await?;
+        }
+        anyhow::ensure!(
+            active(),
+            "accepted private write belongs to a replaced account session"
         );
-        crate::sidecar::remove_pending_sidecar_submission(
-            &mut store,
-            controller_principal_id,
-            attached_source_strand_id,
-            &intent_digest,
+        anyhow::ensure!(
+            status == "committed",
+            "private write is queued; awaiting its committed native history"
         );
+        crate::realm_events_engine::refresh_accepted_sidecar(
+            api.http(),
+            authority,
+            request_epoch,
+            &view.sidecar.realm_id,
+            &view.sidecar.id,
+            &arkret_sdk::EventId::new(event_id.clone())?,
+            crate::app::runtime_adapter::state_store_handle(state_store),
+            active,
+        )
+        .await?;
+        Ok(())
     }
-    Ok(SourceRoutedSidecarMessageOutcome { event_id })
+    .await;
+    // The Station has already answered for the frozen identity. A recovery
+    // read failure must never turn that write into a send failure or reauthor it.
+    Ok(SourceRoutedSidecarMessageOutcome::after_accept(
+        event_id, history,
+    ))
 }
 
 fn sidecar_agent_label(agent_ids: &[String], participants: &[SpaceParticipant]) -> String {
@@ -1751,13 +1831,11 @@ pub fn ChatPanel(
         selected_realm_id.clone(),
         crate::identity::device_directory::session_cache_epoch(),
     );
-    let private_timeline = sidecar_timeline.read().clone();
-    let sidecar_exchange_current = private_timeline.current;
-    let sidecar_exchange_projections = sidecar_exchange_current
-        .as_ref()
-        .cloned()
-        .unwrap_or_default();
-    let private_sidecar_event_ids = private_timeline.private_event_ids;
+    let private_timeline = sidecar_timeline.read();
+    let sidecar_exchange_current = private_timeline.current.clone();
+    let private_sidecar_event_ids = private_timeline.private_event_ids.clone();
+    let sidecar_privacy_gate = private_timeline.privacy_gate.clone();
+    drop(private_timeline);
     use_effect({
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
@@ -1797,7 +1875,6 @@ pub fn ChatPanel(
             });
         }
     });
-    let sidecar_privacy_gate = private_timeline.privacy_gate;
     let filter_value = track_filter();
     let (visible_channels, selected_channel_info) =
         discussion_channels_for_surface(&all_channels, &selected_channel_value, &filter_value);
@@ -1996,7 +2073,7 @@ pub fn ChatPanel(
     // those unrelated edges can monopolize the WASM main thread once an
     // account has a substantial history, making the entire browser appear
     // hung even though network traffic stays quiet.
-    let all_messages_snapshot = timeline_projection::use_ordinary_timeline_projection(
+    let ordinary_timeline = timeline_projection::use_ordinary_timeline_projection(
         state_store,
         timeline_basis,
         messages,
@@ -2005,19 +2082,35 @@ pub fn ChatPanel(
         account_device_id.clone(),
         crate::identity::device_directory::session_cache_epoch(),
     );
-    let mut all_messages_snapshot = all_messages_snapshot.read().clone();
-    merge_chat_messages(&mut all_messages_snapshot, private_timeline.messages);
-    let sidecar_projection: Option<&str> = sidecar_session
+    let merged_timeline = use_memo(move || {
+        let mut rows = ordinary_timeline.read().clone();
+        merge_chat_messages(&mut rows, sidecar_timeline.read().messages.clone());
+        rows
+    });
+    let sidecar_projection = sidecar_session
         .as_ref()
-        .map(|session| session.source_strand_id.as_str());
-    let visible_messages = project_visible_messages(
-        &all_messages_snapshot,
-        &selected_channel_value,
-        &selected_realm_id,
-        sidecar_projection,
-        &sidecar_exchange_projections,
-        sidecar_exchange_current.is_ok(),
-    );
+        .map(|session| session.source_strand_id.clone());
+    let visible_timeline = use_memo(use_reactive(
+        (
+            &selected_channel_value,
+            &selected_realm_id,
+            &sidecar_projection,
+        ),
+        move |(strand, realm, source)| {
+            let private = sidecar_timeline.read();
+            let projections = private.current.as_ref().cloned().unwrap_or_default();
+            project_visible_messages(
+                &merged_timeline.read(),
+                &strand,
+                &realm,
+                source.as_deref(),
+                &projections,
+                private.current.is_ok(),
+            )
+        },
+    ));
+    let all_messages_snapshot = merged_timeline.read();
+    let visible_messages = visible_timeline.read();
     // Context props carry row changes. Retain the mounted feed across sync and
     // lifecycle updates so its scroll position and focused controls survive.
     let timeline_scope_key = format!("{selected_realm_id}\u{1f}{selected_channel_value}");
@@ -2308,6 +2401,8 @@ pub fn ChatPanel(
             "data-initial-sync": if shared_sync_finished { "complete" } else { "pending" },
             ChatEffects {
                 controller,
+                ordinary_timeline,
+                timeline_basis,
                 authority: authority.clone(),
                 principal_id: principal_id.clone(),
                 device_id: account_device_id.clone(),
@@ -2943,7 +3038,7 @@ pub fn ChatPanel(
                     controller,
                     context: ChatTimelineContext {
                         embedded,
-                        visible_messages: visible_messages.clone(),
+                        visible_messages: visible_timeline,
                         strand_scope_lookup: strand_scope_lookup.clone(),
                         private_sidecar_event_ids: private_sidecar_event_ids.clone(),
                         authority: authority.clone(),

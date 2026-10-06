@@ -61,7 +61,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
     // create wizard left pending by unavailable evidence. No implicit activation.
     let mut creator_resume_revision = use_signal(|| 0_u64);
     use_future(move || async move {
-        let mut changes = crate::outbound_store::subscribe_committed_changes();
+        let mut changes = crate::outbound_store::subscribe_creator_committed_changes();
         while changes.changed().await.is_ok() {
             let next = (*creator_resume_revision.peek()).wrapping_add(1);
             creator_resume_revision.set(next);

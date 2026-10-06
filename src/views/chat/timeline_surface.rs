@@ -35,7 +35,7 @@ pub(super) fn chat_feed_scroll_offset(key: &str) -> f64 {
 #[derive(Clone, PartialEq)]
 pub(super) struct ChatTimelineContext {
     pub embedded: bool,
-    pub visible_messages: Vec<ChatMessage>,
+    pub visible_messages: Memo<Vec<ChatMessage>>,
     pub strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle>,
     pub private_sidecar_event_ids: std::collections::BTreeSet<String>,
     pub authority: arkret_sdk::AccountId,
@@ -121,27 +121,28 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
     // rows before filtering this snapshot. Reading controller.messages here
     // would discard remote reactions/revisions that arrived before the
     // sender's canonical create was persisted locally.
-    let all_messages_snapshot = (controller.messages)();
+    let all_messages_snapshot = visible_messages.read();
     let messages_for_reply_lookup = &all_messages_snapshot;
     let message_stream_cards = crate::views::message_streams::MessageStreamHub::try_use()
         .map(|hub| hub.visible_for(&selected_realm_id, &selected_channel_value))
         .unwrap_or_default();
-    // Follow new content only while the reader remains at the end. Restoring
-    // an absolute offset on every append fights browser scroll anchoring.
-    let content_key = (
-        visible_messages.len(),
-        visible_messages.last().map(|message| message.id.clone()),
-        message_stream_cards
-            .iter()
-            .map(|card| (card.message_id.clone(), card.text.len()))
-            .collect::<Vec<_>>(),
+    let position = chat_feed_scroll_position(&scroll_offset_key);
+    let (feed_id, virtual_window, virtual_mount) = timeline_window::use_virtual_timeline(
+        visible_messages,
+        focus_message_id.clone(),
+        position.follows_latest,
+        position.top,
     );
-    let scroll_key_for_effect = scroll_offset_key.clone();
-    use_effect(use_reactive((&content_key,), move |_| {
-        if scroll_restored() && chat_feed_scroll_position(&scroll_key_for_effect).follows_latest {
-            scroll_chat_feed_to_latest();
-        }
-    }));
+    let rows = visible_messages.read();
+    let start = virtual_window.start.min(rows.len());
+    let end = virtual_window.end.max(start).min(rows.len());
+    let mounted_rows = rows[start..end]
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, row)| (start + index, row))
+        .collect::<Vec<_>>();
+    drop(rows);
     let pinned_target_set: std::collections::HashSet<String> = (controller.shared_pins)()
         .iter()
         .map(|pin| pin.target_ref.clone())
@@ -168,7 +169,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
     } = controller;
 
     rsx! {
-                div { class: "discussion-chat-feed", "data-testid": "message-list",
+                div { id: feed_id, class: "discussion-chat-feed", "data-testid": "message-list",
                     onscroll: move |event: ScrollEvent| {
                         // Ignore mounting events until the saved position has
                         // been restored, but retain a real user scroll to zero.
@@ -182,6 +183,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                         }
                     },
                     onmounted: move |event: MountedEvent| {
+                        virtual_mount.call(event.clone());
                         let scroll_offset_key = scroll_offset_key.clone();
                         async move {
                             let position = chat_feed_scroll_position(&scroll_offset_key);
@@ -232,7 +234,11 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                             }
                         }
                     }
-                    for msg in visible_messages {
+                    div { class: "chat-virtual-rows", "data-testid": "virtual-timeline",
+                        style: "height: {virtual_window.total}px",
+                        div { class: "chat-virtual-slice",
+                            style: "transform: translateY({virtual_window.top}px)",
+                    for (virtual_index, msg) in mounted_rows {
                         {
                             let message_is_private_sidecar =
                                 private_sidecar_event_ids.contains(&msg.id);
@@ -351,13 +357,8 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                             // Deep-linked message swaps its testid so the e2e
                             // harness can assert the scroll/highlight landed.
                             "data-testid": if is_focus_message { "chat-highlighted-message" } else { "chat-message" },
-                            onmounted: move |event: MountedEvent| async move {
-                                if is_focus_message {
-                                    // Scroll the deep-linked message into view once it
-                                    // mounts; harmless no-op if already visible.
-                                    let _ = event.scroll_to(ScrollBehavior::Smooth).await;
-                                }
-                            },
+                            "data-virtual-index": "{virtual_index}",
+                            "data-message-id": "{msg.id}",
                             "data-circle-scope-id": "{scope_attr}",
                             "data-sidecar-provenance": if message_is_private_sidecar {
                                 "private"
@@ -1239,6 +1240,8 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                         }
                             }
                         }
+                    }
+                    }
                     }
                     if let Some(report) = moderation_report_draft() {
                         div {

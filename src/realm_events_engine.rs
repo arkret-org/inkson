@@ -34,6 +34,7 @@ use garth::{
     AuthorityClient, ClientEvent, CommitStreamRef, CommittedDelta, CommittedEventView,
     DecodedInbound, InboundDecoder, RealmReplica, RetrySchedule, StreamScanRequest,
 };
+pub(crate) use own_station::refresh_accepted_sidecar;
 
 use crate::config::MultiProfileConfig;
 // Native hosts share the app's verifier and durable projector through these

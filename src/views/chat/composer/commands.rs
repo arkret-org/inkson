@@ -17,6 +17,10 @@
 
 use super::*;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "commands_context_tests.rs"]
+mod context_tests;
+
 /// Upload every dropped file to the Realm's blob store and append an
 /// attachment reference to the draft for each one that lands.
 ///
@@ -166,7 +170,7 @@ pub(super) fn send_poll(
     let mut messages = controller.messages;
     let mut poll_cards = controller.poll_cards;
     let mut status_msg = controller.status_msg;
-    let state_store = crate::app::SessionContext::get().state_store;
+    let state_store = consume_context::<crate::app::SessionContext>().state_store;
     spawn(async move {
         let result =
             crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
@@ -257,7 +261,7 @@ pub(super) fn route_to_owned_agent_sidecar(
     route: OwnedAgentSidecarRoute,
 ) {
     let mut status_msg = controller.status_msg;
-    let state_store = crate::app::SessionContext::get().state_store;
+    let state_store = consume_context::<crate::app::SessionContext>().state_store;
     let session_fence = match crate::transport::auth::AuthoringSessionFence::capture() {
         Ok(fence) => fence,
         Err(error) => {
@@ -320,7 +324,7 @@ pub(super) fn route_to_owned_agent_sidecar(
             };
             let draft_unchanged = draft_fence.finish();
             let same_session = session_fence.check().is_ok()
-                && crate::app::SessionContext::get()
+                && consume_context::<crate::app::SessionContext>()
                     .active_account()
                     .is_some_and(|active| {
                         active.authority == authority && active.device_id == device_id
@@ -674,7 +678,7 @@ pub(super) fn send_plaintext_message(
     let mut messages = controller.messages;
     let mut status_msg = controller.status_msg;
     let chat_draft = controller.draft;
-    let mut state_store = crate::app::SessionContext::get().state_store;
+    let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
     // A verified-current refresh can replace the composer send Button.
     // Its in-flight write belongs to the controller's message list.
     dioxus::core::Runtime::current().in_scope(messages.origin_scope(), || {
@@ -977,7 +981,7 @@ pub(super) struct SidecarSendRequest {
 }
 
 pub(super) fn send_sidecar_message(controller: ChatController, request: SidecarSendRequest) {
-    let hosted = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
+    let hosted = consume_context::<crate::sidecar::HostedSidecarStateContext>().0;
     send_sidecar_message_with_hosted(controller, hosted, request);
 }
 
@@ -997,7 +1001,7 @@ fn send_sidecar_message_with_hosted(
     }
     let authoring_fence = match crate::transport::auth::AuthoringSessionFence::capture() {
         Ok(fence)
-            if crate::app::SessionContext::get()
+            if consume_context::<crate::app::SessionContext>()
                 .active_account()
                 .is_some_and(|active| {
                     active.authority == request.authority && active.device_id == request.device_id
@@ -1039,7 +1043,7 @@ fn send_sidecar_message_with_hosted(
     });
     let mut reply_to = controller.reply_to_message;
     reply_to.set(None);
-    let state_store = crate::app::SessionContext::get().state_store;
+    let state_store = consume_context::<crate::app::SessionContext>().state_store;
     dioxus::core::Runtime::current().in_scope(messages.origin_scope(), || {
         dioxus::core::spawn(async move {
             let SidecarSendRequest {
@@ -1121,7 +1125,12 @@ fn send_sidecar_message_with_hosted(
                         found.error = None;
                         found.mentions = resolved_mentions;
                     }
-                    status_msg.set("Private Sidecar message sent".to_owned());
+                    status_msg.set(match routed.history_pending {
+                        Some(reason) => format!(
+                            "Private Sidecar message accepted; awaiting verified history: {reason}"
+                        ),
+                        None => "Private Sidecar message sent".to_owned(),
+                    });
                     let open_snapshot = hosted.peek().clone();
                     if let Some(mut open) = open_snapshot.filter(|open| {
                         authoring_fence.check_session_identity().is_ok()
@@ -1131,7 +1140,9 @@ fn send_sidecar_message_with_hosted(
                                 .matches_route(&session.source_realm_id, &session.source_strand_id)
                     }) {
                         open.addressed_agent_ids = addressed_agent_ids;
-                        hosted.set(Some(open));
+                        if hosted.peek().as_ref() != Some(&open) {
+                            hosted.set(Some(open));
+                        }
                     }
                     if authoring_fence.check_session_identity().is_ok()
                         && chat_draft.peek().as_str() == draft_at_send
@@ -1351,7 +1362,7 @@ pub(super) fn send_encrypted_message(
     let mut messages = controller.messages;
     let mut status_msg = controller.status_msg;
     let chat_draft = controller.draft;
-    let mut state_store = crate::app::SessionContext::get().state_store;
+    let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
     let EncryptedSendRequest {
         base_url: base,
         api_token,

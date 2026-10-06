@@ -2,6 +2,204 @@ use super::*;
 
 const CHAT_INITIAL_BACKFILL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
+#[cfg(test)]
+mod tests {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct TimelineControl {
+        signals: Rc<RefCell<Option<TimelineSignals>>>,
+        builds: Rc<Cell<usize>>,
+    }
+
+    #[derive(Clone, Copy)]
+    struct TimelineSignals {
+        incoming: Signal<Vec<ChatMessage>>,
+        messages: Signal<Vec<ChatMessage>>,
+        realm: Signal<String>,
+        cursor: Signal<String>,
+        epoch: Signal<u64>,
+    }
+
+    fn row(id: &str, realm: &str) -> ChatMessage {
+        ChatMessage {
+            local_scope: None,
+            realm_id: realm.to_owned(),
+            id: id.to_owned(),
+            protocol_message_id: Some(id.to_owned()),
+            actor_id: None,
+            sender: "fixture".to_owned(),
+            executed_by: None,
+            body: "fixture".to_owned(),
+            content_format: None,
+            timestamp: "00:00".to_owned(),
+            created_at: None,
+            strand_id: "fixture-strand".to_owned(),
+            reply_to: None,
+            reactions: Vec::new(),
+            redacted: false,
+            edited: false,
+            revisions: Vec::new(),
+            revision_source: None,
+            pending: false,
+            failed: false,
+            error: None,
+            mentions: Vec::new(),
+            crypto_state: MessageCryptoState::Plaintext,
+        }
+    }
+
+    fn timeline_harness(control: TimelineControl) -> Element {
+        let incoming = use_signal(Vec::new);
+        let messages = use_signal(Vec::new);
+        let realm = use_signal(|| "selected".to_owned());
+        let cursor = use_signal(String::new);
+        let epoch = use_signal(|| 0_u64);
+        let ordinary = use_memo(move || {
+            control.builds.set(control.builds.get() + 1);
+            let mut rows = messages.read().clone();
+            merge_chat_messages(&mut rows, incoming());
+            rows
+        });
+        use_local_ordinary_timeline(realm(), ordinary, messages, cursor, epoch);
+        *control.signals.borrow_mut() = Some(TimelineSignals {
+            incoming,
+            messages,
+            realm,
+            cursor,
+            epoch,
+        });
+        let count = messages.read().len();
+        rsx! { div { "{count}" } }
+    }
+
+    fn settle(dom: &mut VirtualDom) {
+        for _ in 0..6 {
+            dom.render_immediate_to_vec();
+        }
+    }
+
+    #[test]
+    fn ordinary_memo_updates_without_cursor_change_and_settles_feedback() {
+        let control = TimelineControl {
+            signals: Rc::new(RefCell::new(None)),
+            builds: Rc::new(Cell::new(0)),
+        };
+        let mut dom = VirtualDom::new_with_props(timeline_harness, control.clone());
+        dom.rebuild_in_place();
+        settle(&mut dom);
+        let mut signals = control.signals.borrow().unwrap();
+        let mut queued = row("message", "selected");
+        queued.pending = true;
+        let other = row("other", "other-realm");
+        dom.in_runtime(|| {
+            signals.cursor.set("opaque-ready".to_owned());
+            signals.incoming.set(vec![queued, other]);
+        });
+        settle(&mut dom);
+        dom.in_runtime(|| {
+            assert_eq!(signals.messages.read().len(), 1);
+            assert!(signals.messages.read()[0].pending);
+        });
+        let mut accepted = row("message", "selected");
+        accepted.edited = true;
+        accepted.body = "verified revision".to_owned();
+        accepted.revisions = vec!["fixture".to_owned()];
+        accepted.reactions = vec![("+1".to_owned(), vec!["fixture".to_owned()])];
+        dom.in_runtime(|| signals.incoming.set(vec![accepted.clone()]));
+        settle(&mut dom);
+        dom.in_runtime(|| {
+            let rows = signals.messages.read();
+            assert_eq!(rows.len(), 1);
+            assert!(!rows[0].pending);
+            assert!(rows[0].edited);
+            assert_eq!(rows[0].body, "verified revision");
+            assert_eq!(rows[0].reactions, accepted.reactions);
+            assert_eq!(*signals.cursor.read(), "opaque-ready");
+            assert_eq!(*signals.epoch.read(), 0);
+        });
+        let builds = control.builds.get();
+        settle(&mut dom);
+        dom.in_runtime(|| signals.cursor.set("reminted-ready".to_owned()));
+        settle(&mut dom);
+        assert_eq!(control.builds.get(), builds);
+        accepted.redacted = true;
+        accepted.body.clear();
+        dom.in_runtime(|| signals.incoming.set(vec![accepted]));
+        settle(&mut dom);
+        dom.in_runtime(|| assert!(signals.messages.read()[0].redacted));
+        let builds = control.builds.get();
+        settle(&mut dom);
+        assert_eq!(control.builds.get(), builds);
+    }
+
+    #[test]
+    fn ordinary_memo_preserves_readiness_and_realm_switch() {
+        let control = TimelineControl {
+            signals: Rc::new(RefCell::new(None)),
+            builds: Rc::new(Cell::new(0)),
+        };
+        let mut dom = VirtualDom::new_with_props(timeline_harness, control.clone());
+        dom.rebuild_in_place();
+        settle(&mut dom);
+        let mut signals = control.signals.borrow().unwrap();
+        dom.in_runtime(|| {
+            signals
+                .incoming
+                .set(vec![row("first", "selected"), row("second", "next")]);
+        });
+        settle(&mut dom);
+        dom.in_runtime(|| assert!(signals.messages.read().is_empty()));
+        dom.in_runtime(|| signals.epoch.set(1));
+        settle(&mut dom);
+        dom.in_runtime(|| {
+            assert_eq!(signals.messages.read().len(), 1);
+            signals.realm.set("next".to_owned());
+        });
+        settle(&mut dom);
+        dom.in_runtime(|| {
+            let rows = signals.messages.read();
+            assert_eq!(rows.len(), 2);
+            assert!(rows.iter().any(|row| row.id == "second"));
+        });
+    }
+}
+
+fn use_local_ordinary_timeline(
+    selected_realm_id: String,
+    ordinary_timeline: Memo<Vec<ChatMessage>>,
+    mut messages: Signal<Vec<ChatMessage>>,
+    sync_cursor: Signal<String>,
+    realm_live_epoch: Signal<u64>,
+) {
+    let account_sync_ready = use_memo(move || crate::app::account_sync_ready(&sync_cursor()));
+    use_effect(use_reactive((&selected_realm_id,), move |(realm,)| {
+        let ready = account_sync_ready();
+        let live_epoch = realm_live_epoch();
+        let projected = ordinary_timeline.read();
+        if (!ready && live_epoch == 0) || realm.trim().is_empty() {
+            return;
+        }
+        // This Memo has already verified and folded the complete history,
+        // including revisions and control Events. Never fold/decrypt it again.
+        let incoming = projected
+            .iter()
+            .filter(|message| message.realm_id == realm.trim())
+            .cloned()
+            .collect();
+        let current = messages.peek();
+        let mut next = current.clone();
+        merge_chat_messages(&mut next, incoming);
+        if *current != next {
+            drop(current);
+            messages.set(next);
+        }
+    }));
+}
+
 #[component]
 pub(super) fn ChatEffects(
     controller: ChatController,
@@ -11,6 +209,8 @@ pub(super) fn ChatEffects(
     selected_realm_id: String,
     initial_strand_id: String,
     plaintext_service_id: String,
+    ordinary_timeline: Memo<Vec<ChatMessage>>,
+    timeline_basis: Memo<super::timeline_projection::TimelineProjectionBasis>,
     sync_cursor: Signal<String>,
     mut realm_live_epoch: Signal<u64>,
     frontier_state: Signal<String>,
@@ -30,9 +230,9 @@ pub(super) fn ChatEffects(
         selected_realm_id.clone(),
         (controller.selected_channel)(),
         authority.clone(),
+        device_id.clone(),
         token,
-        sync_cursor,
-        realm_live_epoch,
+        timeline_basis,
         state_store,
     );
     super::sidecar_restore::use_sidecar_reconciliation(
@@ -664,14 +864,10 @@ pub(super) fn ChatEffects(
                 &device_id,
             ));
             let (local_messages, local_poll_cards, local_channels) = {
-                let store = state_store.read();
+                let store = state_store.peek();
                 let snapshot = store.load();
                 (
-                    chat_messages_from_local_state_with_sidecar(
-                        &snapshot,
-                        Some(&store),
-                        local_decrypt_identity,
-                    ),
+                    ordinary_timeline(),
                     poll_cards_from_local_state_with_sidecar(
                         &snapshot,
                         Some(&store),
@@ -851,67 +1047,78 @@ pub(super) fn ChatEffects(
             });
         }
     });
+    use_local_ordinary_timeline(
+        selected_realm_after_initial_sync.clone(),
+        ordinary_timeline,
+        messages,
+        sync_cursor,
+        realm_live_epoch,
+    );
+    let control_revision = use_hook(|| std::rc::Rc::new(std::cell::Cell::new(0_u64)));
+    let local_control_revision = use_memo(move || {
+        let _ = timeline_basis.read();
+        let next = control_revision.get().wrapping_add(1);
+        control_revision.set(next);
+        next
+    });
+    let account_sync_ready_for_controls =
+        use_memo(move || crate::app::account_sync_ready(&sync_cursor()));
     let mut local_timeline_sync_key_seen = use_signal(String::new);
     {
         let selected_realm_for_local_timeline = selected_realm_after_initial_sync.clone();
         let authority_for_local_timeline = authority.clone();
         let principal_id_for_local_timeline = account_after_initial_sync.clone();
         let device_id_for_local_timeline = device_after_initial_sync.clone();
-        use_effect(move || {
-            let cursor = sync_cursor();
-            let account_sync_ready = crate::app::account_sync_ready(&cursor);
-            let live_epoch = realm_live_epoch();
-            if !account_sync_ready && live_epoch == 0 {
-                return;
-            }
-            let realm = selected_realm_for_local_timeline.trim().to_owned();
-            if realm.is_empty() {
-                return;
-            }
-            // Timeline projection follows durable Realm revisions. Cursor
-            // token re-mints for typing/receipts/calls must not rescan every
-            // locally persisted message.
-            let sync_key = format!("{realm}|{}|{live_epoch}", account_sync_ready as u8);
-            if local_timeline_sync_key_seen.peek().as_str() == sync_key {
-                return;
-            }
-            local_timeline_sync_key_seen.set(sync_key);
-            let (next_channels, next_messages, next_poll_cards) = {
-                let store = state_store.read();
-                let snapshot = store.load();
-                let decrypt_identity = Some((
-                    &authority_for_local_timeline,
-                    principal_id_for_local_timeline.as_str(),
-                    &device_id_for_local_timeline,
-                ));
-                let messages = chat_messages_from_local_state_with_sidecar(
-                    &snapshot,
-                    Some(&store),
-                    decrypt_identity,
-                )
-                .into_iter()
-                .filter(|message| message.realm_id == realm)
-                .collect::<Vec<_>>();
-                let poll_cards = poll_cards_from_local_state_with_sidecar(
-                    &snapshot,
-                    Some(&store),
-                    decrypt_identity,
+        use_effect(use_reactive(
+            (&selected_realm_for_local_timeline,),
+            move |(realm,)| {
+                let account_sync_ready = account_sync_ready_for_controls();
+                let live_epoch = realm_live_epoch();
+                let revision = local_control_revision();
+                if !account_sync_ready && live_epoch == 0 {
+                    return;
+                }
+                let realm = realm.trim().to_owned();
+                if realm.is_empty() {
+                    return;
+                }
+                // Timeline projection follows durable Realm revisions. Cursor
+                // token re-mints for typing/receipts/calls must not rescan every
+                // locally persisted message.
+                let sync_key = format!(
+                    "{realm}|{}|{live_epoch}|{revision}",
+                    account_sync_ready as u8
                 );
-                let channels = channels_from_current_view_with_store(
-                    store.current_product_view().as_ref(),
-                    &realm,
-                    &store,
-                );
-                (channels, messages, poll_cards)
-            };
-            if !next_channels.is_empty() {
-                event_sink.emit(ChatProjectionEvent::MergeChannels(next_channels));
-            }
-            if !next_messages.is_empty() {
-                event_sink.emit(ChatProjectionEvent::MergeMessages(next_messages));
-            }
-            event_sink.emit(ChatProjectionEvent::ReplacePollProjection(next_poll_cards));
-        });
+                if local_timeline_sync_key_seen.peek().as_str() == sync_key {
+                    return;
+                }
+                local_timeline_sync_key_seen.set(sync_key);
+                let (next_channels, next_poll_cards) = {
+                    let store = state_store.peek();
+                    let snapshot = store.load();
+                    let decrypt_identity = Some((
+                        &authority_for_local_timeline,
+                        principal_id_for_local_timeline.as_str(),
+                        &device_id_for_local_timeline,
+                    ));
+                    let poll_cards = poll_cards_from_local_state_with_sidecar(
+                        &snapshot,
+                        Some(&store),
+                        decrypt_identity,
+                    );
+                    let channels = channels_from_current_view_with_store(
+                        store.current_product_view().as_ref(),
+                        &realm,
+                        &store,
+                    );
+                    (channels, poll_cards)
+                };
+                if !next_channels.is_empty() {
+                    event_sink.emit(ChatProjectionEvent::MergeChannels(next_channels));
+                }
+                event_sink.emit(ChatProjectionEvent::ReplacePollProjection(next_poll_cards));
+            },
+        ));
     }
 
     // T7.4: safety-net crypto state refresh for rows built without the

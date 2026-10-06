@@ -27,7 +27,7 @@ pub(crate) fn CreatorMlsRetry(
     let mut status = use_signal(String::new);
     let mut revision = use_signal(|| 0u64);
     use_future(move || async move {
-        let mut changes = crate::outbound_store::subscribe_committed_changes();
+        let mut changes = crate::outbound_store::subscribe_creator_committed_changes();
         while changes.changed().await.is_ok() {
             let next = (*revision.peek()).wrapping_add(1);
             revision.set(next);

@@ -1,6 +1,12 @@
 use super::*;
 
 impl LocalStateStore {
+    /// Non-secret trust metadata for the exact active account. Never clone
+    /// unrelated replay history to validate one IdentityLink's domain.
+    pub(crate) fn server_trust_domain(&self) -> Option<String> {
+        self.with_unoverlaid_account_fields(|state| state.server_trust_domain.clone())
+    }
+
     /// Borrow fields untouched by receive-chain overlays when the loaded cache
     /// still belongs to the active account. A namespace mismatch must take the
     /// same persistence path as `load`, never read the previous account's cache.

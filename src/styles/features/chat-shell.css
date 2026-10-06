@@ -495,6 +495,7 @@
 }
 
 .discussion-chat-feed {
+  overflow-anchor: none;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -785,4 +786,22 @@
   width: 16px;
   height: 16px;
   flex: 0 0 16px;
+}
+
+.chat-virtual-rows {
+  position: relative;
+  flex-shrink: 0;
+  overflow-anchor: none;
+}
+.chat-virtual-slice {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.chat-virtual-slice > .chat-message {
+  flex-shrink: 0;
 }

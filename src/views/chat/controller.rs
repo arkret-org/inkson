@@ -515,7 +515,7 @@ impl ChatController {
                     return;
                 }
             };
-        let mut state_store = crate::app::SessionContext::get().state_store;
+        let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
         if let Err(error) = state_store.write().stage_saved_account_data_item(&item) {
             self.status_msg
                 .set(format!("Private save failed: {error:#}"));
@@ -626,7 +626,7 @@ impl ChatController {
             crate::i18n::tr("message.shared_pin_pending")
         });
 
-        let mut state_store = crate::app::SessionContext::get().state_store;
+        let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
         let base_url = context.base_url;
         let api_token = (context.token)();
         let wait_for = active_sync_token((context.sync_cursor)());
@@ -711,7 +711,7 @@ impl ChatController {
                     .push((emoji.clone(), vec![context.principal_id.to_string()]));
             }
         }
-        let state_store = crate::app::SessionContext::get().state_store;
+        let state_store = consume_context::<crate::app::SessionContext>().state_store;
         let operation = match build_chat_reaction_add_operation(
             state_store,
             &context.selected_realm_id,
@@ -907,7 +907,7 @@ impl ChatController {
         let api_token = (context.token)();
         let wait_for = active_sync_token((context.sync_cursor)());
         let mut frontier_state = context.frontier_state;
-        let mut state_store = crate::app::SessionContext::get().state_store;
+        let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
         let mut messages = self.messages;
         let mut status_msg = self.status_msg;
         spawn(async move {
@@ -1008,7 +1008,7 @@ impl ChatController {
             found.error = None;
         }
         self.status_msg.set("Retrying message".to_owned());
-        let state_store = crate::app::SessionContext::get().state_store;
+        let state_store = consume_context::<crate::app::SessionContext>().state_store;
         let mention_values = mention_nodes_to_values(&message.mentions);
         let base_url = context.base_url;
         let authority = context.authority;
@@ -1396,7 +1396,7 @@ impl ChatController {
                 .and_then(|channel| channel.scope_circle.as_ref())
                 .map(|scope| scope.circle_id.clone()),
         };
-        let state_store = crate::app::SessionContext::get().state_store;
+        let state_store = consume_context::<crate::app::SessionContext>().state_store;
         let base_url = context.base_url;
         let realm_id = context.selected_realm_id;
         let strand_id = context.selected_channel_id;
@@ -1464,7 +1464,7 @@ impl ChatController {
         operation: crate::operation::LocalOperation,
         draft: StrandCreateDraft,
     ) {
-        let mut state_store = crate::app::SessionContext::get().state_store;
+        let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
         let mut frontier_state = draft.frontier_state;
         spawn(async move {
             let api = match authed_api_with_sync(&base_url, api_token, wait_for) {
@@ -1866,6 +1866,10 @@ fn use_composer_state(target: ComposerTarget) -> ComposerState {
     targets.write().insert(target, state);
     state
 }
+
+#[cfg(test)]
+#[path = "controller_context_tests.rs"]
+mod controller_context_tests;
 
 #[cfg(test)]
 mod composer_target_tests {

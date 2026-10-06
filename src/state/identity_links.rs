@@ -35,8 +35,15 @@ impl LocalStateStore {
                 entry.identity_link.mls_epoch,
                 entry.identity_link.mls_leaf_index,
             );
-        if let Some(existing) = self.load().authenticated_identity_links.get(&key) {
-            if existing != &entry {
+        let held = self.with_mls_receive_fields(|state, overlay| {
+            overlay
+                .identity_links
+                .get(&key)
+                .or_else(|| state.authenticated_identity_links.get(&key))
+                .map(|existing| existing == &entry)
+        });
+        if let Some(matches) = held {
+            if !matches {
                 anyhow::bail!(
                     "authenticated IdentityLink coordinate resolves to conflicting exact bytes"
                 );

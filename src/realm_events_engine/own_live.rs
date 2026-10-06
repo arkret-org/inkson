@@ -492,7 +492,7 @@ async fn rollback_live_current_pointer(
     confirm_live_current_pointer(index, store, account, generation).await
 }
 
-async fn refresh_sidecars<F: Fn() -> bool>(
+pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
     client: &OwnStationResultClient,
     http: &arkret_sdk::http_client::Client,
     realm: &arkret_sdk::RealmId,

@@ -193,47 +193,128 @@ fn chat_message_protocol_id(message: &ChatMessage) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
-fn chat_message_has_protocol_id(message: &ChatMessage, protocol_id: &str) -> bool {
-    chat_message_protocol_id(message).is_some_and(|candidate| candidate == protocol_id)
+type MessageSlots = std::collections::BTreeMap<String, std::collections::BTreeSet<usize>>;
+
+#[derive(Default)]
+struct MessageMergeIndex {
+    ids: MessageSlots,
+    protocols: MessageSlots,
 }
 
-fn prune_duplicate_chat_message_entries(
-    target: &mut Vec<ChatMessage>,
-    keep_id: &str,
-    protocol_id: Option<&str>,
-) {
-    let mut kept_primary = false;
-    target.retain(|message| {
-        if message.id == keep_id {
-            if kept_primary {
-                return false;
-            }
-            kept_primary = true;
-            return true;
+#[cfg(test)]
+thread_local! {
+    static MERGE_INDEX_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+impl MessageMergeIndex {
+    fn insert(&mut self, slot: usize, message: &ChatMessage) {
+        #[cfg(test)]
+        MERGE_INDEX_STEPS.with(|steps| steps.set(steps.get() + 1));
+        self.ids.entry(message.id.clone()).or_default().insert(slot);
+        if let Some(protocol) = chat_message_protocol_id(message) {
+            self.protocols
+                .entry(protocol.to_owned())
+                .or_default()
+                .insert(slot);
         }
-        !protocol_id.is_some_and(|protocol_id| chat_message_has_protocol_id(message, protocol_id))
-    });
+    }
+
+    fn remove(&mut self, slot: usize, message: &ChatMessage) {
+        #[cfg(test)]
+        MERGE_INDEX_STEPS.with(|steps| steps.set(steps.get() + 1));
+        Self::remove_alias(&mut self.ids, &message.id, slot);
+        if let Some(protocol) = chat_message_protocol_id(message) {
+            Self::remove_alias(&mut self.protocols, protocol, slot);
+        }
+    }
+
+    fn remove_alias(index: &mut MessageSlots, alias: &str, slot: usize) {
+        if let Some(slots) = index.get_mut(alias) {
+            slots.remove(&slot);
+            if slots.is_empty() {
+                index.remove(alias);
+            }
+        }
+    }
+
+    fn first_match(&self, message: &ChatMessage) -> Option<usize> {
+        #[cfg(test)]
+        MERGE_INDEX_STEPS.with(|steps| steps.set(steps.get() + 1));
+        let by_id = self
+            .ids
+            .get(&message.id)
+            .and_then(|slots| slots.first())
+            .copied();
+        let by_protocol = chat_message_protocol_id(message)
+            .and_then(|protocol| self.protocols.get(protocol))
+            .and_then(|slots| slots.first())
+            .copied();
+        match (by_id, by_protocol) {
+            (Some(left), Some(right)) => Some(left.min(right)),
+            (left, right) => left.or(right),
+        }
+    }
+
+    fn duplicate_slots(&self, message: &ChatMessage) -> std::collections::BTreeSet<usize> {
+        let same_id = self.ids.get(&message.id).expect("merged row is indexed");
+        let primary = *same_id.first().expect("merged row has a primary slot");
+        let same_protocol =
+            chat_message_protocol_id(message).and_then(|protocol| self.protocols.get(protocol));
+        same_id
+            .iter()
+            .chain(same_protocol.into_iter().flatten())
+            .filter_map(|slot| {
+                #[cfg(test)]
+                MERGE_INDEX_STEPS.with(|steps| steps.set(steps.get() + 1));
+                (*slot != primary).then_some(*slot)
+            })
+            .collect()
+    }
 }
 
 pub(crate) fn merge_chat_messages(target: &mut Vec<ChatMessage>, incoming: Vec<ChatMessage>) {
+    if incoming.is_empty() {
+        return;
+    }
+    // Slots retain the original presentation order throughout this merge.
+    // Index every alias, including untouched initial duplicates: a bridge
+    // must still select the first row matching either alias, not a preferred ID.
+    let mut slots = std::mem::take(target)
+        .into_iter()
+        .map(Some)
+        .collect::<Vec<_>>();
+    let mut index = MessageMergeIndex::default();
+    for (slot, message) in slots.iter().enumerate() {
+        index.insert(slot, message.as_ref().expect("initial slot is occupied"));
+    }
     for message in incoming {
-        let protocol_id = chat_message_protocol_id(&message).map(ToOwned::to_owned);
-        if let Some(existing_index) = target.iter().position(|existing| {
-            existing.id == message.id
-                || protocol_id
-                    .as_deref()
-                    .is_some_and(|protocol_id| chat_message_has_protocol_id(existing, protocol_id))
-        }) {
-            merge_duplicate_create_message(&mut target[existing_index], message);
-            let keep_id = target[existing_index].id.clone();
-            let protocol_id =
-                chat_message_protocol_id(&target[existing_index]).map(ToOwned::to_owned);
-            prune_duplicate_chat_message_entries(target, &keep_id, protocol_id.as_deref());
+        if let Some(slot) = index.first_match(&message) {
+            let existing = slots[slot].as_mut().expect("matched slot is occupied");
+            index.remove(slot, existing);
+            merge_duplicate_create_message(existing, message);
+            index.insert(slot, existing);
+            // Merging can rewrite both aliases. The earliest row with the new
+            // keep ID survives even if it precedes the row we just updated.
+            for duplicate in index.duplicate_slots(existing) {
+                let removed = slots[duplicate].take().expect("duplicate slot is occupied");
+                index.remove(duplicate, &removed);
+            }
         } else {
-            target.push(message);
+            index.insert(slots.len(), &message);
+            slots.push(Some(message));
         }
     }
+    // Compact once, without sorting or rebuilding identities across streams.
+    target.extend(slots.into_iter().filter_map(|message| {
+        #[cfg(test)]
+        MERGE_INDEX_STEPS.with(|steps| steps.set(steps.get() + 1));
+        message
+    }));
 }
+
+#[cfg(test)]
+#[path = "strands_merge_tests.rs"]
+mod merge_tests;
 
 fn pending_message_private_plaintext_sidecar_body(
     message: &ChatMessage,

@@ -101,6 +101,28 @@ impl E2eePlaintextCacheV1 {
         }
     }
 
+    /// Copy only this secure entry's fields, with the same receive-overlay
+    /// precedence as the complete state used by durable account persistence.
+    fn from_receive_fields(state: &ClientLocalState, overlay: &MlsReceiveOverlay) -> Self {
+        let mut cache = Self::from_state(state);
+        for (key, checkpoint) in &overlay.snapshots {
+            cache
+                .mls_local_checkpoints
+                .insert(key.clone(), checkpoint.clone());
+        }
+        for (realm, entries) in &overlay.plaintexts {
+            cache
+                .decrypted_plaintext
+                .entry(realm.clone())
+                .or_default()
+                .extend(entries.clone());
+        }
+        cache
+            .authenticated_identity_links
+            .extend(overlay.identity_links.clone());
+        cache
+    }
+
     fn is_empty(&self) -> bool {
         self.mls_local_checkpoints.is_empty()
             && self.private_plaintext.is_empty()
@@ -223,7 +245,7 @@ impl LocalStateStore {
         let Some(key) = self.active_e2ee_plaintext_cache_key() else {
             return Ok(None);
         };
-        let cache = E2eePlaintextCacheV1::from_state(&self.effective_state_for_persist());
+        let cache = self.with_mls_receive_fields(E2eePlaintextCacheV1::from_receive_fields);
         let json = if cache.is_empty() {
             None
         } else {
@@ -276,7 +298,8 @@ impl LocalStateStore {
     }
 
     pub(crate) fn e2ee_plaintext_cache_usage(&self) -> E2eePlaintextCacheUsage {
-        E2eePlaintextCacheV1::from_state(&self.effective_state_for_persist()).plaintext_usage()
+        self.with_mls_receive_fields(E2eePlaintextCacheV1::from_receive_fields)
+            .plaintext_usage()
     }
 
     /// Apply the in-memory clear and return the owned durable write. Callers

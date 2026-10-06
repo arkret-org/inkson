@@ -650,3 +650,57 @@ fn private_echo_stays_after_its_source_anchor_but_before_future_ordinary_message
     assert_eq!(projected.len(), 1);
     assert_eq!(projected[0].id, "ordinary-new");
 }
+
+#[test]
+fn ten_thousand_sidecar_streams_visit_only_changed_heads() {
+    let template = timeline_exchange_fixture(
+        "ak:event:ATrYU3cGlcWkAcHXWgJ8sIYfraoV9pIwEHNNStEqHvFh",
+        "ak:event:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
+    );
+    let projections = (0_u64..10_000)
+        .map(|index| {
+            let mut digest = [0_u8; 32];
+            digest[..8].copy_from_slice(&index.to_be_bytes());
+            let request = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, digest);
+            let mut projection = template.clone();
+            projection.sidecar_id =
+                arkret_sdk::SidecarId::new(request.as_str().replace("ak:event:", "ak:sidecar:"))
+                    .unwrap();
+            projection.private_request_event_id = request;
+            projection.source_hlc = arkret_sdk::Hlc::from_components(index, 0, "a13f9c2e").unwrap();
+            projection
+        })
+        .collect::<Vec<_>>();
+    let lookup = projections
+        .iter()
+        .map(|projection| (projection.private_request_event_id.to_string(), projection))
+        .collect();
+    let rows = projections
+        .iter()
+        .rev()
+        .map(|projection| {
+            let mut row = sidecar_projection_message_for_realm(
+                projection.source_track_ref.realm_id.as_str(),
+                projection.private_request_event_id.as_str(),
+                projection.source_track_ref.strand_id.as_str(),
+                "private",
+            );
+            row.created_at = None;
+            row
+        })
+        .collect();
+    timeline_projection::WEAVE_HEAD_VISITS.with(|count| count.set(0));
+    let merged = timeline_projection::interleave_private_timeline_rows(rows, &lookup);
+    assert_eq!(merged.len(), 10_000);
+    assert_eq!(
+        merged.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
+        projections
+            .iter()
+            .map(|projection| projection.private_request_event_id.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        timeline_projection::WEAVE_HEAD_VISITS.with(|count| count.get()),
+        20_000
+    );
+}

@@ -206,7 +206,7 @@ fn authenticate_received_identity_link(
     let canonical = arkret_sdk::canonical::canonical_json_bytes(&identity_link).ok()?;
     let pairwise_actor = arkret_sdk::ActorId::service(identity_link.pairwise_actor_id.clone());
     let pairwise_credential = arkret_sdk::mls_basic_credential_identity(&pairwise_actor).ok()?;
-    let trusted_domain = state_store.load().server_trust_domain?;
+    let trusted_domain = state_store.server_trust_domain()?;
     if canonical != plaintext
         || identity_link.status != arkret_sdk::IdentityLinkStatus::Active
         || pairwise_credential.as_slice() != verified_sender_domain

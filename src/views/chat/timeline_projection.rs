@@ -8,6 +8,7 @@ pub(super) struct TimelineProjectionBasis {
 
 #[cfg(test)]
 thread_local! {
+    pub(super) static WEAVE_HEAD_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static ORDINARY_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -99,53 +100,65 @@ pub(super) fn interleave_private_timeline_rows(
         }
     }
     let mut shown_source_ids = BTreeSet::new();
+    let mut available = BTreeSet::new();
+    let mut blocked = BTreeMap::<String, Vec<String>>::new();
+    let mut pending_heads = private.keys().cloned().collect::<VecDeque<_>>();
     let mut merged = Vec::new();
-    while !ordinary.is_empty() || private.values().any(|stream| !stream.is_empty()) {
-        let candidate = private
-            .iter()
-            .filter_map(|(stream_id, stream)| {
-                let row = stream.front()?;
-                let projection = projections.get(&row.id)?;
-                if projection
-                    .source_event_id
-                    .as_ref()
-                    .is_some_and(|anchor| !shown_source_ids.contains(anchor.as_str()))
-                {
-                    return None;
-                }
-                let time = row
-                    .created_at
-                    .map(|at| at.timestamp_millis())
-                    .unwrap_or(projection.source_hlc.components().physical_ms as i64);
-                Some((
-                    stream_id,
-                    (
-                        time,
-                        &projection.source_hlc,
-                        projection.client_order_key.as_str(),
-                        projection.exchange_id.as_str(),
-                        row.id.as_str(),
-                    ),
-                ))
-            })
-            .min_by(|left, right| left.1.cmp(&right.1));
-        let private_stream = candidate.and_then(|(stream_id, key)| {
-            let precedes_ordinary = ordinary.front().is_none_or(|row| {
+    while !ordinary.is_empty() || !available.is_empty() || !pending_heads.is_empty() {
+        while let Some(stream_id) = pending_heads.pop_front() {
+            #[cfg(test)]
+            WEAVE_HEAD_VISITS.with(|count| count.set(count.get() + 1));
+            let Some(row) = private.get(&stream_id).and_then(|stream| stream.front()) else {
+                continue;
+            };
+            let Some(projection) = projections.get(&row.id) else {
+                continue;
+            };
+            if let Some(anchor) = projection
+                .source_event_id
+                .as_ref()
+                .filter(|anchor| !shown_source_ids.contains(anchor.as_str()))
+            {
+                blocked
+                    .entry(anchor.to_string())
+                    .or_default()
+                    .push(stream_id);
+                continue;
+            }
+            let time = row
+                .created_at
+                .map(|at| at.timestamp_millis())
+                .unwrap_or_else(|| projection.source_hlc.components().physical_ms as i64);
+            available.insert((
+                time,
+                projection.source_hlc.clone(),
+                projection.client_order_key.clone(),
+                projection.exchange_id.to_string(),
+                row.id.clone(),
+                stream_id,
+            ));
+        }
+        let private_precedes = available.first().is_some_and(|head| {
+            ordinary.front().is_none_or(|row| {
                 row.created_at
-                    .is_some_and(|at| key.0 <= at.timestamp_millis())
-            });
-            precedes_ordinary.then(|| stream_id.clone())
+                    .is_some_and(|at| head.0 <= at.timestamp_millis())
+            })
         });
-        if let Some(stream_id) = private_stream {
+        if private_precedes {
+            let head = available.pop_first().expect("available private head");
+            let stream_id = head.5;
             if let Some(row) = private.get_mut(&stream_id).and_then(VecDeque::pop_front) {
                 merged.push(row);
+                pending_heads.push_back(stream_id);
             }
         } else if let Some(row) = ordinary.pop_front() {
+            if let Some(streams) = blocked.remove(&row.id) {
+                pending_heads.extend(streams);
+            }
             shown_source_ids.insert(row.id.clone());
             merged.push(row);
         } else {
-            // Unavailable anchors were removed by the visibility gate. Never
-            // expose a row if an inconsistent caller supplies one nevertheless.
+            // Missing anchors cannot authorize an otherwise hidden private row.
             break;
         }
     }
