@@ -124,6 +124,40 @@ pub(crate) fn enrich_authoritative_agent_metadata(
     }
 }
 
+pub(crate) fn upsert_joined_owned_agent_participants(
+    participants: &mut Vec<SpaceParticipant>,
+    joined_members: Option<&std::collections::BTreeSet<arkret_sdk::ActorId>>,
+    agent_metadata: &std::collections::BTreeMap<String, AgentParticipantMetadata>,
+    principal_id: &str,
+) {
+    let Some(joined_members) = joined_members else {
+        return;
+    };
+    let Ok(station) = crate::operation::authoring_station_id() else {
+        return;
+    };
+    // Inventory supplies Agent identity; the complete verified member current
+    // supplies its hosted Account. A partial display roster cannot supply both.
+    for actor in joined_members {
+        let Some(account) = actor.as_account_id() else {
+            continue;
+        };
+        if account.station_id != station
+            || !agent_metadata.contains_key(account.principal_id.as_str())
+        {
+            continue;
+        }
+        upsert_participant(
+            participants,
+            actor,
+            SpaceParticipantRole::Member,
+            principal_id,
+            None,
+            None,
+        );
+    }
+}
+
 pub(crate) fn upsert_agent_participants(
     participants: &mut Vec<SpaceParticipant>,
     agent_metadata: &std::collections::BTreeMap<String, AgentParticipantMetadata>,

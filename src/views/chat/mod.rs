@@ -2180,6 +2180,17 @@ pub fn ChatPanel(
             &mut agent_metadata,
             agent_metadata_from_mentions(&all_messages_snapshot),
         );
+        let joined_members = state_store
+            .read()
+            .complete_joined_member_hint_for_realm(&selected_realm_id)
+            .ok()
+            .flatten();
+        upsert_joined_owned_agent_participants(
+            &mut participants,
+            joined_members.as_ref(),
+            &agent_metadata,
+            &principal_id,
+        );
         upsert_agent_participants(&mut participants, &agent_metadata, &principal_id);
         annotate_agent_participants_with_metadata(&mut participants, &agent_metadata);
     }

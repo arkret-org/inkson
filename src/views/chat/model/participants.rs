@@ -76,6 +76,84 @@ fn owned_agent_inventory_does_not_classify_another_stations_member() {
     assert_eq!(participants[0].actor_id, Some(remote));
 }
 
+#[cfg(test)]
+#[test]
+fn owned_agent_mention_uses_complete_joined_account_without_display_roster() {
+    let controller = "ak:did_core:web:controller.example";
+    let agent = "ak:did_core:web:joined-agent.example";
+    let local = crate::mls_api_helpers::local_account_actor_id(agent).unwrap();
+    let remote = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        local.signing_principal_id().clone(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:remote-station.example").unwrap(),
+    ));
+    let unowned =
+        crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:unowned-agent.example")
+            .unwrap();
+    let inventory = owned_agent_metadata(
+        &std::collections::BTreeMap::from([(agent.to_owned(), "assistant".to_owned())]),
+        controller,
+        None,
+    );
+    let request =
+        crate::views::chat::MentionInsertRequest::new(local.as_account_id().unwrap().clone(), true);
+    let public = std::collections::BTreeSet::new();
+    for joined in [
+        None,
+        Some(std::collections::BTreeSet::from([
+            remote.clone(),
+            unowned.clone(),
+        ])),
+    ] {
+        let mut participants = Vec::new();
+        upsert_joined_owned_agent_participants(
+            &mut participants,
+            joined.as_ref(),
+            &inventory,
+            controller,
+        );
+        upsert_agent_participants(&mut participants, &inventory, controller);
+        annotate_agent_participants_with_metadata(&mut participants, &inventory);
+        assert!(
+            request
+                .resolve_candidate(&participants, controller, &public)
+                .is_none()
+        );
+    }
+    let joined = std::collections::BTreeSet::from([local.clone(), remote.clone(), unowned]);
+    let mut participants = Vec::new();
+    upsert_joined_owned_agent_participants(
+        &mut participants,
+        Some(&joined),
+        &inventory,
+        controller,
+    );
+    upsert_agent_participants(&mut participants, &inventory, controller);
+    annotate_agent_participants_with_metadata(&mut participants, &inventory);
+    assert_eq!(participants.len(), 1);
+    assert_eq!(participants[0].actor_id.as_ref(), Some(&local));
+    let candidate = request
+        .resolve_candidate(&participants, controller, &public)
+        .expect("a joined owned Account can be selected without a display roster page");
+    assert_eq!(
+        candidate.subject_account_id,
+        *local.as_account_id().unwrap()
+    );
+    assert!(
+        request
+            .resolve_candidate(&participants, "ak:did_core:web:other.example", &public)
+            .is_none()
+    );
+    let remote_request = crate::views::chat::MentionInsertRequest::new(
+        remote.as_account_id().unwrap().clone(),
+        true,
+    );
+    assert!(
+        remote_request
+            .resolve_candidate(&participants, controller, &public)
+            .is_none()
+    );
+}
+
 pub(crate) fn clean_participant_display_name(
     value: &str,
     principal_id: Option<&str>,
