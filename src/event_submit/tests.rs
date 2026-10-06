@@ -861,8 +861,10 @@ fn mls_candidate_release_requires_a_definitive_negative_authority_answer() {
     item.last_error = Some("network connection reset".to_owned());
     assert!(!mls_submission_definitively_rejected(item));
     for (status, code, expected) in [
-        (400, "param_invalid", true),
-        (422, "schema_violation", true),
+        (400, "param_invalid", false),
+        (422, "schema_violation", false),
+        (400, "operation_selector_required", false),
+        (422, "unsupported_operation_version", false),
         (400, "unregistered_failure", false),
         (401, "unauthenticated", false),
         (409, "conflict", false),
@@ -892,6 +894,15 @@ fn mls_candidate_release_requires_a_definitive_negative_authority_answer() {
         !mls_submission_definitively_rejected(item),
         "unstructured error text is insufficient"
     );
+    item.last_problem = None;
+    item.status = SendQueueStatus::Queued;
+    item.last_problem = Some(Box::new(
+        arkret_wire::Problem::new("failed_precondition", 409, "refused").with_extension(
+            "reason_code",
+            serde_json::json!(arkret_wire::ReasonCode::GOVERNANCE_BINDING_MISMATCH),
+        ),
+    ));
+    assert!(!mls_submission_definitively_rejected(item));
     item.last_problem = None;
     item.status = SendQueueStatus::Rejected;
     item.submission.state = garth::SubmissionState::Rejected {

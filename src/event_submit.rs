@@ -534,9 +534,9 @@ fn pending_mls_commit_for_realm_from_snapshot(
     })
 }
 
-/// An authority outcome and a typed request rejection are both negative
-/// terminal answers. A local/transport failure or an unavailable authority is
-/// not evidence that the frozen candidate may be discarded.
+/// Only an exact authority rejection or the registered zero-write governance
+/// binding refusal settles the candidate. A generic HTTP request error does
+/// not establish that the frozen Event was rejected by its authority.
 fn mls_submission_definitively_rejected(item: &garth::SendQueueItem) -> bool {
     (item.status == SendQueueStatus::Rejected
         && matches!(
@@ -548,14 +548,13 @@ fn mls_submission_definitively_rejected(item: &garth::SendQueueItem) -> bool {
         ))
         || (item.status == SendQueueStatus::Failed
             && item.last_problem.as_ref().is_some_and(|problem| {
-                (matches!(problem.status, 400 | 422) && problem.error_code().is_some())
-                    || (problem.status == 409
-                        && problem.error_code() == Some(arkret_wire::ErrorCode::FailedPrecondition)
-                        && problem
-                            .extensions
-                            .get("reason_code")
-                            .and_then(Value::as_str)
-                            == Some(arkret_wire::ReasonCode::GOVERNANCE_BINDING_MISMATCH))
+                problem.status == 409
+                    && problem.error_code() == Some(arkret_wire::ErrorCode::FailedPrecondition)
+                    && problem
+                        .extensions
+                        .get("reason_code")
+                        .and_then(Value::as_str)
+                        == Some(arkret_wire::ReasonCode::GOVERNANCE_BINDING_MISMATCH)
             }))
 }
 
