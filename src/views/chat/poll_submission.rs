@@ -5,7 +5,6 @@ use super::*;
 pub(super) struct PollSubmissionContext {
     pub authority: arkret_sdk::AccountId,
     pub device_id: arkret_sdk::DeviceId,
-    pub encrypted: bool,
     pub circle_id: Option<String>,
 }
 
@@ -64,7 +63,20 @@ pub(super) async fn submit_poll_operation(
     strand_id: &str,
     response_heads: Vec<arkret_sdk::PollResponseHead>,
 ) -> anyhow::Result<String> {
-    anyhow::ensure!(!context.encrypted, "encrypted polls are unavailable in v1");
+    let scope = operation.intent().scope_ref().clone();
+    let store = crate::app::runtime_adapter::state_store_handle(state_store);
+    anyhow::ensure!(
+        store.read(|state| state.active_authority().as_ref() == Some(&context.authority)),
+        "poll authoring account changed"
+    );
+    let input = crate::mls::send_gate::MlsSendGateInput::capture(&store, &scope);
+    let gate =
+        crate::mls::send_gate::resolve_restorable_mls_send_gate(&input, &scope, &context.device_id)
+            .await?;
+    anyhow::ensure!(
+        matches!(gate, crate::mls::send_gate::MlsSendGate::Plaintext),
+        "encrypted polls are unavailable in v1"
+    );
     ensure_response_heads_match_operation(operation, &response_heads)?;
     let content = operation
         .payload()

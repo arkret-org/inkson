@@ -1,7 +1,7 @@
 //! Pure derivations behind the Realm admin panel.
 //!
 //! Governance failure hints, the security-health state, the verified Station
-//! authority basis used by capability grants, and metadata editor
+//! delegation-root basis used by capability grants, and metadata editor
 //! reconciliation. The reconciliation in particular used to run inline between the panel's
 //! `use_signal` declarations and its `rsx!`, writing Signals mid-render; it
 //! now returns the writes it wants instead of performing them, which is what
@@ -11,29 +11,41 @@ use super::*;
 
 pub(super) const VERIFIED_AUTHORITY_ROOT_UNAVAILABLE: &str = "verified governing Station authority-root current is unavailable; sync it before authoring this governance Event";
 
-/// The admin panel has no verified authority-root typed-current carrier yet.
-/// Keep this explicit gate in front of owner transfer/reset so later UI work
-/// cannot accidentally revive a projection-derived payload builder.
+/// Owner transfer/reset still require their complete authoring and acceptance
+/// proof flow. A root current row alone does not enable those transitions.
+/// Keep the explicit gate until that flow is wired and verified.
 pub(super) fn governance_authoring_gate() -> Result<(), &'static str> {
     Err(VERIFIED_AUTHORITY_ROOT_UNAVAILABLE)
 }
 
-/// Convert only the durable outcome of a verified nonce-bound authority bundle
-/// into the exact issuer lineage carried by a capability grant. This is not a
-/// Realm authority-root value and cannot authorize owner transfer/reset.
+/// Read the installed, authority-verified root rather than the unrelated
+/// governing-Station tenure. Generation zero is anchored by the create Event's
+/// content identity. Later reset anchors require an exact historical carrier.
 pub(super) fn capability_issuer_basis(
-    basis: &crate::state::PersistedRealmAuthorityBasis,
-) -> crate::operation::ak_ops::IssuerRealmAuthorityBasis {
-    let authority_event_ref = basis
-        .last_authority_change_ref
-        .as_ref()
-        .unwrap_or(&basis.genesis_ref)
-        .event_id
-        .clone();
-    crate::operation::ak_ops::IssuerRealmAuthorityBasis {
-        authority_generation: basis.current_generation,
-        authority_event_ref,
+    realm_id: &str,
+    entries: &[arkret_wire::TypedCurrentResult],
+    issuer: &arkret_sdk::AccountId,
+) -> Option<crate::operation::ak_ops::IssuerRealmAuthorityBasis> {
+    let realm: arkret_sdk::RealmId = realm_id.parse().ok()?;
+    let mut roots = entries.iter().filter_map(|entry| {
+        let arkret_wire::TypedCurrentResult::Value { selector, source_stream_ref, value, .. } = entry;
+        (matches!(selector, arkret_wire::CurrentSelector::RealmAuthorityRoot)
+            && matches!(source_stream_ref, arkret_wire::CommitStreamRef::Realm { realm_id: source } if source == &realm))
+            .then_some(value)
+    });
+    let root: arkret_wire::RealmAuthorityRootValue =
+        serde_json::from_value(roots.next()?.clone()).ok()?;
+    if roots.next().is_some()
+        || root.validate().is_err()
+        || root.authority_generation != 0
+        || root.controller_actor_id != arkret_sdk::ActorId::account(issuer.clone())
+    {
+        return None;
     }
+    Some(crate::operation::ak_ops::IssuerRealmAuthorityBasis {
+        authority_generation: 0,
+        authority_event_ref: arkret_sdk::EventId::from_token_bytes(realm.token_bytes()).ok()?,
+    })
 }
 
 /// Operator guidance for the known authority-root rejection reasons, appended

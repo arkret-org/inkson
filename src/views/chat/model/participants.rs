@@ -350,9 +350,37 @@ pub(crate) fn space_participants(
         );
     }
 
+    // Ordinary own-Station current carries verified MemberState rows. The
+    // legacy display roster is optional enrichment, not the membership source.
+    let joined = state_store
+        .complete_joined_member_hint_for_realm(realm_id)
+        .ok()
+        .flatten();
+    if let Some(joined) = joined.as_ref() {
+        participants.retain(|participant| {
+            participant
+                .actor_id
+                .as_ref()
+                .is_some_and(|actor| joined.contains(actor))
+        });
+        for actor in joined {
+            upsert_participant(
+                &mut participants,
+                &actor,
+                SpaceParticipantRole::Member,
+                principal_id,
+                None,
+                None,
+            );
+        }
+    }
+
     if !principal_id.trim().is_empty()
         && !participants.iter().any(|participant| participant.is_self)
         && let Ok(own_actor) = crate::mls_api_helpers::local_account_actor_id(principal_id)
+        && joined
+            .as_ref()
+            .is_none_or(|members| members.contains(&own_actor))
     {
         let account_handle = state_store
             .primary_handle_for_principal_id(principal_id)

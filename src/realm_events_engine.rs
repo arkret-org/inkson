@@ -34,7 +34,9 @@ use garth::{
     AuthorityClient, ClientEvent, CommitStreamRef, CommittedDelta, CommittedEventView,
     DecodedInbound, InboundDecoder, RealmReplica, RetrySchedule, StreamScanRequest,
 };
-pub(crate) use own_station::refresh_accepted_sidecar;
+pub(crate) use own_station::{
+    refresh_accepted_sidecar, refresh_joined_realm, refresh_sidecar_history,
+};
 
 use crate::config::MultiProfileConfig;
 // Native hosts share the app's verifier and durable projector through these
@@ -1851,6 +1853,16 @@ fn validate_floor_product_rows(
                 // Only the separate exact read can supply a self-watch CAS preimage.
                 closed_value::<arkret_sdk::StrandWatchCurrentValue>(value, "strand_watch")?;
             }
+            CurrentSelector::Rsvp { occurrence, .. } => {
+                let entry: arkret_sdk::RsvpEntry = closed_value(value, "rsvp")?;
+                entry.validate().map_err(protocol)?;
+                if let Some(occurrence) = occurrence {
+                    arkret_models_collaboration::objects::productivity::validate_canonical_occurrence_key(
+                        occurrence,
+                    )
+                    .map_err(protocol)?;
+                }
+            }
             CurrentSelector::AgentInteraction { .. } => {
                 // The signed Realm cut authenticates this registered mode row.
                 // Ownership and mode authorization remain exact-read decisions.
@@ -3593,6 +3605,73 @@ mod tests {
                 validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &rows).is_err()
             );
         }
+    }
+
+    #[test]
+    fn signed_floor_rsvp_keeps_closed_entry_and_stream_binding() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = crate::test_support::account_actor(ACTOR_ID);
+        let (bundle, _, items) =
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&creator),
+                "alice.example",
+                DEVICE_ID,
+            );
+        let commit = &items.last().unwrap().commit;
+        let head = arkret_wire::CommitStreamHead {
+            stream_ref: commit.stream_ref.clone(),
+            stream_position: commit.stream_position,
+            commit_id: commit.commit_id.clone(),
+        };
+        let mut rows = soland_bootstrap_rows(&bundle, &items);
+        rows.push(TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::Rsvp {
+                event_ref: arkret_sdk::StrandId::from_event_id(&items[1].event.event_id),
+                occurrence: None,
+                responder_actor_id: creator,
+            },
+            source_stream_ref: head.stream_ref.clone(),
+            revision: arkret_wire::CurrentRevision {
+                commit_id: head.commit_id.clone(),
+                stream_position: head.stream_position,
+            },
+            value: json!({
+                "schedule_basis_refs": [bundle.genesis_event.event_id],
+                "response": {"status":"accepted"},
+            }),
+        });
+        let access = arkret_sdk::HistoryAccess::SinceJoin;
+        validate_signed_floor_rows(&realm_id, &bundle, &head, access, &rows).unwrap();
+        for (key, invalid) in [
+            ("schedule_basis_refs", json!([])),
+            ("response", json!({"status":"unknown"})),
+            ("encrypted_response", json!({})),
+            ("scope_ref", json!({"realm_id": realm_id})),
+        ] {
+            let mut forged = rows.clone();
+            let TypedCurrentResult::Value { value, .. } = forged.last_mut().unwrap();
+            value[key] = invalid;
+            assert!(
+                validate_signed_floor_rows(&realm_id, &bundle, &head, access, &forged).is_err()
+            );
+        }
+        let mut foreign = rows.clone();
+        let TypedCurrentResult::Value {
+            source_stream_ref, ..
+        } = foreign.last_mut().unwrap();
+        *source_stream_ref = CommitStreamRef::Realm {
+            realm_id: arkret_sdk::RealmId::from_event_id(&items[2].event.event_id),
+        };
+        assert!(validate_signed_floor_rows(&realm_id, &bundle, &head, access, &foreign).is_err());
+        let TypedCurrentResult::Value { selector, .. } = rows.last_mut().unwrap();
+        let arkret_wire::CurrentSelector::Rsvp { occurrence, .. } = selector else {
+            unreachable!()
+        };
+        *occurrence = Some("2026-10-07T09:00:00Z".to_owned());
+        assert!(validate_signed_floor_rows(&realm_id, &bundle, &head, access, &rows).is_err());
     }
 
     #[test]

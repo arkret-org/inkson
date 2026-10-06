@@ -798,7 +798,7 @@ impl ChatController {
         let mut status_msg = self.status_msg;
         // Closing the edit composer unmounts its Save Button. Keep the
         // accepted-result handler with the controller that owns the message.
-        dioxus::core::Runtime::current().spawn(messages.origin_scope(), async move {
+        crate::runtime_helpers::spawn_owned(messages.origin_scope(), async move {
             let result = match chat_content_block_for_body_with_upload(
                 &base_url,
                 api_token.clone(),
@@ -1387,7 +1387,6 @@ impl ChatController {
         let protection = super::poll_submission::PollSubmissionContext {
             authority: context.authority.clone(),
             device_id: context.device_id.clone(),
-            encrypted: context.selected_channel_security_encrypted,
             circle_id: self
                 .channels
                 .read()
@@ -1406,7 +1405,7 @@ impl ChatController {
         let mut status_msg = self.status_msg;
         // The option Button can unmount when pending/projection state changes.
         // Keep the command with the chat controller that owns these signals.
-        dioxus::core::Runtime::current().spawn(messages.origin_scope(), async move {
+        crate::runtime_helpers::spawn_owned(messages.origin_scope(), async move {
             status_msg.set("Submitting poll vote".to_owned());
             let result =
                 crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
@@ -1570,7 +1569,7 @@ impl ChatController {
         }
         // One owner-scoped worker drains only the latest requested cut. Live
         // message bursts cannot launch concurrent authentication/snapshot reads.
-        dioxus::core::Runtime::current().spawn(self.messages.origin_scope(), async move {
+        crate::runtime_helpers::spawn_owned(self.messages.origin_scope(), async move {
             let mut attempted_target = None;
             let mut attempts = 0u32;
             let mut backoff = garth::RetrySchedule::new(

@@ -1630,6 +1630,7 @@ impl EventSubmitter {
         let local_operation_id = operation.local_operation_id().to_string();
         let _single_writer = outbound_submit_lock().lock().await;
         let event = self.author_intent(&intent).await?;
+        self.retain_authored_metadata(event.event()).await?;
         tracing::debug!(
             local_operation_id = %local_operation_id,
             kind = %event.kind.as_str(),

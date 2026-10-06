@@ -11,28 +11,44 @@ fn governance_events_fail_closed_without_verified_authority_root_current() {
 }
 
 #[test]
-fn capability_basis_uses_the_verified_generation_anchor() {
-    let realm_id = arkret_sdk::RealmId::new(REALM).unwrap();
-    let event_id =
-        arkret_sdk::EventId::new("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19").unwrap();
-    let basis = crate::state::PersistedRealmAuthorityBasis {
-        realm_id: realm_id.clone(),
-        current_service_id: "ak:did_core:web:station.example".parse().unwrap(),
-        current_generation: 4,
-        genesis_ref: arkret_wire::CommittedEventRef {
-            event_id: event_id.clone(),
-            commit_id: arkret_wire::RealmCommitId::from_digest([1; 32]),
-            stream_ref: arkret_wire::CommitStreamRef::Realm { realm_id },
-            stream_position: 0,
-        },
-        last_authority_change_ref: None,
-        validated_at: chrono::Utc::now(),
+fn capability_basis_requires_the_exact_verified_root_controller_and_generation() {
+    let realm: arkret_sdk::RealmId = REALM.parse().unwrap();
+    let issuer = arkret_sdk::AccountId {
+        principal_id: "ak:did_core:web:alice.example".parse().unwrap(),
+        station_id: "ak:did_core:web:station.example".parse().unwrap(),
     };
-    let issuer = capability_issuer_basis(&basis);
-    assert_eq!(issuer.authority_generation, 4);
-    assert_eq!(issuer.authority_event_ref, event_id);
+    let row =
+        |controller: arkret_sdk::AccountId, generation| arkret_wire::TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::RealmAuthorityRoot,
+            source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: realm.clone(),
+            },
+            revision: arkret_wire::CurrentRevision {
+                commit_id: arkret_wire::RealmCommitId::from_digest([1; 32]),
+                stream_position: 9,
+            },
+            value: serde_json::json!({
+                "controller_actor_id": arkret_sdk::ActorId::account(controller),
+                "controller_epoch": 2,
+                "authority_generation": generation,
+            }),
+        };
+    let current = row(issuer.clone(), 0);
+    let basis = capability_issuer_basis(REALM, &[current.clone()], &issuer).unwrap();
+    assert_eq!(basis.authority_generation, 0);
+    assert_eq!(
+        basis.authority_event_ref,
+        arkret_sdk::EventId::from_token_bytes(realm.token_bytes()).unwrap()
+    );
+    assert!(capability_issuer_basis(REALM, &[], &issuer).is_none());
+    assert!(capability_issuer_basis(REALM, &[current.clone(), current], &issuer).is_none());
+    assert!(capability_issuer_basis(REALM, &[row(issuer.clone(), 1)], &issuer).is_none());
+    let foreign_station = arkret_sdk::AccountId {
+        station_id: "ak:did_core:web:other.example".parse().unwrap(),
+        ..issuer.clone()
+    };
+    assert!(capability_issuer_basis(REALM, &[row(foreign_station, 0)], &issuer).is_none());
 }
-
 #[test]
 fn governance_failure_hints_cover_the_reducer_rejection_reasons() {
     assert!(governance_failure_hint("submit failed: realm_authority_root_conflict").is_some());

@@ -1630,8 +1630,8 @@ pub fn KanbanPanel(
                                     Button {
                                         variant: ButtonVariant::Primary,
                                         "data-testid": "create-board-space-button",
-                                        disabled: !event_write_ready || !realm_current_ready,
-                                        title: if realm_current_ready {
+                                        disabled: !card_write_ready,
+                                        title: if card_write_ready {
                                             "Create Board"
                                         } else {
                                             "Waiting for Realm sync"

@@ -431,6 +431,7 @@ async fn reconcile_existing_sidecar_leaves(
     guard: &ReconciliationGuard,
 ) -> anyhow::Result<()> {
     guard()?;
+    let request_epoch = crate::identity::device_directory::session_cache_epoch();
     let http = api.sdk_http_client()?;
     let view = http.agent_sidecar_get(sidecar_id).await?;
     guard()?;
@@ -510,6 +511,19 @@ async fn reconcile_existing_sidecar_leaves(
         current_source.check_session()?;
         Ok(())
     };
+    guard()?;
+    // Authoring completion persists a private checkpoint before the hint
+    // follower necessarily downloads its original Genesis/Commit. Repair
+    // must acquire that verified native history before inspecting its binding.
+    crate::realm_events_engine::refresh_sidecar_history(
+        &http,
+        authority,
+        request_epoch,
+        scope.realm_id(),
+        state.clone(),
+        || guard().is_ok(),
+    )
+    .await?;
     guard()?;
     let after = http.agent_sidecar_get(sidecar_id).await?;
     guard()?;

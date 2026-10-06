@@ -135,7 +135,7 @@ pub fn MlsUnlockPrompt(
         let authority = authority.clone();
         busy.set(true);
         status.set(crate::i18n::tr("mls_unlock.status.fetching"));
-        let task = spawn(async move {
+        let task = crate::runtime_helpers::spawn_owned(busy.origin_scope(), async move {
             tracing::warn!(
                 target: "mls_unlock",
                 %actor,

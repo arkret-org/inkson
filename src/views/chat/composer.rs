@@ -1340,7 +1340,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let protection = super::poll_submission::PollSubmissionContext {
                                         authority: sidecar_authority.clone(),
                                         device_id: device_id.clone(),
-                                        encrypted: selected_channel_security_encrypted,
                                         circle_id: selected_channel_info.as_ref()
                                             .and_then(|channel| channel.scope_circle.as_ref())
                                             .map(|scope| scope.circle_id.clone()),

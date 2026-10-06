@@ -27,9 +27,10 @@ pub(super) async fn subscription<F: Fn() -> bool>(
     )
     .await?;
     client.check_session()?;
-    if resume.is_none() {
-        follow_once(client, http, realm, projector, ctx, is_active, current).await?;
-    }
+    // The hint-rail cursor never proves that the independent scan completed.
+    // In particular, a failed initial scan must resume its durable head even
+    // when the reopened rail already has a cursor and no new Event hint.
+    follow_once(client, http, realm, projector, ctx, is_active, current).await?;
     while is_active() {
         client.check_session()?;
         let frame = loop {
@@ -199,6 +200,17 @@ async fn replay(
         }
         replica.restore_checkpoint_head(client, saved).await?;
     }
+    if saved.is_none()
+        && snapshot
+            .value()?
+            .retention_and_history_floor
+            .stream_floors
+            .iter()
+            .any(|floor| &floor.stream_ref == stream && floor.oldest_position > 0)
+    {
+        replica.bootstrap_current_head(client, stream).await?;
+        return Ok((replica, Vec::new()));
+    }
     let mut after = saved.map(|h| h.stream_position);
     let mut pages = Vec::new();
     let mut retained_bytes = 0usize;
@@ -225,11 +237,11 @@ async fn replay(
                 .as_ref()
                 .is_some_and(|f| f.oldest_position > 0)
         {
-            // A preview floor is not a replay anchor. Account-window ingestion
-            // must first persist the genuine exact snapshot-basis prefix.
-            return Err(protocol(
-                "live stream awaits an admitted Account window basis",
-            ));
+            // Limited history remains preview. Live bootstrap starts at the
+            // verified current cut and admits only its exact original head;
+            // none of the unanchored historical rows becomes display history.
+            replica.bootstrap_current_head(client, stream).await?;
+            break;
         }
         let page = replica.apply_bound_scan(client, response).await?;
         if page.rows()?.is_empty() {
@@ -252,7 +264,7 @@ async fn replay(
     Ok((replica, pages))
 }
 
-async fn drain<F: Fn() -> bool>(
+pub(super) async fn drain<F: Fn() -> bool>(
     client: &OwnStationResultClient,
     http: &arkret_sdk::http_client::Client,
     realm: &arkret_sdk::RealmId,
@@ -798,11 +810,24 @@ pub(super) mod tests {
                     if let Some(head) = &exact_checkpoint {
                         assert_eq!(request.realm_id, request.stream_ref.realm_id().clone());
                         assert_eq!(request.stream_ref, head.stream_ref);
-                        assert_eq!(request.limit, 1);
-                        assert_eq!(
-                            request.direction,
-                            arkret_sdk::StreamScanDirection::Before(Some(head.stream_position + 1))
-                        );
+                        if index == 1 {
+                            assert_eq!(request.limit, 1);
+                            assert_eq!(
+                                request.direction,
+                                arkret_sdk::StreamScanDirection::Before(Some(
+                                    head.stream_position + 1
+                                ))
+                            );
+                        } else {
+                            assert_eq!(
+                                u64::from(request.limit),
+                                expected_limit - head.stream_position - 1
+                            );
+                            assert_eq!(
+                                request.direction,
+                                arkret_sdk::StreamScanDirection::After(Some(head.stream_position))
+                            );
+                        }
                     } else {
                         assert_eq!(u64::from(request.limit), expected_limit);
                         assert_eq!(
@@ -997,6 +1022,104 @@ pub(super) mod tests {
             Ok(store) => store.into_inner().unwrap(),
             Err(_) => panic!("fixture projector must release its store"),
         }
+    }
+
+    #[tokio::test]
+    async fn own_live_since_join_bootstrap_persists_current_head_without_historical_rows() {
+        let row = withheld(5, Some(arkret_sdk::RealmCommitId::from_digest([43; 32])));
+        let mut snapshot = current_snapshot(&[row.clone()], 1);
+        snapshot.retention_and_history_floor.stream_floors[0].oldest_position = 3;
+        seal_current_snapshot(&mut snapshot);
+        let head = snapshot.visible_stream_heads[0].clone();
+        let account = arkret_sdk::AccountId::new(
+            "ak:did_core:web:alice.example".parse().unwrap(),
+            "ak:did_core:web:station.example".parse().unwrap(),
+        );
+        let (client, _, server) = http_for_account(
+            vec![
+                serde_json::to_value(&snapshot).unwrap(),
+                serde_json::json!({"committed_events":[row.clone()],"readable_floor":null,"truncated":true}),
+            ],
+            account,
+            Some(head.clone()),
+        );
+        let bound = client.snapshot_head(&snapshot.realm_id).await.unwrap();
+        let (replica, pages) = replay(&client, &snapshot.realm_id, &head.stream_ref, &bound, None)
+            .await
+            .unwrap();
+        server.join().unwrap();
+        assert!(
+            pages.is_empty(),
+            "current bootstrap must not admit preview history"
+        );
+        assert_eq!(replica.head(&head.stream_ref), Some(&head));
+        let directory = tempfile::tempdir().unwrap();
+        let mut local =
+            crate::state::LocalStateStore::with_path(directory.path().join("live-floor.json"));
+        let fixture = crate::test_support::AccountFixture::new("did:web:alice.example")
+            .station("ak:did_core:web:station.example")
+            .build();
+        local.switch_active_account(&fixture).unwrap();
+        local.save_sync_cursor("ak:cursor:unchanged-account");
+        let store = Arc::new(Mutex::new(local));
+        let projector = test_projector(store.clone(), &snapshot.realm_id);
+        install_live_current_snapshot(
+            &client,
+            &bound,
+            &snapshot.realm_id,
+            &head.stream_ref,
+            &projector,
+            &replica,
+            &pages,
+            &[],
+            &|| true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            store
+                .lock()
+                .unwrap()
+                .verified_commit_stream_cursor(&head.stream_ref)
+                .unwrap(),
+            Some(head.clone())
+        );
+        assert_eq!(
+            store.lock().unwrap().sync_cursor().as_deref(),
+            Some("ak:cursor:unchanged-account")
+        );
+        // A later route starts from the join-time durable head, even if a new
+        // Commit was accepted before the user first opened that route.
+        let next = withheld(6, Some(head.commit_id.clone()));
+        let mut later = current_snapshot(&[next.clone()], 1);
+        later.retention_and_history_floor.stream_floors[0].oldest_position = 3;
+        seal_current_snapshot(&mut later);
+        let account = store.lock().unwrap().active_authority().unwrap();
+        let (client, _, server) = http_for_account(
+            vec![
+                serde_json::to_value(&later).unwrap(),
+                serde_json::json!({"committed_events":[row],"readable_floor":null,"truncated":true}),
+                serde_json::json!({"committed_events":[next.clone()],"readable_floor":{
+                    "oldest_position":3,"floor_commit_id":arkret_sdk::RealmCommitId::from_digest([43;32]),
+                    "floor_reason":"membership_join"},"truncated":false}),
+            ],
+            account,
+            Some(head.clone()),
+        );
+        let bound = client.snapshot_head(&later.realm_id).await.unwrap();
+        let (replica, pages) = replay(
+            &client,
+            &later.realm_id,
+            &head.stream_ref,
+            &bound,
+            Some(&head),
+        )
+        .await
+        .unwrap();
+        assert_eq!(replica.head(&head.stream_ref).unwrap().stream_position, 6);
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].rows().unwrap(), &[next]);
+        server.join().unwrap();
     }
 
     #[tokio::test]

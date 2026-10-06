@@ -86,6 +86,7 @@ pub(crate) fn open_metadata(
         serde_json::to_value(metadata).ok()
     } else {
         let metadata: arkret_sdk::StrandMetadata = serde_json::from_value(opened).ok()?;
+        arkret_models_collaboration::objects::productivity::validate_calendar_event_metadata_fields(&metadata.fields).ok()?;
         serde_json::to_value(metadata).ok()
     }
 }
@@ -114,7 +115,14 @@ pub(crate) fn current_metadata(
         return None;
     }
     let envelope = serde_json::from_value(value.get("encrypted_metadata")?.clone()).ok()?;
-    open_metadata(store, realm, id, &envelope, account, device)
+    let opened = open_metadata(store, realm, id, &envelope, account, device)?;
+    if id.starts_with("ak:strand:") {
+        let mut strand: arkret_sdk::Strand = serde_json::from_value(value.clone()).ok()?;
+        strand.encrypted_metadata = None;
+        strand.metadata = Some(serde_json::from_value(opened.clone()).ok()?);
+        strand.validate_profile_activation().ok()?;
+    }
+    Some(opened)
 }
 
 pub(crate) fn current_title(

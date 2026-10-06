@@ -267,6 +267,33 @@ pub(crate) async fn should_resume_creator_genesis(
             .await
             .map_err(|e| e.to_string())?
     };
+    // A later member's since-join window need not disclose the original
+    // create. With no creator work, a complete accepted plaintext ordinary
+    // current is enough to stop background recovery; it grants no authority
+    // to activate MLS and never classifies anyone as the creator.
+    if durable_intent.is_none()
+        && !creator_genesis_has_resume_evidence(false, staged_checkpoint, durable_queued_genesis)
+        && state_store.read(|store| {
+            matches!(
+                store.installed_scope_mls_current(&scope),
+                crate::current_projection::ScopeMlsCurrent::NotActivated
+            ) && store
+                .realm_current_state_entries(realm_id)
+                .iter()
+                .any(|entry| {
+                    let arkret_wire::TypedCurrentResult::Value {
+                        selector, value, ..
+                    } = entry;
+                    matches!(selector, arkret_wire::CurrentSelector::RealmGenesis)
+                        && serde_json::from_value::<arkret_sdk::RealmGenesis>(value.clone())
+                            .is_ok_and(|genesis| {
+                                genesis.purpose == arkret_sdk::RealmPurpose::Collaboration
+                            })
+                })
+        })
+    {
+        return Ok(false);
+    }
     // A Direct Conversation is MLS-backed from its founding: its founder
     // authors the one scope-derived Genesis the bootstrap phases require
     // (`identity/contact-and-direct-conversation.md` 7.2 / 7.3). Unlike an

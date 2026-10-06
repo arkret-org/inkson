@@ -70,6 +70,86 @@ fn patch_touches_calendar_schedule(patch: &Value) -> bool {
     })
 }
 
+/// Pick only from original coordinates retained by the accepted-page funnel.
+/// A current object's revision alone is not an eligible schedule Event.
+pub(crate) fn canonical_calendar_source(
+    operations: &[RawOperationRecord],
+    strand_id: &arkret_sdk::StrandId,
+    stream: &arkret_sdk::CommitStreamRef,
+    revision: &arkret_sdk::CurrentRevision,
+    state: &crate::state::LocalStateStore,
+) -> Option<String> {
+    let mut winner: Option<(u64, arkret_sdk::EventId)> = None;
+    for record in operations {
+        let Some(commit) = record.payload.get("accepted_commit").and_then(|value| {
+            serde_json::from_value::<arkret_sdk::RealmCommit>(value.clone()).ok()
+        }) else {
+            continue;
+        };
+        let Some(event) = record
+            .payload
+            .get("event")
+            .and_then(|value| serde_json::from_value::<arkret_sdk::Event>(value.clone()).ok())
+        else {
+            continue;
+        };
+        if commit.event_ref != event.event_id
+            || commit.realm_id != event.realm_id
+            || &commit.stream_ref != stream
+            || arkret_sdk::CommitStreamRef::from_scope(
+                &event.scope_ref,
+                Some(event.realm_id.clone()),
+            )
+            .ok()
+            .as_ref()
+                != Some(stream)
+            || commit.stream_position > revision.stream_position
+            || (commit.stream_position == revision.stream_position
+                && commit.commit_id != revision.commit_id)
+        {
+            continue;
+        }
+        let eligible = match event.kind {
+            arkret_sdk::EventKind::StrandCreate => {
+                &arkret_sdk::StrandId::from_event_id(&event.event_id) == strand_id
+                    && event.payload.get("object").is_some_and(|object| {
+                        object.pointer("/metadata/fields/calendar").is_some()
+                            || (object.get("encrypted_metadata").is_some()
+                                && object
+                                    .get("schema_refs")
+                                    .and_then(Value::as_array)
+                                    .is_some_and(|refs| {
+                                        refs.iter().any(|value| {
+                                            value.as_str() == Some("ak.schema.calendar_event.v1")
+                                        })
+                                    }))
+                    })
+            }
+            arkret_sdk::EventKind::StrandUpdate => {
+                event.payload.get("target_ref").and_then(Value::as_str) == Some(strand_id.as_str())
+                    && event.payload.get("patch").is_some_and(|patch| {
+                        // This is a replacement of the complete Metadata object,
+                        // unlike a signed title-only plaintext path.
+                        patch.get("encrypted_metadata").is_some()
+                            || patch_touches_calendar_schedule(patch)
+                    })
+            }
+            _ => false,
+        };
+        if eligible
+            && winner
+                .as_ref()
+                .is_none_or(|(position, _)| commit.stream_position > *position)
+        {
+            winner = Some((commit.stream_position, event.event_id));
+        }
+    }
+    let (position, event) = winner?;
+    state
+        .verified_commit_partition_complete_through(stream, position, revision.stream_position)
+        .then(|| event.event_digest().to_string())
+}
+
 /// Strand id a move / reorder / archive / restore op targets.
 fn op_strand_target_id(record: &RawOperationRecord) -> Option<String> {
     let body = op_body(record);
@@ -929,7 +1009,21 @@ pub(crate) fn install_current_card_sources(
                 )?;
                 serde_json::from_value::<arkret_sdk::StrandMetadata>(value).ok()
             });
-            let metadata = opened_metadata.or(strand.metadata).unwrap_or_default();
+            let readable = opened_metadata.is_some() || strand.encrypted_metadata.is_none();
+            let metadata = opened_metadata
+                .or(strand.metadata.clone())
+                .unwrap_or_default();
+            if readable {
+                let mut checked = strand.clone();
+                checked.encrypted_metadata = None;
+                checked.metadata = Some(metadata.clone());
+                if checked.validate_profile_activation().is_err()
+                    || arkret_models_collaboration::objects::productivity::validate_calendar_event_metadata_fields(&metadata.fields).is_err()
+                {
+                    clear_unavailable_card_content(card);
+                    continue;
+                }
+            }
             view.title = metadata.title.unwrap_or_default();
             view.summary = metadata.summary;
             view.fields = metadata.fields.into_iter().collect();
@@ -937,6 +1031,17 @@ pub(crate) fn install_current_card_sources(
             view.encrypted_content = strand.encrypted_content;
             view.tracks = strand.tracks;
             view.schema_refs = strand.schema_refs.unwrap_or_default();
+            // Strand current replaces object content, not the independently
+            // folded accepted RSVP cells. The endpoint baseline omits them.
+            view.rsvps = card.calendar_rsvp_cells.clone();
+            view.schedule_revision_source = decrypt_ctx.and_then(|ctx| {
+                let source_stream = entries.iter().find_map(|entry| {
+                    let arkret_sdk::TypedCurrentResult::Value { selector, source_stream_ref, .. } = entry;
+                    matches!(selector, arkret_sdk::CurrentSelector::Strand { strand_id: id } if id == &strand_id)
+                        .then_some(source_stream_ref)
+                })?;
+                canonical_calendar_source(operations, &strand_id, source_stream, &revision, ctx.state_store)
+            });
             let mut complete = card_from_strand_projection_for_actor(&view, decrypt_ctx, actor);
             // Current supplies the selected value and revision. Decryption still
             // requires the original authenticated Event carrying that exact
@@ -974,10 +1079,6 @@ pub(crate) fn install_current_card_sources(
             }
             complete.rank = card.rank.clone();
             complete.state = card.state;
-            if complete.calendar == card.calendar {
-                complete.calendar_schedule_basis_refs = card.calendar_schedule_basis_refs.clone();
-            }
-            complete.calendar_rsvp = card.calendar_rsvp.clone();
             complete.lifecycle = card.lifecycle;
             complete.assignee = card.assignee.clone();
             complete.assigned_to_relations = card.assigned_to_relations.clone();

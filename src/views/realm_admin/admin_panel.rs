@@ -152,10 +152,16 @@ pub fn RealmAdminPanel(
     };
     let projected_members = projected_members_for_realm(&state_store.read(), &selected_realm_id);
     let projected_member_count = projected_members.len();
-    let issuer_authority_basis = state_store
-        .read()
-        .realm_authority_basis(&selected_realm_id)
-        .map(|basis| capability_issuer_basis(&basis));
+    let issuer_authority_basis = {
+        let store = state_store.read();
+        store.active_authority().and_then(|issuer| {
+            capability_issuer_basis(
+                &selected_realm_id,
+                &store.realm_current_state_entries(&selected_realm_id),
+                &issuer,
+            )
+        })
+    };
     let governance_authoring_error = governance_authoring_gate()
         .expect_err("owner transfer/reset require verified authority-root current");
     // Every write below is one named command on this bundle; the rsx keeps
@@ -1043,7 +1049,7 @@ pub fn RealmAdminPanel(
                     Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "cap-grant-submit-button",
-                        disabled: capability_grant_pending(),
+                        disabled: capability_grant_pending() || issuer_authority_basis.is_none(),
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
@@ -1077,7 +1083,7 @@ pub fn RealmAdminPanel(
                                 let Some(issuer_authority_basis) = issuer_authority_basis.clone()
                                 else {
                                     status_msg.set(
-                                        "capability grant blocked: verified governing Station authority lineage is unavailable"
+                                        "capability grant blocked: verified Realm delegation-root basis is unavailable"
                                             .to_owned(),
                                     );
                                     return;
@@ -1279,6 +1285,7 @@ pub fn RealmAdminPanel(
                     Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "realm-admin-grant-button",
+                        disabled: issuer_authority_basis.is_none(),
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
@@ -1301,7 +1308,7 @@ pub fn RealmAdminPanel(
                                 let Some(issuer_authority_basis) = issuer_authority_basis.clone()
                                 else {
                                     status_msg.set(
-                                        "set admin blocked: verified governing Station authority lineage is unavailable"
+                                        "set admin blocked: verified Realm delegation-root basis is unavailable"
                                             .to_owned(),
                                     );
                                     return;

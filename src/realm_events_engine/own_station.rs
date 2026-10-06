@@ -11,6 +11,55 @@ const MAX_PREFIX_BYTES: usize = 64 * 1024 * 1024;
 type SnapshotResponse =
     BoundOwnStationResponse<arkret_sdk::RealmId, arkret_sdk::RealmStateSnapshot>;
 
+/// Establish the live checkpoint before publishing completion of a local join.
+/// Limited historical windows remain preview; subsequent live rows extend this
+/// genuine own-Station current head through the ordinary verified follower.
+pub(crate) async fn refresh_joined_realm(
+    http: &arkret_sdk::http_client::Client,
+    account: &arkret_sdk::AccountId,
+    realm: &arkret_sdk::RealmId,
+    state_store: crate::runtime::input::StateStoreHandle,
+) -> garth::Result<()> {
+    let client = crate::transport::own_station_results::client_for_http(http).await?;
+    if client.session()?.account_id() != account {
+        return Err(protocol("joined Realm belongs to another complete Account"));
+    }
+    let revision = std::rc::Rc::new(std::cell::Cell::new(0_u64));
+    let read_revision = revision.clone();
+    let write_revision = revision.clone();
+    let projector = RealmIngestProjector {
+        state_store,
+        realm_id: realm.to_string(),
+        digest_suite: realm_live_digest_suite(realm),
+        realm_live_epoch: crate::runtime::input::ValueCell::new(
+            move || read_revision.get(),
+            move |value| write_revision.set(value),
+            move |update| {
+                let mut value = revision.get();
+                update(&mut value);
+                revision.set(value);
+            },
+        ),
+        message_stream_hub: None,
+    };
+    let active = || client.check_session().is_ok();
+    let mut current = OwnStationReplica::new(realm.clone());
+    super::own_live::drain(
+        &client,
+        http,
+        realm,
+        &CommitStreamRef::Realm {
+            realm_id: realm.clone(),
+        },
+        &projector,
+        &active,
+        &mut current,
+    )
+    .await?;
+    client.check_session()?;
+    Ok(())
+}
+
 /// Read back an accepted private write without depending on a live hint rail.
 /// The existing follower owns original-cut admission, complete native tails,
 /// transactional current/history installation and its durable barrier.
@@ -22,6 +71,29 @@ pub(crate) async fn refresh_accepted_sidecar<F: Fn() -> bool>(
     realm: &arkret_sdk::RealmId,
     sidecar: &arkret_sdk::SidecarId,
     event: &arkret_sdk::EventId,
+    state_store: crate::runtime::input::StateStoreHandle,
+    active: F,
+) -> garth::Result<()> {
+    refresh_sidecar_history(
+        http,
+        account,
+        request_epoch,
+        realm,
+        state_store.clone(),
+        &active,
+    )
+    .await?;
+    state_store.read(|store| require_accepted_sidecar_event(store, account, realm, sidecar, event))
+}
+
+/// Obtain native private originals through the existing verified follower.
+/// A typed current alone cannot supply the accepted MLS governance binding
+/// required by roster repair, nor does it establish downloaded history.
+pub(crate) async fn refresh_sidecar_history<F: Fn() -> bool>(
+    http: &arkret_sdk::http_client::Client,
+    account: &arkret_sdk::AccountId,
+    request_epoch: u64,
+    realm: &arkret_sdk::RealmId,
     state_store: crate::runtime::input::StateStoreHandle,
     active: F,
 ) -> garth::Result<()> {
@@ -79,9 +151,7 @@ pub(crate) async fn refresh_accepted_sidecar<F: Fn() -> bool>(
             "accepted Sidecar readback belongs to a replaced session",
         ));
     }
-    projector
-        .state_store
-        .read(|store| require_accepted_sidecar_event(store, account, realm, sidecar, event))
+    Ok(())
 }
 
 fn require_readback_session(

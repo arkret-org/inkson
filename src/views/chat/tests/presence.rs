@@ -202,3 +202,55 @@ fn typed_watch_levels_map_to_the_same_ui_level() {
         assert_eq!(watch_level_from_wire(wire), expected);
     }
 }
+
+#[test]
+fn presence_members_follow_complete_current_and_drop_stale_roster_members() {
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let peer = presence_actor("peer.example", "station.example");
+    let stale = presence_actor("stale.example", "station.example");
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = LocalStateStore::with_path(directory.path().join("current-presence.json"));
+    let entries = vec![arkret_wire::TypedCurrentResult::Value {
+        selector: arkret_wire::CurrentSelector::MemberState {
+            actor_id: peer.clone(),
+        },
+        source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+            realm_id: realm.parse().unwrap(),
+        },
+        revision: arkret_wire::CurrentRevision {
+            commit_id: arkret_wire::RealmCommitId::from_digest([3; 32]),
+            stream_position: 2,
+        },
+        value: json!({"membership":"join","joined_at":"2026-09-27T00:00:00.000Z"}),
+    }];
+    store
+        .install_current_product_view(
+            crate::current_projection::RealmCurrentView::new(realm, entries.clone(), true).unwrap(),
+        )
+        .unwrap();
+    let legacy = json!({"member_roster_entries":[{"actor_id":stale,"membership":"join"}]});
+    let members = space_participants(Some(&legacy), &store, realm, "ak:did_core:web:self.example");
+    assert!(
+        members
+            .iter()
+            .any(|member| member.actor_id.as_ref() == Some(&peer))
+    );
+    assert!(
+        !members
+            .iter()
+            .any(|member| member.actor_id.as_ref() == Some(&stale))
+    );
+    assert!(
+        !members.iter().any(|member| member.is_self),
+        "complete membership cannot manufacture a self member"
+    );
+    let mut departed = entries;
+    let arkret_wire::TypedCurrentResult::Value { value, .. } = &mut departed[0];
+    *value = json!({"membership":"leave"});
+    store
+        .install_current_product_view(
+            crate::current_projection::RealmCurrentView::new(realm, departed, true).unwrap(),
+        )
+        .unwrap();
+    assert!(space_participants(None, &store, realm, "ak:did_core:web:self.example").is_empty());
+}

@@ -133,10 +133,46 @@ impl LocalStateStore {
         // Events here as well: current ciphertext alone cannot establish the
         // sender, scope or AAD used by authenticated metadata decryption.
         // Only the already accepted Full rows above reach this shared funnel.
-        Ok(private_changes
+        let changes = private_changes
             + verified_changes
             + crate::sync_engine::ingest_message_events(self, "", &events)
-            + crate::sync_engine::ingest_kanban_events(self, "", &events))
+            + crate::sync_engine::ingest_kanban_events(self, "", &events);
+        // Structural originals need their accepted coordinates as well as the
+        // Event. Never derive Calendar revision order from reception time.
+        let mut coordinates_changed = false;
+        for row in page.accepted_rows()? {
+            let arkret_sdk::CommittedEventView::Full(full) = row else {
+                continue;
+            };
+            if !matches!(
+                full.event.kind,
+                arkret_sdk::EventKind::StrandCreate | arkret_sdk::EventKind::StrandUpdate
+            ) {
+                continue;
+            }
+            let original = serde_json::to_value(&full.event).map_err(|error| error.to_string())?;
+            if let Some(record) = self
+                .cached
+                .raw_operations
+                .iter_mut()
+                // Accepted authoring rows retain their holder-local operation
+                // key. Bind provenance to the exact signed original instead.
+                .find(|record| record.payload.get("event") == Some(&original))
+                && let Some(payload) = record.payload.as_object_mut()
+            {
+                let commit =
+                    serde_json::to_value(&full.commit).map_err(|error| error.to_string())?;
+                if payload.get("accepted_commit") != Some(&commit) {
+                    payload.insert("accepted_commit".to_owned(), commit);
+                    coordinates_changed = true;
+                }
+            }
+        }
+        if coordinates_changed {
+            self.flush()
+                .map_err(|error| format!("persist structural Commit coordinates: {error}"))?;
+        }
+        Ok(changes + usize::from(coordinates_changed))
     }
 
     pub(crate) fn verified_commit_stream_cursor(
@@ -225,7 +261,9 @@ impl LocalStateStore {
 
     /// Store a genuine own-Station replay checkpoint. A snapshot head alone
     /// never establishes this state; the replica admitted a complete original
-    /// prefix or re-admitted the exact previously durable original.
+    /// prefix, re-admitted the exact durable original, or verified the exact
+    /// original at its installed current cut for limited-history live bootstrap.
+    /// That last case establishes no historical prefix or displayed history.
     pub(crate) fn stage_own_station_commit_stream_checkpoint(
         &mut self,
         client: &arkret_sdk::http_client::own_station_results::OwnStationResultClient,
@@ -562,13 +600,23 @@ impl LocalStateStore {
         stream: &arkret_sdk::CommitStreamRef,
         poll_position: u64,
     ) -> bool {
+        self.verified_commit_partition_complete_through(stream, poll_position, poll_position)
+    }
+
+    pub(crate) fn verified_commit_partition_complete_through(
+        &self,
+        stream: &arkret_sdk::CommitStreamRef,
+        start_position: u64,
+        end_position: u64,
+    ) -> bool {
         serde_json::to_string(stream)
             .ok()
             .and_then(|key| self.load().verified_poll_prefixes.get(&key).cloned())
             .is_some_and(|prefix| {
                 prefix.contiguous
-                    && prefix.start_position <= poll_position
-                    && poll_position <= prefix.head.stream_position
+                    && prefix.start_position <= start_position
+                    && start_position <= end_position
+                    && end_position <= prefix.head.stream_position
             })
     }
 }
@@ -987,6 +1035,12 @@ mod tests {
                 assert_eq!(retained.event_id, original.event.event_id);
                 assert_eq!(retained.scope_ref, original.event.scope_ref);
                 assert_eq!(retained.producer_proof, original.event.producer_proof);
+                if original.event.kind == arkret_sdk::EventKind::StrandCreate {
+                    assert_eq!(
+                        record.payload["accepted_commit"],
+                        serde_json::to_value(&original.commit).unwrap()
+                    );
+                }
             }
         };
         // Exercise the same shared accepted-page entry used inside the

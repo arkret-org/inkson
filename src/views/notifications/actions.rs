@@ -488,9 +488,16 @@ fn accept_invite_notification(
                     account.principal_id.as_str(),
                     &invite_id,
                     credential.as_ref(),
-                    Some(invitee_account_id),
+                    Some(invitee_account_id.clone()),
                 )
                 .await?;
+            crate::realm_events_engine::refresh_joined_realm(
+                &api.sdk_http_client()?,
+                &invitee_account_id,
+                &arkret_sdk::RealmId::new(accepted_realm_for_api.clone())?,
+                crate::app::runtime_adapter::state_store_handle(state_store),
+            )
+            .await?;
             accepted_status.set(format!(
                 "Joined Realm {}.",
                 short_protocol_id(&accepted_realm_for_api)

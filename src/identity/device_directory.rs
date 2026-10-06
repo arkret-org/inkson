@@ -356,6 +356,11 @@ pub(crate) async fn authenticated_device_authoring_authority(
         .devices_for(account_id)
         .and_then(|devices| devices.get(device_id))
     else {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(
+            reason = "device_row_absent",
+            "device authoring evidence unavailable"
+        );
         return Ok(None);
     };
     if !local_signer_matches_device_projection(
@@ -364,6 +369,11 @@ pub(crate) async fn authenticated_device_authoring_authority(
         device_id,
         &record.device_projection,
     ) {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(
+            reason = "local_signer_mismatch",
+            "device authoring evidence unavailable"
+        );
         return Ok(None);
     }
     let Some(generation) =
@@ -373,11 +383,34 @@ pub(crate) async fn authenticated_device_authoring_authority(
             device_id.as_str(),
         )?
     else {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(
+            reason = "principal_generation_unavailable",
+            "device authoring evidence unavailable"
+        );
         return Ok(None);
     };
-    Ok(persisted_device_authoring_authority_from_outcome(
-        &outcome, account_id, device_id, generation,
-    ))
+    let persisted = persisted_device_authoring_authority_from_outcome(
+        &outcome,
+        account_id,
+        device_id,
+        generation.clone(),
+    );
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    if persisted.is_none() {
+        let now = chrono::Utc::now();
+        let projection = &record.device_projection;
+        tracing::warn!(
+            usable_generation = record.is_usable_in_generation(outcome.generation_for(account_id)),
+            valid_projection = validate_self_device_row(record).is_ok(),
+            fresh_observation = projection_observation_is_fresh(projection, now),
+            authorized_now = projection_authorization_window_contains(projection, now),
+            matching_generation =
+                projection.authorized_generation_ref.to_string() == generation.generation_ref,
+            "device authoring evidence unavailable"
+        );
+    }
+    Ok(persisted)
 }
 
 fn store_entry_at_epoch(

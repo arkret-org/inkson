@@ -1128,6 +1128,22 @@ fn merge_synced_raw_operation_payload(existing: &Value, mut incoming: Value) -> 
     {
         incoming_object.insert("event".to_owned(), event.clone());
     }
+    // Only the verified-page funnel supplies this coordinate. Exact original
+    // replay must retain it, while a different envelope or tombstone cannot
+    // inherit the old Event's schedule provenance.
+    if !incoming_redacted
+        && !raw_payload_is_signed_event(incoming_object)
+        && incoming_object.get("accepted_commit").is_none()
+        && incoming_object.get("event").is_some()
+        && incoming_object.get("event") == existing_object.get("event")
+        && let Some(commit) = existing_object.get("accepted_commit")
+        && commit.get("event_ref")
+            == incoming_object
+                .get("event")
+                .and_then(|event| event.get("event_id"))
+    {
+        incoming_object.insert("accepted_commit".to_owned(), commit.clone());
+    }
     // An event-derived create's optimistic row is keyed by the DRAFT object id
     // (`local_target_ref` = retype(draft event_id)); the canonical row that
     // replaces it re-derives `local_target_ref` from the ACCEPTED event id.
