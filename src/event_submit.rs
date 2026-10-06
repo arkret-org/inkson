@@ -69,7 +69,8 @@ impl garth::HostClock for InksonHostClock {
 }
 
 type InksonOutboundEngine = OutboundEngine<InksonOutboundStore, InksonHostClock>;
-type InksonAuthorityClient = garth::AuthorityClient<garth::own_station::OwnStationConsumer>;
+type InksonAuthorityClient =
+    garth::AuthorityClient<arkret_sdk::http_client::own_station_results::OwnStationResultClient>;
 
 /// The write is safely persisted and will be retried.
 ///
@@ -114,8 +115,9 @@ pub(crate) async fn scan_stream_with(
         direction: arkret_wire::StreamScanDirection::After(after_position),
         limit: limit.clamp(1, 1000),
     };
+    let client = crate::transport::own_station_results::client_for_http(http).await?;
     Ok(BackfillView::from(
-        garth::AuthorityClient::new(http.clone())
+        garth::AuthorityClient::new(client)
             .scan(&request)
             .await
             .map_err(anyhow::Error::from)?,
@@ -1058,20 +1060,9 @@ impl EventSubmitter {
     }
 
     async fn authority_client(&self) -> anyhow::Result<InksonAuthorityClient> {
-        let binding = crate::station_connection::enrolled(self.http.base_url().as_str()).await?;
-        let epoch = crate::identity::device_directory::session_cache_epoch();
-        let consumer = garth::own_station::OwnStationConsumer::authenticate(
-            self.http.clone(),
-            &binding,
-            self.authority()?.clone(),
-            epoch,
-        )
-        .await?;
-        anyhow::ensure!(
-            epoch == crate::identity::device_directory::session_cache_epoch(),
-            "submission Account epoch changed"
-        );
-        Ok(garth::AuthorityClient::new(consumer))
+        Ok(garth::AuthorityClient::new(
+            crate::transport::own_station_results::client_for_http(&self.http).await?,
+        ))
     }
 
     fn outbound(&self, lane: OutboundLane) -> anyhow::Result<InksonOutboundEngine> {
@@ -1211,15 +1202,13 @@ impl EventSubmitter {
         {
             return Ok(Some(cached.clone()));
         }
-        // The nonce-bound, Station-signed authority bundle carries the exact
-        // genesis Event of the Realm's verified chain. A readable-history scan
-        // is not the source: its first row need not be position 0.
+        // Read the disclosed immutable original at its Realm-derived Event
+        // identity; limited history is never treated as a founding prefix.
         let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
-        let originals =
-            crate::realm_events_engine::own_realm_prefix(&self.http, self.authority()?, &realm, 1)
-                .await?;
+        let genesis =
+            crate::transport::own_station_results::accepted_genesis(&self.http, &realm).await?;
         let resolved =
-            realm_create_authority_from_events(std::slice::from_ref(&originals[0].event), realm_id);
+            realm_create_authority_from_events(std::slice::from_ref(&genesis.event), realm_id);
         if let Some(authority) = &resolved {
             realm_create_authority_cache()
                 .lock()
@@ -1451,16 +1440,15 @@ impl EventSubmitter {
         let peer = store
             .read(|state| state.direct_conversation_peer(realm.as_str()))
             .ok_or_else(|| anyhow::anyhow!("Direct MLS admission requires its exact peer"))?;
-        let originals =
-            crate::realm_events_engine::own_realm_prefix(&self.http, self.authority()?, realm, 1)
-                .await?;
+        let genesis =
+            crate::transport::own_station_results::accepted_genesis(&self.http, realm).await?;
         let outcome = self
             .http
             .direct_conversation_resolve(
                 &arkret_sdk::direct_conversation::DirectConversationResolveRequestBody { peer },
             )
             .await?;
-        crate::mls::direct_binding::mls_authoring_intent(intent, &originals[0].event, &outcome)
+        crate::mls::direct_binding::mls_authoring_intent(intent, &genesis.event, &outcome)
     }
 
     fn sign_authored_event(
@@ -2427,7 +2415,10 @@ impl EventSubmitter {
                         .map_err(|error| error.to_string())?
                     {
                         replay_store
-                            .remember_creator_absence(decision)
+                            .remember_creator_absence_guarded(
+                                (decision.0, decision.1),
+                                Some(decision.2),
+                            )
                             .map_err(|error| error.to_string())?;
                     }
                     self.ensure_queued_application_send_gate(&request)
@@ -2461,6 +2452,25 @@ impl EventSubmitter {
                     error,
                     problem,
                 } if item.event_id() == &event_id => {
+                    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                    if let Some(problem) = problem.as_ref() {
+                        let wire_code = problem
+                            .error_code()
+                            .map(|code| code.as_str())
+                            .unwrap_or("unregistered");
+                        let reason_code = problem
+                            .extensions
+                            .get("reason_code")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|value| arkret_sdk::ReasonCode::is_registered(value))
+                            .unwrap_or("unregistered");
+                        tracing::warn!(
+                            http_status = problem.status,
+                            wire_code,
+                            reason_code,
+                            "ordinary durable submission API problem"
+                        );
+                    }
                     let context = format!("durable submission of {event_id} failed");
                     return Err(match problem {
                         Some(problem) => anyhow::Error::new(arkret_sdk::http_client::Error::Api {
@@ -2717,7 +2727,10 @@ impl EventSubmitter {
                         .map_err(|error| error.to_string())?
                     {
                         replay_store
-                            .remember_creator_absence(decision)
+                            .remember_creator_absence_guarded(
+                                (decision.0, decision.1),
+                                Some(decision.2),
+                            )
                             .map_err(|error| error.to_string())?;
                     }
                     self.ensure_queued_application_send_gate(&request)
@@ -3188,27 +3201,21 @@ impl EventSubmitter {
         let stream_ref =
             arkret_wire::CommitStreamRef::from_scope(scope_ref, Some(realm_id.clone()))
                 .map_err(anyhow::Error::from)?;
-        let binding = crate::station_connection::enrolled(self.http.base_url().as_str()).await?;
-        let epoch = crate::identity::device_directory::session_cache_epoch();
-        let consumer = garth::own_station::OwnStationConsumer::authenticate(
-            self.http.clone(),
-            &binding,
-            self.authority()?.clone(),
-            epoch,
-        )
-        .await?;
-        let snapshot = consumer.snapshot_head(&realm_id).await?;
-        anyhow::ensure!(
-            epoch == crate::identity::device_directory::session_cache_epoch(),
-            "head read Account epoch changed"
-        );
-        snapshot
-            .snapshot()
+        let client = crate::transport::own_station_results::client_for_http(&self.http).await?;
+        let response = client.snapshot_head(&realm_id).await?;
+        let mut replica = garth::own_station_results::OwnStationReplica::new(realm_id);
+        replica.install_bound_snapshot(&response)?;
+        let head = response
+            .value()?
             .visible_stream_heads
             .iter()
             .find(|head| head.stream_ref == stream_ref)
-            .map(|head| head.commit_id.clone())
-            .ok_or_else(|| anyhow::anyhow!("own Station current omits the requested stream head"))
+            .ok_or_else(|| {
+                anyhow::anyhow!("current own Station cut does not cover the Signal stream")
+            })?;
+        // This is current coverage, not a downloaded replay predecessor.
+        // The actual scope remains its independent Realm/Circle/Sidecar stream.
+        Ok(head.commit_id.clone())
     }
 
     /// [`Self::send_signal`] with the scope header assembled from the current

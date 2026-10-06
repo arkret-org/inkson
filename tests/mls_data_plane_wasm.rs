@@ -164,6 +164,7 @@ impl AcceptedGroupState {
                 self.current_event_ref.clone(),
             ),
             committed_at: "2026-09-26T00:00:01.000Z".parse().unwrap(),
+            producer_signer_fact_digest: None,
             signature: detached_signature(arkret_sdk::DetachedSignatureContext::RealmCommit, seed),
         };
         let accepted = CommittedEventFullView { commit, event };

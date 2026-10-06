@@ -18,6 +18,7 @@
 //! - [`upload`] — backup / rotation upload flow and superseded cleanup.
 
 mod backup_body;
+mod current_basis;
 mod recovery_transaction;
 mod restore;
 mod rotation_transaction;

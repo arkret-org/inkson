@@ -750,6 +750,7 @@ mod tests {
             committed_at: chrono::DateTime::parse_from_rfc3339("2026-09-20T00:00:00Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
+            producer_signer_fact_digest: None,
             signature: arkret_wire::DetachedObjectSignature {
                 context: arkret_wire::DetachedSignatureContext::RealmCommit,
                 signature_algorithm: arkret_wire::DetachedSignatureAlgorithm::Ed25519,

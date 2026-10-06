@@ -31,6 +31,7 @@ use crate::views::helpers::{
     MentionNode, active_sync_token, parse_mention_nodes, short_protocol_id,
 };
 
+mod agent_modes;
 mod circle_welcome;
 mod composer;
 mod controller;
@@ -2136,63 +2137,41 @@ pub fn ChatPanel(
         realm_live_epoch(),
         readable_participation_agent_ids.join(",")
     );
-    let mut interaction_modes = use_signal(
-        std::collections::BTreeMap::<arkret_sdk::AccountId, arkret_sdk::AgentInteractionMode>::new,
-    );
     let mode_accounts = participants_for_messages
         .iter()
         .filter(|p| p.is_agent)
         .filter_map(participant_mention_account)
         .collect::<Vec<_>>();
-    let mut mode_request_seen = use_signal(String::new);
-    let mode_key = format!(
-        "{}|{}|{}|{}",
-        selected_realm_id,
-        realm_live_epoch(),
-        crate::identity::device_directory::session_cache_epoch(),
-        serde_json::to_string(&mode_accounts).unwrap_or_default()
-    );
-    {
-        let realm = selected_realm_id.clone();
-        let base = base_url.clone();
-        use_effect(use_reactive((&mode_key,), move |(key,)| {
-            interaction_modes.set(Default::default());
-            mode_request_seen.set(key.clone());
-            let expected_key = key.clone();
-            let realm = realm.clone();
-            let base = base.clone();
-            let accounts = mode_accounts.clone();
-            let epoch = crate::identity::device_directory::session_cache_epoch();
-            spawn(async move {
-                let result = crate::transport::auth::with_authed_sdk_client(
-                    &base,
-                    token(),
-                    |http| async move {
-                        let realm = arkret_sdk::RealmId::new(realm)?;
-                        let mut modes = std::collections::BTreeMap::new();
-                        for account in accounts {
-                            if let Ok((mode, ..)) =
-                                crate::transport::agent_interaction::read(&http, &realm, &account)
-                                    .await
-                            {
-                                modes.insert(account, mode);
-                            }
-                        }
-                        Ok::<_, anyhow::Error>(modes)
-                    },
-                )
-                .await;
-                if crate::identity::device_directory::session_cache_epoch() == epoch
-                    && mode_request_seen.peek().as_str() == expected_key
-                {
-                    if let Ok(modes) = result {
-                        interaction_modes.set(modes);
-                    }
-                }
-            });
-        }));
-    }
-    let interaction_modes_snapshot = interaction_modes();
+    let mode_key = {
+        let store = state_store.read();
+        agent_modes::AgentModeReadKey {
+            base: base_url.clone(),
+            authority: authority.clone(),
+            realm: selected_realm_id.clone(),
+            credential: token(),
+            session_epoch: crate::identity::device_directory::session_cache_epoch(),
+            realm_epoch: realm_live_epoch(),
+            sync_ready: account_sync_ready,
+            generation: store.current_generation(),
+            ready: store.current_product_view_ready(&selected_realm_id),
+            complete: store
+                .current_product_view()
+                .is_some_and(|view| view.realm_id == selected_realm_id && view.complete_cut),
+            reset: store.current_reset_required(),
+            head: arkret_sdk::RealmId::new(selected_realm_id.clone())
+                .ok()
+                .and_then(|realm_id| {
+                    store
+                        .verified_commit_stream_cursor(&arkret_sdk::CommitStreamRef::Realm {
+                            realm_id,
+                        })
+                        .ok()
+                        .flatten()
+                }),
+            accounts: mode_accounts,
+        }
+    };
+    let interaction_modes_snapshot = agent_modes::use_agent_modes(mode_key);
     let mut public_agent_accounts = participants_for_messages
         .iter()
         .filter(|p| {

@@ -19,6 +19,7 @@ fn accepted_commit() -> arkret_wire::RealmCommit {
             arkret_wire::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [4; 32]),
         ),
         committed_at: chrono::Utc.with_ymd_and_hms(2026, 9, 22, 0, 0, 0).unwrap(),
+        producer_signer_fact_digest: None,
         signature: arkret_wire::DetachedObjectSignature {
             context: arkret_wire::DetachedSignatureContext::RealmCommit,
             signature_algorithm: arkret_wire::DetachedSignatureAlgorithm::Ed25519,

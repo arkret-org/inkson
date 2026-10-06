@@ -18,6 +18,7 @@ mod key_backup;
 pub mod keys;
 pub mod media;
 pub mod moderation;
+pub mod own_station_results;
 pub mod realm_read;
 pub mod realm_write;
 pub(crate) mod strand_watch;

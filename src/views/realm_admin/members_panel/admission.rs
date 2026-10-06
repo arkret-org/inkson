@@ -666,7 +666,19 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     }));
     if pending.is_empty() {
         let local_state = state_store.read().clone();
-        crate::mls::direct_binding::ensure_binding(api, &local_state, &realm_id, &backfill).await?;
+        crate::mls::direct_binding::diagnostic_stage("admission_binding", "entered");
+        let result =
+            crate::mls::direct_binding::ensure_binding(api, &local_state, &realm_id, &backfill)
+                .await;
+        crate::mls::direct_binding::diagnostic_stage(
+            "admission_binding",
+            if result.is_ok() {
+                "completed"
+            } else {
+                "failed"
+            },
+        );
+        result?;
         return Ok(MlsAdmissionReconcileOutcome {
             admitted: 0,
             deferred: usize::from(

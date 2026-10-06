@@ -930,6 +930,14 @@ pub(crate) struct LocallyAuthenticatedIdentityLink {
     pub(crate) winning_group_state_ref: arkret_sdk::EventId,
 }
 
+/// Previously observed current coordinates, retained across hidden streams or
+/// invalidation only to reject rollback. Never a replay or authoring capability.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ObservedSidecarCurrentWatermark {
+    pub(crate) governance_generation: u64,
+    pub(crate) stream_heads: Vec<arkret_sdk::CommitStreamHead>,
+}
+
 /// Persisted non-secret accounting for one resident external history-secret
 /// candidate. The SDK material key is the protocol identity; secret bytes are
 /// stored separately in `SecureKeyStore`.
@@ -988,6 +996,11 @@ pub struct ClientLocalState {
     pub(crate) verified_sidecar_history: BTreeMap<String, Vec<arkret_sdk::CommittedEventView>>,
     #[serde(default)]
     pub(crate) verified_sidecar_current: BTreeMap<String, arkret_sdk::RealmStateSnapshot>,
+    /// Durable observed current-head union. This is an anti-rollback watermark,
+    /// never a downloaded history prefix, replay cursor or readable current cut.
+    #[serde(default)]
+    pub(crate) verified_sidecar_current_watermarks:
+        BTreeMap<String, ObservedSidecarCurrentWatermark>,
     #[serde(default)]
     pub realm_destroy_receipts: BTreeMap<String, RealmDestroyReceipt>,
     pub realm_tree_projections: BTreeMap<String, Value>,
@@ -1560,6 +1573,7 @@ impl Default for ClientLocalState {
             verified_poll_prefixes: BTreeMap::new(),
             verified_sidecar_history: BTreeMap::new(),
             verified_sidecar_current: BTreeMap::new(),
+            verified_sidecar_current_watermarks: BTreeMap::new(),
             realm_destroy_receipts: BTreeMap::new(),
             realm_tree_projections: BTreeMap::new(),
             realm_collaboration_roles: BTreeMap::new(),

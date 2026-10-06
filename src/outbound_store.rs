@@ -120,7 +120,11 @@ struct DurableOutboundState {
 impl DurableOutboundState {
     fn settle_creator_rejections(
         &mut self,
-        decision: &Option<(arkret_sdk::EventId, MlsCreatorBootstrapVerifiedAbsence)>,
+        decision: &Option<(
+            arkret_sdk::EventId,
+            MlsCreatorBootstrapVerifiedAbsence,
+            Option<arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+        )>,
     ) -> garth::Result<()> {
         for record in &mut self.creator_bootstrap_records {
             let Some(queued) = record.queued_genesis() else {
@@ -145,12 +149,14 @@ impl DurableOutboundState {
                 _ if terminal_problem.is_some() => None,
                 _ => continue,
             };
-            let Some((_, absence)) = decision.as_ref().filter(|(id, _)| id == item.event_id())
+            let Some((_, absence, source)) =
+                decision.as_ref().filter(|(id, ..)| id == item.event_id())
             else {
                 return Err(garth::Error::Storage(
                     "creator rejection has no verified decision for this send attempt".into(),
                 ));
             };
+            check_creator_own_source(source.as_ref(), record.intent())?;
             let rejection = match terminal_problem {
                 Some(problem) => MlsCreatorBootstrapRejection::from_problem(
                     record,
@@ -756,7 +762,13 @@ async fn mutate_state_in_file<R>(
 #[derive(Clone)]
 pub(crate) struct InksonOutboundStore {
     creator_decision: std::sync::Arc<
-        std::sync::Mutex<Option<(arkret_sdk::EventId, MlsCreatorBootstrapVerifiedAbsence)>>,
+        std::sync::Mutex<
+            Option<(
+                arkret_sdk::EventId,
+                MlsCreatorBootstrapVerifiedAbsence,
+                Option<arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+            )>,
+        >,
     >,
     #[cfg(not(target_arch = "wasm32"))]
     path: std::path::PathBuf,
@@ -802,6 +814,22 @@ fn outbound_storage_scope(
             ))
         })?;
     Ok(format!("{authority_digest}.{}", lane.suffix()))
+}
+
+fn check_creator_own_source(
+    own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
+) -> garth::Result<()> {
+    if let Some(client) = own_client {
+        let session = client.session()?;
+        if intent.owner_actor_id().as_account_id() != Some(session.account_id()) {
+            return Err(garth::Error::Protocol(
+                "creator durable publication changed the complete holder Account".into(),
+            ));
+        }
+        client.check_session()?;
+    }
+    Ok(())
 }
 
 impl InksonOutboundStore {
@@ -971,11 +999,22 @@ impl InksonOutboundStore {
         &self,
         decision: (arkret_sdk::EventId, MlsCreatorBootstrapVerifiedAbsence),
     ) -> garth::Result<()> {
+        self.remember_creator_absence_guarded(decision, None)
+    }
+
+    pub(crate) fn remember_creator_absence_guarded(
+        &self,
+        decision: (arkret_sdk::EventId, MlsCreatorBootstrapVerifiedAbsence),
+        source: Option<arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    ) -> garth::Result<()> {
+        if let Some(client) = &source {
+            client.check_session()?;
+        }
         *self
             .creator_decision
             .lock()
             .map_err(|_| garth::Error::Storage("creator decision lock poisoned".into()))? =
-            Some(decision);
+            Some((decision.0, decision.1, source));
         Ok(())
     }
 
@@ -1095,9 +1134,21 @@ impl InksonOutboundStore {
         accepted_create: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
         genesis_absence: arkret_wire::RealmStateSnapshot,
     ) -> garth::Result<()> {
+        self.accept_creator_realm_guarded(expected, accepted_create, genesis_absence, None)
+            .await
+    }
+
+    pub(crate) async fn accept_creator_realm_guarded(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        accepted_create: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
+        genesis_absence: arkret_wire::RealmStateSnapshot,
+        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    ) -> garth::Result<()> {
         let mut next = expected.clone();
         next.accept_realm(accepted_create, genesis_absence)?;
-        self.replace_creator_record(expected, next).await
+        self.replace_creator_record_guarded(expected, next, own_client)
+            .await
     }
 
     pub(crate) async fn pin_creator_governance(
@@ -1105,9 +1156,20 @@ impl InksonOutboundStore {
         expected: MlsCreatorBootstrapRecord,
         evidence: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapGovernanceEvidence,
     ) -> garth::Result<()> {
+        self.pin_creator_governance_guarded(expected, evidence, None)
+            .await
+    }
+
+    pub(crate) async fn pin_creator_governance_guarded(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        evidence: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapGovernanceEvidence,
+        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    ) -> garth::Result<()> {
         let mut next = expected.clone();
         next.pin_governance(evidence)?;
-        self.replace_creator_record(expected, next).await
+        self.replace_creator_record_guarded(expected, next, own_client)
+            .await
     }
 
     pub(crate) async fn persist_creator_epoch_zero(
@@ -1170,9 +1232,20 @@ impl InksonOutboundStore {
         expected: MlsCreatorBootstrapRecord,
         accepted: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedGenesis,
     ) -> garth::Result<()> {
+        self.accept_creator_genesis_guarded(expected, accepted, None)
+            .await
+    }
+
+    pub(crate) async fn accept_creator_genesis_guarded(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        accepted: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedGenesis,
+        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    ) -> garth::Result<()> {
         let mut next = expected.clone();
         next.accept_genesis(accepted.clone())?;
         self.mutate_state(|state| {
+            check_creator_own_source(own_client, expected.intent())?;
             let record = state
                 .creator_bootstrap_records
                 .iter_mut()
@@ -1228,7 +1301,22 @@ impl InksonOutboundStore {
             arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapKnownGenesis,
         >,
     ) -> garth::Result<()> {
+        self.quarantine_creator_guarded(expected, invariant, detail, known, None)
+            .await
+    }
+
+    pub(crate) async fn quarantine_creator_guarded(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        invariant: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapInvariant,
+        detail: String,
+        known: Option<
+            arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapKnownGenesis,
+        >,
+        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    ) -> garth::Result<()> {
         self.mutate_state(|state| {
+            check_creator_own_source(own_client, expected.intent())?;
             let position = state
                 .creator_bootstrap_records
                 .iter()
@@ -1259,6 +1347,15 @@ impl InksonOutboundStore {
         expected: MlsCreatorBootstrapRecord,
         winner: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapWinner,
     ) -> garth::Result<()> {
+        self.supersede_creator_guarded(expected, winner, None).await
+    }
+
+    pub(crate) async fn supersede_creator_guarded(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        winner: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapWinner,
+        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    ) -> garth::Result<()> {
         let mut next = expected.clone();
         next.supersede(winner)?;
         let loser = expected
@@ -1270,6 +1367,7 @@ impl InksonOutboundStore {
                     .map(|rejection| rejection.event_id().clone())
             });
         self.mutate_state(|state| {
+            check_creator_own_source(own_client, expected.intent())?;
             let record = state
                 .creator_bootstrap_records
                 .iter_mut()
@@ -1298,6 +1396,15 @@ impl InksonOutboundStore {
         expected: MlsCreatorBootstrapRecord,
         absence: MlsCreatorBootstrapVerifiedAbsence,
     ) -> garth::Result<()> {
+        self.reopen_creator_guarded(expected, absence, None).await
+    }
+
+    pub(crate) async fn reopen_creator_guarded(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        absence: MlsCreatorBootstrapVerifiedAbsence,
+        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    ) -> garth::Result<()> {
         let old_id = expected
             .rejection()
             .ok_or_else(|| {
@@ -1308,6 +1415,7 @@ impl InksonOutboundStore {
         let mut next = expected.clone();
         next.reopen_rejected(absence)?;
         self.mutate_state(|state| {
+            check_creator_own_source(own_client, expected.intent())?;
             let record = state
                 .creator_bootstrap_records
                 .iter_mut()
@@ -1446,8 +1554,19 @@ impl InksonOutboundStore {
         expected: MlsCreatorBootstrapRecord,
         next: MlsCreatorBootstrapRecord,
     ) -> garth::Result<()> {
+        self.replace_creator_record_guarded(expected, next, None)
+            .await
+    }
+
+    async fn replace_creator_record_guarded(
+        &self,
+        expected: MlsCreatorBootstrapRecord,
+        next: MlsCreatorBootstrapRecord,
+        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    ) -> garth::Result<()> {
         next.validate()?;
         self.mutate_state(|state| {
+            check_creator_own_source(own_client, expected.intent())?;
             let record = state
                 .creator_bootstrap_records
                 .iter_mut()
@@ -1786,6 +1905,7 @@ mod tests {
             governance_generation: 0,
             authority_ref: RealmCommitAuthorityRef::GenesisOrChangeEvent(event.event_id.clone()),
             committed_at: time,
+            producer_signer_fact_digest: None,
             signature: signature(DetachedSignatureContext::RealmCommit),
         };
         let head = CommitStreamHead {
@@ -1831,6 +1951,136 @@ mod tests {
             signature: signature(DetachedSignatureContext::RealmSnapshot),
         };
         (arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate::new(intent, event, commit, arkret_sdk::DigestSuite::Sha256, root).unwrap(), snapshot)
+    }
+
+    #[tokio::test]
+    async fn own_station_creator_vault_lock_session_aba_preserves_original_and_frozen_queue() {
+        use arkret_sdk::http_client::own_station_results::{
+            OwnStationResultClient, OwnStationSessionSnapshot, OwnStationSessionSource,
+        };
+        struct Source(std::sync::Mutex<OwnStationSessionSnapshot>);
+        impl OwnStationSessionSource for Source {
+            fn snapshot(&self) -> arkret_sdk::http_client::Result<OwnStationSessionSnapshot> {
+                Ok(self.0.lock().unwrap().clone())
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("ordinary-creator.json");
+        let store = InksonOutboundStore::for_test_path(path.clone());
+        let (intent, submission) = creator_fixture(CREATOR_DEVICE);
+        store
+            .freeze_creator_intent(intent.clone(), submission)
+            .await
+            .unwrap();
+        let expected = store
+            .creator_record(intent.owner_actor_id(), intent.effective_scope())
+            .await
+            .unwrap()
+            .unwrap();
+        let (native, mut snapshot) = creator_acceptance(&intent);
+        let payload: arkret_sdk::RealmCreatePayload =
+            serde_json::from_value(serde_json::to_value(&native.accepted_event().payload).unwrap())
+                .unwrap();
+        snapshot
+            .current_state_entries
+            .push(arkret_sdk::TypedCurrentResult::Value {
+                selector: arkret_sdk::CurrentSelector::RealmGenesis,
+                source_stream_ref: native.covering_commit().stream_ref.clone(),
+                revision: arkret_sdk::CurrentRevision {
+                    commit_id: native.covering_commit().commit_id.clone(),
+                    stream_position: 0,
+                },
+                value: serde_json::to_value(&payload.object).unwrap(),
+            });
+        let mut unsigned = serde_json::to_value(&snapshot).unwrap();
+        unsigned.as_object_mut().unwrap().remove("snapshot_id");
+        unsigned.as_object_mut().unwrap().remove("signature");
+        snapshot.snapshot_id =
+            arkret_sdk::RealmSnapshotId::from_digest(arkret_sdk::canonical::sha256_bytes(
+                &arkret_sdk::canonical::canonical_json_bytes(&unsigned).unwrap(),
+            ));
+        let account = intent.owner_actor_id().as_account_id().unwrap().clone();
+        let binding = arkret_sdk::StationConnectionBinding {
+            service_id: account.station_id.clone(),
+            base_url: "https://station.example/".into(),
+            trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
+                .unwrap(),
+            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+        };
+        let grant = arkret_wire::SessionGrantId::from_issuance_digest([9; 32]);
+        let session = |epoch| {
+            OwnStationSessionSnapshot::new(
+                binding.clone(),
+                account.clone(),
+                account.station_id.clone(),
+                grant.clone(),
+                epoch,
+                "fixture-session".into(),
+            )
+            .unwrap()
+        };
+        let source = std::sync::Arc::new(Source(std::sync::Mutex::new(session(1))));
+        let raw = arkret_sdk::http_client::ClientBuilder::new(
+            url::Url::parse(&binding.base_url).unwrap(),
+        )
+        .auth(arkret_sdk::http_client::Auth::Bearer(
+            "fixture-session".into(),
+        ))
+        .build()
+        .unwrap();
+        let client =
+            OwnStationResultClient::new(raw.clone(), binding.clone(), source.clone()).unwrap();
+        let cut = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority::own_station(snapshot.clone(), payload.object.clone(), account.clone(), grant.clone(), 1, 1).unwrap();
+        let accepted = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate::new(&intent, native.accepted_event().clone(), native.covering_commit().clone(), native.digest_suite(), cut).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let lock = outbound_write_gate().lock().await;
+        let mut waiting = Box::pin(store.accept_creator_realm_guarded(
+            expected.clone(),
+            accepted.clone(),
+            snapshot.clone(),
+            Some(&client),
+        ));
+        assert!(futures_util::poll!(&mut waiting).is_pending());
+        // Same holder/grant/origin after A -> replacement -> A is a new
+        // provider session epoch. The old in-flight response cannot publish.
+        *source.0.lock().unwrap() = session(2);
+        *source.0.lock().unwrap() = session(3);
+        drop(lock);
+        assert!(waiting.await.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        let reopened = InksonOutboundStore::for_test_path(path.clone());
+        assert_eq!(
+            reopened
+                .creator_record(intent.owner_actor_id(), intent.effective_scope())
+                .await
+                .unwrap(),
+            Some(expected.clone())
+        );
+        let current = OwnStationResultClient::new(raw, binding, source).unwrap();
+        let fresh_cut = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority::own_station(snapshot.clone(), payload.object, account, grant, 3, 2).unwrap();
+        let fresh_accepted = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate::new(&intent, native.accepted_event().clone(), native.covering_commit().clone(), native.digest_suite(), fresh_cut).unwrap();
+        reopened
+            .accept_creator_realm_guarded(expected, fresh_accepted, snapshot, Some(&current))
+            .await
+            .unwrap();
+        let restored = InksonOutboundStore::for_test_path(path)
+            .creator_record(intent.owner_actor_id(), intent.effective_scope())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            restored.state(),
+            arkret_wire::MlsCreatorBootstrapState::RealmAccepted
+        );
+        assert!(
+            restored
+                .accepted_create()
+                .unwrap()
+                .authority_root()
+                .is_err()
+        );
+        // The fixture controls the SDK source lifecycle, without claiming an
+        // HTTP issuer/signature proof. Real Bound-source reads are in Garth.
     }
 
     #[tokio::test]
@@ -1976,7 +2226,7 @@ mod tests {
                 .unwrap(),
             Some(stopped.clone())
         );
-        let mut root = create.authority_root().clone();
+        let mut root = create.authority_root().unwrap().clone();
         root.current_assertion.nonce =
             arkret_wire::Base64UrlString::new("BBBBBBBBBBBBBBBBBBBBBB").unwrap();
         let fresh_create = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate::new(
@@ -2397,7 +2647,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let now = accepted.authority_root().bundle_issued_at;
+        let now = accepted.authority_root().unwrap().bundle_issued_at;
         // These fixtures check atomic storage, not authenticated source evidence.
         let outcome: arkret_models_crypto::KeysQueryOutcome = serde_json::from_value(serde_json::json!({
             "device_keys": [{"account_id": intent.owner_actor_id().as_account_id().unwrap(), "device_keys": {
@@ -2654,7 +2904,7 @@ mod tests {
         let accepted = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedGenesis::new(
             &intent, winner.queued_genesis().unwrap(),
             arkret_wire::CommittedEventFullView { commit: commit.clone(), event: winner.queued_genesis().unwrap().signed_genesis().event().clone() },
-            create.authority_root().clone()).unwrap();
+            create.authority_root().unwrap().clone()).unwrap();
         crate::event_submit::verify_creator_genesis_producer(&winner, &accepted).unwrap();
         Box::pin(creator_rejection_fault_cut(
             directory.path(),
@@ -2703,7 +2953,7 @@ mod tests {
                         event: rival_event.event().clone(),
                         commit: rival_commit,
                     },
-                    create.authority_root().clone(),
+                    create.authority_root().unwrap().clone(),
                 )
                 .unwrap();
             let before = std::fs::read(&rival_path).unwrap();

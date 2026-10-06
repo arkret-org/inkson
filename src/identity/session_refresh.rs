@@ -98,11 +98,44 @@ struct InksonAuthenticatedTransportFactory {
 }
 
 impl InksonAuthenticatedTransportFactory {
+    fn loopback_service_discovery_scope(&self) -> Option<(&'static str, u16)> {
+        // The joint test fixture explicitly enables this feature. Production
+        // sessions never infer egress permission from debug assertions or DIDs.
+        #[cfg(feature = "wasm-localstorage-secrets-test")]
+        if self.station_url.scheme() == "https"
+            && self.station_url.username().is_empty()
+            && self.station_url.password().is_none()
+            && self.station_url.fragment().is_none()
+        {
+            let host = self.station_url.host_str().unwrap_or_default();
+            let namespace = ["localhost", "local.host"].into_iter().find(|namespace| {
+                host == *namespace
+                    || host
+                        .strip_suffix(*namespace)
+                        .is_some_and(|prefix| prefix.ends_with('.'))
+            });
+            if let Some(namespace) = namespace {
+                return Some((namespace, self.station_url.port_or_known_default()?));
+            }
+        }
+        None
+    }
+
+    fn service_discovery_builder(&self, base_url: Url) -> garth::Result<ClientBuilder> {
+        let builder = ClientBuilder::new(base_url);
+        if let Some((namespace, port)) = self.loopback_service_discovery_scope() {
+            return builder
+                .loopback_service_discovery(namespace, port)
+                .map_err(Into::into);
+        }
+        Ok(builder)
+    }
+
     fn build_principal_client(
         &self,
         state: &SessionGrantState,
     ) -> garth::Result<arkret_sdk::http_client::Client> {
-        ClientBuilder::new(self.principal_sdk_base_url.clone())
+        self.service_discovery_builder(self.principal_sdk_base_url.clone())?
             .allow_insecure_localhost()
             .auth(Auth::Dpop(
                 self.device_handle
@@ -116,7 +149,7 @@ impl InksonAuthenticatedTransportFactory {
         &self,
         state: &SessionGrantState,
     ) -> garth::Result<arkret_sdk::http_client::Client> {
-        ClientBuilder::new(self.account_sdk_base_url.clone())
+        self.service_discovery_builder(self.account_sdk_base_url.clone())?
             .allow_insecure_localhost()
             .auth(Auth::Dpop(
                 self.device_handle
@@ -413,6 +446,101 @@ pub async fn provide_authenticated_sdk_client(
 pub(crate) struct AuthenticatedSession {
     pub client: arkret_sdk::http_client::Client,
     pub grant: PersistedSessionGrant,
+}
+
+/// The provider supplies the formal live grant; the host additionally rejects
+/// results after account/device replacement, including a switch away and back.
+struct HostOwnStationSessionSource {
+    provider_client: arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    authority: arkret_sdk::AccountId,
+    device_id: arkret_sdk::DeviceId,
+    runtime_generation: u64,
+    identity_epoch: u64,
+    device_scope_epoch: u64,
+}
+
+impl arkret_sdk::http_client::own_station_results::OwnStationSessionSource
+    for HostOwnStationSessionSource
+{
+    fn snapshot(
+        &self,
+    ) -> arkret_sdk::http_client::Result<
+        arkret_sdk::http_client::own_station_results::OwnStationSessionSnapshot,
+    > {
+        let scope = crate::secure_key_store::active_device_seed_scope_snapshot();
+        if session_grant_runtime().generation.load(Ordering::SeqCst) != self.runtime_generation
+            || crate::identity::device_directory::session_cache_epoch() != self.identity_epoch
+            || !scope.as_ref().is_some_and(|(scope, epoch)| {
+                scope.authority == self.authority
+                    && scope.device_id == self.device_id
+                    && *epoch == self.device_scope_epoch
+            })
+        {
+            return Err(arkret_sdk::http_client::Error::Protocol(
+                "own Station host session changed".into(),
+            ));
+        }
+        self.provider_client.session().cloned()
+    }
+}
+
+pub(crate) async fn provide_own_station_result_client(
+    station_url: &str,
+) -> anyhow::Result<arkret_sdk::http_client::own_station_results::OwnStationResultClient> {
+    own_station_result_client(station_url, None).await
+}
+
+pub(crate) async fn own_station_result_client_for_http(
+    http: &arkret_sdk::http_client::Client,
+) -> anyhow::Result<arkret_sdk::http_client::own_station_results::OwnStationResultClient> {
+    own_station_result_client(http.base_url().as_str(), Some(http)).await
+}
+
+async fn own_station_result_client(
+    station_url: &str,
+    requested_http: Option<&arkret_sdk::http_client::Client>,
+) -> anyhow::Result<arkret_sdk::http_client::own_station_results::OwnStationResultClient> {
+    use arkret_sdk::http_client::own_station_results::{
+        OwnStationResultClient, OwnStationSessionSource,
+    };
+    let runtime = session_grant_runtime();
+    let runtime_generation = runtime.generation.load(Ordering::SeqCst);
+    let identity_epoch = crate::identity::device_directory::session_cache_epoch();
+    let initial_scope = crate::secure_key_store::active_device_seed_scope_snapshot()
+        .context("own Station result consumption has no active authority/device")?;
+    let accepted = crate::station_connection::load_accepted(station_url).await?;
+    let authenticated = provide_authenticated_session(station_url).await?;
+    let (scope, device_scope_epoch) = crate::secure_key_store::active_device_seed_scope_snapshot()
+        .context("own Station result consumption has no active authority/device")?;
+    anyhow::ensure!(
+        initial_scope == (scope.clone(), device_scope_epoch),
+        "own Station authority/device changed during transport restoration"
+    );
+    anyhow::ensure!(
+        authenticated.grant.account_id == scope.authority
+            && authenticated.grant.device_id == scope.device_id,
+        "own Station grant differs from active authority/device"
+    );
+    let provider = runtime
+        .get(
+            &normalized_server_key(&authenticated.grant.station_url),
+            authenticated.grant.device_id.as_str(),
+        )
+        .context("own Station result consumption has no formal session provider")?;
+    let client = requested_http.cloned().unwrap_or(authenticated.client);
+    let provider_client = provider.own_station_result_client(client.clone(), accepted.clone())?;
+    let source = Arc::new(HostOwnStationSessionSource {
+        provider_client,
+        authority: scope.authority,
+        device_id: scope.device_id,
+        runtime_generation,
+        identity_epoch,
+        device_scope_epoch,
+    });
+    // Re-check after all asynchronous trust/provider restoration and before
+    // constructing a carrier. Token-only transports cannot enter this path.
+    source.snapshot()?;
+    Ok(OwnStationResultClient::new(client, accepted, source)?)
 }
 
 fn load_active_session_grant(
@@ -821,6 +949,120 @@ fn required_trimmed<'a>(value: &'a str, field: &str) -> anyhow::Result<&'a str> 
 mod tests {
     use super::*;
 
+    struct TestFormalOwnSource {
+        engine: SessionEngine<ReplaceableSessionTransport>,
+        binding: arkret_sdk::StationConnectionBinding,
+    }
+    impl arkret_sdk::http_client::own_station_results::OwnStationSessionSource for TestFormalOwnSource {
+        fn snapshot(
+            &self,
+        ) -> arkret_sdk::http_client::Result<
+            arkret_sdk::http_client::own_station_results::OwnStationSessionSnapshot,
+        > {
+            self.engine
+                .own_station_snapshot(&self.binding)
+                .map_err(|error| arkret_sdk::http_client::Error::Protocol(error.to_string()))
+        }
+    }
+
+    fn test_host_own_client(
+        state: &SessionGrantState,
+    ) -> arkret_sdk::http_client::own_station_results::OwnStationResultClient {
+        use arkret_sdk::http_client::own_station_results::{
+            OwnStationResultClient, OwnStationSessionSource,
+        };
+        let binding = arkret_sdk::StationConnectionBinding {
+            service_id: state.account_id.station_id.clone(),
+            base_url: "https://soland.example/".into(),
+            trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:soland.example").unwrap(),
+            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+        };
+        let client = ClientBuilder::new(Url::parse(&binding.base_url).unwrap())
+            .auth(Auth::Dpop(
+                test_device_handle().sdk_dpop_auth_for_access_token(state.grant_jwt.clone()),
+            ))
+            .build()
+            .unwrap();
+        let formal = Arc::new(TestFormalOwnSource {
+            engine: SessionEngine::with_state(
+                ReplaceableSessionTransport::default(),
+                state.clone(),
+            ),
+            binding: binding.clone(),
+        });
+        let inner = OwnStationResultClient::new(client.clone(), binding.clone(), formal).unwrap();
+        let (scope, device_scope_epoch) =
+            crate::secure_key_store::active_device_seed_scope_snapshot().unwrap();
+        let host = Arc::new(HostOwnStationSessionSource {
+            provider_client: inner,
+            authority: scope.authority,
+            device_id: scope.device_id,
+            runtime_generation: session_grant_runtime().generation.load(Ordering::SeqCst),
+            identity_epoch: crate::identity::device_directory::session_cache_epoch(),
+            device_scope_epoch,
+        });
+        host.snapshot().unwrap();
+        OwnStationResultClient::new(client, binding, host).unwrap()
+    }
+
+    #[test]
+    fn own_station_host_projection_transaction_rejects_scope_aba_and_trust_replacement() {
+        let mut state = test_grant_state();
+        let principal_did = arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap();
+        state.account_id.principal_id = arkret_sdk::project_did_to_core_id(&principal_did).unwrap();
+        let device = state.device_id.clone().unwrap();
+        let _scope_guard = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((
+            &state.account_id,
+            &device,
+        )));
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = LocalStateStore::with_path(directory.path().join("state.json"));
+        let account = crate::test_support::AccountFixture::new(principal_did.as_str())
+            .station(state.account_id.station_id.as_str())
+            .server_url("https://soland.example/")
+            .build();
+        assert_eq!(account.authority, state.account_id);
+        store.switch_active_account(&account).unwrap();
+        let frame = crate::realm_events_engine::VerifiedAccountFrame::test_own_context(
+            test_host_own_client(&state),
+        );
+        let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        frame
+            .project_transaction(&mut store, |store| {
+                store.save_realm_collaboration_role(
+                    realm,
+                    Some(arkret_sdk::CollaborationRealmRole::DirectConversation),
+                );
+                Ok(())
+            })
+            .unwrap();
+        let before = serde_json::to_value(store.load()).unwrap();
+        crate::secure_key_store::set_active_device_seed_scope(None);
+        crate::secure_key_store::set_active_device_seed_scope(Some((&state.account_id, &device)));
+        assert!(
+            frame
+                .project_transaction(&mut store, |store| {
+                    store.save_realm_collaboration_role(realm, None);
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert_eq!(serde_json::to_value(store.load()).unwrap(), before);
+        let fresh = crate::realm_events_engine::VerifiedAccountFrame::test_own_context(
+            test_host_own_client(&state),
+        );
+        reset_session_grant_runtime();
+        assert!(
+            fresh
+                .project_transaction(&mut store, |store| {
+                    store.save_realm_collaboration_role(realm, None);
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert_eq!(serde_json::to_value(store.load()).unwrap(), before);
+    }
+
     struct ReadOnlyHolderStore(crate::secure_key_store::MemorySecureKeyStore);
 
     impl crate::secure_key_store::SecureKeyStore for ReadOnlyHolderStore {
@@ -1004,6 +1246,48 @@ mod tests {
 
         assert_eq!(authenticated.base_url().as_str(), "https://soland.example/");
         assert_eq!(refresh.base_url().as_str(), "https://coauth.example/");
+    }
+
+    #[test]
+    fn authenticated_factory_only_enables_local_discovery_for_explicit_test_station_scope() {
+        let mut factory = InksonAuthenticatedTransportFactory {
+            principal_sdk_base_url: Url::parse("https://soland-server1.localhost:24630/").unwrap(),
+            account_sdk_base_url: Url::parse("https://coauth-server1.localhost:24630/").unwrap(),
+            station_url: Url::parse("https://soland-server1.localhost:24630/").unwrap(),
+            device_handle: test_device_handle(),
+            refresh_transport: ReplaceableSessionTransport::default(),
+        };
+        for namespace in ["localhost", "local.host"] {
+            factory.station_url =
+                Url::parse(&format!("https://soland-server1.{namespace}:24630/")).unwrap();
+            #[cfg(feature = "wasm-localstorage-secrets-test")]
+            assert_eq!(
+                factory.loopback_service_discovery_scope(),
+                Some((namespace, 24630))
+            );
+            #[cfg(not(feature = "wasm-localstorage-secrets-test"))]
+            assert_eq!(factory.loopback_service_discovery_scope(), None);
+            let state = test_grant_state();
+            assert_eq!(
+                factory.build_principal_client(&state).unwrap().base_url(),
+                &factory.principal_sdk_base_url
+            );
+            assert_eq!(
+                factory.build_account_client(&state).unwrap().base_url(),
+                &factory.account_sdk_base_url
+            );
+        }
+        for station in [
+            "http://soland-server1.localhost:24630/",
+            "https://soland.example:24630/",
+            "https://soland-server1.localhost.evil.example:24630/",
+            "https://127.0.0.1:24630/",
+            "https://10.0.0.1:24630/",
+            "https://user:secret@soland-server1.localhost:24630/",
+        ] {
+            factory.station_url = Url::parse(station).unwrap();
+            assert_eq!(factory.loopback_service_discovery_scope(), None);
+        }
     }
 
     #[test]

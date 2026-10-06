@@ -142,12 +142,18 @@ pub(crate) struct CurrentRealmProgress {
     pub needs_refresh: bool,
     #[serde(default)]
     pub signed_snapshot: Option<SignedSnapshotCoverage>,
+    #[serde(default)]
+    pub observed_heads: Vec<arkret_wire::CommitStreamHead>,
+    #[serde(default)]
+    pub observed_governance_generation: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SignedSnapshotCoverage {
     snapshot_id: arkret_wire::RealmSnapshotId,
     stream_heads: Vec<arkret_wire::CommitStreamHead>,
+    #[serde(default)]
+    original_digest: Option<String>,
 }
 
 /// Whether `progress` is a complete verified cut of `realm_id`.
@@ -452,7 +458,8 @@ static SHARED_INDICES: OnceLock<std::sync::Mutex<BTreeMap<String, Arc<SharedGene
 pub(crate) struct CurrentStage {
     index: CurrentIndex,
     generation: u64,
-    filtered: AccountSubscribeFrame,
+    filtered: Option<AccountSubscribeFrame>,
+    changed: bool,
     _lease: OwnedMutexGuard<()>,
 }
 
@@ -460,14 +467,21 @@ impl CurrentStage {
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
+    pub(crate) fn changed(&self) -> bool {
+        self.changed
+    }
     pub(crate) fn filtered_frame(&self) -> &AccountSubscribeFrame {
-        &self.filtered
+        self.filtered
+            .as_ref()
+            .expect("Account stage has its original frame")
     }
     pub(crate) fn arm_account_commit(&mut self) {
-        self.index
-            ._shared
-            .pending
-            .store(self.generation, Ordering::Release);
+        if self.changed {
+            self.index
+                ._shared
+                .pending
+                .store(self.generation, Ordering::Release);
+        }
     }
     /// The caller must first durably commit this generation and account cursor together.
     pub(crate) fn finish(self) {
@@ -480,7 +494,7 @@ impl CurrentStage {
 
 impl Drop for CurrentStage {
     fn drop(&mut self) {
-        if self.index._shared.pending.load(Ordering::Acquire) == self.generation {
+        if self.changed && self.index._shared.pending.load(Ordering::Acquire) == self.generation {
             self.index.poison();
         }
     }
@@ -950,6 +964,10 @@ impl CurrentIndex {
         selector: &CurrentSelector,
     ) -> anyhow::Result<Option<TypedCurrentResult>> {
         let _lease = self.lease.lock().await;
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
         let generation = self.generation.load(Ordering::Acquire);
         self.ready_selector(realm, selector, generation).await
     }
@@ -962,6 +980,10 @@ impl CurrentIndex {
     pub(crate) async fn read_complete_cut(&self, realm: &str) -> anyhow::Result<Option<u64>> {
         let realm_id = arkret_sdk::RealmId::new(realm.trim().to_owned())?;
         let _lease = self.lease.lock().await;
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
         let generation = self.generation.load(Ordering::Acquire);
         let progress = self.progress_at(realm_id.as_str(), generation).await?;
         let complete = progress_is_complete_cut(&progress, &realm_id);
@@ -994,6 +1016,10 @@ impl CurrentIndex {
             .realm_id_opt()
             .ok_or_else(|| anyhow::anyhow!("MLS current scope has no Realm"))?;
         let _lease = self.lease.lock().await;
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
         let generation = self.generation.load(Ordering::Acquire);
         let progress = self.progress_at(realm_id.as_str(), generation).await?;
         anyhow::ensure!(
@@ -1102,6 +1128,10 @@ impl CurrentIndex {
         member: &arkret_sdk::ActorId,
     ) -> anyhow::Result<Option<arkret_wire::CurrentRevision>> {
         let _lease = self.lease.lock().await;
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
         let generation = self.generation.load(Ordering::Acquire);
         let progress = self.progress_at(realm.as_str(), generation).await?;
         if !progress_is_complete_cut(&progress, realm) {
@@ -1131,6 +1161,10 @@ impl CurrentIndex {
         let realm = scope.realm_id();
         let expected_stream = arkret_sdk::CommitStreamRef::from_scope(scope, None)?;
         let _lease = self.lease.lock().await;
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
         let generation = self.generation.load(Ordering::Acquire);
         let progress = self.progress_at(realm.as_str(), generation).await?;
         anyhow::ensure!(
@@ -1169,6 +1203,10 @@ impl CurrentIndex {
         selector: &CurrentSelector,
         generation: u64,
     ) -> anyhow::Result<Option<TypedCurrentResult>> {
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
         let Some(entry) = self.visible_selector(realm, selector, generation).await? else {
             return Ok(None);
         };
@@ -1269,6 +1307,10 @@ impl CurrentIndex {
             "invalid current page limit"
         );
         let _lease = self.lease.lock().await;
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
         let generation = self.generation.load(Ordering::Acquire);
         if let Some(after) = after {
             anyhow::ensure!(
@@ -1343,7 +1385,82 @@ impl CurrentIndex {
         resolved_preview_streams: &std::collections::BTreeSet<arkret_sdk::CommitStreamRef>,
         snapshots: &BTreeMap<String, crate::realm_events_engine::VerifiedCurrentSnapshot>,
     ) -> anyhow::Result<CurrentStage> {
+        let snapshots = snapshots
+            .iter()
+            .map(|(realm, proof)| (realm.clone(), proof.snapshot()))
+            .collect();
+        self.stage_current_install(
+            expected_generation,
+            Some(frame),
+            None,
+            resolved_preview_streams,
+            &snapshots,
+            &|| Ok(()),
+            None,
+        )
+        .await
+    }
+
+    /// A genuine authenticated original enters the same current plan, lease,
+    /// generation and GC transaction as Account current; it is not an Account frame.
+    pub(crate) async fn stage_own_station_snapshot(
+        &self,
+        expected_generation: u64,
+        response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+            arkret_sdk::RealmId,
+            arkret_sdk::RealmStateSnapshot,
+        >,
+        guard: &dyn Fn() -> anyhow::Result<()>,
+    ) -> anyhow::Result<CurrentStage> {
+        let check = || -> anyhow::Result<()> {
+            guard()?;
+            garth::own_station_results::consume_bound_snapshot(response, response.request())?;
+            Ok(())
+        };
+        check()?;
+        let snapshot = response.value()?;
+        let realm = snapshot.realm_id.to_string();
+        let entry = arkret_sdk::sync::RealmSyncEntry {
+            current: Some(
+                arkret_models_collaboration::sync_frames::current_results::AccountCurrentResult {
+                    realm_id: snapshot.realm_id.clone(),
+                    governance_generation: snapshot.governance_generation,
+                    stream_heads: snapshot.visible_stream_heads.clone(),
+                    entries: snapshot.current_state_entries.clone(),
+                },
+            ),
+            ..Default::default()
+        };
+        let snapshots = BTreeMap::from([(realm.clone(), snapshot)]);
+        self.stage_current_install(
+            expected_generation,
+            None,
+            Some((realm, entry)),
+            &Default::default(),
+            &snapshots,
+            &check,
+            Some(response.clone()),
+        )
+        .await
+    }
+
+    async fn stage_current_install(
+        &self,
+        expected_generation: u64,
+        frame: Option<&AccountSubscribeFrame>,
+        standalone: Option<(String, arkret_sdk::sync::RealmSyncEntry)>,
+        resolved_preview_streams: &std::collections::BTreeSet<arkret_sdk::CommitStreamRef>,
+        snapshots: &BTreeMap<String, &arkret_sdk::RealmStateSnapshot>,
+        guard: &dyn Fn() -> anyhow::Result<()>,
+        bound: Option<
+            arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+                arkret_sdk::RealmId,
+                arkret_sdk::RealmStateSnapshot,
+            >,
+        >,
+    ) -> anyhow::Result<CurrentStage> {
         let lease = self.lease.clone().lock_owned().await;
+        guard()?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1372,15 +1489,40 @@ impl CurrentIndex {
         // rows that root it, means a mark cursor that already passed a Realm
         // cannot lose the evidence and never has to restart its scan.
         let gc: GcState = self.load_state(&self.gc_state_key()).await?;
-        let mut filtered = frame.clone();
+        guard()?;
+        if frame.is_none()
+            && let Some((realm, _)) = &standalone
+        {
+            let snapshot = snapshots.get(realm).copied().expect("standalone original");
+            let progress = self.progress_at(realm, expected_generation).await?;
+            guard()?;
+            let original_digest = hash(snapshot)?;
+            if !progress.needs_refresh
+                && progress.signed_snapshot.as_ref().is_some_and(|cut| {
+                    cut.snapshot_id == snapshot.snapshot_id
+                        && cut.original_digest.as_ref() == Some(&original_digest)
+                })
+            {
+                return Ok(CurrentStage {
+                    index: self.clone(),
+                    generation: expected_generation,
+                    filtered: None,
+                    changed: false,
+                    _lease: lease,
+                });
+            }
+        }
+        let mut filtered = frame.cloned();
         let mut progress_updates = BTreeMap::<String, CurrentRealmProgress>::new();
-        if frame.kind == arkret_sdk::sync::AccountSubscribeFrameKind::ResyncRequired {
+        if frame.is_some_and(|frame| {
+            frame.kind == arkret_sdk::sync::AccountSubscribeFrameKind::ResyncRequired
+        }) {
             writes.insert(
                 format!("{}reset/{suffix}", self.prefix),
                 serde_json::to_vec(&generation)?,
             );
         }
-        if let Some(invalidations) = &frame.realm_invalidations {
+        if let Some(invalidations) = frame.and_then(|frame| frame.realm_invalidations.as_ref()) {
             for invalidation in invalidations {
                 let realm = invalidation.realm_id.as_str();
                 let mut progress = self.progress_at(realm, expected_generation).await?;
@@ -1397,9 +1539,15 @@ impl CurrentIndex {
                 );
             }
         }
-        if let Some(realms) = &mut filtered.realms {
-            for (realm, incoming) in &mut realms.entries {
-                let snapshot = snapshots.get(realm).map(|proof| proof.snapshot());
+        let mut standalone_entries = standalone.map(|entry| BTreeMap::from([entry]));
+        let entries = match &mut filtered {
+            Some(frame) => frame.realms.as_mut().map(|realms| &mut realms.entries),
+            None => standalone_entries.as_mut(),
+        };
+        if let Some(entries) = entries {
+            for (realm, incoming) in entries {
+                guard()?;
+                let snapshot = snapshots.get(realm).copied();
                 if let Some(snapshot) = snapshot {
                     let current = incoming.current.as_mut().ok_or_else(|| {
                         anyhow::anyhow!("complete Snapshot has no Account current cut")
@@ -1438,7 +1586,77 @@ impl CurrentIndex {
                         "complete current baseline has incomplete stream coverage"
                     );
                 }
+                // Older v1 progress already held authoritative baseline/cut
+                // heads. Seed the cumulative watermark before replacing that
+                // visible cut, including streams the next original omits.
+                let held_heads = previous
+                    .signed_snapshot
+                    .as_ref()
+                    .map(|cut| cut.stream_heads.clone())
+                    .or_else(|| {
+                        previous
+                            .baseline
+                            .as_ref()
+                            .map(|baseline| baseline.coverage.stream_heads.clone())
+                    })
+                    .unwrap_or_default();
+                for held in held_heads {
+                    match previous
+                        .observed_heads
+                        .iter_mut()
+                        .find(|old| old.stream_ref == held.stream_ref)
+                    {
+                        Some(old) if held.stream_position > old.stream_position => *old = held,
+                        Some(old) if held.stream_position == old.stream_position => {
+                            anyhow::ensure!(
+                                old.commit_id == held.commit_id,
+                                "held current watermark forks its stream"
+                            );
+                        }
+                        Some(_) => {}
+                        None => previous.observed_heads.push(held),
+                    }
+                }
+                if let Some(held) = previous.governance_generation {
+                    previous.observed_governance_generation = Some(
+                        previous
+                            .observed_governance_generation
+                            .unwrap_or(held)
+                            .max(held),
+                    );
+                }
                 if let Some(current) = &incoming.current {
+                    anyhow::ensure!(
+                        previous
+                            .observed_governance_generation
+                            .is_none_or(|old| current.governance_generation >= old),
+                        "current governance generation regresses observed authority"
+                    );
+                    for old in &previous.observed_heads {
+                        if let Some(new) = current
+                            .stream_heads
+                            .iter()
+                            .find(|head| head.stream_ref == old.stream_ref)
+                        {
+                            anyhow::ensure!(
+                                new.stream_position > old.stream_position
+                                    || (new.stream_position == old.stream_position
+                                        && new.commit_id == old.commit_id),
+                                "current head regresses or forks observed stream"
+                            );
+                        }
+                    }
+                    previous.observed_governance_generation = Some(current.governance_generation);
+                    for head in &current.stream_heads {
+                        match previous
+                            .observed_heads
+                            .iter_mut()
+                            .find(|old| old.stream_ref == head.stream_ref)
+                        {
+                            Some(old) => *old = head.clone(),
+                            None => previous.observed_heads.push(head.clone()),
+                        }
+                    }
                     if snapshot.is_some()
                         && let Some(installed) = &previous.signed_snapshot
                     {
@@ -1507,6 +1725,7 @@ impl CurrentIndex {
                     plan.progress.signed_snapshot = Some(SignedSnapshotCoverage {
                         snapshot_id: snapshot.snapshot_id.clone(),
                         stream_heads: snapshot.visible_stream_heads.clone(),
+                        original_digest: Some(hash(snapshot)?),
                     });
                     plan.progress.needs_refresh = false;
                     plan.cleanup = Some(CurrentCoverageCleanup {
@@ -1707,13 +1926,23 @@ impl CurrentIndex {
             index: self.clone(),
             generation,
             filtered,
+            changed: true,
             _lease: lease,
         };
-        complete_independently(async move {
+        guard()?;
+        let stage = complete_independently(async move {
+            if let Some(bound) = &bound {
+                bound.value()?;
+            }
             backend.apply(deletes, writes.into_iter().collect()).await?;
+            if let Some(bound) = &bound {
+                bound.value()?;
+            }
             Ok(stage)
         })
-        .await
+        .await?;
+        guard()?;
+        Ok(stage)
     }
 
     /// Deduplicate live-update cleanup by selector and rotate its scan position.
@@ -2168,6 +2397,7 @@ mod tests {
         let progress = CurrentRealmProgress {
             governance_generation: Some(1),
             signed_snapshot: Some(SignedSnapshotCoverage {
+                original_digest: None,
                 snapshot_id: arkret_wire::RealmSnapshotId::from_digest([7; 32]),
                 stream_heads: vec![arkret_wire::CommitStreamHead {
                     stream_ref: arkret_wire::CommitStreamRef::Realm {

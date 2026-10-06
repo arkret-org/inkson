@@ -260,6 +260,7 @@ fn verified_circle_page() -> (garth::VerifiedScanPage, Value) {
                 governance_generation: 0,
                 authority_ref: bundle.genesis_commit.authority_ref.clone(),
                 committed_at: fixture_time(60 + position as i64),
+                producer_signer_fact_digest: None,
                 signature: bundle.genesis_commit.signature.clone(),
             });
             previous = Some(commit.commit_id.clone());

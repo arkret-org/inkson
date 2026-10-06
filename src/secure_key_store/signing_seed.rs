@@ -53,7 +53,15 @@ pub struct ActiveDeviceSeedScope {
     pub device_id: DeviceId,
 }
 
-static ACTIVE_DEVICE_SEED_SCOPE: RwLock<Option<ActiveDeviceSeedScope>> = RwLock::new(None);
+struct ActiveDeviceSeedScopeState {
+    scope: Option<ActiveDeviceSeedScope>,
+    epoch: u64,
+}
+static ACTIVE_DEVICE_SEED_SCOPE: RwLock<ActiveDeviceSeedScopeState> =
+    RwLock::new(ActiveDeviceSeedScopeState {
+        scope: None,
+        epoch: 0,
+    });
 
 #[cfg(test)]
 static ACTIVE_DEVICE_SEED_SCOPE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -116,7 +124,17 @@ pub fn set_active_device_seed_scope(scope: Option<(&AccountId, &DeviceId)>) {
         device_id: device_id.clone(),
     });
     if let Ok(mut guard) = ACTIVE_DEVICE_SEED_SCOPE.write() {
-        *guard = normalized;
+        if guard.scope != normalized {
+            match guard.epoch.checked_add(1) {
+                Some(epoch) => {
+                    guard.epoch = epoch;
+                    guard.scope = normalized;
+                }
+                None => {
+                    guard.scope = None;
+                }
+            }
+        }
     }
 }
 
@@ -125,7 +143,13 @@ pub fn active_device_seed_scope() -> Option<ActiveDeviceSeedScope> {
     ACTIVE_DEVICE_SEED_SCOPE
         .read()
         .ok()
-        .and_then(|guard| guard.clone())
+        .and_then(|guard| guard.scope.clone())
+}
+
+/// Capture scope and its ABA fence under the same lock.
+pub(crate) fn active_device_seed_scope_snapshot() -> Option<(ActiveDeviceSeedScope, u64)> {
+    let guard = ACTIVE_DEVICE_SEED_SCOPE.read().ok()?;
+    guard.scope.clone().map(|scope| (scope, guard.epoch))
 }
 
 /// Process-global pending-login device id. During the pre-DID phase of an

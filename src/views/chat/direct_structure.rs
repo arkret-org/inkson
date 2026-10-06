@@ -657,6 +657,78 @@ pub(super) fn DirectStructurePanel(
             })
             .unwrap_or_default()
     };
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    let structure_diag = {
+        let state = store.read();
+        let entries = state
+            .current_product_view()
+            .and_then(|view| view.entries_for(&realm).map(<[_]>::to_vec));
+        let entries_present = entries.is_some();
+        let entry_count = entries.as_ref().map_or(0, Vec::len);
+        let strand_selector_count = entries.as_ref().map_or(0, |entries| {
+            entries
+                .iter()
+                .filter(|entry| {
+                    matches!(
+                        entry,
+                        arkret_sdk::TypedCurrentResult::Value {
+                            selector: arkret_sdk::CurrentSelector::Strand { .. },
+                            ..
+                        }
+                    )
+                })
+                .count()
+        });
+        let current_ready = state.current_product_view_ready(&realm);
+        let result = arkret_sdk::RealmId::new(&realm).ok().and_then(|id| {
+            entries.and_then(|entries| {
+                Some(garth::direct_structure::DirectStructureView::from_current(
+                    &id, &entries,
+                ))
+            })
+        });
+        let from_current_ok = result.as_ref().is_some_and(Result::is_ok);
+        let from_current_outcome = match &result {
+            Some(Ok(_)) => "ok",
+            Some(Err(_)) => "invalid_current",
+            None => "unavailable",
+        };
+        let chat_count = view.chats.len();
+        (
+            entries_present,
+            entry_count,
+            strand_selector_count,
+            current_ready,
+            from_current_ok,
+            from_current_outcome,
+            chat_count,
+        )
+    };
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    use_effect(use_reactive(
+        (&scope_key, &structure_diag),
+        move |(_, diagnostic)| {
+            let (
+                entries_present,
+                entry_count,
+                strand_selector_count,
+                current_ready,
+                from_current_ok,
+                from_current_outcome,
+                chat_count,
+            ) = diagnostic;
+            tracing::warn!(
+                entries_present,
+                entry_count,
+                strand_selector_count,
+                current_ready,
+                from_current_ok,
+                from_current_outcome,
+                chat_count,
+                "Direct structure view diagnostic"
+            );
+        },
+    ));
     let mut chat_rows = view
         .chats
         .iter()
@@ -801,6 +873,8 @@ pub(super) fn DirectStructurePanel(
                                 if active_scope() != write_scope { return; }
                                 match result {
                                     Ok((accepted, chat)) => {
+                                        #[cfg(feature = "wasm-localstorage-secrets-test")]
+                                        tracing::warn!(accepted = true, "Direct structure write diagnostic");
                                         frontier.set(accepted.event_id); live_epoch.set(live_epoch().wrapping_add(1));
                                         if let Some(chat) = chat { on_select.call(chat); }
                                         status.set("Saved".into()); title.set(String::new());

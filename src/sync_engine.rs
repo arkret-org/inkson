@@ -1108,7 +1108,17 @@ impl InksonAccountProjector {
             .ctx
             .state_store
             .write(|store| {
-                store.verified_projection_transaction(|store| {
+                verified.project_transaction(store, |store| {
+                    verified
+                        .check_session()
+                        .map_err(|error| error.to_string())?;
+                    for page in verified.own_pages() {
+                        store.ingest_verified_message_history(page)?;
+                        crate::identity::agent_signer_evidence::index_verified_committed_page(
+                            store, page,
+                        )?;
+                    }
+                    verified.stage_own_checkpoints(store)?;
                     if frame.kind == arkret_sdk::sync::AccountSubscribeFrameKind::ResyncRequired {
                         store.invalidate_sidecar_current(None);
                     }
@@ -1116,9 +1126,6 @@ impl InksonAccountProjector {
                         for invalidation in invalidations {
                             store.invalidate_sidecar_current(Some(invalidation.realm_id.as_str()));
                         }
-                    }
-                    for snapshot in verified.current_snapshots().values() {
-                        store.install_verified_sidecar_current(snapshot)?;
                     }
                     for basis in verified.authority_bases() {
                         if !store.record_realm_authority_basis(basis.clone()) {
@@ -1135,6 +1142,13 @@ impl InksonAccountProjector {
                         crate::identity::agent_signer_evidence::index_verified_committed_page(
                             store, page,
                         )?;
+                    }
+                    for snapshot in verified.current_snapshots().values() {
+                        // Retain the highest observed signed cut even when its
+                        // history is pending. Private fold remains fail-closed
+                        // until the exact prefix is complete; no older cut can
+                        // replace this watermark during recovery.
+                        store.install_verified_sidecar_current(snapshot)?;
                     }
                     let staged = store
                         .prepare_account_demand_frame(current_stage.filtered_frame())
@@ -1430,31 +1444,10 @@ impl InksonAccountProjector {
         next_checkpoint: Option<(garth::CursorScope, garth::AccountCursorCheckpoint)>,
     ) -> garth::Result<()> {
         let http = self.transport.http().http();
-        let binding = crate::station_connection::enrolled(http.base_url().as_str())
-            .await
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        let consumer = garth::own_station::OwnStationConsumer::authenticate(
-            http.clone(),
-            &binding,
-            self.ctx.account.authority.clone(),
-            self.start_generation,
-        )
-        .await?;
-        if !self.active() {
-            return Err(garth::Error::Protocol(
-                "Account consumption epoch changed".into(),
-            ));
-        }
         let mut verified = Vec::with_capacity(batch.frames.len());
         for frame in &batch.frames {
             verified
-                .push(crate::realm_events_engine::consume_account_frame(&consumer, frame).await?);
-        }
-        consumer.require_context(&self.ctx.account.authority, self.generation.get())?;
-        if !self.active() {
-            return Err(garth::Error::Protocol(
-                "Account consumption epoch changed".into(),
-            ));
+                .push(crate::realm_events_engine::verify_account_frame_commits(http, frame).await?);
         }
         self.validate_station_cas_batch(batch).await?;
         for (index, (frame, proof)) in batch.frames.iter().zip(verified.iter()).enumerate() {
@@ -1721,38 +1714,88 @@ async fn refresh_current_product_view(
         return Ok(());
     }
     let session_generation = ctx.session.generation();
+    let guard = || -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !ctx.effect.is_cancelled()
+                && ctx.session.generation() == session_generation
+                && ctx.selected_realm_id.get() == realm_id,
+            "current product publication scope changed"
+        );
+        Ok(())
+    };
+    publish_current_product_view(
+        index,
+        &ctx.state_store,
+        &ctx.account.authority,
+        &realm_id,
+        &guard,
+    )
+    .await?;
+    ctx.realm_live_epoch
+        .update(|epoch| *epoch = epoch.wrapping_add(1));
+    Ok(())
+}
+
+/// Account and live current publish the same exact durable index rows.
+pub(crate) async fn publish_current_product_view(
+    index: &crate::state::CurrentIndex,
+    state_store: &crate::runtime::input::StateStoreHandle,
+    account: &arkret_sdk::AccountId,
+    realm_id: &str,
+    guard: &dyn Fn() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    tracing::warn!(stage = "entered", "joint current product publication");
     // Absence of a selector answers only at one complete verified cut, so the
     // cut is read before and after the pages and must be the same durable
     // generation both times.
+    guard()?;
     let cut_before = index.read_complete_cut(&realm_id).await?;
+    guard()?;
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    tracing::warn!(
+        stage = "cut_read",
+        cut_present = cut_before.is_some(),
+        "joint current product publication"
+    );
     let mut entries = Vec::new();
     let mut after: Option<String> = None;
     loop {
         let page = index
             .read_realm_page(&realm_id, after.as_deref(), CURRENT_VIEW_PAGE)
             .await?;
+        guard()?;
         entries.extend(page.entries);
         match page.next_cursor {
             Some(next) => after = Some(next),
             None => break,
         }
     }
-    if ctx.effect.is_cancelled()
-        || ctx.session.generation() != session_generation
-        || ctx.selected_realm_id.get() != realm_id
-        || !ctx
-            .state_store
-            .read(|store| store.active_authority() == Some(ctx.account.authority.clone()))
-    {
-        return Ok(());
-    }
+    guard()?;
     let cut_after = index.read_complete_cut(&realm_id).await?;
+    guard()?;
     let complete_cut = cut_before.is_some() && cut_before == cut_after;
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    tracing::warn!(
+        stage = "rows_read",
+        entry_count = entries.len(),
+        complete_cut,
+        "joint current product publication"
+    );
     let view = crate::current_projection::RealmCurrentView::new(&realm_id, entries, complete_cut)?;
-    ctx.state_store
-        .write(|store| store.install_current_product_view(view))?;
-    ctx.realm_live_epoch
-        .update(|epoch| *epoch = epoch.wrapping_add(1));
+    guard()?;
+    state_store.write(|store| {
+        guard()?;
+        if store.active_authority().as_ref() != Some(account) {
+            anyhow::bail!("current product account changed");
+        }
+        if complete_cut && cut_after != Some(store.current_generation()) {
+            anyhow::bail!("current product generation changed before publication");
+        }
+        store.install_current_product_view(view)
+    })?;
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    tracing::warn!(stage = "installed", "joint current product publication");
     Ok(())
 }
 

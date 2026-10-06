@@ -1,5 +1,46 @@
 //! Endorse the existing Direct Conversation after its exact-pair MLS admission.
 
+/// Test-feature diagnostics contain fixed stage/outcome values only.
+pub(crate) fn diagnostic_stage(stage: &'static str, outcome: &'static str) {
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    tracing::warn!(stage, outcome, "Direct binding stage diagnostic");
+    #[cfg(not(feature = "wasm-localstorage-secrets-test"))]
+    let _ = (stage, outcome);
+}
+
+fn diagnostic_provisional(
+    initial_present: bool,
+    admission: arkret_sdk::direct_conversation::DirectConversationPeerMlsAdmission,
+) {
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    {
+        use arkret_sdk::direct_conversation::DirectConversationPeerMlsAdmission;
+        let peer_admission = match admission {
+            DirectConversationPeerMlsAdmission::Missing => "missing",
+            DirectConversationPeerMlsAdmission::Pending => "pending",
+            DirectConversationPeerMlsAdmission::RepairRequired => "repair_required",
+            DirectConversationPeerMlsAdmission::Durable => "durable",
+        };
+        tracing::warn!(
+            initial_present,
+            peer_admission,
+            "Direct provisional stage diagnostic"
+        );
+    }
+    #[cfg(not(feature = "wasm-localstorage-secrets-test"))]
+    let _ = (initial_present, admission);
+}
+
+fn diagnostic_result<T, E>(
+    stage: &'static str,
+    result: Result<T, E>,
+    success: &'static str,
+    failure: &'static str,
+) -> Result<T, E> {
+    diagnostic_stage(stage, if result.is_ok() { success } else { failure });
+    result
+}
+
 /// Read the last verified exact-pair binding for display and encryption.
 pub(crate) fn message_authority(
     store: &crate::state::LocalStateStore,
@@ -269,12 +310,9 @@ pub(crate) async fn install_resolved_message_context(
                 arkret_sdk::contact_operations::ContactPeer::Agent { .. }
             ) =>
         {
-            // Ordinary owned-Agent chat waits for the accepted binding. Its
-            // runtime consumes the Welcome independently, so messages need not
-            // race the short bootstrap-to-participant authority transition.
-            let original =
-                crate::realm_events_engine::own_realm_prefix(http, account, &realm, 1).await?;
-            let genesis = &original[0].event;
+            let accepted =
+                crate::transport::own_station_results::accepted_genesis(http, &realm).await?;
+            let genesis = &accepted.event;
             let payload: arkret_sdk::RealmCreatePayload =
                 serde_json::from_value(serde_json::to_value(&genesis.payload)?)?;
             anyhow::ensure!(
@@ -404,6 +442,82 @@ fn founding_genesis_prefix(
         .map_err(|_| anyhow::anyhow!("accepted Direct Conversation founding unit is incomplete"))
 }
 
+async fn founding_own_station_prefix_inner(
+    http: &arkret_sdk::http_client::Client,
+    backfill: &crate::models::BackfillView,
+    realm: &arkret_sdk::RealmId,
+) -> anyhow::Result<[arkret_sdk::Event; 4]> {
+    let client = crate::transport::own_station_results::client_for_http(http).await?;
+    let genesis = crate::transport::own_station_results::genesis_response(&client, realm).await?;
+    let commit = genesis.value()?.commit();
+    let reference = arkret_sdk::CommittedEventRef {
+        event_id: commit.event_ref.clone(),
+        commit_id: commit.commit_id.clone(),
+        stream_ref: commit.stream_ref.clone(),
+        stream_position: commit.stream_position,
+    };
+    let mut replica = garth::own_station_results::OwnStationReplica::new(realm.clone());
+    let mut originals = vec![genesis.value()?.clone()];
+    replica
+        .restore_bound_anchor(&client, &reference, genesis)
+        .await?;
+    let request = arkret_sdk::StreamScanRequest {
+        realm_id: realm.clone(),
+        stream_ref: reference.stream_ref.clone(),
+        direction: arkret_sdk::StreamScanDirection::After(Some(0)),
+        limit: 3,
+    };
+    let page = replica
+        .apply_bound_scan(&client, client.scan_commit_stream(&request).await?)
+        .await?;
+    anyhow::ensure!(
+        page.rows()?.len() == 3,
+        "accepted Direct founding prefix is incomplete"
+    );
+    originals.extend_from_slice(page.rows()?);
+    let mut claimed = backfill.0.committed_events.iter();
+    if claimed
+        .clone()
+        .next()
+        .is_some_and(|row| row.commit().stream_position == 0)
+    {
+        anyhow::ensure!(
+            claimed.next() == originals.first(),
+            "Direct Genesis differs from the own Station original"
+        );
+    }
+    for original in &originals[1..] {
+        anyhow::ensure!(
+            claimed.next() == Some(original),
+            "Direct founding prefix differs from the exact accepted original"
+        );
+    }
+    let events = originals
+        .into_iter()
+        .map(|row| match row {
+            arkret_sdk::CommittedEventView::Full(full) => Ok(full.event),
+            _ => Err(anyhow::anyhow!("Direct founding original is withheld")),
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    events
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Direct founding prefix must contain exactly four originals"))
+}
+
+async fn founding_own_station_prefix(
+    http: &arkret_sdk::http_client::Client,
+    backfill: &crate::models::BackfillView,
+    realm: &arkret_sdk::RealmId,
+) -> anyhow::Result<[arkret_sdk::Event; 4]> {
+    diagnostic_stage("founding_prefix", "entered");
+    diagnostic_result(
+        "founding_prefix",
+        founding_own_station_prefix_inner(http, backfill, realm).await,
+        "verified",
+        "failed",
+    )
+}
+
 pub(crate) async fn ensure_binding(
     api: &crate::transport::TransportClient,
     store: &crate::state::LocalStateStore,
@@ -425,14 +539,7 @@ pub(crate) async fn ensure_binding(
         .ok_or_else(|| anyhow::anyhow!("active account is unavailable"))?;
     let http = api.sdk_http_client()?;
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
-    let originals =
-        crate::realm_events_engine::own_realm_prefix(&http, &account.authority, &realm, 4).await?;
-    let exact: [arkret_sdk::Event; 4] = originals
-        .into_iter()
-        .map(|row| row.event)
-        .collect::<Vec<_>>()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Direct founding unit is incomplete"))?;
+    let exact = founding_own_station_prefix(&http, backfill, &realm).await?;
     let create = &exact[0];
     // The four committed genesis-prefix Events, never timestamps or an
     // arbitrary founder-authored subset, bind the exact Realm/Strand unit.
@@ -451,30 +558,45 @@ pub(crate) async fn ensure_binding(
         .iter()
         .find(|actor| **actor != self_actor)
         .unwrap();
-    let secure = crate::secure_key_store::default_secure_key_store("inkson");
-    let members = crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
-        store,
-        secure.as_ref(),
-        realm_id,
-        None,
-        &account.authority,
-        &account.device_id,
-    )
-    .ok_or_else(|| anyhow::anyhow!("waiting for the local exact-pair MLS state"))?;
-    anyhow::ensure!(
-        members
-            .into_iter()
-            .collect::<std::collections::BTreeSet<_>>()
-            == participants.iter().cloned().collect(),
-        "waiting for exact-pair MLS admission"
-    );
-    let snapshot = store
-        .mls_checkpoint_for(realm_id)
-        .ok_or_else(|| anyhow::anyhow!("MLS checkpoint is unavailable"))?;
-    anyhow::ensure!(snapshot.epoch > 0, "waiting for the peer MLS Add");
+    diagnostic_stage("exact_pair", "entered");
+    let snapshot = diagnostic_result(
+        "exact_pair",
+        (|| -> anyhow::Result<_> {
+            let secure = crate::secure_key_store::default_secure_key_store("inkson");
+            let members = crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
+                store,
+                secure.as_ref(),
+                realm_id,
+                None,
+                &account.authority,
+                &account.device_id,
+            )
+            .ok_or_else(|| anyhow::anyhow!("waiting for the local exact-pair MLS state"))?;
+            anyhow::ensure!(
+                members
+                    .into_iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    == participants.iter().cloned().collect(),
+                "waiting for exact-pair MLS admission"
+            );
+            let snapshot = store
+                .mls_checkpoint_for(realm_id)
+                .ok_or_else(|| anyhow::anyhow!("MLS checkpoint is unavailable"))?;
+            anyhow::ensure!(snapshot.epoch > 0, "waiting for the peer MLS Add");
+            Ok(snapshot)
+        })(),
+        "ready",
+        "not_ready",
+    )?;
     // The current accepted Commit must match our installed state. Its epoch
     // does not select the immutable initial exact-pair binding reference.
-    accepted_pair_commit(&events, realm_id, &snapshot.group_id, snapshot.epoch)?;
+    diagnostic_stage("accepted_pair_commit", "entered");
+    diagnostic_result(
+        "accepted_pair_commit",
+        accepted_pair_commit(&events, realm_id, &snapshot.group_id, snapshot.epoch),
+        "verified",
+        "failed",
+    )?;
     let peer_selector = store
         .direct_conversation_peer(realm_id)
         .ok_or_else(|| anyhow::anyhow!("waiting for the exact Direct Conversation peer"))?;
@@ -492,7 +614,10 @@ pub(crate) async fn ensure_binding(
     use arkret_sdk::direct_conversation::DirectConversationResolveOutcome;
     resolved.validate_shape()?;
     let (coordinates, authorization_basis, initial_state_ref) = match resolved {
-        DirectConversationResolveOutcome::Found { .. } => return Ok(()),
+        DirectConversationResolveOutcome::Found { .. } => {
+            diagnostic_stage("resolve_outcome", "found");
+            return Ok(());
+        }
         DirectConversationResolveOutcome::Provisional {
             coordinates,
             authorization_basis,
@@ -500,8 +625,31 @@ pub(crate) async fn ensure_binding(
             peer_mls_admission:
                 arkret_sdk::direct_conversation::DirectConversationPeerMlsAdmission::Durable,
             ..
-        } => (coordinates, authorization_basis, initial),
-        DirectConversationResolveOutcome::Provisional { .. } => return Ok(()),
+        } => {
+            diagnostic_stage("resolve_outcome", "provisional_ready");
+            diagnostic_provisional(
+                true,
+                arkret_sdk::direct_conversation::DirectConversationPeerMlsAdmission::Durable,
+            );
+            (coordinates, authorization_basis, initial)
+        }
+        DirectConversationResolveOutcome::Provisional {
+            initial_exact_pair_group_state_ref,
+            peer_mls_admission,
+            ..
+        } => {
+            let initial_present = initial_exact_pair_group_state_ref.is_some();
+            diagnostic_stage(
+                "resolve_outcome",
+                if initial_present {
+                    "provisional_not_durable"
+                } else {
+                    "provisional_missing_initial"
+                },
+            );
+            diagnostic_provisional(initial_present, peer_mls_admission);
+            return Ok(());
+        }
         _ => anyhow::bail!("Direct Conversation current authority is not ready for binding"),
     };
     anyhow::ensure!(
@@ -545,7 +693,19 @@ pub(crate) async fn ensure_binding(
                 "direct_conversation_founding_unit",
             )),
     );
-    api.event_submitter()?.submit_sdk_event(&operation).await?;
+    diagnostic_stage("binding_submit", "entered");
+    let submitter = diagnostic_result(
+        "binding_submit",
+        api.event_submitter(),
+        "submitter_ready",
+        "failed",
+    )?;
+    diagnostic_result(
+        "binding_submit",
+        submitter.submit_sdk_event(&operation).await,
+        "completed",
+        "failed",
+    )?;
     Ok(())
 }
 

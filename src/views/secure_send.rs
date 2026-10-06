@@ -110,7 +110,7 @@ pub(crate) fn use_scope_send_probe(
             .as_ref()
             .and_then(arkret_sdk::ScopeRef::realm_id_opt)
             .is_none_or(|realm_id| state.realm_detail_invalidated(realm_id.as_str()));
-        SendReadinessKey {
+        let captured = SendReadinessKey {
             scope,
             device,
             authority,
@@ -121,7 +121,60 @@ pub(crate) fn use_scope_send_probe(
             private_root_available,
             creator_revision: creator_revision(),
             checkpoint,
+        };
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        {
+            let state = state_store.peek();
+            let view = state.current_product_view();
+            let view_matches_scope = captured
+                .scope
+                .as_ref()
+                .and_then(|scope| scope.realm_id_opt())
+                .is_some_and(|realm| {
+                    view.as_ref()
+                        .is_some_and(|view| view.realm_id == realm.as_str())
+                });
+            let current_cut_ready =
+                view_matches_scope && view.as_ref().is_some_and(|view| view.complete_cut);
+            let required_ready =
+                view_matches_scope && view.as_ref().is_some_and(|view| view.ready());
+            let realm_genesis_present = view_matches_scope
+                && view.as_ref().is_some_and(|view| {
+                    view.entries.iter().any(|entry| {
+                        matches!(
+                            entry,
+                            arkret_sdk::TypedCurrentResult::Value {
+                                selector: arkret_sdk::CurrentSelector::RealmGenesis,
+                                ..
+                            }
+                        )
+                    })
+                });
+            let scope_current_known = captured.scope.as_ref().is_some_and(|scope| {
+                state
+                    .installed_scope_mls_current(scope)
+                    .activated()
+                    .is_some()
+            });
+            tracing::warn!(
+                captured_generation = captured.generation,
+                scope_present = captured.scope.is_some(),
+                authority_present = captured.authority.is_some(),
+                detail_invalidated = captured.detail_invalidated,
+                reset_required = captured.reset_required,
+                persistence_healthy = captured.persistence_healthy,
+                private_root_available = captured.private_root_available,
+                checkpoint_present = captured.checkpoint.is_some(),
+                creator_revision = captured.creator_revision,
+                current_cut_ready,
+                view_matches_scope,
+                realm_genesis_present,
+                required_ready,
+                scope_current_known,
+                "MLS send readiness dependencies observed"
+            );
         }
+        captured
     }));
     let mut result =
         use_signal(|| None::<(SendReadinessKey, Option<crate::mls::send_gate::MlsSendGate>)>);
@@ -149,6 +202,28 @@ pub(crate) fn use_scope_send_probe(
             } else {
                 None
             };
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            {
+                let current = key.peek();
+                tracing::warn!(
+                    captured_generation = captured.generation,
+                    current_generation = current.generation,
+                    current_detail_invalidated = current.detail_invalidated,
+                    current_reset_required = current.reset_required,
+                    current_persistence_healthy = current.persistence_healthy,
+                    key_still_current = *current == captured,
+                    gate_ready = gate.is_some(),
+                    encrypted = matches!(
+                        &gate,
+                        Some(crate::mls::send_gate::MlsSendGate::Encrypted(_))
+                    ),
+                    probe_attempted = captured.scope.is_some()
+                        && !captured.reset_required
+                        && !captured.detail_invalidated
+                        && captured.persistence_healthy,
+                    "MLS send readiness probe completed"
+                );
+            }
             if *key.peek() == captured {
                 result.set(Some((captured, gate)));
             }

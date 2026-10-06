@@ -115,28 +115,57 @@ pub(crate) async fn read(
     http: &arkret_sdk::http_client::Client,
     request: &StrandWatchCurrentRequestBody,
 ) -> anyhow::Result<StrandWatchCurrentOutcome> {
-    let account = request
-        .watcher_actor_id
-        .as_account_id()
-        .ok_or_else(|| anyhow::anyhow!("self watch requires a complete Account"))?;
-    let epoch = crate::identity::device_directory::session_cache_epoch();
-    let binding = crate::station_connection::enrolled(http.base_url().as_str()).await?;
-    let consumer = garth::own_station::OwnStationConsumer::authenticate(
-        http.clone(),
-        &binding,
-        account.clone(),
-        epoch,
-    )
-    .await?;
-    let before = consumer.snapshot_head(&request.realm_id).await?;
+    let client = crate::transport::own_station_results::client_for_http(http).await?;
+    anyhow::ensure!(
+        request.watcher_actor_id.as_account_id() == Some(client.session()?.account_id()),
+        "watch cell is not the current complete account"
+    );
+    let before = client.snapshot_head(&request.realm_id).await?;
+    garth::own_station_results::consume_bound_snapshot(&before, &request.realm_id)?;
+    client.check_session()?;
     let current = http.strand_watch_current(request).await?;
+    client.check_session()?;
     payload_from_current(request, &current, None)?;
-    let after = consumer.snapshot_head(&request.realm_id).await?;
-    consumer.require_context(
-        account,
-        crate::identity::device_directory::session_cache_epoch(),
-    )?;
-    validate_own_observation(&current, before.snapshot(), after.snapshot())?;
+    let after = client.snapshot_head(&request.realm_id).await?;
+    garth::own_station_results::consume_bound_snapshot(&after, &request.realm_id)?;
+    let before = before.value()?;
+    let after = after.value()?;
+    let stream = arkret_sdk::CommitStreamRef::Realm {
+        realm_id: request.realm_id.clone(),
+    };
+    let before_head = before
+        .visible_stream_heads
+        .iter()
+        .find(|head| head.stream_ref == stream)
+        .ok_or_else(|| anyhow::anyhow!("watch current cut omits its Realm stream"))?;
+    let after_head = after
+        .visible_stream_heads
+        .iter()
+        .find(|head| head.stream_ref == stream)
+        .ok_or_else(|| anyhow::anyhow!("watch current cut omits its Realm stream"))?;
+    let (realm, generation, head) = match &current {
+        StrandWatchCurrentOutcome::NeverWritten {
+            realm_id,
+            governance_generation,
+            stream_head,
+            ..
+        }
+        | StrandWatchCurrentOutcome::Current {
+            realm_id,
+            governance_generation,
+            stream_head,
+            ..
+        } => (realm_id, *governance_generation, stream_head),
+    };
+    anyhow::ensure!(
+        realm == &request.realm_id
+            && before.governance_generation == after.governance_generation
+            && generation == after.governance_generation
+            && before_head == after_head
+            && head == after_head,
+        "watch current observation crossed its exact own Station cut"
+    );
+    client.check_session()?;
     Ok(current)
 }
 

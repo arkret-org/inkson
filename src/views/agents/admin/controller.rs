@@ -43,6 +43,44 @@ pub(super) struct AgentAdminController {
 
 struct ProvisionInFlightReset(Signal<bool>);
 
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+struct ProvisionStageDiagnostic(Option<&'static str>);
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+impl ProvisionStageDiagnostic {
+    fn enter(&mut self, stage: &'static str) {
+        self.0 = Some(stage);
+        tracing::warn!(
+            stage,
+            outcome = "entered",
+            "Agent provision state transition"
+        );
+    }
+
+    fn complete(&mut self) {
+        if let Some(stage) = self.0.take() {
+            tracing::warn!(
+                stage,
+                outcome = "completed",
+                "Agent provision state transition"
+            );
+        }
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+impl Drop for ProvisionStageDiagnostic {
+    fn drop(&mut self) {
+        if let Some(stage) = self.0 {
+            tracing::warn!(
+                stage,
+                outcome = "failed",
+                "Agent provision state transition"
+            );
+        }
+    }
+}
+
 impl Drop for ProvisionInFlightReset {
     fn drop(&mut self) {
         self.0.set(false);
@@ -536,6 +574,9 @@ impl AgentAdminController {
         request: ProvisionAgentRequest,
     ) {
         let Self {
+            mut agents,
+            mut refresh_epoch,
+            mut detail_refresh_epoch,
             mut selected_agent_id,
             mut create_mode,
             mut new_agent_avatar_blob_ref,
@@ -947,6 +988,10 @@ impl AgentAdminController {
                     pairing_ttl_ms: None,
                 });
             let commit_for_first_request = commit.clone();
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            let mut diagnostic = ProvisionStageDiagnostic(None);
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            diagnostic.enter("first_commit");
             match with_authed_sdk_client(&base, api_token.clone(), move |http| async move {
                 http.agent_provision(&commit_for_first_request)
                     .await
@@ -994,6 +1039,11 @@ impl AgentAdminController {
                 }
             };
             let genesis_for_submit = frozen_genesis.clone();
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            {
+                diagnostic.complete();
+                diagnostic.enter("genesis_submit");
+            }
             if let Err(error) =
                 with_event_submitter(&base, api_token.clone(), move |submitter| async move {
                     submitter
@@ -1012,6 +1062,11 @@ impl AgentAdminController {
                 return;
             }
             let commit_for_pcr_check = commit.clone();
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            {
+                diagnostic.complete();
+                diagnostic.enter("pcr_commit_check");
+            }
             let binding_coordinates = match with_authed_sdk_client(
                 &base,
                 api_token.clone(),
@@ -1064,6 +1119,11 @@ impl AgentAdminController {
                     return;
                 }
             };
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            {
+                diagnostic.complete();
+                diagnostic.enter("did_binding_prepare");
+            }
             let binding_update = match crate::agent_identity::prepare_binding_update(
                 &agent_inception,
                 &agent_did_keys,
@@ -1080,6 +1140,11 @@ impl AgentAdminController {
                 }
             };
             let binding_submit = binding_update.submit_body.clone();
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            {
+                diagnostic.complete();
+                diagnostic.enter("did_binding_publish");
+            }
             let binding_outcome =
                 match with_authed_sdk_client(&base, api_token.clone(), move |http| {
                     let binding_submit = binding_submit.clone();
@@ -1107,6 +1172,11 @@ impl AgentAdminController {
                         .to_owned(),
                 );
                 return;
+            }
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            {
+                diagnostic.complete();
+                diagnostic.enter("final_commit");
             }
             let outcome =
                 match with_authed_sdk_client(&base, api_token.clone(), move |http| async move {
@@ -1152,11 +1222,49 @@ impl AgentAdminController {
                 );
                 return;
             }
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            diagnostic.complete();
+            let created_view = match fetch_agent_details(&base, &api_token, agent_id.as_str()).await
+            {
+                Ok(view) => view,
+                Err(error) => {
+                    last_op_status.set(format!(
+                        "Agent was created, but loading its authoritative details failed: {}",
+                        error.display()
+                    ));
+                    bump_owned_agents_rev(owned_agents_rev);
+                    self.refresh_agents(base, api_token);
+                    return;
+                }
+            };
+            // Older directory/detail responses must not remove or overwrite the
+            // newly committed row between installing it and selecting it.
+            let next_refresh_epoch = (*refresh_epoch.peek()).saturating_add(1);
+            let next_detail_epoch = (*detail_refresh_epoch.peek()).saturating_add(1);
+            refresh_epoch.set(next_refresh_epoch);
+            detail_refresh_epoch.set(next_detail_epoch);
+            let selected_id = match agents.with_mut(|rows| {
+                apply_provisioned_agent_view(
+                    rows,
+                    created_view,
+                    &outcome,
+                    &controller_principal_id,
+                    &account.authority.station_id,
+                )
+            }) {
+                Ok(id) => id,
+                Err(reason) => {
+                    last_op_status.set(format!(
+                        "Agent was created, but its authoritative details were rejected: {reason}"
+                    ));
+                    return;
+                }
+            };
             last_op_status.set(format!(
                 "Created {} with a Station-committed Agent PCR.",
                 short_protocol_id(agent_id.as_str())
             ));
-            selected_agent_id.set(agent_id.to_string());
+            selected_agent_id.set(selected_id);
             create_mode.set(false);
             new_agent_avatar_blob_ref.set(String::new());
             bump_owned_agents_rev(owned_agents_rev);

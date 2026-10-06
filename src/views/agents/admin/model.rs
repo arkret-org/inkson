@@ -125,6 +125,40 @@ pub(super) fn apply_agent_detail_read(
     }
 }
 
+/// Install the committed Agent's authoritative details before selecting it.
+/// Selecting an id absent from the directory lets the panel's selection effect
+/// fall back to the previous Agent while the directory refresh is in flight.
+pub(super) fn apply_provisioned_agent_view(
+    rows: &mut Vec<AgentView>,
+    view: AgentView,
+    outcome: &arkret_sdk::AgentProvisionComplete,
+    controller_principal_id: &arkret_sdk::DidCoreId,
+    controller_station_id: &arkret_sdk::DidCoreId,
+) -> Result<String, &'static str> {
+    let key_state = view
+        .key_state
+        .as_ref()
+        .ok_or("created Agent details omitted the PCR key state")?;
+    if view.agent.agent_id != outcome.agent_id
+        || !selected_agent_binding_matches(
+            outcome.agent_id.as_str(),
+            controller_principal_id,
+            key_state,
+        )
+        || key_state.controller_account_id.station_id != *controller_station_id
+        || key_state.principal_control_realm_id != outcome.principal_control_realm_id
+        || key_state.controller_authorization_ref != outcome.controller_authorization_ref
+    {
+        return Err("created Agent details do not match the committed controller and PCR binding");
+    }
+    // The authoritative read may already have consumed, expired or renewed
+    // the pairing returned by Complete. Install that current SDK view verbatim;
+    // the provision result must never resurrect the original pairing handle.
+    let selected_id = agent_id(&view);
+    upsert_agent_view(rows, view);
+    Ok(selected_id)
+}
+
 pub(super) fn replace_agent_directory(rows: &mut Vec<AgentView>, directory_rows: Vec<AgentView>) {
     let previous_rows = std::mem::take(rows);
     *rows = directory_rows

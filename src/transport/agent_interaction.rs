@@ -1,4 +1,4 @@
-//! Agent mode reads are bound to independently verified governing heads.
+//! Agent mode reads consume the original exact cut through the accepted own Station.
 use arkret_sdk::exact_current_results::{ExactCurrentResultEntry, ExactCurrentResultsReadOutcome};
 use arkret_sdk::{
     AccountId, AgentInteractionCurrentValue, AgentInteractionMode, AgentInteractionSetPayload,
@@ -14,8 +14,11 @@ pub(crate) async fn read(
     Option<CurrentRevision>,
     Option<AccountId>,
 )> {
-    let current =
-        garth::agent_interaction::read_verified_agent_interaction(http, realm, agent).await?;
+    let client = crate::transport::own_station_results::client_for_http(http).await?;
+    let response =
+        garth::own_station_results::read_own_station_agent_interaction(&client, realm, agent)
+            .await?;
+    let current = response.into_value()?;
     match current {
         ExactCurrentResultsReadOutcome::NeverWritten { .. } => {
             Ok((AgentInteractionMode::Private, None, None))

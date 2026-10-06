@@ -150,6 +150,7 @@ pub(crate) fn accepted_mls_commit_with_binding(
             base_group_state_ref,
         ),
         committed_at: "2026-09-22T00:00:01.000Z".parse().unwrap(),
+        producer_signer_fact_digest: None,
         signature: detached_signature(
             arkret_sdk::DetachedSignatureContext::RealmCommit,
             commit_seed,

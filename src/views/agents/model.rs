@@ -253,9 +253,13 @@ impl AgentServiceScopePreset {
             Self::SubscribeEvents => {
                 &[ServiceOperationId::SELF_COMMITTED_EVENT_STREAM_SUBSCRIBE_V1]
             }
-            Self::ScanCatchUp => &[ServiceOperationId::SELF_COMMITTED_EVENT_READ_SCAN_V1],
+            Self::ScanCatchUp => &[
+                ServiceOperationId::SELF_COMMITTED_EVENT_READ_SCAN_V1,
+                ServiceOperationId::SELF_SIGNER_KEYS_READ_RESOLVE_V1,
+            ],
             Self::SubmitEvents => &[ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1],
             Self::SecureMessaging => &[
+                ServiceOperationId::SELF_SIGNER_KEYS_READ_RESOLVE_V1,
                 ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_CONSUME_V1,
                 ServiceOperationId::SELF_KEYS_KEYPACKAGES_READ_CLAIM_V1,
                 ServiceOperationId::SELF_MLS_READ_GROUP_STATE_MATERIAL_V1,
@@ -309,7 +313,16 @@ pub fn service_actions_for_presets(
             push_unique_action(&mut actions, action);
         }
     }
-    arkret_schema::agent_runtime_scope::complete_agent_runtime_scope(actions)
+    let mut completed = arkret_schema::agent_runtime_scope::complete_agent_runtime_scope(actions)?;
+    if completed.iter().any(|operation| {
+        operation == arkret_sdk::ServiceOperationId::SELF_COMMITTED_EVENT_READ_SCAN_V1
+    }) {
+        push_unique_action(
+            &mut completed,
+            arkret_sdk::ServiceOperationId::SELF_SIGNER_KEYS_READ_RESOLVE_V1,
+        );
+    }
+    Ok(completed)
 }
 
 /// Build the `requested_scope` (`AgentKeyScope`, the spec object

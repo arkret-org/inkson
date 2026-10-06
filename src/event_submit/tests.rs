@@ -569,6 +569,7 @@ fn commit_for(event: &arkret_sdk::Event, position: u64) -> arkret_wire::RealmCom
         committed_at: chrono::DateTime::parse_from_rfc3339("2026-05-19T00:00:02.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc),
+        producer_signer_fact_digest: None,
         signature: detached_signature(arkret_wire::DetachedSignatureContext::RealmCommit),
     }
 }
@@ -1317,7 +1318,7 @@ impl garth::AuthorityTransport for ScriptedAuthority {
 
     async fn install_handoff(
         &self,
-        _request: &arkret_wire::AuthorityHandoffRequest,
+        _request: &arkret_sdk::AuthorityHandoffRequest,
         _options: &arkret_sdk::http_client::ClientRequestOptions,
     ) -> garth::Result<arkret_wire::RealmAuthorityHandoff> {
         Err(garth::Error::Protocol("handoff is not scripted".to_owned()))

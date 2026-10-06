@@ -13,9 +13,7 @@ use super::backup_body::{
     build_mls_private_plaintext_backup_successor_body_with_kek,
 };
 use super::restore::fetch_mls_restore_payload;
-use crate::mls::runtime::{
-    active_secret_storage_series_id_for, backup_series_seq_of, select_mls_private_plaintext_backup,
-};
+use crate::mls::runtime::select_mls_private_plaintext_backup;
 use crate::recovery_crypto::derive_vault_kek;
 
 fn passphrase_is_blank(passphrase: &[u8]) -> bool {
@@ -25,6 +23,7 @@ fn passphrase_is_blank(passphrase: &[u8]) -> bool {
             .unwrap_or(false)
 }
 
+#[cfg(test)]
 fn key_backup_source_commit_ref(
     realm_commit_id: arkret_sdk::RealmCommitId,
     device_generation_ref: u64,
@@ -38,28 +37,6 @@ fn key_backup_source_commit_ref(
         realm_commit_id,
         device_generation_ref,
     })
-}
-
-async fn current_backup_source_commit_ref(
-    api: &crate::transport::TransportClient,
-    control_realm: &arkret_sdk::RealmId,
-    authority: &arkret_sdk::AccountId,
-    device_id: &str,
-) -> Result<arkret_sdk::KeyBackupSourceCommitRef> {
-    let http = api.sdk_http_client()?;
-    let trust_anchor = super::rotation_transaction::current_controller_backup_trust_anchor(
-        &http, authority, device_id,
-    )
-    .await?;
-    let realm_commit_id = super::rotation_transaction::current_backup_checkpoint(
-        &http,
-        authority,
-        control_realm,
-        device_id,
-        &trust_anchor,
-    )
-    .await?;
-    key_backup_source_commit_ref(realm_commit_id, trust_anchor.generation_ref)
 }
 
 fn typed_backup_predecessor(previous: &Value) -> Result<arkret_sdk::KeyBackup> {
@@ -158,21 +135,15 @@ async fn ensure_initial_active_series(
     series_id: &str,
 ) -> Result<()> {
     let wire_kind = super::rotation_transaction::wire_backup_kind(backup_kind);
-    let http = api.sdk_http_client()?;
-    let current = api
-        .list_key_backups_page(&arkret_sdk::KeyBackupsListQuery {
-            series_id: None,
-            backup_kind: None,
-            cursor: None,
-            limit: Some(1),
-        })
-        .await?
-        .active_series;
-    if current.account_id != *authority || current.control_realm_id != *control_realm {
-        return Err(anyhow!(
-            "backup pointer response belongs to another account or PCR"
-        ));
-    }
+    let basis = super::current_basis::ConfirmedBackupBasis::read(
+        api,
+        authority,
+        control_realm,
+        device_id,
+        None,
+    )
+    .await?;
+    let current = basis.state()?;
     let active = current.secret_storage.series_id().map(|id| id.as_str());
     if let Some(active) = active {
         if active == series_id {
@@ -184,18 +155,10 @@ async fn ensure_initial_active_series(
     }
 
     let submitter = api.event_submitter()?;
-    let trust_anchor = super::rotation_transaction::current_controller_backup_trust_anchor(
-        &http, authority, device_id,
-    )
-    .await?;
-    let source_realm_commit_id = super::rotation_transaction::current_backup_checkpoint(
-        &http,
-        authority,
-        control_realm,
-        device_id,
-        &trust_anchor,
-    )
-    .await?;
+    // The holder-private projection provides this observed PCR basis;
+    // a collaboration snapshot is not a PCR read surface.
+    let source_realm_commit_id = basis.state()?.authority_commit_id.clone();
+    let trust_anchor = basis.trust_anchor()?;
     let event = super::rotation_transaction::build_active_series_event(
         control_realm,
         actor_id,
@@ -205,15 +168,107 @@ async fn ensure_initial_active_series(
         1,
         &[],
         &source_realm_commit_id,
-        &trust_anchor,
+        trust_anchor,
     )?;
+    basis.check()?;
     let accepted = submitter.submit_sdk_event(&event).await?;
+    basis.check()?;
     if !accepted.is_committed() {
         return Err(anyhow!(
             "Station did not commit the {wire_kind} active-series Event"
         ));
     }
 
+    Ok(())
+}
+
+fn ordered_active_summaries(
+    list: &arkret_sdk::KeysBackupsList,
+    backup_kind: arkret_sdk::BackupKind,
+) -> Result<Vec<&arkret_sdk::KeyBackupSummary>> {
+    let Some(series_id) = list.active_series.secret_storage.series_id() else {
+        // Absent is the Station's current result. Orphan inventory cannot
+        // select a predecessor or prevent a fresh version-one initialization.
+        return Ok(Vec::new());
+    };
+    anyhow::ensure!(
+        !list.has_more && list.next_cursor.is_none(),
+        "backup predecessor inventory is incomplete"
+    );
+    let mut summaries = list
+        .backups
+        .iter()
+        .filter(|row| row.backup_kind == backup_kind && &row.series_id == series_id)
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        !summaries.is_empty(),
+        "confirmed active backup series has no envelopes"
+    );
+    anyhow::ensure!(
+        summaries.len() <= 4096 && serde_json::to_vec(&summaries)?.len() <= 8 * 1024 * 1024,
+        "active backup series exceeds this device's recovery metadata budget"
+    );
+    summaries.sort_by_key(|row| row.series_seq);
+    let actor = arkret_sdk::ActorId::account(list.active_series.account_id.clone());
+    let mut ids = std::collections::BTreeSet::new();
+    for (index, row) in summaries.iter().enumerate() {
+        anyhow::ensure!(
+            row.actor_id == actor,
+            "backup predecessor has another complete Account actor"
+        );
+        anyhow::ensure!(
+            row.series_seq == index as u64 && ids.insert(row.backup_id.clone()),
+            "backup predecessor chain has duplicate sequence, gap or fork"
+        );
+        if index == 0 {
+            anyhow::ensure!(
+                row.supersedes_id.clone().flatten().is_none() && row.supersedes_digest.is_none(),
+                "backup series root has a predecessor"
+            );
+        } else {
+            anyhow::ensure!(
+                row.supersedes_id.clone().flatten().as_ref()
+                    == Some(&summaries[index - 1].backup_id)
+                    && row.supersedes_digest.is_some(),
+                "backup predecessor chain has a broken link"
+            );
+        }
+    }
+    Ok(summaries)
+}
+
+fn verified_full_tail<'a>(
+    bodies: &'a [arkret_sdk::KeyBackup],
+    summaries: &[&arkret_sdk::KeyBackupSummary],
+) -> Result<&'a arkret_sdk::KeyBackup> {
+    anyhow::ensure!(
+        bodies.len() == summaries.len() && !bodies.is_empty(),
+        "backup full chain is incomplete"
+    );
+    for (body, summary) in bodies.iter().zip(summaries) {
+        anyhow::ensure!(
+            crate::key_backup::backup_matches_summary(body, summary),
+            "backup full envelope differs from its exact listed summary"
+        );
+    }
+    let tail = bodies
+        .last()
+        .ok_or_else(|| anyhow!("backup full chain has no tail"))?;
+    // The ordered complete candidate set bounds series_seq before the shared
+    // verifier walks every canonical supersedes digest back to its root.
+    garth::mls::backup_series::verify_series_chain(tail, bodies)?;
+    Ok(tail)
+}
+
+fn ensure_current_tail_signer(
+    signer: &std::sync::Arc<crate::event_signer::InksonEventSigner>,
+) -> Result<()> {
+    let current = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow!("active backup signer was removed"))?;
+    anyhow::ensure!(
+        std::sync::Arc::ptr_eq(signer, &current),
+        "active backup signer was replaced"
+    );
     Ok(())
 }
 
@@ -224,49 +279,79 @@ async fn fetch_active_series_tail(
     device_id: &str,
     backup_kind: BackupRotationKind,
 ) -> Result<Option<Value>> {
-    let wire_kind = super::rotation_transaction::wire_backup_kind(backup_kind);
-    let class = arkret_sdk::BackupKind::try_from(wire_kind).map_err(|error| anyhow!(error))?;
-    let series_id = match active_secret_storage_series_id_for(list_payload, class) {
-        Some(series_id) => series_id.to_owned(),
-        None => {
-            let series_ids = crate::mls::runtime::iter_backup_bodies(list_payload)
-                .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(wire_kind))
-                .filter_map(|body| body.get("series_id").and_then(Value::as_str))
-                .collect::<std::collections::BTreeSet<_>>();
-            if series_ids.is_empty() {
-                return Ok(None);
-            }
-            if series_ids.len() != 1 {
-                return Err(anyhow!(
-                    "{wire_kind} backups have multiple series without an authoritative active-series Event"
-                ));
-            }
-            (*series_ids
-                .first()
-                .ok_or_else(|| anyhow!("{wire_kind} series inventory changed unexpectedly"))?)
-            .to_owned()
-        }
-    };
-    let metadata = crate::mls::runtime::iter_backup_bodies(list_payload)
-        .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(wire_kind))
-        .filter(|body| body.get("series_id").and_then(Value::as_str) == Some(series_id.as_str()))
-        .max_by_key(|body| backup_series_seq_of(body))
-        .ok_or_else(|| anyhow!("authoritative {wire_kind} series has no backup envelope"))?;
-    if metadata.get("ciphertext").and_then(Value::as_str).is_some() {
-        return Ok(Some(metadata.clone()));
+    let class = arkret_sdk::BackupKind::try_from(super::rotation_transaction::wire_backup_kind(
+        backup_kind,
+    ))
+    .map_err(|error| anyhow!(error))?;
+    let list: arkret_sdk::KeysBackupsList = serde_json::from_value(list_payload.clone())?;
+    anyhow::ensure!(
+        crate::mls_api_helpers::principal_core_id(actor_id)?
+            == list.active_series.account_id.principal_id,
+        "backup predecessor principal differs from the confirmed Account"
+    );
+    let http = api.sdk_http_client()?;
+    let source = crate::transport::own_station_results::client_for_http(&http).await?;
+    super::current_basis::read_list_with_source(
+        &http,
+        &source,
+        &list.active_series.account_id,
+        &list.active_series.control_realm_id,
+        Some(&list.active_series),
+    )
+    .await?;
+    let summaries = ordered_active_summaries(&list, class)?;
+    if summaries.is_empty() {
+        return Ok(None);
     }
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    crate::key_backup::fetch_key_backup_with_device_unlock_proof_retrying(
-        api,
-        metadata,
-        actor_id,
-        device_id,
-        Some(&signer),
+    anyhow::ensure!(
+        signer.device_id() == Some(device_id),
+        "backup predecessor signer has another device"
+    );
+    let mut bodies = Vec::with_capacity(summaries.len());
+    let mut bytes = 0usize;
+    for summary in &summaries {
+        source.check_session()?;
+        ensure_current_tail_signer(&signer)?;
+        let metadata = serde_json::to_value(summary)?;
+        let value = crate::key_backup::fetch_key_backup_with_device_unlock_proof_retrying(
+            api,
+            &metadata,
+            actor_id,
+            device_id,
+            Some(&signer),
+        )
+        .await?;
+        source.check_session()?;
+        ensure_current_tail_signer(&signer)?;
+        bytes = bytes.saturating_add(serde_json::to_vec(&value)?.len());
+        anyhow::ensure!(
+            bytes <= 8 * 1024 * 1024,
+            "active backup full chain exceeds this device's recovery material budget"
+        );
+        let body = serde_json::from_value::<arkret_sdk::KeyBackup>(value)?;
+        super::current_basis::verify_envelope_source(
+            &http,
+            &source,
+            &list.active_series.account_id,
+            &body,
+        )
+        .await?;
+        ensure_current_tail_signer(&signer)?;
+        bodies.push(body);
+    }
+    let tail = verified_full_tail(&bodies, &summaries)?;
+    super::current_basis::read_list_with_source(
+        &http,
+        &source,
+        &list.active_series.account_id,
+        &list.active_series.control_realm_id,
+        Some(&list.active_series),
     )
-    .await
-    .map(Some)
-    .map_err(|error| anyhow!("fetch active {wire_kind} series tail: {error}"))
+    .await?;
+    source.check_session()?;
+    Ok(Some(serde_json::to_value(tail)?))
 }
 
 /// Wrap the local account MLS secret behind a freshly-derived recovery KEK and
@@ -309,9 +394,19 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     let account_backup_id = fresh_backup_id().map_err(anyhow::Error::from)?;
 
     let kek = derive_vault_kek(passphrase).map_err(|err| anyhow!("derive KEK: {err}"))?;
+    let expected_pointer = super::current_basis::state_from_payload(&list_payload)?;
+    let basis = super::current_basis::ConfirmedBackupBasis::read(
+        api,
+        authority,
+        control_realm,
+        device_id,
+        Some(&expected_pointer),
+    )
+    .await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let auth = api.key_backup_auth_binding(authority, &signer).await?;
+    basis.check_auth(&auth)?;
     let sign = |bytes: &[u8]| {
         signer.sign_raw(bytes).map_err(|error| {
             arkret_crypto::KeyBackupError::InvalidInput(format!(
@@ -321,8 +416,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     };
     let account_body = if let Some(previous) = previous_account_backup.as_ref() {
         let predecessor = typed_backup_predecessor(previous)?;
-        let source_commit_ref =
-            current_backup_source_commit_ref(api, control_realm, authority, device_id).await?;
+        let source_commit_ref = basis.source_commit_ref()?;
         build_mls_account_secret_backup_successor_body_with_kek_and_version(
             account_backup_id.as_str(),
             &predecessor,
@@ -344,13 +438,15 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
             stored.version,
             &auth,
             &sign,
-            Some(current_backup_source_commit_ref(api, control_realm, authority, device_id).await?),
+            Some(basis.source_commit_ref()?),
         )?
     };
     let account_series_id = account_body.series_id.to_string();
+    basis.check()?;
     api.put_key_backup(account_backup_id.as_str(), account_body)
         .await
         .map_err(|err| anyhow!("upload account MLS secret backup: {err}"))?;
+    basis.check()?;
     if creates_initial_series {
         ensure_initial_active_series(
             api,
@@ -363,6 +459,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         )
         .await?;
     }
+    basis.check()?;
     crate::mls::runtime::mark_account_mls_secret_verified(secure_store, authority)
         .map_err(|err| anyhow!("mark uploaded account MLS secret verified: {err}"))?;
 
@@ -443,9 +540,19 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     let recovery_policy_ref = (recovery_policy_id.as_str(), recovery_policy_version);
 
     let account_backup_id = fresh_backup_id().map_err(anyhow::Error::from)?;
+    let expected_pointer = super::current_basis::state_from_payload(&list_payload)?;
+    let basis = super::current_basis::ConfirmedBackupBasis::read(
+        api,
+        authority,
+        control_realm,
+        device_id,
+        Some(&expected_pointer),
+    )
+    .await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let auth = api.key_backup_auth_binding(authority, &signer).await?;
+    basis.check_auth(&auth)?;
     let sign = |bytes: &[u8]| {
         signer.sign_raw(bytes).map_err(|error| {
             arkret_crypto::KeyBackupError::InvalidInput(format!(
@@ -453,8 +560,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
             ))
         })
     };
-    let source_commit_ref =
-        Some(current_backup_source_commit_ref(api, control_realm, authority, device_id).await?);
+    let source_commit_ref = Some(basis.source_commit_ref()?);
     let account_body = build_mls_account_secret_recovery_public_key_backup_in_series(
         account_backup_id.as_str(),
         authority,
@@ -470,9 +576,11 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         source_commit_ref,
     )?;
     let account_series_id = account_body.series_id.to_string();
+    basis.check()?;
     api.put_key_backup(account_backup_id.as_str(), account_body)
         .await
         .map_err(|err| anyhow!("upload recovery-key account MLS secret backup: {err}"))?;
+    basis.check()?;
     if creates_initial_series {
         ensure_initial_active_series(
             api,
@@ -485,6 +593,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         )
         .await?;
     }
+    basis.check()?;
     crate::mls::runtime::mark_account_mls_secret_verified(secure_store, authority)
         .map_err(|err| anyhow!("mark uploaded account MLS secret verified: {err}"))?;
 
@@ -556,10 +665,9 @@ pub async fn fetch_mls_private_plaintext_backup_body(
 
 /// Upload a sidecar backup successor using a caller-provided predecessor body.
 ///
-/// This is the no-list inner upload path for debounced write-side sidecar
-/// syncing. The predecessor body must be the full previous backup envelope
-/// selected by `select_mls_private_plaintext_backup` or returned from this
-/// function after a successful upload.
+/// Debounced sidecar writes may provide their previously uploaded envelope.
+/// It is revalidated against the complete confirmed active chain and pointer
+/// before authoring a successor; a cached envelope is never current authority.
 pub async fn upload_mls_private_plaintext_backup_with_previous(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -579,24 +687,49 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
     // Fresh backup_id per immutable series link.
     let backup_id = fresh_backup_id().map_err(anyhow::Error::from)?;
 
-    let previous_backup = match previous_backup {
-        Some(previous) => Some(previous.clone()),
-        None => {
-            let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
-            fetch_active_series_tail(
-                api,
-                &list_payload,
-                actor_id,
-                device_id,
-                BackupRotationKind::SecretStorage,
-            )
-            .await?
-        }
-    };
+    let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
+    let confirmed_previous = fetch_active_series_tail(
+        api,
+        &list_payload,
+        actor_id,
+        device_id,
+        BackupRotationKind::SecretStorage,
+    )
+    .await?;
+    if let Some(cached) = previous_backup {
+        anyhow::ensure!(
+            confirmed_previous.as_ref() == Some(cached),
+            "cached private backup differs from the confirmed full chain tail"
+        );
+    }
+    let previous_backup = confirmed_previous;
     let creates_initial_series = previous_backup.is_none();
+    let expected = super::current_basis::state_from_payload(&list_payload)?;
+    let basis = super::current_basis::ConfirmedBackupBasis::read(
+        api,
+        authority,
+        control_realm,
+        device_id,
+        Some(&expected),
+    )
+    .await?;
+    match previous_backup.as_ref() {
+        Some(previous) => {
+            let predecessor = typed_backup_predecessor(previous)?;
+            anyhow::ensure!(
+                basis.state()?.secret_storage.series_id() == Some(&predecessor.series_id),
+                "cached private backup is not the confirmed active series"
+            );
+        }
+        None => anyhow::ensure!(
+            basis.state()?.secret_storage.series_id().is_none(),
+            "private backup initialization has a confirmed active series"
+        ),
+    }
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let auth = api.key_backup_auth_binding(authority, &signer).await?;
+    basis.check_auth(&auth)?;
     let sign = |bytes: &[u8]| {
         signer.sign_raw(bytes).map_err(|error| {
             arkret_crypto::KeyBackupError::InvalidInput(format!(
@@ -606,8 +739,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
     };
     let body = if let Some(previous) = previous_backup.as_ref() {
         let predecessor = typed_backup_predecessor(previous)?;
-        let source_commit_ref =
-            current_backup_source_commit_ref(api, control_realm, authority, device_id).await?;
+        let source_commit_ref = basis.source_commit_ref()?;
         build_mls_private_plaintext_backup_successor_body_with_kek(
             backup_id.as_str(),
             &predecessor,
@@ -627,13 +759,15 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
             sidecar_json,
             &auth,
             &sign,
-            Some(current_backup_source_commit_ref(api, control_realm, authority, device_id).await?),
+            Some(basis.source_commit_ref()?),
         )?
     };
+    basis.check()?;
     let (_, sent_body) = api
         .put_key_backup_returning_sent_body(backup_id.as_str(), body)
         .await
         .map_err(|err| anyhow!("upload private plaintext backup: {err}"))?;
+    basis.check()?;
     let series_id = sent_body.series_id.to_string();
     if creates_initial_series {
         ensure_initial_active_series(
@@ -648,6 +782,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         .await?;
     }
 
+    basis.check()?;
     Ok((backup_id.to_string(), serde_json::to_value(sent_body)?))
 }
 
@@ -656,6 +791,267 @@ mod tests {
     use chrono::{TimeZone as _, Utc};
 
     use super::active_recovery_backup_recipient;
+
+    fn summary(body: &arkret_sdk::KeyBackup) -> arkret_sdk::KeyBackupSummary {
+        let mut wire = serde_json::to_value(body).unwrap();
+        wire.as_object_mut().unwrap().retain(|key, _| {
+            matches!(
+                key.as_str(),
+                "backup_id"
+                    | "actor_id"
+                    | "device_id"
+                    | "backup_kind"
+                    | "backup_version"
+                    | "series_id"
+                    | "series_seq"
+                    | "supersedes_id"
+                    | "supersedes_digest"
+                    | "expires_at"
+                    | "created_at"
+                    | "updated_at"
+                    | "ciphertext_digest"
+                    | "retention"
+            )
+        });
+        wire["encryption"] = serde_json::to_value(arkret_sdk::KeyBackupSummaryEncryption {
+            recipient_method: body.encryption.recipient_method,
+            recipient_key_ref: body.encryption.recipient_key_ref.clone(),
+        })
+        .unwrap();
+        serde_json::from_value(wire).expect("closed summary of the actual sealed envelope")
+    }
+
+    pub(super) fn sealed_chain() -> (Vec<arkret_sdk::KeyBackup>, arkret_sdk::KeysBackupsList) {
+        use ed25519_dalek::Signer as _;
+        let account = crate::test_support::authority("did:web:alice.example");
+        let device = "ak:device:01964137-0000-7000-8000-000000000001";
+        let auth = arkret_crypto::backup::KeyBackupAuthBinding {
+            device_id: arkret_sdk::DeviceId::new(device).unwrap(),
+            verification_method: arkret_sdk::DidUrl::new(format!("did:web:alice.example#{device}"))
+                .unwrap(),
+            signature_algorithm: arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
+            device_authorize_event_id: arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [4; 32],
+            ),
+        };
+        let key = ed25519_dalek::SigningKey::from_bytes(&[42; 32]);
+        let sign = |bytes: &[u8]| -> Result<Vec<u8>, arkret_crypto::KeyBackupError> {
+            Ok(key.sign(bytes).to_bytes().to_vec())
+        };
+        let kek =
+            crate::recovery_crypto::derive_vault_kek(b"correct horse battery staple").unwrap();
+        let root = super::super::backup_body::build_mls_account_secret_backup_body_with_kek(
+            "ak:backup:01964137-0000-7000-8000-00000000beef",
+            &account,
+            device,
+            &kek,
+            "qr6h9rJ8nU0H2pP5w3sLx1A4bC7dE9fG2hI5jK8lM0N",
+            &auth,
+            &sign,
+            None,
+        )
+        .unwrap();
+        let next = super::super::backup_body::build_mls_account_secret_backup_successor_body_with_kek_and_version(
+            "ak:backup:01964137-0000-7000-8000-00000000cafe", &root, device, &kek,
+            "qr6h9rJ8nU0H2pP5w3sLx1A4bC7dE9fG2hI5jK8lM0N", 1, &auth, &sign, None,
+        ).unwrap();
+        let bodies = vec![root, next];
+        for body in &bodies {
+            crate::key_backup::verify_key_backup_auth_data(body, &key.verifying_key()).unwrap();
+        }
+        let list = arkret_sdk::KeysBackupsList {
+            backups: bodies.iter().map(summary).collect(),
+            active_series: arkret_sdk::BackupActiveSeriesState {
+                account_id: account,
+                control_realm_id: arkret_sdk::RealmId::from_event_id(
+                    &arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [3; 32]),
+                ),
+                authority_commit_id: arkret_sdk::RealmCommitId::from_digest([7; 32]),
+                secret_storage: arkret_sdk::BackupActiveSeriesPointer::Active {
+                    active_series_id: bodies[0].series_id.clone(),
+                    series_pointer_version: 1,
+                },
+            },
+            next_cursor: None,
+            has_more: false,
+        };
+        (bodies, list)
+    }
+
+    #[test]
+    fn upload_envelope_verifies_actual_device_signature_and_exact_accepted_authorization() {
+        let (bodies, list) = sealed_chain();
+        let now = crate::clock::now_utc();
+        let key = ed25519_dalek::SigningKey::from_bytes(&[42; 32]);
+        let projection = arkret_sdk::VerifiedDeviceProjection {
+            device_signing_key_did: arkret_sdk::DidKey::new(format!(
+                "did:key:{}",
+                arkret_sdk::ed25519_pubkey_to_did_key_multibase(&key.verifying_key().to_bytes())
+            ))
+            .unwrap(),
+            hpke_key: arkret_sdk::NonEmptyString::new("fixture-hpke-key").unwrap(),
+            device_authorize_event_id: bodies[0].auth_data.device_authorize_event_id.clone(),
+            authorized_generation_ref: 1,
+            device_status: arkret_sdk::DeviceStatus::Active,
+            attested_at: now - chrono::Duration::seconds(1),
+            expires_at: now + chrono::Duration::minutes(1),
+            authorization_window: arkret_sdk::DeviceAuthorizationWindow {
+                not_before: bodies[0].created_at - chrono::Duration::seconds(1),
+                expires_at: None,
+            },
+        };
+        let verify = |body: &arkret_sdk::KeyBackup,
+                      projection: &arkret_sdk::VerifiedDeviceProjection| {
+            super::super::current_basis::verify_envelope_projection(
+                body,
+                &list.active_series.account_id,
+                projection,
+                1,
+                now,
+            )
+        };
+        assert!(
+            bodies[0].source_commit_ref.is_none(),
+            "optional source checkpoint is not invented"
+        );
+        verify(&bodies[0], &projection)
+            .expect("genuine device signature under exact accepted authorization");
+        let mut wrong = projection.clone();
+        wrong.device_authorize_event_id =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [9; 32]);
+        assert!(
+            verify(&bodies[0], &wrong)
+                .unwrap_err()
+                .to_string()
+                .contains("historical authorization")
+        );
+        let mut wrong = projection.clone();
+        wrong.device_signing_key_did = arkret_sdk::DidKey::new(format!(
+            "did:key:{}",
+            arkret_sdk::ed25519_pubkey_to_did_key_multibase(
+                &ed25519_dalek::SigningKey::from_bytes(&[43; 32])
+                    .verifying_key()
+                    .to_bytes()
+            )
+        ))
+        .unwrap();
+        assert!(
+            verify(&bodies[0], &wrong)
+                .unwrap_err()
+                .to_string()
+                .contains("signature is invalid")
+        );
+        let mut wrong = projection.clone();
+        wrong.authorization_window.not_before = bodies[0].created_at + chrono::Duration::seconds(1);
+        assert!(
+            verify(&bodies[0], &wrong)
+                .unwrap_err()
+                .to_string()
+                .contains("authorization window")
+        );
+        let mut wrong = bodies[0].clone();
+        wrong.auth_data.verification_method = arkret_sdk::DidUrl::new(format!(
+            "{}#{}",
+            projection.device_signing_key_did,
+            projection
+                .device_signing_key_did
+                .as_str()
+                .strip_prefix("did:key:")
+                .unwrap()
+        ))
+        .unwrap();
+        assert!(
+            verify(&wrong, &projection)
+                .unwrap_err()
+                .to_string()
+                .contains("complete Account/device"),
+            "key DID does not alias the Account principal"
+        );
+        let mut wrong = bodies[0].clone();
+        wrong.source_commit_ref = Some(arkret_sdk::KeyBackupSourceCommitRef {
+            realm_commit_id: arkret_sdk::RealmCommitId::from_digest([7; 32]),
+            device_generation_ref: 2,
+        });
+        assert!(
+            verify(&wrong, &projection)
+                .unwrap_err()
+                .to_string()
+                .contains("historical generation")
+        );
+    }
+
+    #[test]
+    fn upload_chain_uses_complete_signed_envelopes_and_canonical_supersedes_digest() {
+        let (bodies, list) = sealed_chain();
+        let ordered =
+            super::ordered_active_summaries(&list, arkret_sdk::BackupKind::SecretStorage).unwrap();
+        assert_eq!(
+            super::verified_full_tail(&bodies, &ordered).unwrap(),
+            &bodies[1]
+        );
+        let mut changed = bodies.clone();
+        changed[1].supersedes_digest =
+            Some(arkret_sdk::Hash::new(format!("sha256:{}", "00".repeat(32))).unwrap());
+        let mut changed_list = list.clone();
+        changed_list.backups[1] = summary(&changed[1]);
+        let ordered =
+            super::ordered_active_summaries(&changed_list, arkret_sdk::BackupKind::SecretStorage)
+                .unwrap();
+        assert!(
+            super::verified_full_tail(&changed, &ordered).is_err(),
+            "canonical predecessor digest mismatch must reject"
+        );
+        assert!(
+            super::verified_full_tail(&bodies, &ordered)
+                .unwrap_err()
+                .to_string()
+                .contains("exact listed summary")
+        );
+    }
+
+    #[test]
+    fn upload_chain_rejects_fork_gap_huge_sequence_and_wrong_complete_actor() {
+        let (_, list) = sealed_chain();
+        for sequence in [0, 2, u64::MAX] {
+            let mut bad = list.clone();
+            bad.backups[1].series_seq = sequence;
+            assert!(
+                super::ordered_active_summaries(&bad, arkret_sdk::BackupKind::SecretStorage)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("duplicate sequence, gap or fork")
+            );
+        }
+        let mut bad = list.clone();
+        bad.backups[1].supersedes_id = Some(Some(
+            arkret_sdk::BackupId::new("ak:backup:01964137-0000-7000-8000-00000000ffff").unwrap(),
+        ));
+        assert!(
+            super::ordered_active_summaries(&bad, arkret_sdk::BackupKind::SecretStorage)
+                .unwrap_err()
+                .to_string()
+                .contains("broken link")
+        );
+        let mut bad = list.clone();
+        let mut account = bad.active_series.account_id.clone();
+        account.station_id = arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap();
+        bad.backups[1].actor_id = arkret_sdk::ActorId::account(account);
+        assert!(
+            super::ordered_active_summaries(&bad, arkret_sdk::BackupKind::SecretStorage)
+                .unwrap_err()
+                .to_string()
+                .contains("complete Account")
+        );
+        let mut absent = list;
+        absent.active_series.secret_storage = arkret_sdk::BackupActiveSeriesPointer::Absent {};
+        assert!(
+            super::ordered_active_summaries(&absent, arkret_sdk::BackupKind::SecretStorage)
+                .unwrap()
+                .is_empty(),
+            "orphan inventory must not infer an active tail"
+        );
+    }
 
     #[test]
     fn source_checkpoint_has_one_closed_wire_shape() {

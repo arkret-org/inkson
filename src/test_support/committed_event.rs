@@ -352,6 +352,7 @@ pub(crate) fn verified_realm_fixture_signed_by(
         governance_generation: 0,
         authority_ref: RealmCommitAuthorityRef::GenesisOrChangeEvent(genesis.event_id.clone()),
         committed_at: time(50),
+        producer_signer_fact_digest: None,
         signature: station.initial_signature(DetachedSignatureContext::RealmCommit),
     });
     let mut previous = genesis_commit.commit_id.clone();
@@ -374,6 +375,7 @@ pub(crate) fn verified_realm_fixture_signed_by(
                     genesis.event_id.clone(),
                 ),
                 committed_at: time(50 + position as i64),
+                producer_signer_fact_digest: None,
                 signature: station.initial_signature(DetachedSignatureContext::RealmCommit),
             });
             previous = commit.commit_id.clone();

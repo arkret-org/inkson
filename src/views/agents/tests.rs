@@ -127,6 +127,7 @@ mod agent_tests {
                 "ak.self.committed_event.stream.subscribe.v1",
                 "ak.self.events.command.submit.v1",
                 "ak.self.keys.keypackages.upload.create.v1",
+                "ak.self.signer_keys.read.resolve.v1",
                 "ak.self.keys.keypackages.command.consume.v1",
                 "ak.self.keys.keypackages.read.claim.v1",
                 "ak.self.mls.read.group_state_material.v1",
@@ -156,6 +157,10 @@ mod agent_tests {
                 {
                     "kind": "operation",
                     "operation": "ak.self.keys.keypackages.upload.create.v1"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.signer_keys.read.resolve.v1"
                 },
                 {
                     "kind": "operation",
@@ -211,6 +216,7 @@ mod agent_tests {
                 "ak.self.committed_event.read.scan.v1".to_owned(),
                 "ak.self.committed_event.stream.subscribe.v1".to_owned(),
                 "ak.self.events.command.submit.v1".to_owned(),
+                "ak.self.signer_keys.read.resolve.v1".to_owned(),
             ]
         );
     }
@@ -232,6 +238,7 @@ mod agent_tests {
                 "ak.self.committed_event.read.scan.v1",
                 "ak.self.committed_event.stream.subscribe.v1",
                 "ak.self.events.command.submit.v1",
+                "ak.self.signer_keys.read.resolve.v1",
                 "ak.self.committed_event.resource.get.v1",
             ]
         );

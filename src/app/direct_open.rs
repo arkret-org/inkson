@@ -404,15 +404,24 @@ pub(crate) async fn start_founder_genesis(
     if &account.authority != founder {
         return;
     }
-    if let Err(error) = crate::mls::creator_bootstrap::start_creator_realm_mls_genesis(
+    crate::mls::direct_binding::diagnostic_stage("founder_genesis", "entered");
+    let result = crate::mls::creator_bootstrap::start_creator_realm_mls_genesis(
         api,
         state_store,
         coordinates.realm_id.as_str(),
         founder,
         &account.device_id,
     )
-    .await
-    {
+    .await;
+    crate::mls::direct_binding::diagnostic_stage(
+        "founder_genesis",
+        if result.is_ok() {
+            "completed"
+        } else {
+            "failed"
+        },
+    );
+    if let Err(error) = result {
         tracing::warn!(
             realm = %coordinates.realm_id,
             %error,

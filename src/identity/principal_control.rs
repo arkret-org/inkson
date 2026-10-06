@@ -9,28 +9,7 @@ pub(crate) async fn current_root_authorization_ref(
     realm: &arkret_sdk::RealmId,
     holder: &arkret_sdk::AccountId,
 ) -> anyhow::Result<arkret_sdk::EventId> {
-    let epoch = crate::identity::device_directory::session_cache_epoch();
-    let binding = crate::station_connection::enrolled(http.base_url().as_str()).await?;
-    let consumer = garth::own_station::OwnStationConsumer::authenticate(
-        http.clone(),
-        &binding,
-        holder.clone(),
-        epoch,
-    )
-    .await?;
-    let principal =
-        crate::transport::account::current_principal_for_authority(http, holder).await?;
-    consumer.require_context(
-        holder,
-        crate::identity::device_directory::session_cache_epoch(),
-    )?;
-    anyhow::ensure!(
-        &principal.principal_control_realm_id == realm,
-        "current principal does not bind the holder PCR root"
-    );
-    // This registered self result binds the lifetime-stable PCR identity;
-    // its closed allowlist has no controller transfer/reset writer.
-    Ok(realm.event_id())
+    crate::transport::own_station_results::holder_pcr_root_ref(http, realm, holder).await
 }
 
 #[cfg(test)]

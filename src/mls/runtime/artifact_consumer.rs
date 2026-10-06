@@ -239,9 +239,10 @@ pub(crate) async fn install_accepted_welcome(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     delivery: &arkret_wire::MlsWelcomeDelivery,
-    accepted_commit: &CommittedEventFullView,
+    accepted_source: &AcceptedWelcomeCommit,
     claim: &VerifiedWelcomeClaim,
 ) -> Result<MlsInstallOutcome, String> {
+    let accepted_commit = accepted_source.full()?;
     let transition = accepted_mls_transition(accepted_commit)?;
     // Bootstrap and stream convergence can observe the same delivery while
     // the first installer awaits roster evidence or its durable flush. Hold
@@ -249,6 +250,7 @@ pub(crate) async fn install_accepted_welcome(
     // below so only one installer signs the immutable consume command and no
     // later installer replaces an already advanced receive ratchet.
     let _welcome_install = welcome_install_lock().lock().await;
+    state.read(|store| accepted_source.check_install(store, authority))?;
     if state.read(|store| {
         store.realm_projection_has_retired_minimal_metadata_marker(
             transition.effective_scope.realm_id().as_str(),
@@ -326,6 +328,8 @@ pub(crate) async fn install_accepted_welcome(
         &snapshot_secret,
         transition.event().event_id.clone(),
         &consume,
+        accepted_source,
+        authority,
     )
     .await
 }
@@ -476,20 +480,25 @@ pub(crate) async fn converge_accepted_mls_artifacts(
         // device-lifecycle.md §9.2.4: the claim is read from this device's
         // own Station and verified before the Welcome is decrypted; a read or
         // binding failure leaves the Welcome undecrypted in the inbox.
-        let claim =
-            match verified_welcome_claim(api, &delivery, &endpoint, &accepted_commit, device_id)
-                .await
-            {
-                Ok(claim) => claim,
-                Err(error) => {
-                    tracing::warn!(
-                        welcome = %delivery.welcome_id.as_str(),
-                        %error,
-                        "MLS Welcome claim is not verified; the Welcome stays undecrypted",
-                    );
-                    continue;
-                }
-            };
+        let claim = match verified_welcome_claim(
+            api,
+            &delivery,
+            &endpoint,
+            accepted_commit.full()?,
+            device_id,
+        )
+        .await
+        {
+            Ok(claim) => claim,
+            Err(error) => {
+                tracing::warn!(
+                    welcome = %delivery.welcome_id.as_str(),
+                    %error,
+                    "MLS Welcome claim is not verified; the Welcome stays undecrypted",
+                );
+                continue;
+            }
+        };
         match install_accepted_welcome(
             api,
             state,
@@ -522,6 +531,305 @@ pub(crate) async fn converge_accepted_mls_artifacts(
     Ok(applied)
 }
 
+// Preserve the existing 200-row network page size and finite captured head.
+// Only relevant original artifact carriers consume this additional memory cap.
+const MAX_RECOVERY_MATERIAL_BYTES: usize = 8 * 1024 * 1024;
+
+type RecoverySnapshot = arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+    arkret_sdk::RealmId,
+    arkret_wire::RealmStateSnapshot,
+>;
+type RecoveryAnchor = arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+    arkret_wire::StreamScanRequest,
+    arkret_wire::StreamScanOutcome,
+>;
+
+/// Original private HTTP carriers remain live until the last durable install.
+/// The local base is a candidate identity, never an authorization predecessor.
+struct OwnRecoveryTail {
+    client: arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    snapshot: RecoverySnapshot,
+    anchor: RecoveryAnchor,
+    pages: Vec<garth::own_station_results::OwnStationScanPage>,
+    current: arkret_wire::MlsGroupCurrent,
+    replica: garth::own_station_results::OwnStationReplica,
+    expected_head: arkret_wire::CommitStreamHead,
+}
+
+impl OwnRecoveryTail {
+    fn check_session(&self) -> Result<(), String> {
+        self.snapshot.value().map_err(describe)?;
+        if self.replica.head(&self.expected_head.stream_ref) != Some(&self.expected_head) {
+            return Err("MLS recovery prefix has not reached its exact current head".into());
+        }
+        self.anchor.value().map_err(describe)?;
+        for page in &self.pages {
+            page.rows().map_err(describe)?;
+        }
+        self.client.check_session().map_err(describe)
+    }
+
+    fn full_rows(&self) -> Result<Vec<CommittedEventFullView>, String> {
+        self.check_session()?;
+        let mut rows = self
+            .anchor
+            .value()
+            .map_err(describe)?
+            .committed_events
+            .clone();
+        for page in &self.pages {
+            rows.extend_from_slice(page.rows().map_err(describe)?);
+        }
+        let target = rows
+            .iter()
+            .position(|row| row.commit().event_ref == self.current.current_mls_commit_event_ref)
+            .ok_or("authorized MLS tail does not reach its exact current Event")?;
+        rows.truncate(target + 1);
+        rows.into_iter()
+            .map(|row| match row {
+                CommittedEventView::Full(full) => Ok(full),
+                CommittedEventView::Withheld(_) => {
+                    Err("MLS recovery lineage contains a withheld original".to_owned())
+                }
+            })
+            .collect()
+    }
+
+    fn check_install(
+        &self,
+        store: &crate::state::LocalStateStore,
+        authority: &arkret_sdk::AccountId,
+        scope: &arkret_sdk::ScopeRef,
+        expected_base: &arkret_sdk::EventId,
+        expected_epoch: u64,
+        expected_checkpoint: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    ) -> Result<(), String> {
+        self.check_session()?;
+        if self.client.session().map_err(describe)?.account_id() != authority
+            || store.active_authority().as_ref() != Some(authority)
+            || store.current_reset_required()
+            || store.current_mls_group_for_scope(scope).as_ref() != Some(&self.current)
+        {
+            return Err("MLS recovery account or exact current changed before installation".into());
+        }
+        let base = store
+            .mls_checkpoint_for_scope_and_group(
+                scope,
+                scope.canonical_mls_group_id().map_err(describe)?.as_str(),
+            )
+            .ok_or("MLS recovery local base disappeared")?;
+        require_unchanged_recovery_base(&base, expected_checkpoint, expected_base, expected_epoch)
+    }
+}
+
+fn require_unchanged_recovery_base(
+    actual: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    expected: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    reference: &arkret_sdk::EventId,
+    epoch: u64,
+) -> Result<(), String> {
+    if actual.epoch != epoch
+        || actual.group_state_event_id.as_ref() != Some(reference)
+        || actual != expected
+    {
+        return Err(
+            "MLS recovery local base or private ratchet changed before installation".into(),
+        );
+    }
+    Ok(())
+}
+
+async fn own_recovery_tail(
+    client: arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    scope: &arkret_sdk::ScopeRef,
+    base_ref: &arkret_sdk::EventId,
+) -> Result<OwnRecoveryTail, String> {
+    let realm = scope
+        .realm_id_opt()
+        .ok_or("MLS recovery scope has no Realm")?;
+    let stream = arkret_wire::CommitStreamRef::from_scope(scope, None).map_err(describe)?;
+    let snapshot = client.snapshot_head(realm).await.map_err(describe)?;
+    let mut replica = garth::own_station_results::OwnStationReplica::new(realm.clone());
+    replica
+        .install_bound_snapshot(&snapshot)
+        .map_err(describe)?;
+    let cut = snapshot.value().map_err(describe)?;
+    let head = cut
+        .visible_stream_heads
+        .iter()
+        .find(|head| head.stream_ref == stream)
+        .ok_or("MLS recovery current omits its independent stream")?
+        .clone();
+    let floor = cut
+        .retention_and_history_floor
+        .stream_floors
+        .iter()
+        .find(|floor| floor.stream_ref == stream)
+        .ok_or("MLS recovery current omits its history floor")?
+        .oldest_position;
+    let mut currents = cut
+        .current_state_entries
+        .iter()
+        .filter_map(|row| match row {
+            arkret_wire::TypedCurrentResult::Value {
+                selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref },
+                value,
+                ..
+            } if scope_ref == scope => Some(value),
+            _ => None,
+        });
+    let current: arkret_wire::MlsGroupCurrent = serde_json::from_value(
+        currents
+            .next()
+            .ok_or("MLS recovery current omits the scope MLS result")?
+            .clone(),
+    )
+    .map_err(describe)?;
+    if currents.next().is_some() || current.effective_scope != *scope {
+        return Err("MLS recovery current has duplicate or mismatched scope".into());
+    }
+    // GET supplies only the candidate coordinates. An actual exact scan must
+    // re-admit the original and its historical producer before it is a base.
+    let candidate = client
+        .committed_event_get(base_ref)
+        .await
+        .map_err(describe)?;
+    let CommittedEventView::Full(base) = candidate.value().map_err(describe)? else {
+        return Err("MLS recovery installed base is withheld".into());
+    };
+    if base.event.event_id != *base_ref
+        || base.event.scope_ref != *scope
+        || base.commit.stream_ref != stream
+        || base.commit.stream_position < floor
+        || base.commit.stream_position > head.stream_position
+        || base.commit.governance_generation > cut.governance_generation
+    {
+        return Err("MLS recovery base is outside its exact scope/current floor".into());
+    }
+    let reference = arkret_wire::CommittedEventRef {
+        event_id: base_ref.clone(),
+        commit_id: base.commit.commit_id.clone(),
+        stream_ref: stream.clone(),
+        stream_position: base.commit.stream_position,
+    };
+    let anchor = client
+        .scan_commit_stream(&arkret_wire::StreamScanRequest {
+            realm_id: realm.clone(),
+            stream_ref: stream.clone(),
+            direction: arkret_wire::StreamScanDirection::Before(Some(
+                reference
+                    .stream_position
+                    .checked_add(1)
+                    .ok_or("MLS recovery base position overflow")?,
+            )),
+            limit: 1,
+        })
+        .await
+        .map_err(describe)?;
+    if anchor
+        .value()
+        .map_err(describe)?
+        .committed_events
+        .as_slice()
+        != [CommittedEventView::Full(base.clone())]
+        || anchor
+            .value()
+            .map_err(describe)?
+            .readable_floor
+            .as_ref()
+            .map(|floor| floor.oldest_position)
+            != Some(floor)
+    {
+        return Err("MLS recovery base scan changed its original or current floor".into());
+    }
+    let base_head = arkret_wire::CommitStreamHead {
+        stream_ref: stream.clone(),
+        stream_position: reference.stream_position,
+        commit_id: reference.commit_id,
+    };
+    replica
+        .restore_bound_head(&client, &base_head, anchor.clone())
+        .await
+        .map_err(describe)?;
+    candidate.value().map_err(describe)?;
+    let mut after = base_head.stream_position;
+    let mut pages = Vec::new();
+    let mut retained_bytes = serde_json::to_vec(anchor.value().map_err(describe)?)
+        .map_err(describe)?
+        .len();
+    if retained_bytes > MAX_RECOVERY_MATERIAL_BYTES {
+        return Err("MLS recovery base exceeds bounded in-memory capacity".into());
+    }
+    let mut target_seen = *base_ref == current.current_mls_commit_event_ref;
+    while after < head.stream_position {
+        let remaining = head.stream_position - after;
+        let response = client
+            .scan_commit_stream(&arkret_wire::StreamScanRequest {
+                realm_id: realm.clone(),
+                stream_ref: stream.clone(),
+                direction: arkret_wire::StreamScanDirection::After(Some(after)),
+                limit: remaining.min(200) as u16,
+            })
+            .await
+            .map_err(describe)?;
+        let page = replica
+            .apply_bound_scan(&client, response)
+            .await
+            .map_err(describe)?;
+        if page.rows().map_err(describe)?.is_empty() {
+            return Err("MLS recovery stream ends before its exact current head".into());
+        }
+        after = replica
+            .head(&stream)
+            .ok_or("MLS recovery scan has no continuous head")?
+            .stream_position;
+        let relevant = page.rows().map_err(describe)?.iter().any(|row| match row {
+            CommittedEventView::Full(full) => {
+                full.event.event_id == current.current_mls_commit_event_ref
+                    || matches!(
+                        full.event.kind,
+                        arkret_sdk::EventKind::MlsGenesis | arkret_sdk::EventKind::MlsCommit
+                    )
+            }
+            CommittedEventView::Withheld(_) => !target_seen,
+        });
+        target_seen |= page
+            .rows()
+            .map_err(describe)?
+            .iter()
+            .any(|row| row.commit().event_ref == current.current_mls_commit_event_ref);
+        if relevant {
+            retained_bytes = retained_bytes
+                .checked_add(
+                    serde_json::to_vec(page.rows().map_err(describe)?)
+                        .map_err(describe)?
+                        .len(),
+                )
+                .ok_or("MLS recovery proof size overflow")?;
+            if retained_bytes > MAX_RECOVERY_MATERIAL_BYTES {
+                return Err("MLS recovery artifacts exceed bounded in-memory capacity".into());
+            }
+            pages.push(page);
+        }
+        // Unrelated ordinary pages have already advanced the closed replica;
+        // releasing them places no limit on the total historical span.
+    }
+    if replica.head(&stream) != Some(&head) {
+        return Err("MLS recovery scan forks its exact current head".into());
+    }
+    let tail = OwnRecoveryTail {
+        client,
+        snapshot,
+        anchor,
+        pages,
+        current,
+        replica,
+        expected_head: head,
+    };
+    tail.check_session()?;
+    Ok(tail)
+}
+
 async fn recover_remote_tail(
     api: &crate::transport::TransportClient,
     state: &StateStoreHandle,
@@ -529,17 +837,37 @@ async fn recover_remote_tail(
     device_id: &arkret_sdk::DeviceId,
     scope: &arkret_sdk::ScopeRef,
 ) -> Result<usize, String> {
-    let rows = crate::realm_events_engine::verified_mls_recovery_tail(api, authority, scope)
-        .await
-        .map_err(describe)?;
-    let _install = welcome_install_lock().lock().await;
-    let current = state
-        .read(|store| store.current_mls_group_for_scope(scope))
-        .ok_or_else(|| "MLS recovery has no verified current".to_owned())?;
     let group_id = scope.canonical_mls_group_id().map_err(describe)?;
-    let base = state
+    let requested_base = state
         .read(|store| store.mls_checkpoint_for_scope_and_group(scope, group_id.as_str()))
-        .ok_or_else(|| "MLS recovery has no local checkpoint".to_owned())?;
+        .ok_or("MLS recovery has no local checkpoint")?;
+    let requested_base_ref = requested_base
+        .group_state_event_id
+        .as_ref()
+        .ok_or("MLS recovery has no accepted local base")?;
+    let tail = own_recovery_tail(
+        crate::transport::own_station_results::client_for_http(api.http())
+            .await
+            .map_err(describe)?,
+        scope,
+        requested_base_ref,
+    )
+    .await?;
+    let rows = tail.full_rows()?;
+    let _install = welcome_install_lock().lock().await;
+    tail.check_session()?;
+    let current = tail.current.clone();
+    state.read(|store| {
+        tail.check_install(
+            store,
+            authority,
+            scope,
+            requested_base_ref,
+            requested_base.epoch,
+            &requested_base,
+        )
+    })?;
+    let base = requested_base.clone();
     if base.epoch >= current.epoch {
         return Ok(0);
     }
@@ -580,6 +908,10 @@ async fn recover_remote_tail(
     {
         return Err("MLS recovery checkpoint belongs to another endpoint".to_owned());
     }
+    group
+        .verify_installed_historical_base(&rows[base_position], &base_ref)
+        .map_err(describe)?;
+    let mut expected_checkpoint = base.clone();
     let mut applied = 0;
     for item in &rows[base_position + 1..=target_position] {
         if item.event.kind != arkret_sdk::EventKind::MlsCommit {
@@ -596,15 +928,31 @@ async fn recover_remote_tail(
             api, state, &mut group, item, authority,
         )
         .await?;
-        persist_installed_group(
-            state,
-            &transition,
-            &group,
-            &secret,
-            item.event.event_id.clone(),
-        )
-        .await?;
+        let envelope = sealed_checkpoint(&transition, &group, &secret)?;
+        let (barrier, written_checkpoint) = state.write(|store| {
+            tail.check_install(
+                store,
+                authority,
+                scope,
+                &base_ref,
+                transition.previous_epoch,
+                &expected_checkpoint,
+            )?;
+            let barrier =
+                store.install_accepted_mls_transition(scope, envelope, &item.event.event_id)?;
+            // Capture exactly this write while still holding the same state
+            // critical section, never a later receive/send write-back.
+            let written = store
+                .mls_checkpoint_for_scope_and_group(scope, group_id.as_str())
+                .ok_or("MLS recovery installation did not store its checkpoint")?;
+            Ok::<_, String>((barrier, written))
+        })?;
+        let published = barrier.wait().await.map_err(describe);
+        state.write(|_| {});
+        published?;
+        tail.check_session()?;
         base_ref = item.event.event_id.clone();
+        expected_checkpoint = written_checkpoint;
         applied += 1;
     }
     if group.epoch() != current.epoch || base_ref != current.current_mls_commit_event_ref {
@@ -656,31 +1004,119 @@ async fn verified_welcome_claim(
 /// The delivery carries only an `EventId`, and there is no Realm-global order
 /// to look it up in, so the scan walks the one independent stream the Welcome's
 /// `effective_scope` belongs to.
+pub(crate) struct AcceptedWelcomeCommit {
+    client: arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    response: RecoveryAnchor,
+}
+
+impl AcceptedWelcomeCommit {
+    fn full(&self) -> Result<&CommittedEventFullView, String> {
+        self.client.check_session().map_err(describe)?;
+        let [CommittedEventView::Full(full)] = self
+            .response
+            .value()
+            .map_err(describe)?
+            .committed_events
+            .as_slice()
+        else {
+            return Err("Welcome accepted original is withheld or ambiguous".into());
+        };
+        Ok(full)
+    }
+
+    fn check_install(
+        &self,
+        store: &crate::state::LocalStateStore,
+        authority: &arkret_sdk::AccountId,
+    ) -> Result<(), String> {
+        self.full()?;
+        if self.client.session().map_err(describe)?.account_id() != authority
+            || store.active_authority().as_ref() != Some(authority)
+            || store.current_reset_required()
+        {
+            return Err("Welcome account/session changed before installation".into());
+        }
+        Ok(())
+    }
+}
+
 async fn accepted_commit_for_welcome(
     api: &crate::transport::TransportClient,
     delivery: &arkret_wire::MlsWelcomeDelivery,
-) -> Result<Option<CommittedEventFullView>, String> {
+) -> Result<Option<AcceptedWelcomeCommit>, String> {
+    let client = crate::transport::own_station_results::client_for_http(api.http())
+        .await
+        .map_err(describe)?;
+    accepted_welcome_original(client, delivery).await
+}
+
+async fn accepted_welcome_original(
+    client: arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    delivery: &arkret_wire::MlsWelcomeDelivery,
+) -> Result<Option<AcceptedWelcomeCommit>, String> {
     let stream_ref = arkret_wire::CommitStreamRef::from_scope(&delivery.effective_scope, None)
-        .map_err(|error| format!("MLS Welcome scope has no commit stream: {error}"))?;
-    let submitter = api
-        .event_submitter()
-        .map_err(|error| format!("MLS Welcome stream reader: {error}"))?;
+        .map_err(describe)?;
     let mut after_position = None;
     loop {
-        let page = submitter
-            .scan_stream(&stream_ref, after_position, WELCOME_COMMIT_SCAN_PAGE)
+        let response = client
+            .scan_commit_stream(&arkret_wire::StreamScanRequest {
+                realm_id: delivery.realm_id.clone(),
+                stream_ref: stream_ref.clone(),
+                direction: arkret_wire::StreamScanDirection::After(after_position),
+                limit: WELCOME_COMMIT_SCAN_PAGE,
+            })
             .await
-            .map_err(|error| format!("scan the MLS Welcome commit stream: {error}"))?;
-        if let Some(item) = page.0.committed_events.iter().find_map(|item| match item {
-            CommittedEventView::Full(item) if item.event.event_id == delivery.commit_event_ref => {
-                Some(item)
+            .map_err(describe)?;
+        let page = response.value().map_err(describe)?;
+        if let Some(item) = page.committed_events.iter().find_map(|item| match item {
+            CommittedEventView::Full(full) if full.event.event_id == delivery.commit_event_ref => {
+                Some(full)
             }
             _ => None,
         }) {
-            return Ok(Some(item.clone()));
+            if item.event.kind != arkret_sdk::EventKind::MlsCommit
+                || item.event.scope_ref != delivery.effective_scope
+            {
+                return Err("Welcome accepted Commit has another kind/scope".into());
+            }
+            let reference = arkret_wire::CommittedEventRef {
+                event_id: item.event.event_id.clone(),
+                commit_id: item.commit.commit_id.clone(),
+                stream_ref: item.commit.stream_ref.clone(),
+                stream_position: item.commit.stream_position,
+            };
+            let exact = client
+                .scan_commit_stream(&arkret_wire::StreamScanRequest {
+                    realm_id: delivery.realm_id.clone(),
+                    stream_ref: stream_ref.clone(),
+                    direction: arkret_wire::StreamScanDirection::Before(Some(
+                        reference
+                            .stream_position
+                            .checked_add(1)
+                            .ok_or("Welcome Commit position overflow")?,
+                    )),
+                    limit: 1,
+                })
+                .await
+                .map_err(describe)?;
+            let exact =
+                garth::own_station_results::consume_bound_scan_row(&client, &reference, exact)
+                    .await
+                    .map_err(describe)?;
+            if exact.value().map_err(describe)?.committed_events.as_slice()
+                != [CommittedEventView::Full(item.clone())]
+            {
+                return Err("Welcome Commit exact read changed its original".into());
+            }
+            response.value().map_err(describe)?;
+            client.check_session().map_err(describe)?;
+            return Ok(Some(AcceptedWelcomeCommit {
+                client,
+                response: exact,
+            }));
         }
-        match page.last_position() {
-            Some(position) if page.truncated() => after_position = Some(position),
+        match page.committed_events.last() {
+            Some(row) if page.truncated => after_position = Some(row.commit().stream_position),
             _ => return Ok(None),
         }
     }
@@ -746,22 +1182,27 @@ async fn persist_joined_welcome(
     snapshot_secret: &str,
     accepted_event_id: arkret_sdk::EventId,
     consume: &arkret_sdk::KeyPackagesConsumeRequestBody,
+    accepted_source: &AcceptedWelcomeCommit,
+    authority: &arkret_sdk::AccountId,
 ) -> Result<MlsInstallOutcome, String> {
     let envelope = sealed_checkpoint(transition, group, snapshot_secret)?;
-    record_joined_welcome(
+    record_joined_welcome_guarded(
         state,
         &transition.effective_scope,
         envelope,
         &accepted_event_id,
         consume,
+        |store| accepted_source.check_install(store, authority),
     )
     .await?;
+    accepted_source.full()?;
     Ok(MlsInstallOutcome::Applied)
 }
 
 /// Install a joined Welcome's checkpoint and its owed consume in one flush;
 /// when the flush does not resolve, the consume is dropped again so it is
 /// never sent for a join that is not durable.
+#[cfg(test)]
 async fn record_joined_welcome(
     state: &StateStoreHandle,
     scope: &arkret_sdk::ScopeRef,
@@ -769,7 +1210,22 @@ async fn record_joined_welcome(
     accepted_event_id: &arkret_sdk::EventId,
     consume: &arkret_sdk::KeyPackagesConsumeRequestBody,
 ) -> Result<(), String> {
+    record_joined_welcome_guarded(state, scope, envelope, accepted_event_id, consume, |_| {
+        Ok(())
+    })
+    .await
+}
+
+async fn record_joined_welcome_guarded(
+    state: &StateStoreHandle,
+    scope: &arkret_sdk::ScopeRef,
+    envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    accepted_event_id: &arkret_sdk::EventId,
+    consume: &arkret_sdk::KeyPackagesConsumeRequestBody,
+    guard: impl FnOnce(&crate::state::LocalStateStore) -> Result<(), String>,
+) -> Result<(), String> {
     let barrier = state.write(|store| {
+        guard(store)?;
         store.install_accepted_mls_welcome(scope, envelope, accepted_event_id, consume)
     })?;
     let published = barrier.wait().await;
@@ -1245,5 +1701,539 @@ mod tests {
             )
             .is_err()
         );
+    }
+    struct RecoverySource(
+        std::sync::Mutex<arkret_sdk::http_client::own_station_results::OwnStationSessionSnapshot>,
+    );
+    impl arkret_sdk::http_client::own_station_results::OwnStationSessionSource for RecoverySource {
+        fn snapshot(
+            &self,
+        ) -> arkret_sdk::http_client::Result<
+            arkret_sdk::http_client::own_station_results::OwnStationSessionSnapshot,
+        > {
+            Ok(self.0.lock().unwrap().clone())
+        }
+    }
+
+    // Closed transport fixture only: these bytes are never passed to RFC processing.
+    fn recovery_commit_payload(
+        base: arkret_sdk::EventId,
+        previous_epoch: u64,
+    ) -> serde_json::Value {
+        let next_epoch = previous_epoch.checked_add(1).unwrap();
+        let binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
+            realm_id(),
+            Some(base.clone()),
+            previous_epoch,
+            next_epoch,
+            0,
+        )
+        .unwrap();
+        let bytes = b"accepted-commit-source-fence-fixture";
+        let envelope = arkret_sdk::MlsCommitEnvelope {
+            group_id: binding.mls_group_id().unwrap(),
+            epoch: next_epoch,
+            commit: arkret_sdk::base64url_encode(bytes),
+            commit_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(bytes))
+                .unwrap(),
+            ratchet_tree: None,
+        };
+        let payload = arkret_sdk::MlsCommitPayload::new(base, 0, &envelope, binding).unwrap();
+        payload.validate().unwrap();
+        serde_json::to_value(payload).unwrap()
+    }
+
+    fn recovery_seal_commit(mut commit: arkret_sdk::RealmCommit) -> arkret_sdk::RealmCommit {
+        let mut body = serde_json::to_value(&commit).unwrap();
+        body.as_object_mut().unwrap().remove("commit_id");
+        body.as_object_mut().unwrap().remove("signature");
+        commit.commit_id =
+            arkret_sdk::RealmCommitId::from_digest(arkret_sdk::canonical::sha256_bytes(
+                &arkret_sdk::canonical::canonical_json_bytes(&body).unwrap(),
+            ));
+        let commit =
+            crate::test_support::committed_event::FixtureStation::did_web().seal_commit(commit);
+        commit.verify_commit_id_matches_content().unwrap();
+        let wire: arkret_sdk::RealmCommit =
+            serde_json::from_value(serde_json::to_value(&commit).unwrap()).unwrap();
+        assert_eq!(
+            wire, commit,
+            "canonical millisecond wire roundtrip retains signed original"
+        );
+        wire.verify_commit_id_matches_content().unwrap();
+        wire
+    }
+
+    /// Independently located original PCR authorization transport coordinates.
+    /// This does not claim actual PG admission or independently download PCR
+    /// permissions; the real historical query and Event Ed verifier remain active.
+    fn recovery_original_source(
+        event: &arkret_sdk::Event,
+        template: &arkret_sdk::RealmCommit,
+    ) -> (arkret_sdk::ResolvedSignerKey, chrono::DateTime<chrono::Utc>) {
+        let create = arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            arkret_sdk::canonical::sha256_bytes(b"artifact recovery original PCR create"),
+        );
+        let source_event = arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            arkret_sdk::canonical::sha256_bytes(b"artifact recovery original Device authorization"),
+        );
+        let mut genesis = template.clone();
+        genesis.realm_id = arkret_sdk::RealmId::from_event_id(&create);
+        genesis.stream_ref = arkret_sdk::CommitStreamRef::Realm {
+            realm_id: genesis.realm_id.clone(),
+        };
+        genesis.event_ref = create.clone();
+        genesis.stream_position = 0;
+        genesis.previous_commit_ref = None;
+        genesis.producer_signer_fact_digest = None;
+        genesis.authority_ref = arkret_sdk::RealmCommitAuthorityRef::GenesisOrChangeEvent(create);
+        genesis.committed_at = crate::test_support::committed_event::fixture_time(50);
+        let genesis = recovery_seal_commit(genesis);
+        let mut source = genesis.clone();
+        source.event_ref = source_event;
+        source.stream_position = 1;
+        source.previous_commit_ref = Some(genesis.commit_id);
+        let source = recovery_seal_commit(source);
+        let signer = arkret_test_kit::keys::seeded_signer(
+            arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            event
+                .producer_proof
+                .as_ref()
+                .unwrap()
+                .verification_method
+                .clone(),
+        );
+        let key = arkret_sdk::ResolvedSignerKey {
+            public_key_b64u: arkret_sdk::Base64UrlString::new(
+                arkret_sdk::canonical::base64url_encode(signer.verifying_key().as_bytes()),
+            )
+            .unwrap(),
+            authorization_ref: arkret_sdk::CommittedEventRef {
+                event_id: source.event_ref,
+                commit_id: source.commit_id.clone(),
+                stream_ref: source.stream_ref,
+                stream_position: source.stream_position,
+            },
+            revision: arkret_sdk::CurrentRevision {
+                commit_id: source.commit_id,
+                stream_position: source.stream_position,
+            },
+            governance_generation: source.governance_generation,
+        };
+        assert_ne!(key.authorization_ref.stream_ref, template.stream_ref);
+        assert_ne!(key.authorization_ref.event_id, event.event_id);
+        assert!(source.committed_at < template.committed_at);
+        (key, source.committed_at)
+    }
+
+    fn recovery_signed_rows(
+        entries: Vec<(String, serde_json::Value)>,
+    ) -> Vec<CommittedEventFullView> {
+        let (bundle, _, mut rows) = crate::test_support::committed_event::verified_realm_fixture_as(
+            realm_id(),
+            entries,
+            "alice.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        );
+        let mut previous = recovery_seal_commit(bundle.genesis_commit).commit_id;
+        for row in &mut rows {
+            row.commit.previous_commit_ref = Some(previous);
+            let (key, accepted_at) = recovery_original_source(&row.event, &row.commit);
+            let human = row.event.human_device_producer().unwrap().unwrap();
+            assert_eq!(human.account_id.station_id, authority().station_id);
+            let fact = arkret_models_collaboration::authority_commit::HumanHistoricalSignerFact {
+                event_id: row.event.event_id.clone(),
+                actor: row.event.actual_signer().clone(),
+                device_id: human.device_id,
+                verification_method: row
+                    .event
+                    .producer_proof
+                    .as_ref()
+                    .unwrap()
+                    .verification_method
+                    .clone(),
+                key,
+                accepted_at,
+            };
+            fact.validate_event_binding(&row.event, arkret_sdk::DigestSuite::Sha256)
+                .unwrap();
+            row.commit.producer_signer_fact_digest = Some(fact.digest().unwrap());
+            row.commit = recovery_seal_commit(row.commit.clone());
+            fact.validate_commit_binding(row, arkret_sdk::DigestSuite::Sha256)
+                .unwrap();
+            previous = row.commit.commit_id.clone();
+        }
+        rows
+    }
+
+    fn recovery_fixture(
+        fork: bool,
+        withheld: bool,
+        floor: u64,
+    ) -> (Vec<serde_json::Value>, Vec<CommittedEventFullView>) {
+        use serde_json::json;
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id(),
+        };
+        let initial_ref =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x32; 32]);
+        let first_payload = recovery_commit_payload(initial_ref.clone(), 0);
+        let first = recovery_signed_rows(vec![(
+            arkret_sdk::EventKind::MlsCommit.as_str().into(),
+            first_payload.clone(),
+        )])
+        .remove(0);
+        let mut rows = recovery_signed_rows(vec![
+            (
+                arkret_sdk::EventKind::MlsCommit.as_str().into(),
+                first_payload,
+            ),
+            (
+                arkret_sdk::EventKind::MlsCommit.as_str().into(),
+                recovery_commit_payload(first.event.event_id.clone(), 1),
+            ),
+        ]);
+        assert_eq!(rows[0].event.event_id, first.event.event_id);
+        if fork {
+            rows[1].commit.previous_commit_ref = rows[0].commit.previous_commit_ref.clone();
+            rows[1].commit = recovery_seal_commit(rows[1].commit.clone());
+        }
+        let current = arkret_wire::MlsGroupCurrent {
+            effective_scope: scope.clone(),
+            genesis_event_ref: initial_ref,
+            cipher_suite: arkret_sdk::NonEmptyString::new(
+                "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+            )
+            .unwrap(),
+            current_mls_commit_event_ref: rows[1].event.event_id.clone(),
+            epoch: 2,
+            current_key_access_revision: 0,
+            covered_key_access_revision: 0,
+            public_tree_ref: arkret_sdk::BlobRef::new(format!(
+                "ak:blob:sha256:{}",
+                "22".repeat(32)
+            ))
+            .unwrap(),
+        };
+        let stream = rows[0].commit.stream_ref.clone();
+        let mut snapshot = arkret_wire::RealmStateSnapshot {
+            snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0; 32]),
+            realm_id: realm_id(),
+            governance_generation: 0,
+            retention_and_history_floor: arkret_wire::RetentionAndHistoryFloor {
+                history_access: arkret_wire::HistoryAccess::SinceJoin,
+                stream_floors: vec![arkret_wire::StreamHistoryFloor {
+                    stream_ref: stream.clone(),
+                    oldest_position: floor,
+                }],
+            },
+            visible_stream_heads: vec![arkret_wire::CommitStreamHead {
+                stream_ref: stream.clone(),
+                stream_position: 2,
+                commit_id: rows[1].commit.commit_id.clone(),
+            }],
+            current_state_entries: vec![arkret_wire::TypedCurrentResult::Value {
+                selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref: scope },
+                source_stream_ref: stream,
+                revision: arkret_wire::CurrentRevision {
+                    commit_id: rows[1].commit.commit_id.clone(),
+                    stream_position: 2,
+                },
+                value: serde_json::to_value(current).unwrap(),
+            }],
+            created_at: crate::test_support::committed_event::fixture_time(60),
+            signature: rows[0].commit.signature.clone(),
+        };
+        crate::test_support::committed_event::sign_fixture_snapshot(&mut snapshot);
+        let base = if withheld {
+            json!({"commit":rows[0].commit,"event_disclosure":{"status":"withheld"}})
+        } else {
+            serde_json::to_value(&rows[0]).unwrap()
+        };
+        let mut bodies = vec![serde_json::to_value(snapshot).unwrap(), base];
+        if !withheld && floor <= 1 {
+            let readable = arkret_wire::ReadableFloor {
+                oldest_position: floor,
+                floor_commit_id: rows[0].commit.commit_id.clone(),
+                floor_reason: arkret_wire::ReadableFloorReason::MembershipJoin,
+            };
+            bodies.extend([
+                json!({"committed_events":[rows[0]],"readable_floor":readable,"truncated":false}),
+                json!({"__key":true}),
+                json!({"committed_events":[rows[1]],"readable_floor":readable,"truncated":false}),
+            ]);
+            if !fork {
+                bodies.push(json!({"__key":true}));
+            }
+        }
+        (bodies, rows)
+    }
+
+    fn recovery_http(
+        bodies: Vec<serde_json::Value>,
+        original: &CommittedEventFullView,
+    ) -> (
+        arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+        std::sync::Arc<RecoverySource>,
+        std::thread::JoinHandle<()>,
+    ) {
+        use std::io::{Read, Write};
+
+        use arkret_sdk::http_client::own_station_results::*;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}/", listener.local_addr().unwrap());
+        let binding = arkret_sdk::StationConnectionBinding {
+            service_id: authority().station_id.clone(),
+            base_url: base.clone(),
+            trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
+                .unwrap(),
+            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+        };
+        let session = OwnStationSessionSnapshot::new(
+            binding.clone(),
+            authority(),
+            authority().station_id,
+            arkret_wire::SessionGrantId::from_issuance_digest([3; 32]),
+            0,
+            "fixture-grant".into(),
+        )
+        .unwrap()
+        .with_provider_identity(Default::default());
+        let source = std::sync::Arc::new(RecoverySource(std::sync::Mutex::new(session)));
+        let raw = arkret_sdk::http_client::ClientBuilder::new(url::Url::parse(&base).unwrap())
+            .allow_insecure_localhost()
+            .auth(arkret_sdk::http_client::Auth::Bearer(
+                "fixture-grant".into(),
+            ))
+            .build()
+            .unwrap();
+        let (original_key, original_accepted_at) =
+            recovery_original_source(&original.event, &original.commit);
+        let server = std::thread::spawn(move || {
+            for body in bodies {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                let mut buffer = [0; 8192];
+                let start = loop {
+                    let n = socket.read(&mut buffer).unwrap();
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&buffer[..n]);
+                    if let Some(index) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+                        break index + 4;
+                    }
+                };
+                let headers = String::from_utf8_lossy(&bytes[..start]).to_ascii_lowercase();
+                assert!(headers.contains("authorization: bearer fixture-grant"));
+                let len = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("content-length:")
+                            .map(|value| value.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap_or(0);
+                while bytes.len() < start + len {
+                    let n = socket.read(&mut buffer).unwrap();
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&buffer[..n]);
+                }
+                let body = if body.get("__key").is_some() {
+                    let request: arkret_sdk::SignerKeysQueryRequestBody =
+                        serde_json::from_slice(&bytes[start..start + len]).unwrap();
+                    assert_eq!(request.queries.len(), 1);
+                    assert!(request.queries[0].committed_event_ref().is_some());
+                    serde_json::to_value(arkret_sdk::SignerKeysQueryOutcome {
+                        request_id: request.request_id,
+                        realm_id: request.realm_id,
+                        recipient_account_id: request.recipient_account_id,
+                        results: vec![arkret_sdk::SignerKeyQueryResult::HistoricalResolved {
+                            selector: request.queries[0].clone(),
+                            accepted_at: original_accepted_at,
+                            key: original_key.clone(),
+                        }],
+                    })
+                    .unwrap()
+                } else {
+                    body
+                };
+                let bytes = serde_json::to_vec(&body).unwrap();
+                write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",bytes.len()).unwrap();
+                socket.write_all(&bytes).unwrap();
+            }
+        });
+        (
+            OwnStationResultClient::new(raw, binding, source.clone()).unwrap(),
+            source,
+            server,
+        )
+    }
+
+    #[tokio::test]
+    async fn ordinary_recovery_actual_http_prefix_preserves_carriers_and_session_fence() {
+        use arkret_sdk::http_client::own_station_results::OwnStationSessionSource;
+        let (bodies, rows) = recovery_fixture(false, false, 1);
+        let (client, source, server) = recovery_http(bodies, &rows[0]);
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id(),
+        };
+        let tail = own_recovery_tail(client, &scope, &rows[0].event.event_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            tail.full_rows().unwrap(),
+            rows,
+            "actual signed originals retain their admitted continuous prefix"
+        );
+        let old = source.snapshot().unwrap();
+        *source.0.lock().unwrap() =
+            arkret_sdk::http_client::own_station_results::OwnStationSessionSnapshot::new(
+                old.binding().clone(),
+                old.account_id().clone(),
+                old.account_id().station_id.clone(),
+                old.grant_id().clone(),
+                old.epoch(),
+                "fixture-grant".into(),
+            )
+            .unwrap()
+            .with_provider_identity(Default::default());
+        assert!(
+            tail.check_session().is_err(),
+            "same-grant/epoch provider replacement invalidates held responses"
+        );
+        assert!(tail.full_rows().is_err());
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn ordinary_recovery_actual_http_fork_withheld_and_floor_loss_fail_closed() {
+        for (fork, withheld, floor, reason) in [
+            (true, false, 1, "fork"),
+            (false, true, 1, "withheld"),
+            (false, false, 2, "floor"),
+        ] {
+            let (bodies, rows) = recovery_fixture(fork, withheld, floor);
+            let (client, _, server) = recovery_http(bodies, &rows[0]);
+            let scope = arkret_sdk::ScopeRef::Realm {
+                realm_id: realm_id(),
+            };
+            let error = match own_recovery_tail(client, &scope, &rows[0].event.event_id).await {
+                Ok(_) => panic!("invalid recovery proof admitted"),
+                Err(error) => error,
+            };
+            assert!(error.contains(reason), "{reason}: {error}");
+            server.join().unwrap();
+        }
+    }
+    #[tokio::test]
+    async fn ordinary_welcome_actual_exact_scan_late_session_publishes_no_checkpoint_or_consume() {
+        use arkret_sdk::http_client::own_station_results::OwnStationSessionSource;
+        use serde_json::json;
+        let item = recovery_signed_rows(vec![(
+            arkret_sdk::EventKind::MlsCommit.as_str().into(),
+            recovery_commit_payload(
+                arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x32; 32]),
+                0,
+            ),
+        )])
+        .remove(0);
+        let floor = arkret_wire::ReadableFloor {
+            oldest_position: item.commit.stream_position,
+            floor_commit_id: item.commit.commit_id.clone(),
+            floor_reason: arkret_wire::ReadableFloorReason::MembershipJoin,
+        };
+        let bodies = vec![
+            json!({"committed_events":[item],"readable_floor":floor,"truncated":false}),
+            json!({"committed_events":[item],"readable_floor":floor,"truncated":false}),
+            json!({"__key":true}),
+        ];
+        let (client, source, server) = recovery_http(bodies, &item);
+        let mut delivery = welcome_delivery(arkret_wire::MlsWelcomeRecipientEndpoint::Device {
+            device_id: device_id(),
+        });
+        delivery.commit_event_ref = item.event.event_id.clone();
+        let accepted = accepted_welcome_original(client, &delivery)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            accepted.full().unwrap(),
+            &item,
+            "actual target scan was historically re-admitted"
+        );
+        let old = source.snapshot().unwrap();
+        *source.0.lock().unwrap() =
+            arkret_sdk::http_client::own_station_results::OwnStationSessionSnapshot::new(
+                old.binding().clone(),
+                old.account_id().clone(),
+                old.account_id().station_id.clone(),
+                old.grant_id().clone(),
+                old.epoch(),
+                "fixture-grant".into(),
+            )
+            .unwrap()
+            .with_provider_identity(Default::default());
+        let path = temp_path("ordinary-late-welcome");
+        let (state, shared) = handle(crate::state::LocalStateStore::with_path(path.clone()));
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id(),
+        };
+        let error = record_joined_welcome_guarded(
+            &state,
+            &scope,
+            checkpoint(),
+            &item.event.event_id,
+            &consume_command(),
+            |store| accepted.check_install(store, &authority()),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.contains("session") || error.contains("changed"),
+            "late actual carrier rejected: {error}"
+        );
+        assert!(
+            shared
+                .lock()
+                .unwrap()
+                .mls_checkpoint_for_scope(&scope)
+                .is_none()
+        );
+        assert!(
+            owed_bytes(&shared.lock().unwrap()).is_empty(),
+            "no future consume obligation was created"
+        );
+        assert!(!path.exists(), "no durable write occurred");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn ordinary_recovery_same_epoch_private_ratchet_change_cannot_replace_captured_base() {
+        let mut expected = checkpoint();
+        expected.group_state_event_id = Some(accepted_event());
+        assert!(
+            require_unchanged_recovery_base(
+                &expected,
+                &expected,
+                &accepted_event(),
+                expected.epoch
+            )
+            .is_ok()
+        );
+        let mut received = expected.clone();
+        received.ciphertext_hex.push_str("00");
+        assert_eq!(received.epoch, expected.epoch);
+        assert_eq!(received.group_state_event_id, expected.group_state_event_id);
+        let error = require_unchanged_recovery_base(
+            &received,
+            &expected,
+            &accepted_event(),
+            expected.epoch,
+        )
+        .unwrap_err();
+        assert!(error.contains("private ratchet"));
     }
 }

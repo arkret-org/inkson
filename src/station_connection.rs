@@ -26,25 +26,59 @@ pub(crate) async fn discover(base_url: &str) -> anyhow::Result<ServiceDescribe> 
     if let Err(error) = compare_and_store(&binding, None).await {
         // A discovered mismatch or unavailable trust store must not leave an
         // earlier authentication route reusable by a later credential refresh.
+        crate::identity::session_refresh::reset_session_grant_runtime();
         crate::identity::account_auth::clear_authority_resolver_cache();
         return Err(error);
     }
     Ok(description)
 }
 
-/// Return the connection only after the durable enrollment CAS succeeded.
-pub(crate) async fn enrolled(base_url: &str) -> anyhow::Result<StationConnectionBinding> {
-    let description = discover(base_url).await?;
+/// Read the connection previously accepted by the host. Reading a result must
+/// never discover or replace its own trust anchor.
+pub(crate) async fn load_accepted(base_url: &str) -> anyhow::Result<StationConnectionBinding> {
     let base = crate::config::validate_server_url(base_url)?;
-    Ok(StationConnectionBinding::from_description(
-        &base,
-        &description,
-        true,
-    )?)
+    #[cfg(not(target_arch = "wasm32"))]
+    let binding = load_native(
+        &crate::config::default_config_path().with_file_name("station-connections.json"),
+        base.as_str(),
+    )?;
+    #[cfg(target_arch = "wasm32")]
+    let binding = {
+        let value = station_connection_get(base.as_str())
+            .await
+            .map_err(|error| anyhow::anyhow!("Station trust storage: {error:?}"))?;
+        let value = value
+            .as_string()
+            .ok_or_else(|| anyhow::anyhow!("Station connection has not been accepted"))?;
+        serde_json::from_str::<StationConnectionBinding>(&value)?
+    };
+    anyhow::ensure!(
+        binding.base_url == base.as_str(),
+        "Stored Station connection origin mismatch"
+    );
+    Ok(binding)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_native(path: &std::path::Path, base_url: &str) -> anyhow::Result<StationConnectionBinding> {
+    let bindings: std::collections::BTreeMap<String, StationConnectionBinding> =
+        serde_json::from_slice(&std::fs::read(path)?)?;
+    let binding = bindings
+        .get(base_url)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("Station connection has not been accepted"))?;
+    anyhow::ensure!(
+        binding.base_url == base_url,
+        "Stored Station connection origin mismatch"
+    );
+    Ok(binding)
 }
 
 /// Called only after the user reviews this exact old/new pair and elects a new login.
 pub(crate) async fn confirm_change(change: &ConnectionTrustChange) -> anyhow::Result<()> {
+    // Revoke in-flight consumers before the asynchronous durable replacement.
+    // Even a failed CAS cannot leave the former accepted auth route usable.
+    crate::identity::session_refresh::reset_session_grant_runtime();
     compare_and_store(&change.candidate, Some(&change.previous)).await?;
     crate::identity::account_auth::clear_authority_resolver_cache();
     Ok(())
@@ -187,6 +221,29 @@ async fn compare_and_store(
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
+export function station_connection_get(key) {
+    return new Promise((resolve, reject) => {
+        const opening = indexedDB.open('inkson.station-connections.v1', 1);
+        opening.onupgradeneeded = () => { opening.transaction.abort(); };
+        opening.onerror = () => reject(new Error('Cannot read accepted Station trust'));
+        opening.onblocked = () => reject(new Error('Station trust storage is blocked'));
+        opening.onsuccess = () => {
+            const db = opening.result;
+            let tx;
+            try { tx = db.transaction('bindings', 'readonly'); }
+            catch (error) { db.close(); reject(error); return; }
+            let value;
+            const request = tx.objectStore('bindings').get(key);
+            request.onsuccess = () => { value = request.result; };
+            tx.oncomplete = () => {
+                db.close();
+                if (typeof value !== 'string') { reject(new Error('Station connection has not been accepted')); return; }
+                resolve(value);
+            };
+            tx.onabort = tx.onerror = () => { db.close(); reject(new Error('Station trust read failed')); };
+        };
+    });
+}
 export function station_connection_cas(key, candidate, expected) {
     return new Promise((resolve, reject) => {
         const opening = indexedDB.open('inkson.station-connections.v1', 1);
@@ -223,6 +280,10 @@ export function station_connection_cas(key, candidate, expected) {
 "#)]
 extern "C" {
     #[wasm_bindgen(catch)]
+    async fn station_connection_get(
+        key: &str,
+    ) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue>;
+    #[wasm_bindgen(catch)]
     async fn station_connection_cas(
         key: &str,
         candidate: &str,
@@ -242,6 +303,28 @@ mod tests {
                 .unwrap(),
             auth_metadata: arkret_sdk::AuthMetadata::minimal(),
         }
+    }
+
+    #[test]
+    fn accepted_station_read_never_discovers_or_replaces_a_pin() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("connections.json");
+        let original = binding();
+        assert!(load_native(&path, &original.base_url).is_err());
+        assert!(!path.exists());
+        store_native(&path, &original, None).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert_eq!(load_native(&path, &original.base_url).unwrap(), original);
+        assert!(load_native(&path, "https://other.example/").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let mut malformed = std::collections::BTreeMap::new();
+        let mut wrong_origin = original.clone();
+        wrong_origin.base_url = "https://other.example/".into();
+        malformed.insert(original.base_url.clone(), wrong_origin);
+        std::fs::write(&path, serde_json::to_vec(&malformed).unwrap()).unwrap();
+        assert!(load_native(&path, &original.base_url).is_err());
+        std::fs::write(&path, b"corrupt").unwrap();
+        assert!(load_native(&path, &original.base_url).is_err());
     }
 
     #[test]

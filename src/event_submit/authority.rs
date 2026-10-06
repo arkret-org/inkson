@@ -192,9 +192,9 @@ fn restored_creator_artifacts_with_secret(
 
 impl EventSubmitter {
     /// Persist the registered accepted-create arrow before any MLS material
-    /// is produced. The authority root is independently verified with a fresh
-    /// nonce and method-native key history; only a complete signed current
-    /// snapshot at that same cut can prove exact-scope Genesis absence.
+    /// is produced. Ordinary clients retain original own-Station Create and
+    /// current results under a live complete holder session; only the complete
+    /// exact current cut can prove exact-scope Genesis absence.
     pub(crate) async fn persist_creator_realm_acceptance(
         &self,
         scope: &arkret_sdk::ScopeRef,
@@ -231,9 +231,10 @@ impl EventSubmitter {
             // pin must authenticate its own current creator/endpoint cut.
             return Ok(());
         }
-        let (accepted, snapshot) = self.read_verified_creator_cut(record.intent()).await?;
+        let (accepted, snapshot, own_client) =
+            self.read_verified_creator_cut(record.intent()).await?;
         store
-            .accept_creator_realm(record, accepted, snapshot)
+            .accept_creator_realm_guarded(record, accepted, snapshot, Some(&own_client))
             .await?;
         Ok(())
     }
@@ -288,7 +289,7 @@ impl EventSubmitter {
             intent.creator_device_id().as_str(),
         )
         .await?;
-        let (accepted, snapshot) = self.read_verified_creator_cut(intent).await?;
+        let (accepted, snapshot, own_client) = self.read_verified_creator_cut(intent).await?;
         let device = MlsCreatorBootstrapDeviceAuthority::from_self_keys_query(
             intent,
             &keys,
@@ -306,7 +307,9 @@ impl EventSubmitter {
         let evidence =
             MlsCreatorBootstrapGovernanceEvidence::new_device(intent, accepted, snapshot, device)?;
         let binding = evidence.governance_binding().clone();
-        store.pin_creator_governance(record, evidence).await?;
+        store
+            .pin_creator_governance_guarded(record, evidence, Some(&own_client))
+            .await?;
         Ok(binding)
     }
 
@@ -525,6 +528,7 @@ impl EventSubmitter {
         Option<(
             arkret_sdk::EventId,
             arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapVerifiedAbsence,
+            arkret_sdk::http_client::own_station_results::OwnStationResultClient,
         )>,
     > {
         let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(
@@ -556,20 +560,27 @@ impl EventSubmitter {
         let evidence = record
             .governance_evidence()
             .ok_or_else(|| anyhow::anyhow!("creator worker lost its pin"))?;
-        let (bundle, snapshot, accepted) = crate::realm_events_engine::verified_creator_genesis(
-            &self.http,
-            record.intent(),
-            evidence.accepted_create(),
-        )
-        .await?;
+        let (bundle, snapshot, accepted, own_client) =
+            crate::realm_events_engine::verified_creator_genesis(
+                &self.http,
+                record.intent(),
+                evidence.accepted_create(),
+            )
+            .await?;
         if let Some(accepted) = accepted {
             if record
                 .closed_attempts()
                 .iter()
                 .any(|closed| closed.event_id() == &accepted.event.event_id)
             {
-                self.quarantine_creator_accepted_conflict(&vault, record, accepted, bundle)
-                    .await?;
+                self.quarantine_creator_accepted_conflict(
+                    &vault,
+                    record,
+                    accepted,
+                    bundle,
+                    &own_client,
+                )
+                .await?;
                 anyhow::bail!("creator accepted-result contradiction remains stopped");
             }
             anyhow::bail!("creator Genesis winner must be reconciled before replay");
@@ -582,7 +593,8 @@ impl EventSubmitter {
         let absence = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapVerifiedAbsence::new(
             record.intent(), fresh_create, snapshot,
         )?;
-        Ok(Some((event.event_id.clone(), absence)))
+        own_client.check_session()?;
+        Ok(Some((event.event_id.clone(), absence, own_client)))
     }
 
     async fn quarantine_creator_accepted_conflict(
@@ -590,16 +602,17 @@ impl EventSubmitter {
         vault: &crate::outbound_store::InksonOutboundStore,
         record: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
         accepted: arkret_wire::CommittedEventFullView,
-        bundle: arkret_wire::RealmAuthorityBundle,
+        bundle: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority,
+        own_client: &arkret_sdk::http_client::own_station_results::OwnStationResultClient,
     ) -> anyhow::Result<()> {
         use arkret_models_collaboration::mls_creator_bootstrap::{
             MlsCreatorBootstrapInvariant, MlsCreatorBootstrapKnownGenesis,
         };
         let known =
             MlsCreatorBootstrapKnownGenesis::authenticated_winner(&record, accepted, bundle)?;
-        vault.quarantine_creator(record, MlsCreatorBootstrapInvariant::AcceptedResult,
+        vault.quarantine_creator_guarded(record, MlsCreatorBootstrapInvariant::AcceptedResult,
             "independently verified accepted Genesis contradicts a definitely rejected or closed attempt".into(),
-            Some(known)).await?;
+            Some(known), Some(own_client)).await?;
         anyhow::bail!(
             "creator accepted-result contradiction is quarantined; original material retained"
         )
@@ -626,12 +639,13 @@ impl EventSubmitter {
         let create = record
             .accepted_create()
             .ok_or_else(|| anyhow::anyhow!("creator restart lost accepted scope create"))?;
-        let (bundle, snapshot, accepted) = crate::realm_events_engine::verified_creator_genesis(
-            &self.http,
-            record.intent(),
-            create,
-        )
-        .await?;
+        let (bundle, snapshot, accepted, own_client) =
+            crate::realm_events_engine::verified_creator_genesis(
+                &self.http,
+                record.intent(),
+                create,
+            )
+            .await?;
         if let Some(accepted) = accepted {
             if record
                 .rejection()
@@ -642,11 +656,19 @@ impl EventSubmitter {
                     .any(|closed| closed.event_id() == &accepted.event.event_id)
             {
                 return self
-                    .quarantine_creator_accepted_conflict(&vault, record, accepted, bundle)
+                    .quarantine_creator_accepted_conflict(
+                        &vault,
+                        record,
+                        accepted,
+                        bundle,
+                        &own_client,
+                    )
                     .await;
             }
             let winner = MlsCreatorBootstrapWinner::new(&record, accepted, bundle)?;
-            vault.supersede_creator(record, winner).await?;
+            vault
+                .supersede_creator_guarded(record, winner, Some(&own_client))
+                .await?;
             anyhow::bail!(
                 "creator restart found another accepted Genesis; use Welcome, migration or recovery"
             );
@@ -660,7 +682,9 @@ impl EventSubmitter {
         )?;
         let absence =
             MlsCreatorBootstrapVerifiedAbsence::new(record.intent(), fresh_create, snapshot)?;
-        vault.reopen_creator(record, absence).await?;
+        vault
+            .reopen_creator_guarded(record, absence, Some(&own_client))
+            .await?;
         Ok(())
     }
 
@@ -696,12 +720,13 @@ impl EventSubmitter {
         let evidence = record
             .governance_evidence()
             .ok_or_else(|| anyhow::anyhow!("creator exact query requires its original pin"))?;
-        let (bundle, _, accepted) = crate::realm_events_engine::verified_creator_genesis(
-            &self.http,
-            record.intent(),
-            evidence.accepted_create(),
-        )
-        .await?;
+        let (bundle, _, accepted, own_client) =
+            crate::realm_events_engine::verified_creator_genesis(
+                &self.http,
+                record.intent(),
+                evidence.accepted_create(),
+            )
+            .await?;
         let Some(accepted) = accepted else {
             return Ok(None);
         };
@@ -710,8 +735,14 @@ impl EventSubmitter {
             .iter()
             .any(|closed| closed.event_id() == &accepted.event.event_id)
         {
-            self.quarantine_creator_accepted_conflict(&vault, record, accepted, bundle)
-                .await?;
+            self.quarantine_creator_accepted_conflict(
+                &vault,
+                record,
+                accepted,
+                bundle,
+                &own_client,
+            )
+            .await?;
             anyhow::bail!("creator accepted-result contradiction remains stopped");
         }
         if record
@@ -722,7 +753,9 @@ impl EventSubmitter {
                 arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapWinner::new(
                     &record, accepted, bundle,
                 )?;
-            vault.supersede_creator(record, winner).await?;
+            vault
+                .supersede_creator_guarded(record, winner, Some(&own_client))
+                .await?;
             anyhow::bail!(
                 "another exact accepted Genesis won; creator attempt is superseded and its loser queue stopped"
             );
@@ -736,7 +769,9 @@ impl EventSubmitter {
             MlsCreatorBootstrapAcceptedGenesis::new(record.intent(), queued, accepted, bundle)?;
         verify_creator_genesis_producer(&record, &carrier)?;
         let id = carrier.accepted().event.event_id.clone();
-        vault.accept_creator_genesis(record, carrier).await?;
+        vault
+            .accept_creator_genesis_guarded(record, carrier, Some(&own_client))
+            .await?;
         Ok(Some(id))
     }
 
@@ -881,6 +916,7 @@ impl EventSubmitter {
     ) -> anyhow::Result<(
         arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
         arkret_wire::RealmStateSnapshot,
+        arkret_sdk::http_client::own_station_results::OwnStationResultClient,
     )> {
         crate::realm_events_engine::verified_creator_create(&self.http, intent)
             .await

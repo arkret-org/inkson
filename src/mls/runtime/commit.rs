@@ -503,3 +503,79 @@ pub fn build_idle_self_update_commit(
         staged_checkpoint,
     }))
 }
+
+/// Stage a Sidecar roster repair on its exact accepted private base. Removing
+/// leaf indices preserves other authorized endpoints of the same full Actor.
+/// An empty removal set is a roster-preserving authority-binding refresh.
+pub(crate) fn build_sidecar_reconciliation_commit_with_binding(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    scope: &arkret_sdk::ScopeRef,
+    authority: &AccountId,
+    device: &DeviceId,
+    removed_leaves: &[u32],
+    binding: &arkret_sdk::MlsGovernanceBindingPayload,
+) -> Result<StagedMlsCommit, MlsRuntimeError> {
+    if !matches!(scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
+        return Err(MlsRuntimeError::Commit(
+            "Sidecar repair requires its native scope".into(),
+        ));
+    }
+    binding
+        .validate()
+        .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?;
+    let realm = scope.realm_id().as_str();
+    let (mut group, secret) =
+        restore_for_commit(state_store, secure_store, scope, realm, authority, device)?;
+    let base = state_store
+        .mls_group_state_ref_for_scope(scope, &group.group_id(), group.epoch())
+        .map_err(MlsRuntimeError::Commit)?;
+    if binding.effective_scope() != scope
+        || binding
+            .mls_group_id()
+            .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?
+            != group.group_id()
+        || binding.previous_epoch() != group.epoch()
+        || binding.next_epoch()
+            != group
+                .epoch()
+                .checked_add(1)
+                .ok_or_else(|| MlsRuntimeError::Commit("MLS epoch overflow".into()))?
+        || binding.base_group_state_ref() != Some(&base)
+    {
+        return Err(MlsRuntimeError::Commit(
+            "Sidecar repair binding differs from its exact private base".into(),
+        ));
+    }
+    let author = arkret_sdk::ActorId::account(authority.clone());
+    let endpoint = arkret_sdk::MlsEndpointIdentity::human_device(
+        authority.principal_id.clone(),
+        device.clone(),
+    );
+    if group
+        .verified_leaf_bindings()
+        .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?
+        .iter()
+        .any(|leaf| {
+            leaf.actor_id == author
+                && leaf.endpoint == endpoint
+                && removed_leaves.contains(&leaf.leaf_index)
+        })
+    {
+        return Err(MlsRuntimeError::Commit(
+            "Sidecar repair cannot remove its author endpoint".into(),
+        ));
+    }
+    let envelope = if removed_leaves.is_empty() {
+        group.self_update_commit_with_governance_binding(binding)
+    } else {
+        group
+            .remove_members_by_leaf_indices_with_governance_binding(removed_leaves, binding)
+            .map(|result| result.commit)
+    }
+    .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?;
+    Ok(StagedMlsCommit {
+        envelope,
+        staged_checkpoint: staged_checkpoint(&group, realm, &secret)?,
+    })
+}

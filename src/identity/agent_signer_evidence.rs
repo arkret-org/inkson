@@ -256,10 +256,16 @@ fn index_verified_committed_event(
 
 pub(crate) fn index_verified_committed_page(
     store: &mut LocalStateStore,
-    page: &garth::VerifiedScanPage,
+    page: &impl crate::transport::own_station_results::AcceptedPageRows,
 ) -> Result<usize, String> {
+    if page
+        .accepted_account()
+        .is_some_and(|account| store.active_authority().as_ref() != Some(account))
+    {
+        return Err("ordinary signer page belongs to another account store".into());
+    }
     let mut changed = 0;
-    for view in page.rows() {
+    for view in page.accepted_rows()? {
         changed += usize::from(index_verified_committed_event(
             store,
             view.commit().stream_ref.realm_id(),
@@ -586,6 +592,7 @@ mod historical_result_tests {
                     .as_ref()
                     .unwrap()
                     .created_at,
+                producer_signer_fact_digest: None,
                 signature: arkret_wire::DetachedObjectSignature {
                     context: arkret_wire::DetachedSignatureContext::RealmCommit,
                     signature_algorithm: arkret_wire::DetachedSignatureAlgorithm::Ed25519,
@@ -857,11 +864,9 @@ mod historical_result_tests {
             CachedAgentEventVerdict::Unresolved
         );
         assert!(
-            crate::realm_events_engine::resolve_stream_projection_dependencies(
-                &http, &handle, true
-            )
-            .await
-            .unwrap()
+            crate::realm_events_engine::resolve_stream_agent_keys(&http, &handle, true)
+                .await
+                .unwrap()
         );
         server.join().unwrap();
         assert_eq!(
@@ -887,11 +892,9 @@ mod historical_result_tests {
             ));
         });
         assert!(
-            !crate::realm_events_engine::resolve_stream_projection_dependencies(
-                &http, &handle, false
-            )
-            .await
-            .unwrap()
+            !crate::realm_events_engine::resolve_stream_agent_keys(&http, &handle, false)
+                .await
+                .unwrap()
         );
     }
 

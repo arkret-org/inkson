@@ -421,6 +421,39 @@ pub fn cached_sidecar_exchange_projections(
     crate::sidecar_fold::rebuild(store, controller_account_id, source_realm_id)
 }
 
+/// Server readiness cannot publish local access before this device's private
+/// checkpoint agrees with the independently verified signed current cut.
+pub(crate) fn native_sidecar_mls_ready(
+    store: &crate::state::LocalStateStore,
+    view: &arkret_sdk::AgentSidecarView,
+) -> bool {
+    let scope = arkret_sdk::ScopeRef::Sidecar {
+        realm_id: view.sidecar.realm_id.clone(),
+        sidecar_id: view.sidecar.id.clone(),
+    };
+    view.mls_context.mls_group_id.as_ref().is_some_and(|group| {
+        let current = store
+            .verified_sidecar_inputs(view.sidecar.realm_id.as_str())
+            .ok()
+            .and_then(|(snapshot, _)| {
+                crate::current_projection::current_mls_group(
+                    &snapshot.current_state_entries,
+                    &scope,
+                )
+            });
+        store
+            .mls_checkpoint_for_scope_and_group(&scope, group)
+            .is_some_and(|checkpoint| {
+                Some(checkpoint.epoch) == view.mls_context.epoch
+                    && current.is_some_and(|current| {
+                        current.epoch == checkpoint.epoch
+                            && checkpoint.group_state_event_id.as_ref()
+                                == Some(&current.current_mls_commit_event_ref)
+                    })
+            })
+    })
+}
+
 /// The opt-in test hook does not report an empty successful fold while
 /// verified Sidecar Commit/current input is unavailable.
 #[cfg(all(

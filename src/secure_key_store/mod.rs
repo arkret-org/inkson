@@ -442,4 +442,4 @@ pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore + 
     }
 }
 
-pub(crate) use signing_seed::load_signing_seed_for;
+pub(crate) use signing_seed::{active_device_seed_scope_snapshot, load_signing_seed_for};

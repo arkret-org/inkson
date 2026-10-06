@@ -348,6 +348,208 @@ fn test_renew_outcome(replacement: bool) -> AgentRenewPairingOutcome {
     }
 }
 
+fn provision_complete_for_view(view: &AgentView) -> arkret_sdk::AgentProvisionComplete {
+    let key_state = view.key_state.as_ref().unwrap();
+    let did = arkret_sdk::Did::new("did:web:agents.example:unaddressed").unwrap();
+    arkret_sdk::AgentProvisionComplete {
+        status: arkret_sdk::AgentProvisionCompleteStatus::Complete,
+        agent_id: view.agent.agent_id.clone(),
+        did: did.clone(),
+        initial_resolution: arkret_sdk::ResolutionCommitment {
+            did,
+            method_history_head:
+                "sha256:0707070707070707070707070707070707070707070707070707070707070707".to_owned(),
+            version_id: "1-fixture".to_owned(),
+        },
+        principal_control_realm_id: key_state.principal_control_realm_id.clone(),
+        controller_authorization_ref: key_state.controller_authorization_ref.clone(),
+        pairing_request_id: key_state.pairing_request_id.clone().unwrap(),
+        pairing_code: key_state.pairing_code.clone(),
+        expires_at: key_state.pairing_expires_at.unwrap(),
+    }
+}
+
+#[test]
+fn provisioning_second_agent_installs_its_pairing_before_selection() {
+    let old = test_pairing_view(AgentLifecycleState::Active, AgentRuntimeState::Ready);
+    let old_id = agent_id(&old);
+    let mut created = test_pairing_view(
+        AgentLifecycleState::Active,
+        AgentRuntimeState::PendingRuntimeKey,
+    );
+    let created_id =
+        crate::mls_api_helpers::principal_core_id("did:web:agents.example:unaddressed").unwrap();
+    created.agent.agent_id = created_id.clone();
+    created.agent.slug = "unaddressed".to_owned();
+    created.key_state.as_mut().unwrap().agent_id = created_id.clone();
+    let outcome = provision_complete_for_view(&created);
+    let mut stale_detail = created.clone();
+    stale_detail.key_state = None;
+    let controller = created
+        .key_state
+        .as_ref()
+        .unwrap()
+        .controller_account_id
+        .clone();
+    let mut rows = vec![old];
+    let selected = apply_provisioned_agent_view(
+        &mut rows,
+        created,
+        &outcome,
+        &controller.principal_id,
+        &controller.station_id,
+    )
+    .unwrap();
+
+    // A detail request issued before the provision result owns an older epoch.
+    apply_agent_detail_read(&mut rows, stale_detail, 1, 2);
+
+    assert_ne!(selected, old_id);
+    assert!(rows.iter().any(|row| agent_id(row) == selected));
+    let panel = build_agent_admin_view(&rows, &selected, "all", &now_before_expiry());
+    assert_eq!(panel.selected_slug, "unaddressed");
+    assert!(panel.selected_should_show_pairing_card);
+    assert_eq!(
+        panel.selected_pairing_request_id,
+        outcome.pairing_request_id.as_str()
+    );
+    assert_eq!(panel.selected_pairing_code, outcome.pairing_code.unwrap());
+}
+
+#[test]
+fn provisioning_rejects_mismatched_authoritative_identity_and_pcr_without_upsert() {
+    let created = test_pairing_view(
+        AgentLifecycleState::Active,
+        AgentRuntimeState::PendingRuntimeKey,
+    );
+    let outcome = provision_complete_for_view(&created);
+    let controller = created
+        .key_state
+        .as_ref()
+        .unwrap()
+        .controller_account_id
+        .clone();
+    for changed_coordinate in 0..7 {
+        let mut wrong = created.clone();
+        let other = arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap();
+        match changed_coordinate {
+            0 => wrong.agent.agent_id = other,
+            1 => wrong.key_state.as_mut().unwrap().agent_id = other,
+            2 => {
+                wrong
+                    .key_state
+                    .as_mut()
+                    .unwrap()
+                    .controller_account_id
+                    .principal_id = other
+            }
+            3 => {
+                wrong
+                    .key_state
+                    .as_mut()
+                    .unwrap()
+                    .controller_account_id
+                    .station_id = other
+            }
+            4 => {
+                wrong.key_state.as_mut().unwrap().principal_control_realm_id =
+                    arkret_sdk::RealmId::new(
+                        "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
+                    )
+                    .unwrap()
+            }
+            5 => {
+                wrong
+                    .key_state
+                    .as_mut()
+                    .unwrap()
+                    .controller_authorization_ref =
+                    arkret_sdk::DidUrl::new("did:web:other.example#controller").unwrap()
+            }
+            _ => wrong.key_state = None,
+        }
+        let mut rows = Vec::new();
+        assert!(
+            apply_provisioned_agent_view(
+                &mut rows,
+                wrong,
+                &outcome,
+                &controller.principal_id,
+                &controller.station_id,
+            )
+            .is_err(),
+            "changed coordinate {changed_coordinate}"
+        );
+        assert!(rows.is_empty(), "changed coordinate {changed_coordinate}");
+    }
+}
+
+#[test]
+fn provisioning_installs_authoritative_consumed_expired_and_renewed_pairing_states() {
+    let created = test_pairing_view(
+        AgentLifecycleState::Active,
+        AgentRuntimeState::PendingRuntimeKey,
+    );
+    let outcome = provision_complete_for_view(&created);
+    let controller = created
+        .key_state
+        .as_ref()
+        .unwrap()
+        .controller_account_id
+        .clone();
+    for state in [
+        AgentRuntimeState::Ready,
+        AgentRuntimeState::PairingExpired,
+        AgentRuntimeState::PendingRuntimeKey,
+        AgentRuntimeState::Replacing,
+    ] {
+        let mut current = test_pairing_view(AgentLifecycleState::Active, state);
+        if matches!(
+            state,
+            AgentRuntimeState::PendingRuntimeKey | AgentRuntimeState::Replacing
+        ) {
+            let key_state = current.key_state.as_mut().unwrap();
+            key_state.pairing_request_id =
+                Some(arkret_sdk::OpaqueLocalId::new("renewed-pairing").unwrap());
+            key_state.pairing_code = Some("renewed-code".to_owned());
+            key_state.pairing_expires_at = Some(outcome.expires_at + chrono::Duration::hours(1));
+        }
+        // Exercise the SDK's serialized authoritative shape rather than filling
+        // absent consumed/expired fields back from the provision response.
+        let current: AgentView =
+            serde_json::from_value(serde_json::to_value(&current).unwrap()).unwrap();
+        let expected_key_state = serde_json::to_value(&current.key_state).unwrap();
+        let mut rows = Vec::new();
+        let selected = apply_provisioned_agent_view(
+            &mut rows,
+            current,
+            &outcome,
+            &controller.principal_id,
+            &controller.station_id,
+        )
+        .unwrap();
+        assert_eq!(selected, outcome.agent_id.as_str());
+        assert_eq!(
+            serde_json::to_value(&rows[0].key_state).unwrap(),
+            expected_key_state
+        );
+        assert_eq!(agent_view_runtime_state(&rows[0]), state);
+        let panel = build_agent_admin_view(&rows, &selected, "all", &now_before_expiry());
+        assert_eq!(
+            panel.selected_should_show_pairing_card,
+            state != AgentRuntimeState::Ready
+        );
+        if matches!(
+            state,
+            AgentRuntimeState::PendingRuntimeKey | AgentRuntimeState::Replacing
+        ) {
+            assert_eq!(panel.selected_pairing_code, "renewed-code");
+        } else {
+            assert!(panel.selected_pairing_code.is_empty());
+        }
+    }
+}
+
 #[test]
 fn bootstrap_renewal_reopens_expired_agent_and_exposes_fresh_material() {
     let mut rows = vec![test_pairing_view(

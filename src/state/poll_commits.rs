@@ -99,8 +99,14 @@ impl LocalStateStore {
     /// timeline filtering. The caller owns the stream checkpoint transaction.
     pub fn ingest_verified_message_history(
         &mut self,
-        page: &garth::VerifiedScanPage,
+        page: &impl crate::transport::own_station_results::AcceptedPageRows,
     ) -> Result<usize, String> {
+        if page
+            .accepted_account()
+            .is_some_and(|account| self.active_authority().as_ref() != Some(account))
+        {
+            return Err("ordinary accepted page belongs to another account store".into());
+        }
         self.ensure_cached_loaded();
         let prior_private_history = self.cached.verified_sidecar_history.clone();
         let private_changes = self.ingest_verified_sidecar_history(page)?;
@@ -112,7 +118,7 @@ impl LocalStateStore {
             }
         };
         let events = page
-            .rows()
+            .accepted_rows()?
             .iter()
             .filter_map(|view| {
                 if let arkret_sdk::CommittedEventView::Full(full) = view {
@@ -211,17 +217,96 @@ impl LocalStateStore {
         Ok(())
     }
 
+    /// Store a genuine own-Station replay checkpoint. A snapshot head alone
+    /// never establishes this state; the replica admitted a complete original
+    /// prefix or re-admitted the exact previously durable original.
+    pub(crate) fn stage_own_station_commit_stream_checkpoint(
+        &mut self,
+        client: &arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+        replica: &garth::own_station_results::OwnStationReplica,
+        stream_ref: &arkret_sdk::CommitStreamRef,
+        pages: &[garth::own_station_results::OwnStationScanPage],
+    ) -> Result<(), String> {
+        client.check_session().map_err(|e| e.to_string())?;
+        if self.active_authority().as_ref()
+            != Some(client.session().map_err(|e| e.to_string())?.account_id())
+        {
+            return Err("own-Station checkpoint changed the complete account store".into());
+        }
+        let head = replica
+            .head(stream_ref)
+            .ok_or("own-Station replay has no accepted head")?;
+        let mut anchor = None;
+        for page in pages {
+            if page.session() != client.session().map_err(|e| e.to_string())? {
+                return Err(
+                    "own-Station checkpoint pages belong to a different live session".into(),
+                );
+            }
+
+            for row in page.rows().map_err(|e| e.to_string())? {
+                let commit = row.commit();
+                if commit.stream_ref == head.stream_ref
+                    && commit.stream_position == head.stream_position
+                    && commit.commit_id == head.commit_id
+                {
+                    anchor = Some(commit.clone());
+                }
+            }
+        }
+        let key = serde_json::to_string(stream_ref).map_err(|e| e.to_string())?;
+        self.ensure_cached_loaded();
+        if let Some(old) = self.cached.verified_commit_stream_cursors.get(&key) {
+            if old.stream_ref != head.stream_ref
+                || head.stream_position < old.stream_position
+                || (head.stream_position == old.stream_position && head.commit_id != old.commit_id)
+            {
+                return Err("own-Station checkpoint regresses or forks the durable stream".into());
+            }
+        }
+
+        if anchor.is_none() {
+            anchor = self
+                .cached
+                .verified_commit_stream_anchors
+                .get(&key)
+                .filter(|a| {
+                    a.stream_ref == head.stream_ref
+                        && a.stream_position == head.stream_position
+                        && a.commit_id == head.commit_id
+                })
+                .cloned();
+        }
+        self.cached
+            .verified_commit_stream_cursors
+            .insert(key.clone(), head.clone());
+        if let Some(anchor) = anchor {
+            self.cached
+                .verified_commit_stream_anchors
+                .insert(key, anchor);
+        } else {
+            self.cached.verified_commit_stream_anchors.remove(&key);
+        }
+        Ok(())
+    }
+
     /// Stage verified coordinates in the existing account-state blob. On wasm,
     /// the caller must await `begin_durable_flush()` before ACKing the scan
     /// cursor: `flush()` alone only enqueues the IndexedDB write.
     pub(crate) fn ingest_verified_message_commits(
         &mut self,
-        page: &garth::VerifiedScanPage,
+        page: &impl crate::transport::own_station_results::AcceptedPageRows,
     ) -> Result<usize, String> {
+        if page
+            .accepted_account()
+            .is_some_and(|account| self.active_authority().as_ref() != Some(account))
+        {
+            return Err("ordinary accepted page belongs to another account store".into());
+        }
         let mut pending = Vec::new();
         let mut pending_reactions = Vec::new();
         let mut genesis_roles = BTreeMap::new();
-        for view in page.rows() {
+        for view in page.accepted_rows()? {
             let arkret_sdk::CommittedEventView::Full(full) = view else {
                 continue;
             };
@@ -331,7 +416,7 @@ impl LocalStateStore {
         merge_verified_poll_page(
             &mut self.cached.verified_poll_inputs,
             &mut self.cached.verified_poll_prefixes,
-            page.rows(),
+            page.accepted_rows()?,
         )?;
         if let Err(error) = merge_verified_reaction_assertions(
             &mut self.cached.verified_reaction_assertions,
@@ -588,6 +673,203 @@ fn merge_verified_poll_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn own_station_bound_checkpoint_rejects_late_window_and_same_position_fork_atomically() {
+        use std::io::{Read, Write};
+
+        use arkret_sdk::http_client::own_station_results::{
+            OwnStationResultClient, OwnStationSessionSnapshot, OwnStationSessionSource,
+        };
+        struct Source(OwnStationSessionSnapshot);
+        impl OwnStationSessionSource for Source {
+            fn snapshot(&self) -> arkret_sdk::http_client::Result<OwnStationSessionSnapshot> {
+                Ok(self.0.clone())
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("checkpoint.json");
+        let mut store = LocalStateStore::with_path(path.clone());
+        let account =
+            crate::test_support::AccountFixture::new("did:webvh:z6mkfixture:alice.example")
+                .station("ak:did_core:web:station.example")
+                .build();
+        store.switch_active_account(&account).unwrap();
+        let realm = arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [8; 32],
+        ));
+        let stream_ref = arkret_sdk::CommitStreamRef::Realm {
+            realm_id: realm.clone(),
+        };
+        let make = |position, previous, seed| {
+            let event =
+                arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [seed; 32]);
+            let at = chrono::DateTime::parse_from_rfc3339("2026-10-05T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+            let mut commit = arkret_sdk::RealmCommit {
+                commit_id: arkret_sdk::RealmCommitId::from_digest([0; 32]),
+                realm_id: realm.clone(),
+                stream_ref: stream_ref.clone(),
+                stream_position: position,
+                previous_commit_ref: previous,
+                event_ref: event.clone(),
+                governance_generation: 0,
+                authority_ref: arkret_sdk::RealmCommitAuthorityRef::GenesisOrChangeEvent(event),
+                committed_at: at,
+                producer_signer_fact_digest: None,
+                signature: arkret_sdk::DetachedObjectSignature {
+                    context: arkret_sdk::DetachedSignatureContext::RealmCommit,
+                    signature_algorithm: arkret_sdk::DetachedSignatureAlgorithm::Ed25519,
+                    verification_method: arkret_sdk::DidUrl::new("did:web:station.example#key")
+                        .unwrap(),
+                    signed_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64)))
+                        .unwrap(),
+                    created_at: at,
+                    sig: arkret_sdk::Base64UrlString::new("AA").unwrap(),
+                },
+            };
+            let mut unsigned = serde_json::to_value(&commit).unwrap();
+            unsigned.as_object_mut().unwrap().remove("commit_id");
+            unsigned.as_object_mut().unwrap().remove("signature");
+            commit.commit_id =
+                arkret_sdk::RealmCommitId::from_digest(arkret_sdk::canonical::sha256_bytes(
+                    &arkret_sdk::canonical::canonical_json_bytes(&unsigned).unwrap(),
+                ));
+            serde_json::json!({"commit":commit,"event_disclosure":{"status":"withheld"}})
+        };
+        let first = make(0, None, 1);
+        let first_commit: arkret_sdk::RealmCommit =
+            serde_json::from_value(first["commit"].clone()).unwrap();
+        let second = make(1, Some(first_commit.commit_id.clone()), 2);
+        let fork = make(1, Some(first_commit.commit_id.clone()), 3);
+        let bodies = [
+            serde_json::json!({"committed_events":[first.clone(),second],"readable_floor":{"oldest_position":0,"floor_commit_id":first_commit.commit_id,"floor_reason":"stream_start"},"truncated":false}),
+            serde_json::json!({"committed_events":[first.clone()],"readable_floor":{"oldest_position":0,"floor_commit_id":first_commit.commit_id,"floor_reason":"stream_start"},"truncated":false}),
+            serde_json::json!({"committed_events":[first,fork],"readable_floor":{"oldest_position":0,"floor_commit_id":first_commit.commit_id,"floor_reason":"stream_start"},"truncated":false}),
+        ];
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}/", listener.local_addr().unwrap());
+        let binding = arkret_sdk::StationConnectionBinding {
+            service_id: account.authority.station_id.clone(),
+            base_url: base.clone(),
+            trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
+                .unwrap(),
+            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+        };
+        let session = OwnStationSessionSnapshot::new(
+            binding.clone(),
+            account.authority.clone(),
+            account.authority.station_id.clone(),
+            arkret_wire::SessionGrantId::from_issuance_digest([4; 32]),
+            1,
+            "checkpoint-grant".into(),
+        )
+        .unwrap();
+        let raw = arkret_sdk::http_client::ClientBuilder::new(url::Url::parse(&base).unwrap())
+            .allow_insecure_localhost()
+            .auth(arkret_sdk::http_client::Auth::Bearer(
+                "checkpoint-grant".into(),
+            ))
+            .build()
+            .unwrap();
+        let client =
+            OwnStationResultClient::new(raw, binding, std::sync::Arc::new(Source(session)))
+                .unwrap();
+        let server = std::thread::spawn(move || {
+            for body in bodies {
+                let (mut connection, _) = listener.accept().unwrap();
+                connection
+                    .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 8192];
+                let header_end = loop {
+                    let n = connection.read(&mut buffer).unwrap();
+                    assert!(n > 0);
+                    request.extend_from_slice(&buffer[..n]);
+                    if let Some(i) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break i + 4;
+                    }
+                };
+                let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+                assert!(headers.contains("authorization: bearer checkpoint-grant"));
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("content-length:")
+                            .map(|n| n.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap_or(0);
+                while request.len() < header_end + length {
+                    let n = connection.read(&mut buffer).unwrap();
+                    assert!(n > 0);
+                    request.extend_from_slice(&buffer[..n]);
+                }
+                let bytes = serde_json::to_vec(&body).unwrap();
+                write!(connection,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",bytes.len()).unwrap();
+                connection.write_all(&bytes).unwrap();
+            }
+        });
+        let request = arkret_sdk::StreamScanRequest {
+            realm_id: realm.clone(),
+            stream_ref: stream_ref.clone(),
+            direction: arkret_sdk::StreamScanDirection::After(None),
+            limit: 2,
+        };
+        let mut current = garth::own_station_results::OwnStationReplica::new(realm.clone());
+        let current_page = current
+            .apply_bound_scan(&client, client.scan_commit_stream(&request).await.unwrap())
+            .await
+            .unwrap();
+        store
+            .verified_projection_transaction(|s| {
+                s.stage_own_station_commit_stream_checkpoint(
+                    &client,
+                    &current,
+                    &stream_ref,
+                    &[current_page],
+                )
+            })
+            .unwrap();
+        store.flush().unwrap();
+        let expected = store.verified_commit_stream_cursor(&stream_ref).unwrap();
+        let original = serde_json::to_value(store.load()).unwrap();
+        for _ in 0..2 {
+            let mut late = garth::own_station_results::OwnStationReplica::new(realm.clone());
+            let page = late
+                .apply_bound_scan(&client, client.scan_commit_stream(&request).await.unwrap())
+                .await
+                .unwrap();
+            assert!(
+                store
+                    .verified_projection_transaction(|s| s
+                        .stage_own_station_commit_stream_checkpoint(
+                            &client,
+                            &late,
+                            &stream_ref,
+                            &[page]
+                        ))
+                    .is_err()
+            );
+            assert_eq!(
+                store.verified_commit_stream_cursor(&stream_ref).unwrap(),
+                expected
+            );
+            assert_eq!(serde_json::to_value(store.load()).unwrap(), original);
+        }
+        server.join().unwrap();
+        let mut reopened = LocalStateStore::with_path(path);
+        reopened.switch_active_account(&account).unwrap();
+        assert_eq!(
+            reopened.verified_commit_stream_cursor(&stream_ref).unwrap(),
+            expected
+        );
+        // The actual bound HTTP scan and original content-address/continuity
+        // gates are exercised. This ordinary role does not audit Station keys.
+    }
 
     #[test]
     fn direct_chat_unread_uses_signed_stream_positions_and_survives_reopen() {

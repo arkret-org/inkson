@@ -166,8 +166,19 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let list_payload = super::restore::fetch_mls_restore_payload(api, actor_id).await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let trust_anchor =
-        current_controller_backup_trust_anchor(&http, authority, current_device_id).await?;
+    let principal = Did::new(actor_id.to_owned())?;
+    let control_realm =
+        crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
+    let expected_pointer = super::current_basis::state_from_payload(&list_payload)?;
+    let basis = super::current_basis::ConfirmedBackupBasis::read(
+        api,
+        authority,
+        &control_realm,
+        current_device_id,
+        Some(&expected_pointer),
+    )
+    .await?;
+    let trust_anchor = basis.trust_anchor()?;
     let prepared = prepare_rotation_backup_material(
         secure_store.as_ref(),
         authority,
@@ -176,20 +187,11 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         snapshots,
         &list_payload,
         &signer,
-        &trust_anchor,
+        trust_anchor,
     )?;
 
-    let principal = Did::new(actor_id.to_owned())?;
-    let control_realm =
-        crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
-    let source_realm_commit_id = current_backup_checkpoint(
-        &http,
-        authority,
-        &control_realm,
-        current_device_id,
-        &trust_anchor,
-    )
-    .await?;
+    // The authenticated backup projection names the observed PCR basis.
+    let source_realm_commit_id = basis.state()?.authority_commit_id.clone();
     let revoke = crate::operation::ak_ops::device_revoke(
         control_realm.as_str(),
         actor_id,
@@ -206,10 +208,12 @@ pub(crate) async fn execute_device_revoke_security_rotation(
             authority,
             class.backup_kind,
             class.new_series_id.as_str(),
-            active_pointer_version(&list_payload, class.backup_kind)? + 1,
+            active_pointer_version(&list_payload, class.backup_kind)?
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("backup pointer version overflow"))?,
             std::slice::from_ref(&class.previous_series_id),
             &source_realm_commit_id,
-            &trust_anchor,
+            trust_anchor,
         )?);
     }
     let mut all_events = Vec::with_capacity(1 + pointer_events.len());
@@ -219,7 +223,9 @@ pub(crate) async fn execute_device_revoke_security_rotation(
             .into_iter()
             .map(crate::operation::LocalOperation::into_intent),
     );
+    basis.check()?;
     let signed_events = submitter.author_independent_events(all_events).await?;
+    basis.check()?;
     let mut submissions = submitter
         .prepare_initial_submissions(&signed_events)
         .await?;
@@ -262,6 +268,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     }
     .into_create_request()?;
 
+    basis.check()?;
     let staged = Zeroizing::new(serde_json::to_vec(&StagedRotationSecret::from_rotation(
         &prepared.rotation,
     )?)?);
@@ -271,6 +278,11 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         .stage_secret(&transaction_id, staged)
         .await
         .map_err(anyhow::Error::from)?;
+    if let Err(error) = basis.check() {
+        let _ =
+            garth::SecurityTransactionStore::clear_staged_secret(&transaction_store, &staged_ref);
+        return Err(error);
+    }
     if let Err(error) = save_pending_rotation(
         secure_store.as_ref(),
         target_device_id,
@@ -292,10 +304,12 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         secure_store.clone(),
     );
     let workflow = crate::fresh_device_recovery::DeviceRevokeSecurityRotation::new(engine);
+    basis.check()?;
     let mut transaction = workflow
         .create_or_resume(create, staged_ref)
         .await
         .map_err(anyhow::Error::from)?;
+    basis.check()?;
     drive_security_rotation(
         api,
         secure_store,
@@ -599,59 +613,6 @@ pub(super) async fn current_controller_backup_trust_anchor(
     let outcome = crate::transport::keys::query_keys(http, &account_id, device_id).await?;
     resolve_controller_backup_trust_anchor(&outcome, &account_id, &device)
         .map_err(|error| anyhow!("controller backup trust anchor unavailable: {error}"))
-}
-
-/// The current device authorization names an accepted PCR checkpoint at this
-/// generation. Later Commits in the same generation do not stale it.
-pub(super) async fn current_backup_checkpoint(
-    http: &arkret_sdk::http_client::Client,
-    account: &arkret_sdk::AccountId,
-    realm: &arkret_sdk::RealmId,
-    device_id: &str,
-    anchor: &ControllerBackupTrustAnchor,
-) -> Result<arkret_sdk::RealmCommitId> {
-    let epoch = crate::identity::device_directory::session_cache_epoch();
-    let binding = crate::station_connection::enrolled(http.base_url().as_str()).await?;
-    let consumer = garth::own_station::OwnStationConsumer::authenticate(
-        http.clone(),
-        &binding,
-        account.clone(),
-        epoch,
-    )
-    .await?;
-    let original = http.committed_event_get(&anchor.authorize_event_id).await?;
-    original.validate_shape()?;
-    original.commit().validate_content_address()?;
-    let arkret_sdk::CommittedEventView::Full(full) = original else {
-        return Err(anyhow!("current device authorization original is withheld"));
-    };
-    let event = &full.event;
-    let suite = event.event_id.digest_suite_code().digest_suite();
-    event.verify_event_id_matches_content_with_digest_suite(suite)?;
-    event.validate_proof_bindings_with_digest_suite(suite)?;
-    let payload: arkret_sdk::DeviceAuthorizePayload =
-        serde_json::from_value(serde_json::to_value(&event.payload)?)?;
-    payload
-        .validate_wire_constraints()
-        .map_err(anyhow::Error::msg)?;
-    anyhow::ensure!(
-        event.event_id == anchor.authorize_event_id
-            && event.kind == arkret_sdk::EventKind::DeviceAuthorize
-            && event.actor_id == arkret_sdk::ActorId::account(account.clone())
-            && event.realm_id == *realm
-            && full.commit.stream_ref
-                == arkret_sdk::CommitStreamRef::Realm {
-                    realm_id: realm.clone()
-                }
-            && payload.device_id.as_str() == device_id
-            && payload.authorized_generation_ref == anchor.generation_ref,
-        "current device authorization checkpoint has mixed Account, PCR, device or generation"
-    );
-    consumer.require_context(
-        account,
-        crate::identity::device_directory::session_cache_epoch(),
-    )?;
-    Ok(full.commit.commit_id)
 }
 
 fn active_pointer_version(list_payload: &Value, kind: BackupRotationKind) -> Result<u64> {

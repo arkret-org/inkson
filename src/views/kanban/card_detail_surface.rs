@@ -167,6 +167,12 @@ fn CardMemberMentionRow(
                 onclick: {
                     let mention_target = mention_target.clone();
                     move |_| {
+                        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                        tracing::warn!(
+                            exact_account_available = mention_target.is_some(),
+                            require_agent_identity,
+                            "Card member mention requested"
+                        );
                         if let Some(account) = mention_target.as_ref() {
                             onmention.call(crate::views::chat::MentionInsertRequest::new(
                                 account.clone(),

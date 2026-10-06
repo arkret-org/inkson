@@ -16,6 +16,28 @@ use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 use crate::views::recovery::RecoveryKeyBackupOutcome;
 
+#[cfg(feature = "wasm-localstorage-secrets-test")]
+fn trace_recovery_setup(
+    stage: &'static str,
+    generated: &str,
+    confirmation: &str,
+    open: bool,
+    publishing: bool,
+) {
+    tracing::warn!(
+        stage,
+        generated_words = generated.split_whitespace().count(),
+        confirmation_words = confirmation.split_whitespace().count(),
+        confirmed = matches!(
+            recovery_key_confirmation_diff(generated, confirmation),
+            RecoveryKeyConfirmationDiff::Match
+        ),
+        open,
+        publishing,
+        "recovery setup state transition"
+    );
+}
+
 /// Prepare a recovery secret for explicit cold-custody confirmation.
 ///
 /// The words are revealed before any recovery-policy or backup write. The
@@ -47,6 +69,14 @@ fn begin_recovery_key_setup(
             return;
         }
     };
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    trace_recovery_setup(
+        "generate",
+        &recovery_key,
+        confirmation_input.peek().as_str(),
+        true,
+        false,
+    );
     copied.set(false);
     confirmation_input.set(String::new());
     device_unauthorized.set(false);
@@ -79,6 +109,14 @@ pub fn RecoveryKeySetupPrompt(
 
     use_effect(move || {
         if !open() {
+            #[cfg(feature = "wasm-localstorage-secrets-test")]
+            trace_recovery_setup(
+                "closed_reset",
+                generated_recovery_key.peek().as_str(),
+                confirmation_input.peek().as_str(),
+                false,
+                *publishing.peek(),
+            );
             auto_generate_started.set(false);
             generated_recovery_key.set(String::new());
             confirmation_input.set(String::new());
@@ -118,6 +156,14 @@ pub fn RecoveryKeySetupPrompt(
     let is_device_unauthorized = device_unauthorized();
     let is_publishing = publishing();
     let has_generation_failed = generation_failed() && generated_now.trim().is_empty();
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    trace_recovery_setup(
+        "render",
+        &generated_now,
+        &confirmation_now,
+        *open.peek(),
+        is_publishing,
+    );
 
     rsx! {
         Dialog {
@@ -226,7 +272,12 @@ pub fn RecoveryKeySetupPrompt(
                                 rows: "3",
                                 value: "{confirmation_now}",
                                 placeholder: crate::i18n::tr("recovery_setup.confirm_placeholder"),
-                                oninput: move |event: FormEvent| confirmation_input.set(event.value()),
+                                oninput: move |event: FormEvent| {
+                                    let value = event.value();
+                                    #[cfg(feature = "wasm-localstorage-secrets-test")]
+                                    trace_recovery_setup("input", generated_recovery_key.peek().as_str(), &value, *open.peek(), *publishing.peek());
+                                    confirmation_input.set(value);
+                                },
                             }
                             div { class: "muted", "data-testid": "recovery-key-setup-confirm-hint",
                                 {crate::i18n::tr("recovery_setup.confirm_hint")}
@@ -326,6 +377,8 @@ pub fn RecoveryKeySetupPrompt(
                             onclick: {
                                 let saved_recovery_key = generated_now.clone();
                                 move |_| {
+                                    #[cfg(feature = "wasm-localstorage-secrets-test")]
+                                    trace_recovery_setup("save", &saved_recovery_key, confirmation_input.peek().as_str(), *open.peek(), *publishing.peek());
                                     if publishing() {
                                         return;
                                     }
@@ -370,6 +423,8 @@ pub fn RecoveryKeySetupPrompt(
                                     let on_outcome = EventHandler::new(
                                         move |outcome: RecoveryKeyBackupOutcome| match outcome {
                                             RecoveryKeyBackupOutcome::Established => {
+                                                #[cfg(feature = "wasm-localstorage-secrets-test")]
+                                                trace_recovery_setup("outcome_established", generated_recovery_key.peek().as_str(), confirmation_input.peek().as_str(), *open.peek(), *publishing.peek());
                                                 let mut store_signal = state_store;
                                                 let Some((fingerprint, _)) =
                                                     crate::views::recovery::save_generated_recovery_key_metadata(
@@ -397,10 +452,14 @@ pub fn RecoveryKeySetupPrompt(
                                                 open.set(false);
                                             }
                                             RecoveryKeyBackupOutcome::DeviceUnauthorized => {
+                                                #[cfg(feature = "wasm-localstorage-secrets-test")]
+                                                trace_recovery_setup("outcome_deviceunauthorized", generated_recovery_key.peek().as_str(), confirmation_input.peek().as_str(), *open.peek(), *publishing.peek());
                                                 publishing.set(false);
                                                 device_unauthorized.set(true);
                                             }
                                             RecoveryKeyBackupOutcome::Transient => {
+                                                #[cfg(feature = "wasm-localstorage-secrets-test")]
+                                                trace_recovery_setup("outcome_transient", generated_recovery_key.peek().as_str(), confirmation_input.peek().as_str(), *open.peek(), *publishing.peek());
                                                 publishing.set(false);
                                             }
                                         },
