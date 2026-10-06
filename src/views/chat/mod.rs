@@ -423,6 +423,9 @@ fn composer_agent_mode_route(
     let own = Some(controller.clone());
     let mut selected = Vec::new();
     let mut outside = false;
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    let (mut unknown_mode_count, mut unowned_private_count, mut missing_participant_count) =
+        (0, 0, 0);
     for mention in mentions.iter().filter_map(MentionNode::as_mention) {
         let target = participants
             .iter()
@@ -444,6 +447,13 @@ fn composer_agent_mode_route(
                 && own
                     .as_ref()
                     .is_some_and(|a| a.station_id == mention.subject_account_id.station_id);
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            {
+                unknown_mode_count += usize::from(mode.is_none());
+                unowned_private_count +=
+                    usize::from(mode == Some(arkret_sdk::AgentInteractionMode::Private) && !owned);
+                missing_participant_count += usize::from(target.is_none());
+            }
             selected.push(
                 if mode == Some(arkret_sdk::AgentInteractionMode::Private) && !owned {
                     None
@@ -455,12 +465,26 @@ fn composer_agent_mode_route(
             outside = true;
         }
     }
-    arkret_sdk::agent_mention_route_with_modes(
+    let route = arkret_sdk::agent_mention_route_with_modes(
         scope,
         &selected,
         outside,
         mentions.iter().any(|m| m.as_audience_mention().is_some()),
-    )
+    );
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    if route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets {
+        tracing::warn!(
+            ?scope,
+            selected_agent_count = selected.len(),
+            unknown_mode_count,
+            unowned_private_count,
+            missing_participant_count,
+            outside,
+            audience = mentions.iter().any(|m| m.as_audience_mention().is_some()),
+            "joint private mention route blocked"
+        );
+    }
+    route
 }
 
 #[derive(Clone, Debug)]
