@@ -2421,13 +2421,6 @@ pub fn ChatPanel(
                 presence_sync_key: presence_sync_key.clone(),
                 token,
             }
-            if direct_mode && !embedded {
-                direct_structure::DirectStructurePanel {
-                    realm: selected_realm_id.clone(), base: base_url.clone(), account: authority.clone(), device: account_device_id.clone(),
-                    token, selected: selected_channel, frontier: frontier_state, live_epoch: realm_live_epoch,
-                    on_select: move |id| controller.select_channel(id),
-                }
-            }
             if left_open {
                 aside { class: "discussion-panel discussion-sidebar-panel", "data-testid": "discussion-list-panel",
                     div { class: "discussion-panel-head",
@@ -3025,6 +3018,13 @@ pub fn ChatPanel(
                 }
                 }
 
+                if direct_mode && !embedded {
+                    direct_structure::DirectStructurePanel {
+                        realm: selected_realm_id.clone(), base: base_url.clone(), account: authority.clone(), device: account_device_id.clone(),
+                        token, selected: selected_channel, frontier: frontier_state, live_epoch: realm_live_epoch,
+                        on_select: move |id| controller.select_channel(id),
+                    }
+                }
                 if sidecar_mode && sidecar_exchange_current.is_err() {
                     div {
                         class: "event warning-banner",

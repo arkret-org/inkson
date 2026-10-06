@@ -1420,9 +1420,9 @@ where
 ///   (a restricted mode needs an automatic gate in that bundle), history access (equal to the
 ///   signed floor's `history_access`), discovery, the alias and plaintext-visible-services facets,
 ///   member state, Realm-scoped Strand and the default-Strand pointer, which must name a Strand in
-///   the same signed cut, the `message_revision` of each message (a create carrier's Strand must
-///   have been created earlier in the same signed cut; a revise carrier names its own Message), and
-///   the `object_redaction` of a redacted Message, whose every assertion redacts that Message.
+///   the same signed cut, the `message_revision` of each message (a create carrier's Strand must be
+///   present in the cut; its mutable current revision is not its creation Commit), and the
+///   `object_redaction` of a redacted Message, whose every assertion redacts that Message.
 ///
 /// MLS, Space structural siblings, placement, Invite registers and grants
 /// use their existing SDK value types and retain their exact Realm subjects.
@@ -1935,23 +1935,21 @@ fn validate_floor_product_rows(
             ));
         }
     }
-    if let Some((Some(strand_id), position)) = &default_strand
-        && strands
-            .get(strand_id)
-            .is_none_or(|created| created > position)
+    if let Some((Some(strand_id), _)) = &default_strand
+        && !strands.contains_key(strand_id)
     {
         return Err(protocol(
             "signed default Strand names no Strand in the signed cut",
         ));
     }
-    if messages.iter().any(|(strand_id, position)| {
-        strands
-            .get(strand_id)
-            .is_none_or(|created| created >= position)
-    }) {
-        return Err(protocol(
-            "signed message names no earlier Strand in the signed cut",
-        ));
+    // A later metadata/lifecycle update legitimately advances Strand current
+    // beyond older messages and the default pointer. Creation order belongs
+    // to verified original Commits, not this mutable current row's revision.
+    if messages
+        .iter()
+        .any(|(strand_id, _)| !strands.contains_key(strand_id))
+    {
+        return Err(protocol("signed message names no Strand in the signed cut"));
     }
     if history_at_genesis && !direct_conversation {
         return Err(protocol(
@@ -3465,7 +3463,7 @@ mod tests {
     /// Soland discloses the founder's cut after messages and bootstrap facets:
     /// alias, plaintext-visible services and each created message's
     /// `message_revision` are installable closed rows, and a message must name
-    /// a Strand created earlier in the same signed cut.
+    /// a Strand present in the same signed cut, including after later updates.
     #[test]
     fn signed_floor_rows_admit_bootstrap_facets_and_messages_of_earlier_strands() {
         let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
@@ -3497,6 +3495,13 @@ mod tests {
             strand,
             default_strand_entry(&strand_id, None),
             message_create_entry(&strand_id, "discussion"),
+            (
+                "ak.strand.update".to_owned(),
+                json!({
+                    "target_ref": strand_id,
+                    "patch": {"metadata": {"op": "set", "value": {"title": "Renamed"}}}
+                }),
+            ),
         ]);
         let head_commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
@@ -3513,7 +3518,7 @@ mod tests {
             },
             value,
         };
-        let mut rows = soland_bootstrap_rows(&bundle, &items);
+        let mut rows = soland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
         rows.push(facet(
             arkret_wire::CurrentSelector::RealmPlaintextVisibleServices,
             json!({"services": [{
@@ -3530,6 +3535,20 @@ mod tests {
         ));
         let since_join = arkret_sdk::HistoryAccess::SinceJoin;
         validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &rows).unwrap();
+
+        let mut updated = rows.clone();
+        let row = updated.iter_mut().find(|row| matches!(row,
+            TypedCurrentResult::Value { selector: arkret_wire::CurrentSelector::Strand { strand_id: id }, .. } if id == &strand_id
+        )).unwrap();
+        let TypedCurrentResult::Value {
+            revision, value, ..
+        } = row;
+        *revision = arkret_wire::CurrentRevision {
+            commit_id: head_commit.commit_id.clone(),
+            stream_position: head_commit.stream_position,
+        };
+        value["metadata"]["title"] = json!("Renamed");
+        validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &updated).unwrap();
 
         let message_index = rows
             .iter()
@@ -3554,11 +3573,10 @@ mod tests {
         let TypedCurrentResult::Value { value, .. } = &mut open_message[message_index];
         value["unknown"] = json!(true);
         forged.push(open_message);
-        let mut early_message = rows.clone();
-        let TypedCurrentResult::Value { revision, .. } = &mut early_message[message_index];
-        revision.stream_position = items[5].commit.stream_position;
-        revision.commit_id = items[5].commit.commit_id.clone();
-        forged.push(early_message);
+        let mut future_message = rows.clone();
+        let TypedCurrentResult::Value { revision, .. } = &mut future_message[message_index];
+        revision.stream_position = head.stream_position + 1;
+        forged.push(future_message);
         let mut open_alias = rows.clone();
         let last = open_alias.len() - 1;
         set_row_value(&mut open_alias[last], json!({"tombstone": false}));
