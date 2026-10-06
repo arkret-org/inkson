@@ -494,6 +494,17 @@
   }
 }
 
+/* Shared Chat/Topic controls stay within the main panel instead of adding a
+ * grid row that consumes the timeline's available height. */
+.discussion-direct-structure {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(180px, 40%);
+  padding: 10px 14px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+}
+
 .discussion-chat-feed {
   overflow-anchor: none;
   flex: 1;

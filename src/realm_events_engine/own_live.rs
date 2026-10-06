@@ -360,7 +360,7 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
     let mut stage = index
         .stage_own_station_snapshot(generation, &snapshot, &guard)
         .await
-        .map_err(protocol)?;
+        .map_err(crate::state::current_index::current_stage_error)?;
     guard().map_err(protocol)?;
     let current_changed = stage.changed();
     let transaction = projector.state_store.write(|store| {

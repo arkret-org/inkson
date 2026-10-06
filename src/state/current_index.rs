@@ -7,6 +7,19 @@ use arkret_sdk::AccountId;
 use arkret_sdk::sync::{AccountSubscribeFrame, RealmDetailBaseline};
 use arkret_wire::{CurrentRevision, CurrentSelector, TypedCurrentResult};
 use serde::{Deserialize, Serialize};
+
+/// A competing local publisher committed while this reader was verifying its cut.
+#[derive(Debug, thiserror::Error)]
+#[error("current generation changed")]
+pub(crate) struct CurrentGenerationChanged;
+
+pub(crate) fn current_stage_error(error: anyhow::Error) -> garth::Error {
+    if error.is::<CurrentGenerationChanged>() {
+        garth::Error::AuthorityCutBehind
+    } else {
+        garth::Error::Protocol(error.to_string())
+    }
+}
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1465,10 +1478,9 @@ impl CurrentIndex {
             !self.is_poisoned(),
             "current pointer durability is unresolved"
         );
-        anyhow::ensure!(
-            self.generation.load(Ordering::Acquire) == expected_generation,
-            "current generation changed"
-        );
+        if self.generation.load(Ordering::Acquire) != expected_generation {
+            return Err(CurrentGenerationChanged.into());
+        }
         let generation = expected_generation
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("current generation exhausted"))?;
@@ -2382,6 +2394,41 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[tokio::test]
+    async fn concurrent_current_publication_retries_without_installing_stale_rows() {
+        let path = path();
+        let store = index(&path, 0).await;
+        store
+            .stage_frame(0, &frame(vec![row(2, false)], None))
+            .await
+            .unwrap()
+            .finish();
+        let error = match store
+            .stage_frame(0, &frame(vec![row(1, false)], None))
+            .await
+        {
+            Ok(_) => panic!("stale publisher must not acquire a stage"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            current_stage_error(error),
+            garth::Error::AuthorityCutBehind
+        ));
+        assert_eq!(
+            store
+                .read_selector(REALM, &selector_of(&row(2, false)))
+                .await
+                .unwrap(),
+            Some(row(2, false))
+        );
+        assert!(matches!(
+            current_stage_error(anyhow::anyhow!(
+                "current head regresses or forks observed stream"
+            )),
+            garth::Error::Protocol(_)
+        ));
+    }
     static NEXT_TEST_PATH: AtomicU64 = AtomicU64::new(0);
     const REALM: &str = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
     const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq";

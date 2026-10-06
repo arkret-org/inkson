@@ -1066,6 +1066,7 @@ impl InksonAccountProjector {
         cursor: &str,
         verified: &crate::realm_events_engine::VerifiedAccountFrame,
         next_checkpoint: Option<&(garth::CursorScope, garth::AccountCursorCheckpoint)>,
+        previous_generation: u64,
     ) -> garth::Result<()> {
         if frame.kind == AccountSubscribeFrameKind::ResyncRequired {
             return self.reset_account_context().await;
@@ -1083,10 +1084,6 @@ impl InksonAccountProjector {
             );
         }
         let current_index = self.current_index().await?;
-        let previous_generation = self
-            .ctx
-            .state_store
-            .read(LocalStateStore::current_generation);
         let mut current_stage = current_index
             .stage_verified_frame_with_snapshots(
                 previous_generation,
@@ -1095,7 +1092,7 @@ impl InksonAccountProjector {
                 verified.current_snapshots(),
             )
             .await
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+            .map_err(crate::state::current_index::current_stage_error)?;
         let response =
             AccountFrameStep::new(current_stage.filtered_frame().clone(), cursor.to_owned())
                 .map_err(|error| garth::Error::Protocol(error.to_string()))?;
@@ -1444,18 +1441,37 @@ impl InksonAccountProjector {
         next_checkpoint: Option<(garth::CursorScope, garth::AccountCursorCheckpoint)>,
     ) -> garth::Result<()> {
         let http = self.transport.http().http();
+        // Verification performs independent reads. A live Realm publisher can
+        // advance the shared pointer while those reads await their responses.
+        // Restart from the durable Account cursor instead of installing an old
+        // cut or classifying this local race as a Station protocol violation.
+        let mut generation = self
+            .ctx
+            .state_store
+            .read(LocalStateStore::current_generation);
         let mut verified = Vec::with_capacity(batch.frames.len());
         for frame in &batch.frames {
             verified
                 .push(crate::realm_events_engine::verify_account_frame_commits(http, frame).await?);
+        }
+        if self
+            .ctx
+            .state_store
+            .read(LocalStateStore::current_generation)
+            != generation
+        {
+            return Err(garth::Error::AuthorityCutBehind);
         }
         self.validate_station_cas_batch(batch).await?;
         for (index, (frame, proof)) in batch.frames.iter().zip(verified.iter()).enumerate() {
             let final_checkpoint = (index + 1 == batch.frames.len())
                 .then_some(next_checkpoint.as_ref())
                 .flatten();
-            self.project_frame(frame, &batch.cursor, proof, final_checkpoint)
+            self.project_frame(frame, &batch.cursor, proof, final_checkpoint, generation)
                 .await?;
+            generation = generation
+                .checked_add(1)
+                .ok_or_else(|| garth::Error::Protocol("current generation exhausted".into()))?;
         }
         Ok(())
     }
