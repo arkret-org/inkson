@@ -128,9 +128,15 @@ impl LocalStateStore {
                 }
             })
             .collect::<Vec<_>>();
+        // Account windows can advance the same stream checkpoint before the
+        // per-Realm follower runs. Retain the complete signed structural
+        // Events here as well: current ciphertext alone cannot establish the
+        // sender, scope or AAD used by authenticated metadata decryption.
+        // Only the already accepted Full rows above reach this shared funnel.
         Ok(private_changes
             + verified_changes
-            + crate::sync_engine::ingest_message_events(self, "", &events))
+            + crate::sync_engine::ingest_message_events(self, "", &events)
+            + crate::sync_engine::ingest_kanban_events(self, "", &events))
     }
 
     pub(crate) fn verified_commit_stream_cursor(
@@ -869,6 +875,169 @@ mod tests {
         );
         // The actual bound HTTP scan and original content-address/continuity
         // gates are exercised. This ordinary role does not audit Station keys.
+    }
+
+    #[test]
+    fn accepted_structure_originals_survive_checkpoint_reopen_and_replay() {
+        let realm =
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap();
+        let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let mut strand = arkret_sdk::Strand::new_create(realm.clone(), "", actor.clone());
+        strand.metadata = None;
+        strand.created_at = crate::test_support::committed_event::fixture_time(3);
+        strand.tracks.clear();
+        strand.tracks.insert(
+            "discussion".into(),
+            arkret_sdk::StrandTrack::discussion_primary(),
+        );
+        let mut space = arkret_sdk::Space::create_object(realm.clone(), "topic", "", actor);
+        space.title = None;
+        space.created_at = crate::test_support::committed_event::fixture_time(2);
+        let (bundle, keys, items) = crate::test_support::committed_event::verified_realm_fixture_as(
+            realm.clone(),
+            vec![
+                (
+                    arkret_sdk::EventKind::SpaceCreate.as_str().into(),
+                    serde_json::to_value(arkret_sdk::SpaceCreatePayload::new(space)).unwrap(),
+                ),
+                (
+                    arkret_sdk::EventKind::StrandCreate.as_str().into(),
+                    serde_json::json!({"object":strand}),
+                ),
+            ],
+            "bob.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        );
+        let request = arkret_sdk::AuthorityBundleRequest {
+            realm_id: realm.clone(),
+            nonce: bundle.current_assertion.nonce.clone(),
+        };
+        let freshness = arkret_identity::RealmAuthorityFreshness::new(
+            bundle.bundle_issued_at + chrono::Duration::seconds(50),
+            request.nonce.clone(),
+        );
+        let stream = arkret_sdk::CommitStreamRef::Realm {
+            realm_id: realm.clone(),
+        };
+        let mut replica = garth::RealmReplica::new(realm.clone());
+        replica
+            .install_verified_authority(&request, bundle.clone(), &freshness, &keys)
+            .unwrap();
+        let page = replica
+            .apply_verified_scan(
+                &arkret_sdk::StreamScanRequest {
+                    realm_id: realm.clone(),
+                    stream_ref: stream.clone(),
+                    direction: arkret_sdk::StreamScanDirection::After(None),
+                    limit: 3,
+                },
+                arkret_sdk::StreamScanOutcome {
+                    committed_events: std::iter::once(arkret_sdk::CommittedEventView::Full(
+                        arkret_sdk::CommittedEventFullView {
+                            commit: bundle.genesis_commit.clone(),
+                            event: bundle.genesis_event.clone(),
+                        },
+                    ))
+                    .chain(
+                        items
+                            .iter()
+                            .cloned()
+                            .map(arkret_sdk::CommittedEventView::Full),
+                    )
+                    .collect(),
+                    readable_floor: Some(arkret_sdk::ReadableFloor {
+                        oldest_position: 0,
+                        floor_commit_id: bundle.genesis_commit.commit_id.clone(),
+                        floor_reason: arkret_sdk::ReadableFloorReason::StreamStart,
+                    }),
+                    truncated: false,
+                },
+                &freshness,
+                &keys,
+            )
+            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("structure-originals.json");
+        let mut store = LocalStateStore::with_path(&path);
+        let head = arkret_sdk::CommitStreamHead {
+            stream_ref: stream.clone(),
+            stream_position: items[1].commit.stream_position,
+            commit_id: items[1].commit.commit_id.clone(),
+        };
+        let assert_originals = |store: &LocalStateStore| {
+            let state = store.load();
+            assert_eq!(state.raw_operations.len(), 2);
+            for original in &items {
+                let record = state
+                    .raw_operations
+                    .iter()
+                    .find(|record| record.operation_id == original.event.event_id.as_str())
+                    .unwrap();
+                assert_eq!(record.realm_id.as_deref(), Some(realm.as_str()));
+                assert_eq!(
+                    record.payload["event"],
+                    serde_json::to_value(&original.event).unwrap()
+                );
+                let retained: arkret_sdk::Event =
+                    serde_json::from_value(record.payload["event"].clone()).unwrap();
+                assert_eq!(retained.event_id, original.event.event_id);
+                assert_eq!(retained.scope_ref, original.event.scope_ref);
+                assert_eq!(retained.producer_proof, original.event.producer_proof);
+            }
+        };
+        // Exercise the same shared accepted-page entry used inside the
+        // Account transaction, without forging an Account frame or capability.
+        // This fixture actually audits a signed continuous native page; it
+        // does not claim an ordinary Bound HTTP/session/MLS decryption test.
+        let before = serde_json::to_value(store.load()).unwrap();
+        let refused: Result<(), String> = store.verified_projection_transaction(|store| {
+            assert!(store.ingest_verified_message_history(&page)? > 0);
+            assert_originals(store);
+            store.save_verified_commit_stream_cursor(&stream, head.clone())?;
+            Err("test structural checkpoint transaction refused".into())
+        });
+        assert!(refused.is_err());
+        assert_eq!(serde_json::to_value(store.load()).unwrap(), before);
+        assert!(
+            store
+                .verified_commit_stream_cursor(&stream)
+                .unwrap()
+                .is_none()
+        );
+        store
+            .verified_projection_transaction(|store| {
+                assert!(store.ingest_verified_message_history(&page)? > 0);
+                assert_originals(store);
+                assert!(
+                    store
+                        .verified_commit_stream_cursor(&stream)
+                        .unwrap()
+                        .is_none()
+                );
+                store.save_verified_commit_stream_cursor(&stream, head.clone())
+            })
+            .unwrap();
+        store.flush().unwrap();
+        let mut reopened = LocalStateStore::with_path(&path);
+        assert_originals(&reopened);
+        assert_eq!(
+            reopened.verified_commit_stream_cursor(&stream).unwrap(),
+            Some(head.clone())
+        );
+        assert_eq!(reopened.ingest_verified_message_history(&page).unwrap(), 0);
+        assert_originals(&reopened);
+        let before = serde_json::to_value(reopened.load()).unwrap();
+        let failed: Result<(), String> = reopened.verified_projection_transaction(|store| {
+            store.ingest_verified_message_history(&page)?;
+            store.save_verified_commit_stream_cursor(&stream, head.clone())?;
+            Err("test structural checkpoint transaction refused".into())
+        });
+        assert!(failed.is_err());
+        assert_eq!(serde_json::to_value(reopened.load()).unwrap(), before);
     }
 
     #[test]
