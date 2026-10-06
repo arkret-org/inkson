@@ -294,6 +294,7 @@ pub(super) fn route_to_owned_agent_sidecar(
                 draft_at_send,
                 participants,
             } = route;
+            trace_private_send_stage("private_route_ensure_started");
             let addressed_agent_ids =
                 owned_agent_ids_from_composer(mentions_enabled, &mentions, &participants, &actor);
             let sidecar_outcome = ensure_owned_agent_sidecar(
@@ -309,6 +310,7 @@ pub(super) fn route_to_owned_agent_sidecar(
                 state_store,
             )
             .await;
+            trace_private_send_stage("private_route_ensure_finished");
             let current_private_mode = if matches!(&sidecar_outcome, Ok(Some(_))) {
                 require_current_private_targets(
                     &base_url,
@@ -323,6 +325,11 @@ pub(super) fn route_to_owned_agent_sidecar(
                 Ok(())
             };
             let draft_unchanged = draft_fence.finish();
+            trace_private_send_stage(if draft_unchanged {
+                "private_route_draft_current"
+            } else {
+                "private_route_draft_replaced"
+            });
             let same_session = session_fence.check().is_ok()
                 && consume_context::<crate::app::SessionContext>()
                     .active_account()
@@ -330,10 +337,12 @@ pub(super) fn route_to_owned_agent_sidecar(
                         active.authority == authority && active.device_id == device_id
                     });
             if !same_session {
+                trace_private_send_stage("private_route_session_replaced");
                 sidecar_route_pending.set(false);
                 return;
             }
             if let Err(error) = current_private_mode {
+                trace_private_send_stage("private_route_mode_rejected");
                 sidecar_route_pending.set(false);
                 status_msg.set(format!("Private Sidecar message was not sent: {error:#}"));
                 return;
@@ -348,6 +357,7 @@ pub(super) fn route_to_owned_agent_sidecar(
                         || controller.draft.peek().as_str() != draft_at_send
                         || controller.selected_channel.peek().as_str() != strand_id
                     {
+                        trace_private_send_stage("private_route_draft_changed_before_access");
                         sidecar_route_pending.set(false);
                         status_msg.set(
                             "Private Sidecar ready. The edited draft has not been sent.".to_owned(),
@@ -433,6 +443,11 @@ pub(super) fn route_to_owned_agent_sidecar(
                         60,
                     )
                     .await;
+                    trace_private_send_stage(if ready.is_ok() {
+                        "private_route_access_wait_finished"
+                    } else {
+                        "private_route_access_wait_failed"
+                    });
                     let mode = if ready.is_ok() {
                         require_current_private_targets(
                             &base_url,
@@ -454,12 +469,18 @@ pub(super) fn route_to_owned_agent_sidecar(
                                 && open.matches_route(&realm_id, &strand_id)
                         });
                     if session_fence.check_session_identity().is_err() {
+                        trace_private_send_stage("private_route_session_replaced_after_access");
                         sidecar_route_pending.set(false);
                         return;
                     }
                     let ready_view = match ready.and_then(|view| mode.map(|_| view)) {
                         Ok(view) if unchanged => view,
                         outcome => {
+                            trace_private_send_stage(if unchanged {
+                                "private_route_access_or_mode_rejected"
+                            } else {
+                                "private_route_draft_or_host_replaced"
+                            });
                             sidecar_route_pending.set(false);
                             status_msg.set(match outcome {
                                 Err(error) => {
@@ -486,6 +507,7 @@ pub(super) fn route_to_owned_agent_sidecar(
                         &realm_id,
                         &strand_id,
                     );
+                    trace_private_send_stage("private_route_submit_dispatched");
                     send_sidecar_message_with_hosted(
                         controller,
                         sidecar_session,
@@ -997,6 +1019,7 @@ fn send_sidecar_message_with_hosted(
     let picker_at_send = picker.peek().clone();
     let mut sending = controller.sidecar_send_pending;
     if *sending.peek() {
+        trace_private_send_stage("private_submit_already_pending");
         return;
     }
     let authoring_fence = match crate::transport::auth::AuthoringSessionFence::capture() {
@@ -1010,6 +1033,7 @@ fn send_sidecar_message_with_hosted(
             fence
         }
         _ => {
+            trace_private_send_stage("private_submit_session_replaced");
             status_msg
                 .set("Private Sidecar message was not sent: account session changed".to_owned());
             return;
@@ -1061,6 +1085,7 @@ fn send_sidecar_message_with_hosted(
                 body,
                 mentions,
             } = request;
+            trace_private_send_stage("private_submit_started");
             let resolved_mentions = mentions;
             let view = match crate::transport::auth::authed_api_with_sync(
                 &base_url,
@@ -1114,6 +1139,11 @@ fn send_sidecar_message_with_hosted(
             };
             match outcome {
                 Ok(routed) => {
+                    trace_private_send_stage(if routed.history_pending.is_some() {
+                        "private_submit_accepted_history_pending"
+                    } else {
+                        "private_submit_accepted_history_verified"
+                    });
                     if let Some(found) = messages
                         .write()
                         .iter_mut()
@@ -1161,14 +1191,17 @@ fn send_sidecar_message_with_hosted(
                         picker.write().clear();
                     }
                 }
-                Err(error) => fail_optimistic_chat_send(
-                    messages,
-                    chat_draft,
-                    status_msg,
-                    &local_id,
-                    &body,
-                    format!("Private Sidecar message was not sent: {error:#}"),
-                ),
+                Err(error) => {
+                    trace_private_send_stage("private_submit_failed");
+                    fail_optimistic_chat_send(
+                        messages,
+                        chat_draft,
+                        status_msg,
+                        &local_id,
+                        &body,
+                        format!("Private Sidecar message was not sent: {error:#}"),
+                    )
+                }
             }
             sending.set(false);
         })

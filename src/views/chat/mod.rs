@@ -52,6 +52,12 @@ mod timeline_window;
 const PRESENCE_HEARTBEAT_SECS: u64 = 25;
 const PRESENCE_STARTUP_RETRY_SECS: u64 = 2;
 
+#[inline(always)]
+fn trace_private_send_stage(_stage: &'static str) {
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    tracing::warn!(target: "sidecar", stage = _stage, "joint Sidecar preparation stage");
+}
+
 fn presence_heartbeat_delay_secs(heartbeat_tick: u64) -> u64 {
     if heartbeat_tick == 0 {
         PRESENCE_STARTUP_RETRY_SECS
@@ -1710,6 +1716,23 @@ pub fn ChatPanel(
     focus_message_id: String,
     mention_insert_request: Option<Signal<Option<MentionInsertRequest>>>,
 ) -> Element {
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    {
+        use_hook(move || {
+            trace_private_send_stage(if embedded {
+                "embedded_chat_mounted"
+            } else {
+                "chat_mounted"
+            });
+        });
+        use_drop(move || {
+            trace_private_send_stage(if embedded {
+                "embedded_chat_unmounted"
+            } else {
+                "chat_unmounted"
+            });
+        });
+    }
     // A4 — base_url / state_store from session context instead of props.
     let session_context = crate::app::SessionContext::get();
     let base_url = session_context.base_url.read().clone();
