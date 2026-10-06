@@ -16,6 +16,12 @@ use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 use crate::views::recovery::RecoveryKeyBackupOutcome;
 
+// Keep the actual Dialog subscribed to its controlled state. A successful
+// publication closes the same state that controls the rendered backdrop.
+fn use_recovery_setup_dialog_open(open: Signal<bool>) -> ReadSignal<Option<bool>> {
+    use_memo(move || Some(open())).into()
+}
+
 #[cfg(feature = "wasm-localstorage-secrets-test")]
 fn trace_recovery_setup(
     stage: &'static str,
@@ -106,6 +112,7 @@ pub fn RecoveryKeySetupPrompt(
     // string-matching it would break in non-English locales.
     let mut generation_failed = use_signal(|| false);
     let navigator = use_navigator();
+    let dialog_open = use_recovery_setup_dialog_open(open);
 
     use_effect(move || {
         if !open() {
@@ -167,7 +174,7 @@ pub fn RecoveryKeySetupPrompt(
 
     rsx! {
         Dialog {
-            open: true,
+            open: dialog_open,
             on_open_change: move |next_open: bool| {
                 if next_open {
                     return;
@@ -482,5 +489,62 @@ pub fn RecoveryKeySetupPrompt(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod dialog_lifecycle_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use dioxus::dioxus_core::Mutation;
+
+    use super::*;
+
+    fn mounted_dialog(control: Rc<RefCell<Option<Signal<bool>>>>) -> Element {
+        let open = use_signal(|| true);
+        *control.borrow_mut() = Some(open);
+        let dialog_open = use_recovery_setup_dialog_open(open);
+        // The harness does not read `open` while rendering. The production
+        // controlled source must therefore update the actual Yoface Dialog.
+        rsx! {
+            Dialog {
+                open: dialog_open,
+                div { "data-testid": "recovery-key-setup-banner", "public fixture" }
+            }
+        }
+    }
+
+    #[test]
+    fn recovery_setup_actual_dialog_tracks_close_and_reopen_without_parent_render() {
+        let control = Rc::new(RefCell::new(None));
+        let mut dom = VirtualDom::new_with_props(mounted_dialog, control.clone());
+        let initial = dom.rebuild_to_vec();
+        assert!(
+            initial
+                .edits
+                .iter()
+                .any(|edit| matches!(edit, Mutation::LoadTemplate { .. }))
+        );
+        dom.in_runtime(|| control.borrow().unwrap().set(false));
+        let closed = dom.render_immediate_to_vec();
+        assert!(
+            closed
+                .edits
+                .iter()
+                .any(|edit| matches!(edit, Mutation::Remove { .. } | Mutation::ReplaceWith { .. })),
+            "closing the production controlled source must remove the mounted Dialog"
+        );
+        dom.in_runtime(|| control.borrow().unwrap().set(false));
+        assert!(dom.render_immediate_to_vec().edits.is_empty());
+        dom.in_runtime(|| control.borrow().unwrap().set(true));
+        let reopened = dom.render_immediate_to_vec();
+        assert!(
+            reopened
+                .edits
+                .iter()
+                .any(|edit| matches!(edit, Mutation::LoadTemplate { .. })),
+            "a distinct legitimate open must mount a new Dialog"
+        );
     }
 }
