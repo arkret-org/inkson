@@ -39,6 +39,8 @@ where
     S: Future<Output = ()>,
 {
     loop {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(target: "mls_unlock", "MLS unlock: recovery fetch attempt");
         let error = match mls_unlock_fetch_with_timeout(fetch()).await {
             Ok(value) => return Ok(value),
             Err(error) => error,
@@ -46,7 +48,11 @@ where
         let Some(delay) = crate::key_backup::key_backup_unlock_retry_delay(error.inner()) else {
             return Err(error);
         };
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(target: "mls_unlock", delay_ms = delay.as_millis() as u64, "MLS unlock: retry wait started");
         wait(delay).await;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(target: "mls_unlock", "MLS unlock: retry wait completed");
     }
 }
 
@@ -80,6 +86,8 @@ pub fn MlsUnlockPrompt(
     let mut unlock_task = use_signal(|| None::<dioxus::core::Task>);
     let mut dismissed = use_signal(|| false);
     let mut recovery_key_open = use_signal(|| false);
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    use_drop(|| tracing::warn!(target: "mls_unlock", "MLS unlock: prompt component unmounted"));
 
     {
         let mut dismissed = dismissed;
