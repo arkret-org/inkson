@@ -101,7 +101,7 @@ impl MlsSendGateInput {
 /// Read the scope's accepted `mls_group` from the durable current index at a
 /// complete verified cut. `Ok(None)` is that cut's answer; every missing
 /// precondition is an error.
-async fn read_durable_mls_current(
+pub(crate) async fn read_durable_mls_current(
     input: &MlsSendGateInput,
     scope: &arkret_sdk::ScopeRef,
 ) -> anyhow::Result<Option<arkret_wire::MlsGroupCurrent>> {

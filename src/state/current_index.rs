@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct CurrentGenerationChanged;
 
 pub(crate) fn current_stage_error(error: anyhow::Error) -> garth::Error {
-    if error.is::<CurrentGenerationChanged>() {
+    if error.is::<CurrentGenerationChanged>() || error.is::<CurrentCutSuperseded>() {
         garth::Error::AuthorityCutBehind
     } else {
         garth::Error::Protocol(error.to_string())
@@ -168,6 +168,13 @@ pub(crate) struct SignedSnapshotCoverage {
     #[serde(default)]
     original_digest: Option<String>,
 }
+
+/// A concurrent own-Station read can install a newer cut while an Account
+/// frame is in flight. Reject the older cut without terminating subscription;
+/// a new request must still meet every retained authority watermark.
+#[derive(Debug, thiserror::Error)]
+#[error("current cut was superseded by a newer observed stream head")]
+pub(crate) struct CurrentCutSuperseded;
 
 /// Whether `progress` is a complete verified cut of `realm_id`.
 fn progress_is_complete_cut(
@@ -470,6 +477,7 @@ static SHARED_INDICES: OnceLock<std::sync::Mutex<BTreeMap<String, Arc<SharedGene
 
 pub(crate) struct CurrentStage {
     index: CurrentIndex,
+    previous_generation: u64,
     generation: u64,
     filtered: Option<AccountSubscribeFrame>,
     changed: bool,
@@ -477,6 +485,9 @@ pub(crate) struct CurrentStage {
 }
 
 impl CurrentStage {
+    pub(crate) fn previous_generation(&self) -> u64 {
+        self.previous_generation
+    }
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
@@ -1360,6 +1371,7 @@ impl CurrentIndex {
         })
     }
 
+    #[cfg(any(test, target_arch = "wasm32"))]
     pub(crate) async fn stage_frame(
         &self,
         expected_generation: u64,
@@ -1376,6 +1388,7 @@ impl CurrentIndex {
     /// Stage one frame whose `preview_only` windows in
     /// `resolved_preview_streams` were replayed from genesis by a verified
     /// scan; every other preview window still withholds its current.
+    #[cfg(any(test, target_arch = "wasm32"))]
     pub(crate) async fn stage_verified_frame(
         &self,
         expected_generation: u64,
@@ -1391,9 +1404,28 @@ impl CurrentIndex {
         .await
     }
 
+    #[cfg(any(test, target_arch = "wasm32"))]
     pub(crate) async fn stage_verified_frame_with_snapshots(
         &self,
         expected_generation: u64,
+        frame: &AccountSubscribeFrame,
+        resolved_preview_streams: &std::collections::BTreeSet<arkret_sdk::CommitStreamRef>,
+        snapshots: &BTreeMap<String, crate::realm_events_engine::VerifiedCurrentSnapshot>,
+    ) -> anyhow::Result<CurrentStage> {
+        self.stage_committed_frame_with_snapshots(
+            || Ok(expected_generation),
+            frame,
+            resolved_preview_streams,
+            snapshots,
+        )
+        .await
+    }
+
+    /// Read the durable Account pointer only after acquiring the shared writer
+    /// lease. A live Realm installer may advance it while this writer waits.
+    pub(crate) async fn stage_committed_frame_with_snapshots(
+        &self,
+        committed_generation: impl FnOnce() -> anyhow::Result<u64>,
         frame: &AccountSubscribeFrame,
         resolved_preview_streams: &std::collections::BTreeSet<arkret_sdk::CommitStreamRef>,
         snapshots: &BTreeMap<String, crate::realm_events_engine::VerifiedCurrentSnapshot>,
@@ -1403,7 +1435,7 @@ impl CurrentIndex {
             .map(|(realm, proof)| (realm.clone(), proof.snapshot()))
             .collect();
         self.stage_current_install(
-            expected_generation,
+            committed_generation,
             Some(frame),
             None,
             resolved_preview_streams,
@@ -1416,9 +1448,23 @@ impl CurrentIndex {
 
     /// A genuine authenticated original enters the same current plan, lease,
     /// generation and GC transaction as Account current; it is not an Account frame.
+    #[cfg(test)]
     pub(crate) async fn stage_own_station_snapshot(
         &self,
         expected_generation: u64,
+        response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+            arkret_sdk::RealmId,
+            arkret_sdk::RealmStateSnapshot,
+        >,
+        guard: &dyn Fn() -> anyhow::Result<()>,
+    ) -> anyhow::Result<CurrentStage> {
+        self.stage_committed_own_station_snapshot(|| Ok(expected_generation), response, guard)
+            .await
+    }
+
+    pub(crate) async fn stage_committed_own_station_snapshot(
+        &self,
+        committed_generation: impl FnOnce() -> anyhow::Result<u64>,
         response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
             arkret_sdk::RealmId,
             arkret_sdk::RealmStateSnapshot,
@@ -1446,7 +1492,7 @@ impl CurrentIndex {
         };
         let snapshots = BTreeMap::from([(realm.clone(), snapshot)]);
         self.stage_current_install(
-            expected_generation,
+            committed_generation,
             None,
             Some((realm, entry)),
             &Default::default(),
@@ -1459,7 +1505,7 @@ impl CurrentIndex {
 
     async fn stage_current_install(
         &self,
-        expected_generation: u64,
+        committed_generation: impl FnOnce() -> anyhow::Result<u64>,
         frame: Option<&AccountSubscribeFrame>,
         standalone: Option<(String, arkret_sdk::sync::RealmSyncEntry)>,
         resolved_preview_streams: &std::collections::BTreeSet<arkret_sdk::CommitStreamRef>,
@@ -1474,6 +1520,7 @@ impl CurrentIndex {
     ) -> anyhow::Result<CurrentStage> {
         let lease = self.lease.clone().lock_owned().await;
         guard()?;
+        let expected_generation = committed_generation()?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1517,6 +1564,7 @@ impl CurrentIndex {
             {
                 return Ok(CurrentStage {
                     index: self.clone(),
+                    previous_generation: expected_generation,
                     generation: expected_generation,
                     filtered: None,
                     changed: false,
@@ -1650,6 +1698,9 @@ impl CurrentIndex {
                             .iter()
                             .find(|head| head.stream_ref == old.stream_ref)
                         {
+                            if new.stream_position < old.stream_position {
+                                return Err(CurrentCutSuperseded.into());
+                            }
                             anyhow::ensure!(
                                 new.stream_position > old.stream_position
                                     || (new.stream_position == old.stream_position
@@ -1936,6 +1987,7 @@ impl CurrentIndex {
         let backend = self.backend.clone();
         let stage = CurrentStage {
             index: self.clone(),
+            previous_generation: expected_generation,
             generation,
             filtered,
             changed: true,
@@ -4011,6 +4063,112 @@ mod tests {
                 .unwrap(),
             Some(row(1, false))
         );
+    }
+
+    #[tokio::test]
+    async fn superseded_current_cut_is_retryable_without_overwriting_or_accepting_a_fork() {
+        let index = index(&path(), 0).await;
+        index
+            .stage_frame(
+                0,
+                &frame(vec![row(2, false)], Some(baseline(CURSORS[0], 2, true))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        let older = frame(vec![row(1, false)], Some(baseline(CURSORS[1], 1, true)));
+        let error = index.stage_frame(1, &older).await.err().unwrap();
+        assert!(error.is::<CurrentCutSuperseded>());
+        assert_eq!(index.generation.load(Ordering::Acquire), 1);
+        assert_eq!(
+            index
+                .read_selector(REALM, &selector_of(&row(2, false)))
+                .await
+                .unwrap(),
+            Some(row(2, false))
+        );
+        let mut fork = frame(vec![row(2, false)], Some(baseline(CURSORS[1], 2, true)));
+        fork.realms
+            .as_mut()
+            .unwrap()
+            .entries
+            .get_mut(REALM)
+            .unwrap()
+            .current
+            .as_mut()
+            .unwrap()
+            .stream_heads[0]
+            .commit_id = arkret_sdk::RealmCommitId::from_digest([9; 32]);
+        let error = index.stage_frame(1, &fork).await.err().unwrap();
+        assert!(!error.is::<CurrentCutSuperseded>());
+        assert_eq!(index.generation.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn queued_current_writers_read_the_pointer_after_the_previous_commit() {
+        for reset in [false, true] {
+            let index = index(&path(), 0).await;
+            let pointer = Arc::new(AtomicU64::new(0));
+            let reads = Arc::new(AtomicU64::new(0));
+            let mut first = index
+                .stage_frame(0, &frame(vec![row(1, false)], None))
+                .await
+                .unwrap();
+            first.arm_account_commit();
+            let waiting = {
+                let (index, pointer, reads) = (index.clone(), pointer.clone(), reads.clone());
+                async move {
+                    let next_frame = if reset {
+                        serde_json::from_value(serde_json::json!({"kind":"resync_required"}))
+                            .unwrap()
+                    } else {
+                        frame(vec![row(2, false)], None)
+                    };
+                    let stage = index
+                        .stage_committed_frame_with_snapshots(
+                            || {
+                                reads.fetch_add(1, Ordering::AcqRel);
+                                Ok(pointer.load(Ordering::Acquire))
+                            },
+                            &next_frame,
+                            &Default::default(),
+                            &Default::default(),
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(stage.previous_generation(), 1);
+                    assert_eq!(stage.generation(), 2);
+                    stage.finish();
+                }
+            };
+            tokio::pin!(waiting);
+            assert!(futures_util::poll!(waiting.as_mut()).is_pending());
+            assert_eq!(reads.load(Ordering::Acquire), 0);
+            pointer.store(1, Ordering::Release);
+            first.finish();
+            waiting.await;
+            assert_eq!(reads.load(Ordering::Acquire), 1);
+            assert_eq!(index.generation.load(Ordering::Acquire), 2);
+            assert_eq!(
+                index
+                    .read_selector(REALM, &selector_of(&row(1, false)))
+                    .await
+                    .unwrap(),
+                Some(row(if reset { 1 } else { 2 }, false))
+            );
+            if reset {
+                assert!(index.progress_at(REALM, 2).await.unwrap().needs_refresh);
+                assert!(
+                    index
+                        .read_selector_ready(REALM, &selector_of(&row(1, false)))
+                        .await
+                        .unwrap()
+                        .is_none()
+                );
+            }
+            // A genuinely stale durable pointer must still fail closed.
+            assert!(index.stage_frame(1, &frame(vec![], None)).await.is_err());
+        }
     }
 
     #[tokio::test]

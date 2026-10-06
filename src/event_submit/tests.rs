@@ -854,6 +854,59 @@ fn the_genesis_lane_projection_counts_committed_and_unsettled_attempts() {
 }
 
 #[test]
+fn mls_candidate_release_requires_a_definitive_negative_authority_answer() {
+    let signer = test_signer();
+    let mut snapshot = snapshot_of(vec![(mls_commit_event(&signer), SendQueueStatus::Failed)]);
+    let item = &mut snapshot.items[0];
+    item.last_error = Some("network connection reset".to_owned());
+    assert!(!mls_submission_definitively_rejected(item));
+    for (status, code, expected) in [
+        (400, "param_invalid", true),
+        (422, "schema_violation", true),
+        (400, "unregistered_failure", false),
+        (401, "unauthenticated", false),
+        (409, "conflict", false),
+        (503, "unavailable", false),
+    ] {
+        item.last_problem = Some(Box::new(arkret_wire::Problem::new(code, status, "refused")));
+        assert_eq!(
+            mls_submission_definitively_rejected(item),
+            expected,
+            "{status} {code}"
+        );
+    }
+    item.last_problem = None;
+    item.last_problem = Some(Box::new(
+        arkret_wire::Problem::new("failed_precondition", 409, "refused").with_extension(
+            "reason_code",
+            serde_json::json!(arkret_wire::ReasonCode::GOVERNANCE_BINDING_MISMATCH),
+        ),
+    ));
+    assert!(mls_submission_definitively_rejected(item));
+    item.last_problem = Some(Box::new(arkret_wire::Problem::new(
+        "failed_precondition",
+        409,
+        "governance_binding_mismatch",
+    )));
+    assert!(
+        !mls_submission_definitively_rejected(item),
+        "unstructured error text is insufficient"
+    );
+    item.last_problem = None;
+    item.status = SendQueueStatus::Rejected;
+    item.submission.state = garth::SubmissionState::Rejected {
+        status: arkret_wire::AuthorityRejectionStatus::RetryableUnavailable,
+        reason_code: "revision_unavailable".to_owned(),
+    };
+    assert!(!mls_submission_definitively_rejected(item));
+    item.submission.state = garth::SubmissionState::Rejected {
+        status: arkret_wire::AuthorityRejectionStatus::Rejected,
+        reason_code: "forbidden".to_owned(),
+    };
+    assert!(mls_submission_definitively_rejected(item));
+}
+
+#[test]
 fn accepted_mls_submission_owns_transition_until_private_state_is_installed() {
     let signer = test_signer();
     let commit = mls_commit_event(&signer);

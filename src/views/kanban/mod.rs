@@ -211,9 +211,15 @@ fn CardMarkdownEditor(
 fn CardDetailEditActions(
     status: String,
     #[props(default)] save_disabled: bool,
+    #[props(default)] blocked_reason: String,
     on_save: EventHandler<()>,
     on_cancel: EventHandler<()>,
 ) -> Element {
+    let status = if status.trim().is_empty() && save_disabled {
+        blocked_reason
+    } else {
+        status
+    };
     rsx! {
         if !status.trim().is_empty() {
             div {

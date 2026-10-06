@@ -66,6 +66,7 @@ pub(crate) fn use_scope_send_gate(
 pub(crate) struct ScopeSendProbe {
     pub gate: Option<crate::mls::send_gate::MlsSendGate>,
     pub checking: bool,
+    pub blocked_reason: Option<String>,
 }
 
 pub(crate) fn use_scope_send_probe(
@@ -176,8 +177,12 @@ pub(crate) fn use_scope_send_probe(
         }
         captured
     }));
-    let mut result =
-        use_signal(|| None::<(SendReadinessKey, Option<crate::mls::send_gate::MlsSendGate>)>);
+    let mut result = use_signal(|| {
+        None::<(
+            SendReadinessKey,
+            Result<crate::mls::send_gate::MlsSendGate, String>,
+        )>
+    });
     use_effect(move || {
         let captured = key();
         spawn(async move {
@@ -194,13 +199,51 @@ pub(crate) fn use_scope_send_probe(
                     &captured.device,
                 )
                 .await;
+                if *key.peek() == captured
+                    && let Err(error) = &outcome
+                    && let Some(blocked) =
+                        error.downcast_ref::<crate::mls::send_gate::MlsSendGateBlocked>()
+                    && blocked == &crate::mls::send_gate::MlsSendGateBlocked::EpochUpdateRequired
+                    && matches!(
+                        scope,
+                        arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+                    )
+                    && store.read(|state| state.active_authority() == captured.authority)
+                    && store.read(|state| {
+                        let circle = match scope {
+                            arkret_sdk::ScopeRef::Circle { circle_id, .. } => {
+                                Some(circle_id.as_str())
+                            }
+                            _ => None,
+                        };
+                        scope.realm_id_opt().is_some_and(|realm| {
+                            state
+                                .mls_coverage_stale_reason(realm.as_str(), circle)
+                                .is_none()
+                        })
+                    })
+                {
+                    store.write(|state| {
+                        crate::mls::coverage_liveness::note_send_gate_blocked_in_store(
+                            state, scope, blocked,
+                        );
+                    });
+                }
                 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
                 if let Err(error) = &outcome {
                     tracing::warn!(%error, "MLS send readiness probe failed");
                 }
-                outcome.ok()
+                outcome.map_err(|error| error.to_string())
             } else {
-                None
+                Err(if captured.reset_required {
+                    "Waiting for a fresh account baseline".to_owned()
+                } else if captured.detail_invalidated {
+                    "Waiting for the Realm current state to refresh".to_owned()
+                } else if !captured.persistence_healthy {
+                    "Local state could not be saved".to_owned()
+                } else {
+                    "No content scope is selected".to_owned()
+                })
             };
             #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
             {
@@ -212,11 +255,9 @@ pub(crate) fn use_scope_send_probe(
                     current_reset_required = current.reset_required,
                     current_persistence_healthy = current.persistence_healthy,
                     key_still_current = *current == captured,
-                    gate_ready = gate.is_some(),
-                    encrypted = matches!(
-                        &gate,
-                        Some(crate::mls::send_gate::MlsSendGate::Encrypted(_))
-                    ),
+                    gate_ready = gate.is_ok(),
+                    encrypted =
+                        matches!(&gate, Ok(crate::mls::send_gate::MlsSendGate::Encrypted(_))),
                     probe_attempted = captured.scope.is_some()
                         && !captured.reset_required
                         && !captured.detail_invalidated
@@ -235,7 +276,8 @@ pub(crate) fn use_scope_send_probe(
         .as_ref()
         .filter(|(captured, _)| captured == &current_key);
     ScopeSendProbe {
-        gate: completed.and_then(|(_, gate)| gate.clone()),
+        gate: completed.and_then(|(_, gate)| gate.as_ref().ok().cloned()),
+        blocked_reason: completed.and_then(|(_, gate)| gate.as_ref().err().cloned()),
         checking: completed.is_none()
             && current_key.scope.is_some()
             && !current_key.reset_required

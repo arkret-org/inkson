@@ -358,9 +358,19 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
         guard().map_err(protocol)?;
     }
     let mut stage = index
-        .stage_own_station_snapshot(generation, &snapshot, &guard)
+        .stage_committed_own_station_snapshot(
+            || {
+                guard()?;
+                Ok(projector
+                    .state_store
+                    .read(|store| store.current_generation()))
+            },
+            &snapshot,
+            &guard,
+        )
         .await
         .map_err(crate::state::current_index::current_stage_error)?;
+    let generation = stage.previous_generation();
     guard().map_err(protocol)?;
     let current_changed = stage.changed();
     let transaction = projector.state_store.write(|store| {

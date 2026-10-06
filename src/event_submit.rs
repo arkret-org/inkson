@@ -534,6 +534,31 @@ fn pending_mls_commit_for_realm_from_snapshot(
     })
 }
 
+/// An authority outcome and a typed request rejection are both negative
+/// terminal answers. A local/transport failure or an unavailable authority is
+/// not evidence that the frozen candidate may be discarded.
+fn mls_submission_definitively_rejected(item: &garth::SendQueueItem) -> bool {
+    (item.status == SendQueueStatus::Rejected
+        && matches!(
+            &item.submission.state,
+            garth::SubmissionState::Rejected {
+                status: arkret_wire::AuthorityRejectionStatus::Rejected,
+                ..
+            }
+        ))
+        || (item.status == SendQueueStatus::Failed
+            && item.last_problem.as_ref().is_some_and(|problem| {
+                (matches!(problem.status, 400 | 422) && problem.error_code().is_some())
+                    || (problem.status == 409
+                        && problem.error_code() == Some(arkret_wire::ErrorCode::FailedPrecondition)
+                        && problem
+                            .extensions
+                            .get("reason_code")
+                            .and_then(Value::as_str)
+                            == Some(arkret_wire::ReasonCode::GOVERNANCE_BINDING_MISMATCH))
+            }))
+}
+
 fn durable_mls_genesis_for_realm_from_snapshot(
     snapshot: &garth::SendQueueSnapshot,
     realm_id: &str,
@@ -2628,6 +2653,7 @@ impl EventSubmitter {
     }
 
     async fn recover_committed_mls_outbound(&self) -> anyhow::Result<()> {
+        let _single_writer = outbound_submit_lock().lock().await;
         let Some(state) = self.state_store.as_ref() else {
             return Ok(());
         };
@@ -2644,6 +2670,11 @@ impl EventSubmitter {
         );
         let snapshot = self.outbound(OutboundLane::MlsCommit)?.snapshot().await?;
         for item in snapshot.items {
+            if mls_submission_definitively_rejected(&item) {
+                self.recover_rejected_mls_commit(queued_event(&item), state, &endpoint)
+                    .await?;
+                continue;
+            }
             let garth::SubmissionState::Committed { commit, .. } = &item.submission.state else {
                 continue;
             };
@@ -2675,6 +2706,80 @@ impl EventSubmitter {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// A definitive rejection settles the original retry unit, but its staged
+    /// provider state must also be released before a new transition can exist.
+    /// Never restore a pre-authoring snapshot: it could rewind live ratchets.
+    async fn recover_rejected_mls_commit(
+        &self,
+        event: &arkret_sdk::Event,
+        state: &crate::runtime::input::StateStoreHandle,
+        endpoint: &crate::secure_key_store::ActiveDeviceSeedScope,
+    ) -> anyhow::Result<()> {
+        let payload: arkret_sdk::MlsCommitPayload =
+            serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+        let binding = payload.governance_binding();
+        let Some(local) = state.read(|store| {
+            store.mls_checkpoint_for_scope_and_group(
+                binding.effective_scope(),
+                binding.mls_group_id().ok()?.as_str(),
+            )
+        }) else {
+            return Ok(());
+        };
+        if local.epoch != binding.previous_epoch()
+            || local.group_state_event_id.as_ref() != binding.base_group_state_ref()
+        {
+            return Ok(());
+        }
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let secret = crate::mls::runtime::load_device_checkpoint_secret(
+            secure_store.as_ref(),
+            &endpoint.authority,
+            &endpoint.device_id,
+        )
+        .map_err(anyhow::Error::msg)?;
+        let mut group = crate::mls::persistence::restore_envelope(&local, &secret, local.epoch)?;
+        if !group.discard_rejected_own_commit(&payload.commit_envelope()?)? {
+            return Ok(());
+        }
+        let mut salt = [0_u8; 16];
+        getrandom::fill(&mut salt)
+            .map_err(|error| anyhow::anyhow!("MLS checkpoint salt: {error}"))?;
+        let record = group.export_state_record()?;
+        let mut checkpoint = crate::mls::persistence::encrypt_state(
+            &local.realm_id,
+            &local.group_id,
+            local.epoch,
+            &serde_json::to_vec(&record)?,
+            &secret,
+            &salt,
+        );
+        checkpoint.group_state_event_id = local.group_state_event_id.clone();
+        checkpoint.admission_epoch = local.admission_epoch;
+        checkpoint.epoch_started_at = local.epoch_started_at;
+        checkpoint.app_messages_observed = local.app_messages_observed;
+        let barrier = state.write(|store| {
+            anyhow::ensure!(
+                store
+                    .mls_checkpoint_for_scope(binding.effective_scope())
+                    .as_ref()
+                    == Some(&local),
+                "MLS checkpoint changed during rejected Commit recovery"
+            );
+            store
+                .save_mls_checkpoint_for_scope(binding.effective_scope(), checkpoint)
+                .map_err(anyhow::Error::msg)?;
+            store.begin_durable_flush()
+        })?;
+        barrier.wait().await?;
+        self.outbound(OutboundLane::MlsCommit)?
+            .store()
+            .retire_mls_commit_checkpoint(&event.event_id)
+            .await?;
+        tracing::info!(event = %event.event_id, "released definitively rejected own MLS Commit without advancing the epoch");
         Ok(())
     }
 

@@ -991,17 +991,24 @@ impl InksonAccountProjector {
         )
         .await
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        let generation = self
-            .ctx
-            .state_store
-            .read(LocalStateStore::current_generation);
         let reset_frame: AccountSubscribeFrame =
             serde_json::from_value(serde_json::json!({"kind":"resync_required"}))
                 .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let mut stage = index
-            .stage_frame(generation, &reset_frame)
+            .stage_committed_frame_with_snapshots(
+                || {
+                    Ok(self
+                        .ctx
+                        .state_store
+                        .read(LocalStateStore::current_generation))
+                },
+                &reset_frame,
+                &Default::default(),
+                &Default::default(),
+            )
             .await
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let generation = stage.previous_generation();
         stage.arm_account_commit();
         self.ctx.state_store.write(|store| -> garth::Result<()> {
             if store.active_authority() != Some(self.ctx.account.authority.clone()) {
@@ -1085,14 +1092,20 @@ impl InksonAccountProjector {
         }
         let current_index = self.current_index().await?;
         let mut current_stage = current_index
-            .stage_verified_frame_with_snapshots(
-                previous_generation,
+            .stage_committed_frame_with_snapshots(
+                || {
+                    Ok(self
+                        .ctx
+                        .state_store
+                        .read(LocalStateStore::current_generation))
+                },
                 frame,
                 verified.resolved_preview_streams(),
                 verified.current_snapshots(),
             )
             .await
             .map_err(crate::state::current_index::current_stage_error)?;
+        let previous_generation = current_stage.previous_generation();
         let response =
             AccountFrameStep::new(current_stage.filtered_frame().clone(), cursor.to_owned())
                 .map_err(|error| garth::Error::Protocol(error.to_string()))?;

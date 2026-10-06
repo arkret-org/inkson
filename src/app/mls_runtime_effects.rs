@@ -843,6 +843,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         .write()
                         .remove(&repair_key);
                     let error_prefix = format!("MLS coverage repair [{repair_key}]:");
+                    bootstrap_retry_required |= coverage_result != Ok(true);
                     if let Err(error) = coverage_result {
                         tracing::warn!(
                             realm = %creator_bootstrap_realm_id,

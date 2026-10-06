@@ -87,6 +87,24 @@ pub(crate) fn binding_for_transition(
     .map_err(|error| format!("invalid MLS transition governance binding: {error}"))
 }
 
+/// Pin a transition to one already verified durable current result.
+pub(crate) fn binding_for_current_transition(
+    current: &arkret_wire::MlsGroupCurrent,
+) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
+    let next_epoch = current
+        .epoch
+        .checked_add(1)
+        .ok_or_else(|| "MLS current epoch cannot advance".to_owned())?;
+    arkret_sdk::MlsGovernanceBindingPayload::new(
+        current.effective_scope.clone(),
+        Some(current.current_mls_commit_event_ref.clone()),
+        current.epoch,
+        next_epoch,
+        current.current_key_access_revision,
+    )
+    .map_err(|error| format!("invalid durable MLS transition governance binding: {error}"))
+}
+
 /// The key-access revision the scope's current MLS group state declares.
 ///
 /// A scope whose snapshot has not delivered `CurrentSelector::MlsGroup` yet has

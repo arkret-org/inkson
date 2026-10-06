@@ -7,9 +7,9 @@
 //! active leaf set. §2.4.1 makes the sender MUST pause until that happens.
 //!
 //! Endpoint authorization and policy updates do not advance key-access revision.
-//! The trigger is a receiver's typed refusal, rather than a moving stream head.
-//! Only the receiver can decide that coverage is actually missing,
-//! and it says so with `failed_precondition` / `epoch_update_required`. A
+//! A receiver's typed refusal or a verified durable MLS current result can
+//! establish missing coverage; a moving stream head cannot. The receiver
+//! reports it with `failed_precondition` / `epoch_update_required`. A
 //! top-level `epoch_mismatch` is a different state (decision 0100): a covering
 //! Commit already exists, so this module does nothing for it and the sender
 //! refreshes its group and re-encrypts a new request instead.
@@ -54,6 +54,40 @@ pub(crate) fn note_e2ee_epoch_update_required(
         }
         true
     })
+}
+
+/// The durable send gate can discover missing coverage before a submit is
+/// allowed. Wake the same repair scheduler once, without inventing a refusal
+/// from error text or repeatedly dirtying the store while the gate is blocked.
+pub(crate) fn note_send_gate_blocked_in_store(
+    store: &mut LocalStateStore,
+    scope: &arkret_sdk::ScopeRef,
+    blocked: &crate::mls::send_gate::MlsSendGateBlocked,
+) -> bool {
+    if blocked != &crate::mls::send_gate::MlsSendGateBlocked::EpochUpdateRequired {
+        return false;
+    }
+    let (realm, circle) = match scope {
+        arkret_sdk::ScopeRef::Realm { realm_id } => (realm_id, None),
+        arkret_sdk::ScopeRef::Circle {
+            realm_id,
+            circle_id,
+        } => (realm_id, Some(circle_id.as_str())),
+        _ => return false,
+    };
+    if store
+        .mls_coverage_stale_reason(realm.as_str(), circle)
+        .is_some()
+    {
+        return false;
+    }
+    match store.record_mls_coverage_stale(realm.to_string(), circle, &blocked.to_string()) {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(%error, "could not schedule MLS send-gate coverage repair");
+            false
+        }
+    }
 }
 
 /// Store-level form for callers that already hold the store borrow.
@@ -191,13 +225,29 @@ pub(crate) async fn ensure_mls_governance_coverage(
         return Ok(false);
     }
 
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| error.to_string())?;
+    let scope = match circle_id {
+        Some(circle) => arkret_sdk::ScopeRef::Circle {
+            realm_id: realm,
+            circle_id: arkret_sdk::CircleId::new(circle.to_owned())
+                .map_err(|error| error.to_string())?,
+        },
+        None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
+    };
+    let input = crate::mls::send_gate::MlsSendGateInput::capture(state_store, &scope);
+    let current = crate::mls::send_gate::read_durable_mls_current(&input, &scope)
+        .await
+        .map_err(|error| format!("reading MLS coverage repair current failed: {error}"))?
+        .ok_or_else(|| "MLS coverage repair requires verified durable current".to_owned())?;
+    // Pin the same verified current used by the send gate for both the MLS
+    // authenticated handshake and its outer Event. The product view can lag.
+    let binding = crate::mls::governance_proof::binding_for_current_transition(&current)?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let local_state = state_store.read(Clone::clone);
-    let staged = crate::mls::runtime::force_epoch_rotation_commit_for_effective_scope(
+    let staged = crate::mls::runtime::force_epoch_rotation_commit_with_binding(
         &local_state,
         secure_store.as_ref(),
-        realm_id,
-        circle_id,
+        &binding,
         authority,
         device_id,
     )
@@ -207,12 +257,11 @@ pub(crate) async fn ensure_mls_governance_coverage(
             error.user_message()
         )
     })?;
-    let commit_event = crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
+    let commit_event = crate::mls::group_events::mls_commit_event_with_binding(
         &local_state,
-        realm_id,
-        circle_id,
         actor_id,
         &staged.envelope,
+        &binding,
     )
     .map_err(|error| format!("building ak.mls.commit event failed: {error}"))?;
 
@@ -259,6 +308,49 @@ mod tests {
     }
 
     const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+
+    #[test]
+    fn a_verified_send_gate_block_wakes_coverage_repair_without_a_failed_submit() {
+        use crate::mls::send_gate::MlsSendGateBlocked;
+        let mut store = temp_store("send-gate");
+        let realm_id = arkret_sdk::RealmId::new(REALM).unwrap();
+        let realm = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id.clone(),
+        };
+        for blocked in [
+            MlsSendGateBlocked::GenesisPending,
+            MlsSendGateBlocked::EpochMismatch,
+            MlsSendGateBlocked::LocalGroupBehind { current_epoch: 2 },
+            MlsSendGateBlocked::NotReady("epoch_update_required".to_owned()),
+        ] {
+            assert!(!note_send_gate_blocked_in_store(
+                &mut store, &realm, &blocked
+            ));
+        }
+        assert!(store.stale_mls_coverage_scopes(REALM).is_empty());
+        let blocked = MlsSendGateBlocked::EpochUpdateRequired;
+        assert!(note_send_gate_blocked_in_store(
+            &mut store, &realm, &blocked
+        ));
+        assert!(!note_send_gate_blocked_in_store(
+            &mut store, &realm, &blocked
+        ));
+        let circle = arkret_sdk::ScopeRef::Circle {
+            realm_id,
+            circle_id: arkret_sdk::CircleId::new(
+                "ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
+            )
+            .unwrap(),
+        };
+        assert!(note_send_gate_blocked_in_store(
+            &mut store, &circle, &blocked
+        ));
+        assert_eq!(store.stale_mls_coverage_scopes(REALM).len(), 2);
+        store.clear_mls_coverage_stale(REALM, None).unwrap();
+        assert!(note_send_gate_blocked_in_store(
+            &mut store, &realm, &blocked
+        ));
+    }
 
     #[test]
     fn coverage_repair_needs_both_a_refusal_and_local_group_material() {

@@ -333,11 +333,19 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
             None => Some(arkret_sdk::ScopeRef::Realm { realm_id }),
         }
     });
-    let detail_send_ready = crate::views::secure_send::use_scope_send_ready(
+    let detail_send_probe = crate::views::secure_send::use_scope_send_probe(
         state_store,
         detail_send_scope,
         account_device_id,
     );
+    let detail_send_ready = detail_send_probe.gate.is_some();
+    let detail_send_blocked_reason = detail_send_probe.blocked_reason.unwrap_or_else(|| {
+        if detail_send_probe.checking {
+            "Checking sync and encryption readiness...".to_owned()
+        } else {
+            "Waiting for sync and encryption readiness".to_owned()
+        }
+    });
     let mut sidecar_edit_context_seen = use_signal(SidecarTrackEditContext::default);
     let mut suspended_shared_track_edits = use_signal(BTreeMap::<String, SuspendedTrackEdit>::new);
     let mut card_detail_backdrop_pressed = use_signal(|| false);
@@ -872,6 +880,13 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         }
                                                         CardDetailEditActions {
                                                             save_disabled: !detail_send_ready || !card_detail_write_ready(card) || !realm_content_write_ready,
+                                                            blocked_reason: if !card_detail_write_ready(card) {
+                                                                "Waiting for the accepted card revision".to_owned()
+                                                            } else if !detail_send_ready {
+                                                                detail_send_blocked_reason.clone()
+                                                            } else {
+                                                                "Waiting for Realm content write readiness".to_owned()
+                                                            },
                                                             status: card_detail_edit_status(),
                                                             on_save: {
                                                                 let base = base_url.clone();
@@ -1049,6 +1064,13 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 }
                                                                 CardDetailEditActions {
                                                                     save_disabled: !detail_send_ready || !card_detail_write_ready(card) || !realm_content_write_ready,
+                                                                    blocked_reason: if !card_detail_write_ready(card) {
+                                                                        "Waiting for the accepted card revision".to_owned()
+                                                                    } else if !detail_send_ready {
+                                                                        detail_send_blocked_reason.clone()
+                                                                    } else {
+                                                                        "Waiting for Realm content write readiness".to_owned()
+                                                                    },
                                                                     status: card_detail_edit_status(),
                                                                     on_save: {
                                                                         let base = base_url.clone();
@@ -1426,6 +1448,13 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                         }
                                                                                         CardDetailEditActions {
                                                                                             save_disabled: !detail_send_ready || !card_detail_write_ready(card) || (!sidecar_track_active && !realm_content_write_ready),
+                                                                                            blocked_reason: if !card_detail_write_ready(card) {
+                                                                                                "Waiting for the accepted card revision".to_owned()
+                                                                                            } else if !detail_send_ready {
+                                                                                                detail_send_blocked_reason.clone()
+                                                                                            } else {
+                                                                                                "Waiting for Realm content write readiness".to_owned()
+                                                                                            },
                                                                                             status: card_detail_edit_status(),
                                                                                             on_save: {
                                                                                                 let base = base_url.clone();
@@ -1518,6 +1547,13 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 }
                                                                 CardDetailEditActions {
                                                                     save_disabled: !detail_send_ready || !card_detail_write_ready(card) || (!sidecar_track_active && !realm_content_write_ready),
+                                                                    blocked_reason: if !card_detail_write_ready(card) {
+                                                                        "Waiting for the accepted card revision".to_owned()
+                                                                    } else if !detail_send_ready {
+                                                                        detail_send_blocked_reason.clone()
+                                                                    } else {
+                                                                        "Waiting for Realm content write readiness".to_owned()
+                                                                    },
                                                                     status: card_detail_edit_status(),
                                                                     on_save: {
                                                                         let base = base_url.clone();

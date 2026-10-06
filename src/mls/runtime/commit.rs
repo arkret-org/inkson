@@ -217,6 +217,42 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     })
 }
 
+/// Stage against the exact binding obtained from the durable signed current,
+/// retaining it for the outer Event instead of resolving a moving UI view.
+pub(crate) fn force_epoch_rotation_commit_with_binding(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    binding: &arkret_sdk::MlsGovernanceBindingPayload,
+    authority: &AccountId,
+    device_id: &DeviceId,
+) -> Result<StagedMlsCommit, MlsRuntimeError> {
+    let scope = binding.effective_scope();
+    let realm_id = scope.realm_id().as_str();
+    let (mut group, secret) = restore_for_commit(
+        state_store,
+        secure_store,
+        scope,
+        realm_id,
+        authority,
+        device_id,
+    )?;
+    let base = state_store
+        .mls_group_state_ref_for_scope(scope, group.group_id().as_str(), group.epoch())
+        .map_err(MlsRuntimeError::Commit)?;
+    if binding.base_group_state_ref() != Some(&base) {
+        return Err(MlsRuntimeError::Commit(
+            "durable MLS current differs from the installed private base".into(),
+        ));
+    }
+    let envelope = group
+        .self_update_commit_with_governance_binding(binding)
+        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
+    Ok(StagedMlsCommit {
+        envelope,
+        staged_checkpoint: staged_checkpoint(&group, realm_id, &secret)?,
+    })
+}
+
 /// Stage the removal of every leaf belonging to `targets`.
 ///
 /// The removal set is decided locally from the group's own verified leaf

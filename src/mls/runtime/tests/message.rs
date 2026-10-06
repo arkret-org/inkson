@@ -33,6 +33,62 @@ fn accepted_mls_base_current(
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn coverage_commit_pins_durable_revision_when_product_view_lags() {
+    let mut state = temp_state_store("coverage-durable-binding");
+    let secure = MemorySecureKeyStore::new();
+    let actor = "did:web:alice.example";
+    let authority = fixture::authority(actor);
+    let device = fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001");
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+    };
+    super::seed_human_creator_authorization(actor, device.as_str());
+    ensure_creator_mls_checkpoint_for_effective_scope(
+        &mut state, &secure, realm, None, &authority, &device,
+    )
+    .unwrap();
+    fixture::install_accepted_mls_group(&mut state, &scope);
+    let mut durable = state.current_mls_group_for_scope(&scope).unwrap();
+    let before = state.mls_checkpoint_for_scope(&scope).unwrap();
+    state
+        .record_mls_group_state_ref_for_scope(
+            &scope,
+            &before.group_id,
+            before.epoch,
+            durable.current_mls_commit_event_ref.clone(),
+        )
+        .unwrap();
+    durable.current_key_access_revision = 7;
+    let before = state.mls_checkpoint_for_scope(&scope).unwrap();
+    assert_eq!(
+        state
+            .current_mls_group_for_scope(&scope)
+            .unwrap()
+            .current_key_access_revision,
+        0
+    );
+    let binding = crate::mls::governance_proof::binding_for_current_transition(&durable).unwrap();
+    let staged =
+        force_epoch_rotation_commit_with_binding(&state, &secure, &binding, &authority, &device)
+            .unwrap();
+    let operation = crate::mls::group_events::mls_commit_event_with_binding(
+        &state,
+        actor,
+        &staged.envelope,
+        &binding,
+    )
+    .unwrap();
+    assert_eq!(
+        operation.payload()["governance_binding"],
+        serde_json::to_value(&binding).unwrap()
+    );
+    assert_eq!(operation.payload()["covers_key_access_revision"], json!(7));
+    assert_eq!(state.mls_checkpoint_for_scope(&scope), Some(before));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn circle_commit_restoration_uses_only_its_own_accepted_epoch() {
     let mut state = temp_state_store("circle-own-commit-floor");
     let secure = MemorySecureKeyStore::new();
