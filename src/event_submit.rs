@@ -1647,7 +1647,11 @@ impl EventSubmitter {
         self.refresh_direct_message_authority(&intent, None).await?;
         let local_operation_id = operation.local_operation_id().to_string();
         let _single_writer = outbound_submit_lock().lock().await;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let trace = OutboundWriterTrace::acquired("submit_event");
         let event = self.author_intent(&intent).await?;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        trace.stage("authored");
         self.retain_authored_metadata(event.event()).await?;
         tracing::debug!(
             local_operation_id = %local_operation_id,
@@ -1678,6 +1682,8 @@ impl EventSubmitter {
         let intent = operation.intent();
         self.ensure_recovery_material_ready(intent).await?;
         let _single_writer = outbound_submit_lock().lock().await;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let _trace = OutboundWriterTrace::acquired("create_circle");
         let parent_revision = self
             .read_parent_membership_revision(
                 intent
@@ -1778,6 +1784,8 @@ impl EventSubmitter {
         }
         let _single_writer = outbound_submit_lock().lock().await;
         let mut results = Vec::with_capacity(sdk_events.len());
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let _trace = OutboundWriterTrace::acquired("submit_ordered");
         for event in sdk_events {
             self.ensure_realm_detail_current(event.realm_id.as_str())
                 .await?;
@@ -1818,6 +1826,8 @@ impl EventSubmitter {
         mls_creator_device: Option<&arkret_sdk::DeviceId>,
     ) -> anyhow::Result<CommittedRealmBootstrap> {
         let _single_writer = outbound_submit_lock().lock().await;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let _trace = OutboundWriterTrace::acquired("bootstrap_realm");
         let events = self.author_event_unit(steps).await?;
         let realm_id = events
             .first()
@@ -1882,6 +1892,8 @@ impl EventSubmitter {
         }
         let _single_writer = outbound_submit_lock().lock().await;
         // The foreground or another holder may have completed while waiting.
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let _trace = OutboundWriterTrace::acquired("create_discussion");
         if let Some(strand) = store.completed_creator_discussion(realm).await? {
             return Ok(strand);
         }
@@ -1982,6 +1994,8 @@ impl EventSubmitter {
         events: Vec<arkret_sdk::AuthoredEvent>,
     ) -> anyhow::Result<Vec<SubmitEventResult>> {
         let _single_writer = outbound_submit_lock().lock().await;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let _trace = OutboundWriterTrace::acquired("found_direct");
         let idempotency_key = arkret_wire::UuidV7::new(arkret_sdk::identifiers::uuid_v7_at(
             crate::clock::now_unix_ms(),
         ))?;
@@ -2026,6 +2040,8 @@ impl EventSubmitter {
         submission: QueuedSubmission,
     ) -> anyhow::Result<SubmitEventResult> {
         let _single_writer = outbound_submit_lock().lock().await;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let _trace = OutboundWriterTrace::acquired("dispatch_scheduled");
         let submission = self
             .outbound(OutboundLane::Standard)?
             .store()
@@ -2066,6 +2082,8 @@ impl EventSubmitter {
         );
         let authority = self.authority()?.clone();
         let _single_writer = outbound_submit_lock().lock().await;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let _trace = OutboundWriterTrace::acquired("submit_mls");
         validate_signed_sdk_event_for_submit(commit.event(), commit.digest_suite())?;
         let mut welcomes = welcomes;
         welcomes.sort_by(|left, right| left.welcome_id.cmp(&right.welcome_id));

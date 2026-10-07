@@ -477,6 +477,8 @@ impl EventSubmitter {
         mut record: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
     ) -> anyhow::Result<SubmitEventResult> {
         let _single_writer = outbound_submit_lock().lock().await;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let _trace = OutboundWriterTrace::acquired("creator_genesis");
         let vault = self.outbound(OutboundLane::Standard)?.store().clone();
         let submission = if let Some(queued) = record.queued_genesis() {
             event_submission(queued.signed_genesis())?

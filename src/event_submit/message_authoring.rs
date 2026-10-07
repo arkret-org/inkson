@@ -173,6 +173,8 @@ impl EventSubmitter {
         tracing::warn!(stage = "waiting_writer", "ordinary message outbound stage");
         let _single_writer = outbound_submit_lock().lock().await;
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let _trace = super::OutboundWriterTrace::acquired("send_message");
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         tracing::warn!(stage = "driving", "ordinary message outbound stage");
         let item = self.enqueue_and_drive(write).await.map_err(|error| {
             if is_durably_queued_error(&error) {
