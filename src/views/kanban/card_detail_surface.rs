@@ -235,7 +235,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
     let principal_id = principal_id.as_str().to_owned();
     let account_device_id = device_id.clone();
     let device_id = device_id.to_string();
-    let state_store = crate::app::SessionContext::get().state_store;
+    let session_context = crate::app::SessionContext::get();
+    let state_store = session_context.state_store;
     let hosted_sidecar_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     let navigator = use_navigator();
     let route = use_route::<Route>();
@@ -495,7 +496,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                         "{base_url}|{selected_realm_id}|{}|{device_id}|{}|{}",
                         card.primary_strand_id,
                         crate::identity::device_directory::session_cache_epoch(),
-                        crate::app::SessionContext::get()
+                        session_context
                             .active_account()
                             .map(|account| account.authority.to_string())
                             .unwrap_or_default(),
