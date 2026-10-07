@@ -319,13 +319,19 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let sidecar_target_missing = private_draft && preview_sidecar_targets.is_empty();
     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
     let send_blocker_diagnostic = Some(format!(
-        "channel_unavailable={},private_gate={},target_missing={},route_pending={},send_pending={},private_draft={}",
+        "channel_unavailable={},private_gate={},target_missing={},route_pending={},send_pending={},private_draft={},mls_binding_pending={},binding_current_pending={},binding_local_keys_pending={},binding_roster_pending={},binding_authority_pending={},binding_send_probe_pending={}",
         selected_channel_unavailable,
         sidecar_send_blocked,
         sidecar_target_missing,
         sidecar_route_pending(),
         sidecar_send_pending(),
         private_draft,
+        selected_realm_pending_mls_binding,
+        selected_realm_pending_mls_binding_reason.as_deref().is_some_and(|reason| reason.starts_with("encryption_policy_pending:")),
+        selected_realm_pending_mls_binding_reason.as_deref().is_some_and(|reason| reason.starts_with("Waiting for this device's encryption keys.")),
+        selected_realm_pending_mls_binding_reason.as_deref().is_some_and(|reason| reason == "encryption_transition_pending: synced roster differs from the verified MLS group"),
+        selected_realm_pending_mls_binding_reason.as_deref().is_some_and(|reason| reason == "Waiting for verified conversation authority and encryption keys."),
+        selected_realm_pending_mls_binding_reason.as_deref().is_some_and(|reason| reason == "Waiting for this scope's verified send state and this device's local encryption keys."),
     ));
     #[cfg(not(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")))]
     let send_blocker_diagnostic: Option<String> = None;
