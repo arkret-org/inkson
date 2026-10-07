@@ -156,9 +156,17 @@ pub(crate) mod test_http {
 
     use super::*;
 
-    struct Source(OwnStationSessionSnapshot);
+    struct Source(
+        OwnStationSessionSnapshot,
+        Arc<std::sync::atomic::AtomicBool>,
+    );
     impl OwnStationSessionSource for Source {
         fn snapshot(&self) -> arkret_sdk::http_client::Result<OwnStationSessionSnapshot> {
+            if !self.1.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(arkret_sdk::http_client::Error::Protocol(
+                    "session replaced".into(),
+                ));
+            }
             Ok(self.0.clone())
         }
     }
@@ -168,6 +176,29 @@ pub(crate) mod test_http {
         account: &arkret_sdk::AccountId,
         bodies: Vec<serde_json::Value>,
     ) -> (OwnStationResultClient, std::thread::JoinHandle<()>) {
+        client_with_status(
+            account,
+            bodies.into_iter().map(|body| (200, body)).collect(),
+        )
+    }
+
+    pub(crate) fn client_with_status(
+        account: &arkret_sdk::AccountId,
+        bodies: Vec<(u16, serde_json::Value)>,
+    ) -> (OwnStationResultClient, std::thread::JoinHandle<()>) {
+        let (client, server, _) = revocable_client(account, bodies, false);
+        (client, server)
+    }
+
+    pub(crate) fn revocable_client(
+        account: &arkret_sdk::AccountId,
+        bodies: Vec<(u16, serde_json::Value)>,
+        invalidate_on_response: bool,
+    ) -> (
+        OwnStationResultClient,
+        std::thread::JoinHandle<()>,
+        Arc<std::sync::atomic::AtomicBool>,
+    ) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}/", listener.local_addr().unwrap());
         let binding = arkret_sdk::StationConnectionBinding {
@@ -194,8 +225,10 @@ pub(crate) mod test_http {
             ))
             .build()
             .unwrap();
+        let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let server_active = active.clone();
         let server = std::thread::spawn(move || {
-            for body in bodies {
+            for (status, body) in bodies {
                 let (mut connection, _) = listener.accept().unwrap();
                 connection
                     .set_read_timeout(Some(std::time::Duration::from_secs(10)))
@@ -225,13 +258,18 @@ pub(crate) mod test_http {
                     request.extend_from_slice(&buffer[..n]);
                 }
                 let bytes = serde_json::to_vec(&body).unwrap();
-                write!(connection,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",bytes.len()).unwrap();
+                if invalidate_on_response {
+                    server_active.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+                write!(connection,"HTTP/1.1 {status} Result\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",bytes.len()).unwrap();
                 connection.write_all(&bytes).unwrap();
             }
         });
         (
-            OwnStationResultClient::new(raw, binding, Arc::new(Source(session))).unwrap(),
+            OwnStationResultClient::new(raw, binding, Arc::new(Source(session, active.clone())))
+                .unwrap(),
             server,
+            active,
         )
     }
 }
