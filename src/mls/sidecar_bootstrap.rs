@@ -547,6 +547,21 @@ async fn reconcile_existing_sidecar_leaves(
     )
     .await?;
     guard()?;
+    // Another controller device may have advanced the accepted epoch while
+    // this device was dormant. Downloaded originals do not install provider
+    // state; consume the verified tail before attempting a new roster write.
+    if state.read(|store| {
+        store
+            .mls_checkpoint_for_scope(&scope)
+            .is_some_and(|checkpoint| checkpoint.epoch < current.epoch)
+    }) {
+        trace_preparation_stage("roster_private_tail_recovery_started");
+        crate::mls::runtime::recover_remote_tail(api, state, authority, device, &scope)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        guard()?;
+        trace_preparation_stage("roster_private_tail_recovery_finished");
+    }
     let after = http.agent_sidecar_get(sidecar_id).await?;
     guard()?;
     genesis_binding(&after, authority)?;

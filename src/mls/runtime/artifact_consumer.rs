@@ -830,7 +830,7 @@ async fn own_recovery_tail(
     Ok(tail)
 }
 
-async fn recover_remote_tail(
+pub(crate) async fn recover_remote_tail(
     api: &crate::transport::TransportClient,
     state: &StateStoreHandle,
     authority: &arkret_sdk::AccountId,
