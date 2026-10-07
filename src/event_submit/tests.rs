@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::*;
 
-const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+pub(super) const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 const OTHER_REALM: &str = "ak:realm:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk";
 const PRINCIPAL: &str = "did:web:alice.example";
 const PRINCIPAL_CORE: &str = "ak:did_core:web:alice.example";
@@ -49,7 +49,7 @@ fn event_with_kind(event_id: &str, realm: &str, kind: &str, payload: Value) -> a
     serde_json::from_value(value).unwrap()
 }
 
-fn message_intent(realm: &str, strand_id: &str) -> EventIntent {
+pub(super) fn message_intent(realm: &str, strand_id: &str) -> EventIntent {
     serde_json::from_value(json!({
         "kind": "ak.message.create",
         "scope_ref": {"kind": "realm", "realm_id": realm},
@@ -64,7 +64,7 @@ fn message_intent(realm: &str, strand_id: &str) -> EventIntent {
     .unwrap()
 }
 
-fn test_signer() -> crate::event_signer::InksonEventSigner {
+pub(super) fn test_signer() -> crate::event_signer::InksonEventSigner {
     crate::event_signer::build_ed25519_device_signer([73; 32], PRINCIPAL, DEVICE)
 }
 
@@ -512,7 +512,7 @@ async fn device_authoring_requeries_only_across_a_same_session_device_refresh() 
 
 /// Finalize and sign one intent the way production does: the identity is
 /// derived from the finished content, then a single producer proof is added.
-fn author_and_sign(
+pub(super) fn author_and_sign(
     intent: EventIntent,
     signer: &crate::event_signer::InksonEventSigner,
 ) -> arkret_sdk::AuthoredEvent {
@@ -549,7 +549,7 @@ fn detached_signature(
 
 /// One authority-signed commit that covers `event` at `position` of the
 /// Event's own scope stream.
-fn commit_for(event: &arkret_sdk::Event, position: u64) -> arkret_wire::RealmCommit {
+pub(super) fn commit_for(event: &arkret_sdk::Event, position: u64) -> arkret_wire::RealmCommit {
     arkret_wire::RealmCommit {
         commit_id: arkret_wire::RealmCommitId::from_digest([position as u8 + 1; 32]),
         realm_id: event.realm_id.clone(),

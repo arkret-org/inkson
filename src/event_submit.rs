@@ -38,6 +38,7 @@ mod authoring_unit;
 mod authority;
 mod message_authoring;
 mod metadata;
+mod outbound_recovery;
 
 #[cfg(test)]
 pub(crate) use authoring_unit::author_event_unit_for_test;
@@ -2462,6 +2463,7 @@ impl EventSubmitter {
             .idempotency_key(event_id.to_string());
         let mut interactive_retries = 0_u8;
         loop {
+            self.recover_accepted_application_items(&outbound).await?;
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             self.quarantine_superseded_items(&outbound, &fence).await?;
             let replay_store = outbound.store().clone();
@@ -2915,6 +2917,8 @@ impl EventSubmitter {
             trace.stage("preparing");
             completed =
                 completed.saturating_add(self.cancel_quarantined_creator_items(&outbound).await?);
+            completed =
+                completed.saturating_add(self.recover_accepted_application_items(&outbound).await?);
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             completed = completed
                 .saturating_add(self.quarantine_superseded_items(&outbound, &fence).await?);
