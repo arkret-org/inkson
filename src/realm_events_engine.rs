@@ -1661,6 +1661,16 @@ fn validate_floor_product_rows(
                     messages.push((parsed.strand_id, revision.stream_position));
                 }
             }
+            CurrentSelector::MessageReactions { target_ref } => {
+                // This row retains assertions, not actor membership. The chat
+                // fold still requires signed Events in a verified prefix.
+                arkret_sdk::MessageId::new(target_ref.as_str()).map_err(protocol)?;
+                closed_value::<
+                    arkret_models_collaboration::events_payloads::reaction::MessageReactionsCurrentValue,
+                >(value, "message_reactions")?
+                .validate_for_target(target_ref)
+                .map_err(protocol)?;
+            }
             CurrentSelector::ObjectRedaction { target_ref } => {
                 // Only a Message redaction has a product installer; its
                 // assertions all redact exactly the selected Message.
@@ -3148,7 +3158,7 @@ mod tests {
                 "controller_actor_id": bundle.genesis_event.actor_id,
                 "controller_epoch": 0,
                 "authority_generation": 0,
-                "authority_event_ref": bundle.genesis_event.event_id,
+                "authority_event_ref": realm_id.event_id(),
             }),
         };
         let since_join = arkret_sdk::HistoryAccess::SinceJoin;
@@ -3975,6 +3985,80 @@ mod tests {
         }
     }
 
+    #[test]
+    fn signed_floor_reaction_assertions_are_closed_and_target_bound() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let (bundle, _, items) =
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&creator),
+                "alice.example",
+                DEVICE_ID,
+            );
+        let commit = &items.last().unwrap().commit;
+        let head = arkret_wire::CommitStreamHead {
+            stream_ref: commit.stream_ref.clone(),
+            stream_position: commit.stream_position,
+            commit_id: commit.commit_id.clone(),
+        };
+        let target = arkret_sdk::MessageId::from_event_id(&items[1].event.event_id);
+        let tag = format!("{}:0", items[2].event.event_id);
+        let assertion = json!({"tag_id": tag, "value": {"target_ref": target, "key": "+1"}});
+        let value = json!({"assertions": [assertion]});
+        let mut rows = soland_bootstrap_rows(&bundle, &items);
+        rows.push(TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::MessageReactions {
+                target_ref: target.to_string(),
+            },
+            source_stream_ref: head.stream_ref.clone(),
+            revision: arkret_wire::CurrentRevision {
+                commit_id: head.commit_id.clone(),
+                stream_position: head.stream_position,
+            },
+            value: value.clone(),
+        });
+        let validate = |rows: &[TypedCurrentResult]| {
+            validate_signed_floor_rows(
+                &realm_id,
+                &bundle,
+                &head,
+                arkret_sdk::HistoryAccess::SinceJoin,
+                rows,
+            )
+        };
+        validate(&rows).unwrap();
+        let mut foreign_anchor = rows.clone();
+        let TypedCurrentResult::Value { value, .. } = &mut foreign_anchor[1];
+        value["authority_event_ref"] = json!(items[2].event.event_id);
+        assert!(validate(&foreign_anchor).is_err());
+        for bad in [
+            json!({"assertions": [assertion], "members": [creator]}),
+            json!({"assertions": [assertion, assertion]}),
+            json!({"assertions": [{"tag_id": format!("{}:1", items[2].event.event_id), "value": {"target_ref": target, "key": "+1"}}]}),
+            json!({"assertions": [{"tag_id": tag, "value": {"target_ref": arkret_sdk::MessageId::from_event_id(&items[3].event.event_id), "key": "+1"}}]}),
+            json!({"assertions": [{"tag_id": tag, "actor_id": creator, "value": {"target_ref": target, "key": "+1"}}]}),
+        ] {
+            let mut forged = rows.clone();
+            set_row_value(forged.last_mut().unwrap(), bad);
+            assert!(validate(&forged).is_err());
+        }
+        let mut unsupported = rows.clone();
+        let TypedCurrentResult::Value { selector, .. } = unsupported.last_mut().unwrap();
+        *selector = arkret_wire::CurrentSelector::MessageReactions {
+            target_ref: items[1].event.event_id.to_string(),
+        };
+        assert!(validate(&unsupported).is_err());
+        let mut empty = rows.clone();
+        set_row_value(empty.last_mut().unwrap(), json!({"assertions": []}));
+        validate(&empty).unwrap();
+    }
+
     /// A restricted founder Realm: the Station evaluated the join policy at
     /// admission, so its signed bundle and restricted join rule install; a
     /// restricted rule without an automatic gate in that bundle does not.
@@ -4108,7 +4192,7 @@ mod tests {
                     "controller_actor_id": bundle.genesis_event.actor_id,
                     "controller_epoch": 0,
                     "authority_generation": 0,
-                "authority_event_ref": bundle.genesis_event.event_id,
+                "authority_event_ref": bundle.realm_id.event_id(),
                 }),
             ),
         ];
