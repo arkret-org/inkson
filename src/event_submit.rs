@@ -300,6 +300,28 @@ fn outbound_submit_lock() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+struct OutboundWriterTrace(&'static str);
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+impl OutboundWriterTrace {
+    fn acquired(operation: &'static str) -> Self {
+        tracing::warn!(operation, stage = "acquired", "outbound writer scope");
+        Self(operation)
+    }
+
+    fn stage(&self, stage: &'static str) {
+        tracing::warn!(operation = self.0, stage, "outbound writer scope");
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+impl Drop for OutboundWriterTrace {
+    fn drop(&mut self) {
+        self.stage("released");
+    }
+}
+
 /// How long an interactive caller should wait before looking at the durable
 /// queue again, for failures the engine does not classify for us.
 fn outbound_retry_delay(error: &anyhow::Error) -> Option<Duration> {
@@ -2650,6 +2672,8 @@ impl EventSubmitter {
 
     async fn recover_committed_mls_outbound(&self) -> anyhow::Result<()> {
         let _single_writer = outbound_submit_lock().lock().await;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let trace = OutboundWriterTrace::acquired("recover_mls");
         let Some(state) = self.state_store.as_ref() else {
             return Ok(());
         };
@@ -2678,6 +2702,8 @@ impl EventSubmitter {
                 commit: (**commit).clone(),
                 event: queued_event(&item).clone(),
             };
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            trace.stage("installing");
             match crate::mls::runtime::install_recovered_outbound_commit(
                 &api,
                 state,
@@ -2819,6 +2845,11 @@ impl EventSubmitter {
 
     async fn drain_lane(&self, lane: OutboundLane) -> anyhow::Result<usize> {
         let _single_writer = outbound_submit_lock().lock().await;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let trace = OutboundWriterTrace::acquired(match lane {
+            OutboundLane::Standard => "drain_standard",
+            OutboundLane::MlsCommit => "drain_mls",
+        });
         let outbound = self.outbound(lane)?;
         if lane == OutboundLane::MlsCommit {
             let now = crate::clock::now_utc();
@@ -2862,6 +2893,8 @@ impl EventSubmitter {
         let authority_client = self.authority_client().await?;
         let mut completed = 0usize;
         loop {
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            trace.stage("preparing");
             completed =
                 completed.saturating_add(self.cancel_quarantined_creator_items(&outbound).await?);
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
@@ -2869,6 +2902,8 @@ impl EventSubmitter {
                 .saturating_add(self.quarantine_superseded_items(&outbound, &fence).await?);
             let options = arkret_sdk::http_client::ClientRequestOptions::new();
             let replay_store = outbound.store().clone();
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            trace.stage("submitting");
             match outbound
                 .submit_next_checked(&authority_client, &options, |request| async move {
                     self.ensure_creator_quarantine_replay_fence(&request)
