@@ -177,6 +177,26 @@ fn query_key(
 ) -> anyhow::Result<String> {
     Ok(serde_json::to_string(&(account, peer))?)
 }
+pub(crate) fn query_lock(
+    account: &arkret_sdk::AccountId,
+    peer: &arkret_sdk::contact_operations::ContactPeer,
+) -> anyhow::Result<std::sync::Arc<tokio::sync::Mutex<()>>> {
+    use std::sync::{Arc, Mutex, OnceLock, Weak};
+    type Locks = std::collections::BTreeMap<String, Weak<tokio::sync::Mutex<()>>>;
+    static LOCKS: OnceLock<Mutex<Locks>> = OnceLock::new();
+    let key = query_key(account, peer)?;
+    let mut locks = LOCKS
+        .get_or_init(Mutex::default)
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Direct Conversation query lock poisoned"))?;
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return Ok(lock);
+    }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    Ok(lock)
+}
 pub(crate) fn begin_query(
     account: &arkret_sdk::AccountId,
     peer: &arkret_sdk::contact_operations::ContactPeer,
@@ -714,6 +734,46 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[tokio::test]
+    async fn direct_queries_serialize_same_pair_without_masking_invalidation() {
+        let account = crate::test_support::authority_at_station(
+            "ak:did_core:web:query-lock.example",
+            crate::test_support::SERVER_STATION_ID,
+        );
+        let peer = arkret_sdk::contact_operations::ContactPeer::Human {
+            account_id: crate::test_support::authority_at_station(
+                "ak:did_core:web:query-peer.example",
+                crate::test_support::SERVER_STATION_ID,
+            ),
+        };
+        let foreground = query_lock(&account, &peer).unwrap();
+        let background = query_lock(&account, &peer).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&foreground, &background));
+        let guard = foreground.lock().await;
+        let first = begin_query(&account, &peer).unwrap();
+        let waiting = background.lock();
+        tokio::pin!(waiting);
+        assert!(futures_util::poll!(&mut waiting).is_pending());
+        assert!(query_is_current(&account, &peer, first));
+
+        let mut other_station = account.clone();
+        other_station.station_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:query-other-station.example").unwrap();
+        assert!(
+            query_lock(&other_station, &peer)
+                .unwrap()
+                .try_lock()
+                .is_ok()
+        );
+        invalidate_query(&account, &peer);
+        assert!(!query_is_current(&account, &peer, first));
+        drop(guard);
+        let _next_guard = waiting.await;
+        let second = begin_query(&account, &peer).unwrap();
+        assert!(query_is_current(&account, &peer, second));
+        assert!(!query_is_current(&account, &peer, first));
+    }
 
     #[tokio::test]
     async fn cold_agent_chat_waits_for_binding_and_durable_peer_closes_human_bootstrap() {

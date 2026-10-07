@@ -564,6 +564,8 @@ pub async fn direct_conversation_resolve(
     let body = arkret_sdk::direct_conversation::DirectConversationResolveRequestBody {
         peer: peer_descriptor,
     };
+    let query_lock = crate::mls::direct_binding::query_lock(&authority, &body.peer)?;
+    let _query_guard = query_lock.lock().await;
     let query_sequence = crate::mls::direct_binding::begin_query(&authority, &body.peer)?;
     let outcome = http
         .direct_conversation_resolve(&body)

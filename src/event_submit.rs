@@ -3303,6 +3303,10 @@ impl EventSubmitter {
                     "Open the Direct Conversation to refresh its exact peer coordinates"
                 )
             })?;
+        // Background refresh must not supersede this pre-signing read while
+        // its authenticated result is being installed.
+        let query_lock = crate::mls::direct_binding::query_lock(authority, &peer)?;
+        let _query_guard = query_lock.lock().await;
         let query_sequence = crate::mls::direct_binding::begin_query(authority, &peer)?;
         let outcome = self
             .http

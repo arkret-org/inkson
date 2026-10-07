@@ -105,11 +105,15 @@ pub(super) fn use_direct_authority(
             ))
         }),
         move |(base_url, realm_id, authority, credential, epoch, peer, request_key)| {
-            let Ok(query_sequence) = crate::mls::direct_binding::begin_query(&authority, &peer)
-            else {
+            let Ok(query_lock) = crate::mls::direct_binding::query_lock(&authority, &peer) else {
                 return;
             };
             spawn(async move {
+                let _query_guard = query_lock.lock().await;
+                let Ok(query_sequence) = crate::mls::direct_binding::begin_query(&authority, &peer)
+                else {
+                    return;
+                };
                 let state = crate::app::runtime_adapter::state_store_handle(state_store);
                 let retry_state = state.clone();
                 let retry_authority = authority.clone();
