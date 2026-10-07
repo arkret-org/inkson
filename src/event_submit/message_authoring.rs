@@ -164,10 +164,16 @@ impl EventSubmitter {
             retry_scope: InteractiveRetryScope::Ordinary,
         };
         let outbound = self.outbound(write.lane).map_err(failure)?;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(stage = "persisting", "ordinary message outbound stage");
         self.persist_queued_write(&write, &outbound)
             .await
             .map_err(|error| classify_presubmit_failure(&error))?;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(stage = "waiting_writer", "ordinary message outbound stage");
         let _single_writer = outbound_submit_lock().lock().await;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(stage = "driving", "ordinary message outbound stage");
         let item = self.enqueue_and_drive(write).await.map_err(|error| {
             if is_durably_queued_error(&error) {
                 MessageAuthoringFailure::SubmissionOutcomeUnknown {
@@ -177,6 +183,8 @@ impl EventSubmitter {
                 classify_submit_failure(&error)
             }
         })?;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(stage = "settled", "ordinary message outbound stage");
         match item.rejection_reason_code() {
             Some(reason_code) => Err(garth::classify_authority_rejection(reason_code)),
             None => Ok(SubmitEventResult::from(&item)),
