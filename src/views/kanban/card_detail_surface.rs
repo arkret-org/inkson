@@ -491,6 +491,15 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                             .as_deref()
                             .is_some_and(|strand_id| strand_id == card.primary_strand_id.as_str());
                     let discussion_target_ready = card_discussion_target_ready(card);
+                    let discussion_host_key = format!(
+                        "{base_url}|{selected_realm_id}|{}|{device_id}|{}|{}",
+                        card.primary_strand_id,
+                        crate::identity::device_directory::session_cache_epoch(),
+                        crate::app::SessionContext::get()
+                            .active_account()
+                            .map(|account| account.authority.to_string())
+                            .unwrap_or_default(),
+                    );
                     let action_menu_class = if editing_card_detail() {
                         "card-detail-action-menu is-editing"
                     } else {
@@ -1656,23 +1665,29 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         "data-testid": "card-discussion-panel",
                                                         role: "tabpanel",
                                                         "aria-hidden": "{active_detail_tab != CardDetailContentTab::Discussion}",
-                                                        if discussion_target_ready {
-                                                            crate::views::chat::ChatPanel {
-                                                                plaintext_service_id: plaintext_service_id.clone(),
-                                                                principal_id: principal_core_id.clone(),
-                                                                account_primary_handle: account_primary_handle.clone(),
-                                                                device_id: device_id.clone(),
-                                                                token,
-                                                                selected_realm_id: selected_realm_id.clone(),
-                                                                sync_cursor,
-                                                                realm_live_epoch,
-                                                                frontier_state,
-                                                                initial_strand_id: card.primary_strand_id.clone(),
-                                                                embedded: true,
-                                                                direct_mode: false,
-                                                                mention_insert_request: Some(member_mention_request),
+                                                        for host_key in [discussion_host_key] {
+                                                            crate::views::chat::RetainedDiscussionHost {
+                                                                key: "{host_key}",
+                                                                ready: discussion_target_ready,
+                                                                crate::views::chat::ChatPanel {
+                                                                    plaintext_service_id: plaintext_service_id.clone(),
+                                                                    principal_id: principal_core_id.clone(),
+                                                                    account_primary_handle: account_primary_handle.clone(),
+                                                                    device_id: device_id.clone(),
+                                                                    token,
+                                                                    selected_realm_id: selected_realm_id.clone(),
+                                                                    sync_cursor,
+                                                                    realm_live_epoch,
+                                                                    frontier_state,
+                                                                    initial_strand_id: card.primary_strand_id.clone(),
+                                                                    embedded: true,
+                                                                    source_suspended: !discussion_target_ready,
+                                                                    direct_mode: false,
+                                                                    mention_insert_request: Some(member_mention_request),
+                                                                }
                                                             }
-                                                        } else {
+                                                        }
+                                                        if !discussion_target_ready {
                                                             div {
                                                                 class: "card-detail-empty discussion-pending-target",
                                                                 "data-testid": "card-discussion-pending-target",

@@ -40,6 +40,7 @@ mod direct_structure;
 mod effects;
 pub(crate) mod model;
 mod poll_submission;
+mod retained_host;
 mod right_panel;
 mod scheduled_send_panel;
 mod sidecar_projection;
@@ -48,6 +49,7 @@ mod timeline;
 mod timeline_projection;
 mod timeline_surface;
 mod timeline_window;
+pub(crate) use retained_host::RetainedDiscussionHost;
 
 const PRESENCE_HEARTBEAT_SECS: u64 = 25;
 const PRESENCE_STARTUP_RETRY_SECS: u64 = 2;
@@ -1698,6 +1700,10 @@ pub fn ChatPanel(
     frontier_state: Signal<String>,
     initial_strand_id: String,
     embedded: bool,
+    /// Keep the target-owned state alive while its source current is unavailable,
+    /// without mounting any timeline or authoring controls.
+    #[props(default)]
+    source_suspended: bool,
     direct_mode: bool,
     /// Counterpart resolved by the contact-only Direct Conversation entry
     /// point. It is display identity, not participation authorization: an
@@ -1763,6 +1769,7 @@ pub fn ChatPanel(
         &authority,
         &account_device_id,
     );
+    let sidecar_route_pending = use_signal(|| false);
     let selected_source_strand = (controller.selected_channel)();
     let sidecar_session = initial_sidecar_session
         .filter(|session| session.matches_route(&selected_realm_id, &selected_source_strand));
@@ -2450,6 +2457,9 @@ pub fn ChatPanel(
                 .map(|snapshot| snapshot.epoch.to_string())
         })
         .flatten();
+    if source_suspended {
+        return rsx! {};
+    }
     rsx! {
         div {
             class: "{shell_class}",
@@ -3246,6 +3256,7 @@ pub fn ChatPanel(
             ChatComposer {
                 controller,
                 context: ChatComposerContext {
+                    sidecar_route_pending,
                     embedded,
                     selected_channel_info: selected_channel_info.clone(),
                     authority: authority.clone(),

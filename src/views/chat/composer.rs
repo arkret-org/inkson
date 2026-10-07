@@ -23,6 +23,7 @@ fn ordinary_composer_scope(realm: &str, channel: &ChannelEntity) -> Option<arkre
 
 #[derive(Clone, PartialEq)]
 pub(super) struct ChatComposerContext {
+    pub sidecar_route_pending: Signal<bool>,
     pub embedded: bool,
     pub selected_channel_info: Option<ChannelEntity>,
     pub authority: arkret_sdk::AccountId,
@@ -204,6 +205,7 @@ fn OrdinarySendActions(
 #[component]
 pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerContext) -> Element {
     let ChatComposerContext {
+        mut sidecar_route_pending,
         embedded: _,
         selected_channel_info,
         authority: sidecar_authority,
@@ -252,7 +254,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let mut messages = controller.messages;
     let mut is_online = controller.is_online;
     let mut status_msg = controller.status_msg;
-    let mut sidecar_route_pending = use_signal(|| false);
     let sidecar_send_pending = controller.sidecar_send_pending;
     let composer_scope = if !mentions_enabled {
         arkret_sdk::AgentMentionComposerScope::Direct
