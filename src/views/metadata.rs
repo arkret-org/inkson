@@ -4,6 +4,45 @@ use serde_json::Value;
 
 use crate::state::LocalStateStore;
 
+fn current_metadata_context(
+    store: &LocalStateStore,
+    realm: &str,
+    id: &str,
+    envelope: &arkret_sdk::EncryptedEnvelope,
+) -> Option<(arkret_sdk::ScopeRef, arkret_wire::CalendarMetadataContext)> {
+    let realm_id: arkret_sdk::RealmId = realm.parse().ok()?;
+    let strand_id: arkret_sdk::StrandId = id.parse().ok()?;
+    let entries = store.realm_current_state_entries(realm);
+    let mut strands = entries.iter().filter_map(|entry| {
+        let arkret_wire::TypedCurrentResult::Value { selector, source_stream_ref, revision, value } = entry;
+        matches!(selector, arkret_wire::CurrentSelector::Strand { strand_id: target } if target == &strand_id).then_some((source_stream_ref, revision, value))
+    });
+    let (stream, revision, strand) = strands.next()?;
+    if strands.next().is_some()
+        || strand.get("encrypted_metadata")? != &serde_json::to_value(envelope).ok()?
+    {
+        return None;
+    }
+    let mut sources = entries.iter().filter_map(|entry| {
+        let arkret_wire::TypedCurrentResult::Value { selector, source_stream_ref, revision, value } = entry;
+        matches!(selector, arkret_wire::CurrentSelector::CalendarScheduleSource { strand_id: target } if target == &strand_id).then_some((source_stream_ref, revision, value))
+    });
+    let (source_stream, source_revision, value) = sources.next()?;
+    if sources.next().is_some() || source_stream != stream || source_revision != revision {
+        return None;
+    }
+    let source: arkret_wire::CalendarScheduleSourceValue =
+        serde_json::from_value(value.clone()).ok()?;
+    source
+        .validate_for_current(&realm_id, stream, revision)
+        .ok()?;
+    let context = source.metadata_context?;
+    if context.payload_digest != envelope.payload_digest().ok()? {
+        return None;
+    }
+    Some((source.effective_scope, context))
+}
+
 pub(crate) fn open_metadata(
     store: &LocalStateStore,
     realm: &str,
@@ -11,6 +50,19 @@ pub(crate) fn open_metadata(
     envelope: &arkret_sdk::EncryptedEnvelope,
     account: &arkret_sdk::AccountId,
     device: &arkret_sdk::DeviceId,
+) -> Option<Value> {
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    open_metadata_with_secure_store(store, realm, id, envelope, account, device, secure.as_ref())
+}
+
+pub(crate) fn open_metadata_with_secure_store(
+    store: &LocalStateStore,
+    realm: &str,
+    id: &str,
+    envelope: &arkret_sdk::EncryptedEnvelope,
+    account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    secure: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Option<Value> {
     let digest = envelope.payload_digest().ok()?;
     let path = format!("encrypted_metadata:{digest}");
@@ -23,6 +75,23 @@ pub(crate) fn open_metadata(
                 .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         });
     let opened = local.or_else(|| {
+        if let Some((scope, context)) = current_metadata_context(store, realm, id, envelope) {
+            let sender =
+                arkret_models_crypto::mls_basic_credential_identity(&context.signer_id).ok()?;
+            let payload = crate::mls::runtime::encrypted_payload_from_verified_event_context(
+                store,
+                envelope,
+                &scope,
+                context.event_kind.as_str(),
+                &sender,
+                None,
+            )?;
+            let bytes =
+                crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
+                    store, secure, realm, account, device, &payload, &scope, &sender,
+                )?;
+            return serde_json::from_slice(&bytes).ok();
+        }
         let cipher = serde_json::to_value(envelope).ok()?;
         let snapshot = store.load();
         let event = snapshot.raw_operations.iter().find_map(|record| {
@@ -66,11 +135,10 @@ pub(crate) fn open_metadata(
             &sender,
             None,
         )?;
-        let secure = crate::secure_key_store::default_secure_key_store("inkson");
         let bytes =
             crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
                 store,
-                secure.as_ref(),
+                secure,
                 realm,
                 account,
                 device,

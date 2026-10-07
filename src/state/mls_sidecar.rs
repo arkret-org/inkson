@@ -238,7 +238,64 @@ impl LocalStateStore {
         self.save_mls_checkpoint_for_scope(&scope, envelope)
     }
 
+    pub(crate) fn mark_mls_rejection_cleared(
+        &mut self,
+        event_id: &arkret_sdk::EventId,
+        scope: &arkret_sdk::ScopeRef,
+        group: &str,
+    ) -> Result<(), String> {
+        let checkpoint = self
+            .mls_checkpoint_for_scope_and_group(scope, group)
+            .ok_or_else(|| "cleared MLS checkpoint is missing".to_owned())?;
+        self.cached
+            .mls_rejection_cleared_checkpoints
+            .insert(event_id.to_string(), checkpoint);
+        Ok(())
+    }
+
+    pub(crate) fn remove_mls_rejection_cleared(&mut self, event_id: &arkret_sdk::EventId) {
+        self.cached
+            .mls_rejection_cleared_checkpoints
+            .remove(event_id.as_str());
+    }
+
+    pub(crate) fn mls_rejection_cleared_checkpoint(
+        &self,
+        event_id: &arkret_sdk::EventId,
+    ) -> Option<crate::mls::persistence::MlsLocalCheckpointEnvelope> {
+        self.load()
+            .mls_rejection_cleared_checkpoints
+            .get(event_id.as_str())
+            .cloned()
+    }
+
     pub fn save_mls_checkpoint_for_scope(
+        &mut self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    ) -> Result<(), String> {
+        self.install_mls_checkpoint_for_scope(effective_scope, envelope)?;
+        let _ = self.flush();
+        self.persist_e2ee_plaintext_cache_if_ready();
+        Ok(())
+    }
+
+    pub(crate) fn save_rejected_mls_checkpoint(
+        &mut self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+        event_id: &arkret_sdk::EventId,
+    ) -> Result<(), String> {
+        let group = envelope.group_id.clone();
+        self.install_mls_checkpoint_for_scope(effective_scope, envelope)?;
+        self.mark_mls_rejection_cleared(event_id, effective_scope, &group)
+    }
+
+    pub(crate) fn mirror_durable_mls_checkpoint(&self) {
+        self.persist_e2ee_plaintext_cache_if_ready();
+    }
+
+    fn install_mls_checkpoint_for_scope(
         &mut self,
         effective_scope: &arkret_sdk::ScopeRef,
         mut envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
@@ -276,8 +333,6 @@ impl LocalStateStore {
         }
         self.cached.mls_local_checkpoints.insert(key, envelope);
         prune_historical_mls_author_states(&mut self.cached);
-        let _ = self.flush();
-        self.persist_e2ee_plaintext_cache_if_ready();
         Ok(())
     }
 

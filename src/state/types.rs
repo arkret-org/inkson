@@ -1172,6 +1172,11 @@ pub struct ClientLocalState {
     #[serde(default, rename = "mls_snapshots")]
     pub mls_local_checkpoints:
         BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+    /// Exact cleared checkpoints committed with their candidate cleanup.
+    /// A secure-cache rollback cannot match this marker.
+    #[serde(default)]
+    pub mls_rejection_cleared_checkpoints:
+        BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
     /// Pre-decrypt MLS checkpoints retained until the combined secure entry
     /// (advanced snapshot + decrypted plaintext cache) is durably confirmed.
     /// These envelopes are already device-secret-encrypted; keeping the oldest
@@ -1614,6 +1619,7 @@ impl Default for ClientLocalState {
             recovery_material_evidence: None,
             pending_account_handoff: None,
             mls_local_checkpoints: BTreeMap::new(),
+            mls_rejection_cleared_checkpoints: BTreeMap::new(),
             mls_receive_recovery_checkpoints: BTreeMap::new(),
             mls_genesis_emitted: BTreeSet::new(),
             mls_group_state_refs: BTreeMap::new(),

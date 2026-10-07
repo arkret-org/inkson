@@ -475,7 +475,8 @@ fn projected_member_profiles_do_not_promote_retired_local_authority_root() {
                 "result": {"status": "value", "value": {
                     "controller_actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
                     "controller_epoch": 0,
-                    "authority_generation": 0
+                    "authority_generation": 0,
+                    "authority_event_ref": realm_id.replacen("ak:realm:", "ak:event:", 1)
                 }}
             }]}
         }),

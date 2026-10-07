@@ -1036,7 +1036,8 @@ mod tests {
             "result": {"status": "value", "value": {
                 "controller_actor_id": controller,
                 "controller_epoch": 0,
-                "authority_generation": 0
+                "authority_generation": 0,
+                    "authority_event_ref": REALM.replacen("ak:realm:", "ak:event:", 1)
             }}
         })
     }

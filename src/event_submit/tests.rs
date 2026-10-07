@@ -884,7 +884,10 @@ fn mls_candidate_release_requires_a_definitive_negative_authority_answer() {
             serde_json::json!(arkret_wire::ReasonCode::GOVERNANCE_BINDING_MISMATCH),
         ),
     ));
-    assert!(mls_submission_definitively_rejected(item));
+    assert!(
+        !mls_submission_definitively_rejected(item),
+        "a later zero-write request does not exclude an earlier accepted attempt"
+    );
     item.last_problem = Some(Box::new(arkret_wire::Problem::new(
         "failed_precondition",
         409,

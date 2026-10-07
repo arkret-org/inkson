@@ -109,7 +109,8 @@ fn target_of(selector: &CurrentSelector) -> CurrentTarget {
         CurrentSelector::AgentStatus { agent_id } => CurrentTarget::AgentStatus {
             agent_id: agent_id.clone(),
         },
-        CurrentSelector::Strand { strand_id } => CurrentTarget::Strand {
+        CurrentSelector::Strand { strand_id }
+        | CurrentSelector::CalendarScheduleSource { strand_id } => CurrentTarget::Strand {
             strand_id: strand_id.clone(),
         },
         CurrentSelector::CallState { call_id } => CurrentTarget::Event {

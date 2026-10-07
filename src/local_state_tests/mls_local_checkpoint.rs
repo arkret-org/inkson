@@ -238,3 +238,56 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
         "logout must preserve the account's own projection cache"
     );
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn rejected_mls_checkpoint_and_cleanup_marker_share_one_durable_main_cut() {
+    let path = temp_state_path("rejected-mls-cut");
+    let realm =
+        arkret_sdk::RealmId::new("ak:realm:AR9U75vD82XqGon9r2GYv6cwT3_W8U4BtjeOCoODErj_").unwrap();
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: realm.clone(),
+    };
+    let event =
+        arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [71; 32]);
+    let group = scope.canonical_mls_group_id().unwrap().to_string();
+    let mut store = LocalStateStore::with_path(path.clone());
+    store.switch_test_account("did:web:alice.example");
+    let pending = crate::mls::persistence::encrypt_state(
+        realm.as_str(),
+        &group,
+        1,
+        b"pending candidate with advanced ratchet",
+        "secret",
+        b"pending-salt",
+    );
+    store
+        .save_mls_checkpoint_for_scope(&scope, pending.clone())
+        .unwrap();
+    let cleared = crate::mls::persistence::encrypt_state(
+        realm.as_str(),
+        &group,
+        1,
+        b"candidate removed with same advanced ratchet",
+        "secret",
+        b"cleared-salt",
+    );
+    store
+        .save_rejected_mls_checkpoint(&scope, cleared.clone(), &event)
+        .unwrap();
+    let mut before = LocalStateStore::with_path(path.clone());
+    before.switch_test_account("did:web:alice.example");
+    assert_eq!(before.mls_checkpoint_for_scope(&scope), Some(pending));
+    assert!(before.mls_rejection_cleared_checkpoint(&event).is_none());
+    store.begin_durable_flush().unwrap().wait().await.unwrap();
+    let mut recovered = LocalStateStore::with_path(path);
+    recovered.switch_test_account("did:web:alice.example");
+    assert_eq!(
+        recovered.mls_checkpoint_for_scope(&scope),
+        Some(cleared.clone())
+    );
+    assert_eq!(
+        recovered.mls_rejection_cleared_checkpoint(&event),
+        Some(cleared)
+    );
+}

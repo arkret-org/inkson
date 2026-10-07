@@ -1479,6 +1479,10 @@ fn validate_floor_product_rows(
     genesis_object: &serde_json::Value,
     genesis_actor: &arkret_sdk::ActorId,
 ) -> garth::Result<()> {
+    arkret_models_collaboration::exact_current_results::validate_calendar_current_pairs(
+        realm_id, rows,
+    )
+    .map_err(protocol)?;
     use arkret_wire::CurrentSelector;
     let realm_stream = CommitStreamRef::Realm {
         realm_id: realm_id.clone(),
@@ -1575,10 +1579,11 @@ fn validate_floor_product_rows(
                 if revision == genesis_revision
                     && *value
                         != serde_json::json!({
-                            "controller_actor_id": genesis_actor,
-                            "controller_epoch": 0,
-                            "authority_generation": 0,
-                        })
+                                    "controller_actor_id": genesis_actor,
+                                    "controller_epoch": 0,
+                                    "authority_generation": 0,
+                        "authority_event_ref": realm_id.event_id(),
+                                })
                 {
                     return Err(protocol(
                         "signed authority root is not the generation-zero creator controller",
@@ -1730,6 +1735,13 @@ fn validate_floor_product_rows(
                     ));
                 }
                 strands.insert(strand_id.clone(), revision.stream_position);
+            }
+            CurrentSelector::CalendarScheduleSource { .. } => {
+                let parsed: arkret_wire::CalendarScheduleSourceValue =
+                    closed_value(value, "calendar_schedule_source")?;
+                parsed
+                    .validate_for_current(realm_id, source_stream_ref, revision)
+                    .map_err(protocol)?;
             }
             CurrentSelector::Relation {
                 primary_conflict_domain,
@@ -3136,6 +3148,7 @@ mod tests {
                 "controller_actor_id": bundle.genesis_event.actor_id,
                 "controller_epoch": 0,
                 "authority_generation": 0,
+                "authority_event_ref": bundle.genesis_event.event_id,
             }),
         };
         let since_join = arkret_sdk::HistoryAccess::SinceJoin;
@@ -3187,6 +3200,7 @@ mod tests {
                 "controller_actor_id": {"kind":"service", "service_id":"ak:did_core:web:wrong.example"},
                 "controller_epoch": 0,
                 "authority_generation": 0,
+                "authority_event_ref": realm_id.event_id(),
             }),
         );
         forged_rows.push(vec![row.clone(), other_controller]);
@@ -3197,6 +3211,7 @@ mod tests {
                 "controller_actor_id": bundle.genesis_event.actor_id,
                 "controller_epoch": 1,
                 "authority_generation": 0,
+                "authority_event_ref": realm_id.event_id(),
             }),
         );
         forged_rows.push(vec![row.clone(), rotated]);
@@ -3425,10 +3440,11 @@ mod tests {
                     source_stream_ref: stream_ref,
                     revision,
                     value: json!({
-                        "controller_actor_id": bundle.genesis_event.actor_id,
-                        "controller_epoch": 0,
-                        "authority_generation": 0,
-                    }),
+                            "controller_actor_id": bundle.genesis_event.actor_id,
+                            "controller_epoch": 0,
+                            "authority_generation": 0,
+                    "authority_event_ref": realm_id.event_id(),
+                        }),
                 },
             ];
             assert_eq!(
@@ -4092,6 +4108,7 @@ mod tests {
                     "controller_actor_id": bundle.genesis_event.actor_id,
                     "controller_epoch": 0,
                     "authority_generation": 0,
+                "authority_event_ref": bundle.genesis_event.event_id,
                 }),
             ),
         ];

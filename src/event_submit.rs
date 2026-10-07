@@ -19,7 +19,10 @@ use std::time::Duration;
 
 use anyhow::Context;
 use arkret_wire::{CapabilityActionId, event_kind_str};
-use garth::{OutboundEngine, OutboundEngineOutcome, QueuedSubmission, SendQueueStatus};
+use garth::{
+    OutboundEngine, OutboundEngineOutcome, OutboundQueueStore as _, QueuedSubmission,
+    SendQueueStatus,
+};
 use serde_json::Value;
 use tokio::sync::OnceCell;
 
@@ -530,32 +533,25 @@ fn pending_mls_commit_for_realm_from_snapshot(
         let event = queued_event(item);
         event.realm_id.as_str() == realm_id
             && (is_unsettled(item.status)
-                || (item.status == SendQueueStatus::Committed && !installed(event)))
+                || (item.status == SendQueueStatus::Committed && !installed(event))
+                || (matches!(
+                    item.status,
+                    SendQueueStatus::Failed | SendQueueStatus::Cancelled
+                ) && !mls_submission_definitively_rejected(item)))
     })
 }
 
-/// Only an exact authority rejection or the registered zero-write governance
-/// binding refusal settles the candidate. A generic HTTP request error does
-/// not establish that the frozen Event was rejected by its authority.
+/// Only an exact authority rejection settles the candidate. An HTTP refusal
+/// proves nothing about an earlier lost response or concurrent admission.
 fn mls_submission_definitively_rejected(item: &garth::SendQueueItem) -> bool {
-    (item.status == SendQueueStatus::Rejected
+    item.status == SendQueueStatus::Rejected
         && matches!(
             &item.submission.state,
             garth::SubmissionState::Rejected {
                 status: arkret_wire::AuthorityRejectionStatus::Rejected,
                 ..
             }
-        ))
-        || (item.status == SendQueueStatus::Failed
-            && item.last_problem.as_ref().is_some_and(|problem| {
-                problem.status == 409
-                    && problem.error_code() == Some(arkret_wire::ErrorCode::FailedPrecondition)
-                    && problem
-                        .extensions
-                        .get("reason_code")
-                        .and_then(Value::as_str)
-                        == Some(arkret_wire::ReasonCode::GOVERNANCE_BINDING_MISMATCH)
-            }))
+        )
 }
 
 fn durable_mls_genesis_for_realm_from_snapshot(
@@ -2721,6 +2717,19 @@ impl EventSubmitter {
         let payload: arkret_sdk::MlsCommitPayload =
             serde_json::from_value(serde_json::to_value(&event.payload)?)?;
         let binding = payload.governance_binding();
+        let vault = self.outbound(OutboundLane::MlsCommit)?;
+        if vault
+            .store()
+            .mls_commit_checkpoint(&event.event_id)
+            .await?
+            .is_none()
+        {
+            return Ok(());
+        }
+        vault.store().begin_mls_rejection_cleanup(event).await?;
+        let completed = state
+            .read(|store| store.mls_rejection_cleared_checkpoint(&event.event_id))
+            .is_some();
         let Some(local) = state.read(|store| {
             store.mls_checkpoint_for_scope_and_group(
                 binding.effective_scope(),
@@ -2732,6 +2741,9 @@ impl EventSubmitter {
         if local.epoch != binding.previous_epoch()
             || local.group_state_event_id.as_ref() != binding.base_group_state_ref()
         {
+            if completed {
+                self.retire_rejected_mls_checkpoint(event, state).await?;
+            }
             return Ok(());
         }
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -2743,6 +2755,9 @@ impl EventSubmitter {
         .map_err(anyhow::Error::msg)?;
         let mut group = crate::mls::persistence::restore_envelope(&local, &secret, local.epoch)?;
         if !group.discard_rejected_own_commit(&payload.commit_envelope()?)? {
+            if completed {
+                self.retire_rejected_mls_checkpoint(event, state).await?;
+            }
             return Ok(());
         }
         let mut salt = [0_u8; 16];
@@ -2770,22 +2785,55 @@ impl EventSubmitter {
                 "MLS checkpoint changed during rejected Commit recovery"
             );
             store
-                .save_mls_checkpoint_for_scope(binding.effective_scope(), checkpoint)
+                .save_rejected_mls_checkpoint(
+                    binding.effective_scope(),
+                    checkpoint,
+                    &event.event_id,
+                )
                 .map_err(anyhow::Error::msg)?;
             store.begin_durable_flush()
         })?;
         barrier.wait().await?;
+        state.write(|store| store.mirror_durable_mls_checkpoint());
+        self.retire_rejected_mls_checkpoint(event, state).await?;
+        tracing::info!(event = %event.event_id, "released definitively rejected own MLS Commit without advancing the epoch");
+        Ok(())
+    }
+
+    async fn retire_rejected_mls_checkpoint(
+        &self,
+        event: &arkret_sdk::Event,
+        state: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<()> {
         self.outbound(OutboundLane::MlsCommit)?
             .store()
             .retire_mls_commit_checkpoint(&event.event_id)
             .await?;
-        tracing::info!(event = %event.event_id, "released definitively rejected own MLS Commit without advancing the epoch");
+        let barrier = state.write(|store| {
+            store.remove_mls_rejection_cleared(&event.event_id);
+            store.begin_durable_flush()
+        })?;
+        barrier.wait().await?;
         Ok(())
     }
 
     async fn drain_lane(&self, lane: OutboundLane) -> anyhow::Result<usize> {
         let _single_writer = outbound_submit_lock().lock().await;
         let outbound = self.outbound(lane)?;
+        if lane == OutboundLane::MlsCommit {
+            let now = crate::clock::now_utc();
+            outbound
+                .store()
+                .mutate_outbound(move |queue| {
+                    for item in queue.snapshot().items {
+                        if queued_event(&item).kind == arkret_sdk::EventKind::MlsCommit {
+                            queue.retry_unknown(&item.submission.event_id, now)?;
+                        }
+                    }
+                    Ok(())
+                })
+                .await?;
+        }
         if lane == OutboundLane::MlsCommit
             && let Some(state) = self.state_store.as_ref()
         {

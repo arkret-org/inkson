@@ -19,8 +19,8 @@ pub(super) fn governance_authoring_gate() -> Result<(), &'static str> {
 }
 
 /// Read the installed, authority-verified root rather than the unrelated
-/// governing-Station tenure. Generation zero is anchored by the create Event's
-/// content identity. Later reset anchors require an exact historical carrier.
+/// governing-Station tenure. The current value retains its exact delegation
+/// anchor across owner transfer and Station handoff, including after reset.
 pub(super) fn capability_issuer_basis(
     realm_id: &str,
     entries: &[arkret_wire::TypedCurrentResult],
@@ -37,14 +37,13 @@ pub(super) fn capability_issuer_basis(
         serde_json::from_value(roots.next()?.clone()).ok()?;
     if roots.next().is_some()
         || root.validate().is_err()
-        || root.authority_generation != 0
         || root.controller_actor_id != arkret_sdk::ActorId::account(issuer.clone())
     {
         return None;
     }
     Some(crate::operation::ak_ops::IssuerRealmAuthorityBasis {
-        authority_generation: 0,
-        authority_event_ref: arkret_sdk::EventId::from_token_bytes(realm.token_bytes()).ok()?,
+        authority_generation: root.authority_generation,
+        authority_event_ref: root.authority_event_ref,
     })
 }
 

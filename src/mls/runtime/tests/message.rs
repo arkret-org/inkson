@@ -1909,3 +1909,141 @@ async fn frozen_message_real_mls_retry_and_durable_reopen_preserve_sender_state(
         b"once encrypted retry"
     );
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache() {
+    let mut state = temp_state_store("calendar-current-cold");
+    let secure = MemorySecureKeyStore::new();
+    let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
+    let (mut alice, _) =
+        two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
+    let realm_id = arkret_sdk::RealmId::new(realm).unwrap();
+    let event =
+        |byte| arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [byte; 32]);
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: realm_id.clone(),
+    };
+    let snapshot = state.mls_checkpoint_for_scope(&scope).unwrap();
+    let group_ref = event(61);
+    state
+        .record_mls_group_state_ref_for_effective_scope(
+            realm,
+            None,
+            &snapshot.group_id,
+            snapshot.epoch,
+            group_ref.clone(),
+        )
+        .unwrap();
+    let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
+        "1.0",
+        "application/vnd.arkret.strand-metadata+json",
+        arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+        scope.clone(),
+        "ak.strand.update",
+        alice.epoch(),
+        group_ref.clone(),
+        alice.local_content_sender_domain().unwrap(),
+        arkret_sdk::EventContentRoutingContext::None,
+    )
+    .unwrap();
+    let plaintext = json!({"title":"Cold calendar","fields":{"calendar":{"start":"2026-10-07","end":"2026-10-08","timezone":"UTC","tzdb_version":"2025b","all_day":true,"status":"confirmed"}}});
+    let encrypted = alice
+        .encrypt_payload(header, &serde_json::to_vec(&plaintext).unwrap())
+        .unwrap();
+    let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(&encrypted).unwrap();
+    let strand_id = arkret_sdk::StrandId::from_event_id(&event(62));
+    let mut strand = arkret_sdk::Strand::discussion(
+        strand_id.clone(),
+        realm_id.clone(),
+        "",
+        fixture::account_actor("did:web:alice.example"),
+    );
+    strand.metadata = None;
+    strand.encrypted_metadata = Some(envelope.clone());
+    let stream = arkret_sdk::CommitStreamRef::Realm {
+        realm_id: realm_id.clone(),
+    };
+    let revision = arkret_sdk::CurrentRevision {
+        commit_id: arkret_sdk::RealmCommitId::from_digest([65; 32]),
+        stream_position: 65,
+    };
+    let source_ref = arkret_sdk::CommittedEventRef {
+        event_id: event(63),
+        commit_id: arkret_sdk::RealmCommitId::from_digest([63; 32]),
+        stream_ref: stream.clone(),
+        stream_position: 63,
+    };
+    let source = arkret_wire::CalendarScheduleSourceValue {
+        effective_scope: scope.clone(),
+        source: Some(source_ref.clone()),
+        strand_revision: revision.clone(),
+        metadata_context: Some(arkret_wire::CalendarMetadataContext {
+            source: source_ref,
+            event_kind: arkret_sdk::EventKind::StrandUpdate,
+            signer_id: fixture::account_actor("did:web:alice.example"),
+            payload_digest: envelope.payload_digest().unwrap(),
+        }),
+    };
+    let rows = vec![
+        arkret_wire::TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::Strand {
+                strand_id: strand_id.clone(),
+            },
+            source_stream_ref: stream.clone(),
+            revision: revision.clone(),
+            value: serde_json::to_value(strand).unwrap(),
+        },
+        arkret_wire::TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::CalendarScheduleSource {
+                strand_id: strand_id.clone(),
+            },
+            source_stream_ref: stream.clone(),
+            revision: revision.clone(),
+            value: serde_json::to_value(source).unwrap(),
+        },
+        arkret_wire::TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::MlsGroup {
+                scope_ref: scope.clone(),
+            },
+            source_stream_ref: stream,
+            revision,
+            value: serde_json::to_value(accepted_mls_base_current(
+                &scope,
+                event(60),
+                group_ref,
+                snapshot.epoch,
+            ))
+            .unwrap(),
+        },
+    ];
+    fixture::install_current_entries(&mut state, realm, rows.clone());
+    assert!(state.load().raw_operations.is_empty());
+    assert!(
+        state
+            .mls_decrypted_plaintext_for(realm, envelope.payload_digest().unwrap().as_str())
+            .is_none()
+    );
+    let open = |state: &crate::state::LocalStateStore, keys: &MemorySecureKeyStore| {
+        crate::views::metadata::open_metadata_with_secure_store(
+            state,
+            realm,
+            strand_id.as_str(),
+            &envelope,
+            &fixture::authority(bob_actor),
+            &fixture::device_id(bob_device),
+            keys,
+        )
+    };
+    let mut bad = rows.clone();
+    let arkret_wire::TypedCurrentResult::Value { value, .. } = &mut bad[1];
+    value["metadata_context"]["signer_id"] =
+        json!(fixture::account_actor("did:web:mallory.example"));
+    fixture::install_current_entries(&mut state, realm, bad);
+    assert!(open(&state, &secure).is_none());
+    fixture::install_current_entries(&mut state, realm, rows);
+    assert!(open(&state, &MemorySecureKeyStore::new()).is_none());
+    assert_eq!(open(&state, &secure), Some(plaintext));
+}

@@ -95,6 +95,8 @@ struct DurableOutboundState {
         arkret_sdk::EventId,
         crate::mls::persistence::MlsLocalCheckpointEnvelope,
     >,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    mls_rejection_cleanup_intents: std::collections::BTreeMap<arkret_sdk::EventId, String>,
     // Opaque diagnostics only; retired ingress records can never be replayed
     // or used as evidence of an authority commit.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -563,7 +565,24 @@ async fn mutate_authenticated_state_in_store<R>(
             "creator inconsistency quarantined durably; requested queue mutation stopped".into(),
         ))
     } else {
-        Ok(mutation(&mut state)?)
+        let protected = state
+            .items
+            .iter()
+            .filter(|item| state.mls_commit_checkpoints.contains_key(item.event_id()))
+            .map(|item| (item.event_id().clone(), item.request().clone()))
+            .collect::<Vec<_>>();
+        let result = mutation(&mut state)?;
+        for (id, request) in protected {
+            if state.mls_commit_checkpoints.contains_key(&id)
+                && !state
+                    .items
+                    .iter()
+                    .any(|item| item.event_id() == &id && item.request() == &request)
+            {
+                return Err(garth::Error::Storage("frozen MLS recovery material cannot be compacted or rewritten before retirement".into()));
+            }
+        }
+        Ok(result)
     };
     let changed =
         serde_json::to_string(&state).map_err(|error| garth::Error::Storage(error.to_string()))?;
@@ -698,7 +717,24 @@ async fn mutate_state_in_file<R>(
             "creator inconsistency quarantined durably; requested queue mutation stopped".into(),
         ))
     } else {
-        Ok(mutation(&mut state)?)
+        let protected = state
+            .items
+            .iter()
+            .filter(|item| state.mls_commit_checkpoints.contains_key(item.event_id()))
+            .map(|item| (item.event_id().clone(), item.request().clone()))
+            .collect::<Vec<_>>();
+        let result = mutation(&mut state)?;
+        for (id, request) in protected {
+            if state.mls_commit_checkpoints.contains_key(&id)
+                && !state
+                    .items
+                    .iter()
+                    .any(|item| item.event_id() == &id && item.request() == &request)
+            {
+                return Err(garth::Error::Storage("frozen MLS recovery material cannot be compacted or rewritten before retirement".into()));
+            }
+        }
+        Ok(result)
     };
     let changed =
         serde_json::to_string(&state).map_err(|error| garth::Error::Storage(error.to_string()))?;
@@ -920,6 +956,51 @@ impl InksonOutboundStore {
     ) -> garth::Result<()> {
         self.mutate_state(|state| {
             state.mls_commit_checkpoints.remove(event_id);
+            state.mls_rejection_cleanup_intents.remove(event_id);
+            Ok(())
+        })
+        .await
+    }
+
+    pub(crate) async fn begin_mls_rejection_cleanup(
+        &self,
+        event: &arkret_sdk::Event,
+    ) -> garth::Result<()> {
+        self.mutate_state(|state| {
+            let item = state
+                .items
+                .iter()
+                .find(|item| item.event_id() == &event.event_id)
+                .ok_or_else(|| {
+                    garth::Error::Storage("MLS cleanup has no durable retry unit".into())
+                })?;
+            if item.submission.primary_event() != event
+                || item.status != garth::SendQueueStatus::Rejected
+                || !matches!(
+                    &item.submission.state,
+                    garth::SubmissionState::Rejected {
+                        status: arkret_wire::AuthorityRejectionStatus::Rejected,
+                        ..
+                    }
+                )
+            {
+                return Err(garth::Error::Storage(
+                    "MLS cleanup does not bind a durable rejected exact Event".into(),
+                ));
+            }
+            let identity =
+                arkret_sdk::canonical::canonical_sha256(&(item.request(), &item.submission.state))?
+                    .to_string();
+            if let Some(existing) = state.mls_rejection_cleanup_intents.get(&event.event_id)
+                && existing != &identity
+            {
+                return Err(garth::Error::Storage(
+                    "MLS cleanup identity conflict".into(),
+                ));
+            }
+            state
+                .mls_rejection_cleanup_intents
+                .insert(event.event_id.clone(), identity);
             Ok(())
         })
         .await
@@ -4401,15 +4482,100 @@ mod tests {
         changed.ciphertext_hex.push('0');
         assert!(
             reopened
-                .freeze_mls_commit(submission, changed)
+                .freeze_mls_commit(submission.clone(), changed)
                 .await
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(path).unwrap(),
+            std::fs::read(&path).unwrap(),
             before,
             "substitution must be zero write"
         );
+        assert!(
+            reopened
+                .begin_mls_rejection_cleanup(submission.primary_event())
+                .await
+                .is_err()
+        );
+        reopened
+            .mutate_state(|state| {
+                let item = state
+                    .items
+                    .iter_mut()
+                    .find(|item| item.event_id() == &submission.event_id)
+                    .unwrap();
+                item.submission
+                    .apply_outcome(arkret_wire::AuthoritySubmitOutcome::Rejected {
+                        status: arkret_wire::AuthorityRejectionStatus::Rejected,
+                        reason_code: "failed_precondition".into(),
+                    })?;
+                item.status = garth::SendQueueStatus::Rejected;
+                item.settled_at = Some(crate::clock::now_utc());
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let refused = std::fs::read(&path).unwrap();
+        std::fs::create_dir(path.with_extension("json.tmp")).unwrap();
+        assert!(
+            reopened
+                .begin_mls_rejection_cleanup(submission.primary_event())
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), refused);
+        std::fs::remove_dir(path.with_extension("json.tmp")).unwrap();
+        reopened
+            .begin_mls_rejection_cleanup(submission.primary_event())
+            .await
+            .unwrap();
+        let again = InksonOutboundStore::for_test_path(path.clone());
+        again
+            .mutate_state(|state| {
+                assert!(
+                    state
+                        .mls_rejection_cleanup_intents
+                        .contains_key(&submission.event_id)
+                );
+                assert!(
+                    state
+                        .mls_commit_checkpoints
+                        .contains_key(&submission.event_id)
+                );
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(
+            again
+                .mutate_outbound(|queue| Ok(queue
+                    .compact_terminal_before(crate::clock::now_utc() + chrono::TimeDelta::days(1))))
+                .await
+                .is_err()
+        );
+        again
+            .retire_mls_commit_checkpoint(&submission.event_id)
+            .await
+            .unwrap();
+        let retired = InksonOutboundStore::for_test_path(path);
+        assert!(
+            retired
+                .mls_commit_checkpoint(&submission.event_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        retired
+            .mutate_state(|state| {
+                assert!(
+                    !state
+                        .mls_rejection_cleanup_intents
+                        .contains_key(&submission.event_id)
+                );
+                Ok(())
+            })
+            .await
+            .unwrap();
     }
 
     fn enqueue_items(queue: &mut garth::SendQueue, count: usize) {

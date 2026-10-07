@@ -98,7 +98,8 @@ pub(super) fn creator_realm_projection(
             "result":{"status":"value", "value":{
                 "controller_actor_id":crate::mls_api_helpers::local_account_actor_id(actor_id.as_str()).unwrap(),
                 "controller_epoch":0,
-                "authority_generation":0
+                "authority_generation":0,
+                    "authority_event_ref": realm_id.replacen("ak:realm:", "ak:event:", 1)
             }}
         }]}
 
