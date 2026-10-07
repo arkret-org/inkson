@@ -31,7 +31,7 @@ use crate::views::helpers::{
     MentionNode, active_sync_token, parse_mention_nodes, short_protocol_id,
 };
 
-mod agent_modes;
+pub(crate) mod agent_modes;
 mod circle_welcome;
 mod composer;
 mod controller;

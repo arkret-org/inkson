@@ -896,7 +896,6 @@ pub fn KanbanPanel(
         return rsx! {};
     };
     let authority = active_account.authority;
-    let hosted_sidecar_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     // Demo seed fallback remains explicit; normal boards derive from events.
     let seed_fallback_allowed = kanban_seed_fallback_allowed(&base_url);
     let initial_columns = if seed_fallback_allowed {
@@ -1190,14 +1189,8 @@ pub fn KanbanPanel(
             };
             let decrypt_ctx =
                 mls_decrypt_ctx_if_ready(&store, &memo_realm_id, &memo_authority, &memo_device);
-            let _active_sidecar = hosted_sidecar_state().filter(|session| {
-                session.source_realm_id == memo_realm_id
-                    && session.source_strand_id == card.primary_strand_id
-            });
-            let private_card: Option<KanbanCard> = None;
-            let projected_card = private_card.as_ref().unwrap_or(&card);
             card_synthesis_track_entries_with_author_context_and_decrypt(
-                projected_card,
+                &card,
                 &snapshot.raw_operations,
                 &store,
                 Some(author_context),
@@ -2923,6 +2916,7 @@ pub fn KanbanPanel(
                     base_url: base_url.clone(),
                     plaintext_service_id: plaintext_service_id.clone(),
                     principal_id: principal_core_id.clone(),
+                    authority: authority.clone(),
                     account_primary_handle: account_primary_handle(),
                     device_id: active_account.device_id.clone(),
                     selected_realm_id: selected_realm_id.clone(),

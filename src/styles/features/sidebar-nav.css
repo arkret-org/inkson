@@ -875,3 +875,14 @@
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent-2) 11%, transparent)),
     var(--nav-soft);
 }
+
+.agent-mode-badge.is-public {
+  background: color-mix(in srgb, #16a085 24%, var(--ak-bg-soft));
+  color: var(--text, var(--ak-ink));
+  border: 1px solid color-mix(in srgb, #16a085 55%, transparent);
+}
+.agent-mode-badge.is-private {
+  background: color-mix(in srgb, #9b7bd4 26%, var(--ak-bg-soft));
+  color: var(--text, var(--ak-ink));
+  border: 1px solid color-mix(in srgb, #9b7bd4 55%, transparent);
+}

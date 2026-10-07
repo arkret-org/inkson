@@ -3322,6 +3322,8 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.sidebar.show_own_agents", "Show your AI agents");
     dict.set("app.sidebar.opening", "Opening...");
     dict.set("app.sidebar.agent_badge", "AI agent");
+    dict.set("app.sidebar.public_agent_badge", "Public agent");
+    dict.set("app.sidebar.private_agent_badge", "Private agent");
     dict.set("app.sidebar.remark", "Remark");
     dict.set(
         "app.sidebar.remark_title",

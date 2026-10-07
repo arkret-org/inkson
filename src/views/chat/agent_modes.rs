@@ -6,13 +6,13 @@ use std::rc::Rc;
 
 use super::*;
 
-pub(super) type Modes =
+pub(crate) type Modes =
     std::collections::BTreeMap<arkret_sdk::AccountId, arkret_sdk::AgentInteractionMode>;
 type ModeRead<K> = Rc<dyn Fn(K) -> Pin<Box<dyn Future<Output = Modes>>>>;
 type RetryWait = Rc<dyn Fn(u64) -> Pin<Box<dyn Future<Output = ()>>>>;
 
 #[derive(Clone, PartialEq)]
-pub(super) struct AgentModeReadKey {
+pub(crate) struct AgentModeReadKey {
     pub base: String,
     pub authority: arkret_sdk::AccountId,
     pub realm: String,
@@ -107,7 +107,7 @@ fn use_mode_reads<K: Clone + PartialEq + 'static>(
     }
 }
 
-pub(super) fn use_agent_modes(key: AgentModeReadKey) -> Modes {
+pub(crate) fn use_agent_modes(key: AgentModeReadKey) -> Modes {
     use_mode_reads(
         key.clone(),
         key.accounts.len(),

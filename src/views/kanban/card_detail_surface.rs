@@ -7,6 +7,7 @@ pub(super) struct CardDetailContext {
     pub base_url: String,
     pub plaintext_service_id: String,
     pub principal_id: arkret_sdk::DidCoreId,
+    pub authority: arkret_sdk::AccountId,
     pub account_primary_handle: String,
     pub device_id: arkret_sdk::DeviceId,
     pub selected_realm_id: String,
@@ -23,7 +24,7 @@ pub(super) struct CardDetailContext {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct SidecarTrackEditContext {
+struct CardTrackEditContext {
     source_strand_id: String,
 }
 
@@ -44,9 +45,8 @@ pub(super) struct SuspendedTrackEdit {
     pub(super) synthesis_target_id: Option<String>,
 }
 
-/// Only the Synthesis scope edits track content, so it is the only draft a
-/// Sidecar transition has to suspend. Summary / Calendar edits target
-/// `metadata.*` and are unaffected.
+/// Preserve Synthesis drafts when switching cards. Summary / Calendar edits
+/// target `metadata.*` and are unaffected.
 pub(super) fn suspend_track_edit(
     scope: CardEditScope,
     synthesis: String,
@@ -117,6 +117,7 @@ fn CardMemberMentionRow(
     #[props(default)] is_self: bool,
     agent_slug: Option<String>,
     #[props(default)] in_strand: bool,
+    #[props(default)] interaction_mode: Option<arkret_sdk::AgentInteractionMode>,
     onmention: EventHandler<crate::views::chat::MentionInsertRequest>,
 ) -> Element {
     let dot_class = if in_strand {
@@ -189,6 +190,7 @@ fn CardMemberMentionRow(
                     crate::components::AgentIdentity {
                         agent_id: mention_target.as_ref().map(|account| account.principal_id.to_string()).unwrap_or_default(),
                         label: label.clone(),
+                        interaction_mode,
                         label_test_id: Some("card-detail-member".to_owned()),
                     }
                 } else {
@@ -215,6 +217,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         base_url,
         plaintext_service_id,
         principal_id,
+        authority,
         account_primary_handle,
         device_id,
         selected_realm_id,
@@ -237,7 +240,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
     let device_id = device_id.to_string();
     let session_context = crate::app::SessionContext::get();
     let state_store = session_context.state_store;
-    let hosted_sidecar_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let mut member_mention_request =
@@ -318,22 +320,64 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         mut board_status,
         command_queue: _,
     } = controller;
-    let detail_send_scope = selected_card().and_then(|card| {
-        let realm_id = arkret_sdk::RealmId::new(selected_realm_id.clone()).ok()?;
-        let sidecar = hosted_sidecar_state().filter(|session| {
-            session.source_realm_id == selected_realm_id
-                && session.source_strand_id == card.primary_strand_id
-        });
-        match sidecar {
-            Some(session) => session.mls_scope_sidecar_id().ok().map(|sidecar_id| {
-                arkret_sdk::ScopeRef::Sidecar {
-                    realm_id,
-                    sidecar_id,
-                }
-            }),
-            None => Some(arkret_sdk::ScopeRef::Realm { realm_id }),
-        }
-    });
+    let mode_accounts = owned_agent_inventory
+        .read()
+        .as_ref()
+        .and_then(|result| result.as_ref().ok())
+        .map(|inventory| {
+            let store = state_store.read();
+            let joined = store
+                .complete_joined_member_hint_for_realm(&selected_realm_id)
+                .ok()
+                .flatten();
+            crate::operation::authoring_station_id()
+                .ok()
+                .map(|station| {
+                    card_owned_agent_rows(joined.as_ref(), inventory, &station)
+                        .into_iter()
+                        .filter_map(|(actor, _)| {
+                            serde_json::from_str::<arkret_sdk::ActorId>(&actor).ok()
+                        })
+                        .filter_map(|actor| actor.as_account_id().cloned())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+    let interaction_modes = {
+        let store = state_store.read();
+        crate::views::chat::agent_modes::use_agent_modes(
+            crate::views::chat::agent_modes::AgentModeReadKey {
+                base: base_url.clone(),
+                authority,
+                realm: selected_realm_id.clone(),
+                credential: token(),
+                session_epoch: crate::identity::device_directory::session_cache_epoch(),
+                realm_epoch: realm_live_epoch(),
+                sync_ready: crate::app::account_sync_ready(&sync_cursor()),
+                generation: store.current_generation(),
+                ready: store.current_product_view_ready(&selected_realm_id),
+                complete: store
+                    .current_product_view()
+                    .is_some_and(|view| view.realm_id == selected_realm_id && view.complete_cut),
+                reset: store.current_reset_required(),
+                head: arkret_sdk::RealmId::new(selected_realm_id.clone())
+                    .ok()
+                    .and_then(|realm_id| {
+                        store
+                            .verified_commit_stream_cursor(&arkret_sdk::CommitStreamRef::Realm {
+                                realm_id,
+                            })
+                            .ok()
+                            .flatten()
+                    }),
+                accounts: mode_accounts,
+            },
+        )
+    };
+    let detail_send_scope = arkret_sdk::RealmId::new(selected_realm_id.clone())
+        .ok()
+        .map(|realm_id| arkret_sdk::ScopeRef::Realm { realm_id });
     let detail_send_probe = crate::views::secure_send::use_scope_send_probe(
         state_store,
         detail_send_scope,
@@ -347,17 +391,17 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
             "Waiting for sync and encryption readiness".to_owned()
         }
     });
-    let mut sidecar_edit_context_seen = use_signal(SidecarTrackEditContext::default);
+    let mut card_edit_context_seen = use_signal(CardTrackEditContext::default);
     let mut suspended_shared_track_edits = use_signal(BTreeMap::<String, SuspendedTrackEdit>::new);
     let mut card_detail_backdrop_pressed = use_signal(|| false);
     use_effect(move || {
         let selected_strand = selected_card()
             .map(|card| card.primary_strand_id)
             .unwrap_or_default();
-        let next = SidecarTrackEditContext {
+        let next = CardTrackEditContext {
             source_strand_id: selected_strand,
         };
-        let previous = sidecar_edit_context_seen.peek().clone();
+        let previous = card_edit_context_seen.peek().clone();
         if previous == next {
             return;
         }
@@ -366,7 +410,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         // identity reconciliation; only a different card suspends the edit.
         let aliases = event_derived_target_aliases(&state_store.read().load().raw_operations);
         if canonicalized_edit_target(&previous.source_strand_id, &next.source_strand_id, &aliases) {
-            sidecar_edit_context_seen.set(next);
+            card_edit_context_seen.set(next);
             return;
         }
         if editing_card_detail() {
@@ -388,7 +432,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         let suspended = suspended_shared_track_edits
             .write()
             .remove(&next.source_strand_id);
-        sidecar_edit_context_seen.set(next);
+        card_edit_context_seen.set(next);
         if let Some(edit) = suspended {
             card_edit_scope.set(edit.scope);
             card_edit_synthesis.set(edit.synthesis);
@@ -401,20 +445,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
             if let Some(ref card) = selected_card() {
                 {
                     let card_id_label = short_protocol_id(&card.id);
-                    let active_sidecar_session = hosted_sidecar_state().filter(|session| {
-                        session.source_realm_id == selected_realm_id
-                            && session.source_strand_id == card.primary_strand_id
-                    });
-                    let sidecar_track_write = active_sidecar_session.as_ref().map(|session| {
-                        SidecarTrackWriteContext {
-                            sidecar_id: session.mls_scope_sidecar_id().ok(),
-                            ready: session.membership_ready(),
-                        }
-                    });
-                    let private_track_card: Option<KanbanCard> = None;
-                    let track_card = private_track_card.as_ref().unwrap_or(card);
-                    let sidecar_track_active = active_sidecar_session.is_some();
-                    let show_shared_track_base = sidecar_track_active;
                     let board_route_after_close =
                         kanban_card_detail_board_route(&selected_realm_id, selected_board().as_ref());
                     let route_is_card_detail = matches!(
@@ -694,7 +724,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 oninput: move |event: FormEvent| card_edit_due.set(event.value()),
                                                             }
                                                         }
-                                                    } else if !sidecar_track_active {
+                                                    } else {
                                                         Button {
                                                             variant: ButtonVariant::Secondary,
                                                             class: "card-detail-action-menu-item",
@@ -834,7 +864,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         UiIcon { name: "file" }
                                                         span { "Summary" }
                                                     }
-                                                    if !editing_card_detail() && !sidecar_track_active {
+                                                    if !editing_card_detail() {
                                                         Button {
                                                             variant: ButtonVariant::Secondary,
                                                             class: "card-detail-mini-action card-detail-edit-action",
@@ -883,7 +913,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 value: card_edit_description(),
                                                                 token: token(),
                                                                 realm_id: selected_realm_id.clone(),
-                                                                allow_image_upload: !sidecar_track_active,
+                                                                allow_image_upload: true,
                                                                 on_change: move |value| card_edit_description.set(value),
                                                                 slot: "summary".to_owned(),
                                                             }
@@ -905,7 +935,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 let device = device_id.clone();
                                                                 let current = card.clone();
                                                                 let entries = synthesis_entries.clone();
-                                                                let sidecar_write = sidecar_track_write.clone();
+
                                                                 move |_| {
                                                                     spawn(save_card_detail_edit(
                                                                         base.clone(),
@@ -916,7 +946,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         current.clone(),
                                                                         entries.clone(),
                                                                         selected_scope_security_encrypted,
-                                                                        sidecar_write.clone(),
+                                                                        None,
                                                                         card_edit_scope,
                                                                         card_edit_title,
                                                                         card_edit_description,
@@ -1157,7 +1187,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     )}
                                                                 }
                                                             }
-                                                            if !sidecar_track_active && !card.description_locked {
+                                                            if !card.description_locked {
                                                                 div { class: "card-synthesis-footer-action",
                                                                     Button {
                                                                         variant: ButtonVariant::Secondary,
@@ -1195,27 +1225,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         class: "card-detail-synthesis-panel",
                                                         "data-testid": "card-synthesis-panel",
                                                         role: "tabpanel",
-                                                        if show_shared_track_base {
-                                                            div { class: "sidecar-shared-track-base", "data-testid": "sidecar-shared-synthesis-base",
-                                                                span { class: "badge", "Original Strand · read only" }
-                                                                if card.synthesis.trim().is_empty() {
-                                                                    div { class: "card-detail-empty", "No shared synthesis" }
-                                                                } else {
-                                                                    div { class: "card-detail-description card-synthesis-body",
-                                                                        {crate::content::render_blocks(
-                                                                            &crate::content::parse_local_preview_body(&card.synthesis),
-                                                                        )}
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                        if sidecar_track_active {
-                                                            div { class: "sidecar-private-track-label", "data-testid": "sidecar-private-synthesis-label",
-                                                                span { class: "badge", "Private Sidecar overlay" }
-                                                            }
-                                                        }
                                                         if synthesis_entries.is_empty()
-                                                            && track_card.synthesis_locked
+                                                            && card.synthesis_locked
                                                         {
                                                             div {
                                                                 class: "card-detail-empty",
@@ -1224,7 +1235,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             }
                                                         } else if synthesis_entries.is_empty() {
                                                             div { class: "card-detail-empty",
-                                                                div { {if sidecar_track_active { "No private synthesis yet." } else { "No synthesis yet." }} }
+                                                                div { "No synthesis yet." }
                                                             }
                                                         } else {
                                                             div { class: "card-synthesis-track", "data-testid": "card-synthesis-track",
@@ -1412,9 +1423,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             r#type: "button",
                                                                                             class: "card-detail-mini-action card-synthesis-entry-edit",
                                                                                             "data-testid": "card-detail-edit-synthesis-button",
-                                                                                            disabled: !card_detail_edit_ready(track_card),
+                                                                                            disabled: !card_detail_edit_ready(card),
                                                                                             onclick: {
-                                                                                                let current = track_card.clone();
+                                                                                                let current = card.clone();
                                                                                                 let entry_id = entry.id.clone();
                                                                                                 let entry_body = entry.body.clone();
                                                                                                 move |_| {
@@ -1451,13 +1462,13 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                 value: card_edit_synthesis(),
                                                                                                 token: token(),
                                                                                                 realm_id: selected_realm_id.clone(),
-                                                                                                allow_image_upload: !sidecar_track_active,
+                                                                                                allow_image_upload: true,
                                                                                                 on_change: move |value| card_edit_synthesis.set(value),
                                                                                                 slot: "synthesis".to_owned(),
                                                                                             }
                                                                                         }
                                                                                         CardDetailEditActions {
-                                                                                            save_disabled: !detail_send_ready || !card_detail_write_ready(card) || (!sidecar_track_active && !realm_content_write_ready),
+                                                                                            save_disabled: !detail_send_ready || !card_detail_write_ready(card) || !realm_content_write_ready,
                                                                                             blocked_reason: if !card_detail_write_ready(card) {
                                                                                                 "Waiting for the accepted card revision".to_owned()
                                                                                             } else if !detail_send_ready {
@@ -1471,9 +1482,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                 let realm = selected_realm_id.clone();
                                                                                                 let actor = principal_id.clone();
                                                                                                 let device = device_id.clone();
-                                                                                                let current = track_card.clone();
+                                                                                                let current = card.clone();
                                                                                                 let entries = synthesis_entries.clone();
-                                                                                                let sidecar_write = sidecar_track_write.clone();
+
                                                                                                 move |_| {
                                                                                                     spawn(save_card_detail_edit(
                                                                                                         base.clone(),
@@ -1484,7 +1495,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         current.clone(),
                                                                                                         entries.clone(),
                                                                                                         selected_scope_security_encrypted,
-                                                                                                        sidecar_write.clone(),
+                                                                                                        None,
                                                                                                         card_edit_scope,
                                                                                                         card_edit_title,
                                                                                                         card_edit_description,
@@ -1504,7 +1515,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                 }
                                                                                             },
                                                                                             on_cancel: {
-                                                                                                let current = track_card.clone();
+                                                                                                let current = card.clone();
                                                                                                 move |_| {
                                                                                                     reset_card_detail_edit(
                                                                                                         &current,
@@ -1550,13 +1561,13 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         value: card_edit_synthesis(),
                                                                         token: token(),
                                                                         realm_id: selected_realm_id.clone(),
-                                                                        allow_image_upload: !sidecar_track_active,
+                                                                        allow_image_upload: true,
                                                                         on_change: move |value| card_edit_synthesis.set(value),
                                                                         slot: "synthesis".to_owned(),
                                                                     }
                                                                 }
                                                                 CardDetailEditActions {
-                                                                    save_disabled: !detail_send_ready || !card_detail_write_ready(card) || (!sidecar_track_active && !realm_content_write_ready),
+                                                                    save_disabled: !detail_send_ready || !card_detail_write_ready(card) || !realm_content_write_ready,
                                                                     blocked_reason: if !card_detail_write_ready(card) {
                                                                         "Waiting for the accepted card revision".to_owned()
                                                                     } else if !detail_send_ready {
@@ -1570,9 +1581,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         let realm = selected_realm_id.clone();
                                                                         let actor = principal_id.clone();
                                                                         let device = device_id.clone();
-                                                                        let current = track_card.clone();
+                                                                        let current = card.clone();
                                                                         let entries = synthesis_entries.clone();
-                                                                        let sidecar_write = sidecar_track_write.clone();
+
                                                                         move |_| {
                                                                             spawn(save_card_detail_edit(
                                                                                 base.clone(),
@@ -1583,7 +1594,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                 current.clone(),
                                                                                 entries.clone(),
                                                                                 selected_scope_security_encrypted,
-                                                                                sidecar_write.clone(),
+                                                                                None,
                                                                                 card_edit_scope,
                                                                                 card_edit_title,
                                                                                 card_edit_description,
@@ -1603,7 +1614,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         }
                                                                     },
                                                                     on_cancel: {
-                                                                        let current = track_card.clone();
+                                                                        let current = card.clone();
                                                                         move |_| {
                                                                             reset_card_detail_edit(
                                                                                 &current,
@@ -1632,9 +1643,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     variant: ButtonVariant::Secondary,
                                                                     class: "card-detail-mini-action",
                                                                     "data-testid": "card-detail-new-synthesis-button",
-                                                                    disabled: !card_detail_edit_ready(track_card),
+                                                                    disabled: !card_detail_edit_ready(card),
                                                                     onclick: {
-                                                                        let current = track_card.clone();
+                                                                        let current = card.clone();
                                                                         move |_| {
                                                                             prepare_selected_card_for_edit(selected_card);
                                                                             let draft = card_detail_draft_from_card(&current);
@@ -2796,6 +2807,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                         member_id: actor.clone(),
                                                                                         label: slug.clone(),
                                                                                         agent_slug: Some(slug.clone()),
+                                                                                        interaction_mode: serde_json::from_str::<arkret_sdk::ActorId>(actor).ok()
+                                                                                            .and_then(|actor| actor.as_account_id().cloned())
+                                                                                            .and_then(|account| interaction_modes.get(&account).copied()),
                                                                                         in_strand: participant_set.contains(actor),
                                                                                         onmention: on_member_mention,
                                                                                     }

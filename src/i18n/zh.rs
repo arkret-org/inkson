@@ -2783,6 +2783,8 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.sidebar.show_own_agents", "显示你的 AI 助理");
     dict.set("app.sidebar.opening", "正在打开…");
     dict.set("app.sidebar.agent_badge", "AI 助理");
+    dict.set("app.sidebar.public_agent_badge", "公开助理");
+    dict.set("app.sidebar.private_agent_badge", "私有助理");
     dict.set("app.sidebar.remark", "备注");
     dict.set("app.sidebar.remark_title", "本地备注（只对这个账户可见）");
     dict.set("app.sidebar.direct_badge", "私聊");
