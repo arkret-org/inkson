@@ -1661,6 +1661,15 @@ fn validate_floor_product_rows(
                     messages.push((parsed.strand_id, revision.stream_position));
                 }
             }
+            CurrentSelector::Pin { pin_scope } => {
+                // Assertions retain payloads, not the effective roster. Event
+                // kinds and causal history still determine add/remove/reorder.
+                closed_value::<
+                    arkret_models_collaboration::objects::productivity::PinCurrentValue,
+                >(value, "pin")?
+                .validate_for_scope(pin_scope)
+                .map_err(protocol)?;
+            }
             CurrentSelector::MessageReactions { target_ref } => {
                 // This row retains assertions, not actor membership. The chat
                 // fold still requires signed Events in a verified prefix.
@@ -4057,6 +4066,109 @@ mod tests {
         let mut empty = rows.clone();
         set_row_value(empty.last_mut().unwrap(), json!({"assertions": []}));
         validate(&empty).unwrap();
+    }
+
+    #[test]
+    fn signed_floor_pin_assertions_are_closed_and_scope_bound() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let (bundle, _, items) =
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&creator),
+                "alice.example",
+                DEVICE_ID,
+            );
+        let commit = &items.last().unwrap().commit;
+        let head = arkret_wire::CommitStreamHead {
+            stream_ref: commit.stream_ref.clone(),
+            stream_position: commit.stream_position,
+            commit_id: commit.commit_id.clone(),
+        };
+        let event_id = &items[2].event.event_id;
+        let target = arkret_sdk::MessageId::from_event_id(&items[1].event.event_id);
+        let tag = format!("{event_id}:0");
+        let validate = |rows: &[TypedCurrentResult]| {
+            validate_signed_floor_rows(
+                &realm_id,
+                &bundle,
+                &head,
+                arkret_sdk::HistoryAccess::SinceJoin,
+                rows,
+            )
+        };
+        for scope in [
+            arkret_wire::PinScope::Realm {
+                id: realm_id.clone(),
+            },
+            arkret_wire::PinScope::Strand {
+                id: arkret_sdk::StrandId::from_event_id(event_id),
+            },
+            arkret_wire::PinScope::Circle {
+                id: arkret_sdk::CircleId::from_event_id(event_id),
+            },
+            arkret_wire::PinScope::Space {
+                id: arkret_sdk::SpaceId::from_event_id(event_id),
+            },
+        ] {
+            let assertion = json!({"tag_id": tag, "value": {
+                "pin_scope": scope, "target_ref": target, "rank": "a0"
+            }});
+            let mut rows = soland_bootstrap_rows(&bundle, &items);
+            rows.push(TypedCurrentResult::Value {
+                selector: arkret_wire::CurrentSelector::Pin {
+                    pin_scope: scope.clone(),
+                },
+                source_stream_ref: head.stream_ref.clone(),
+                revision: arkret_wire::CurrentRevision {
+                    commit_id: head.commit_id.clone(),
+                    stream_position: head.stream_position,
+                },
+                value: json!({"assertions": [assertion]}),
+            });
+            validate(&rows).unwrap();
+            for payload in [
+                json!({"pin_scope": scope, "target_ref": target}),
+                json!({"pin_scope": scope, "target_ref": target, "rank": "b0", "expected_rank": "a0"}),
+            ] {
+                let mut accepted = rows.clone();
+                set_row_value(
+                    accepted.last_mut().unwrap(),
+                    json!({"assertions": [{"tag_id": tag, "value": payload}]}),
+                );
+                validate(&accepted).unwrap();
+            }
+            for bad in [
+                json!({"assertions": [assertion], "roster": [target]}),
+                json!({"assertions": [assertion, assertion]}),
+                json!({"assertions": [{"tag_id": format!("{event_id}:1"), "value": assertion["value"]}]}),
+                json!({"assertions": [{"tag_id": tag, "actor_id": creator, "value": assertion["value"]}]}),
+                json!({"assertions": [{"tag_id": tag, "kind": "ak.pin.add", "value": assertion["value"]}]}),
+                json!({"assertions": [{"tag_id": tag, "value": {"pin_scope": scope, "target_ref": target, "rank": "!"}}]}),
+                json!({"assertions": [{"tag_id": tag, "value": {"pin_scope": scope, "target_ref": "hidden", "rank": "a0"}}]}),
+                json!({"assertions": [{"tag_id": tag, "value": {"pin_scope": scope, "target_ref": target, "rank": "a0", "note": "plaintext"}}]}),
+            ] {
+                let mut forged = rows.clone();
+                set_row_value(forged.last_mut().unwrap(), bad);
+                assert!(validate(&forged).is_err());
+            }
+            let mut foreign = rows.clone();
+            let TypedCurrentResult::Value { selector, .. } = foreign.last_mut().unwrap();
+            *selector = arkret_wire::CurrentSelector::Pin {
+                pin_scope: arkret_wire::PinScope::Realm {
+                    id: arkret_sdk::RealmId::from_event_id(&items[3].event.event_id),
+                },
+            };
+            assert!(validate(&foreign).is_err());
+            let mut empty = rows.clone();
+            set_row_value(empty.last_mut().unwrap(), json!({"assertions": []}));
+            validate(&empty).unwrap();
+        }
     }
 
     /// A restricted founder Realm: the Station evaluated the join policy at
