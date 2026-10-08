@@ -622,7 +622,26 @@ impl OwnRecoveryTail {
     }
 }
 
-fn require_unchanged_recovery_base(
+// Network proof acquisition pins the accepted lineage coordinate, not a private
+// receive ratchet. Freeze the latest executable state only after that proof is
+// available; every subsequent installation still uses the full checkpoint CAS.
+pub(super) fn refreeze_recovery_base(
+    actual: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    requested: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+) -> Result<crate::mls::persistence::MlsLocalCheckpointEnvelope, String> {
+    if actual.realm_id != requested.realm_id
+        || actual.group_id != requested.group_id
+        || actual.epoch != requested.epoch
+        || actual.admission_epoch != requested.admission_epoch
+        || actual.group_state_event_id != requested.group_state_event_id
+        || actual.group_state_event_id.is_none()
+    {
+        return Err("MLS recovery accepted local base changed during proof acquisition".into());
+    }
+    Ok(actual.clone())
+}
+
+pub(super) fn require_unchanged_recovery_base(
     actual: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
     expected: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
     reference: &arkret_sdk::EventId,
@@ -857,17 +876,21 @@ pub(crate) async fn recover_remote_tail(
     let _install = welcome_install_lock().lock().await;
     tail.check_session()?;
     let current = tail.current.clone();
-    state.read(|store| {
+    let base = state.read(|store| {
+        let actual = store
+            .mls_checkpoint_for_scope_and_group(scope, group_id.as_str())
+            .ok_or("MLS recovery local base disappeared")?;
+        let frozen = refreeze_recovery_base(&actual, &requested_base)?;
         tail.check_install(
             store,
             authority,
             scope,
             requested_base_ref,
             requested_base.epoch,
-            &requested_base,
-        )
+            &frozen,
+        )?;
+        Ok::<_, String>(frozen)
     })?;
-    let base = requested_base.clone();
     if base.epoch >= current.epoch {
         return Ok(0);
     }
@@ -2235,5 +2258,22 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("private ratchet"));
+    }
+    #[test]
+    fn ordinary_recovery_refreeze_rejects_changed_accepted_coordinates() {
+        let mut requested = checkpoint();
+        requested.group_state_event_id = Some(accepted_event());
+        for field in 0..5 {
+            let mut changed = requested.clone();
+            match field {
+                0 => changed.epoch += 1,
+                1 => changed.group_state_event_id = None,
+                2 => changed.realm_id.push('x'),
+                3 => changed.group_id.push('x'),
+                _ => changed.admission_epoch += 1,
+            }
+            assert!(refreeze_recovery_base(&changed, &requested).is_err());
+            assert_eq!(requested.group_state_event_id, Some(accepted_event()));
+        }
     }
 }
