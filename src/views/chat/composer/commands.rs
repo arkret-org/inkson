@@ -36,7 +36,38 @@ pub(super) fn upload_dropped_attachments(
 ) {
     let mut chat_draft = controller.draft;
     let mut compose_upload_status = controller.compose_upload_status;
+    let session = consume_context::<crate::app::SessionContext>();
+    let state_store = crate::app::runtime_adapter::state_store_handle(session.state_store);
+    let session_generation = *session.session_generation.peek();
+    let selected_channel = controller.selected_channel.peek().clone();
+    let scope = controller
+        .channels
+        .peek()
+        .iter()
+        .find(|channel| channel.strand_id == selected_channel)
+        .and_then(|channel| ordinary_composer_scope(&realm_id, channel));
     spawn(async move {
+        let Some(scope) = scope else {
+            compose_upload_status
+                .set("Attachment upload requires a verified conversation scope.".to_owned());
+            return;
+        };
+        let input = crate::mls::send_gate::MlsSendGateInput::capture(&state_store, &scope);
+        match crate::mls::send_gate::resolve_mls_send_gate(&input, &scope).await {
+            Ok(crate::mls::send_gate::MlsSendGate::Plaintext) => {}
+            Ok(crate::mls::send_gate::MlsSendGate::Encrypted(_)) => {
+                compose_upload_status.set(
+                    "Attachment upload is unavailable for this encrypted conversation.".to_owned(),
+                );
+                return;
+            }
+            Err(error) => {
+                compose_upload_status.set(format!(
+                    "Attachment upload requires verified conversation security: {error}"
+                ));
+                return;
+            }
+        }
         let api = match crate::transport::auth::authed_api_with_sync(&base_url, api_token, None) {
             Ok(api) => api,
             Err(err) => {
@@ -71,12 +102,53 @@ pub(super) fn upload_dropped_attachments(
                     continue;
                 }
             };
+            if *session.session_generation.peek() != session_generation
+                || *controller.selected_channel.peek() != selected_channel
+            {
+                compose_upload_status.set(
+                    "Attachment upload stopped because the session or conversation changed."
+                        .to_owned(),
+                );
+                return;
+            }
+            let input = crate::mls::send_gate::MlsSendGateInput::capture(&state_store, &scope);
+            match crate::mls::send_gate::resolve_mls_send_gate(&input, &scope).await {
+                Ok(crate::mls::send_gate::MlsSendGate::Plaintext) => {}
+                Ok(crate::mls::send_gate::MlsSendGate::Encrypted(_)) => {
+                    compose_upload_status.set(
+                        "Attachment upload is unavailable for this encrypted conversation."
+                            .to_owned(),
+                    );
+                    return;
+                }
+                Err(error) => {
+                    compose_upload_status.set(format!(
+                        "Attachment upload requires verified conversation security: {error}"
+                    ));
+                    return;
+                }
+            }
+            if *session.session_generation.peek() != session_generation
+                || *controller.selected_channel.peek() != selected_channel
+            {
+                compose_upload_status.set(
+                    "Attachment upload stopped because the session or conversation changed."
+                        .to_owned(),
+                );
+                return;
+            }
             match clients
                 .blob()
                 .upload_bytes_scoped(bytes, &content_type, Some(&realm_id), Some(&filename))
                 .await
             {
                 Ok(resp) => {
+                    if *session.session_generation.peek() != session_generation
+                        || *controller.selected_channel.peek() != selected_channel
+                    {
+                        compose_upload_status.set("Attachment upload stopped because the session or conversation changed.".to_owned());
+                        return;
+                    }
                     let current = chat_draft();
                     let needs_space =
                         !current.is_empty() && !current.ends_with(' ') && !current.ends_with('\n');

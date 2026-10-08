@@ -2047,3 +2047,97 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
     assert!(open(&state, &MemorySecureKeyStore::new()).is_none());
     assert_eq!(open(&state, &secure), Some(plaintext));
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn ordinary_recovery_refreezes_received_private_base_after_proof() {
+    use super::super::artifact_consumer::{
+        refreeze_recovery_base, require_unchanged_recovery_base,
+    };
+    let mut state = temp_state_store("recovery-refreeze-private-base");
+    let secure = MemorySecureKeyStore::new();
+    let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
+    let bob_actor = "did:web:bob.example";
+    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
+    let (mut alice, _) =
+        two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+    };
+    let reference = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x61; 32]);
+    let mut requested = state.mls_checkpoint_for(realm).unwrap();
+    requested.group_state_event_id = Some(reference.clone());
+    let secret = load_device_checkpoint_secret(
+        &secure,
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
+    )
+    .unwrap();
+    let mut bob = crate::mls::persistence::restore_envelope(&requested, &secret, 1).unwrap();
+    let first = alice
+        .encrypt_payload(test_message_header(&alice, realm), b"first")
+        .unwrap();
+    let second = alice
+        .encrypt_payload(test_message_header(&alice, realm), b"second")
+        .unwrap();
+    // A legitimate receive runs while the bounded source proof is in flight.
+    assert_eq!(bob.decrypt_payload(&second).unwrap(), b"second");
+    let received_state = bob.export_state_record().unwrap();
+    let mut received = crate::mls::persistence::encrypt_state(
+        realm,
+        &received_state.group_id,
+        received_state.epoch,
+        &serde_json::to_vec(&received_state).unwrap(),
+        &secret,
+        &[0x62; 16],
+    );
+    received.group_state_event_id = Some(reference.clone());
+    assert_ne!(received.ciphertext_hex, requested.ciphertext_hex);
+    assert!(require_unchanged_recovery_base(&received, &requested, &reference, 1).is_err());
+    let frozen = refreeze_recovery_base(&received, &requested).unwrap();
+    assert_eq!(frozen, received);
+    let mut recovered = crate::mls::persistence::restore_envelope(&frozen, &secret, 1).unwrap();
+    // The newer provider retains its skipped receive key after serialization.
+    assert_eq!(recovered.decrypt_payload(&first).unwrap(), b"first");
+    let changed_state = recovered.export_state_record().unwrap();
+    let mut changed = crate::mls::persistence::encrypt_state(
+        realm,
+        &changed_state.group_id,
+        changed_state.epoch,
+        &serde_json::to_vec(&changed_state).unwrap(),
+        &secret,
+        &[0x63; 16],
+    );
+    changed.group_state_event_id = Some(reference.clone());
+    // A receive after freezing still fences installation: the durable candidate
+    // remains byte-for-byte untouched by this rejected installation attempt.
+    let before = changed.clone();
+    assert!(require_unchanged_recovery_base(&changed, &frozen, &reference, 1).is_err());
+    assert_eq!(changed, before);
+    let binding = arkret_sdk::MlsGovernanceBindingPayload::new(
+        scope.clone(),
+        Some(reference.clone()),
+        1,
+        2,
+        0,
+    )
+    .unwrap();
+    let commit = alice
+        .self_update_commit_with_governance_binding(&binding)
+        .unwrap();
+    let accepted = crate::test_support::accepted_mls_commit(
+        &scope,
+        fixture::account_actor("did:web:alice.example"),
+        &commit,
+        reference.clone(),
+        0x64,
+    );
+    // Consume the actual accepted RFC Commit from the refrozen provider, rather
+    // than authoring a new rotation to compensate for the public current.
+    let mut recovered = crate::mls::persistence::restore_envelope(&frozen, &secret, 1).unwrap();
+    require_unchanged_recovery_base(&received, &frozen, &reference, 1).unwrap();
+    recovered
+        .install_recovered_remote_commit(&accepted, &reference)
+        .unwrap();
+    assert_eq!(recovered.epoch(), 2);
+}
