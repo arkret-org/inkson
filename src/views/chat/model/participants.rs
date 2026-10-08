@@ -376,7 +376,6 @@ pub(crate) fn space_participants(
     }
 
     if !principal_id.trim().is_empty()
-        && !participants.iter().any(|participant| participant.is_self)
         && let Ok(own_actor) = crate::mls_api_helpers::local_account_actor_id(principal_id)
         && joined
             .as_ref()

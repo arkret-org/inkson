@@ -208,6 +208,74 @@ fn participant_roster_ignores_noncanonical_identity_fields() {
 }
 
 #[test]
+fn current_only_self_participant_keeps_the_account_viewer_handle_without_leaking_to_remote() {
+    let principal = "ak:did_core:web:current-self-handle.example";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let own = crate::mls_api_helpers::local_account_actor_id(principal).unwrap();
+    let remote = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        own.signing_principal_id().clone(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:remote-station.example").unwrap(),
+    ));
+    let account = crate::test_support::AccountFixture::new(principal)
+        .station(own.as_account_id().unwrap().station_id.as_str())
+        .build();
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = LocalStateStore::with_path(directory.path().join("self-handle.json"));
+    store.switch_active_account(&account).unwrap();
+    let handle = "alice:local.host";
+    store.set_primary_handle_for_principal_id(principal, handle);
+    let entries =
+        [own.clone(), remote.clone()].map(|actor| arkret_wire::TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::MemberState { actor_id: actor },
+            source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: realm.parse().unwrap(),
+            },
+            revision: arkret_wire::CurrentRevision {
+                commit_id: arkret_sdk::RealmCommitId::from_digest([0x42; 32]),
+                stream_position: 2,
+            },
+            value: json!({"membership":"join","joined_at":"2026-10-08T00:00:00.000Z"}),
+        });
+    store
+        .install_current_product_view(
+            crate::current_projection::RealmCurrentView::new(realm, entries.to_vec(), true)
+                .unwrap(),
+        )
+        .unwrap();
+    let participants = space_participants(None, &store, realm, principal);
+    assert_eq!(participants.len(), 2);
+    let own_row = participants
+        .iter()
+        .find(|row| row.actor_id.as_ref() == Some(&own))
+        .unwrap();
+    assert!(own_row.is_self);
+    assert_eq!(own_row.handle_label.as_deref(), Some(handle));
+    assert_eq!(
+        sender_display_label(principal, principal, "", &participants),
+        handle
+    );
+    let remote_row = participants
+        .iter()
+        .find(|row| row.actor_id.as_ref() == Some(&remote))
+        .unwrap();
+    assert!(!remote_row.is_self);
+    assert!(remote_row.handle_label.is_none());
+
+    let mut departed = entries.to_vec();
+    let arkret_wire::TypedCurrentResult::Value { value, .. } = &mut departed[0];
+    *value = json!({"membership":"leave"});
+    store
+        .install_current_product_view(
+            crate::current_projection::RealmCurrentView::new(realm, departed, true).unwrap(),
+        )
+        .unwrap();
+    let remaining = space_participants(None, &store, realm, principal);
+    assert_eq!(remaining.len(), 1);
+    assert!(!remaining[0].is_self);
+    assert!(remaining[0].handle_label.is_none());
+}
+
+#[test]
 fn participant_roster_rejects_naked_handle_field() {
     let projection = json!({
         "member_roster_entries": [
@@ -278,7 +346,24 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
 
     let temp = std::env::temp_dir().join(format!("inkson-chat-roster-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
-    crate::test_support::install_current_entries(&mut store, POLICY_REALM, vec![policy]);
+    let membership = arkret_wire::TypedCurrentResult::Value {
+        selector: arkret_wire::CurrentSelector::MemberState {
+            actor_id: arkret_sdk::ActorId::account(bob_subject),
+        },
+        source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+            realm_id: POLICY_REALM.parse().unwrap(),
+        },
+        revision: arkret_wire::CurrentRevision {
+            commit_id: arkret_sdk::RealmCommitId::from_digest([0x41; 32]),
+            stream_position: 1,
+        },
+        value: json!({"membership":"join","joined_at":"2026-10-08T00:00:00.000Z"}),
+    };
+    crate::test_support::install_current_entries(
+        &mut store,
+        POLICY_REALM,
+        vec![policy, membership],
+    );
     let participants = space_participants(
         Some(&projection),
         &store,
