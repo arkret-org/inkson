@@ -12,11 +12,12 @@
 //!
 //! All client-side attachment encryption is delegated to
 //! [`arkret_crypto::blob_aead`], the canonical implementation of
-//! `ak.blob.stream_aead.v1` (chunked streaming AEAD) and
-//! `ak.blob.whole_file_aead.v1` (whole-file AEAD). Inkson no longer ships a
-//! private XChaCha envelope or its own nonce derivation; the
-//! `mls_exported_secret` (32 bytes from the MLS exporter) is passed straight
-//! through as the SDK `content_key`. The envelope carried on the wire is the
+//! `ak.blob.stream_aead.v1` (XChaCha20-Poly1305 streaming AEAD).
+//! The encrypted composer path is not yet connected. Its caller must freeze
+//! a fresh SDK `AttachmentContentKeySalt`, resolve one authorized winning
+//! MLS checkpoint, and derive through the registered `ak.blob-content-key-v1`
+//! Context before passing the key to the codec. Retrying the same object must
+//! preserve its salt, descriptor and ciphertext. The wire envelope is the
 //! SDK's [`arkret_models_crypto::EncryptedAttachment`], whose serde shape is exactly
 //! `blob.schema.json#/$defs/encrypted_attachment`.
 
