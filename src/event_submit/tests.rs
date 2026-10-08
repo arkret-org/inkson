@@ -2250,6 +2250,77 @@ pub(crate) fn queue_message_operation_for_test(operation: &LocalOperation) -> Qu
 
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
+async fn application_authoring_waits_for_detail_even_with_a_complete_durable_cut() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut local = crate::state::LocalStateStore::with_path(directory.path().join("state.json"));
+    local.promote_accepted_context_for_test(&arkret_sdk::Did::new(PRINCIPAL).unwrap());
+    let authority = local.active_authority().unwrap();
+    local
+        .save_sync_demand_filter(Some(arkret_sdk::sync::AccountFilter {
+            realm_ids: Some(vec![realm_id(REALM)]),
+            ..Default::default()
+        }))
+        .unwrap();
+    let heads = json!([{
+        "stream_ref": {"kind": "realm", "realm_id": REALM},
+        "stream_position": 1,
+        "commit_id": "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq"
+    }]);
+    let frame: arkret_sdk::sync::AccountSubscribeFrame = serde_json::from_value(json!({
+        "kind": "delta", "cursor": "ak:cursor:YQ", "realms": {REALM: {
+            "current": {"realm_id": REALM, "governance_generation": 1, "stream_heads": heads, "entries": []},
+            "baseline": {
+                "snapshot_cursor": "ak:cursor:cw", "cut_revision": 1,
+                "coverage": {"realm_id": REALM, "stream_heads": heads, "complete_for_authorized_streams": true},
+                "complete": true
+            }
+        }}
+    })).unwrap();
+    let index = crate::state::CurrentIndex::open(&authority, 0, local.current_index_location())
+        .await
+        .unwrap();
+    index.stage_frame(0, &frame).await.unwrap().finish();
+    local.set_current_generation(1);
+    assert!(index.read_complete_cut(REALM).await.unwrap().is_some());
+    assert!(local.realm_detail_invalidated(REALM));
+    let state = std::sync::Arc::new(std::sync::Mutex::new(local));
+    let read = state.clone();
+    let write = state.clone();
+    let handle = crate::runtime::input::StateStoreHandle::new(
+        move |callback| callback(&read.lock().unwrap()),
+        move |callback| callback(&mut write.lock().unwrap()),
+    );
+    let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:1/".parse().unwrap())
+        .allow_insecure_localhost()
+        .build()
+        .unwrap();
+    let submitter = EventSubmitter::new(http)
+        .with_authority(authority)
+        .with_state_store(handle);
+    let intent = message_intent(
+        REALM,
+        "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+    );
+    let waiting = submitter.await_application_current(&intent);
+    tokio::pin!(waiting);
+    tokio::select! {
+        outcome = &mut waiting => panic!("durable cut bypassed the invalidated detail: {outcome:?}"),
+        _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+    }
+    {
+        let mut state = state.lock().unwrap();
+        let accepted = state.prepare_account_demand_frame(&frame).unwrap();
+        state.finish_account_demand_frame(&accepted).unwrap();
+        assert!(!state.realm_detail_invalidated(REALM));
+    }
+    tokio::time::timeout(Duration::from_secs(2), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
 async fn ordinary_message_is_durable_while_the_network_writer_is_busy() {
     let directory = tempfile::tempdir().unwrap();
     let state_path = directory.path().join("state.json");

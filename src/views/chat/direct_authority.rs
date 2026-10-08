@@ -105,11 +105,17 @@ pub(super) fn use_direct_authority(
             ))
         }),
         move |(base_url, realm_id, authority, credential, epoch, peer, request_key)| {
-            let Ok(query_lock) = crate::mls::direct_binding::query_lock(&authority, &peer) else {
-                return;
-            };
             spawn(async move {
-                let _query_guard = query_lock.lock().await;
+                let Ok(_query_guard) =
+                    crate::mls::direct_binding::coordinate_query(&authority, &peer).await
+                else {
+                    return;
+                };
+                if current_request_key.peek().as_ref() != Some(&request_key)
+                    || epoch != crate::identity::device_directory::session_cache_epoch()
+                {
+                    return;
+                }
                 let Ok(query_sequence) = crate::mls::direct_binding::begin_query(&authority, &peer)
                 else {
                     return;

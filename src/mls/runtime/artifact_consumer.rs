@@ -635,6 +635,7 @@ pub(super) fn refreeze_recovery_base(
         || actual.admission_epoch != requested.admission_epoch
         || actual.group_state_event_id != requested.group_state_event_id
         || actual.group_state_event_id.is_none()
+        || actual.aead_version != requested.aead_version
     {
         return Err("MLS recovery accepted local base changed during proof acquisition".into());
     }
@@ -2275,5 +2276,32 @@ mod tests {
             assert!(refreeze_recovery_base(&changed, &requested).is_err());
             assert_eq!(requested.group_state_event_id, Some(accepted_event()));
         }
+    }
+
+    #[test]
+    fn ordinary_recovery_captures_latest_private_ratchet_after_authorized_read() {
+        let mut requested = checkpoint();
+        requested.group_state_event_id = Some(accepted_event());
+        let mut received = requested.clone();
+        received.ciphertext_hex.push_str("00");
+        received.app_messages_observed += 1;
+        let base = refreeze_recovery_base(&received, &requested).unwrap();
+        assert_eq!(base, received);
+        require_unchanged_recovery_base(&received, &base, &accepted_event(), base.epoch).unwrap();
+        let mut later_receive = received.clone();
+        later_receive.ciphertext_hex.push_str("11");
+        assert!(
+            require_unchanged_recovery_base(&later_receive, &base, &accepted_event(), base.epoch,)
+                .is_err()
+        );
+        let mut advanced = received.clone();
+        advanced.epoch += 1;
+        assert!(refreeze_recovery_base(&advanced, &requested).is_err());
+        let mut another_group = received.clone();
+        another_group.group_id.push_str("other");
+        assert!(refreeze_recovery_base(&another_group, &requested).is_err());
+        let mut missing_base = requested.clone();
+        missing_base.group_state_event_id = None;
+        assert!(refreeze_recovery_base(&missing_base, &missing_base).is_err());
     }
 }

@@ -197,6 +197,14 @@ pub(crate) fn query_lock(
     locks.insert(key, Arc::downgrade(&lock));
     Ok(lock)
 }
+
+// Hold the same pair lock through resolve and verified installation.
+pub(crate) async fn coordinate_query(
+    account: &arkret_sdk::AccountId,
+    peer: &arkret_sdk::contact_operations::ContactPeer,
+) -> anyhow::Result<tokio::sync::OwnedMutexGuard<()>> {
+    Ok(query_lock(account, peer)?.lock_owned().await)
+}
 pub(crate) fn begin_query(
     account: &arkret_sdk::AccountId,
     peer: &arkret_sdk::contact_operations::ContactPeer,
@@ -731,6 +739,50 @@ pub(crate) async fn ensure_binding(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn direct_queries_coordinate_same_pair_without_weakening_invalidation() {
+        let account = |name: &str| {
+            arkret_sdk::AccountId::new(
+                arkret_sdk::DidCoreId::new(format!("ak:did_core:web:{name}.example")).unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:query-coordination-station.example")
+                    .unwrap(),
+            )
+        };
+        let owner = account("query-coordination-owner");
+        let peer = arkret_sdk::contact_operations::ContactPeer::Human {
+            account_id: account("query-coordination-peer"),
+        };
+        let other = arkret_sdk::contact_operations::ContactPeer::Human {
+            account_id: account("query-coordination-other-peer"),
+        };
+        let first = coordinate_query(&owner, &peer).await.unwrap();
+        let sequence = begin_query(&owner, &peer).unwrap();
+        let waiting = coordinate_query(&owner, &peer);
+        tokio::pin!(waiting);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(10), &mut waiting)
+                .await
+                .is_err()
+        );
+        assert!(query_is_current(&owner, &peer, sequence));
+        let independent = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            coordinate_query(&owner, &other),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        drop(independent);
+        drop(first);
+        let second = waiting.await.unwrap();
+        let next = begin_query(&owner, &peer).unwrap();
+        assert!(!query_is_current(&owner, &peer, sequence));
+        assert!(query_is_current(&owner, &peer, next));
+        invalidate_query(&owner, &peer);
+        assert!(!query_is_current(&owner, &peer, next));
+        drop(second);
+    }
+
     use serde_json::json;
 
     use super::*;

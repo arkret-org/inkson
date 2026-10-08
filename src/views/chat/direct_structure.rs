@@ -446,6 +446,8 @@ async fn submit_structure(
     device: arkret_sdk::DeviceId,
     mut store: SyncSignal<LocalStateStore>,
 ) -> anyhow::Result<(crate::models::SubmitEventResult, Option<String>)> {
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    tracing::warn!(action = %write.action, stage = "starting", "Direct structure write diagnostic");
     let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
     anyhow::ensure!(
         crate::secure_key_store::active_device_seed_scope()
@@ -522,6 +524,8 @@ async fn submit_structure(
     } else {
         None
     };
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    tracing::warn!(action = %write.action, stage = "encrypted", "Direct structure write diagnostic");
     let draft = builder_for(&write, &realm, actor, envelope.clone())?;
     let intent = crate::mls::direct_binding::participant_authoring_intent(
         draft.intent()?,
@@ -532,6 +536,8 @@ async fn submit_structure(
     let barrier = store.read().begin_durable_flush()?;
     barrier.wait().await?;
     fence.check()?;
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    tracing::warn!(action = %write.action, stage = "durable", "Direct structure write diagnostic");
     let api = authed_api_with_sync(&base, token, None)?;
     let accepted = api
         .event_submitter()?
@@ -866,6 +872,8 @@ pub(super) fn DirectStructurePanel(
                         move |_| {
                             let write = StructureWrite { action: action(), title: title(), chat: selected(), topic: topic(), topic_target: topic_target(), view: view.clone() };
                             let realm = realm.clone(); let base = base.clone(); let account = account.clone(); let device = device.clone();
+                            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                            tracing::warn!(action = %write.action, stage = "requested", "Direct structure write diagnostic");
                             let write_scope = active_scope();
                             pending.set(true); status.set("Saving".into());
                             spawn(async move {

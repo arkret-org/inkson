@@ -2990,7 +2990,9 @@ impl EventSubmitter {
                 store.read(|state| state.active_authority().as_ref() == Some(authority)),
                 "application current crossed its Account fence"
             );
-            if store.read(crate::state::LocalStateStore::current_reset_required) {
+            if store.read(|state| {
+                state.current_reset_required() || state.realm_detail_invalidated(realm.as_str())
+            }) {
                 crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
                 continue;
             }
@@ -3010,7 +3012,13 @@ impl EventSubmitter {
                     store.read(|state| state.active_authority().as_ref() == Some(authority)),
                     "application current crossed its Account fence"
                 );
-                if store.read(crate::state::LocalStateStore::current_reset_required) {
+                // A durable cut can outlive the selected Realm's in-memory
+                // baseline while a just-accepted write invalidates its detail.
+                // Recheck both fences after the asynchronous current read.
+                if store.read(|state| {
+                    state.current_reset_required() || state.realm_detail_invalidated(realm.as_str())
+                }) {
+                    crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
                     continue;
                 }
                 return Ok(());
@@ -3360,10 +3368,11 @@ impl EventSubmitter {
                     "Open the Direct Conversation to refresh its exact peer coordinates"
                 )
             })?;
-        // Background refresh must not supersede this pre-signing read while
-        // its authenticated result is being installed.
-        let query_lock = crate::mls::direct_binding::query_lock(authority, &peer)?;
-        let _query_guard = query_lock.lock().await;
+        let _query_guard = crate::mls::direct_binding::coordinate_query(authority, &peer).await?;
+        anyhow::ensure!(
+            epoch == crate::identity::device_directory::session_cache_epoch(),
+            "Direct Conversation session changed while waiting for query"
+        );
         let query_sequence = crate::mls::direct_binding::begin_query(authority, &peer)?;
         let outcome = self
             .http

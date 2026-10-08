@@ -813,3 +813,43 @@ pub(crate) fn act_on_behalf_agent_label(
         None => Some(short_principal_label(executed_by)),
     }
 }
+
+#[cfg(test)]
+#[test]
+fn complete_membership_enriches_own_handle_without_reviving_departed_accounts() {
+    let principal = "ak:did_core:web:joined-self-handle.example";
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let own = crate::mls_api_helpers::local_account_actor_id(principal).unwrap();
+    let remote = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        own.signing_principal_id().clone(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:remote-station.example").unwrap(),
+    ));
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = LocalStateStore::with_path(directory.path().join("self-handle.json"));
+    store.switch_test_account("did:web:joined-self-handle.example");
+    store.set_primary_handle_for_principal_id(principal, "alice:local.host");
+    crate::test_support::install_complete_joined_members(
+        &mut store,
+        realm,
+        vec![own.clone(), remote.clone()],
+    );
+    let participants = space_participants(None, &store, realm, principal);
+    assert_eq!(participants.len(), 2);
+    let me = participants
+        .iter()
+        .find(|member| member.actor_id.as_ref() == Some(&own))
+        .unwrap();
+    assert!(me.is_self);
+    assert_eq!(me.handle_label.as_deref(), Some("alice:local.host"));
+    let other = participants
+        .iter()
+        .find(|member| member.actor_id.as_ref() == Some(&remote))
+        .unwrap();
+    assert!(!other.is_self);
+    assert!(other.handle_label.is_none());
+    crate::test_support::install_complete_joined_members(&mut store, realm, vec![remote]);
+    let departed = space_participants(None, &store, realm, principal);
+    assert_eq!(departed.len(), 1);
+    assert!(!departed[0].is_self);
+    assert!(departed[0].handle_label.is_none());
+}

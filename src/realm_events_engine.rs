@@ -3661,7 +3661,7 @@ mod tests {
             stream_position: commit.stream_position,
             commit_id: commit.commit_id.clone(),
         };
-        let mut rows = soland_bootstrap_rows(&bundle, &items);
+        let mut rows = soland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
         rows.push(TypedCurrentResult::Value {
             selector: arkret_wire::CurrentSelector::Rsvp {
                 event_ref: arkret_sdk::StrandId::from_event_id(&items[1].event.event_id),
@@ -3844,6 +3844,192 @@ mod tests {
             assert!(
                 validate_signed_floor_rows(&realm_id, &bundle, &head, access, &forged).is_err(),
                 "{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn signed_floor_reactions_admit_the_closed_set_and_reject_subject_or_dot_drift() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let chain = |tail: Vec<(String, serde_json::Value)>| {
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&creator)
+                    .into_iter()
+                    .chain(tail)
+                    .collect(),
+                "alice.example",
+                DEVICE_ID,
+            )
+        };
+        let strand = strand_create_entry(
+            &realm_id,
+            &creator,
+            crate::test_support::committed_event::fixture_time(8),
+        );
+        let (_, _, probe) = chain(vec![strand.clone()]);
+        let strand_id = arkret_sdk::StrandId::from_event_id(&probe[6].event.event_id);
+        let prefix = vec![
+            strand,
+            default_strand_entry(&strand_id, None),
+            message_create_entry(&strand_id, "discussion"),
+        ];
+        let (_, _, probe) = chain(prefix.clone());
+        let message = arkret_sdk::MessageId::from_event_id(&probe.last().unwrap().event.event_id);
+        let mut tail = prefix;
+        tail.push((
+            "ak.reaction.add".to_owned(),
+            json!({"target_ref":message,"key":"thumbsup"}),
+        ));
+        let (bundle, _, items) = chain(tail);
+        let accepted = items.last().unwrap();
+        let head = arkret_wire::CommitStreamHead {
+            stream_ref: accepted.commit.stream_ref.clone(),
+            stream_position: accepted.commit.stream_position,
+            commit_id: accepted.commit.commit_id.clone(),
+        };
+        let mut rows = soland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
+        rows.push(TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::MessageReactions {
+                target_ref: message.to_string(),
+            },
+            source_stream_ref: head.stream_ref.clone(),
+            revision: arkret_wire::CurrentRevision {
+                commit_id: head.commit_id.clone(),
+                stream_position: head.stream_position,
+            },
+            value: json!({"assertions":[{
+                "tag_id":format!("{}:0", accepted.event.event_id),
+                "value":{"target_ref":message,"key":"thumbsup"}
+            }]}),
+        });
+        validate_signed_floor_rows(
+            &realm_id,
+            &bundle,
+            &head,
+            arkret_sdk::HistoryAccess::SinceJoin,
+            &rows,
+        )
+        .unwrap();
+        for invalid in [
+            json!({"assertions":[{"tag_id":format!("{}:1", accepted.event.event_id),
+                "value":{"target_ref":message,"key":"thumbsup"}}]}),
+            json!({"assertions":[{"tag_id":format!("{}:0", accepted.event.event_id),
+                "value":{"target_ref":arkret_sdk::MessageId::from_event_id(&items[0].event.event_id),"key":"thumbsup"}}]}),
+            json!({"assertions":[],"count":1}),
+        ] {
+            let mut forged = rows.clone();
+            let TypedCurrentResult::Value { value, .. } = forged.last_mut().unwrap();
+            *value = invalid;
+            assert!(
+                validate_signed_floor_rows(
+                    &realm_id,
+                    &bundle,
+                    &head,
+                    arkret_sdk::HistoryAccess::SinceJoin,
+                    &forged
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn signed_floor_pins_admit_the_closed_set_and_reject_scope_or_dot_drift() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let chain = |tail: Vec<(String, serde_json::Value)>| {
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&creator)
+                    .into_iter()
+                    .chain(tail)
+                    .collect(),
+                "alice.example",
+                DEVICE_ID,
+            )
+        };
+        let strand = strand_create_entry(
+            &realm_id,
+            &creator,
+            crate::test_support::committed_event::fixture_time(8),
+        );
+        let (_, _, probe) = chain(vec![strand.clone()]);
+        let strand_id = arkret_sdk::StrandId::from_event_id(&probe[6].event.event_id);
+        let prefix = vec![
+            strand,
+            default_strand_entry(&strand_id, None),
+            message_create_entry(&strand_id, "discussion"),
+        ];
+        let (_, _, probe) = chain(prefix.clone());
+        let message = arkret_sdk::MessageId::from_event_id(&probe.last().unwrap().event.event_id);
+        let mut tail = prefix;
+        tail.push((
+            "ak.pin.add".to_owned(),
+            json!({"pin_scope":{"kind":"realm","id":realm_id},"target_ref":message,"rank":"m"}),
+        ));
+        let (bundle, _, items) = chain(tail);
+        let accepted = items.last().unwrap();
+        let head = arkret_wire::CommitStreamHead {
+            stream_ref: accepted.commit.stream_ref.clone(),
+            stream_position: accepted.commit.stream_position,
+            commit_id: accepted.commit.commit_id.clone(),
+        };
+        let mut rows = soland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
+        rows.push(TypedCurrentResult::Value {
+            selector: arkret_wire::CurrentSelector::Pin {
+                pin_scope: arkret_sdk::PinScope::Realm {
+                    id: realm_id.clone(),
+                },
+            },
+            source_stream_ref: head.stream_ref.clone(),
+            revision: arkret_wire::CurrentRevision {
+                commit_id: head.commit_id.clone(),
+                stream_position: head.stream_position,
+            },
+            value: json!({"assertions":[{
+                "tag_id":format!("{}:0", accepted.event.event_id),
+                "value":{"pin_scope":{"kind":"realm","id":realm_id},"target_ref":message,"rank":"m"}
+            }]}),
+        });
+        validate_signed_floor_rows(
+            &realm_id,
+            &bundle,
+            &head,
+            arkret_sdk::HistoryAccess::SinceJoin,
+            &rows,
+        )
+        .unwrap();
+        for invalid in [
+            json!({"assertions":[{"tag_id":format!("{}:1", accepted.event.event_id),
+                "value":{"pin_scope":{"kind":"realm","id":realm_id},"target_ref":message,"rank":"m"}}]}),
+            json!({"assertions":[{"tag_id":format!("{}:0", accepted.event.event_id),
+                "value":{"pin_scope":{"kind":"strand","id":strand_id},"target_ref":message,"rank":"m"}}]}),
+            json!({"assertions":[],"count":1}),
+        ] {
+            let mut forged = rows.clone();
+            let TypedCurrentResult::Value { value, .. } = forged.last_mut().unwrap();
+            *value = invalid;
+            assert!(
+                validate_signed_floor_rows(
+                    &realm_id,
+                    &bundle,
+                    &head,
+                    arkret_sdk::HistoryAccess::SinceJoin,
+                    &forged
+                )
+                .is_err()
             );
         }
     }
