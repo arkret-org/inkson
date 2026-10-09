@@ -2005,6 +2005,135 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.action_failed", "操作失败:{error}");
 
     // ── InvitePolicySettingsCard ──────────────────────────────────────
+    dict.set(
+        "settings.capabilities.row_changed",
+        "授权已变更。请重新加载并再次确认放弃此授权。",
+    );
+    dict.set("settings.capabilities.title", "权限授权");
+    dict.set("settings.capabilities.empty_title", "没有权限授权");
+    dict.set(
+        "settings.capabilities.empty_hint",
+        "未找到此身份的授权。授权视图可能尚未就绪，或尚未发放授权。",
+    );
+    dict.set("settings.capabilities.detail", "详情");
+    dict.set("settings.capabilities.relinquish", "放弃");
+    dict.set("settings.capabilities.relinquish_title", "放弃权限授权");
+    dict.set("settings.capabilities.close_relinquish", "关闭放弃授权确认");
+    dict.set("settings.capabilities.reason", "原因（选填，记录于审计）");
+    dict.set("settings.capabilities.reason_placeholder", "不再需要");
+    dict.set("settings.capabilities.confirm", "放弃此授权");
+    dict.set("settings.capabilities.audit", "授权依据审计");
+    dict.set("settings.capabilities.close_detail", "关闭授权详情");
+    dict.set(
+        "settings.capabilities.authority_empty",
+        "此视图未提供发放方的授权依据。",
+    );
+    dict.set("settings.capabilities.impact", "这将永久放弃你持有的此项授权。仅授权持有人可执行，无需撤销权限，其他人不能代你操作。如有需要，发放方可重新授权。");
+    dict.set("settings.capabilities.expires", "到期时间：{time}");
+    dict.set(
+        "settings.capabilities.issued",
+        "发放方：{issuer} → {subject}",
+    );
+    dict.set("settings.capabilities.scope", "范围：{scope}");
+    dict.set(
+        "settings.capabilities.authority_agent",
+        "自有 Agent 控制账号：{account}",
+    );
+    dict.set("settings.capabilities.authority_grant", "授权：{grant}");
+    dict.set(
+        "settings.capabilities.authority_root",
+        "Realm 根授权：{realm}，代次 {generation}",
+    );
+    dict.set("settings.capabilities.loaded", "已加载 {count} 项授权");
+    dict.set("settings.capabilities.no_account", "无法加载授权：尚未登录");
+    dict.set("settings.capabilities.load_failed", "无法加载授权：{error}");
+    dict.set(
+        "settings.capabilities.disconnected",
+        "放弃授权失败：账号尚未连接",
+    );
+    dict.set(
+        "settings.capabilities.invalid_realm",
+        "无法准备放弃授权：Realm 标识无效：{error}",
+    );
+    dict.set(
+        "settings.capabilities.build_failed",
+        "无法准备放弃授权：{error}",
+    );
+    dict.set(
+        "settings.capabilities.submitted",
+        "已提交放弃授权 {grant}：事件 {event}，控制操作提交后授权失效",
+    );
+    dict.set(
+        "settings.capabilities.failed",
+        "放弃授权失败：{error}{hint}",
+    );
+    dict.set("settings.capabilities.hint_subject", "服务端拒绝了此操作，因为签名者不是授权持有人。仅持有人可放弃授权；请发放方或 Realm 所有者撤销。");
+    dict.set(
+        "settings.capabilities.hint_pending",
+        "服务端尚未解析该授权，放弃操作将等待授权记录就绪。如仍未完成，请同步后重试。",
+    );
+    dict.set("consent.title", "联系许可");
+    dict.set("consent.grant", "授予许可");
+    dict.set("consent.request", "请求许可");
+    dict.set("consent.empty", "尚未设置联系许可");
+    dict.set("consent.empty_hint", "直接授予许可，或向对方请求许可。");
+    dict.set("consent.scope", "范围");
+    dict.set("consent.scope.invite", "群组邀请");
+    dict.set("consent.scope.voice_call", "语音通话");
+    dict.set("consent.scope.video_call", "视频通话");
+    dict.set("consent.scope.presence", "在线状态");
+    dict.set("consent.scope.any", "全部联系许可");
+    dict.set("consent.scope.unknown", "未知范围");
+    dict.set("consent.grantee", "接收方 DID");
+    dict.set("consent.ttl", "有效时长（例如 30d）");
+    dict.set("consent.grant_submit", "授予");
+    dict.set("consent.holder", "许可持有人 DID");
+    dict.set("consent.request_submit", "发送请求");
+    dict.set("consent.granted", "已授予");
+    dict.set("consent.revoked", "已撤销");
+    dict.set("consent.expired", "已到期");
+    dict.set("consent.revoke", "撤销");
+    dict.set("consent.peer_service", "服务 {service}");
+    dict.set(
+        "consent.intro",
+        "决定谁可以邀请你、呼叫你或查看你的在线状态。联系许可是私密决定，不会授予群组成员资格。",
+    );
+    dict.set("consent.load_failed", "无法加载联系许可：{error}");
+    dict.set("consent.expires", "到期时间：{time}");
+    dict.set("consent.account_example", "账号 DID");
+    dict.set("consent.station_example", "服务器 DID");
+    dict.set("consent.ttl_example", "30d");
+    dict.set("consent.station_core_example", "服务器身份");
+    dict.set("consent.grant_busy", "正在授予许可…");
+    dict.set("consent.grant_success", "已授予联系许可");
+    dict.set("consent.grant_failed", "授予许可失败：{error}");
+    dict.set("consent.request_busy", "正在请求许可…");
+    dict.set("consent.request_success", "联系许可请求已接收，等待处理");
+    dict.set("consent.request_failed", "请求许可失败：{error}");
+    dict.set("consent.revoke_busy", "正在撤销许可…");
+    dict.set("consent.revoke_success", "联系许可已撤销");
+    dict.set("consent.revoke_failed", "撤销许可失败：{error}");
+    dict.set("invite_policy.no_account", "没有当前账号");
+    dict.set(
+        "invite_policy.allowed_domains_example",
+        "example.com, team.example",
+    );
+    dict.set("invite_policy.blocked_domains_example", "spam.example");
+    dict.set("invite_policy.constraints.permitted", "允许：{values}");
+    dict.set("invite_policy.constraints.forbidden", "禁止：{values}");
+    dict.set(
+        "invite_policy.constraints.handle_cap",
+        "用户名邀请上限：{values}",
+    );
+    dict.set(
+        "invite_policy.constraints.explicit_cap",
+        "直接地址邀请上限：{values}",
+    );
+    dict.set("invite_policy.constraints.domains", "用户名域名：{values}");
+    dict.set(
+        "invite_policy.constraints.directories",
+        "目录服务：{values}",
+    );
     dict.set("invite_policy.title", "谁可以邀请我");
     dict.set("invite_policy.loading", "加载中…");
     dict.set(
@@ -2040,6 +2169,14 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("invite_policy.unknown_drop", "直接丢弃");
     dict.set("invite_policy.unknown_quarantine", "暂存待审");
     dict.set("invite_policy.unknown_suffix", "。");
+    dict.set(
+        "invite_policy.disclosure_toggle",
+        "允许已批准的联系人查看邀请结果",
+    );
+    dict.set(
+        "invite_policy.discovery_disclosure_toggle",
+        "允许发现信任来源查看邀请结果",
+    );
     dict.set("invite_policy.disclosure_title", "回执");
     dict.set(
         "invite_policy.disclosure_hint",
