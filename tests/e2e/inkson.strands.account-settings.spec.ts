@@ -589,35 +589,95 @@ test("account settings split account/server info and surface Agents", async ({ p
   await expect(page.getByTestId("agent-admin-provision")).toBeVisible();
 });
 
-test("agent deactivation fails closed without a durable governance checkpoint", async ({
-  page,
-}) => {
+async function confirmAssistantDeactivation(page: import("@playwright/test").Page) {
   await gotoAndDismissRecovery(page, "/settings/agents?filter=all");
-  const assistantRow = page.getByTestId("agent-admin-row").filter({ hasText: "assistant" });
-  await assistantRow.click();
-  const deactivateButton = page.getByTestId("agent-admin-deactivate-button");
-  await expect(deactivateButton).toBeVisible();
-  await deactivateButton.click();
+  await page.getByTestId("agent-admin-row").filter({ hasText: "assistant" }).click();
+  await page.getByTestId("agent-admin-deactivate-button").click();
   await page.getByTestId("agent-admin-deactivate-confirm-input").fill("DEACTIVATE");
+}
 
-  let deactivateRequests = 0;
-  page.on("request", (request) => {
-    if (
-      request.method() === "POST" &&
-      new URL(request.url()).pathname.endsWith("/deactivate")
-    ) {
-      deactivateRequests += 1;
-    }
-  });
-  await page.getByTestId("agent-admin-deactivate-confirm-button").click();
-  await expect(page.getByTestId("agent-admin-last-op")).toContainText(
-    "has no durable verified governance checkpoint",
-    { timeout: 60_000 },
+test("agent deactivation submits controller-signed lifecycle without revoke bundles", async ({ page }) => {
+  await confirmAssistantDeactivation(page);
+  const responsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    new URL(response.url()).pathname.endsWith("/deactivate"),
   );
-  expect(deactivateRequests).toBe(0);
-  await expect(page.getByTestId("agent-admin-deactivate-modal")).toBeVisible();
-  await expect(page.getByTestId("agent-admin-deactivate-button")).toBeVisible();
+  await page.getByTestId("agent-admin-deactivate-confirm-button").click();
+  const response = await responsePromise;
+  expect(response.status()).toBe(200);
+  const body = response.request().postDataJSON();
+  expect(Object.keys(body).sort()).toEqual(["lifecycle_event", "reason"]);
+  expect(body.lifecycle_event.authorization_lease).toBeUndefined();
+  expect(body.lifecycle_event.control_proposal_ack).toBeUndefined();
+  const proof = body.lifecycle_event.event.producer_proof;
+  expect(proof.kind).toBe("detached_jws");
+  expect(proof.verification_method).toBe(
+    "did:web:alice.example#ak:device:01964137-0000-7000-8000-0000000000a1",
+  );
+  expect(proof.event_digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+  const [protectedHeader, detachedPayload, signature] = proof.jws.split(".");
+  expect(JSON.parse(Buffer.from(protectedHeader, "base64url").toString())).toEqual({
+    alg: "Ed25519",
+  });
+  expect(detachedPayload).toBe("");
+  expect(Buffer.from(signature, "base64url")).toHaveLength(64);
+  expect(body.lifecycle_event.event.actor_id).toEqual({
+    kind: "account",
+    account_id: {
+      principal_id: "ak:did_core:web:agents.example:assistant",
+      station_id: CURRENT_STATION_ID,
+    },
+  });
+  expect(body.lifecycle_event.event.executed_by).toEqual({
+    kind: "account",
+    account_id: {
+      principal_id: "ak:did_core:web:alice.example",
+      station_id: CURRENT_STATION_ID,
+    },
+  });
+  expect(body.lifecycle_event.event.scope_ref).toEqual({
+    kind: "realm",
+    realm_id: "ak:realm:AS7wchHFRbXWnMQPln42BrokXsPCf18uboKMm-yhYquI",
+  });
+  expect(body.lifecycle_event.event.payload).toMatchObject({
+    transition: "deactivate", previous_status: "active", reason: body.reason,
+  });
+  const outcome = await response.json();
+  expect(outcome).toEqual({ status: "deactivated" });
+  await expect(page.getByTestId("agent-admin-last-op")).toHaveText("Agent deactivated permanently.");
+  await expect(page.getByTestId("agent-admin-deactivate-modal")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-deactivate-button")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-row").filter({ hasText: "assistant" })).toHaveCount(0);
+  // Ordinary filters intentionally remove terminal Agents. Inspect the newly
+  // deactivated Agent through the existing audit deep link, then select it.
+  await gotoAndDismissRecovery(page, "/settings/agents?filter=deactivated");
+  const terminalRow = page.getByTestId("agent-admin-row").filter({ hasText: "assistant" });
+  await expect(terminalRow).toContainText("Deactivated");
+  await terminalRow.click();
+  await expect(page.getByTestId("agent-admin-deactivated-terminal-note")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-enabled-switch")).toHaveCount(0);
+  await expect(page.getByTestId("agent-admin-deactivate-button")).toHaveCount(0);
 });
+
+for (const [binding, message] of [
+  ["missing", "Agent key binding is unavailable"],
+  ["mismatched", "Agent key binding does not match the selected Agent and controller"],
+] as const) {
+  test(`agent deactivation rejects ${binding} key binding without submission`, async ({ page }) => {
+    await confirmAssistantDeactivation(page);
+    let deactivateRequests = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname.endsWith("/deactivate")) {
+        deactivateRequests += 1;
+      }
+    });
+    await page.getByTestId("agent-admin-deactivate-confirm-button").click();
+    await expect(page.getByTestId("agent-admin-last-op")).toContainText(message);
+    expect(deactivateRequests).toBe(0);
+    await expect(page.getByTestId("agent-admin-deactivate-modal")).toBeVisible();
+    await expect(page.getByTestId("agent-admin-deactivate-confirm-button")).toBeEnabled();
+  });
+}
 
 test("deactivated Agents are available only through the audit deep link", async ({
   page,

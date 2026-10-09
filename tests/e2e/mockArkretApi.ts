@@ -112,6 +112,7 @@ type MockArkretApiOptions = {
   includeSidecarInCircleList?: boolean;
   preseedRecoveryMaterial?: boolean;
   seedDefaultActiveAgent?: boolean;
+  assistantKeyBinding?: "missing" | "mismatched";
   emptyBoard?: boolean;
   invitePreview?: "disclosed" | "restricted" | "retry_once";
   invitePreviewDelayMs?: number;
@@ -374,7 +375,7 @@ export function assertNoRetiredMockFields(value: unknown, path = "$"): void {
   }
 }
 
-function validateMockSchema(schemaRef: string, value: unknown) {
+export function validateMockSchema(schemaRef: string, value: unknown) {
   const validationKey = `${schemaRef}\n${JSON.stringify(value)}`;
   if (validatedMockResponses.has(validationKey)) {
     return;
@@ -3310,65 +3311,41 @@ export async function mockArkretApi(
         Record<string, any> | undefined;
       const event = lifecycleSubmission?.event as
         Record<string, any> | undefined;
-      const keyEvents = Array.isArray(body.key_revocation_events)
-        ? body.key_revocation_events
-        : [];
-      const capabilityEvents = Array.isArray(body.capability_revocation_events)
-        ? body.capability_revocation_events
-        : [];
-      const activeAuthorizations = Array.isArray(keyState.active_authorizations)
-        ? keyState.active_authorizations
-        : [];
-      const activeGrants = personalAgentGrants.get(agentId) ?? [];
-      const previousStatus = String(agent.lifecycle ?? "active");
-      const suppliedKeyIds = new Set(
-        keyEvents.map((candidate: Record<string, any>) =>
-          String(candidate?.event?.payload?.key_id ?? ""),
-        ),
+      // Structural UI fixture, not a substitute for Station admission or
+      // signature verification. The real service accepts one lifecycle Event;
+      // subordinate authorization cleanup is not client-authored input.
+      validateMockSchema(
+        "schemas/agent-operations.schema.json#/$defs/agent_deactivate_request_body",
+        body,
       );
-      const suppliedGrantIds = new Set(
-        capabilityEvents.map((candidate: Record<string, any>) =>
-          String(candidate?.event?.payload?.grant_id ?? ""),
-        ),
+      expect(event?.scope_ref).toEqual({
+        kind: "realm",
+        realm_id: keyState.principal_control_realm_id,
+      });
+      expect(event?.realm_id).toBe(keyState.principal_control_realm_id);
+      expect(event?.actor_id).toEqual(accountActorIdFor(agentId));
+      expect(event?.executed_by).toEqual(accountActorId);
+      expect(event?.authorization_ref).toBe(keyState.controller_authorization_ref);
+      const proof = event?.producer_proof;
+      expect(proof?.kind).toBe("detached_jws");
+      expect(proof?.verification_method).toBe(
+        `${didFromCoreId(accountPrincipalCoreId)}#${currentDeviceId}`,
       );
-      const validLifecycle =
-        event?.kind === "ak.self.agent.deactivate" &&
-        event?.realm_id === keyState.principal_control_realm_id &&
-        event?.actor_id === agentId &&
-        event?.executed_by === accountPrincipalId &&
-        event?.authorization_ref === keyState.controller_authorization_ref &&
-        Array.isArray(event?.proofs) &&
-        event.proofs.length > 0 &&
-        lifecycleSubmission?.authorization_lease &&
-        lifecycleSubmission?.control_proposal_ack &&
-        event?.payload?.transition === "deactivate" &&
-        event?.payload?.previous_status === previousStatus &&
-        event?.payload?.reason === body.reason;
-      const keysCovered = activeAuthorizations.every(
-        (authorization: Record<string, any>) =>
-          suppliedKeyIds.has(String(authorization.key_id ?? "")),
-      );
-      const grantsCovered = activeGrants.every((grant) =>
-        suppliedGrantIds.has(String(grant.grant_id ?? "")),
-      );
-      if (!validLifecycle || !keysCovered || !grantsCovered) {
-        return json(
-          route,
-          {
-            ok: false,
-            error: {
-              code: "failed_precondition",
-              message: "deactivation revocation bundle is incomplete",
-            },
-          },
-          412,
-        );
-      }
+      expect(proof?.event_digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+      const [protectedHeader, detachedPayload, signature] = proof.jws.split(".");
+      expect(JSON.parse(Buffer.from(protectedHeader, "base64url").toString())).toEqual({
+        alg: "Ed25519",
+      });
+      expect(detachedPayload).toBe("");
+      expect(Buffer.from(signature, "base64url")).toHaveLength(64);
+      expect(event?.payload?.previous_status).toBe(agent.lifecycle);
+      expect(event?.payload?.transition).toBe("deactivate");
+      expect(event?.payload?.reason).toBe(body.reason);
       agent.lifecycle = "deactivated";
       agent.updated_at = "2026-07-19T08:00:00.000Z";
       keyState.active_authorizations = [];
       personalAgentGrants.set(agentId, []);
-      return json(route, { ok: true, status: "deactivated" });
+      return json(route, { status: "deactivated" });
     }
 
     const agentRenewPairingMatch = url.pathname.match(
@@ -3459,7 +3436,14 @@ export async function mockArkretApi(
           404,
         );
       }
-      const storedKeyState = personalAgentKeyStates.get(agentId);
+      const savedKeyState = personalAgentKeyStates.get(agentId);
+      const storedKeyState =
+        agentId === activeAssistantId && options.assistantKeyBinding === "missing"
+          ? undefined
+          : agentId === activeAssistantId &&
+              options.assistantKeyBinding === "mismatched" && savedKeyState
+            ? { ...savedKeyState, agent_id: "ak:did_core:web:agents.example:other" }
+            : savedKeyState;
       return json(route, {
         agent: projectAgent(agentId),
         grants: personalAgentGrants.get(agentId) ?? [],

@@ -532,6 +532,13 @@ export function registerStrandsBeforeEach() {
           "kanban queues canonical event submissions",
         ) ||
         testInfo.title.startsWith("card detail embeds discussion directly"),
+      assistantKeyBinding: testInfo.title.startsWith(
+        "agent deactivation rejects missing",
+      )
+        ? "missing"
+        : testInfo.title.startsWith("agent deactivation rejects mismatched")
+          ? "mismatched"
+          : undefined,
       seedDefaultActiveAgent: !testInfo.title.startsWith(
         "account settings split account/server info",
       ),
