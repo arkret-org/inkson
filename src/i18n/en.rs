@@ -142,6 +142,81 @@ pub fn english_translations() -> TranslationDict {
         "settings.local_stores.platform_native",
         "Native (filesystem)",
     );
+    dict.set("settings.storage.quota_title", "Browser origin quota");
+    dict.set("settings.storage.low_space", "Low space");
+    dict.set("settings.storage.origin_total", "Origin total");
+    dict.set("settings.storage.used_available", "Used / available");
+    dict.set(
+        "settings.storage.quota_warning",
+        "Browser storage is above 80% of its reported quota.",
+    );
+    dict.set(
+        "settings.storage.quota_guidance",
+        "Review local data before the browser starts rejecting writes.",
+    );
+    dict.set(
+        "settings.storage.cache_title",
+        "Protected E2EE plaintext cache",
+    );
+    dict.set("settings.storage.manual_only", "Manual cleanup only");
+    dict.set("settings.storage.plaintext", "Protected plaintext");
+    dict.set("settings.storage.entries", "Protected entries");
+    dict.set(
+        "settings.storage.eviction_disabled",
+        "Automatic eviction is disabled.",
+    );
+    dict.set("settings.storage.cache_warning", "A cached plaintext may be the only locally renderable copy after the MLS ratchet advances. Clear it only if you accept that affected content may no longer open on this device. MLS receive state is retained.");
+    dict.set(
+        "settings.storage.empty",
+        "No protected plaintext is cached for this account.",
+    );
+    dict.set("settings.storage.clear_realm", "Clear Realm cache");
+    dict.set(
+        "settings.storage.clear_all",
+        "Clear all protected plaintext",
+    );
+    dict.set("settings.storage.irreversible", "May be irreversible");
+    dict.set(
+        "settings.storage.clear_confirm",
+        "Clear protected plaintext",
+    );
+    dict.set(
+        "settings.storage.quota_summary",
+        "{used} of {quota}{percent}",
+    );
+    dict.set("settings.storage.checking", "Checking browser quota…");
+    dict.set(
+        "settings.storage.browser_only",
+        "Origin quota is reported by browsers only.",
+    );
+    dict.set(
+        "settings.storage.quota_error",
+        "Browser quota unavailable: {detail}",
+    );
+    dict.set(
+        "settings.storage.entry_summary",
+        "{entries} across {realms} Realms",
+    );
+    dict.set(
+        "settings.storage.realm_summary",
+        "{bytes} · {entries} entries ({authored} authored, {received} received)",
+    );
+    dict.set("settings.storage.target_all", "all Realms");
+    dict.set("settings.storage.target_realm", "Realm {realm}");
+    dict.set(
+        "settings.storage.clear_title",
+        "Clear protected plaintext for {target}?",
+    );
+    dict.set("settings.storage.clear_body", "This removes locally cached authored and received plaintext for {target}. MLS private-state checkpoints are kept, but older ratcheted content may still not open again on this device. This cannot be undone.");
+    dict.set("settings.storage.cleared", "Protected plaintext cleared. MLS private-state checkpoints were retained; old content may still be unavailable.");
+    dict.set(
+        "settings.storage.no_match",
+        "Nothing matched that cleanup scope.",
+    );
+    dict.set(
+        "settings.storage.clear_error",
+        "Protected plaintext cleanup failed: {detail}",
+    );
     dict.set("settings.storage_risks.title", "Storage diagnostics");
     dict.set(
         "settings.storage_risks.bounded_projection",

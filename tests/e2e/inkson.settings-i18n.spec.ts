@@ -94,3 +94,75 @@ test("settings encrypted recovery status and guidance follow the active language
       : "Check and replenish KeyPackages");
   }
 });
+
+test("settings storage quota, low space, refresh and errors follow the active language", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const probe = window as Window & {
+      storageQuotaProbe?: { fail: boolean; calls: number };
+    };
+    probe.storageQuotaProbe = { fail: false, calls: 0 };
+    Object.defineProperty(StorageManager.prototype, "estimate", {
+      configurable: true,
+      value: async () => {
+        probe.storageQuotaProbe!.calls += 1;
+        if (probe.storageQuotaProbe!.fail) {
+          throw new Error("storage-quota-detail / 原文");
+        }
+        return { usage: 9216, quota: 10240 };
+      },
+    });
+  });
+  await gotoAndDismissRecovery(page, "/settings/storage");
+  for (const language of ["en", "zh", "en"] as const) {
+    await selectLanguage(page, language);
+    await page.getByTestId("settings-nav-item-storage").click();
+    const quota = page.getByTestId("browser-storage-quota");
+    const cache = page.getByTestId("e2ee-plaintext-cache");
+    await expect(quota).toContainText(language === "zh"
+      ? "浏览器站点存储配额"
+      : "Browser origin quota");
+    await expect(page.getByTestId("browser-storage-quota-warning")).toHaveText(
+      language === "zh" ? "空间不足" : "Low space",
+    );
+    await expect(quota).toContainText(language === "zh"
+      ? "9.0 KiB / 10.0 KiB (90%)"
+      : "9.0 KiB of 10.0 KiB (90%)");
+    await expect(quota).toContainText(language === "zh"
+      ? "请在浏览器开始拒绝写入前检查本地数据。"
+      : "Review local data before the browser starts rejecting writes.");
+    await expect(cache).toContainText(language === "zh"
+      ? "此账号没有缓存受保护的明文。"
+      : "No protected plaintext is cached for this account.");
+    await expect(cache).toContainText(language === "zh"
+      ? "0 个 Realm 中共 0 条"
+      : "0 across 0 Realms");
+    await expect(page.getByTestId("e2ee-cache-clear-all")).toBeDisabled();
+    await expect(page.getByTestId("e2ee-cache-clear-modal")).toHaveCount(0);
+    const refresh = page.getByTestId("e2ee-cache-refresh");
+    await expect(refresh).toHaveText(language === "zh" ? "刷新" : "Refresh");
+    const callsBefore = await page.evaluate(() => {
+      const probe = window as Window & {
+        storageQuotaProbe?: { fail: boolean; calls: number };
+      };
+      probe.storageQuotaProbe!.fail = true;
+      return probe.storageQuotaProbe!.calls;
+    });
+    await refresh.click();
+    await expect(quota).toContainText(language === "zh"
+      ? "无法获取浏览器配额："
+      : "Browser quota unavailable:");
+    await expect(quota).toContainText("storage-quota-detail / 原文");
+    await expect.poll(() => page.evaluate(() => (window as Window & {
+      storageQuotaProbe?: { calls: number };
+    }).storageQuotaProbe!.calls)).toBeGreaterThan(callsBefore);
+    await page.evaluate(() => {
+      (window as Window & { storageQuotaProbe?: { fail: boolean } })
+        .storageQuotaProbe!.fail = false;
+    });
+    await refresh.click();
+    await expect(page.getByTestId("browser-storage-quota-warning")).toBeVisible();
+    await expect(quota).not.toContainText("storage-quota-detail");
+  }
+});

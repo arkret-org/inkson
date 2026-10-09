@@ -7,6 +7,25 @@ use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::views::helpers::short_protocol_id;
 
+// Keep the message identity until render so completed operations follow locale changes.
+#[derive(Clone, Default)]
+enum StorageFeedback {
+    #[default]
+    Empty,
+    Message(&'static str),
+    Error(&'static str, String),
+}
+
+impl StorageFeedback {
+    fn text(&self) -> String {
+        match self {
+            Self::Empty => String::new(),
+            Self::Message(key) => crate::i18n::tr(key),
+            Self::Error(key, detail) => crate::i18n::tr_args(key, &[("detail", detail.clone())]),
+        }
+    }
+}
+
 fn format_storage_bytes(bytes: u64) -> String {
     const KIB: f64 = 1024.0;
     const MIB: f64 = 1024.0 * KIB;
@@ -28,27 +47,42 @@ fn browser_storage_summary(estimate: BrowserStorageEstimate) -> String {
         .usage_ratio()
         .map(|ratio| format!(" ({:.0}%)", ratio * 100.0))
         .unwrap_or_default();
-    format!(
-        "{} of {}{}",
-        format_storage_bytes(estimate.usage_bytes),
-        format_storage_bytes(estimate.quota_bytes),
-        percent
+    crate::i18n::tr_args(
+        "settings.storage.quota_summary",
+        &[
+            ("used", format_storage_bytes(estimate.usage_bytes)),
+            ("quota", format_storage_bytes(estimate.quota_bytes)),
+            ("percent", percent),
+        ],
     )
+}
+
+fn clear_target_text(scope: &E2eePlaintextCacheClearScope) -> String {
+    match scope {
+        E2eePlaintextCacheClearScope::All => crate::i18n::tr("settings.storage.target_all"),
+        E2eePlaintextCacheClearScope::Realm(realm_id) => crate::i18n::tr_args(
+            "settings.storage.target_realm",
+            &[("realm", short_protocol_id(realm_id))],
+        ),
+    }
 }
 
 async fn refresh_browser_storage_quota(
     mut quota: Signal<Option<BrowserStorageEstimate>>,
-    mut status: Signal<String>,
+    mut status: Signal<StorageFeedback>,
 ) {
     quota.set(None);
-    status.set("Checking browser quota…".to_owned());
+    status.set(StorageFeedback::Message("settings.storage.checking"));
     match crate::state::browser_storage_estimate().await {
         Ok(Some(estimate)) => {
             quota.set(Some(estimate));
-            status.set(String::new());
+            status.set(StorageFeedback::Empty);
         }
-        Ok(None) => status.set("Origin quota is reported by browsers only.".to_owned()),
-        Err(error) => status.set(format!("Browser quota unavailable: {error}")),
+        Ok(None) => status.set(StorageFeedback::Message("settings.storage.browser_only")),
+        Err(error) => status.set(StorageFeedback::Error(
+            "settings.storage.quota_error",
+            error.to_string(),
+        )),
     }
 }
 
@@ -61,71 +95,73 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
     }
     let mut cache_usage = use_signal(|| state_store.read().e2ee_plaintext_cache_usage());
     let mut pending_clear = use_signal(|| None::<E2eePlaintextCacheClearScope>);
-    let mut cache_status = use_signal(String::new);
+    let mut cache_status = use_signal(StorageFeedback::default);
     let browser_quota = use_signal(|| None::<BrowserStorageEstimate>);
-    let browser_quota_status = use_signal(String::new);
+    let browser_quota_status = use_signal(StorageFeedback::default);
     use_future(move || refresh_browser_storage_quota(browser_quota, browser_quota_status));
 
     let usage: E2eePlaintextCacheUsage = cache_usage();
     let quota = browser_quota();
+    let quota_status_text = browser_quota_status().text();
+    let cache_status_text = cache_status().text();
 
     rsx! {
         div { class: "event", "data-testid": "browser-storage-quota",
             div { class: "event-head",
-                span { "Browser origin quota" }
+                span { {crate::i18n::tr("settings.storage.quota_title")} }
                 if quota.is_some_and(|estimate| estimate.is_near_quota()) {
                     span {
                         class: "badge badge-warning",
                         "data-testid": "browser-storage-quota-warning",
-                        "Low space"
+                        {crate::i18n::tr("settings.storage.low_space")}
                     }
                 } else {
-                    span { class: "badge badge-info", "Origin total" }
+                    span { class: "badge badge-info", {crate::i18n::tr("settings.storage.origin_total")} }
                 }
             }
             if let Some(estimate) = quota {
                 div { class: "metric",
-                    strong { "Used / available" }
+                    strong { {crate::i18n::tr("settings.storage.used_available")} }
                     span { "{browser_storage_summary(estimate)}" }
                 }
                 if estimate.is_near_quota() {
                     div { class: "callout warn",
                         div { class: "body",
-                            strong { "Browser storage is above 80% of its reported quota." }
-                            div { "Review local data before the browser starts rejecting writes." }
+                            strong { {crate::i18n::tr("settings.storage.quota_warning")} }
+                            div { {crate::i18n::tr("settings.storage.quota_guidance")} }
                         }
                     }
                 }
             } else {
-                div { class: "muted", "{browser_quota_status}" }
+                div { class: "muted", "{quota_status_text}" }
             }
         }
 
         div { class: "event", "data-testid": "e2ee-plaintext-cache",
             div { class: "event-head",
-                span { "Protected E2EE plaintext cache" }
-                span { "Manual cleanup only" }
+                span { {crate::i18n::tr("settings.storage.cache_title")} }
+                span { {crate::i18n::tr("settings.storage.manual_only")} }
             }
             div { class: "metric-grid",
                 div { class: "metric",
-                    strong { "Protected plaintext" }
+                    strong { {crate::i18n::tr("settings.storage.plaintext")} }
                     span { "{format_storage_bytes(usage.plaintext_bytes as u64)}" }
                 }
                 div { class: "metric",
-                    strong { "Protected entries" }
-                    span { "{usage.entry_count()} across {usage.realms.len()} Realms" }
+                    strong { {crate::i18n::tr("settings.storage.entries")} }
+                    span { {crate::i18n::tr_args("settings.storage.entry_summary", &[("entries", usage.entry_count().to_string()), ("realms", usage.realms.len().to_string())])} }
                 }
             }
             div { class: "callout warn",
                 div { class: "body",
-                    strong { "Automatic eviction is disabled." }
+                    strong { {crate::i18n::tr("settings.storage.eviction_disabled")} }
                     div {
-                        "A cached plaintext may be the only locally renderable copy after the MLS ratchet advances. Clear it only if you accept that affected content may no longer open on this device. MLS receive state is retained."
+                        {crate::i18n::tr("settings.storage.cache_warning")}
                     }
                 }
             }
             if usage.realms.is_empty() {
-                div { class: "muted", "No protected plaintext is cached for this account." }
+                div { class: "muted", {crate::i18n::tr("settings.storage.empty")} }
             } else {
                 div { class: "metric-grid", "data-testid": "e2ee-cache-realm-usage",
                     for (realm_id, realm_usage) in &usage.realms {
@@ -136,7 +172,7 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
                                 div { class: "metric", key: "{realm_id}",
                                     strong { title: "{realm_id}", "{realm_label}" }
                                     span {
-                                        "{format_storage_bytes(realm_usage.plaintext_bytes as u64)} · {realm_usage.entry_count()} entries ({realm_usage.authored_entries} authored, {realm_usage.received_entries} received)"
+                                        {crate::i18n::tr_args("settings.storage.realm_summary", &[("bytes", format_storage_bytes(realm_usage.plaintext_bytes as u64)), ("entries", realm_usage.entry_count().to_string()), ("authored", realm_usage.authored_entries.to_string()), ("received", realm_usage.received_entries.to_string())])}
                                     }
                                     div { class: "actions",
                                         Button {
@@ -148,7 +184,7 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
                                                     realm_id_for_clear.clone(),
                                                 ),
                                             )),
-                                            "Clear Realm cache"
+                                            {crate::i18n::tr("settings.storage.clear_realm")}
                                         }
                                     }
                                 }
@@ -166,7 +202,7 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
                         cache_usage.set(state_store.read().e2ee_plaintext_cache_usage());
                         spawn(refresh_browser_storage_quota(browser_quota, browser_quota_status));
                     },
-                    "Refresh"
+                    {crate::i18n::tr("common.refresh")}
                 }
                 Button {
                     variant: ButtonVariant::Destructive,
@@ -174,23 +210,18 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
                     "data-testid": "e2ee-cache-clear-all",
                     disabled: usage.entry_count() == 0,
                     onclick: move |_| pending_clear.set(Some(E2eePlaintextCacheClearScope::All)),
-                    "Clear all protected plaintext"
+                    {crate::i18n::tr("settings.storage.clear_all")}
                 }
             }
-            if !cache_status().is_empty() {
-                div { class: "muted", role: "status", "{cache_status}" }
+            if !cache_status_text.is_empty() {
+                div { class: "muted", role: "status", "{cache_status_text}" }
             }
         }
 
         if let Some(clear_scope) = pending_clear() {
             {
                 let clear_scope_for_action = clear_scope.clone();
-                let clear_target = match &clear_scope {
-                    E2eePlaintextCacheClearScope::All => "all Realms".to_owned(),
-                    E2eePlaintextCacheClearScope::Realm(realm_id) => {
-                        format!("Realm {}", short_protocol_id(realm_id))
-                    }
-                };
+                let clear_target = clear_target_text(&clear_scope);
                 rsx! {
                     Dialog {
                         open: true,
@@ -205,13 +236,13 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
                             div { class: "modal-head event-head",
                                 h3 {
                                     id: "e2ee-cache-clear-title",
-                                    "Clear protected plaintext for {clear_target}?"
+                                    {crate::i18n::tr_args("settings.storage.clear_title", &[("target", clear_target.clone())])}
                                 }
-                                span { class: "badge red", "May be irreversible" }
+                                span { class: "badge red", {crate::i18n::tr("settings.storage.irreversible")} }
                             }
                             div { class: "modal-body",
                                 p {
-                                    "This removes locally cached authored and received plaintext for {clear_target}. MLS private-state checkpoints are kept, but older ratcheted content may still not open again on this device. This cannot be undone."
+                                    {crate::i18n::tr_args("settings.storage.clear_body", &[("target", clear_target.clone())])}
                                 }
                             }
                             div { class: "modal-foot actions",
@@ -219,7 +250,7 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
                                     variant: ButtonVariant::Secondary,
                                     "data-testid": "e2ee-cache-clear-cancel",
                                     onclick: move |_| pending_clear.set(None),
-                                    "Cancel"
+                                    {crate::i18n::tr("common.cancel")}
                                 }
                                 Button {
                                     variant: ButtonVariant::Destructive,
@@ -252,14 +283,11 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
                                             };
                                             match result {
                                                 Ok(Some(())) => cache_status.set(
-                                                    "Protected plaintext cleared. MLS private-state checkpoints were retained; old content may still be unavailable."
-                                                        .to_owned(),
+                                                    StorageFeedback::Message("settings.storage.cleared"),
                                                 ),
                                                 Ok(None) => cache_status
-                                                    .set("Nothing matched that cleanup scope.".to_owned()),
-                                                Err(error) => cache_status.set(format!(
-                                                    "Protected plaintext cleanup failed: {error}"
-                                                )),
+                                                    .set(StorageFeedback::Message("settings.storage.no_match")),
+                                                Err(error) => cache_status.set(StorageFeedback::Error("settings.storage.clear_error", error.to_string())),
                                             }
                                             cache_usage.set(
                                                 state_store.read().e2ee_plaintext_cache_usage(),
@@ -267,7 +295,7 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
                                             pending_clear.set(None);
                                         });
                                     },
-                                    "Clear protected plaintext"
+                                    {crate::i18n::tr("settings.storage.clear_confirm")}
                                 }
                             }
                         }
@@ -287,5 +315,66 @@ mod tests {
         assert_eq!(format_storage_bytes(999), "999 B");
         assert_eq!(format_storage_bytes(1536), "1.5 KiB");
         assert_eq!(format_storage_bytes(2 * 1024 * 1024), "2.0 MiB");
+    }
+
+    #[test]
+    fn completed_storage_feedback_retranslates_without_changing_error_detail() {
+        let mut dom = VirtualDom::new(|| rsx! {});
+        dom.rebuild_in_place();
+        dom.in_scope(ScopeId::ROOT, || {
+            let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
+                crate::i18n::UiLocale::En,
+            ));
+            let error = StorageFeedback::Error(
+                "settings.storage.quota_error",
+                "quota-test-detail / 原文".into(),
+            );
+            let completed = StorageFeedback::Message("settings.storage.cleared");
+            assert_eq!(
+                error.text(),
+                "Browser quota unavailable: quota-test-detail / 原文"
+            );
+            assert!(completed.text().starts_with("Protected plaintext cleared."));
+            crate::i18n::set_locale(&mut locale, crate::i18n::UiLocale::Zh);
+            assert_eq!(error.text(), "无法获取浏览器配额：quota-test-detail / 原文");
+            assert!(completed.text().starts_with("受保护的明文已清理。"));
+            crate::i18n::set_locale(&mut locale, crate::i18n::UiLocale::En);
+            assert_eq!(
+                error.text(),
+                "Browser quota unavailable: quota-test-detail / 原文"
+            );
+        });
+    }
+
+    #[test]
+    fn cleanup_confirmation_keeps_scope_and_irreversibility_in_both_languages() {
+        let mut dom = VirtualDom::new(|| rsx! {});
+        dom.rebuild_in_place();
+        dom.in_scope(ScopeId::ROOT, || {
+            let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
+                crate::i18n::UiLocale::En,
+            ));
+            for (language, all, warning) in [
+                (
+                    crate::i18n::UiLocale::En,
+                    "all Realms",
+                    "This cannot be undone.",
+                ),
+                (crate::i18n::UiLocale::Zh, "全部 Realm", "此操作无法撤销。"),
+            ] {
+                crate::i18n::set_locale(&mut locale, language);
+                assert_eq!(clear_target_text(&E2eePlaintextCacheClearScope::All), all);
+                let target =
+                    clear_target_text(&E2eePlaintextCacheClearScope::Realm("realm-test".into()));
+                assert!(target.contains(&short_protocol_id("realm-test")));
+                let body = crate::i18n::tr_args(
+                    "settings.storage.clear_body",
+                    &[("target", target.clone())],
+                );
+                assert!(body.contains(&target));
+                assert!(body.contains(warning));
+                assert!(body.contains("MLS"));
+            }
+        });
     }
 }

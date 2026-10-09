@@ -478,6 +478,63 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.local_stores.platform", "平台");
     dict.set("settings.local_stores.platform_web", "Web（localStorage）");
     dict.set("settings.local_stores.platform_native", "原生（文件系统）");
+    dict.set("settings.storage.quota_title", "浏览器站点存储配额");
+    dict.set("settings.storage.low_space", "空间不足");
+    dict.set("settings.storage.origin_total", "站点总量");
+    dict.set("settings.storage.used_available", "已用 / 可用");
+    dict.set(
+        "settings.storage.quota_warning",
+        "浏览器存储用量已超过所报告配额的 80%。",
+    );
+    dict.set(
+        "settings.storage.quota_guidance",
+        "请在浏览器开始拒绝写入前检查本地数据。",
+    );
+    dict.set("settings.storage.cache_title", "受保护的 E2EE 明文缓存");
+    dict.set("settings.storage.manual_only", "仅手动清理");
+    dict.set("settings.storage.plaintext", "受保护的明文");
+    dict.set("settings.storage.entries", "受保护的条目");
+    dict.set("settings.storage.eviction_disabled", "自动清理已禁用。");
+    dict.set("settings.storage.cache_warning", "MLS 棘轮推进后，缓存的明文可能是本地唯一可显示的副本。仅在接受受影响内容可能无法再在此设备打开时清理。MLS 接收状态会保留。");
+    dict.set("settings.storage.empty", "此账号没有缓存受保护的明文。");
+    dict.set("settings.storage.clear_realm", "清理 Realm 缓存");
+    dict.set("settings.storage.clear_all", "清理全部受保护的明文");
+    dict.set("settings.storage.irreversible", "可能无法恢复");
+    dict.set("settings.storage.clear_confirm", "清理受保护的明文");
+    dict.set(
+        "settings.storage.quota_summary",
+        "{used} / {quota}{percent}",
+    );
+    dict.set("settings.storage.checking", "正在检查浏览器配额…");
+    dict.set(
+        "settings.storage.browser_only",
+        "仅浏览器会报告站点存储配额。",
+    );
+    dict.set(
+        "settings.storage.quota_error",
+        "无法获取浏览器配额：{detail}",
+    );
+    dict.set(
+        "settings.storage.entry_summary",
+        "{realms} 个 Realm 中共 {entries} 条",
+    );
+    dict.set(
+        "settings.storage.realm_summary",
+        "{bytes} · {entries} 条（{authored} 条自建，{received} 条接收）",
+    );
+    dict.set("settings.storage.target_all", "全部 Realm");
+    dict.set("settings.storage.target_realm", "Realm {realm}");
+    dict.set("settings.storage.clear_title", "清理{target}的受保护明文？");
+    dict.set("settings.storage.clear_body", "这将移除{target}在本地缓存的自建和接收明文。MLS 私有状态检查点会保留，但较早的棘轮内容仍可能无法再在此设备打开。此操作无法撤销。");
+    dict.set(
+        "settings.storage.cleared",
+        "受保护的明文已清理。MLS 私有状态检查点已保留；旧内容仍可能无法打开。",
+    );
+    dict.set("settings.storage.no_match", "该清理范围内没有匹配的内容。");
+    dict.set(
+        "settings.storage.clear_error",
+        "受保护的明文清理失败：{detail}",
+    );
     dict.set("settings.storage_risks.title", "存储诊断");
     dict.set(
         "settings.storage_risks.bounded_projection",
