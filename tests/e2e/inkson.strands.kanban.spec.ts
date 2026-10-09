@@ -108,7 +108,7 @@ test("kanban card detail embeds discussion without boundary copy", async ({
   await expect(agentMention.getByTestId("card-detail-member")).toHaveText(
     "assistant",
   );
-  await expect(agentMention).toContainText("AI agent");
+  await expect(agentMention).toContainText("Private agent");
 
   await agentMention.click();
   await expect(
@@ -168,7 +168,11 @@ test("sidecar activation fails closed until this device receives Realm encryptio
     .click();
   await detailPopup.getByTestId("chat-input").fill("@me/assistant hello");
 
-  await expect(detailPopup.getByRole("alert")).toContainText(
+  await expect(detailPopup.getByText(
+    "Agent modes are unknown or these targets cannot share a scope. Edit the mentions to continue.",
+    { exact: true },
+  )).toHaveCount(0);
+  await expect(detailPopup.getByTestId("epoch-update-required-banner")).toContainText(
     "Waiting for this device's encryption keys. Keep this conversation open to receive the MLS Welcome.",
   );
   await expect(detailPopup.getByTestId("send-chat-button")).toBeDisabled();

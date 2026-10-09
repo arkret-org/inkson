@@ -54,6 +54,80 @@ pub(crate) use retained_host::RetainedDiscussionHost;
 const PRESENCE_HEARTBEAT_SECS: u64 = 25;
 const PRESENCE_STARTUP_RETRY_SECS: u64 = 2;
 
+// Private-state restoration controls sending, not whether the already
+// verified public current is known. A failed probe must retain that evidence.
+fn send_probe_presentation_current(
+    gate: Option<&crate::mls::send_gate::MlsSendGate>,
+    installed: crate::current_projection::ScopeMlsCurrent,
+) -> crate::current_projection::ScopeMlsCurrent {
+    match gate {
+        Some(crate::mls::send_gate::MlsSendGate::Encrypted(current)) => {
+            crate::current_projection::ScopeMlsCurrent::Activated(current.clone())
+        }
+        Some(crate::mls::send_gate::MlsSendGate::Plaintext) => {
+            crate::current_projection::ScopeMlsCurrent::NotActivated
+        }
+        None => installed,
+    }
+}
+
+#[cfg(test)]
+mod send_probe_presentation_tests {
+    use super::*;
+    use crate::current_projection::{RealmCurrentView, ScopeMlsCurrent};
+
+    #[test]
+    fn missing_private_keys_preserve_verified_current_without_admitting_send() {
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: "ak:realm:AeEFmfOZxsx5kLi2kpOJu8m7TFXZ_G8E4019rUp4wmT6"
+                .parse()
+                .unwrap(),
+        };
+        let current: arkret_wire::MlsGroupCurrent = serde_json::from_value(json!({
+            "effective_scope": scope,
+            "genesis_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            "current_mls_commit_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519", "epoch": 4,
+            "current_key_access_revision": 2, "covered_key_access_revision": 2,
+            "public_tree_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
+        })).unwrap();
+        let probe = crate::mls::send_gate::decide_mls_send_gate(Ok(Some(current.clone())), None);
+        assert_eq!(
+            probe,
+            Err(crate::mls::send_gate::MlsSendGateBlocked::LocalGroupBehind { current_epoch: 4 })
+        );
+        let failed_probe = probe.ok();
+        assert_eq!(
+            send_probe_presentation_current(
+                failed_probe.as_ref(),
+                ScopeMlsCurrent::Activated(current.clone())
+            ),
+            ScopeMlsCurrent::Activated(current)
+        );
+        let realm = scope.realm_id_opt().unwrap().as_str();
+        let complete = RealmCurrentView::new(realm, vec![], true).unwrap();
+        let partial = RealmCurrentView::new(realm, vec![], false).unwrap();
+        let other = RealmCurrentView::new(
+            "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
+            vec![],
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            send_probe_presentation_current(None, complete.scope_mls_current(&scope)),
+            ScopeMlsCurrent::NotActivated
+        );
+        assert_eq!(
+            send_probe_presentation_current(None, partial.scope_mls_current(&scope)),
+            ScopeMlsCurrent::Unknown
+        );
+        assert_eq!(
+            send_probe_presentation_current(None, other.scope_mls_current(&scope)),
+            ScopeMlsCurrent::Unknown
+        );
+    }
+}
+
 #[inline(always)]
 fn trace_private_send_stage(_stage: &'static str) {
     #[cfg(feature = "wasm-localstorage-secrets-test")]
@@ -2010,14 +2084,9 @@ pub fn ChatPanel(
     if (selected_channel_security_encrypted || direct_mode)
         && selected_realm_pending_mls_binding_reason.is_none()
     {
-        let installed = match scope_send_gate.as_ref() {
-            Some(crate::mls::send_gate::MlsSendGate::Encrypted(current)) => {
-                crate::current_projection::ScopeMlsCurrent::Activated(current.clone())
-            }
-            Some(crate::mls::send_gate::MlsSendGate::Plaintext) => {
-                crate::current_projection::ScopeMlsCurrent::NotActivated
-            }
-            None if scope_readiness_checking => send_scope
+        let installed = send_probe_presentation_current(
+            scope_send_gate.as_ref(),
+            send_scope
                 .as_ref()
                 .map(|scope| {
                     // Presentation only: authoring still requires the independent
@@ -2025,8 +2094,7 @@ pub fn ChatPanel(
                     state_store.read().installed_scope_mls_current(scope)
                 })
                 .unwrap_or(crate::current_projection::ScopeMlsCurrent::Unknown),
-            None => crate::current_projection::ScopeMlsCurrent::Unknown,
-        };
+        );
         let local_epoch = send_scope.as_ref().and_then(|scope| {
             state_store
                 .read()

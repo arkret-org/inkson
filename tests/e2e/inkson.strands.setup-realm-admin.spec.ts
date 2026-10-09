@@ -181,9 +181,32 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   const primaryAxisCards = boundaryPanel.locator(
     ".setup-step-panel > .setup-axis-grid > .setup-axis-card",
   );
-  await expect(primaryAxisCards).toHaveCount(6);
-  await expect(primaryAxisCards.locator(".help-tip")).toHaveCount(6);
+  await expect(primaryAxisCards).toHaveCount(5);
+  await expect(primaryAxisCards.locator(".help-tip")).toHaveCount(5);
   await expect(primaryAxisCards.locator(".muted")).toHaveCount(0);
+  for (const field of [
+    "realm-discoverability-input",
+    "realm-policy-join-rule-input",
+    "realm-policy-history-access-input",
+    "realm-mls-activation-input",
+    "realm-security-class-input",
+  ]) {
+    await expect(boundaryPanel.getByTestId(field)).toBeVisible();
+  }
+  const advanced = boundaryPanel.getByTestId("realm-advanced-config");
+  await expect(advanced).not.toHaveAttribute("open", "");
+  await expect(advanced.getByTestId("realm-federation-policy-input")).toBeHidden();
+  await expect(advanced.getByTestId("realm-hash-profile-input")).toBeHidden();
+  await advanced.locator("summary").click();
+  await expect(advanced).toHaveAttribute("open", "");
+  await expect(advanced.locator(".setup-axis-card")).toHaveCount(2);
+  await expect(advanced.locator(".help-tip")).toHaveCount(2);
+  await expect(advanced.getByTestId("realm-federation-policy-input")).toBeVisible();
+  await expect(advanced.getByTestId("realm-hash-profile-input")).toBeVisible();
+  await advanced.locator("summary").click();
+  await expect(advanced).not.toHaveAttribute("open", "");
+  await expect(advanced.getByTestId("realm-federation-policy-input")).toBeHidden();
+  await expect(advanced.getByTestId("realm-hash-profile-input")).toBeHidden();
   await expect(
     boundaryPanel.getByText("Who can discover that this Realm exists?"),
   ).toHaveCount(0);
