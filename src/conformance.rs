@@ -9,10 +9,18 @@ use crate::models::ServiceDescribe;
 /// active holder fence. Dropping the fixture invalidates all captured results.
 #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
 pub struct NativeAccountSession {
+    client: arkret_sdk::http_client::Client,
     previous: Option<crate::secure_key_store::ActiveDeviceSeedScope>,
     previous_pending: Option<arkret_sdk::DeviceId>,
     previous_signer: Option<std::sync::Arc<crate::event_signer::InksonEventSigner>>,
     previous_mode: crate::operation::ProofMode,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+impl NativeAccountSession {
+    pub fn client(&self) -> arkret_sdk::http_client::Client {
+        self.client.clone()
+    }
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
@@ -94,7 +102,8 @@ pub async fn restore_native_account_session(
         .await?;
     crate::state::store_session_grant_in_user_secure_store_durable(&user, secure.as_ref(), &grant)
         .await?;
-    let session = NativeAccountSession {
+    let mut session = NativeAccountSession {
+        client: arkret_sdk::http_client::Client::new(grant.station_url.clone())?,
         previous: crate::secure_key_store::active_device_seed_scope(),
         previous_pending: crate::secure_key_store::pending_login_device_id(),
         previous_signer: crate::event_signer::replace_active_signer(Some(std::sync::Arc::new(
@@ -109,8 +118,10 @@ pub async fn restore_native_account_session(
     crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
     crate::identity::session_refresh::reset_session_grant_runtime();
     user.activate();
-    crate::identity::session_refresh::provide_authenticated_sdk_client(grant.station_url.as_str())
-        .await?;
+    session.client = crate::identity::session_refresh::provide_authenticated_sdk_client(
+        grant.station_url.as_str(),
+    )
+    .await?;
     Ok(session)
 }
 
