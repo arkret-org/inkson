@@ -214,3 +214,5 @@ Unauthenticated users see only the login or registration entry screen. After a r
 - Server-owned OIDC/coauth sign-in and registration. The client opens the authorization URL from server discovery and completes the callback into a Station session.
 
 ---
+
+Applet 安装已同步正式 Service-only 合同：管理员原签 registration／grants，Station preview 返回 plan，确认时提交原 basis 与 plan_digest；安装不向 Applet author 一个默认 Bot。独立 Bot／Ghost 创建、管理审批产品流程仍需后续接线。已有客户端原生 MLS／Welcome／Blob 路径保持独立，Applet HTTPS base_url 不接收群内容。
