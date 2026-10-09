@@ -19,8 +19,10 @@ use inkson::operation::LocalOperation;
 /// rather than reached through a `cfg(test)` helper.
 pub fn test_inception_root_key_multibase(principal_did: &str) -> String {
     arkret_sdk::ed25519_pubkey_to_did_key_multibase(
-        arkret_signatures::development_verifying_key(&format!("{principal_did}#inception-root"))
-            .as_bytes(),
+        arkret_test_kit::keys::development_verifying_key(&format!(
+            "{principal_did}#inception-root"
+        ))
+        .as_bytes(),
     )
 }
 

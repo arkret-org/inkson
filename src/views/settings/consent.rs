@@ -44,9 +44,6 @@ struct ConsentRow {
     peer: arkret_sdk::ConsentPeer,
     /// Kind-qualified row key: the exact wire form of [`ConsentRow::peer`].
     peer_key: String,
-    /// Human label. Always contains the peer principal, plus the rest of the
-    /// identity that makes it exact.
-    peer_label: String,
     /// Wire scope (`invite` / `voice_call` / `presence` / ...).
     scope: String,
     /// Materialized current state, with `expired` derived from the read clock.
@@ -63,23 +60,24 @@ fn consent_peer_label(peer: &arkret_sdk::ConsentPeer) -> String {
                 account_id.principal_id.as_str(),
                 account_id.station_id.as_str()
             ),
-            arkret_sdk::ActorId::Service { service_id } => {
-                format!("service {}", service_id.as_str())
-            }
+            arkret_sdk::ActorId::Service { service_id } => crate::i18n::tr_args(
+                "consent.peer_service",
+                &[("service", service_id.to_string())],
+            ),
         },
     }
 }
 
 /// Human label for a wire scope.
-fn scope_label(scope: &str) -> &'static str {
-    match scope {
-        "invite" => "Group invites",
-        "voice_call" => "Voice calls",
-        "video_call" => "Video calls",
-        "presence" => "Presence",
-        "any" => "All consent permissions",
-        _ => "Unknown scope",
-    }
+fn scope_label(scope: &str) -> String {
+    tr(match scope {
+        "invite" => "consent.scope.invite",
+        "voice_call" => "consent.scope.voice_call",
+        "video_call" => "consent.scope.video_call",
+        "presence" => "consent.scope.presence",
+        "any" => "consent.scope.any",
+        _ => "consent.scope.unknown",
+    })
 }
 
 /// Parse a TTL token such as `30d` / `12h` / `90m` / `5s` into a duration. Returns
@@ -113,7 +111,6 @@ fn parse_consent_rows(value: &arkret_sdk::ConsentList, holder: &str) -> Vec<Cons
             holder: holder.to_owned(),
             peer: cell.peer.clone(),
             peer_key: serde_json::to_string(&cell.peer).unwrap_or_default(),
-            peer_label: consent_peer_label(&cell.peer),
             scope: cell.consent_scope.as_str().to_owned(),
             state: match cell.state {
                 arkret_sdk::ConsentState::Active
@@ -142,10 +139,10 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
             .unwrap_or_default()
     });
     let mut rows = use_signal(Vec::<ConsentRow>::new);
-    let mut load_error = use_signal(|| Option::<String>::None);
+    let mut load_error = use_signal(|| Option::<Vec<(&'static str, String)>>::None);
     let mut reload = use_signal(|| 0_u32);
     let mut loaded_generation = use_signal(|| u32::MAX);
-    let mut write_status = use_signal(String::new);
+    let mut write_status = use_signal(|| ("", Vec::<(&'static str, String)>::new()));
 
     // Direct-grant form state.
     let mut grant_form_open = use_signal(|| false);
@@ -196,7 +193,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                         rows.set(parse_consent_rows(&list, &holder));
                     }
                     Err(err) => {
-                        load_error.set(Some(err.display()));
+                        load_error.set(Some(super::capabilities::api_error_feedback_args(&err)));
                     }
                 }
             });
@@ -237,7 +234,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                 section { class: "settings-content-stack",
                     div { class: "event",
                         div { class: "event-head",
-                            span { "Consent" }
+                            span { {tr("consent.title")} }
                             div { class: "actions",
                                 Button {
                                     variant: ButtonVariant::Secondary,
@@ -246,7 +243,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                         let next = !grant_form_open();
                                         grant_form_open.set(next);
                                     },
-                                    "Grant consent"
+                                    {tr("consent.grant")}
                                 }
                                 Button {
                                     variant: ButtonVariant::Secondary,
@@ -255,26 +252,25 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                         let next = !request_form_open();
                                         request_form_open.set(next);
                                     },
-                                    "Request consent"
+                                    {tr("consent.request")}
                                 }
                             }
                         }
                         div { class: "muted",
-                            "Decide who may invite, call, or observe your presence. Consent is a "
-                            "private decision — it does not grant any group membership."
+                            {tr("consent.intro")}
                         }
 
                         if let Some(message) = load_error.read().clone() {
                             div {
                                 class: "event error-banner",
                                 "data-testid": "consent-load-error",
-                                div { class: "muted", "Couldn't load consent: {message}" }
+                                div { class: "muted", {crate::i18n::tr_args("consent.load_failed", &super::capabilities::localized_feedback_args(&message))} }
                                 div { class: "actions",
                                     Button {
                                         variant: ButtonVariant::Secondary,
                                         "data-testid": "consent-retry-button",
                                         onclick: move |_| reload.set(reload() + 1),
-                                        "Retry"
+                                        {tr("common.retry")}
                                     }
                                 }
                             }
@@ -284,9 +280,9 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                             div {
                                 class: "members-empty",
                                 "data-testid": "consent-grant-empty",
-                                div { class: "members-empty-title", "No consent decisions yet" }
+                                div { class: "members-empty-title", {tr("consent.empty")} }
                                 div { class: "muted members-empty-hint",
-                                    "Grant consent directly, or ask someone for consent."
+                                    {tr("consent.empty_hint")}
                                 }
                             }
                         }
@@ -295,9 +291,9 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                     // ── Direct grant form ───────────────────────────────────
                     if grant_form_open() {
                         div { class: "event", "data-testid": "consent-new-grant-form",
-                            div { class: "event-head", span { "Grant consent" } }
+                            div { class: "event-head", span { {tr("consent.grant")} } }
                             div { class: "field",
-                                Label { html_for: "consent-new-grant-scope", "Scope" }
+                                Label { html_for: "consent-new-grant-scope", {tr("consent.scope")} }
                                 Select::<String> {
                                     id: "consent-new-grant-scope",
                                     "data-testid": "consent-new-grant-scope-input",
@@ -307,20 +303,20 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                             grant_scope.set(v);
                                         }
                                     },
-                                    SelectOption::<String> { index: 0usize, value: "invite".to_string(), text_value: "Group invites", "Group invites" }
-                                    SelectOption::<String> { index: 1usize, value: "voice_call".to_string(), text_value: "Voice calls", "Voice calls" }
-                                    SelectOption::<String> { index: 2usize, value: "video_call".to_string(), text_value: "Video calls", "Video calls" }
-                                    SelectOption::<String> { index: 3usize, value: "presence".to_string(), text_value: "Presence", "Presence" }
-                                    SelectOption::<String> { index: 4usize, value: "any".to_string(), text_value: "All consent permissions", "All consent permissions" }
+                                    SelectOption::<String> { index: 0usize, value: "invite".to_string(), text_value: tr("consent.scope.invite"), {tr("consent.scope.invite")} }
+                                    SelectOption::<String> { index: 1usize, value: "voice_call".to_string(), text_value: tr("consent.scope.voice_call"), {tr("consent.scope.voice_call")} }
+                                    SelectOption::<String> { index: 2usize, value: "video_call".to_string(), text_value: tr("consent.scope.video_call"), {tr("consent.scope.video_call")} }
+                                    SelectOption::<String> { index: 3usize, value: "presence".to_string(), text_value: tr("consent.scope.presence"), {tr("consent.scope.presence")} }
+                                    SelectOption::<String> { index: 4usize, value: "any".to_string(), text_value: tr("consent.scope.any"), {tr("consent.scope.any")} }
                                 }
                             }
                             div { class: "field",
-                                Label { html_for: "consent-new-grant-grantee-input-input", "Grantee DID" }
+                                Label { html_for: "consent-new-grant-grantee-input-input", {tr("consent.grantee")} }
                                 Input {
                                     id: "consent-new-grant-grantee-input-input",
                                     "data-testid": "consent-new-grant-grantee-input",
                                     value: "{grant_grantee}",
-                                    placeholder: "did:web:bob.example",
+                                    placeholder: tr("consent.account_example"),
                                     oninput: move |event: FormEvent| grant_grantee.set(event.value()),
                                 }
                             }
@@ -330,17 +326,17 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                     id: "consent-new-grant-grantee-station-input-input",
                                     "data-testid": "consent-new-grant-grantee-station-input",
                                     value: "{grant_grantee_station}",
-                                    placeholder: "did:web:soland.example",
+                                    placeholder: tr("consent.station_example"),
                                     oninput: move |event: FormEvent| grant_grantee_station.set(event.value()),
                                 }
                             }
                             div { class: "field",
-                                Label { html_for: "consent-new-grant-ttl-input-input", "Valid for (e.g. 30d)" }
+                                Label { html_for: "consent-new-grant-ttl-input-input", {tr("consent.ttl")} }
                                 Input {
                                     id: "consent-new-grant-ttl-input-input",
                                     "data-testid": "consent-new-grant-ttl-input",
                                     value: "{grant_ttl}",
-                                    placeholder: "30d",
+                                    placeholder: tr("consent.ttl_example"),
                                     oninput: move |event: FormEvent| grant_ttl.set(event.value()),
                                 }
                             }
@@ -374,12 +370,12 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                             ) {
                                                 Ok(peer) => peer,
                                                 Err(err) => {
-                                                    write_status.set(format!("grant failed: {err}"));
+                                                    write_status.set(("consent.grant_failed", vec![("error", err.to_string())]));
                                                     return;
                                                 }
                                             };
                                             busy.set(true);
-                                            write_status.set("granting…".to_owned());
+                                            write_status.set(("consent.grant_busy", vec![]));
                                             spawn(async move {
                                                 match with_authed_sdk_client(&base, api_token, |http| async move {
                                                     crate::transport::account::grant_consent(
@@ -390,21 +386,21 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                                 .await
                                                 {
                                                     Ok(_) => {
-                                                        write_status.set("consent granted".to_owned());
+                                                        write_status.set(("consent.grant_success", vec![]));
                                                         grant_form_open.set(false);
                                                         grant_grantee.set(String::new());
                                                         grant_grantee_station.set(String::new());
                                                         reload.set(reload() + 1);
                                                     }
                                                     Err(err) => {
-                                                        write_status.set(format!("grant failed: {}", err.display()));
+                                                        write_status.set(("consent.grant_failed", super::capabilities::api_error_feedback_args(&err)));
                                                     }
                                                 }
                                                 busy.set(false);
                                             });
                                         }
                                     },
-                                    "Grant"
+                                    {tr("consent.grant_submit")}
                                 }
                             }
                         }
@@ -413,9 +409,9 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                     // ── Outbound request form ───────────────────────────────
                     if request_form_open() {
                         div { class: "event", "data-testid": "consent-request-form",
-                            div { class: "event-head", span { "Request consent" } }
+                            div { class: "event-head", span { {tr("consent.request")} } }
                             div { class: "field",
-                                Label { html_for: "consent-request-scope", "Scope" }
+                                Label { html_for: "consent-request-scope", {tr("consent.scope")} }
                                 Select::<String> {
                                     id: "consent-request-scope",
                                     "data-testid": "consent-request-scope-input",
@@ -432,19 +428,19 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                     // that branch pins the scope away from invite. The
                                     // grant form above still offers it, because a grant
                                     // may cover the invite scope.
-                                    SelectOption::<String> { index: 0usize, value: "voice_call".to_string(), text_value: "Voice calls", "Voice calls" }
-                                    SelectOption::<String> { index: 1usize, value: "video_call".to_string(), text_value: "Video calls", "Video calls" }
-                                    SelectOption::<String> { index: 2usize, value: "presence".to_string(), text_value: "Presence", "Presence" }
-                                    SelectOption::<String> { index: 3usize, value: "any".to_string(), text_value: "All consent permissions", "All consent permissions" }
+                                    SelectOption::<String> { index: 0usize, value: "voice_call".to_string(), text_value: tr("consent.scope.voice_call"), {tr("consent.scope.voice_call")} }
+                                    SelectOption::<String> { index: 1usize, value: "video_call".to_string(), text_value: tr("consent.scope.video_call"), {tr("consent.scope.video_call")} }
+                                    SelectOption::<String> { index: 2usize, value: "presence".to_string(), text_value: tr("consent.scope.presence"), {tr("consent.scope.presence")} }
+                                    SelectOption::<String> { index: 3usize, value: "any".to_string(), text_value: tr("consent.scope.any"), {tr("consent.scope.any")} }
                                 }
                             }
                             div { class: "field",
-                                Label { html_for: "consent-request-holder-input-input", "Holder DID" }
+                                Label { html_for: "consent-request-holder-input-input", {tr("consent.holder")} }
                                 Input {
                                     id: "consent-request-holder-input-input",
                                     "data-testid": "consent-request-holder-input",
                                     value: "{request_holder}",
-                                    placeholder: "did:web:bob.example",
+                                    placeholder: tr("consent.account_example"),
                                     oninput: move |event: FormEvent| request_holder.set(event.value()),
                                 }
                             }
@@ -454,7 +450,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                     id: "consent-request-holder-station-input-input",
                                     "data-testid": "consent-request-holder-station-input",
                                     value: "{request_holder_station}",
-                                    placeholder: "ak:did_core:web:station.example",
+                                    placeholder: tr("consent.station_core_example"),
                                     oninput: move |event: FormEvent| request_holder_station.set(event.value()),
                                 }
                             }
@@ -483,12 +479,12 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                             ) {
                                                 Ok(holder) => holder,
                                                 Err(err) => {
-                                                    write_status.set(format!("request failed: {err}"));
+                                                    write_status.set(("consent.request_failed", vec![("error", err.to_string())]));
                                                     return;
                                                 }
                                             };
                                             busy.set(true);
-                                            write_status.set("requesting…".to_owned());
+                                            write_status.set(("consent.request_busy", vec![]));
                                             spawn(async move {
                                                 match with_authed_sdk_client(&base, api_token, |http| async move {
                                                     crate::transport::account::request_consent(&http, &holder, &scope).await
@@ -499,20 +495,17 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                                         request_form_open.set(false);
                                                         request_holder.set(String::new());
                                                         request_holder_station.set(String::new());
-                                                        write_status.set(
-                                                            "consent request accepted for processing"
-                                                                .to_owned(),
-                                                        );
+                                                        write_status.set(("consent.request_success", vec![]));
                                                     }
                                                     Err(err) => {
-                                                        write_status.set(format!("request failed: {}", err.display()));
+                                                        write_status.set(("consent.request_failed", super::capabilities::api_error_feedback_args(&err)));
                                                     }
                                                 }
                                                 busy.set(false);
                                             });
                                         }
                                     },
-                                    "Send request"
+                                    {tr("consent.request_submit")}
                                 }
                             }
                         }
@@ -521,14 +514,14 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                     // ── Granted consents ────────────────────────────────────
                     if !granted_rows.is_empty() {
                         div { class: "event",
-                            div { class: "event-head", span { "Granted" } }
+                            div { class: "event-head", span { {tr("consent.granted")} } }
                             ul { class: "settings-list",
                                 for row in granted_rows.iter().cloned() {
                                     {
                                         let consent_id = row.consent_id.clone();
                                         let peer = row.peer.clone();
                                         let peer_key = row.peer_key.clone();
-                                        let peer_label = row.peer_label.clone();
+                                        let peer_label = consent_peer_label(&row.peer);
                                         let scope = row.scope.clone();
                                         let expires = row.expires_at.clone();
                                         rsx! {
@@ -543,7 +536,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                                     span { class: "mono", title: "{peer_key}", "{peer_label}" }
                                                 }
                                                 if let Some(expires) = &expires {
-                                                    div { class: "muted", "Expires: {expires}" }
+                                                    div { class: "muted", {crate::i18n::tr_args("consent.expires", &[("time", expires.clone())])} }
                                                 }
                                                 div { class: "actions",
                                                     Button {
@@ -564,7 +557,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                                                 let peer = peer.clone();
                                                                 let scope = scope.clone();
                                                                 busy.set(true);
-                                                                write_status.set("revoking…".to_owned());
+                                                                write_status.set(("consent.revoke_busy", vec![]));
                                                                 spawn(async move {
                                                                     match with_authed_sdk_client(&base, api_token, |http| async move {
                                                                         crate::transport::account::revoke_consent(
@@ -575,18 +568,18 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                                                     .await
                                                                     {
                                                                         Ok(_) => {
-                                                                            write_status.set("consent revoked".to_owned());
+                                                                            write_status.set(("consent.revoke_success", vec![]));
                                                                             reload.set(reload() + 1);
                                                                         }
                                                                         Err(err) => {
-                                                                            write_status.set(format!("revoke failed: {}", err.display()));
+                                                                            write_status.set(("consent.revoke_failed", super::capabilities::api_error_feedback_args(&err)));
                                                                         }
                                                                     }
                                                                     busy.set(false);
                                                                 });
                                                             }
                                                         },
-                                                        "Revoke"
+                                                        {tr("consent.revoke")}
                                                     }
                                                 }
                                             }
@@ -599,7 +592,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
 
                     if !revoked_rows.is_empty() {
                         div { class: "event",
-                            div { class: "event-head", span { "Revoked" } }
+                            div { class: "event-head", span { {tr("consent.revoked")} } }
                             ul { class: "settings-list",
                                 for row in revoked_rows.iter() {
                                     li {
@@ -608,7 +601,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                         "data-peer": "{row.peer_key}",
                                         "data-scope": "{row.scope}",
                                         span { "{scope_label(&row.scope)}" }
-                                        span { class: "mono", title: "{row.peer_key}", "{row.peer_label}" }
+                                        span { class: "mono", title: "{row.peer_key}", "{consent_peer_label(&row.peer)}" }
                                     }
                                 }
                             }
@@ -617,7 +610,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
 
                     if !expired_rows.is_empty() {
                         div { class: "event",
-                            div { class: "event-head", span { "Expired" } }
+                            div { class: "event-head", span { {tr("consent.expired")} } }
                             ul { class: "settings-list",
                                 for row in expired_rows.iter() {
                                     li {
@@ -626,22 +619,60 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                         "data-peer": "{row.peer_key}",
                                         "data-scope": "{row.scope}",
                                         span { "{scope_label(&row.scope)}" }
-                                        span { class: "mono", title: "{row.peer_key}", "{row.peer_label}" }
+                                        span { class: "mono", title: "{row.peer_key}", "{consent_peer_label(&row.peer)}" }
                                     }
                                 }
                             }
                         }
                     }
 
-                    if !write_status.read().is_empty() {
+                    if !write_status.read().0.is_empty() {
                         div {
                             class: "muted",
                             "data-testid": "write-status",
-                            "{write_status}"
+                            {crate::i18n::tr_args(write_status.read().0, &super::capabilities::localized_feedback_args(&write_status.read().1))}
                         }
                     }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn consent_scope_and_exact_service_peer_retranslate_without_changing_identity() {
+        let peer = arkret_sdk::ConsentPeer::Actor {
+            actor_id: arkret_sdk::ActorId::service(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:service.example").unwrap(),
+            ),
+        };
+        let original = serde_json::to_string(&peer).unwrap();
+        let mut dom = VirtualDom::new(|| rsx! {});
+        dom.rebuild_in_place();
+        dom.in_scope(ScopeId::ROOT, || {
+            let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
+                crate::i18n::UiLocale::En,
+            ));
+            for (language, scope, prefix) in [
+                (crate::i18n::UiLocale::En, "Group invites", "service "),
+                (crate::i18n::UiLocale::Zh, "群组邀请", "服务 "),
+                (crate::i18n::UiLocale::En, "Group invites", "service "),
+            ] {
+                crate::i18n::set_locale(&mut locale, language);
+                assert_eq!(
+                    scope_label(arkret_wire::ConsentScope::Invite.as_str()),
+                    scope
+                );
+                assert_eq!(
+                    consent_peer_label(&peer),
+                    format!("{prefix}ak:did_core:web:service.example")
+                );
+                assert_eq!(serde_json::to_string(&peer).unwrap(), original);
+            }
+        });
     }
 }

@@ -142,6 +142,81 @@ pub fn english_translations() -> TranslationDict {
         "settings.local_stores.platform_native",
         "Native (filesystem)",
     );
+    dict.set("settings.storage.quota_title", "Browser origin quota");
+    dict.set("settings.storage.low_space", "Low space");
+    dict.set("settings.storage.origin_total", "Origin total");
+    dict.set("settings.storage.used_available", "Used / available");
+    dict.set(
+        "settings.storage.quota_warning",
+        "Browser storage is above 80% of its reported quota.",
+    );
+    dict.set(
+        "settings.storage.quota_guidance",
+        "Review local data before the browser starts rejecting writes.",
+    );
+    dict.set(
+        "settings.storage.cache_title",
+        "Protected E2EE plaintext cache",
+    );
+    dict.set("settings.storage.manual_only", "Manual cleanup only");
+    dict.set("settings.storage.plaintext", "Protected plaintext");
+    dict.set("settings.storage.entries", "Protected entries");
+    dict.set(
+        "settings.storage.eviction_disabled",
+        "Automatic eviction is disabled.",
+    );
+    dict.set("settings.storage.cache_warning", "A cached plaintext may be the only locally renderable copy after the MLS ratchet advances. Clear it only if you accept that affected content may no longer open on this device. MLS receive state is retained.");
+    dict.set(
+        "settings.storage.empty",
+        "No protected plaintext is cached for this account.",
+    );
+    dict.set("settings.storage.clear_realm", "Clear Realm cache");
+    dict.set(
+        "settings.storage.clear_all",
+        "Clear all protected plaintext",
+    );
+    dict.set("settings.storage.irreversible", "May be irreversible");
+    dict.set(
+        "settings.storage.clear_confirm",
+        "Clear protected plaintext",
+    );
+    dict.set(
+        "settings.storage.quota_summary",
+        "{used} of {quota}{percent}",
+    );
+    dict.set("settings.storage.checking", "Checking browser quota…");
+    dict.set(
+        "settings.storage.browser_only",
+        "Origin quota is reported by browsers only.",
+    );
+    dict.set(
+        "settings.storage.quota_error",
+        "Browser quota unavailable: {detail}",
+    );
+    dict.set(
+        "settings.storage.entry_summary",
+        "{entries} across {realms} Realms",
+    );
+    dict.set(
+        "settings.storage.realm_summary",
+        "{bytes} · {entries} entries ({authored} authored, {received} received)",
+    );
+    dict.set("settings.storage.target_all", "all Realms");
+    dict.set("settings.storage.target_realm", "Realm {realm}");
+    dict.set(
+        "settings.storage.clear_title",
+        "Clear protected plaintext for {target}?",
+    );
+    dict.set("settings.storage.clear_body", "This removes locally cached authored and received plaintext for {target}. MLS private-state checkpoints are kept, but older ratcheted content may still not open again on this device. This cannot be undone.");
+    dict.set("settings.storage.cleared", "Protected plaintext cleared. MLS private-state checkpoints were retained; old content may still be unavailable.");
+    dict.set(
+        "settings.storage.no_match",
+        "Nothing matched that cleanup scope.",
+    );
+    dict.set(
+        "settings.storage.clear_error",
+        "Protected plaintext cleanup failed: {detail}",
+    );
     dict.set("settings.storage_risks.title", "Storage diagnostics");
     dict.set(
         "settings.storage_risks.bounded_projection",
@@ -2128,6 +2203,156 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.action_failed", "Action failed: {error}");
 
     // ── InvitePolicySettingsCard ──────────────────────────────────────
+    dict.set(
+        "settings.capabilities.row_changed",
+        "The grant changed. Reload and confirm relinquishing it again.",
+    );
+    dict.set("settings.capabilities.title", "Capabilities");
+    dict.set("settings.capabilities.empty_title", "No capabilities");
+    dict.set("settings.capabilities.empty_hint", "No grants found for this actor. Either the projection is still warming up, or no grants have been issued yet.");
+    dict.set("settings.capabilities.detail", "Detail");
+    dict.set("settings.capabilities.relinquish", "Relinquish");
+    dict.set(
+        "settings.capabilities.relinquish_title",
+        "Relinquish capability",
+    );
+    dict.set(
+        "settings.capabilities.close_relinquish",
+        "Close relinquish confirmation",
+    );
+    dict.set(
+        "settings.capabilities.reason",
+        "Reason (optional, audit trail)",
+    );
+    dict.set(
+        "settings.capabilities.reason_placeholder",
+        "no longer needed",
+    );
+    dict.set("settings.capabilities.confirm", "Relinquish grant");
+    dict.set("settings.capabilities.audit", "Authority audit");
+    dict.set(
+        "settings.capabilities.close_detail",
+        "Close capability detail",
+    );
+    dict.set(
+        "settings.capabilities.authority_empty",
+        "Issuer authority is not available in this projection.",
+    );
+    dict.set("settings.capabilities.impact", "This permanently gives up the grant for yourself via `ak.capability.relinquish`. It is subject-only: no revoke authority is required or attached, and nobody else can use this path on your behalf. The issuer can re-grant later if needed.");
+    dict.set("settings.capabilities.expires", "expires {time}");
+    dict.set(
+        "settings.capabilities.issued",
+        "issued by {issuer} → {subject}",
+    );
+    dict.set("settings.capabilities.scope", "scope {scope}");
+    dict.set(
+        "settings.capabilities.authority_agent",
+        "owned Agent controller {account}",
+    );
+    dict.set("settings.capabilities.authority_grant", "grant {grant}");
+    dict.set(
+        "settings.capabilities.authority_root",
+        "realm root {realm} generation {generation}",
+    );
+    dict.set(
+        "settings.capabilities.loaded",
+        "Loaded {count} capabilities",
+    );
+    dict.set(
+        "settings.capabilities.no_account",
+        "Failed to load capabilities: no authenticated account",
+    );
+    dict.set(
+        "settings.capabilities.load_failed",
+        "Failed to load capabilities: {error}",
+    );
+    dict.set(
+        "settings.capabilities.disconnected",
+        "relinquish failed: account is not connected",
+    );
+    dict.set(
+        "settings.capabilities.invalid_realm",
+        "relinquish build failed: invalid realm id: {error}",
+    );
+    dict.set(
+        "settings.capabilities.build_failed",
+        "relinquish build failed: {error}",
+    );
+    dict.set("settings.capabilities.submitted", "relinquish submitted for {grant}: event_id={event} — the grant is void once the control move seals");
+    dict.set(
+        "settings.capabilities.failed",
+        "relinquish failed: {error}{hint}",
+    );
+    dict.set("settings.capabilities.hint_subject", "the server rejected this because the signer is not the grant's subject — only the subject may relinquish a grant; ask the issuer (or Realm owner) to revoke it instead");
+    dict.set("settings.capabilities.hint_pending", "the grant is not yet resolved in the server projection — the relinquish stays pending until the grant row lands; retry after sync if it does not settle");
+    dict.set("consent.title", "Consent");
+    dict.set("consent.grant", "Grant consent");
+    dict.set("consent.request", "Request consent");
+    dict.set("consent.empty", "No consent decisions yet");
+    dict.set(
+        "consent.empty_hint",
+        "Grant consent directly, or ask someone for consent.",
+    );
+    dict.set("consent.scope", "Scope");
+    dict.set("consent.scope.invite", "Group invites");
+    dict.set("consent.scope.voice_call", "Voice calls");
+    dict.set("consent.scope.video_call", "Video calls");
+    dict.set("consent.scope.presence", "Presence");
+    dict.set("consent.scope.any", "All consent permissions");
+    dict.set("consent.scope.unknown", "Unknown scope");
+    dict.set("consent.grantee", "Grantee DID");
+    dict.set("consent.ttl", "Valid for (e.g. 30d)");
+    dict.set("consent.grant_submit", "Grant");
+    dict.set("consent.holder", "Holder DID");
+    dict.set("consent.request_submit", "Send request");
+    dict.set("consent.granted", "Granted");
+    dict.set("consent.revoked", "Revoked");
+    dict.set("consent.expired", "Expired");
+    dict.set("consent.revoke", "Revoke");
+    dict.set("consent.peer_service", "service {service}");
+    dict.set("consent.intro", "Decide who may invite, call, or observe your presence. Consent is a private decision — it does not grant any group membership.");
+    dict.set("consent.load_failed", "Couldn't load consent: {error}");
+    dict.set("consent.expires", "Expires: {time}");
+    dict.set("consent.account_example", "Account DID");
+    dict.set("consent.station_example", "Station DID");
+    dict.set("consent.ttl_example", "30d");
+    dict.set("consent.station_core_example", "Station identity");
+    dict.set("consent.grant_busy", "granting…");
+    dict.set("consent.grant_success", "consent granted");
+    dict.set("consent.grant_failed", "grant failed: {error}");
+    dict.set("consent.request_busy", "requesting…");
+    dict.set(
+        "consent.request_success",
+        "consent request accepted for processing",
+    );
+    dict.set("consent.request_failed", "request failed: {error}");
+    dict.set("consent.revoke_busy", "revoking…");
+    dict.set("consent.revoke_success", "consent revoked");
+    dict.set("consent.revoke_failed", "revoke failed: {error}");
+    dict.set("invite_policy.no_account", "No active account");
+    dict.set(
+        "invite_policy.allowed_domains_example",
+        "example.com, team.example",
+    );
+    dict.set("invite_policy.blocked_domains_example", "spam.example");
+    dict.set("invite_policy.constraints.permitted", "permitted: {values}");
+    dict.set("invite_policy.constraints.forbidden", "forbidden: {values}");
+    dict.set(
+        "invite_policy.constraints.handle_cap",
+        "handle cap: {values}",
+    );
+    dict.set(
+        "invite_policy.constraints.explicit_cap",
+        "explicit cap: {values}",
+    );
+    dict.set(
+        "invite_policy.constraints.domains",
+        "handle domains: {values}",
+    );
+    dict.set(
+        "invite_policy.constraints.directories",
+        "directory services: {values}",
+    );
     dict.set("invite_policy.title", "Who can invite me");
     dict.set("invite_policy.loading", "Loading…");
     dict.set(
@@ -2184,6 +2409,14 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("invite_policy.unknown_drop", "dropped");
     dict.set("invite_policy.unknown_quarantine", "held for review");
     dict.set("invite_policy.unknown_suffix", ".");
+    dict.set(
+        "invite_policy.disclosure_toggle",
+        "Let approved contacts see the invite outcome",
+    );
+    dict.set(
+        "invite_policy.discovery_disclosure_toggle",
+        "Let discovery-trust sources see the invite outcome",
+    );
     dict.set("invite_policy.disclosure_title", "Receipts");
     dict.set(
         "invite_policy.disclosure_hint",
