@@ -142,6 +142,18 @@ fn draft_scope_send_blocked(
     }
 }
 
+fn installed_sidecar_send_blocked(
+    private_draft: bool,
+    session_installed: bool,
+    access_blocked: bool,
+    gate: Option<&crate::mls::send_gate::MlsSendGate>,
+) -> bool {
+    private_draft
+        && session_installed
+        && (access_blocked
+            || !matches!(gate, Some(crate::mls::send_gate::MlsSendGate::Encrypted(_))))
+}
+
 #[component]
 fn OrdinarySendActions(
     plaintext: bool,
@@ -307,13 +319,12 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         private_scope,
         device_id.clone(),
     );
-    let sidecar_send_blocked = private_draft
-        && active_sidecar_session.is_some()
-        && (sidecar_send_block_reason.is_some()
-            || !matches!(
-                private_probe.gate,
-                Some(crate::mls::send_gate::MlsSendGate::Encrypted(_))
-            ));
+    let sidecar_send_blocked = installed_sidecar_send_blocked(
+        private_draft,
+        active_sidecar_session.is_some(),
+        sidecar_send_block_reason.is_some(),
+        private_probe.gate.as_ref(),
+    );
     let preview_sidecar_targets = sidecar_request_targets(
         mentions_enabled,
         &preview_mentions,
@@ -1492,6 +1503,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         creator_bootstrap_pending: !private_draft && creator_mls_bootstrap_pending,
                         secure_title: if sidecar_target_missing {
                             "Select an Agent with @ before sending this private message".to_owned()
+                        } else if private_draft && active_sidecar_session.is_none() {
+                            crate::i18n::tr("chat.sidecar.open_and_send")
                         } else if private_draft { sidecar_send_block_reason.clone().unwrap_or_else(|| {
                             "Waiting for this device's verified private encryption state.".to_owned()
                         }) } else { selected_realm_pending_mls_binding_reason.clone().unwrap_or_else(|| {

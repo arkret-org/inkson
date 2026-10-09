@@ -19,6 +19,78 @@ const build = () => inksonWire<Fixture>("mock-realm-fixture", {
   salt: 9, title: "Contract Realm", board: true,
 });
 const verify = (fixture: Fixture) => inksonWire("mock-realm-verify", fixture);
+
+function declaredPlaintextServices(fixture: Fixture) {
+  return {
+    services: [{
+      service_id: fixture.identity.account_id.station_id,
+      service_kind: "station",
+      purposes: ["realm search"],
+      data_classes: ["full_text_index"],
+      visibility: "derived_plaintext",
+    }],
+  };
+}
+
+test("Plaintext-visible service bootstrap retains the signed declaration and exact current source", () => {
+  const original = build();
+  for (const payload of [{ services: [] }, declaredPlaintextServices(original)]) {
+    const fixture = inksonWire<Fixture>("mock-realm-fixture", {
+      salt: 9, title: "Declared service Realm", plaintext_visible_services: payload,
+    });
+    expect(verify(fixture)).toEqual({ verified: true });
+    const index = fixture.committed_events.findIndex(full => full.event.kind === "ak.realm.plaintext_visible_services");
+    expect(index).toBeGreaterThan(0);
+    const full = fixture.committed_events[index];
+    const creatorJoin = fixture.committed_events.findIndex(({ event }) => event.kind === "ak.member.state");
+    expect(index).toBeLessThan(creatorJoin);
+    expect(full.event.payload).toEqual(payload);
+    expect(full.commit.event_ref).toBe(full.event.event_id);
+    expect(full.commit.previous_commit_ref).toBe(fixture.committed_events[index - 1].commit.commit_id);
+    expect(full.event.producer_proof.jws).toMatch(/^[^.]+\.\.[^.]+$/);
+    const row = fixture.snapshot.current_state_entries.find((row: any) => row.selector.kind === "realm_plaintext_visible_services");
+    expect(row).toEqual({
+      selector: { kind: "realm_plaintext_visible_services" },
+      source_stream_ref: full.commit.stream_ref,
+      revision: { commit_id: full.commit.commit_id, stream_position: full.commit.stream_position },
+      value: payload,
+    });
+    expect(fixture.account_entry.current.entries).toContainEqual(row);
+    validateMockSchema("schemas/typed-current-result.schema.json", row);
+  }
+});
+
+test("Plaintext-visible service fixtures reject invalid declarations and signed/current tampering", () => {
+  const original = build();
+  const declaration = declaredPlaintextServices(original);
+  for (const payload of [
+    { ...declaration, undeclared_field: true },
+    { services: [{ ...declaration.services[0], data_classes: ["unregistered_plaintext_class"] }] },
+  ]) {
+    expect(() => inksonWire("mock-realm-fixture", {
+      salt: 9, title: "Invalid declaration", plaintext_visible_services: payload,
+    })).toThrow();
+  }
+  const fixture = inksonWire<Fixture>("mock-realm-fixture", {
+    salt: 9, title: "Declaration negatives", plaintext_visible_services: declaration,
+  });
+  for (const mutation of ["service", "signature", "current value", "current source", "current revision", "unknown kind"] as const) {
+    const changed = structuredClone(fixture);
+    const full = changed.committed_events.find(full => full.event.kind === "ak.realm.plaintext_visible_services")!;
+    const row = changed.snapshot.current_state_entries.find((row: any) => row.selector.kind === "realm_plaintext_visible_services");
+    if (mutation === "service") full.event.payload.services[0].service_id = "ak:did_core:web:unapproved.example";
+    if (mutation === "signature") {
+      const segments = full.event.producer_proof.jws.split(".");
+      segments[2] = (segments[2][0] === "A" ? "B" : "A") + segments[2].slice(1);
+      full.event.producer_proof.jws = segments.join(".");
+    }
+    if (mutation === "current value") row.value.services = [];
+    if (mutation === "current source") row.source_stream_ref.realm_id = original.identity.principal_control_realm_id;
+    if (mutation === "current revision") row.revision = { commit_id: changed.committed_events[0].commit.commit_id, stream_position: 0 };
+    if (mutation === "unknown kind") full.event.kind = "ak.realm.unregistered_fixture_kind";
+    expect(() => verify(changed), mutation).toThrow();
+  }
+});
 const scanRequest = (fixture: Fixture) => ({
   realm_id: fixture.snapshot.realm_id,
   stream_ref: fixture.committed_events[0].commit.stream_ref,

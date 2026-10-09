@@ -555,6 +555,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.board_header", "Board");
     dict.set("chat.send", "Send");
     dict.set("chat.send_secure", "Send Secure");
+    dict.set("chat.sidecar.open_and_send", "Open Private Sidecar and send");
     dict.set("chat.scheduled_send.send_at", "Send at");
     dict.set("chat.scheduled_send.create", "Schedule message");
     dict.set(

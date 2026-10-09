@@ -150,6 +150,38 @@ fn private_history_does_not_supply_a_draft_target_or_block_original_send() {
 
 type SendState = Rc<RefCell<Option<Signal<(bool, bool, bool)>>>>;
 
+#[test]
+fn installed_sidecar_requires_its_own_private_group_without_parent_scope_keys() {
+    let current: arkret_wire::MlsGroupCurrent = serde_json::from_value(serde_json::json!({
+        "effective_scope": {"kind":"sidecar", "realm_id":"ak:realm:AeEFmfOZxsx5kLi2kpOJu8m7TFXZ_G8E4019rUp4wmT6", "sidecar_id":"ak:sidecar:Abbk-ALq9nZszIh8qJC26XasNIx9TYjU5-BzXWyqwDVx"},
+        "genesis_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        "current_mls_commit_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519", "epoch": 4,
+        "current_key_access_revision": 2, "covered_key_access_revision": 2,
+        "public_tree_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
+    })).unwrap();
+    let probe = crate::mls::send_gate::decide_mls_send_gate(Ok(Some(current)), None);
+    assert_eq!(
+        probe,
+        Err(crate::mls::send_gate::MlsSendGateBlocked::LocalGroupBehind { current_epoch: 4 })
+    );
+    let gate = probe.ok();
+    assert!(installed_sidecar_send_blocked(
+        true,
+        true,
+        false,
+        gate.as_ref()
+    ));
+    assert!(
+        !installed_sidecar_send_blocked(true, false, false, gate.as_ref()),
+        "fresh opening acquires its independent scope"
+    );
+    assert!(
+        !installed_sidecar_send_blocked(false, true, false, gate.as_ref()),
+        "old private state cannot gate a shared draft"
+    );
+}
+
 fn send_actions_harness(control: SendState) -> Element {
     let state = use_signal(|| (false, true, false));
     *control.borrow_mut() = Some(state);

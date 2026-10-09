@@ -25,6 +25,8 @@ struct BuildInput {
     empty_board: bool,
     #[serde(default)]
     encrypted: bool,
+    #[serde(default)]
+    plaintext_visible_services: Option<PlaintextVisibleServicesPayload>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -859,6 +861,11 @@ impl Builder {
                 CurrentSelector::RealmPolicyBundle,
                 serde_json::from_value::<RealmPolicyBundlePayload>(payload)?,
             )?,
+            EventKind::RealmPlaintextVisibleServices => self.row(
+                full,
+                CurrentSelector::RealmPlaintextVisibleServices,
+                serde_json::from_value::<PlaintextVisibleServicesPayload>(payload)?,
+            )?,
             EventKind::RealmJoinRule => {
                 let payload: RealmJoinRulePayload = serde_json::from_value(payload)?;
                 self.row(full, CurrentSelector::RealmJoinRule, payload.value)?;
@@ -1259,6 +1266,9 @@ pub(super) fn build(input: Value) -> Result<Value> {
                 .author_with_digest_suite(DigestSuite::Sha256)?,
         )?;
     }
+    if let Some(services) = input.plaintext_visible_services.clone() {
+        builder.author::<event_spec::RealmPlaintextVisibleServices>(&realm, services)?;
+    }
     let member =
         inkson::event_builders::build_realm_bootstrap_membership_intent(&facets, realm.as_str())?;
     builder.append(
@@ -1482,6 +1492,7 @@ fn validate_fixture(fixture: &Fixture) -> Result<Fixture> {
         board: false,
         empty_board: true,
         encrypted: false,
+        plaintext_visible_services: None,
     };
     let mut builder = Builder::new(&configuration)?;
     builder.public_blobs = fixture.public_blobs.clone();
@@ -1690,6 +1701,7 @@ pub(super) fn submit(input: Value) -> Result<Value> {
         board: false,
         empty_board: true,
         encrypted: false,
+        plaintext_visible_services: None,
     };
     let mut builder = Builder::new(&configuration)?;
     if let Some(fixture) = input.fixture {

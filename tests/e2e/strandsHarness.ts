@@ -624,7 +624,7 @@ export function registerStrandsBeforeEach() {
         "bootstrap login and sync shows the connected realm",
         "selected Realm security badge matches its encrypted sidebar marker",
         "chat fails closed until this device receives Realm encryption keys",
-        "sidecar activation fails closed until this device receives Realm encryption keys",
+        "fresh Sidecar rejection preserves its bound draft without publishing to the encrypted Realm",
         "card detail embeds discussion directly without discussion chrome",
       ].includes(testInfo.title),
       currentDeviceId: initialDeviceId,

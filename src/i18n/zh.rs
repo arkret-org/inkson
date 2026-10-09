@@ -320,6 +320,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.board_header", "看板");
     dict.set("chat.send", "发送");
     dict.set("chat.send_secure", "加密发送");
+    dict.set("chat.sidecar.open_and_send", "开启私密 Sidecar 并发送");
     dict.set("chat.scheduled_send.send_at", "发送时间");
     dict.set("chat.scheduled_send.create", "定时发送");
     dict.set(

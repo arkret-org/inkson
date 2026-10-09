@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 import {
   CURRENT_ASSISTANT_ACCOUNT_ID,
   CURRENT_ASSISTANT_CORE_ID,
+  CURRENT_ACCOUNT_ID,
+  validateMockSchema,
 } from "./mockArkretApi";
 import {
   registerStrandsBeforeEach,
@@ -142,14 +144,30 @@ test("kanban card detail embeds discussion without boundary copy", async ({
   await expect(detailPopup).toHaveCount(0);
 });
 
-test("sidecar activation fails closed until this device receives Realm encryption keys", async ({
+test("fresh Sidecar rejection preserves its bound draft without publishing to the encrypted Realm", async ({
   page,
 }) => {
   await openKanban(page);
-  await page.getByTestId("kanban-card").first().click();
+  const sourceCard = page.getByTestId("kanban-card").first();
+  const sourceStrand = await sourceCard.getAttribute("data-strand-id");
+  const sourceRealm = decodeURIComponent(new URL(page.url()).pathname.split("/kanban/")[1].split("/")[0]);
+  await sourceCard.click();
   const detailPopup = page.getByTestId("card-detail-modal");
   let ensureRequests = 0;
   let messageSubmissions = 0;
+  const ensureBodies: Record<string, any>[] = [];
+  await page.route("**/_arkret/self/agent-sidecars:ensure", async (route) => {
+    const body = route.request().postDataJSON();
+    validateMockSchema("schemas/agent-operations.schema.json#/$defs/agent_sidecar_ensure_request_body", body);
+    ensureBodies.push(body);
+    const problem = {
+      type: "https://arkret.org/problems/service_unavailable",
+      title: "Service unavailable", status: 503,
+      detail: "Private Sidecar creation is unavailable.",
+    };
+    validateMockSchema("schemas/http-problem-details.schema.json", problem);
+    await route.fulfill({status: 503, contentType: "application/problem+json", body: JSON.stringify(problem)});
+  });
   page.on("request", (request) => {
     if (request.url().includes("/_arkret/self/agent-sidecars:ensure")) {
       ensureRequests += 1;
@@ -175,12 +193,26 @@ test("sidecar activation fails closed until this device receives Realm encryptio
   await expect(detailPopup.getByTestId("epoch-update-required-banner")).toContainText(
     "Waiting for this device's encryption keys. Keep this conversation open to receive the MLS Welcome.",
   );
-  await expect(detailPopup.getByTestId("send-chat-button")).toBeDisabled();
+  const send = detailPopup.getByTestId("send-chat-button");
+  await expect(send).toHaveAttribute("title", "Open Private Sidecar and send");
+  await send.click();
+  await expect(page.getByText(/Could not open private AI sidecar:/)).toBeVisible();
   await expect(page.getByTestId("sidecar-context-strip")).toHaveCount(0);
   await page.waitForTimeout(300);
-  expect(ensureRequests).toBe(0);
+  expect(ensureRequests).toBeGreaterThanOrEqual(1);
+  expect(ensureBodies.length).toBeGreaterThanOrEqual(1);
+  for (const body of ensureBodies) {
+    expect(body.phase).toBe("prepare");
+    expect(body.controller_account_id).toEqual(CURRENT_ACCOUNT_ID);
+    expect(body.source_realm_id).toBe(sourceRealm);
+    expect(body.context_ref).toEqual({kind: "strand", strand_id: sourceStrand});
+  }
   expect(messageSubmissions).toBe(0);
   await expect(detailPopup.getByTestId("chat-input")).toHaveValue("@me/assistant hello");
+  await expect(detailPopup.getByTestId("mention-chip")).toHaveCount(1);
+  await expect(detailPopup.getByTestId("mention-chip")).toHaveAttribute("data-mention-principal-id", CURRENT_ASSISTANT_ACCOUNT_ID.principal_id);
+  await expect(detailPopup.getByTestId("mention-chip")).toHaveAttribute("data-mention-station-id", CURRENT_ASSISTANT_ACCOUNT_ID.station_id);
+  await expect(detailPopup.getByTestId("chat-message")).toHaveCount(0);
 });
 
 test("kanban hides list creation until a board exists", async ({ page }) => {
