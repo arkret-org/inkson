@@ -464,13 +464,13 @@ pub(super) fn push_realm_remark_account_data_impl(
 
 /// Human-readable label for a watch level, used by the per-realm override
 /// picker. Spec values: push-notifications.md §4.3.2.
-pub(super) fn watch_level_label(level: WatchLevel) -> &'static str {
-    match level {
-        WatchLevel::All => "All messages",
-        WatchLevel::Participating => "Participating",
-        WatchLevel::MentionsOnly => "Mentions only",
-        WatchLevel::Muted => "Muted",
-    }
+pub(super) fn watch_level_label(level: WatchLevel) -> String {
+    crate::i18n::tr(match level {
+        WatchLevel::All => "settings.notifications.level_all",
+        WatchLevel::Participating => "chat.watch_level.participating",
+        WatchLevel::MentionsOnly => "chat.watch_level.mentions_only",
+        WatchLevel::Muted => "chat.watch_level.muted",
+    })
 }
 
 /// Realms the user can pick a per-realm override for. Derived from the SAME

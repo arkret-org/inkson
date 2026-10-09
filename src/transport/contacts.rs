@@ -19,6 +19,20 @@ pub(crate) const DEFAULT_CONTACT_SCOPE_NAMES: [&str; 5] = [
     "presence",
 ];
 
+pub(crate) fn new_contact_operation_binding()
+-> anyhow::Result<(ProtocolOperationId, IdempotencyKey)> {
+    let operation = arkret_sdk::OperationId::new_v7_at(crate::clock::now_unix_ms());
+    let nonce = operation
+        .as_str()
+        .strip_prefix("ak:operation:")
+        .expect("SDK OperationId retains its registered prefix")
+        .to_owned();
+    Ok((
+        ProtocolOperationId::new(operation.into_string()).map_err(anyhow::Error::msg)?,
+        IdempotencyKey::new(nonce).map_err(anyhow::Error::msg)?,
+    ))
+}
+
 pub(crate) fn default_contact_scopes() -> Vec<ContactScope> {
     DEFAULT_CONTACT_SCOPE_NAMES
         .iter()
@@ -424,8 +438,14 @@ fn validate_contact_current_result(
 }
 
 pub(crate) fn require_contact_success(outcome: ContactOperationOutcome) -> anyhow::Result<()> {
+    successful_contact_request(outcome).map(|_| ())
+}
+
+fn successful_contact_request(
+    outcome: ContactOperationOutcome,
+) -> anyhow::Result<ContactOperationOutcome> {
     match outcome {
-        ContactOperationOutcome::Accepted { .. } => Ok(()),
+        accepted @ ContactOperationOutcome::Accepted { .. } => Ok(accepted),
         ContactOperationOutcome::Failed { outcome } => {
             anyhow::bail!("Contact operation failed: {:?}", outcome.reason)
         }
@@ -537,14 +557,10 @@ impl crate::transport::TransportClient {
         ])))
         .await?;
         if let Some(outcome) = pending.resume(&http).await? {
-            return Ok(outcome);
+            return successful_contact_request(outcome);
         }
         let addressing = self.contact_request_addressing(target).await?;
-        let nonce = crate::operation::uuid_v7();
-        let operation_id =
-            ProtocolOperationId::new(format!("ak:operation:contact.request.{nonce}"))
-                .map_err(anyhow::Error::msg)?;
-        let idempotency_key = IdempotencyKey::new(nonce).map_err(anyhow::Error::msg)?;
+        let (operation_id, idempotency_key) = new_contact_operation_binding()?;
         let prepare = ContactOperationRequestBody::Prepare(ContactPrepareRequestBody {
             phase: ContactPreparePhase::Prepare,
             operation_id: operation_id.clone(),
@@ -579,6 +595,8 @@ impl crate::transport::TransportClient {
             reservation_handle,
             signed_event: signed_event.event().clone(),
         });
-        finish_contact_commit(&http, commit_context, &pending, &commit).await
+        successful_contact_request(
+            finish_contact_commit(&http, commit_context, &pending, &commit).await?,
+        )
     }
 }

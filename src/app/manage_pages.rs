@@ -91,12 +91,12 @@ pub(super) fn RealmsManagePage(
                                     {
                                         let realm_id = row.realm_id.clone();
                                         let realm_label = row.display_name.clone();
-                                        let security_label = if row.encrypted {
-                                            crate::i18n::tr("manage.row_encrypted")
-                                        } else {
-                                            crate::i18n::tr("manage.row_unencrypted")
+                                        let security_label = match row.encrypted {
+                                            Some(true) => crate::i18n::tr("manage.row_encrypted"),
+                                            Some(false) => crate::i18n::tr("manage.row_unencrypted"),
+                                            None => crate::i18n::tr("realm.security_unknown"),
                                         };
-                                        let security_icon = if row.encrypted { "lock" } else { "unlock" };
+                                        let security_icon = match row.encrypted { Some(true) => "lock", Some(false) => "unlock", None => "help-circle" };
                                         rsx! {
                                             div {
                                                 class: "realm-manage-row",

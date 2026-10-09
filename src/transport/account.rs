@@ -350,11 +350,8 @@ async fn submit_contact_response(
         ContactRejectRequestBody,
     };
 
-    let nonce = crate::operation::uuid_v7();
-    let operation_id =
-        arkret_sdk::ProtocolOperationId::new(format!("ak:operation:contact.{action}.{nonce}"))
-            .map_err(anyhow::Error::msg)?;
-    let idempotency_key = arkret_sdk::IdempotencyKey::new(nonce).map_err(anyhow::Error::msg)?;
+    let (operation_id, idempotency_key) =
+        crate::transport::contacts::new_contact_operation_binding()?;
 
     if action == "accept" {
         let prepare = ContactAcceptRequestBody::Prepare(ContactAcceptPrepareRequestBody {
@@ -1022,11 +1019,8 @@ pub async fn update_contact_scopes(
         .ok_or_else(|| {
             anyhow::anyhow!("Contact scope update for `{peer}` requires a fresh accepted list row")
         })?;
-    let nonce = crate::operation::uuid_v7();
-    let operation_id =
-        arkret_sdk::ProtocolOperationId::new(format!("ak:operation:contact.scope_update.{nonce}"))
-            .map_err(anyhow::Error::msg)?;
-    let idempotency_key = arkret_sdk::IdempotencyKey::new(nonce).map_err(anyhow::Error::msg)?;
+    let (operation_id, idempotency_key) =
+        crate::transport::contacts::new_contact_operation_binding()?;
     let prepare = contact_scope_update_prepare(
         row,
         granted_to_peer_scopes,
@@ -1123,11 +1117,8 @@ pub async fn tombstone_contact(
         anyhow::anyhow!("accepted Contact row omitted its exact next_prepare_input")
     })?;
     next.validate_shape()?;
-    let nonce = crate::operation::uuid_v7();
-    let operation_id =
-        arkret_sdk::ProtocolOperationId::new(format!("ak:operation:contact.tombstone.{nonce}"))
-            .map_err(anyhow::Error::msg)?;
-    let idempotency_key = arkret_sdk::IdempotencyKey::new(nonce).map_err(anyhow::Error::msg)?;
+    let (operation_id, idempotency_key) =
+        crate::transport::contacts::new_contact_operation_binding()?;
     let prepare = ContactTombstoneRequestBody::Prepare(ContactTombstonePrepareRequestBody {
         phase: ContactPreparePhase::Prepare,
         operation_id: operation_id.clone(),
@@ -1858,7 +1849,7 @@ mod tests {
                 arkret_sdk::contact_operations::ContactScope::Presence,
             ],
             arkret_sdk::ProtocolOperationId::new(
-                "ak:operation:contact.scope_update.0198f254-30c1-7f32-a1ab-4e52f4e14d9d",
+                "ak:operation:0198f254-30c1-7f32-a1ab-4e52f4e14d9d",
             )
             .expect("operation id"),
             arkret_sdk::IdempotencyKey::new("0198f254-30c1-7f32-a1ab-4e52f4e14d9d")
@@ -1895,7 +1886,7 @@ mod tests {
             accepted_contact_row_for_scope_update(),
             Vec::new(),
             arkret_sdk::ProtocolOperationId::new(
-                "ak:operation:contact.scope_update.0198f254-30c1-7f32-a1ab-4e52f4e14d9e",
+                "ak:operation:0198f254-30c1-7f32-a1ab-4e52f4e14d9e",
             )
             .expect("operation id"),
             arkret_sdk::IdempotencyKey::new("0198f254-30c1-7f32-a1ab-4e52f4e14d9e")

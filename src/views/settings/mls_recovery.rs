@@ -60,6 +60,44 @@ impl MlsRecoveryStatus {
     }
 }
 
+/// Local feedback keeps its translation key until render. Server-provided
+/// error details stay verbatim and are never interpreted as dictionary keys.
+#[derive(Clone, Debug, Default, PartialEq)]
+enum RecoveryFeedback {
+    #[default]
+    Empty,
+    Localized {
+        key: &'static str,
+        detail: Option<String>,
+    },
+    External(String),
+}
+
+impl RecoveryFeedback {
+    fn message(key: &'static str) -> Self {
+        Self::Localized { key, detail: None }
+    }
+
+    fn with_detail(key: &'static str, detail: String) -> Self {
+        Self::Localized {
+            key,
+            detail: Some(detail),
+        }
+    }
+
+    fn text(&self) -> String {
+        match self {
+            Self::Empty => String::new(),
+            Self::Localized { key, detail: None } => crate::i18n::tr(key),
+            Self::Localized {
+                key,
+                detail: Some(detail),
+            } => format!("{} {detail}", crate::i18n::tr(key)),
+            Self::External(detail) => detail.clone(),
+        }
+    }
+}
+
 /// Compute the backup status from a fetched `list_key_backups` payload + the
 /// local account-secret presence. Pure so it can be unit-tested without a
 /// live session.
@@ -80,7 +118,7 @@ fn start_recovery_key_generation(
     mut state_store: SyncSignal<LocalStateStore>,
     mut generated_recovery_key: Signal<String>,
     mut generated_recovery_key_confirm: Signal<String>,
-    mut action_status: Signal<String>,
+    mut action_status: Signal<RecoveryFeedback>,
     mut busy: Signal<bool>,
     mut copied: Signal<bool>,
     mut status: Signal<MlsRecoveryStatus>,
@@ -91,15 +129,17 @@ fn start_recovery_key_generation(
     let recovery_key = match generate_recovery_key() {
         Ok(key) => key,
         Err(err) => {
-            action_status.set(format!(
-                "{} {err}",
-                crate::i18n::tr("mls_backup.status.generate_failed")
+            action_status.set(RecoveryFeedback::with_detail(
+                "mls_backup.status.generate_failed",
+                err.to_string(),
             ));
             return;
         }
     };
     let Some(recovery_secret) = normalize_recovery_key_input(&recovery_key) else {
-        action_status.set(crate::i18n::tr("mls_backup.status.generate_failed"));
+        action_status.set(RecoveryFeedback::message(
+            "mls_backup.status.generate_failed",
+        ));
         return;
     };
     let base = account.server_url.to_string();
@@ -108,14 +148,18 @@ fn start_recovery_key_generation(
     let actor = account.principal_id().to_string();
     let device = account.device_id.to_string();
     let Some(recovery_material_evidence) = state_store.read().recovery_material_evidence() else {
-        action_status.set("Frozen PCR authority evidence is required".to_owned());
+        action_status.set(RecoveryFeedback::message(
+            "settings.mls_recovery.authority_missing",
+        ));
         return;
     };
     if recovery_material_evidence.account_id != account.authority
         || recovery_material_evidence.principal_did != *account.did()
         || recovery_material_evidence.device_id != account.device_id
     {
-        action_status.set("Frozen PCR authority evidence does not match this account".to_owned());
+        action_status.set(RecoveryFeedback::message(
+            "settings.mls_recovery.authority_mismatch",
+        ));
         return;
     }
     let principal_control_realm_id = recovery_material_evidence
@@ -129,7 +173,7 @@ fn start_recovery_key_generation(
     busy.set(true);
     copied.set(false);
     generated_recovery_key_confirm.set(String::new());
-    action_status.set(crate::i18n::tr("mls_backup.status.uploading"));
+    action_status.set(RecoveryFeedback::message("mls_backup.status.uploading"));
     spawn(async move {
         let recovery_key_for_display = recovery_key.clone();
         let actor_for_sidecar = actor.clone();
@@ -187,11 +231,11 @@ fn start_recovery_key_generation(
                 }
                 generated_recovery_key.set(recovery_key_for_display);
                 generated_recovery_key_confirm.set(String::new());
-                action_status.set(crate::i18n::tr("mls_backup.status.created"));
+                action_status.set(RecoveryFeedback::message("mls_backup.status.created"));
                 status.set(MlsRecoveryStatus::BackedUp);
             }
             Err(err) => {
-                action_status.set(err.display());
+                action_status.set(RecoveryFeedback::External(err.display()));
             }
         }
     });
@@ -213,10 +257,10 @@ pub fn SettingsMlsRecoveryPanel(
     let mut status = use_signal(|| MlsRecoveryStatus::Loading);
     let mut generated_recovery_key = use_signal(String::new);
     let mut generated_recovery_key_confirm = use_signal(String::new);
-    let mut action_status = use_signal(String::new);
+    let mut action_status = use_signal(RecoveryFeedback::default);
     let busy = use_signal(|| false);
     let mut refill_busy = use_signal(|| false);
-    let mut refill_status = use_signal(String::new);
+    let mut refill_status = use_signal(RecoveryFeedback::default);
     let mut copied = use_signal(|| false);
 
     let has_session = !token().trim().is_empty();
@@ -276,7 +320,7 @@ pub fn SettingsMlsRecoveryPanel(
                     Err(err) => {
                         // Couldn't reach the server — fall back to the local-only
                         // signal so the user still gets an actionable view.
-                        action_status.set(err.display());
+                        action_status.set(RecoveryFeedback::External(err.display()));
                         status.set(if local_secret {
                             MlsRecoveryStatus::NotBackedUp
                         } else {
@@ -337,7 +381,9 @@ pub fn SettingsMlsRecoveryPanel(
         let device = account_for_refill.device_id.clone();
         let has_session = state_store.read().session_grant().is_some();
         refill_busy.set(true);
-        refill_status.set(crate::i18n::tr("settings.mls_keypackages.refill_busy"));
+        refill_status.set(RecoveryFeedback::message(
+            "settings.mls_keypackages.refill_busy",
+        ));
         spawn(async move {
             let result = match has_session {
                 true => {
@@ -349,14 +395,15 @@ pub fn SettingsMlsRecoveryPanel(
                 false => Err("active session is missing".to_owned()),
             };
             match result {
-                Ok(count) => refill_status.set(format!(
-                    "{} {count}",
-                    crate::i18n::tr("settings.mls_keypackages.refill_done")
+                Ok(count) => refill_status.set(RecoveryFeedback::with_detail(
+                    "settings.mls_keypackages.refill_done",
+                    count.to_string(),
                 )),
-                Err(error) => refill_status.set(format!(
-                    "{} {error}",
-                    crate::i18n::tr("settings.mls_keypackages.refill_failed")
-                )),
+                Err(error) => refill_status.set(if has_session {
+                    RecoveryFeedback::with_detail("settings.mls_keypackages.refill_failed", error)
+                } else {
+                    RecoveryFeedback::message("settings.mls_recovery.session_missing")
+                }),
             }
             refill_busy.set(false);
         });
@@ -368,7 +415,13 @@ pub fn SettingsMlsRecoveryPanel(
                 span { {crate::i18n::tr("settings.mls_recovery.title")} }
                 span {
                     "data-testid": "settings-mls-recovery-status-badge",
-                    "{current_status.badge()}"
+                    "data-status": current_status.badge(),
+                    {crate::i18n::tr(match current_status {
+                        MlsRecoveryStatus::Loading => "settings.mls_recovery.badge.loading",
+                        MlsRecoveryStatus::NoLocalSecret => "settings.mls_recovery.badge.no_local_secret",
+                        MlsRecoveryStatus::BackedUp => "settings.mls_recovery.badge.backed_up",
+                        MlsRecoveryStatus::NotBackedUp => "settings.mls_recovery.badge.not_backed_up",
+                    })}
                 }
             }
             div { class: "muted", "data-testid": "settings-mls-recovery-status",
@@ -469,13 +522,13 @@ pub fn SettingsMlsRecoveryPanel(
                                         &generated_recovery_key_confirm(),
                                     ) {
                                         action_status.set(
-                                            crate::i18n::tr("mls_backup.status.confirm_mismatch"),
+                                            RecoveryFeedback::message("mls_backup.status.confirm_mismatch"),
                                         );
                                         return;
                                     }
                                     generated_recovery_key.set(String::new());
                                     generated_recovery_key_confirm.set(String::new());
-                                    action_status.set(String::new());
+                                    action_status.set(RecoveryFeedback::Empty);
                                     copied.set(false);
                                 },
                                 {crate::i18n::tr("mls_backup.button_confirm_saved")}
@@ -496,9 +549,9 @@ pub fn SettingsMlsRecoveryPanel(
                     }
                 }
             }
-            if !action_status().is_empty() {
+            if !action_status().text().is_empty() {
                 div { class: "muted", "data-testid": "settings-mls-recovery-action-status",
-                    "{action_status}"
+                    {action_status().text()}
                 }
             }
             div { class: "workflow-form", "data-testid": "settings-mls-keypackages-refill",
@@ -514,9 +567,9 @@ pub fn SettingsMlsRecoveryPanel(
                         {crate::i18n::tr("settings.mls_keypackages.refill_button")}
                     }
                 }
-                if !refill_status().is_empty() {
+                if !refill_status().text().is_empty() {
                     div { class: "muted", "data-testid": "settings-mls-keypackages-refill-status",
-                        "{refill_status}"
+                        {refill_status().text()}
                     }
                 }
             }
@@ -527,6 +580,53 @@ pub fn SettingsMlsRecoveryPanel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_feedback_retranslates_existing_message_and_preserves_external_details() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        use crate::i18n::{I18nSignal, UiLocale, init_i18n_with_locale, set_locale};
+
+        fn harness(capture: Rc<RefCell<Option<I18nSignal>>>) -> Element {
+            let i18n = use_context_provider(|| init_i18n_with_locale(UiLocale::En));
+            *capture.borrow_mut() = Some(i18n);
+            rsx! { div {} }
+        }
+
+        let capture = Rc::new(RefCell::new(None));
+        let mut dom = VirtualDom::new_with_props(harness, capture.clone());
+        dom.rebuild_in_place();
+        let mut i18n = capture.borrow().unwrap();
+        dom.in_scope(i18n.origin_scope(), || {
+            let feedback = RecoveryFeedback::message("settings.mls_recovery.authority_missing");
+            assert!(
+                feedback
+                    .text()
+                    .starts_with("Account recovery details are unavailable.")
+            );
+            let detailed = RecoveryFeedback::with_detail(
+                "settings.mls_keypackages.refill_done",
+                "3".to_owned(),
+            );
+            assert!(detailed.text().ends_with("3"));
+            set_locale(&mut i18n, UiLocale::Zh);
+            assert_eq!(feedback.text(), "账号恢复信息暂不可用。请刷新账号后重试。");
+            assert!(detailed.text().contains("3"));
+            assert!(!detailed.text().contains("KeyPackage maintenance complete"));
+            assert_eq!(
+                RecoveryFeedback::External("server detail".to_owned()).text(),
+                "server detail"
+            );
+            assert!(RecoveryFeedback::Empty.text().is_empty());
+            set_locale(&mut i18n, UiLocale::En);
+            assert!(
+                feedback
+                    .text()
+                    .starts_with("Account recovery details are unavailable.")
+            );
+        });
+    }
 
     #[test]
     fn status_backed_up_when_server_has_backup() {

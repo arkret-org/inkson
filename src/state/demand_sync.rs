@@ -645,6 +645,14 @@ impl LocalStateStore {
                         &self.current_view,
                         invalidation.realm_id.as_str(),
                     );
+                    if let Some(view) = self
+                        .realm_security_view
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .as_mut()
+                    {
+                        view.states.remove(invalidation.realm_id.as_str());
+                    }
                 }
             }
         }
@@ -661,6 +669,14 @@ impl LocalStateStore {
                     state.complete = false;
                     state.invalidated_snapshot = state.snapshot.clone();
                     super::realm_tree_snapshot::invalidate_current_view(&self.current_view, id);
+                    if let Some(view) = self
+                        .realm_security_view
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .as_mut()
+                    {
+                        view.states.remove(id);
+                    }
                     return true;
                 }
                 if let Some(segment) = &entry.baseline {

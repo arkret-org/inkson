@@ -212,7 +212,7 @@ pub(super) struct RealmManageRow {
     pub(super) realm_id: String,
     pub(super) display_name: String,
     pub(super) title: String,
-    pub(super) encrypted: bool,
+    pub(super) encrypted: Option<bool>,
     pub(super) space_count: usize,
 }
 

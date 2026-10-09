@@ -253,6 +253,42 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("settings.notifications.select_realm", "Select a Realm…");
     dict.set("settings.notifications.notify_label", "Notify me about");
+    dict.set(
+        "settings.notifications.kind_mention",
+        "Mention notifications",
+    );
+    dict.set(
+        "settings.notifications.kind_reaction",
+        "Reaction notifications",
+    );
+    dict.set("settings.notifications.kind_invite", "Invite notifications");
+    dict.set(
+        "settings.notifications.kind_message",
+        "Message notifications",
+    );
+    dict.set("settings.notifications.kind_enabled", " Enabled");
+    dict.set("settings.notifications.kind_muted", " Muted");
+    dict.set("settings.notifications.remove_override", "Remove");
+    dict.set(
+        "settings.notifications.configured_count",
+        "{count} configured",
+    );
+    dict.set(
+        "settings.mls_recovery.authority_missing",
+        "Account recovery details are unavailable. Refresh your account and try again.",
+    );
+    dict.set("settings.mls_recovery.authority_mismatch", "Recovery details belong to another account. Switch back or refresh this account before trying again.");
+    dict.set(
+        "settings.mls_recovery.session_missing",
+        "Your session is unavailable. Sign in again and retry.",
+    );
+    dict.set("settings.mls_recovery.badge.loading", "Loading…");
+    dict.set(
+        "settings.mls_recovery.badge.no_local_secret",
+        "Not ready yet",
+    );
+    dict.set("settings.mls_recovery.badge.backed_up", "Backed up");
+    dict.set("settings.mls_recovery.badge.not_backed_up", "Not backed up");
     dict.set("settings.notifications.level_all", "All messages");
     dict.set("settings.notifications.add_override", "Add override");
     dict.set(
@@ -1354,6 +1390,11 @@ pub fn english_translations() -> TranslationDict {
     dict.set("contact.unpinned", "Unpinned Contact");
     dict.set("realm.add_member", "Add Member");
     dict.set("realm.settings", "Settings");
+    dict.set("realm.security_unknown", "Encryption status unknown");
+    dict.set(
+        "realm.security_unknown_title",
+        "Realm encryption status has not been verified.",
+    );
     dict.set("chat.empty.title", "No discussion track available");
     dict.set(
         "chat.empty.description",

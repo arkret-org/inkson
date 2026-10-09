@@ -34,6 +34,8 @@ fn accepted_mls_base_current(
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn coverage_commit_pins_durable_revision_when_product_view_lags() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("coverage-durable-binding");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -90,6 +92,8 @@ fn coverage_commit_pins_durable_revision_when_product_view_lags() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn circle_commit_restoration_uses_only_its_own_accepted_epoch() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("circle-own-commit-floor");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -264,6 +268,8 @@ fn test_message_header(
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn creator_realm_state_snapshot_bootstrap_makes_space_encryptable() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("creator-bootstrap");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -322,6 +328,8 @@ fn creator_realm_state_snapshot_bootstrap_makes_space_encryptable() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn complete_membership_hint_does_not_alias_same_principal_at_another_station() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("station-scoped-roster-hint");
     let secure = MemorySecureKeyStore::new();
     let principal = "did:web:alice.example";
@@ -387,6 +395,8 @@ fn complete_membership_hint_does_not_alias_same_principal_at_another_station() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn direct_epoch_zero_send_requires_exact_verified_founder_bootstrap_context() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("direct-provisional-sending");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:provisional-founder.example";
@@ -551,6 +561,8 @@ fn direct_epoch_zero_send_requires_exact_verified_founder_bootstrap_context() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("metadata-same-epoch");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -644,6 +656,8 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn replacement_sender_domain_blocks_before_counter_advance() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("replacement-sender-fence");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -705,6 +719,8 @@ fn replacement_sender_domain_blocks_before_counter_advance() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("send-pause-membership-ahead");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -754,6 +770,8 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_write_uses_accepted_mls_group_without_legacy_scheme_projection() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("send-pause-policy-pending");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -1504,6 +1522,8 @@ fn out_of_order_skipped_keys_survive_restart() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn author_own_ciphertext_uses_secure_cache_without_state_regression() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     // Own-leaf echoes are not decryptable. Retained send bytes can render
     // without replaying the ratchet; without that cache the echo stays pending.
     let mut state = temp_state_store("own-ciphertext-soft-fail");

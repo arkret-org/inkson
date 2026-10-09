@@ -145,43 +145,56 @@ async fn accepted_account_context(
     let device_id = arkret_sdk::DeviceId::new(device_id.trim().to_owned())?;
     let server_url = url::Url::parse(server_url)?;
 
-    // Login/onboarding publish ActiveAccountContext after binding the selected
-    // Station and its authenticated current-principal result. Connect must
-    // reuse that accepted state instead of making an empty, session-scoped DID
-    // cache a second authentication authority. The cache is an optimization for
-    // later resolutions and is intentionally cleared across account changes.
-    if let Some(current) = current.filter(|account| {
-        account.authority.principal_id == principal_id
-            && description
-                .is_none_or(|description| account.authority.station_id == description.service_id)
-            && account.device_id == device_id
-            && account.server_url == server_url
-    }) {
-        return Ok(current.clone());
-    }
-
-    let description = description.ok_or_else(|| {
-        anyhow::anyhow!(
-            "Station describe is temporarily unavailable and no accepted account context can be reused"
-        )
-    })?;
+    // A reachable authenticated Station refreshes its accepted projection.
+    // During a describe outage, reuse only the already accepted exact context;
+    // a session-scoped DID cache must never become another identity authority.
+    let Some(description) = description else {
+        return current
+            .filter(|account| {
+                account.authority.principal_id == principal_id
+                    && account.device_id == device_id
+                    && account.server_url == server_url
+            })
+            .cloned()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Station describe is temporarily unavailable and no accepted account context can be reused"
+                )
+            });
+    };
     let authority = arkret_sdk::AccountId::new(principal_id, description.service_id.clone());
+    if let Some(current) = current.filter(|account| {
+        account.authority.principal_id == authority.principal_id && account.server_url == server_url
+    }) {
+        anyhow::ensure!(
+            current.authority == authority,
+            "Station describe changes the accepted Account authority"
+        );
+    }
     let profile_id = current
         .filter(|account| account.authority == authority)
         .map(|account| account.profile_id.clone())
         .unwrap_or_else(|| format!("ak:profile:{}", crate::operation::uuid_v7()));
 
-    // A missing/mismatched accepted context is repaired through the canonical
-    // authenticated Station current-principal result. A cache miss does not
-    // establish that the user's session is invalid.
-    crate::transport::account::resolve_active_account_context(
+    let refreshed = crate::transport::account::resolve_active_account_context(
         &authed.sdk_http_client()?,
         profile_id,
         authority,
         device_id,
         server_url,
     )
-    .await
+    .await?;
+    if let Some(current) = current.filter(|account| account.authority == refreshed.authority) {
+        anyhow::ensure!(
+            current.principal_control_realm_id == refreshed.principal_control_realm_id,
+            "current principal changes the Account's pinned PCR"
+        );
+        anyhow::ensure!(
+            current.resolution.updated_at <= refreshed.resolution.updated_at,
+            "current principal projection regressed"
+        );
+    }
+    Ok(refreshed)
 }
 
 async fn client_core_server_describe(
@@ -1520,8 +1533,70 @@ pub(super) fn connect(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn describe_outage_reuses_only_the_exact_accepted_context() {
+        let account =
+            crate::test_support::AccountFixture::new("ak:did_core:web:alice.example").build();
+        let transport = crate::transport::TransportClient::new(
+            account.server_url.as_str(),
+            crate::transport::RequestContext::new("unused-no-http"),
+        )
+        .unwrap();
+        let restored = accepted_account_context(
+            &transport,
+            account.authority.principal_id.clone(),
+            None,
+            Some(&account),
+            account.device_id.as_str(),
+            account.server_url.as_str(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(restored.authority, account.authority);
+        assert_eq!(
+            restored.principal_control_realm_id,
+            account.principal_control_realm_id
+        );
+        assert_eq!(restored.resolution, account.resolution);
+        assert_eq!(restored.device_id, account.device_id);
+        for (principal, device, route, current) in [
+            (
+                crate::test_support::core_id("ak:did_core:web:bob.example"),
+                account.device_id.as_str(),
+                account.server_url.as_str(),
+                Some(&account),
+            ),
+            (
+                account.authority.principal_id.clone(),
+                "ak:device:01964137-0000-7000-8000-0000000000b0",
+                account.server_url.as_str(),
+                Some(&account),
+            ),
+            (
+                account.authority.principal_id.clone(),
+                account.device_id.as_str(),
+                "https://other.example",
+                Some(&account),
+            ),
+            (
+                account.authority.principal_id.clone(),
+                account.device_id.as_str(),
+                account.server_url.as_str(),
+                None,
+            ),
+        ] {
+            assert!(
+                accepted_account_context(&transport, principal, None, current, device, route)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
     #[test]
     fn stale_bootstrap_lease_cannot_invalidate_replacement_session() {
+        // Session cache mutations share the signer/scope tests' process-wide fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let coordinator = crate::runtime::session::SessionCoordinator::new(|| {
             Box::pin(async {
                 crate::runtime::session::CurrentSessionRefresh::retry_later("unused")

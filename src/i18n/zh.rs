@@ -567,6 +567,33 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.notifications.no_realms", "暂无可选的 Realm");
     dict.set("settings.notifications.select_realm", "选择一个 Realm…");
     dict.set("settings.notifications.notify_label", "通知我");
+    dict.set("settings.notifications.kind_mention", "提及通知");
+    dict.set("settings.notifications.kind_reaction", "回应通知");
+    dict.set("settings.notifications.kind_invite", "邀请通知");
+    dict.set("settings.notifications.kind_message", "消息通知");
+    dict.set("settings.notifications.kind_enabled", " 已开启");
+    dict.set("settings.notifications.kind_muted", " 已静音");
+    dict.set("settings.notifications.remove_override", "移除");
+    dict.set(
+        "settings.notifications.configured_count",
+        "已配置 {count} 个",
+    );
+    dict.set(
+        "settings.mls_recovery.authority_missing",
+        "账号恢复信息暂不可用。请刷新账号后重试。",
+    );
+    dict.set(
+        "settings.mls_recovery.authority_mismatch",
+        "恢复信息属于另一个账号。请切回原账号，或刷新当前账号后重试。",
+    );
+    dict.set(
+        "settings.mls_recovery.session_missing",
+        "当前登录会话不可用。请重新登录后重试。",
+    );
+    dict.set("settings.mls_recovery.badge.loading", "加载中…");
+    dict.set("settings.mls_recovery.badge.no_local_secret", "尚未就绪");
+    dict.set("settings.mls_recovery.badge.backed_up", "已备份");
+    dict.set("settings.mls_recovery.badge.not_backed_up", "未备份");
     dict.set("settings.notifications.level_all", "所有消息");
     dict.set("settings.notifications.add_override", "添加覆盖");
     dict.set(
@@ -1367,6 +1394,11 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm.unpinned", "已取消置顶 Realm");
     dict.set("realm.add_member", "添加成员");
     dict.set("realm.settings", "设置");
+    dict.set("realm.security_unknown", "加密状态未知");
+    dict.set(
+        "realm.security_unknown_title",
+        "尚未验证此 Realm 的加密状态。",
+    );
     dict.set("realm.pin_failed", "Realm 置顶 account-data 写入失败");
     // Actor-private contact list pinning.
     dict.set("contact.pin", "置顶联系人");

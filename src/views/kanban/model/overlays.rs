@@ -930,6 +930,43 @@ pub(crate) fn local_card_create_from_raw_operation(
     })
 }
 
+/// A holder-local pending create may display its authored content ID before
+/// current exists. This is display evidence only, never an editable source or
+/// an accepted alias. Bind the exact local operation and intended Board/List.
+pub(crate) fn holder_local_pending_card_create(
+    card: &KanbanCard,
+    board_space_id: &str,
+    list_space_id: &str,
+    operations: &[RawOperationRecord],
+) -> bool {
+    operations.iter().any(|record| {
+        let payload = &record.payload;
+        if !matches!(
+            payload.get("write_state").and_then(Value::as_str),
+            Some("queued" | "submitting" | "submitted" | "pending_commit")
+        ) {
+            return false;
+        }
+        let Some(local_target) = payload.get("local_target_ref").and_then(Value::as_str) else {
+            return false;
+        };
+        if local_target != record.operation_id
+            || payload
+                .get("effect")
+                .and_then(|effect| effect.get("strand_id"))
+                .and_then(Value::as_str)
+                != Some(local_target)
+        {
+            return false;
+        }
+        local_card_create_from_raw_operation(record).is_some_and(|create| {
+            create.card.id == card.id
+                && create.board_space_id == board_space_id
+                && create.list_space_id == list_space_id
+        })
+    })
+}
+
 pub(crate) fn local_space_create_from_raw_operation(
     record: &RawOperationRecord,
 ) -> Option<LocalSpaceCreate> {
@@ -1041,9 +1078,9 @@ pub(crate) fn pending_board_creates_from_ops(
 /// Detect Board creates that LEFT the pending set since the previous pass and
 /// resolve the accepted Space id of the newest one.
 ///
-/// A create row stops being pending exactly when its receipt/backfill merge
-/// records the final Event id — which is also the moment its holder-local
-/// operation id becomes resolvable through `event_derived_target_aliases`. The
+/// A create row stops being pending when its verified receipt/backfill merge
+/// records a terminal write state for the already authored Event id. Its
+/// holder-local operation id then resolves through `event_derived_target_aliases`. The
 /// caller remembers the pending operation-id set across passes; this function
 /// diffs it against the current set, resolves the departed ids, and returns
 /// the newest candidate (`LocalOperationId` is UUIDv7, so string order is time
@@ -1080,18 +1117,27 @@ pub(crate) fn accepted_board_create_transition(
 ///
 /// Before acceptance an optimistic row only knows its holder-local handle in
 /// `local_target_ref` — the write's own operation id, never anything shaped
-/// like a protocol id. The submit receipt is persisted as `event_id`. Prefer
-/// that accepted id, or the canonical backfill row's `operation_id`, and fall
-/// back to the holder-local handle while the write is in flight.
+/// like a protocol id. A Card can use its authored content ID for continuous
+/// pending presentation; Space selection waits for submit/sync acceptance.
+/// Neither pending presentation nor a content ID establishes an accepted alias.
 pub(crate) fn raw_operation_create_target_id(payload: &Value) -> Option<String> {
-    raw_operation_accepted_create_target_id(payload).or_else(|| {
-        let kind = json_path_string(Some(payload), &["kind"])
-            .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
-        if kind != event_kind_str::SPACE_CREATE && kind != event_kind_str::STRAND_CREATE {
-            return None;
-        }
-        json_path_string(Some(payload), &["local_target_ref"])
-    })
+    let pending_card_id = (json_path_string(Some(payload), &["kind"])
+        .or_else(|| json_path_string(Some(payload), &["wire_kind"]))
+        .as_deref()
+        == Some(event_kind_str::STRAND_CREATE)
+        && raw_operation_allows_overlay(payload))
+    .then(|| raw_operation_authored_create_target_id(payload))
+    .flatten();
+    pending_card_id
+        .or_else(|| raw_operation_accepted_create_target_id(payload))
+        .or_else(|| {
+            let kind = json_path_string(Some(payload), &["kind"])
+                .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
+            if kind != event_kind_str::SPACE_CREATE && kind != event_kind_str::STRAND_CREATE {
+                return None;
+            }
+            json_path_string(Some(payload), &["local_target_ref"])
+        })
 }
 
 /// [`raw_operation_create_target_id`] restricted to ids derived from an
@@ -1099,6 +1145,19 @@ pub(crate) fn raw_operation_create_target_id(payload: &Value) -> Option<String> 
 /// the set of object ids that provably exist server-side; alias resolution uses
 /// it to refuse mapping one of them away as if it were a draft handle.
 pub(crate) fn raw_operation_accepted_create_target_id(payload: &Value) -> Option<String> {
+    // Enqueue stamps the final content ID before the Station answers. Only
+    // terminal rows written by the verified submit/sync owners confirm a
+    // create for presentation; the content ID alone is not an acceptance.
+    let write_state = json_path_string(Some(payload), &["write_state"])?;
+    if !matches!(write_state.as_str(), "accepted" | "synced" | "committed") {
+        return None;
+    }
+    raw_operation_authored_create_target_id(payload)
+}
+
+// The signed create already fixes this content-derived identity. This helper
+// supplies pending Card presentation and is never acceptance or alias evidence.
+fn raw_operation_authored_create_target_id(payload: &Value) -> Option<String> {
     let kind = json_path_string(Some(payload), &["kind"])
         .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
     if kind != event_kind_str::SPACE_CREATE && kind != event_kind_str::STRAND_CREATE {
@@ -1132,7 +1191,7 @@ pub(crate) fn event_derived_target_aliases(
             let temporary =
                 json_path_string(Some(&record.payload), &["local_temporary_target_ref"])
                     .or_else(|| json_path_string(Some(&record.payload), &["local_target_ref"]))?;
-            let canonical = raw_operation_create_target_id(&record.payload)?;
+            let canonical = raw_operation_accepted_create_target_id(&record.payload)?;
             (temporary != canonical).then_some((temporary, canonical))
         })
         .collect::<BTreeMap<_, _>>();
@@ -1155,7 +1214,8 @@ pub(crate) fn event_derived_target_aliases(
         else {
             continue;
         };
-        let Some(canonical_target) = raw_operation_create_target_id(&canonical.payload) else {
+        let Some(canonical_target) = raw_operation_accepted_create_target_id(&canonical.payload)
+        else {
             continue;
         };
         if temporary != canonical_target {

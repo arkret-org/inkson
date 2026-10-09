@@ -35,7 +35,7 @@ fn navigation_input<'a>(
     control: &'a BTreeSet<String>,
     pinned: &'a BTreeSet<String>,
     projections: &'a BTreeMap<String, Value>,
-    local_mls: &'a BTreeSet<String>,
+    security_states: &'a BTreeMap<String, Option<bool>>,
     remarks: &'a BTreeMap<String, RealmRemark>,
     active_realm_id: &'a str,
     query: &'a str,
@@ -47,8 +47,7 @@ fn navigation_input<'a>(
         active_realm_id,
         pinned_realm_ids: pinned,
         realm_tree_projections: projections,
-        current_product_view: None,
-        realm_ids_with_local_mls: local_mls,
+        realm_security_states: security_states,
         realm_remarks: remarks,
         collaboration_query: query,
     }
@@ -103,13 +102,13 @@ fn control_and_direct_conversation_realms_are_hidden_with_their_subtrees() {
         node(CONTROL_REALM, "Control", None),
     ];
     let control = BTreeSet::from([CONTROL_REALM.to_owned()]);
-    let (pinned, projections, local_mls, remarks) = Default::default();
+    let (pinned, projections, security_states, remarks) = Default::default();
     let model = build_realm_navigation(navigation_input(
         &loaded,
         &control,
         &pinned,
         &projections,
-        &local_mls,
+        &security_states,
         &remarks,
         REALM_A,
         "",
@@ -131,7 +130,7 @@ fn control_and_direct_conversation_realms_are_hidden_with_their_subtrees() {
 fn manage_rows_prefer_the_local_remark_over_the_public_title() {
     let loaded = vec![node(REALM_A, "Public title", None)];
     let control = BTreeSet::new();
-    let (pinned, projections, local_mls) = Default::default();
+    let (pinned, projections, security_states) = Default::default();
     let mut remarks = BTreeMap::new();
     let mut remark = RealmRemark::new(
         crate::test_support::realm_id(REALM_A),
@@ -144,7 +143,7 @@ fn manage_rows_prefer_the_local_remark_over_the_public_title() {
         &control,
         &pinned,
         &projections,
-        &local_mls,
+        &security_states,
         &remarks,
         REALM_A,
         "",
@@ -158,7 +157,7 @@ fn manage_rows_prefer_the_local_remark_over_the_public_title() {
             &control,
             &pinned,
             &projections,
-            &local_mls,
+            &security_states,
             &remarks,
             REALM_A,
             query,
@@ -168,46 +167,84 @@ fn manage_rows_prefer_the_local_remark_over_the_public_title() {
 }
 
 #[test]
-fn a_local_mls_snapshot_keeps_the_realm_encrypted_without_a_projection() {
+fn verified_realm_activation_keeps_the_realm_encrypted_without_a_projection() {
     // Regression guard for the topbar/row disagreement: with no security state
-    // in the projection the row must still read encrypted from local MLS
-    // evidence rather than defaulting to unencrypted.
+    // in the projection the row must still read encrypted from the durable
+    // current activation map, without requiring private local MLS state.
     let loaded = vec![node(REALM_A, "Acme", None)];
     let control = BTreeSet::new();
     let (pinned, remarks) = Default::default();
     let projections = BTreeMap::new();
-    let local_mls = BTreeSet::from([REALM_A.to_owned()]);
+    let security_states = BTreeMap::from([(REALM_A.to_owned(), Some(true))]);
     let model = build_realm_navigation(navigation_input(
         &loaded,
         &control,
         &pinned,
         &projections,
-        &local_mls,
+        &security_states,
         &remarks,
         REALM_A,
         "",
     ));
-    assert!(model.manage_realm_rows[0].encrypted);
-    assert!(model.active_realm_security_encrypted);
+    assert_eq!(model.manage_realm_rows[0].encrypted, Some(true));
+    assert_eq!(model.active_realm_security_encrypted, Some(true));
 }
 
 #[test]
-fn active_realm_security_falls_back_to_unencrypted_for_an_unknown_realm() {
+fn unknown_realm_security_never_claims_plaintext() {
     let loaded = vec![node(REALM_A, "Acme", None)];
     let control = BTreeSet::new();
-    let (pinned, projections, local_mls, remarks) = Default::default();
+    let (pinned, projections, security_states, remarks) = Default::default();
     let model = build_realm_navigation(navigation_input(
         &loaded,
         &control,
         &pinned,
         &projections,
-        &local_mls,
+        &security_states,
         &remarks,
         REALM_B,
         "",
     ));
-    assert!(!model.active_realm_security_encrypted);
+    assert_eq!(model.active_realm_security_encrypted, None);
     assert!(model.active_projection_realm_id.is_empty());
+}
+
+#[test]
+fn home_navigation_reads_each_realms_verified_activation_without_a_selected_view() {
+    let loaded = vec![
+        node(REALM_A, "Encrypted", None),
+        node(REALM_B, "Plaintext", None),
+        node(CONTROL_REALM, "Pending", None),
+    ];
+    let (control, pinned, projections, remarks) = Default::default();
+    let states = BTreeMap::from([
+        (REALM_A.to_owned(), Some(true)),
+        (REALM_B.to_owned(), Some(false)),
+    ]);
+    for active in ["", REALM_A, REALM_B, CONTROL_REALM] {
+        let model = build_realm_navigation(navigation_input(
+            &loaded,
+            &control,
+            &pinned,
+            &projections,
+            &states,
+            &remarks,
+            active,
+            "",
+        ));
+        assert_eq!(
+            model
+                .manage_realm_rows
+                .iter()
+                .map(|row| row.encrypted)
+                .collect::<Vec<_>>(),
+            vec![Some(true), Some(false), None]
+        );
+        assert_eq!(
+            model.active_realm_security_encrypted,
+            states.get(active).copied().flatten()
+        );
+    }
 }
 
 #[test]

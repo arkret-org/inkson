@@ -873,6 +873,8 @@ mod verification_method_controller_tests {
 
     #[test]
     fn trusted_device_result_requires_exact_binding_and_current_generation() {
+        // Session cache mutations share the signer/scope tests' process-wide fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let (account, device) = projection_fixture_account();
         let now = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&[43u8; 32]);
@@ -1112,6 +1114,8 @@ mod verification_method_controller_tests {
 
     #[test]
     fn authoring_retains_verified_key_past_lookup_ttl_until_revocation() {
+        // Directory writes and negative reads share the session tests' cache fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let account = arkret_sdk::AccountId::new(
             "ak:did_core:web:retained-author.example".parse().unwrap(),
             "ak:did_core:web:retained-station.example".parse().unwrap(),
@@ -1175,6 +1179,8 @@ mod verification_method_controller_tests {
 
     #[test]
     fn verified_projection_cache_rejects_rollback_conflict_and_revoked_replay() {
+        // Directory writes and negative reads share the session tests' cache fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let account = arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new("ak:did_core:web:cache-watermark.example").unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station-watermark.example").unwrap(),
@@ -1239,6 +1245,8 @@ mod verification_method_controller_tests {
 
     #[test]
     fn device_authorization_cache_binds_the_exact_account() {
+        // Directory writes and negative reads share the session tests' cache fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let full = "did:webvh:zfixture:alice.example";
         let core = crate::mls_api_helpers::principal_core_id(full).expect("core id");
         let device = "ak:device:01904100-0000-7000-8000-0000000000a1";

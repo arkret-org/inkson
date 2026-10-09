@@ -415,7 +415,10 @@ mod tests {
 
 /// Home Realm of a stored projection body, falling back to the key it is
 /// stored under.
-fn projection_home_realm_id(projection: &serde_json::Value, stored_under: &str) -> String {
+pub(crate) fn projection_home_realm_id(
+    projection: &serde_json::Value,
+    stored_under: &str,
+) -> String {
     projection
         .get("realm_id")
         .and_then(serde_json::Value::as_str)

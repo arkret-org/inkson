@@ -616,6 +616,9 @@ impl super::LocalStateStore {
     }
     pub(crate) fn set_current_reset_required(&mut self, required: bool) {
         self.cached.current_reset_required = required;
+        if required {
+            self.clear_current_product_view();
+        }
     }
     pub(crate) fn current_generation(&self) -> u64 {
         self.cached.current_generation
@@ -983,6 +986,52 @@ impl CurrentIndex {
         self.visible_selector(realm, selector, self.generation.load(Ordering::Acquire))
             .await
     }
+    /// Read Realm-default activation at one committed account generation.
+    /// Missing rows answer plaintext only at a complete verified cut.
+    pub(crate) async fn read_realm_mls_activations(
+        &self,
+        account: &AccountId,
+        realms: &[String],
+    ) -> anyhow::Result<(u64, std::collections::BTreeMap<String, Option<bool>>)> {
+        let _lease = self.lease.lock().await;
+        anyhow::ensure!(
+            self.prefix == format!("{}{}/", CURRENT_PREFIX, hash(account)?),
+            "Realm security index account mismatch"
+        );
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
+        let generation = self.generation.load(Ordering::Acquire);
+        let mut states = std::collections::BTreeMap::new();
+        for realm in realms {
+            let realm_id = arkret_sdk::RealmId::new(realm.clone())?;
+            let scope_ref = arkret_sdk::ScopeRef::Realm {
+                realm_id: realm_id.clone(),
+            };
+            let selector = CurrentSelector::MlsGroup {
+                scope_ref: scope_ref.clone(),
+            };
+            let row = self.ready_selector(realm, &selector, generation).await?;
+            let state = match row {
+                Some(TypedCurrentRow::Value { value, .. }) => {
+                    let group: arkret_wire::MlsGroupCurrent = serde_json::from_value(value)?;
+                    anyhow::ensure!(
+                        group.effective_scope == scope_ref,
+                        "MLS current belongs to another Realm"
+                    );
+                    Some(true)
+                }
+                None => {
+                    let progress = self.progress_at(realm, generation).await?;
+                    progress_is_complete_cut(&progress, &realm_id).then_some(false)
+                }
+            };
+            states.insert(realm.clone(), state);
+        }
+        Ok((generation, states))
+    }
+
     pub(crate) async fn read_selector_ready(
         &self,
         realm: &str,
@@ -3233,6 +3282,140 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn realm_security_presentation_reads_multiple_durable_cuts_and_rejects_namespace_aba() {
+        let mut store = crate::state::LocalStateStore::with_path(path());
+        assert!(store.switch_test_account("did:web:alice.example"));
+        let alice = store.active_authority().unwrap();
+        let location = store.current_index_location();
+        let index = CurrentIndex::open(&alice, 0, location.clone())
+            .await
+            .unwrap();
+        let unknown = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned();
+        let realms = vec![REALM.to_owned(), OTHER_REALM.to_owned(), unknown.clone()];
+        index
+            .stage_frame(
+                0,
+                &frame(
+                    vec![mls_group_row(REALM, 1)],
+                    Some(baseline(CURSORS[0], 1, true)),
+                ),
+            )
+            .await
+            .unwrap()
+            .finish();
+        store.set_current_generation(1);
+        let (generation, first) = index
+            .read_realm_mls_activations(&alice, &realms)
+            .await
+            .unwrap();
+        assert_eq!(first[REALM], Some(true));
+        assert_eq!(
+            first[OTHER_REALM], None,
+            "missing coverage is not plaintext"
+        );
+        store
+            .install_realm_security_view(&alice, generation, first)
+            .unwrap();
+        assert_eq!(store.realm_security_states()[REALM], Some(true));
+
+        index
+            .stage_frame(
+                1,
+                &realm_frame(OTHER_REALM, vec![], Some(baseline(CURSORS[1], 1, true))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        store.set_current_generation(2);
+        assert!(
+            store.realm_security_states().is_empty(),
+            "old generation cannot answer a new cut"
+        );
+        assert!(
+            store
+                .install_realm_security_view(
+                    &alice,
+                    1,
+                    BTreeMap::from([(REALM.to_owned(), Some(false))])
+                )
+                .is_err()
+        );
+        let (generation, states) = index
+            .read_realm_mls_activations(&alice, &realms)
+            .await
+            .unwrap();
+        assert_eq!(
+            states[REALM],
+            Some(true),
+            "another Realm's empty cut cannot overwrite activation"
+        );
+        assert_eq!(states[OTHER_REALM], Some(false));
+        assert_eq!(states[&unknown], None);
+        store
+            .install_realm_security_view(&alice, generation, states.clone())
+            .unwrap();
+        assert_eq!(store.realm_security_states(), states);
+        store.flush().unwrap();
+
+        let other_station = AccountId::new(
+            alice.principal_id.clone(),
+            "ak:did_core:web:other-station.example".parse().unwrap(),
+        );
+        let context = crate::state::tests::test_account_context_for_authority(
+            &"did:web:alice.example".parse().unwrap(),
+            other_station.clone(),
+        );
+        store.switch_active_account(&context).unwrap();
+        assert!(store.realm_security_states().is_empty());
+        assert!(
+            store
+                .install_realm_security_view(&alice, generation, states.clone())
+                .is_err(),
+            "late old-account completion is rejected"
+        );
+        assert!(
+            index
+                .read_realm_mls_activations(&other_station, &realms)
+                .await
+                .is_err(),
+            "reader must name its exact index namespace"
+        );
+        let other_index = CurrentIndex::open(&other_station, 0, location)
+            .await
+            .unwrap();
+        assert!(
+            other_index
+                .read_realm_mls_activations(&other_station, &realms)
+                .await
+                .unwrap()
+                .1
+                .values()
+                .all(Option::is_none)
+        );
+        store.switch_test_account("did:web:alice.example");
+        assert_eq!(store.active_authority().as_ref(), Some(&alice));
+        assert!(
+            store.realm_security_states().is_empty(),
+            "A-B-A cannot revive an old presentation cache"
+        );
+        let reset = serde_json::from_value(json!({"kind":"resync_required"})).unwrap();
+        index.stage_frame(2, &reset).await.unwrap().finish();
+        store.set_current_generation(3);
+        let (generation, reset_states) = index
+            .read_realm_mls_activations(&alice, &realms)
+            .await
+            .unwrap();
+        assert!(
+            reset_states.values().all(Option::is_none),
+            "retained rows and empty cuts are unknown after reset"
+        );
+        store
+            .install_realm_security_view(&alice, generation, reset_states)
+            .unwrap();
+        assert!(store.realm_security_states().values().all(Option::is_none));
     }
 
     #[tokio::test]

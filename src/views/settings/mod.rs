@@ -1555,10 +1555,10 @@ pub fn SettingsPanel(
                                     {crate::i18n::tr("settings.notifications.defaults_body")}
                                 }
                                 div { class: "metric-grid",
-                                    {render_notification_kind_toggle("mention", "Mention notifications", state_store)}
-                                    {render_notification_kind_toggle("reaction", "Reaction notifications", state_store)}
-                                    {render_notification_kind_toggle("invite", "Invite notifications", state_store)}
-                                    {render_notification_kind_toggle("message", "Message notifications", state_store)}
+                                    {render_notification_kind_toggle("mention", "settings.notifications.kind_mention", state_store)}
+                                    {render_notification_kind_toggle("reaction", "settings.notifications.kind_reaction", state_store)}
+                                    {render_notification_kind_toggle("invite", "settings.notifications.kind_invite", state_store)}
+                                    {render_notification_kind_toggle("message", "settings.notifications.kind_message", state_store)}
                                 }
                                 div { class: "actions",
                                     label {
@@ -1665,7 +1665,7 @@ pub fn SettingsPanel(
                             div { class: "event", "data-testid": "per-realm-overrides",
                                 div { class: "event-head",
                                     span { {crate::i18n::tr("settings.notifications.overrides_title")} }
-                                    span { "{realm_watch_overrides.len()} configured" }
+                                    span { {crate::i18n::tr_args("settings.notifications.configured_count", &[("count", realm_watch_overrides.len().to_string())])} }
                                 }
                                 div { class: "muted",
                                     {crate::i18n::tr("settings.notifications.overrides_body")}
@@ -1762,7 +1762,7 @@ pub fn SettingsPanel(
                                                 "feedback.watch_level_set",
                                                 vec![
                                                     ("realm", short_protocol_id(&realm_id)),
-                                                    ("level", watch_level_label(level).to_owned()),
+                                                    ("level", watch_level_label(level)),
                                                 ],
                                             );
                                             new_override_realm.set(String::new());

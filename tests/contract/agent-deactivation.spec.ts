@@ -1,8 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { mockArkretApi, validateMockSchema } from "../e2e/mockArkretApi";
+import {
+  CURRENT_ASSISTANT_CORE_ID,
+  mockArkretApi,
+  validateMockSchema,
+} from "../e2e/mockArkretApi";
 import { captureRouteHandler, driveOnce } from "./mockShapeDriver";
 
-const ASSISTANT_ID = "ak:did_core:web:agents.example:assistant";
+const ASSISTANT_ID = CURRENT_ASSISTANT_CORE_ID;
 const ASSISTANT_URL = `https://local.host/_arkret/self/agents/${encodeURIComponent(ASSISTANT_ID)}`;
 
 for (const binding of ["missing", "mismatched"] as const) {

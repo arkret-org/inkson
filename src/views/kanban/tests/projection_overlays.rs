@@ -290,6 +290,85 @@ fn pending_board_create_derives_title_and_write_state_from_the_op_log() {
     );
 }
 
+#[test]
+fn stamped_create_identity_stays_pending_until_submit_acceptance() {
+    for write_state in [
+        "queued",
+        "submitting",
+        "submitted",
+        "pending_commit",
+        "failed",
+        "rejected",
+        "effective",
+        "unknown",
+    ] {
+        let mut record = pending_board_create_record(write_state);
+        record.payload["event_id"] = json!(PENDING_TEST_EVENT);
+        let records = vec![record];
+        assert_eq!(
+            raw_operation_accepted_create_target_id(&records[0].payload),
+            None
+        );
+        let pending = pending_board_creates_from_ops(&records, PENDING_TEST_REALM);
+        assert_eq!(pending.len(), 1, "{write_state} is not a receipt");
+        let aliases = event_derived_target_aliases(&records);
+        assert!(
+            aliases.is_empty(),
+            "{write_state} must not confirm an alias"
+        );
+        let (candidate, awaiting) = accepted_board_create_transition(
+            &BTreeSet::from([PENDING_TEST_OPERATION.to_owned()]),
+            &pending,
+            &aliases,
+        );
+        assert_eq!(candidate, None);
+        assert!(awaiting.contains(PENDING_TEST_OPERATION));
+        assert!(
+            overlay_local_board_space_options(Vec::new(), &records, PENDING_TEST_REALM, &[],)
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn create_acceptance_requires_terminal_owner_state_and_retains_exact_identity() {
+    let mut missing_state = accepted_board_create_record();
+    missing_state
+        .payload
+        .as_object_mut()
+        .unwrap()
+        .remove("write_state");
+    assert_eq!(
+        raw_operation_accepted_create_target_id(&missing_state.payload),
+        None
+    );
+    assert!(event_derived_target_aliases(&[missing_state]).is_empty());
+
+    for write_state in ["accepted", "synced", "committed"] {
+        let mut accepted = accepted_board_create_record();
+        accepted.payload["write_state"] = json!(write_state);
+        assert_eq!(
+            raw_operation_accepted_create_target_id(&accepted.payload).as_deref(),
+            Some(PENDING_TEST_SPACE),
+        );
+        let records = vec![accepted];
+        let pending = pending_board_creates_from_ops(&records, PENDING_TEST_REALM);
+        assert!(pending.is_empty());
+        let aliases = event_derived_target_aliases(&records);
+        let (candidate, awaiting) = accepted_board_create_transition(
+            &BTreeSet::from([PENDING_TEST_OPERATION.to_owned()]),
+            &pending,
+            &aliases,
+        );
+        assert_eq!(
+            candidate.as_ref().map(arkret_sdk::SpaceId::as_str),
+            Some(PENDING_TEST_SPACE)
+        );
+        let (repeated, _) = accepted_board_create_transition(&awaiting, &pending, &aliases);
+        assert_eq!(repeated, None);
+    }
+}
+
 /// The confirmed option set fails closed on anything that is not a canonical
 /// `ak:space:` id: a pending create's holder-local handle never becomes a
 /// `BoardSpaceOption`.
@@ -853,6 +932,102 @@ fn local_strand_create_overlay_restores_card_until_projection_catches_up() {
 }
 
 #[test]
+fn stamped_pending_card_has_exact_holder_local_render_evidence_without_acceptance() {
+    let local_id = "01904100-0000-7000-8000-000000000099";
+    let event_id = "ak:event:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
+    let strand_id = "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
+    let list_id = "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
+    let mut store = isolated_store_for_tests("stamped-pending-card-render-evidence");
+    store.upsert_raw_operation(
+        local_id,
+        Some(PENDING_TEST_REALM.to_owned()),
+        json!({
+            "kind": "ak.strand.create", "operation_id": local_id,
+            "local_target_ref": local_id, "event_id": event_id, "write_state": "queued",
+            "effect": {"strand_id": local_id, "board_space_id": PENDING_TEST_SPACE,
+                "list_space_id": list_id, "title": "Held card", "rank": "U"}
+        }),
+    );
+    let original = store.load().raw_operations;
+    let card = local_card_create_from_raw_operation(&original[0])
+        .unwrap()
+        .card;
+    assert_eq!(card.id, strand_id);
+    assert!(card.authoring_basis.is_none());
+    assert!(!card_detail_write_ready(&card));
+    for state in ["queued", "submitting", "submitted", "pending_commit"] {
+        let mut rows = original.clone();
+        rows[0].payload["write_state"] = json!(state);
+        assert!(holder_local_pending_card_create(
+            &card,
+            PENDING_TEST_SPACE,
+            list_id,
+            &rows
+        ));
+        assert!(raw_operation_accepted_create_target_id(&rows[0].payload).is_none());
+        assert!(event_derived_target_aliases(&rows).is_empty());
+        assert!(!displayed_card_state(&card, &BTreeSet::new()).is_settled());
+    }
+    for state in [
+        "failed",
+        "rejected",
+        "cancelled",
+        "dropped",
+        "unknown",
+        "effective",
+        "accepted",
+        "synced",
+        "committed",
+    ] {
+        let mut rows = original.clone();
+        rows[0].payload["write_state"] = json!(state);
+        assert!(
+            !holder_local_pending_card_create(&card, PENDING_TEST_SPACE, list_id, &rows),
+            "{state}"
+        );
+    }
+    assert!(!holder_local_pending_card_create(
+        &card,
+        "other-board",
+        list_id,
+        &original
+    ));
+    assert!(!holder_local_pending_card_create(
+        &card,
+        PENDING_TEST_SPACE,
+        "other-list",
+        &original
+    ));
+    for field in ["local_target_ref", "event_id"] {
+        let mut rows = original.clone();
+        rows[0].payload[field] = json!("different-target");
+        assert!(
+            !holder_local_pending_card_create(&card, PENDING_TEST_SPACE, list_id, &rows),
+            "{field}"
+        );
+    }
+    let mut rows = original.clone();
+    rows[0].payload["effect"]["strand_id"] = json!("different-target");
+    assert!(!holder_local_pending_card_create(
+        &card,
+        PENDING_TEST_SPACE,
+        list_id,
+        &rows
+    ));
+    rows[0]
+        .payload
+        .as_object_mut()
+        .unwrap()
+        .remove("write_state");
+    assert!(!holder_local_pending_card_create(
+        &card,
+        PENDING_TEST_SPACE,
+        list_id,
+        &rows
+    ));
+}
+
+#[test]
 fn card_create_stays_visible_through_commit_and_backfill_until_placement() {
     let board_id = PENDING_TEST_SPACE;
     let list_id = "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
@@ -892,6 +1067,14 @@ fn card_create_stays_visible_through_commit_and_backfill_until_placement() {
             (write_state != "queued").then(|| event_id.to_owned()),
             None,
         );
+        if write_state == "pending_commit" {
+            let rows = store.load().raw_operations;
+            assert_eq!(
+                raw_operation_accepted_create_target_id(&rows[0].payload),
+                None
+            );
+            assert!(event_derived_target_aliases(&rows).is_empty());
+        }
         let shown = overlay_local_card_create_records(
             columns.clone(),
             &store.load().raw_operations,

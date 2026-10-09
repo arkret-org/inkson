@@ -1849,6 +1849,14 @@ mod tests {
     use crate::operation::AuthoredEventExt as _;
     use crate::test_support as fixture;
 
+    // Successful creator writes and ingress retirement publish one process-wide watch.
+    // Hold this lock for the whole test, before any device-scope test guard.
+    fn creator_watch_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        GATE.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     fn creator_fixture(device: &str) -> (MlsCreatorBootstrapIntent, garth::QueuedSubmission) {
         let mut events = crate::event_submit::author_event_unit_for_test(
             crate::event_builders::build_realm_bootstrap_steps_for_station(
@@ -1901,6 +1909,7 @@ mod tests {
 
     #[tokio::test]
     async fn ordinary_queue_commits_do_not_invalidate_creator_readiness() {
+        let _creator_watch = creator_watch_test_guard();
         let store = garth::MemorySecureKeyStore::default();
         let key = "inkson.outbound.v1::readiness.standard";
         let directory = tempfile::tempdir().unwrap();
@@ -2036,6 +2045,7 @@ mod tests {
 
     #[tokio::test]
     async fn own_station_creator_vault_lock_session_aba_preserves_original_and_frozen_queue() {
+        let _creator_watch = creator_watch_test_guard();
         use arkret_sdk::http_client::own_station_results::{
             OwnStationResultClient, OwnStationSessionSnapshot, OwnStationSessionSource,
         };
@@ -2166,6 +2176,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_acceptance_failure_keeps_intent_and_exact_queue_then_reopens() {
+        let _creator_watch = creator_watch_test_guard();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("standard.json");
         let store = InksonOutboundStore::for_test_path(path.clone());
@@ -2702,6 +2713,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_pin_failure_and_stale_holder_keep_the_single_durable_cut() {
+        let _creator_watch = creator_watch_test_guard();
         use arkret_models_collaboration::mls_creator_bootstrap::{
             MlsCreatorBootstrapDeviceAuthority, MlsCreatorBootstrapGovernanceEvidence,
         };
@@ -3417,6 +3429,7 @@ mod tests {
     #[tokio::test]
     async fn creator_native_record_requires_the_original_device_secret_without_plaintext_fallback()
     {
+        let _creator_watch = creator_watch_test_guard();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("standard.json");
         let (intent, submission) = creator_fixture(CREATOR_DEVICE);
@@ -3556,6 +3569,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_circle_create_and_initial_join_share_one_recoverable_cut() {
+        let _creator_watch = creator_watch_test_guard();
         use arkret_sdk::*;
         let (realm_intent, _) = creator_fixture(CREATOR_DEVICE);
         let realm = realm_intent.effective_scope().realm_id().clone();
@@ -3792,6 +3806,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_discussion_vault_failure_and_reopen_preserve_one_original() {
+        let _creator_watch = creator_watch_test_guard();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("standard.json");
         let store = InksonOutboundStore::for_test_path(path.clone());
@@ -3901,6 +3916,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_discussion_completed_receipts_remain_readable_when_new_writes_are_blocked() {
+        let _creator_watch = creator_watch_test_guard();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("standard.json");
         let store = InksonOutboundStore::for_test_path(path.clone());
@@ -3978,6 +3994,7 @@ mod tests {
 
     #[test]
     fn creator_discussion_independent_writers_join_the_original_public_event() {
+        let _creator_watch = creator_watch_test_guard();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("standard.json");
         let (intent, create) = creator_fixture(CREATOR_DEVICE);
@@ -4038,6 +4055,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_discussion_rejects_scope_signer_and_selection_substitution() {
+        let _creator_watch = creator_watch_test_guard();
         let directory = tempfile::tempdir().unwrap();
         let store = InksonOutboundStore::for_test_path(directory.path().join("standard.json"));
         let (intent, create) = creator_fixture(CREATOR_DEVICE);
@@ -4106,6 +4124,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_intent_and_create_queue_survive_reopen_together() {
+        let _creator_watch = creator_watch_test_guard();
         let directory = std::env::temp_dir().join(format!(
             "inkson-creator-intent-{}",
             arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms())
@@ -4149,6 +4168,7 @@ mod tests {
 
     #[test]
     fn independent_native_creator_holders_keep_one_immutable_intent() {
+        let _creator_watch = creator_watch_test_guard();
         let directory = std::env::temp_dir().join(format!(
             "inkson-creator-race-{}",
             arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms())
@@ -4195,6 +4215,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_intent_failure_never_publishes_half_a_create() {
+        let _creator_watch = creator_watch_test_guard();
         let (intent, submission) = creator_fixture(CREATOR_DEVICE);
         assert!(
             mutate_state_in_store(
@@ -4680,6 +4701,7 @@ mod tests {
 
     #[tokio::test]
     async fn retired_ingress_queue_is_preserved_and_new_work_survives_reopen() {
+        let _creator_watch = creator_watch_test_guard();
         let store = garth::MemorySecureKeyStore::default();
         let key = "inkson.outbound.v1::nsA.standard";
         let retired = retired_ingress_fixture();
@@ -4731,6 +4753,7 @@ mod tests {
 
     #[tokio::test]
     async fn retired_ingress_cleanup_is_durable_in_native_file() {
+        let _creator_watch = creator_watch_test_guard();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("standard.json");
         let retired = retired_ingress_fixture();
@@ -4760,6 +4783,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_retired_ingress_counter_is_durably_archived_once() {
+        let _creator_watch = creator_watch_test_guard();
         for counter in [0, u64::MAX] {
             let store = garth::MemorySecureKeyStore::default();
             let key = "inkson.outbound.v1::nsA.standard";

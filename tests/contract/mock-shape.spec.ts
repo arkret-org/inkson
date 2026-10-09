@@ -11,7 +11,7 @@
 
 import { expect, test } from "@playwright/test";
 
-import { mockArkretApi } from "../e2e/mockArkretApi";
+import { CURRENT_ASSISTANT_CORE_ID, mockArkretApi } from "../e2e/mockArkretApi";
 import {
   captureRouteHandler,
   concretePath,
@@ -129,7 +129,12 @@ async function driveInstall(
   excused: Set<string>,
 ) {
   for (const operation of mockOperations()) {
-    const url = `${BASE_URL}${concretePath(operation.path_template)}`;
+    // Agent routes probe the actual default native Agent rather than an
+    // unrelated generic driver placeholder that now names no inventory row.
+    const pathTemplate = operation.path_template.replaceAll(
+      "{agent_id}", CURRENT_ASSISTANT_CORE_ID,
+    );
+    const url = `${BASE_URL}${concretePath(pathTemplate)}`;
     const seen: ({ summary: string; fingerprint: string } | null)[] = [];
     for (const probe of PROBES) {
       try {

@@ -188,6 +188,7 @@ pub struct LocalStateStore {
     /// never persisted: the index owns durable current state, and the account
     /// blob carries no copy of it.
     current_view: Arc<Mutex<Option<CurrentProductView>>>,
+    realm_security_view: Arc<Mutex<Option<RealmSecurityView>>>,
     /// Perf: whether `cached` has been reconciled with the persistence layer at
     /// least once. Before this flag existed, an empty/default account (where
     /// `cached == ClientLocalState::default()`) re-read the backing store (disk
@@ -249,6 +250,13 @@ pub(crate) struct CurrentProductView {
     required_ready: bool,
 }
 
+#[derive(Clone, Debug)]
+struct RealmSecurityView {
+    account_key: String,
+    generation: u64,
+    states: std::collections::BTreeMap<String, Option<bool>>,
+}
+
 impl Clone for LocalStateStore {
     fn clone(&self) -> Self {
         Self {
@@ -257,6 +265,7 @@ impl Clone for LocalStateStore {
             contact_remarks_restored_for: self.contact_remarks_restored_for.clone(),
             product_current_demand: Arc::clone(&self.product_current_demand),
             current_view: Arc::clone(&self.current_view),
+            realm_security_view: Arc::clone(&self.realm_security_view),
             loaded: AtomicBool::new(self.loaded.load(Ordering::Acquire)),
             flush_suspended: self.flush_suspended,
             flush_pending: AtomicBool::new(self.flush_pending.load(Ordering::Acquire)),
@@ -331,6 +340,7 @@ impl Default for LocalStateStore {
             contact_remarks_restored_for: None,
             product_current_demand: Arc::new(Mutex::new(None)),
             current_view: Arc::new(Mutex::new(None)),
+            realm_security_view: Arc::new(Mutex::new(None)),
             loaded: AtomicBool::new(false),
             flush_suspended: 0,
             flush_pending: AtomicBool::new(false),
@@ -663,6 +673,7 @@ impl LocalStateStore {
             contact_remarks_restored_for: None,
             product_current_demand: Arc::new(Mutex::new(None)),
             current_view: Arc::new(Mutex::new(None)),
+            realm_security_view: Arc::new(Mutex::new(None)),
             loaded: AtomicBool::new(false),
             flush_suspended: 0,
             flush_pending: AtomicBool::new(false),

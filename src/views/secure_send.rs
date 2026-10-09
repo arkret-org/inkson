@@ -38,11 +38,133 @@ struct SendReadinessKey {
     persistence_healthy: bool,
     private_root_available: bool,
     creator_revision: u64,
+    scope_current: Option<crate::current_projection::ScopeMlsCurrent>,
+    scope_current_source: Option<(arkret_sdk::CommitStreamRef, arkret_sdk::CurrentRevision)>,
     checkpoint: Option<(
         u64,
         Option<arkret_sdk::EventId>,
         chrono::DateTime<chrono::Utc>,
     )>,
+}
+
+fn scope_current_evidence(
+    view: Option<&crate::current_projection::RealmCurrentView>,
+    scope: &arkret_sdk::ScopeRef,
+) -> (
+    crate::current_projection::ScopeMlsCurrent,
+    Option<(arkret_sdk::CommitStreamRef, arkret_sdk::CurrentRevision)>,
+) {
+    let current = view
+        .map(|view| view.scope_mls_current(scope))
+        .unwrap_or(crate::current_projection::ScopeMlsCurrent::Unknown);
+    let source = view
+        .and_then(|view| {
+            scope
+                .realm_id_opt()
+                .and_then(|realm| view.entries_for(realm.as_str()))
+        })
+        .and_then(|entries| {
+            entries.iter().find_map(|entry| match entry {
+                arkret_sdk::TypedCurrentRow::Value {
+                    selector: arkret_sdk::CurrentSelector::MlsGroup { scope_ref },
+                    source_stream_ref,
+                    revision,
+                    ..
+                } if scope_ref == scope => Some((source_stream_ref.clone(), revision.clone())),
+                _ => None,
+            })
+        });
+    (current, source)
+}
+
+#[cfg(test)]
+mod readiness_current_tests {
+    use arkret_sdk::{CommitStreamRef, CurrentRevision, CurrentSelector, TypedCurrentRow};
+
+    use super::*;
+    use crate::current_projection::RealmCurrentView;
+
+    fn scope() -> arkret_sdk::ScopeRef {
+        arkret_sdk::ScopeRef::Realm {
+            realm_id: "ak:realm:AeEFmfOZxsx5kLi2kpOJu8m7TFXZ_G8E4019rUp4wmT6"
+                .parse()
+                .unwrap(),
+        }
+    }
+
+    fn key(view: Option<&RealmCurrentView>) -> SendReadinessKey {
+        let scope = scope();
+        let (current, source) = scope_current_evidence(view, &scope);
+        SendReadinessKey {
+            scope: Some(scope),
+            device: "ak:device:01964137-0000-7000-8000-0000000000a1"
+                .parse()
+                .unwrap(),
+            authority: None,
+            generation: 7,
+            reset_required: false,
+            detail_invalidated: false,
+            persistence_healthy: true,
+            private_root_available: false,
+            creator_revision: 0,
+            checkpoint: None,
+            scope_current: Some(current),
+            scope_current_source: source,
+        }
+    }
+
+    fn row(epoch: u64, position: u64) -> TypedCurrentRow {
+        let scope = scope();
+        TypedCurrentRow::Value {
+            selector: CurrentSelector::MlsGroup {
+                scope_ref: scope.clone(),
+            },
+            source_stream_ref: CommitStreamRef::Realm {
+                realm_id: scope.realm_id_opt().unwrap().clone(),
+            },
+            revision: CurrentRevision {
+                commit_id: arkret_sdk::RealmCommitId::from_digest([position as u8; 32]),
+                stream_position: position,
+            },
+            value: serde_json::json!({
+                "effective_scope": scope,
+                "genesis_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                "current_mls_commit_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519", "epoch": epoch,
+                "current_key_access_revision": 2, "covered_key_access_revision": 2,
+                "public_tree_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
+            }),
+        }
+    }
+
+    #[test]
+    fn verified_scope_current_wakes_unknown_probe_and_fences_same_generation_results() {
+        let realm = scope().realm_id_opt().unwrap().to_string();
+        let partial = RealmCurrentView::new(&realm, vec![], false).unwrap();
+        let plaintext = RealmCurrentView::new(&realm, vec![], true).unwrap();
+        let encrypted = RealmCurrentView::new(&realm, vec![row(4, 9)], true).unwrap();
+        let next_epoch = RealmCurrentView::new(&realm, vec![row(5, 10)], true).unwrap();
+        let next_source = RealmCurrentView::new(&realm, vec![row(4, 10)], true).unwrap();
+        let unknown = key(Some(&partial));
+        assert!(unknown == key(None));
+        assert!(unknown != key(Some(&plaintext)));
+        assert!(key(Some(&plaintext)) != key(Some(&encrypted)));
+        assert!(key(Some(&encrypted)) != key(Some(&next_epoch)));
+        assert!(key(Some(&encrypted)) != key(Some(&next_source)));
+        // These transitions happen without an account-generation change. The
+        // production async fence must reject every earlier captured key.
+        assert_eq!(unknown.generation, key(Some(&next_source)).generation);
+        let other = RealmCurrentView::new(
+            "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
+            vec![],
+            true,
+        )
+        .unwrap();
+        assert!(
+            key(Some(&other)) == unknown,
+            "another Realm cannot unblock this scope"
+        );
+    }
 }
 
 /// Never reuse a ready result across account, scope, cut or private-state changes.
@@ -111,6 +233,13 @@ pub(crate) fn use_scope_send_probe(
             .as_ref()
             .and_then(arkret_sdk::ScopeRef::realm_id_opt)
             .is_none_or(|realm_id| state.realm_detail_invalidated(realm_id.as_str()));
+        // The verified view can finish at the same account generation. Its
+        // exact scope value/source must wake an Unknown probe and fence any
+        // in-flight result from the previous MLS epoch or current revision.
+        let view = state.current_product_view();
+        let evidence = scope
+            .as_ref()
+            .map(|scope| scope_current_evidence(view.as_ref(), scope));
         let captured = SendReadinessKey {
             scope,
             device,
@@ -121,6 +250,8 @@ pub(crate) fn use_scope_send_probe(
             persistence_healthy: state.persist_error().is_none(),
             private_root_available,
             creator_revision: creator_revision(),
+            scope_current: evidence.as_ref().map(|(current, _)| current.clone()),
+            scope_current_source: evidence.and_then(|(_, source)| source),
             checkpoint,
         };
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]

@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
+  CURRENT_PRINCIPAL_CORE_ID,
   latestTestId,
   dismissBlockingRecoveryModal,
   refreshServer,
@@ -8,7 +9,9 @@ import {
   dismissRecoveryMissingModal,
   dismissMlsBackupModal,
   CURRENT_STATION_ID,
+  DEMO_REALM,
   submittedEvent,
+  readLocalConfig,
 } from "./strandsHarness";
 
 registerStrandsBeforeEach();
@@ -126,9 +129,19 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("onboarding-panel")).toBeVisible();
   await dismissRecoveryMissingModal(page);
-  await expect(page.getByTestId("account-flow")).toContainText(
-    "Your account is linked to ak:did_core:web:alice.example",
+  await expect(page.getByTestId("account-flow").locator("p")).toHaveText(
+    /^Your account is linked to ak:did_core:webvh:.+\.\.\..+\.$/,
   );
+  expect((await readLocalConfig(page)).active_account.authority.principal_id).toBe(
+    CURRENT_PRINCIPAL_CORE_ID,
+  );
+  await expect(page.getByTestId("account-flow")).toContainText("You're all set");
+  await page
+    .getByTestId("account-flow")
+    .getByRole("link", { name: "Continue", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId("client-shell")).toBeVisible();
 
   await page.getByTestId("sidebar-new-realm-cta").click();
   const setupPanel = page.getByTestId("setup-panel");
@@ -259,7 +272,7 @@ test("realm profile fills the current canonical metadata values", async ({
   );
   await gotoAndDismissRecovery(
     page,
-    "/realms/ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk/settings/profile",
+    `/realms/${DEMO_REALM}/settings/profile`,
   );
 
   await expect(page.getByTestId("realm-profile")).toBeVisible();
@@ -276,7 +289,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
 }) => {
   await gotoAndDismissRecovery(
     page,
-    "/realms/ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk/settings",
+    `/realms/${DEMO_REALM}/settings`,
   );
   await expect(latestTestId(page, "realm-admin-panel")).toBeVisible();
   await expect(latestTestId(page, "realm-admin-overview")).toContainText(
@@ -308,10 +321,10 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
 
   await gotoAndDismissRecovery(
     page,
-    "/realms/ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk/members",
+    `/realms/${DEMO_REALM}/members`,
   );
   await expect(page).toHaveURL(
-    /\/realms\/ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk\/members$/,
+    new RegExp(`/realms/${DEMO_REALM}/members$`),
   );
   await dismissBlockingRecoveryModal(page);
   await expect(latestTestId(page, "realm-members-panel")).toBeVisible();
@@ -319,7 +332,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
 
   await gotoAndDismissRecovery(
     page,
-    "/realms/ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk/settings/profile",
+    `/realms/${DEMO_REALM}/settings/profile`,
   );
   await expect(page.getByTestId("realm-profile")).toBeVisible();
   await page.getByTestId("realm-name-input").fill("Updated Demo Realm");
@@ -335,7 +348,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
 
   await gotoAndDismissRecovery(
     page,
-    "/realms/ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk/settings/access",
+    `/realms/${DEMO_REALM}/settings/access`,
   );
   await expect(page.getByTestId("realm-profile")).toHaveCount(0);
   await expect(page.getByTestId("realm-name-input")).toHaveCount(0);
@@ -346,7 +359,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
 
   await gotoAndDismissRecovery(
     page,
-    "/realms/ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk/members",
+    `/realms/${DEMO_REALM}/members`,
   );
   await expect(page.getByTestId("member-table")).toBeVisible();
   await page.getByTestId("open-invite-modal-button").click();
@@ -403,7 +416,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
 
   await gotoAndDismissRecovery(
     page,
-    "/realms/ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk/settings/security",
+    `/realms/${DEMO_REALM}/settings/security`,
   );
   await page.getByTestId("rotate-realm-epoch").click();
   // rotation is now a real local `self_update_commit`
@@ -417,14 +430,14 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
 
   await gotoAndDismissRecovery(
     page,
-    "/realms/ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk/settings/repair",
+    `/realms/${DEMO_REALM}/settings/repair`,
   );
   await page.getByTestId("archive-realm-button").click();
   await expect(page.getByTestId("realm-danger-confirm-modal")).toBeVisible();
   await expect(page.getByTestId("realm-danger-confirm-submit")).toBeDisabled();
   await page
     .getByTestId("realm-danger-confirm-input")
-    .fill("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk");
+    .fill(DEMO_REALM);
   await expect(page.getByTestId("realm-danger-confirm-submit")).toBeEnabled();
   await page.getByTestId("realm-danger-confirm-submit").click();
   await expect(page.getByTestId("realm-admin-status")).toContainText(

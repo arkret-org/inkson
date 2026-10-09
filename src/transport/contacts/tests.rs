@@ -85,7 +85,62 @@ fn peer_request() -> (arkret_sdk::Event, ContactProducerSigner) {
 }
 
 pub(super) fn operation_id() -> ProtocolOperationId {
-    ProtocolOperationId::new("ak:operation:contact.request.fixture").unwrap()
+    ProtocolOperationId::new("ak:operation:01964137-0000-7000-8000-0000000000f2").unwrap()
+}
+
+#[test]
+fn contact_operation_binding_uses_the_registered_uuidv7_identifier() {
+    let (operation, idempotency) = new_contact_operation_binding().unwrap();
+    assert!(arkret_sdk::OperationId::new(operation.as_str()).is_ok());
+    assert_eq!(operation.as_str(), format!("ak:operation:{idempotency}"));
+    assert!(
+        arkret_sdk::OperationId::new(format!("ak:operation:contact.request.{idempotency}"))
+            .is_err()
+    );
+}
+
+#[test]
+fn request_success_exit_rejects_terminal_failure_and_another_preparation() {
+    let request = event(arkret_wire::event_kind_str::CONTACT_REQUESTED);
+    assert!(successful_contact_request(accepted(&request)).is_ok());
+    let failed = ContactOperationOutcome::Failed {
+        outcome: ContactFailedOutcome {
+            result_kind: ContactResultKind::Request,
+            operation_id: operation_id(),
+            reason: ContactOperationRejectReason::ContactRoundConflict,
+        },
+    };
+    assert!(
+        successful_contact_request(failed)
+            .unwrap_err()
+            .to_string()
+            .contains("ContactRoundConflict")
+    );
+    let prepared = ContactOperationOutcome::Prepared {
+        outcome: ContactPreparedOutcome::Request {
+            operation_id: operation_id(),
+            reservation_handle: ReservationHandle::new("contact-fixture-reservation").unwrap(),
+            expires_at: request.created_at,
+            event_draft: PreparedEventDraft {
+                unsigned_event_bytes: arkret_sdk::Base64UrlString::new(
+                    arkret_sdk::base64url_encode(
+                        arkret_sdk::canonical::canonical_json_bytes(
+                            &request.digest_payload().unwrap(),
+                        )
+                        .unwrap(),
+                    ),
+                )
+                .unwrap(),
+                event_digest: arkret_sdk::Hash::new(
+                    request
+                        .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+                        .unwrap(),
+                )
+                .unwrap(),
+            },
+        },
+    };
+    assert!(successful_contact_request(prepared).is_err());
 }
 
 // Source signatures remain structural placeholders: these tests exercise an
@@ -335,7 +390,7 @@ fn exact_branch_operation_and_event_are_required_but_later_current_head_is_valid
         validate_contact_commit_outcome(
             &outcome,
             &event,
-            &ProtocolOperationId::new("ak:operation:other").unwrap(),
+            &ProtocolOperationId::new("ak:operation:01964137-0000-7000-8000-0000000000f3").unwrap(),
             &local_signer()
         )
         .is_err()

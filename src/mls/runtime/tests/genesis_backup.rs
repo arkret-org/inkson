@@ -15,6 +15,8 @@ fn genesis_governance_binding() -> arkret_sdk::MlsGovernanceBindingPayload {
 
 #[test]
 fn sidecar_epoch_zero_restores_only_its_pinned_authority_and_creator_device() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("sidecar-pinned-genesis");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -108,6 +110,8 @@ fn sidecar_epoch_zero_restores_only_its_pinned_authority_and_creator_device() {
 
 #[test]
 fn sidecar_add_keeps_exact_binding_and_stages_private_state_until_acceptance() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("sidecar-add-binding");
     let secure = MemorySecureKeyStore::new();
     let authority = fixture::authority("did:web:alice.example");
@@ -231,6 +235,8 @@ fn sidecar_add_keeps_exact_binding_and_stages_private_state_until_acceptance() {
 
 #[test]
 fn build_mls_genesis_payload_has_required_fields() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("genesis-payload");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -335,6 +341,8 @@ fn build_mls_genesis_payload_has_required_fields() {
 
 #[test]
 fn sidecar_withdrawal_keeps_the_other_agent_and_recovers_the_pending_commit() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("sidecar-withdrawal");
     let secure = MemorySecureKeyStore::new();
     let authority = fixture::authority("did:web:alice.example");
@@ -593,6 +601,8 @@ fn sidecar_withdrawal_keeps_the_other_agent_and_recovers_the_pending_commit() {
 
 #[test]
 fn existing_epoch_zero_snapshot_restores_genesis_summary() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("genesis-summary-restore");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -632,6 +642,8 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
 
 #[test]
 fn persisted_creator_epoch_zero_is_reused_and_never_recreated() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let mut state = temp_state_store("genesis-no-recreate");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";

@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 import {
   CURRENT_STATION_ID,
+  CURRENT_PRINCIPAL_DID,
+  CURRENT_PRINCIPAL_CORE_ID,
+  CURRENT_ACCOUNT_ID,
+  CURRENT_ACCOUNT_ACTOR_ID,
+  CURRENT_ACCOUNT_RESOLUTION,
+  DEMO_BOARD_SPACE,
   DEMO_REALM,
   PRINCIPAL_CONTROL_REALM,
   mockArkretApi,
@@ -9,7 +15,16 @@ import {
 // `DEMO_REALM` had a second literal copy here. The drift guard in
 // `mockArkretApi` only ever checked its own, so the two could disagree — and
 // did. One definition, re-exported.
-export { CURRENT_STATION_ID, DEMO_REALM };
+export {
+  CURRENT_STATION_ID,
+  CURRENT_PRINCIPAL_DID,
+  CURRENT_PRINCIPAL_CORE_ID,
+  CURRENT_ACCOUNT_ID,
+  CURRENT_ACCOUNT_ACTOR_ID,
+  CURRENT_ACCOUNT_RESOLUTION,
+  DEMO_REALM,
+  DEMO_BOARD_SPACE,
+};
 
 export function submittedEvent(body: any) {
   const entry = Array.isArray(body.events)
@@ -18,21 +33,29 @@ export function submittedEvent(body: any) {
   return entry?.event ?? entry;
 }
 
-export const DEMO_BOARD_SPACE =
-  "ak:space:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM";
 const DEFAULT_SERVER_URL = "https://local.host";
 const DEFAULT_SERVER_AUDIENCE = CURRENT_STATION_ID;
-const DEFAULT_ACCOUNT_DID = "did:web:alice.example";
-const DEFAULT_ACCOUNT_CORE_ID = "ak:did_core:web:alice.example";
+const DEFAULT_ACCOUNT_DID = CURRENT_PRINCIPAL_DID;
+const DEFAULT_ACCOUNT_CORE_ID = CURRENT_PRINCIPAL_CORE_ID;
 const DEFAULT_DEVICE_ID = "ak:device:01964137-0000-7000-8000-0000000000a1";
 const DEFAULT_SESSION_CREDENTIAL = "sx:e2e-token";
 const TEST_SESSION_INJECTION_KEY = "inkson.test.session_injection.v1";
 const DEFAULT_DPOP_SEED_B64URL = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const DEFAULT_EVENT_SIGNING_SEED_B64URL =
   "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
+type ApiObservation = {
+  method: string;
+  path: string;
+  status: number | null;
+  startedAtMs: number;
+  responseDurationMs?: number;
+  durationMs?: number;
+  state: "pending" | "response" | "finished" | "failed";
+  failure?: string;
+};
 const apiObservations = new WeakMap<
   import("@playwright/test").Page,
-  Array<{ method: string; path: string; status: number }>
+  ApiObservation[]
 >();
 
 // The client says why it dropped a sync frame in the console, and the seed
@@ -42,6 +65,38 @@ const consoleErrors = new WeakMap<
   import("@playwright/test").Page,
   string[]
 >();
+const consoleMessageCounts = new WeakMap<import("@playwright/test").Page, number>();
+type SignerKeyDiagnostic = {
+  startedAtMs: number;
+  status?: number;
+  request?: unknown;
+  response?: unknown;
+  captureError?: string;
+};
+const signerKeyDiagnostics = new WeakMap<import("@playwright/test").Page, SignerKeyDiagnostic[]>();
+const pendingSignerKeyCaptures = new WeakMap<import("@playwright/test").Page, Promise<void>[]>();
+const scenarioRealms = new WeakMap<
+  import("@playwright/test").Page,
+  { demoRealm: string; demoBoardSpace: string }
+>();
+
+function diagnosticText(value: string): string {
+  return value
+    .replaceAll(DEFAULT_SESSION_CREDENTIAL, "[redacted]")
+    .replace(/\bBearer\s+[^\s"']+/gi, "Bearer [redacted]")
+    .replace(/\bsx:[^\s"',}]+/g, "[redacted]")
+    .replace(/((?:access_token|refresh_token|session_credential|authorization)["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, "$1[redacted]")
+    .slice(0, 1200);
+}
+
+function diagnosticPath(url: URL): string {
+  const query = new URLSearchParams(url.search);
+  for (const key of query.keys()) {
+    if (/token|credential|authorization|secret/i.test(key)) query.set(key, "[redacted]");
+  }
+  const search = query.toString();
+  return `${url.pathname}${search ? `?${search}` : ""}`;
+}
 
 async function settleWithin<T>(
   operation: Promise<T>,
@@ -54,11 +109,17 @@ async function settleWithin<T>(
   ]);
 }
 
-function coreIdForDid(did: string) {
-  if (did.startsWith("did:web:")) {
-    return `ak:did_core:web:${did.slice("did:web:".length)}`;
+function fixturePrincipalForDid(did: string) {
+  // Locator-only overrides retain Alice's accepted WebVH SCID. This helper
+  // does not manufacture another human identity or infer another user's PCR.
+  const fixturePrefix =
+    DEFAULT_ACCOUNT_DID.split(":").slice(0, 3).join(":") + ":";
+  if (!did.startsWith(fixturePrefix)) {
+    throw new Error(
+      `E2E account locator must retain the accepted WebVH principal: ${did}`,
+    );
   }
-  throw new Error(`unsupported E2E account DID method: ${did}`);
+  return DEFAULT_ACCOUNT_CORE_ID;
 }
 
 export function testLocalConfig(
@@ -79,19 +140,10 @@ export function testLocalConfig(
       // identity refresh scenario; they are not a multi-account PCR mapping.
       principal_control_realm_id: PRINCIPAL_CONTROL_REALM,
       authority: {
-        principal_id:
-          did === DEFAULT_ACCOUNT_DID
-            ? DEFAULT_ACCOUNT_CORE_ID
-            : coreIdForDid(did),
-        station_id: DEFAULT_SERVER_AUDIENCE,
+        ...CURRENT_ACCOUNT_ID,
+        principal_id: fixturePrincipalForDid(did),
       },
-      resolution: {
-        did: did,
-        method_history_head: "e2e-method-history-head",
-        version_id: "1",
-        resolution_event_ref: `ak:event:${"A".repeat(44)}`,
-        updated_at: "2026-08-23T00:00:00.000Z",
-      },
+      resolution: { ...CURRENT_ACCOUNT_RESOLUTION, did },
       device_id: deviceId,
       server_url: serverUrl,
     },
@@ -235,7 +287,8 @@ export async function openDiscussion(page: import("@playwright/test").Page) {
 export async function openKanban(page: import("@playwright/test").Page) {
   await refreshServer(page);
   await assertRealmTreeSeeded(page);
-  await page.goto(`/kanban/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
+  const realmId = scenarioRealms.get(page)?.demoRealm ?? DEMO_REALM;
+  await page.goto(`/kanban/${realmId}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await dismissHistoryRecoveryModal(page);
   await dismissBlockingRecoveryModal(page);
@@ -392,6 +445,16 @@ export async function writeLocalConfigAndReload(
   await page.waitForLoadState("domcontentloaded");
 }
 
+export async function preventSessionGrantReinjection(
+  page: import("@playwright/test").Page,
+) {
+  // Keep the init script from issuing another test grant on reload. The
+  // existing accepted grant remains in its original Device-scoped store.
+  await page.evaluate((injectionKey) => {
+    localStorage.setItem(injectionKey, "{}");
+  }, TEST_SESSION_INJECTION_KEY);
+}
+
 export async function readLocalConfig(page: import("@playwright/test").Page) {
   return page.evaluate(() =>
     JSON.parse(localStorage.getItem("inkson.config.v1") ?? "{}"),
@@ -451,30 +514,92 @@ export async function dismissMlsBackupModal(
 
 export function registerStrandsBeforeEach() {
   test.beforeEach(async ({ page }, testInfo) => {
-    const observations: Array<{
-      method: string;
-      path: string;
-      status: number;
-    }> = [];
+    const observations: ApiObservation[] = [];
     apiObservations.set(page, observations);
+    const requestObservations = new WeakMap<import("@playwright/test").Request, ApiObservation>();
+    const signerRequests = new WeakMap<import("@playwright/test").Request, SignerKeyDiagnostic>();
+    const signerCaptures: SignerKeyDiagnostic[] = [];
+    const pendingCaptures: Promise<void>[] = [];
+    signerKeyDiagnostics.set(page, signerCaptures);
+    pendingSignerKeyCaptures.set(page, pendingCaptures);
+    const startedAt = Date.now();
     const errors: string[] = [];
     consoleErrors.set(page, errors);
+    consoleMessageCounts.set(page, 0);
+    const recordConsole = (message: string) => {
+      consoleMessageCounts.set(page, (consoleMessageCounts.get(page) ?? 0) + 1);
+      errors.push(`${Date.now() - startedAt}ms ${diagnosticText(message)}`);
+      // Retain the first cause as well as the latest messages when retries are noisy.
+      if (errors.length > 200) errors.splice(100, 1);
+    };
     page.on("console", (message) => {
-      if (message.type() === "error" || message.type() === "warning") {
-        errors.push(`${message.type()}: ${message.text()}`.slice(0, 400));
-      }
+      recordConsole(`${message.type()}: ${message.text()}`);
     });
     page.on("pageerror", (error) => {
-      errors.push(`pageerror: ${String(error)}`.slice(0, 400));
+      recordConsole(`pageerror: ${String(error)}`);
+    });
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith("/_arkret/")) {
+        const observation: ApiObservation = {
+          method: request.method(), path: diagnosticPath(url), status: null,
+          startedAtMs: Date.now() - startedAt, state: "pending",
+        };
+        observations.push(observation);
+        requestObservations.set(request, observation);
+        if (url.pathname === "/_arkret/self/signer-keys/query" && signerCaptures.length < 64) {
+          const capture: SignerKeyDiagnostic = { startedAtMs: observation.startedAtMs };
+          try {
+            const body = request.postDataJSON();
+            // Only public selectors of this typed query are collected, never headers.
+            capture.request = {
+              request_id: body.request_id, realm_id: body.realm_id,
+              recipient_account_id: body.recipient_account_id, queries: body.queries,
+            };
+          } catch (error) {
+            capture.captureError = diagnosticText(String(error));
+          }
+          signerCaptures.push(capture);
+          signerRequests.set(request, capture);
+        }
+      }
     });
     page.on("response", (response) => {
-      const url = new URL(response.url());
-      if (url.pathname.startsWith("/_arkret/")) {
-        observations.push({
-          method: response.request().method(),
-          path: `${url.pathname}${url.search}`,
-          status: response.status(),
-        });
+      const observation = requestObservations.get(response.request());
+      if (observation) {
+        observation.status = response.status();
+        observation.responseDurationMs = Date.now() - startedAt - observation.startedAtMs;
+        observation.state = "response";
+      }
+      const capture = signerRequests.get(response.request());
+      if (capture) {
+        capture.status = response.status();
+        pendingCaptures.push((async () => {
+          const body = await settleWithin(response.json(), null, 1_000);
+          if (body) {
+            capture.response = {
+              request_id: body.request_id, realm_id: body.realm_id,
+              results: body.results, error: body.error,
+            };
+          } else {
+            capture.captureError = "response JSON unavailable within diagnostic capture budget";
+          }
+        })());
+      }
+    });
+    page.on("requestfinished", (request) => {
+      const observation = requestObservations.get(request);
+      if (observation) {
+        observation.durationMs = Date.now() - startedAt - observation.startedAtMs;
+        observation.state = "finished";
+      }
+    });
+    page.on("requestfailed", (request) => {
+      const observation = requestObservations.get(request);
+      if (observation) {
+        observation.durationMs = Date.now() - startedAt - observation.startedAtMs;
+        observation.state = "failed";
+        observation.failure = diagnosticText(request.failure()?.errorText ?? "request failed");
       }
     });
     const initialDeviceId = testInfo.title.startsWith(
@@ -494,7 +619,14 @@ export function registerStrandsBeforeEach() {
         : invitePreviewTest
           ? "disclosed"
           : undefined;
-    await mockArkretApi(page, {
+    const scenario = await mockArkretApi(page, {
+      encryptedDemoRealm: [
+        "bootstrap login and sync shows the connected realm",
+        "selected Realm security badge matches its encrypted sidebar marker",
+        "chat fails closed until this device receives Realm encryption keys",
+        "sidecar activation fails closed until this device receives Realm encryption keys",
+        "card detail embeds discussion directly without discussion chrome",
+      ].includes(testInfo.title),
       currentDeviceId: initialDeviceId,
       currentDeviceSigningSeedB64url: DEFAULT_EVENT_SIGNING_SEED_B64URL,
       directoryPrimaryHandle: testInfo.title.startsWith(
@@ -529,7 +661,7 @@ export function registerStrandsBeforeEach() {
           "kanban hides list creation until a board exists",
         ) ||
         testInfo.title.startsWith(
-          "kanban queues canonical event submissions",
+          "kanban submits canonical card-create events",
         ) ||
         testInfo.title.startsWith("card detail embeds discussion directly"),
       assistantKeyBinding: testInfo.title.startsWith(
@@ -542,6 +674,9 @@ export function registerStrandsBeforeEach() {
       seedDefaultActiveAgent: !testInfo.title.startsWith(
         "account settings split account/server info",
       ),
+      contactRequestOutcome: testInfo.title.startsWith("contact request terminal failure")
+        ? "failed" : testInfo.title.startsWith("contact request rejects tampered receipt")
+          ? "tampered" : undefined,
       invitePreview,
       invitePreviewDelayMs: testInfo.title.startsWith(
         "invite preview disclosed",
@@ -549,6 +684,7 @@ export function registerStrandsBeforeEach() {
         ? 750
         : undefined,
     });
+    scenarioRealms.set(page, scenario);
     if (testInfo.title.startsWith("login page")) {
       return;
     }
@@ -607,6 +743,7 @@ export function registerStrandsBeforeEach() {
   });
 
   test.afterEach(async ({ page }, testInfo) => {
+    await settleWithin(Promise.all(pendingSignerKeyCaptures.get(page) ?? []), [], 1_000);
     const observations = apiObservations.get(page) ?? [];
     const counts = observations.reduce<Record<string, number>>(
       (current, entry) => {
@@ -620,11 +757,31 @@ export function registerStrandsBeforeEach() {
       body: Buffer.from(JSON.stringify({ counts, observations }, null, 2)),
       contentType: "application/json",
     });
+    await testInfo.attach("inkson-console.json", {
+      body: Buffer.from(JSON.stringify({
+        totalMessages: consoleMessageCounts.get(page) ?? 0,
+        retainedMessages: consoleErrors.get(page) ?? [],
+      }, null, 2)),
+      contentType: "application/json",
+    });
+    await testInfo.attach("inkson-signer-key-queries.json", {
+      body: Buffer.from(JSON.stringify(signerKeyDiagnostics.get(page) ?? [], null, 2)),
+      contentType: "application/json",
+    });
     await testInfo.attach("inkson-ui-state.json", {
       body: Buffer.from(
         JSON.stringify(
           {
             url: page.url(),
+            connection: await settleWithin(
+              page.getByTestId("connection-status").allTextContents(), [],
+            ),
+            syncCursor: await settleWithin(
+              page.getByTestId("sync-cursor").allTextContents(), [],
+            ),
+            realms: await settleWithin(
+              page.getByTestId("realm-tree-node-button").allTextContents(), [],
+            ),
             selectedRealm: await settleWithin(
               page.getByTestId("selected-realm-id").allTextContents(),
               [],

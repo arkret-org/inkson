@@ -67,6 +67,8 @@ mod committed_producer_proof_tests {
 
     #[test]
     fn foreign_producer_without_a_cached_device_key_is_verified() {
+        // Directory writes and negative reads share the session tests' cache fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let event = foreign_device_message();
         let actor = event["actor_id"].clone();
         let actor = serde_json::from_value::<arkret_sdk::ActorId>(actor).unwrap();

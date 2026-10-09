@@ -98,6 +98,8 @@ mod tests {
     }
     #[test]
     fn direct_result_survives_pending_refresh_but_not_account_or_peer_changes() {
+        // Session cache mutations share the signer/scope tests' process-wide fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let path = std::env::temp_dir().join(format!(
             "inkson-dc-{}.json",
             std::time::SystemTime::now()

@@ -194,6 +194,7 @@ impl LocalStateStore {
             });
         });
 
+        self.clear_current_product_view();
         let mut incoming = self.read_account_state(&namespace).unwrap_or_default();
         if let Some(mut staged) = pending {
             incoming.session_grant = staged.session_grant.take().or(incoming.session_grant);

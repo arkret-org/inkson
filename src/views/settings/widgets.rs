@@ -14,13 +14,13 @@ use crate::views::helpers::short_protocol_id;
 
 pub(super) fn render_notification_kind_toggle(
     kind: &'static str,
-    label: &'static str,
+    label_key: &'static str,
     mut state_store: SyncSignal<LocalStateStore>,
 ) -> Element {
     let enabled = state_store.read().notification_kind_enabled(kind);
     rsx! {
-        div { class: "metric",
-            strong { "{label}" }
+        div { class: "metric", "data-testid": "settings-notification-kind-{kind}",
+            strong { {crate::i18n::tr(label_key)} }
             label {
                 Checkbox {
                     checked: if enabled { CheckboxState::Checked } else { CheckboxState::Unchecked },
@@ -33,11 +33,11 @@ pub(super) fn render_notification_kind_toggle(
                             } else {
                                 "feedback.notification_kind_muted"
                             },
-                            vec![("label", label.to_owned())],
+                            vec![("label", crate::i18n::tr(label_key))],
                         );
                     },
                 }
-                if enabled { " Enabled" } else { " Muted" }
+                if enabled { {crate::i18n::tr("settings.notifications.kind_enabled")} } else { {crate::i18n::tr("settings.notifications.kind_muted")} }
             }
         }
     }
@@ -99,15 +99,15 @@ pub(super) fn RealmOverrideRow(realm_id: String, label: String, token: Signal<St
                             "feedback.watch_level_set",
                             vec![
                                 ("realm", short_protocol_id(&realm_id)),
-                                ("level", watch_level_label(next).to_owned()),
+                                ("level", watch_level_label(next)),
                             ],
                         );
                     }
                 },
-                SelectOption::<String> { index: 0usize, value: "all".to_string(), text_value: "All messages", "All messages" }
-                SelectOption::<String> { index: 1usize, value: "participating".to_string(), text_value: "Participating", "Participating" }
-                SelectOption::<String> { index: 2usize, value: "mentions_only".to_string(), text_value: "Mentions only", "Mentions only" }
-                SelectOption::<String> { index: 3usize, value: "muted".to_string(), text_value: "Muted", "Muted" }
+                SelectOption::<String> { index: 0usize, value: "all".to_string(), text_value: crate::i18n::tr("settings.notifications.level_all"), {crate::i18n::tr("settings.notifications.level_all")} }
+                SelectOption::<String> { index: 1usize, value: "participating".to_string(), text_value: crate::i18n::tr("chat.watch_level.participating"), {crate::i18n::tr("chat.watch_level.participating")} }
+                SelectOption::<String> { index: 2usize, value: "mentions_only".to_string(), text_value: crate::i18n::tr("chat.watch_level.mentions_only"), {crate::i18n::tr("chat.watch_level.mentions_only")} }
+                SelectOption::<String> { index: 3usize, value: "muted".to_string(), text_value: crate::i18n::tr("chat.watch_level.muted"), {crate::i18n::tr("chat.watch_level.muted")} }
             }
             Button {
                 variant: ButtonVariant::Secondary,
@@ -127,7 +127,7 @@ pub(super) fn RealmOverrideRow(realm_id: String, label: String, token: Signal<St
                         );
                     }
                 },
-                "Remove"
+                {crate::i18n::tr("settings.notifications.remove_override")}
             }
         }
     }

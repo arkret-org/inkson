@@ -2031,8 +2031,12 @@ pub fn KanbanPanel(
                         }
 
                 for (card_index, card) in active_cards.iter().enumerate().filter(|(_, card)| {
-                    let optimistic_local_id = arkret_sdk::StrandId::new(card.id.clone()).is_err();
-                    optimistic_local_id
+                    holder_local_pending_card_create(
+                        card,
+                        selected_board_value.as_ref().map(|id| id.as_str()).unwrap_or_default(),
+                        &column.id,
+                        &state_store.read().load().raw_operations,
+                    )
                         || (current_card_ids.contains(&card.id)
                             && card.authoring_basis.is_some())
                 })

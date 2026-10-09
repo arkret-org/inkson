@@ -138,6 +138,52 @@ impl LocalStateStore {
     /// reader keeps serving rows of a durable generation that was dropped.
     pub(crate) fn clear_current_product_view(&self) {
         *self.current_view.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        *self
+            .realm_security_view
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    /// Install presentation evidence read from this account's committed index.
+    pub(crate) fn install_realm_security_view(
+        &mut self,
+        account: &arkret_sdk::AccountId,
+        generation: u64,
+        states: BTreeMap<String, Option<bool>>,
+    ) -> anyhow::Result<()> {
+        self.ensure_cached_loaded();
+        anyhow::ensure!(
+            self.active_authority().as_ref() == Some(account),
+            "Realm security account changed"
+        );
+        anyhow::ensure!(
+            self.current_generation() == generation,
+            "Realm security generation changed"
+        );
+        let account_key = self.effective_account_key();
+        *self
+            .realm_security_view
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(super::RealmSecurityView {
+            account_key,
+            generation,
+            states,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn realm_security_states(&self) -> BTreeMap<String, Option<bool>> {
+        let key = self.effective_account_key();
+        if self.cached_account_key.as_deref() != Some(key.as_str()) {
+            return BTreeMap::new();
+        }
+        self.realm_security_view
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .filter(|view| view.account_key == key && view.generation == self.current_generation())
+            .map(|view| view.states.clone())
+            .unwrap_or_default()
     }
 
     /// The installed product view of the active account, if any.

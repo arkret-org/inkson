@@ -45,6 +45,8 @@ fn retired_minimal_metadata_marker_rejects_reaction_before_checkpoint_access() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
+    // Creator fixtures share the session tests' exact device-directory cache.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     // Control: a non-minimal Realm with an equally-old epoch never forces a
     // commit; the reaction rides the current epoch and persists immediately.
     let mut state = temp_state_store("non-minimal-reaction");

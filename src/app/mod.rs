@@ -837,17 +837,7 @@ fn AppBootstrap() -> Element {
         pinned_realm_ids_from_store(&store)
     };
     let realm_tree_projections = state_store.read().load().realm_tree_projections;
-    let current_product_view = state_store.read().current_product_view();
-    // A persisted Realm-default MLS snapshot is authoritative local evidence
-    // for previously created/joined encrypted Realms. It also repairs clients
-    // whose cached account projection was already downgraded by the old
-    // `e2ee_epoch: null => plaintext` parser before this build starts.
-    let realm_ids_with_local_mls: BTreeSet<String> = state_store
-        .read()
-        .mls_local_checkpoints()
-        .into_keys()
-        .filter(|scope_id| scope_id.starts_with("ak:realm:"))
-        .collect();
+    let realm_security_states = state_store.read().realm_security_states();
     let collaboration_sidebar_query_value =
         collaboration_sidebar_query().trim().to_ascii_lowercase();
     let direct_sidebar_query_value = direct_sidebar_query().trim().to_ascii_lowercase();
@@ -867,8 +857,7 @@ fn AppBootstrap() -> Element {
         active_realm_id: &active_realm_id,
         pinned_realm_ids: &pinned_realm_ids,
         realm_tree_projections: &realm_tree_projections,
-        current_product_view: current_product_view.as_ref(),
-        realm_ids_with_local_mls: &realm_ids_with_local_mls,
+        realm_security_states: &realm_security_states,
         realm_remarks: &realm_remarks_for_sidebar,
         collaboration_query: &collaboration_sidebar_query_value,
     });
@@ -2407,25 +2396,25 @@ fn AppBootstrap() -> Element {
                                         RealmTreeNodeKind::Realm => "Realm actions",
                                         RealmTreeNodeKind::Space => "Space actions",
                                     };
+                                    let unknown_security_title = crate::i18n::tr("realm.security_unknown_title");
                                     let (icon_name, icon_class, icon_title) = match item_node.kind {
                                         RealmTreeNodeKind::Realm => {
-                                            let is_encrypted = crate::views::helpers::realm_mls_activation(
-                                                    current_product_view.as_ref(),
-                                                    &item_node.id,
-                                                )
-                                                .unwrap_or_else(|| realm_ids_with_local_mls.contains(&item_node.id));
-                                            if is_encrypted {
+                                            match realm_security_states.get(&item_node.id).copied().flatten() {
+                                                Some(true) => {
                                                 (
                                                     "lock",
                                                     "sidebar-nav-icon realm-security-secure",
                                                     "Encrypted Realm",
                                                 )
-                                            } else {
+                                                },
+                                                Some(false) => {
                                                 (
                                                     "unlock",
                                                     "sidebar-nav-icon realm-security-unsafe",
                                                     "Unencrypted Realm",
                                                 )
+                                                },
+                                                None => ("help-circle", "sidebar-nav-icon", unknown_security_title.as_str()),
                                             }
                                         }
                                         RealmTreeNodeKind::Space => (
@@ -2733,7 +2722,8 @@ fn AppBootstrap() -> Element {
                             div { class: "topbar-context", "data-testid": "topbar-crumbs",
                                 if route_uses_realm_context && !active_realm_id.is_empty() {
                                     SecurityStateBadge {
-                                        encrypted: active_realm_security_encrypted,
+                                        encrypted: active_realm_security_encrypted == Some(true),
+                                        unknown: active_realm_security_encrypted.is_none(),
                                         compact: false,
                                         test_id: Some("realm-security-state".to_owned()),
                                     }

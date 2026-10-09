@@ -456,6 +456,8 @@ mod tests {
 
     #[test]
     fn ingests_inline_event_and_resolves_current_identity() {
+        // Directory writes and negative reads share the session tests' cache fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let mut store = MemberIdentityStore::new();
         let actor_did = "did:web:alice.example";
         let actor_id = crate::mls_api_helpers::principal_core_id(actor_did).unwrap();
@@ -499,6 +501,8 @@ mod tests {
 
     #[test]
     fn rejects_forged_identity_with_unverifiable_proof() {
+        // Directory writes and negative reads share the session tests' cache fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         // MID-5 fail-closed: an attacker forges a member_identity (correct
         // digest binding) but signs it with a key NOT in the directory for the
         // claimed actor. The verifier MUST drop it — `current_identity` returns
@@ -533,6 +537,8 @@ mod tests {
 
     #[test]
     fn signed_identity_does_not_cross_station_cache_keys() {
+        // Directory writes and negative reads share the session tests' cache fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let principal = "did:web:identity-station-isolation.example";
         let first = crate::mls_api_helpers::local_account_actor_id(principal).unwrap();
         let second = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
@@ -565,6 +571,8 @@ mod tests {
 
     #[test]
     fn rejects_identity_when_directory_key_absent() {
+        // Directory writes and negative reads share the session tests' cache fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         // MID-5 fail-closed: a correctly self-signed identity whose device key
         // is NOT cached (directory Miss) MUST NOT resolve — the key is never
         // taken from the envelope.
@@ -697,6 +705,8 @@ mod tests {
     }
     #[test]
     fn invalid_display_proof_is_retained_and_reported_without_verified_identity() {
+        // Directory writes and negative reads share the session tests' cache fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let principal = "did:web:identity-bad-proof.example";
         let actor = crate::mls_api_helpers::local_account_actor_id(principal).unwrap();
         let signer = SigningKey::from_bytes(&[37u8; 32]);
@@ -721,6 +731,8 @@ mod tests {
 
     #[test]
     fn invalid_replacement_digest_keeps_the_prior_verified_identity() {
+        // Directory writes and negative reads share the session tests' cache fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let principal = "did:web:identity-bad-edge.example";
         let actor = crate::mls_api_helpers::local_account_actor_id(principal).unwrap();
         let signer = SigningKey::from_bytes(&[38u8; 32]);

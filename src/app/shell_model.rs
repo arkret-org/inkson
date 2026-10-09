@@ -131,7 +131,7 @@ pub(super) struct RealmNavigationModel {
     pub realm_tree: Vec<RealmTreeItem>,
     pub filtered_realm_tree: Vec<RealmTreeItem>,
     pub manage_realm_rows: Vec<RealmManageRow>,
-    pub active_realm_security_encrypted: bool,
+    pub active_realm_security_encrypted: Option<bool>,
 }
 
 pub(super) struct RealmNavigationInput<'a> {
@@ -143,8 +143,7 @@ pub(super) struct RealmNavigationInput<'a> {
     pub active_realm_id: &'a str,
     pub pinned_realm_ids: &'a BTreeSet<String>,
     pub realm_tree_projections: &'a BTreeMap<String, Value>,
-    pub current_product_view: Option<&'a crate::current_projection::RealmCurrentView>,
-    pub realm_ids_with_local_mls: &'a BTreeSet<String>,
+    pub realm_security_states: &'a BTreeMap<String, Option<bool>>,
     pub realm_remarks: &'a BTreeMap<String, RealmRemark>,
     /// Already trimmed and lowercased by the caller.
     pub collaboration_query: &'a str,
@@ -201,9 +200,7 @@ pub(super) fn build_realm_navigation(input: RealmNavigationInput<'_>) -> RealmNa
         .filter(|node| node.kind == RealmTreeNodeKind::Realm)
         .map(|node| {
             let display_name = remark_display_name(input.realm_remarks, node);
-            let encrypted =
-                crate::views::helpers::realm_mls_activation(input.current_product_view, &node.id)
-                    .unwrap_or_else(|| input.realm_ids_with_local_mls.contains(&node.id));
+            let encrypted = input.realm_security_states.get(&node.id).copied().flatten();
             let space_count = descendant_node_ids(&collaboration_nodes, &node.id)
                 .len()
                 .saturating_sub(1);
@@ -229,15 +226,17 @@ pub(super) fn build_realm_navigation(input: RealmNavigationInput<'_>) -> RealmNa
     let active_realm_security_encrypted = manage_realm_rows
         .iter()
         .find(|row| row.realm_id == input.active_realm_id)
-        .map(|row| row.encrypted)
+        .and_then(|row| row.encrypted)
         .or_else(|| {
-            crate::views::helpers::scope_mls_activation(
-                input.realm_tree_projections,
-                input.current_product_view,
-                security_scope_id,
-            )
-        })
-        .unwrap_or(false);
+            let home = input
+                .realm_tree_projections
+                .get(security_scope_id)
+                .map(|projection| {
+                    crate::views::helpers::projection_home_realm_id(projection, security_scope_id)
+                })
+                .unwrap_or_else(|| security_scope_id.to_owned());
+            input.realm_security_states.get(&home).copied().flatten()
+        });
     RealmNavigationModel {
         collaboration_nodes,
         selected_preview,

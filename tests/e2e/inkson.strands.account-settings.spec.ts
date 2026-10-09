@@ -1,7 +1,13 @@
 import { expect, test } from "@playwright/test";
 import {
+  CURRENT_ASSISTANT_ACCOUNT_ID,
+  CURRENT_ASSISTANT_PCR,
+} from "./mockArkretApi";
+import {
   registerStrandsBeforeEach,
-  CURRENT_STATION_ID,
+  CURRENT_PRINCIPAL_CORE_ID,
+  CURRENT_PRINCIPAL_DID,
+  CURRENT_ACCOUNT_ACTOR_ID,
   DEMO_REALM,
   latestTestId,
   dismissBlockingRecoveryModal,
@@ -18,8 +24,12 @@ test("topbar account menu shows profile identity and current device", async ({ p
   await refreshServer(page);
   await dismissBlockingRecoveryModal(page);
   await page.getByTestId("account-menu-button").click();
-  await expect(page.getByTestId("account-menu")).toContainText(
-    "ak:did_core:web:alice.example",
+  await expect(page.getByTestId("account-menu-did")).toHaveAttribute(
+    "title",
+    CURRENT_PRINCIPAL_CORE_ID,
+  );
+  await expect(page.getByTestId("account-menu-did")).toHaveText(
+    /^ak:did_core:webvh:.+\.\.\..+$/,
   );
   await expect(page.getByTestId("account-menu")).toContainText("ak:device:");
   await expect(page.getByTestId("account-menu-copy-did")).toBeVisible();
@@ -136,7 +146,8 @@ test("account invite locator stays contained and follows the active locale", asy
   await gotoAndDismissRecovery(page, "/settings/account");
   await expect(page.getByTestId("realm-title")).toHaveText("设置");
   await expect(page.getByTestId("sidebar")).toContainText("主页");
-  await expect(page.getByTestId("sidebar")).toContainText("文件");
+  await expect(page.getByTestId("realm-sidebar-tab-collaboration")).toHaveText("协作");
+  await expect(page.getByTestId("realm-sidebar-tab-direct")).toHaveText("联系人");
   await expect(page.getByTestId("realm-sidebar-search-input")).toHaveAttribute(
     "placeholder",
     "搜索 Realm",
@@ -336,13 +347,7 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
   expect(submitBody.source_format).toBeUndefined();
   // `sender_actor_id` is an `ActorId`: the account variant carries the complete
   // AccountId, and no comparison may fall back to a bare principal id.
-  expect(submitBody.sender_actor_id).toEqual({
-    kind: "account",
-    account_id: {
-      principal_id: "ak:did_core:web:alice.example",
-      station_id: CURRENT_STATION_ID,
-    },
-  });
+  expect(submitBody.sender_actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
   expect(submitBody.ciphertext.content_type).toBe("application/json");
   expect(submitBody.ciphertext.ciphertext_digest).toMatch(/^sha256:[0-9a-f]{64}$/);
   expect(submitBody.ciphertext.payload).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -392,7 +397,7 @@ test("account settings split account/server info and surface Agents", async ({ p
   await expect(page.getByTestId("settings-nav-item-account")).toHaveAttribute("aria-current", "page");
   await expect(page.getByTestId("settings-avatar-card")).toBeVisible();
   await expect(page.getByTestId("settings-account-did")).toHaveText(
-    "ak:did_core:web:alice.example",
+    CURRENT_PRINCIPAL_CORE_ID,
   );
   await expect(page.getByTestId("settings-account-did")).not.toHaveText("@alice:local.host");
   const inviteLocatorUrl = page.getByTestId("settings-invite-locator-url");
@@ -612,7 +617,7 @@ test("agent deactivation submits controller-signed lifecycle without revoke bund
   const proof = body.lifecycle_event.event.producer_proof;
   expect(proof.kind).toBe("detached_jws");
   expect(proof.verification_method).toBe(
-    "did:web:alice.example#ak:device:01964137-0000-7000-8000-0000000000a1",
+    `${CURRENT_PRINCIPAL_DID}#ak:device:01964137-0000-7000-8000-0000000000a1`,
   );
   expect(proof.event_digest).toMatch(/^sha256:[0-9a-f]{64}$/);
   const [protectedHeader, detachedPayload, signature] = proof.jws.split(".");
@@ -623,21 +628,12 @@ test("agent deactivation submits controller-signed lifecycle without revoke bund
   expect(Buffer.from(signature, "base64url")).toHaveLength(64);
   expect(body.lifecycle_event.event.actor_id).toEqual({
     kind: "account",
-    account_id: {
-      principal_id: "ak:did_core:web:agents.example:assistant",
-      station_id: CURRENT_STATION_ID,
-    },
+    account_id: CURRENT_ASSISTANT_ACCOUNT_ID,
   });
-  expect(body.lifecycle_event.event.executed_by).toEqual({
-    kind: "account",
-    account_id: {
-      principal_id: "ak:did_core:web:alice.example",
-      station_id: CURRENT_STATION_ID,
-    },
-  });
+  expect(body.lifecycle_event.event.executed_by).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
   expect(body.lifecycle_event.event.scope_ref).toEqual({
     kind: "realm",
-    realm_id: "ak:realm:AS7wchHFRbXWnMQPln42BrokXsPCf18uboKMm-yhYquI",
+    realm_id: CURRENT_ASSISTANT_PCR,
   });
   expect(body.lifecycle_event.event.payload).toMatchObject({
     transition: "deactivate", previous_status: "active", reason: body.reason,

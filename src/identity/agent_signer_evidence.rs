@@ -771,6 +771,9 @@ mod historical_result_tests {
     async fn changed_realm_projection_resolves_agent_reply_without_an_account_frame() {
         use std::io::{Read, Write};
 
+        // Coordinate with tests that replace the shared session/device epoch
+        // while this real HTTP query is waiting for its historical response.
+        let _session = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let (selector, mut entry, _) = fixture();
         let mut store = crate::state::isolated_store_for_tests("realm-agent-reply-query");
         store.switch_test_account("did:web:reader.example");

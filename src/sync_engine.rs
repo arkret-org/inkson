@@ -1740,6 +1740,18 @@ async fn refresh_current_product_view(
 ) -> anyhow::Result<()> {
     let realm_id = ctx.selected_realm_id.get();
     if arkret_sdk::RealmId::new(realm_id.clone()).is_err() {
+        let session_generation = ctx.session.generation();
+        let guard = || -> anyhow::Result<()> {
+            anyhow::ensure!(
+                !ctx.effect.is_cancelled() && ctx.session.generation() == session_generation,
+                "Realm security publication session changed"
+            );
+            Ok(())
+        };
+        publish_realm_security_view(index, &ctx.state_store, &ctx.account.authority, &guard)
+            .await?;
+        ctx.realm_live_epoch
+            .update(|epoch| *epoch = epoch.wrapping_add(1));
         return Ok(());
     }
     let session_generation = ctx.session.generation();
@@ -1825,6 +1837,32 @@ pub(crate) async fn publish_current_product_view(
     })?;
     #[cfg(feature = "wasm-localstorage-secrets-test")]
     tracing::warn!(stage = "installed", "joint current product publication");
+    publish_realm_security_view(index, state_store, account, guard).await?;
+    Ok(())
+}
+
+async fn publish_realm_security_view(
+    index: &crate::state::CurrentIndex,
+    state_store: &crate::runtime::input::StateStoreHandle,
+    account: &arkret_sdk::AccountId,
+    guard: &dyn Fn() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    guard()?;
+    let realms = state_store.read(|store| {
+        store
+            .load()
+            .realm_tree_projections
+            .keys()
+            .filter(|id| arkret_sdk::RealmId::new((*id).clone()).is_ok())
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    let (generation, states) = index.read_realm_mls_activations(account, &realms).await?;
+    guard()?;
+    state_store.write(|store| {
+        guard()?;
+        store.install_realm_security_view(account, generation, states)
+    })?;
     Ok(())
 }
 

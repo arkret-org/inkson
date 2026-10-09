@@ -217,6 +217,8 @@ mod tests {
 
     #[test]
     fn authentication_transaction_fences_old_denials_without_logout() {
+        // Session cache mutations share the signer/scope tests' process-wide fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let coordinator = SessionCoordinator::new(|| {
             Box::pin(async { CurrentSessionRefresh::retry_later("unused") })
         });
@@ -246,6 +248,8 @@ mod tests {
 
     #[tokio::test]
     async fn preserves_retry_later_refresh_result() {
+        // Session cache mutations share the signer/scope tests' process-wide fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let coordinator = SessionCoordinator::new(|| {
             Box::pin(async { CurrentSessionRefresh::retry_later("account authority unavailable") })
         });
@@ -271,6 +275,8 @@ mod tests {
 
     #[tokio::test]
     async fn late_refresh_cannot_invalidate_a_replacement_session() {
+        // Session cache mutations share the signer/scope tests' process-wide fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let receiver = Rc::new(RefCell::new(Some(receiver)));
         let coordinator = SessionCoordinator::new({
@@ -318,6 +324,8 @@ mod tests {
 
     #[test]
     fn stale_task_cannot_invalidate_a_replacement_session() {
+        // Session cache mutations share the signer/scope tests' process-wide fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let coordinator = SessionCoordinator::new(|| {
             Box::pin(async { CurrentSessionRefresh::retry_later("unused") })
         });
@@ -340,6 +348,8 @@ mod tests {
 
     #[test]
     fn invalidator_invokes_registered_hook() {
+        // Session cache mutations share the signer/scope tests' process-wide fence.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         thread_local! {
             static REASON: RefCell<Option<String>> = const { RefCell::new(None) };
         }

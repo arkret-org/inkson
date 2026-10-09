@@ -1,9 +1,14 @@
 import { chromium, expect, test } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
+  CURRENT_PRINCIPAL_CORE_ID,
+  CURRENT_PRINCIPAL_DID,
+  CURRENT_ACCOUNT_ID,
+  CURRENT_ACCOUNT_RESOLUTION,
   latestTestId,
   refreshServer,
   writeLocalConfigAndReload,
+  preventSessionGrantReinjection,
   readLocalConfig,
   addSessionGrantInjection,
   testLocalConfig,
@@ -42,7 +47,7 @@ test("bootstrap login and sync shows the connected realm", async ({ page }) => {
     "inkson",
   );
   await expect(page.getByTestId("account-menu-account-detail")).toContainText(
-    "@alice:local.host · Current device",
+    "alice:local.host · Current device",
   );
   await expect(page.getByTestId("account-menu-device-name")).toHaveText(
     "Current device",
@@ -228,8 +233,14 @@ test("selected Realm security badge matches its encrypted sidebar marker", async
   );
 });
 
-test("authenticated login route returns to the realm", async ({ page }) => {
+test("authenticated login session refresh returns to the realm", async ({ page }) => {
   await page.goto("/login", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("login-panel")).toBeVisible();
+  await expect(page.getByTestId("session-status")).toHaveAttribute(
+    "data-status",
+    "signed-in",
+  );
+  await page.getByTestId("refresh-now-button").click();
 
   await expect(latestTestId(page, "client-shell")).toBeVisible({
     timeout: 120_000,
@@ -296,16 +307,18 @@ test("login page delegates account lifecycle to coauth OIDC", async ({
   await expect(page.getByText("Lost password or account")).toBeVisible();
 });
 
-test("connect refresh canonicalizes stale account and device identity", async ({
+test("connect refresh canonicalizes a stale locator while retaining the accepted device", async ({
   page,
 }) => {
-  const staleDid = "did:web:auth.local.host:users:01KCANONICAL";
-  const staleDeviceId = "ak:device:01964137-0000-7000-8000-0000000000b0";
+  // WebVH relocation changes its locator, while the accepted SCID and
+  // Account authority remain the same principal.
+  const scid = CURRENT_PRINCIPAL_DID.split(":")[2];
+  const staleDid = `did:webvh:${scid}:auth.local.host:users:01KCANONICAL`;
   const canonicalDeviceId = "ak:device:01964137-0000-7000-8000-0000000000a1";
   await expect(latestTestId(page, "status-label")).toContainText("Online");
   await writeLocalConfigAndReload(page, {
     did: staleDid,
-    device_id: staleDeviceId,
+    device_id: canonicalDeviceId,
   });
   await expect(latestTestId(page, "client-shell")).toBeVisible({
     timeout: 120_000,
@@ -318,10 +331,14 @@ test("connect refresh canonicalizes stale account and device identity", async ({
     "inkson",
   );
   await expect(latestTestId(page, "account-menu-handles")).toContainText(
-    "@alice:local.host",
+    "alice:local.host",
   );
-  await expect(latestTestId(page, "account-menu-did")).toContainText(
-    "ak:did_core:web:alice.example",
+  await expect(latestTestId(page, "account-menu-did")).toHaveAttribute(
+    "title",
+    CURRENT_PRINCIPAL_CORE_ID,
+  );
+  await expect(latestTestId(page, "account-menu-did")).toHaveText(
+    /^ak:did_core:webvh:.+\.\.\..+$/,
   );
   await expect(latestTestId(page, "account-menu-device")).toHaveAttribute(
     "title",
@@ -331,10 +348,42 @@ test("connect refresh canonicalizes stale account and device identity", async ({
     .poll(() => readLocalConfig(page))
     .toMatchObject({
       active_account: {
-        resolution: { did: "did:web:alice.example" },
+        authority: CURRENT_ACCOUNT_ID,
+        resolution: CURRENT_ACCOUNT_RESOLUTION,
         device_id: canonicalDeviceId,
       },
     });
+});
+
+test("changing the active device requires sign-in instead of silently restoring another device", async ({
+  page,
+}) => {
+  const unacceptedDeviceId = "ak:device:01964137-0000-7000-8000-0000000000b0";
+  let authenticatedWrites = 0;
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (
+      request.method() === "POST" &&
+      (path === "/_arkret/self/events" || path === "/_arkret/self/account/profile")
+    ) {
+      authenticatedWrites += 1;
+    }
+  });
+  await expect(latestTestId(page, "status-label")).toContainText("Online");
+  await preventSessionGrantReinjection(page);
+  await writeLocalConfigAndReload(page, { device_id: unacceptedDeviceId });
+  await expect(latestTestId(page, "login-panel")).toBeVisible({
+    timeout: 30_000,
+  });
+  expect((await readLocalConfig(page)).active_account.device_id).toBe(
+    unacceptedDeviceId,
+  );
+  await expect(latestTestId(page, "start-server-login-button")).toBeVisible();
+  await expect(latestTestId(page, "start-server-login-button")).toBeEnabled();
+  await expect(page.getByTestId("device-authorization-modal")).toHaveCount(0);
+  await expect(page.getByTestId("recovery-setup-banner")).toHaveCount(0);
+  await expect(page.getByTestId("recovery-key-setup-modal")).toHaveCount(0);
+  expect(authenticatedWrites).toBe(0);
 });
 
 test("fresh browser requires device authorization before recovery prompts", async ({

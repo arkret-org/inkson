@@ -132,3 +132,49 @@ fn option_table_keys_exist_for_every_wire_value() {
         missing.join("\n  ")
     );
 }
+
+#[test]
+fn settings_notification_and_recovery_copy_has_distinct_localized_text() {
+    let en = english_translations();
+    let zh = chinese_translations();
+    for key in [
+        "settings.notifications.kind_mention",
+        "settings.notifications.kind_reaction",
+        "settings.notifications.kind_invite",
+        "settings.notifications.kind_message",
+        "settings.notifications.kind_enabled",
+        "settings.notifications.kind_muted",
+        "settings.notifications.remove_override",
+        "settings.notifications.configured_count",
+        "settings.mls_recovery.authority_missing",
+        "settings.mls_recovery.authority_mismatch",
+        "settings.mls_recovery.session_missing",
+        "settings.mls_recovery.badge.loading",
+        "settings.mls_recovery.badge.no_local_secret",
+        "settings.mls_recovery.badge.backed_up",
+        "settings.mls_recovery.badge.not_backed_up",
+    ] {
+        let english = en
+            .get(key)
+            .unwrap_or_else(|| panic!("missing English settings copy: {key}"));
+        let chinese = zh
+            .get(key)
+            .unwrap_or_else(|| panic!("missing Chinese settings copy: {key}"));
+        assert!(!english.trim().is_empty(), "{key}");
+        assert!(!chinese.trim().is_empty(), "{key}");
+        assert_ne!(
+            english, chinese,
+            "settings copy must not silently stay English: {key}"
+        );
+    }
+    assert!(
+        en.get("settings.notifications.configured_count")
+            .unwrap()
+            .contains("{count}")
+    );
+    assert!(
+        zh.get("settings.notifications.configured_count")
+            .unwrap()
+            .contains("{count}")
+    );
+}

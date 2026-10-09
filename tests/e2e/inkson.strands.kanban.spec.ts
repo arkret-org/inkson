@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 import {
+  CURRENT_ASSISTANT_ACCOUNT_ID,
+  CURRENT_ASSISTANT_CORE_ID,
+} from "./mockArkretApi";
+import {
   registerStrandsBeforeEach,
+  CURRENT_PRINCIPAL_DID,
   DEMO_REALM,
   DEMO_BOARD_SPACE,
   dismissBlockingRecoveryModal,
@@ -87,9 +92,23 @@ test("kanban card detail embeds discussion without boundary copy", async ({
     exact: true,
   });
   await expect(selfMention).toContainText("alice:local.host");
-  await expect(selfMention).not.toContainText("did:web:alice.example");
-  await expect(agentMention).toContainText("Agent");
-  await expect(agentMention).toContainText("@me/assistant");
+  await expect(selfMention).not.toContainText(CURRENT_PRINCIPAL_DID);
+  const agentRow = detailPopup.getByTestId("card-detail-agent-row");
+  await expect(agentRow).toHaveAttribute(
+    "data-agent-id",
+    CURRENT_ASSISTANT_CORE_ID,
+  );
+  const memberActor = JSON.parse(
+    await agentRow.getAttribute("data-member-id") ?? "null",
+  );
+  expect(memberActor).toEqual({
+    kind: "account",
+    account_id: CURRENT_ASSISTANT_ACCOUNT_ID,
+  });
+  await expect(agentMention.getByTestId("card-detail-member")).toHaveText(
+    "assistant",
+  );
+  await expect(agentMention).toContainText("AI agent");
 
   await agentMention.click();
   await expect(
@@ -123,12 +142,25 @@ test("kanban card detail embeds discussion without boundary copy", async ({
   await expect(detailPopup).toHaveCount(0);
 });
 
-test("sidecar activation fails closed until the Realm content scheme is verified", async ({
+test("sidecar activation fails closed until this device receives Realm encryption keys", async ({
   page,
 }) => {
   await openKanban(page);
   await page.getByTestId("kanban-card").first().click();
   const detailPopup = page.getByTestId("card-detail-modal");
+  let ensureRequests = 0;
+  let messageSubmissions = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/_arkret/self/agent-sidecars:ensure")) {
+      ensureRequests += 1;
+    }
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/_arkret/self/events"
+    ) {
+      messageSubmissions += 1;
+    }
+  });
   await detailPopup.getByTestId("card-detail-sidebar-tab-members").click();
   await detailPopup
     .getByTestId("card-detail-agent-row")
@@ -136,37 +168,48 @@ test("sidecar activation fails closed until the Realm content scheme is verified
     .click();
   await detailPopup.getByTestId("chat-input").fill("@me/assistant hello");
 
-  let ensureRequests = 0;
-  page.on("request", (request) => {
-    if (request.url().includes("/_arkret/self/agent-sidecars:ensure")) {
-      ensureRequests += 1;
-    }
-  });
-
   await expect(detailPopup.getByRole("alert")).toContainText(
-    "waiting for the verified content scheme",
+    "Waiting for this device's encryption keys. Keep this conversation open to receive the MLS Welcome.",
   );
   await expect(detailPopup.getByTestId("send-chat-button")).toBeDisabled();
   await expect(page.getByTestId("sidecar-context-strip")).toHaveCount(0);
   await page.waitForTimeout(300);
   expect(ensureRequests).toBe(0);
+  expect(messageSubmissions).toBe(0);
+  await expect(detailPopup.getByTestId("chat-input")).toHaveValue("@me/assistant hello");
 });
 
 test("kanban hides list creation until a board exists", async ({ page }) => {
-  await page.route("**/_arkret/self/realms/*/spaces", async (route) => {
-    return route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ items: [], total: 0, spaces: [] }),
-    });
-  });
-  await page.route("**/_arkret/self/realms/*/strands", async (route) => {
-    return route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ items: [], total: 0, strands: [] }),
-    });
-  });
+  await page.route(
+    (url) => /^\/_arkret\/self\/realms\/[^/]+\/spaces$/.test(url.pathname),
+    async (route) => {
+      const realmId = decodeURIComponent(
+        new URL(route.request().url()).pathname.split("/")[4],
+      );
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          realm_id: realmId, total: 0, spaces: [], has_more: false,
+        }),
+      });
+    },
+  );
+  await page.route(
+    (url) => /^\/_arkret\/self\/realms\/[^/]+\/strands$/.test(url.pathname),
+    async (route) => {
+      const realmId = decodeURIComponent(
+        new URL(route.request().url()).pathname.split("/")[4],
+      );
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          realm_id: realmId, total: 0, strands: [], has_more: false,
+        }),
+      });
+    },
+  );
 
   await gotoAndDismissRecovery(page, `/kanban/${DEMO_REALM}`);
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
@@ -304,9 +347,11 @@ test("card create receipt survives opening the optimistic card", async ({
   await optimisticCard.click();
   const detail = page.getByTestId("card-detail-modal");
   await expect(detail).toBeVisible();
+  await detail.getByTestId("card-detail-tab-discussion").click();
   await expect(detail.getByTestId("card-discussion-pending-target")).toHaveCount(
     1,
   );
+  await expect(detail.getByTestId("chat-panel")).toHaveCount(0);
 
   const eventId = submittedCard?.event_id;
   expect(eventId).toMatch(/^ak:event:/);
@@ -414,7 +459,7 @@ test("card detail embeds discussion directly without discussion chrome", async (
     .getByTestId("chat-input")
     .fill("hello @did:web:bob.example about #ak:task:123");
   await expect(page.getByRole("alert")).toContainText(
-    "waiting for the verified content scheme",
+    "Waiting for this device's encryption keys. Keep this conversation open to receive the MLS Welcome.",
   );
   await expect(page.getByTestId("send-chat-button")).toBeDisabled();
   expect(chatSubmitPosts).toBe(0);

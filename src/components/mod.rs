@@ -96,18 +96,39 @@ pub use write_state::{WriteState, WriteStateIcon};
 // LazyLinkBadge is declared below.
 
 #[component]
-pub fn SecurityStateBadge(encrypted: bool, compact: bool, test_id: Option<String>) -> Element {
-    let state_class = if encrypted { "encrypted" } else { "plaintext" };
-    let icon = if encrypted { "shield-check" } else { "alert" };
-    let label = if encrypted {
-        "Encrypted"
+pub fn SecurityStateBadge(
+    encrypted: bool,
+    compact: bool,
+    test_id: Option<String>,
+    #[props(default = false)] unknown: bool,
+) -> Element {
+    let state_class = if unknown {
+        "unknown"
+    } else if encrypted {
+        "encrypted"
     } else {
-        "Unencrypted"
+        "plaintext"
     };
-    let title = if encrypted {
-        "Encrypted communication is enabled."
+    let icon = if unknown {
+        "help-circle"
+    } else if encrypted {
+        "shield-check"
     } else {
-        "Unencrypted plaintext communication."
+        "alert"
+    };
+    let label = if unknown {
+        crate::i18n::tr("realm.security_unknown")
+    } else if encrypted {
+        "Encrypted".to_owned()
+    } else {
+        "Unencrypted".to_owned()
+    };
+    let title = if unknown {
+        crate::i18n::tr("realm.security_unknown_title")
+    } else if encrypted {
+        "Encrypted communication is enabled.".to_owned()
+    } else {
+        "Unencrypted plaintext communication.".to_owned()
     };
     let mut class = format!("security-state-badge security-state-badge--{state_class}");
     if compact {
@@ -136,6 +157,9 @@ pub fn UiIcon(name: String) -> Element {
         "archive" => "M21 8v13H3V8M1 3h22v5H1V3Zm9 9h4",
         "activity" => "M3 12h4l3 7 4-14 3 7h4",
         "at-sign" => "M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8M16 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z",
+        "help-circle" => {
+            "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-3 7a3 3 0 1 1 5 2.24C12 12.5 12 13 12 14m0 3h.01"
+        }
         "alert" => {
             "M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0ZM12 9v4m0 4h.01"
         }
