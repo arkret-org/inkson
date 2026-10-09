@@ -103,6 +103,7 @@ pub fn circle_lifecycle(
         >(realm_id, actor, payload)),
         other => anyhow::bail!("unsupported Circle lifecycle kind {}", other.as_str()),
     }
+    .map(|builder| builder.circle_id(circle_id))
 }
 
 /// Derive a Circle's `display` from its title.
@@ -136,6 +137,62 @@ pub fn circle_display_from_title(title: &str) -> arkret_sdk::CircleDisplay {
             glyph: arkret_sdk::CircleGlyph::Ring,
         },
     }
+}
+
+/// Edit only mutable Circle metadata; history uses its own ratchet Event.
+pub fn circle_update(
+    realm_id: &str,
+    actor: &str,
+    circle_id: &str,
+    title: &str,
+    summary: &str,
+    display: arkret_sdk::CircleDisplay,
+    directory_visibility: arkret_sdk::CircleDirectoryVisibility,
+    join_rule: arkret_sdk::CircleJoinRule,
+) -> anyhow::Result<TypedOperationBuilder> {
+    anyhow::ensure!(!title.trim().is_empty(), "Circle title is required");
+    let mut patch = arkret_sdk::Patch::new();
+    patch.insert("title", title.trim())?;
+    patch.insert("summary", summary.trim())?;
+    patch.insert("display", serde_json::to_value(display)?)?;
+    patch.insert(
+        "directory_visibility",
+        serde_json::to_value(directory_visibility)?,
+    )?;
+    patch.insert("join_rule", serde_json::to_value(join_rule)?)?;
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::CircleUpdate>(
+            realm_id,
+            actor,
+            arkret_sdk::CirclePatchPayload {
+                circle_id: circle_id_value(circle_id)?,
+                patch,
+                expected_state_digest: None,
+            },
+        )
+        .circle_id(circle_id),
+    )
+}
+
+/// Tighten Circle-local history without patching the immutable history field.
+pub fn circle_restrict_history(
+    realm_id: &str,
+    actor: &str,
+    circle_id: &str,
+) -> anyhow::Result<TypedOperationBuilder> {
+    let payload = arkret_sdk::CircleHistoryAccessPayload {
+        circle_id: circle_id_value(circle_id)?,
+        from: Some(arkret_sdk::HistoryAccess::AllHistoryForCurrentMembers),
+        to: arkret_sdk::HistoryAccess::SinceJoin,
+        reason: None,
+    };
+    payload.validate()?;
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::CircleHistoryAccess>(
+            realm_id, actor, payload,
+        )
+        .circle_id(circle_id),
+    )
 }
 
 /// Build the canonical `ak.circle.create` operation for the Circle admin surface.
@@ -176,6 +233,59 @@ pub fn circle_create(
 #[cfg(test)]
 mod member_actor_tests {
     use super::*;
+
+    #[test]
+    fn circle_lifecycle_signs_its_own_stream_scope() {
+        let realm = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+        let circle = "ak:circle:AcsXlJSItqSzy43Swu0nFz2ijj4Yaf0RgjmoTeivRt8M";
+        for kind in [
+            arkret_sdk::EventKind::CircleArchive,
+            arkret_sdk::EventKind::CircleRestore,
+            arkret_sdk::EventKind::CircleTombstone,
+        ] {
+            let builder =
+                circle_lifecycle(realm, "ak:did_core:web:alice.example", circle, kind, None)
+                    .unwrap();
+            assert!(
+                matches!(builder.intent().unwrap().scope_ref(), arkret_sdk::ScopeRef::Circle { circle_id, .. } if circle_id.as_str() == circle)
+            );
+            assert_eq!(builder.intent().unwrap().payload()["target_ref"], circle);
+        }
+    }
+
+    #[test]
+    fn circle_metadata_update_and_history_ratchet_use_separate_payloads() {
+        let realm = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+        let actor = "ak:did_core:web:alice.example";
+        let circle = "ak:circle:AcsXlJSItqSzy43Swu0nFz2ijj4Yaf0RgjmoTeivRt8M";
+        let builder = circle_update(
+            realm,
+            actor,
+            circle,
+            " Ops ",
+            " Summary ",
+            circle_display_from_title("Ops"),
+            arkret_sdk::CircleDirectoryVisibility::RealmMembers,
+            arkret_sdk::CircleJoinRule::Knock,
+        )
+        .unwrap();
+        let intent = builder.intent().unwrap();
+        let payload = intent.payload();
+        assert_eq!(payload["patch"]["title"], "Ops");
+        assert_eq!(payload["patch"]["join_rule"], "knock");
+        assert_eq!(payload["patch"]["directory_visibility"], "realm_members");
+        assert!(payload["patch"].get("history_access").is_none());
+        assert!(payload["patch"].get("mls_group_id").is_none());
+        assert!(matches!(
+            intent.scope_ref(),
+            arkret_sdk::ScopeRef::Circle { .. }
+        ));
+        let ratchet_builder = circle_restrict_history(realm, actor, circle).unwrap();
+        let ratchet = ratchet_builder.intent().unwrap();
+        assert_eq!(ratchet.payload()["from"], "all_history_for_current_members");
+        assert_eq!(ratchet.payload()["to"], "since_join");
+        assert!(ratchet.payload().get("patch").is_none());
+    }
 
     #[test]
     fn circle_membership_preserves_remote_actor_id_variant_and_station() {

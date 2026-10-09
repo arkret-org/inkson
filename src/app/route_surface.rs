@@ -458,6 +458,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         if StationFeature::Circles.ready(server_description.as_ref()) {
                             rsx! {
                                 crate::views::circles::CirclesPanel {
+                                    key: "{realm_id}:{routed_circle_id:?}",
                                     realm_id: realm_id.clone(),
                                     selected_circle_id: routed_circle_id.clone(),
                                     principal_id: principal_core_id.clone(),

@@ -1,5 +1,6 @@
 import { expect, type Page, type Route } from "@playwright/test";
 import { spawnSync } from "node:child_process";
+import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -66,7 +67,7 @@ const eventIdForDerivedId = (id: string, prefix: string): string => {
 };
 const mockCommitId = (value: unknown): string => {
   const digest = createHash("sha256").update(JSON.stringify(value)).digest();
-  return `ak:realm_commit:A${digest.toString("base64url")}`;
+  return `ak:realm_commit:${Buffer.concat([Buffer.from([0x01]), digest]).toString("base64url")}`;
 };
 const mockMlsGroupId = (scope: string): string =>
   createHash("sha256").update(`ak.mls.group_id.v1\0${scope}`).digest("base64url");
@@ -720,8 +721,8 @@ export async function mockArkretApi(
       },
     ],
   ]);
-  const circleMembers = new Map<string, string[]>([
-    [DEMO_CIRCLE, [accountPrincipalCoreId]],
+  const circleMembers = new Map<string, Record<string, unknown>[]>([
+    [DEMO_CIRCLE, [accountActorId]],
   ]);
   let circleCounter = 0;
   const circleView = (circleId = DEMO_CIRCLE) => ({
@@ -741,10 +742,10 @@ export async function mockArkretApi(
     state: circleStates.get(circleId) ?? "active",
     viewer_membership: circleMembers
       .get(circleId)
-      ?.includes(accountPrincipalCoreId)
+      ?.some(member => canonicalJson(member) === canonicalJson(accountActorId))
       ? "join"
       : undefined,
-    member_ids: (circleMembers.get(circleId) ?? []).map(accountActorIdFor),
+    member_ids: circleMembers.get(circleId) ?? [],
     created_by: accountActorId,
     created_at: "2026-06-23T00:00:00.000Z",
     updated_by: accountActorId,
@@ -1455,38 +1456,39 @@ export async function mockArkretApi(
     );
     if (circleMemberCollection && route.request().method() === "POST") {
       const circleId = circleMemberCollection[1];
-      const request = route.request().postDataJSON() as {
-        actor_id: string;
-        membership?: string;
-      };
-      const membership = request.membership ?? "join";
-      const members = new Set(circleMembers.get(circleId) ?? []);
+      const request = route.request().postDataJSON();
+      validateMockSchema("schemas/circle-operations.schema.json#/$defs/circle_member_request_body", request);
+      const event = request.member_event.event;
+      const { member_id: memberId, membership } = event.payload;
+      expect(event.kind).toBe("ak.circle.member.state");
+      expect(event.scope_ref).toEqual({ kind: "circle", realm_id: DEMO_REALM, circle_id: circleId });
+      expect(event.payload.circle_id).toBe(circleId);
+      const members = new Map((circleMembers.get(circleId) ?? []).map(member => [canonicalJson(member), member]));
       if (membership === "join") {
-        members.add(request.actor_id);
+        members.set(canonicalJson(memberId), memberId);
       } else if (membership === "leave" || membership === "ban") {
-        members.delete(request.actor_id);
+        members.delete(canonicalJson(memberId));
       }
-      circleMembers.set(circleId, [...members]);
-      return json(route, {
-        circle_id: circleId,
-        member_id: accountActorIdFor(request.actor_id),
-        membership,
-      });
+      circleMembers.set(circleId, [...members.values()]);
+      return json(route, { circle_id: circleId, member_id: memberId, membership });
     }
 
     const circleMemberResource = url.pathname.match(
       /^\/_arkret\/self\/circles\/([^/]+)\/members\/(.+)$/,
     );
     if (circleMemberResource && route.request().method() === "DELETE") {
-      const [, circleId, actorId] = circleMemberResource;
-      const members = new Set(circleMembers.get(circleId) ?? []);
-      members.delete(decodeURIComponent(actorId));
-      circleMembers.set(circleId, [...members]);
-      return json(route, {
-        circle_id: circleId,
-        member_id: accountActorIdFor(decodeURIComponent(actorId)),
-        membership: "leave",
-      });
+      const [, circleId] = circleMemberResource;
+      const request = route.request().postDataJSON();
+      validateMockSchema("schemas/circle-operations.schema.json#/$defs/circle_member_delete_request_body", request);
+      const event = request.member_event.event;
+      const memberId = event.payload.member_id;
+      expect(event.kind).toBe("ak.circle.member.state");
+      expect(event.payload.circle_id).toBe(circleId);
+      expect(event.payload.membership).toBe("leave");
+      const members = new Map((circleMembers.get(circleId) ?? []).map(member => [canonicalJson(member), member]));
+      members.delete(canonicalJson(memberId));
+      circleMembers.set(circleId, [...members.values()]);
+      return json(route, { circle_id: circleId, member_id: memberId, membership: "leave" });
     }
 
     if (
@@ -2545,12 +2547,12 @@ export async function mockArkretApi(
       });
     }
 
-    // NB: no `/_arkret/self/realm-state-snapshot/head` route. The mock's describe does
-    // not advertise `ak.self.realm_state_snapshot.read.manifest_head.v1`, so the client falls back to
-    // event replay before issuing the request. The current wire shape is the
-    // full signed `ak.schema.realm_state_snapshot.v1` manifest (self-id field `id`); the
-    // removed `realm_state_snapshot_ref` pointer DTO is hard-rejected and MUST NOT be
-    // reintroduced here.
+    // No signed `/_arkret/self/realm-state-snapshot/head` fixture is supplied.
+    // Complete current bootstrap therefore fails closed on these legacy detail
+    // projections. Navigation tests can supply the canonical bounded realm_list;
+    // complete signed bootstrap remains a joint-test fixture responsibility.
+    // Never substitute the retired realm_state_snapshot_ref pointer DTO for the
+    // full signed ak.schema.realm_state_snapshot.v1 manifest.
     if (
       url.pathname === "/_arkret/root/identity/describe" &&
       route.request().method() === "GET"

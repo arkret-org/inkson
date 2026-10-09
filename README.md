@@ -59,6 +59,15 @@ section plus the protocol spec history in `../arkret-spec/spec/v1/`.
 
 See the protocol spec tree (`../arkret-spec/spec/v1/`) for the normative source.
 
+- **Circles** — open a Realm row menu and choose **Circles**. Create a
+  boundary with its own short name, directory visibility, join rule and history
+  policy; directory previews offer public join or an approval request. Members
+  can leave, and Circle managers can edit metadata, manage membership,
+  archive/restore, restrict history and permanently retire the Circle. History
+  restriction and retirement require explicit confirmation. The short name,
+  controlled colour and symbol identify the scope; an E2EE label requires a
+  verified accepted MLS binding. A directory preview never exposes private
+  titles, short names or member identities.
 - **Signal routing** — typing / receipts / presence / call-signal do not
   travel through the durable `ak.self.events.command.submit.v1` path. They are
   encrypted inside `SignalEnvelope` and sent with

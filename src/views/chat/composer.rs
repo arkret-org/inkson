@@ -26,6 +26,8 @@ pub(super) struct ChatComposerContext {
     pub sidecar_route_pending: Signal<bool>,
     pub embedded: bool,
     pub selected_channel_info: Option<ChannelEntity>,
+    pub circle_display: Option<arkret_sdk::CircleDisplay>,
+    pub circle_encrypted: Option<bool>,
     pub authority: arkret_sdk::AccountId,
     pub did: arkret_sdk::Did,
     pub principal_id: arkret_sdk::DidCoreId,
@@ -208,6 +210,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         mut sidecar_route_pending,
         embedded: _,
         selected_channel_info,
+        circle_display,
+        circle_encrypted,
         authority: sidecar_authority,
         did: sidecar_did,
         principal_id,
@@ -857,7 +861,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         })
                         .unwrap_or(crate::circle::CircleScope::Realm);
                     rsx! {
-                        crate::components::CircleComposerBanner { scope }
+                        crate::components::CircleComposerBanner { scope, display: circle_display.clone(), encrypted: circle_encrypted }
                     }
                 }
                 if let Some(reply_id) = reply_to_message() {

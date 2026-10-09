@@ -1,9 +1,22 @@
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
-use crate::components::HelpTip;
+mod controls;
+
+use controls::{CircleEditForm, CirclePolicyFields, CircleSelfMembership, CircleTerminalActions};
+
+use crate::components::{CircleIdentityBadge, HelpTip};
 use crate::routes::Route;
 use crate::transport::auth::with_authed_api;
+
+fn valid_short_name(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    (1..=24).contains(&bytes.len())
+        && bytes[0].is_ascii_uppercase()
+        && bytes
+            .iter()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, b' ' | b'_' | b'-'))
+}
 
 fn lifecycle_label(state: arkret_sdk::CircleState) -> &'static str {
     match state {
@@ -65,8 +78,12 @@ pub fn CirclesPanel(
     let mut create_title = use_signal(String::new);
     let mut create_summary = use_signal(String::new);
     let mut create_encrypted = use_signal(|| false);
+    let mut create_short_name = use_signal(String::new);
+    let create_visibility = use_signal(|| arkret_sdk::CircleDirectoryVisibility::Members);
+    let create_join_rule = use_signal(|| arkret_sdk::CircleJoinRule::Public);
+    let mut create_history = use_signal(|| arkret_sdk::HistoryAccess::SinceJoin);
     let mut member_actor = use_signal(String::new);
-    let mut member_state = use_signal(|| "invite".to_owned());
+    let mut member_state = use_signal(|| "join".to_owned());
     let mut busy = use_signal(|| false);
 
     {
@@ -91,7 +108,6 @@ pub fn CirclesPanel(
                         let (full, directory) = crate::circle::split_ordinary_circle_reads(list);
                         circles.set(full);
                         previews.set(directory);
-                        status.set(String::new());
                     }
                     Err(error) => {
                         circles.set(Vec::new());
@@ -114,11 +130,15 @@ pub fn CirclesPanel(
             .into_iter()
             .find(|preview| preview.circle_id.as_str() == id)
     });
-    let create_disabled = busy() || create_title().trim().is_empty();
+    let create_disabled = busy()
+        || create_title().trim().is_empty()
+        || (!create_short_name().trim().is_empty()
+            && !valid_short_name(create_short_name().trim()));
 
     rsx! {
         main { class: "circle-realm", "data-testid": "circles-panel",
             header { class: "circle-realm-header",
+                h1 { "Circles" }
                 HelpTip { text: "Circles restrict membership, history, delivery and encryption inside this Realm." }
                 div { class: "actions",
                     button {
@@ -174,7 +194,8 @@ pub fn CirclesPanel(
                                     span { class: "pill", "{lifecycle_label(circle.state)}" }
                                 }
                                 span { class: "muted",
-                                    "{circle.display.short_name} · {circle.member_ids.len()} members"
+                                    CircleIdentityBadge { color: circle.display.color_token, symbol: circle.display.symbol.clone(), short_name: circle.display.short_name.clone() }
+                                    " · {circle.member_ids.len()} members"
                                 }
                                 span { class: "muted", "{encryption_label(circle.mls_group_id.as_deref())}" }
                             }
@@ -192,6 +213,7 @@ pub fn CirclesPanel(
                                     strong { "Circle preview" }
                                     span { class: "pill", "Directory" }
                                 }
+                                CircleIdentityBadge { color: preview.display.color_token, symbol: preview.display.symbol.clone() }
                                 span { class: "muted", "{preview_member_count(preview.member_count_bucket)} members · {preview.join_rule:?}" }
                             }
                         }
@@ -202,7 +224,7 @@ pub fn CirclesPanel(
                     if let Some(circle) = selected {
                         div { class: "circle-detail-heading",
                             div {
-                                p { class: "eyebrow", "{circle.display.short_name}" }
+                                CircleIdentityBadge { color: circle.display.color_token, symbol: circle.display.symbol.clone(), short_name: circle.display.short_name.clone() }
                                 h2 { "{circle.title}" }
                                 if let Some(summary) = circle.summary.as_deref() {
                                     p { class: "muted", "{summary}" }
@@ -228,6 +250,26 @@ pub fn CirclesPanel(
                             }
                         }
 
+                        CircleSelfMembership {
+                            realm_id: circle.realm_id.to_string(),
+                            circle_id: circle.circle_id.to_string(), principal_id: principal_id.clone(),
+                            join_rule: circle.join_rule, membership: circle.viewer_membership,
+                            terminal: circle.state == arkret_sdk::CircleState::Tombstoned,
+                            token, busy, refresh, status,
+                        }
+                        if circle.state == arkret_sdk::CircleState::Active {
+                            CircleEditForm {
+                                key: "edit-{circle.circle_id}-{refresh}", realm_id: circle.realm_id.to_string(), circle_id: circle.circle_id.to_string(),
+                                initial_title: circle.title.clone(), initial_summary: circle.summary.clone(), display: circle.display.clone(),
+                                initial_visibility: circle.directory_visibility, initial_join_rule: circle.join_rule,
+                                principal_id: principal_id.clone(), token, busy, refresh, status,
+                            }
+                        }
+                        CircleTerminalActions {
+                            realm_id: circle.realm_id.to_string(), circle_id: circle.circle_id.to_string(),
+                            state: circle.state, history_access: circle.history_access,
+                            principal_id: principal_id.clone(), token, busy, refresh, status,
+                        }
                         section { class: "circle-members-section",
                             h3 { "Members" }
                             if circle.member_ids.is_empty() {
@@ -239,7 +281,7 @@ pub fn CirclesPanel(
                                         button {
                                             class: "secondary danger",
                                             r#type: "button",
-                                            disabled: busy(),
+                                            disabled: busy() || circle.state == arkret_sdk::CircleState::Tombstoned,
                                             onclick: {
                                                 let base = base_url.clone();
                                                 let circle_id = circle.circle_id.to_string();
@@ -289,16 +331,18 @@ pub fn CirclesPanel(
                                     value: "{member_state}",
                                     "aria-label": "Circle membership state",
                                     onchange: move |event| member_state.set(event.value()),
-                                    option { value: "invite", "Invite" }
-                                    option { value: "join", "Join" }
-                                    option { value: "knock", "Request (knock)" }
+
+                                    option { value: "join", "Add member" }
+                                    if circle.join_rule == arkret_sdk::CircleJoinRule::Knock {
+                                        option { value: "knock", "Request (knock)" }
+                                    }
                                     option { value: "leave", "Leave" }
                                     option { value: "ban", "Ban" }
                                 }
                                 button {
                                     class: "secondary",
                                     r#type: "button",
-                                    disabled: busy() || member_actor().trim().is_empty(),
+                                    disabled: busy() || circle.state == arkret_sdk::CircleState::Tombstoned || member_actor().trim().is_empty(),
                                     onclick: {
                                         let base = base_url.clone();
                                         let circle_id = circle.circle_id.to_string();
@@ -314,7 +358,10 @@ pub fn CirclesPanel(
                                                 "knock" => arkret_sdk::CircleMembership::Knock,
                                                 "leave" => arkret_sdk::CircleMembership::Leave,
                                                 "ban" => arkret_sdk::CircleMembership::Ban,
-                                                _ => arkret_sdk::CircleMembership::Knock,
+                                                _ => {
+                                                    status.set("Choose a valid membership transition".to_owned());
+                                                    return;
+                                                },
                                             };
                                             busy.set(true);
                                             let base = base.clone();
@@ -414,6 +461,12 @@ pub fn CirclesPanel(
                                 p { class: "muted", "Private details are visible after joining this Circle." }
                             }
                         }
+                        CircleSelfMembership {
+                            realm_id: preview.realm_id.to_string(),
+                            circle_id: preview.circle_id.to_string(), principal_id: principal_id.clone(),
+                            join_rule: preview.join_rule, membership: None, terminal: false,
+                            token, busy, refresh, status,
+                        }
                         div { class: "circle-boundary-grid",
                             div { strong { "Members" } span { "{preview_member_count(preview.member_count_bucket)} (approximate)" } }
                             div { strong { "Join rule" } span { "{preview.join_rule:?}" } }
@@ -437,8 +490,22 @@ pub fn CirclesPanel(
                         div { class: "workflow-form",
                             label { "Title" }
                             input { r#type: "text", value: "{create_title}", oninput: move |event| create_title.set(event.value()), "data-testid": "circle-create-title" }
+                            label { "Short name (ASCII, unique in this Realm)" }
+                            input {
+                                value: "{create_short_name}", "aria-label": "Circle short name",
+                                "data-testid": "circle-create-short-name",
+                                oninput: move |event| create_short_name.set(event.value()),
+                            }
                             label { "Summary" }
                             textarea { value: "{create_summary}", oninput: move |event| create_summary.set(event.value()) }
+                            CirclePolicyFields { visibility: create_visibility, join_rule: create_join_rule }
+                            label { "History" }
+                            select {
+                                "aria-label": "Circle history", value: if create_history() == arkret_sdk::HistoryAccess::SinceJoin { "since_join" } else { "all_history_for_current_members" },
+                                onchange: move |event| create_history.set(if event.value() == "since_join" { arkret_sdk::HistoryAccess::SinceJoin } else { arkret_sdk::HistoryAccess::AllHistoryForCurrentMembers }),
+                                option { value: "since_join", "Since joining" }
+                                option { value: "all_history_for_current_members", "All history for current members" }
+                            }
                             label {
                                 input { r#type: "checkbox", checked: create_encrypted(),
                                     "data-testid": "circle-create-encrypted",
@@ -448,9 +515,9 @@ pub fn CirclesPanel(
                             div { class: "circle-boundary-preview",
                                 strong { "Boundary preview" }
                                 p { "Initial member: {principal_id}" }
-                                p { "Directory: Circle members only" }
-                                p { "Join rule: open to active Realm members" }
-                                p { "History: joined members" }
+                                p { "Directory: {create_visibility():?}" }
+                                p { "Join rule: {create_join_rule():?}" }
+                                p { "History: {create_history():?}" }
                                 p { "Starts as restricted delivery only. E2EE becomes active only after this Circle's own MLS genesis is accepted." }
                             }
                         }
@@ -480,16 +547,20 @@ pub fn CirclesPanel(
                                         // Circle, and it must not sign for us.
                                         let title = create_title().trim().to_owned();
                                         let summary = create_summary().trim().to_owned();
+                                        let mut display = crate::operation::ak_ops::circle_display_from_title(&title);
+                                        if !create_short_name().trim().is_empty() {
+                                            display.short_name = create_short_name().trim().to_owned();
+                                        }
                                         let create_event = match crate::operation::ak_ops::circle_create(
                                             realm_id.as_str(),
                                             &principal_id,
                                             crate::operation::ak_ops::CircleCreateOptions {
                                                 title: &title,
                                                 summary: Some(&summary),
-                                                display: crate::operation::ak_ops::circle_display_from_title(&title),
-                                                directory_visibility: arkret_sdk::CircleDirectoryVisibility::Members,
-                                                join_rule: arkret_sdk::CircleJoinRule::Public,
-                                                history_access: arkret_sdk::HistoryAccess::SinceJoin,
+                                                display,
+                                                directory_visibility: create_visibility(),
+                                                join_rule: create_join_rule(),
+                                                history_access: create_history(),
                                             },
                                         )
                                         .and_then(|builder| builder.build_sdk_event("inkson"))
@@ -552,6 +623,7 @@ pub fn CirclesPanel(
                                                 Ok(circle_id) => {
                                                     create_title.set(String::new());
                                                     create_summary.set(String::new());
+                                                    create_short_name.set(String::new());
                                                     create_encrypted.set(false);
                                                     create_open.set(false);
                                                     refresh += 1;
@@ -579,7 +651,17 @@ pub fn CirclesPanel(
 
 #[cfg(test)]
 mod tests {
-    use super::encryption_label;
+    use super::{encryption_label, valid_short_name};
+
+    #[test]
+    fn circle_short_name_validation_matches_registered_ascii_boundary() {
+        for value in ["Ops", "A_1-x", "A12345678901234567890123"] {
+            assert!(valid_short_name(value));
+        }
+        for value in ["", "ops", "运维", "A!", "A1234567890123456789012345"] {
+            assert!(!valid_short_name(value));
+        }
+    }
 
     #[test]
     fn circle_security_label_follows_accepted_mls_binding() {

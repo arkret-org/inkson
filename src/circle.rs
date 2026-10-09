@@ -1,13 +1,13 @@
 //! Circle UX scaffolding (P3B.2).
 //!
-//! A `Circle` is an intra-Realm cryptographic sub-boundary that hosts its
-//! own MLS group and a strict-subset of the parent Realm's membership. The
-//! spec is in `arkret-rust-sdk/crates/core/src/model/circle.rs`; this
-//! module is the *client* surface that the rest of inkson consumes:
+//! A `Circle` restricts membership, history and delivery within a Realm.
+//! E2EE activates only after the Circle's own accepted MLS Genesis.
+//! The normative contract is `arkret-spec/spec/v1/zh/models/circle.md`;
+//! this module is the client presentation surface:
 //!
 //! - [`CircleScope`] is the active scope a composer / new-Strand form is writing into. `Realm` is
 //!   the default; `Circle { … }` flags a Circle-scoped write that must end up with
-//!   `scope_circle_id` set on the canonical envelope.
+//!   `scope_ref.kind=circle` on the signed envelope.
 //! - [`CircleSummary`] is the lightweight projection rendered by the Space-sidebar Circle list and
 //!   scope picker.
 //! - [`CircleErrorKind`] is the typed mapping from the Circle reason codes that surface in soland's
@@ -119,9 +119,7 @@ pub struct CircleSummary {
     /// `ak:realm:…` of the parent Realm.
     pub realm_id: String,
     pub title: String,
-    pub short_name: String,
-    pub color_token: String,
-    pub symbol: String,
+    pub display: arkret_sdk::CircleDisplay,
     pub member_count: u32,
     pub state: arkret_sdk::CircleState,
     /// `true` if the active account is a member of this Circle (used to
@@ -298,9 +296,7 @@ mod tests {
             id: "ak:circle:opsroom".to_owned(),
             realm_id: "ak:realm:A28oJpDpEI80mVokdt5Yo0vuv0Z1SXEPt1X593Rirmn8".to_owned(),
             title: "Ops Room".to_owned(),
-            short_name: "Ops".to_owned(),
-            color_token: "indigo".to_owned(),
-            symbol: "shield".to_owned(),
+            display: crate::operation::ak_ops::circle_display_from_title("Ops"),
             member_count: 7,
             state: arkret_sdk::CircleState::Active,
             viewer_is_member: true,

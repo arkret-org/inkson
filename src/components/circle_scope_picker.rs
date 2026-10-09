@@ -43,6 +43,10 @@ pub fn CircleScopePicker(
         })
     });
     let circles_for_handler = circles.clone();
+    let selected_identity = circles
+        .iter()
+        .find(|circle| selected().circle_id() == Some(circle.id.as_str()))
+        .cloned();
 
     rsx! {
         label {
@@ -79,9 +83,13 @@ pub fn CircleScopePicker(
                         index: i + 1,
                         value: circle.id.to_string(),
                         text_value: "{circle.title} ({circle.member_count} members)",
-                        "{circle.title} ({circle.member_count} members)"
+                        CircleIdentityBadge { color: circle.display.color_token, symbol: circle.display.symbol.clone(), short_name: circle.display.short_name.clone() }
+                        " {circle.title} ({circle.member_count} members)"
                     }
                 }
+            }
+            if let Some(circle) = selected_identity {
+                CircleIdentityBadge { color: circle.display.color_token, symbol: circle.display.symbol, short_name: circle.display.short_name }
             }
             p { class: "field-help muted",
                 "{scope_help}"
@@ -95,7 +103,11 @@ pub fn CircleScopePicker(
 /// (the default scope has no banner — that keeps the UI surface quiet
 /// during normal use).
 #[component]
-pub fn CircleComposerBanner(scope: CircleScope) -> Element {
+pub fn CircleComposerBanner(
+    scope: CircleScope,
+    display: Option<arkret_sdk::CircleDisplay>,
+    encrypted: Option<bool>,
+) -> Element {
     match scope {
         CircleScope::Realm => rsx! {},
         CircleScope::Circle {
@@ -107,9 +119,14 @@ pub fn CircleComposerBanner(scope: CircleScope) -> Element {
                 class: "banner circle-composer-banner",
                 "data-testid": "circle-composer-banner",
                 "data-circle-id": "{circle_id}",
-                span { class: "banner-icon", "🛡" }
+                if let Some(display) = display {
+                    CircleIdentityBadge { color: display.color_token, symbol: display.symbol, short_name: display.short_name }
+                } else {
+                    span { class: "banner-icon", "◯" }
+                }
                 div { class: "banner-body",
                     strong { "Circle scope · {title}" }
+                    span { class: "muted", match encrypted { Some(true) => "E2EE active", Some(false) => "Restricted delivery · not E2EE", None => "Waiting for verified encryption state" } }
                     span { class: "muted",
                         if member_count == 0 {
                             "This message is visible only to Circle members."
@@ -120,6 +137,74 @@ pub fn CircleComposerBanner(scope: CircleScope) -> Element {
                 }
             }
         },
+    }
+}
+
+/// Render the protocol's visual identity without turning a colour into authority.
+#[component]
+pub fn CircleIdentityBadge(
+    color: arkret_sdk::CircleColorToken,
+    symbol: arkret_sdk::CircleSymbol,
+    short_name: Option<String>,
+) -> Element {
+    use arkret_sdk::{CircleColorToken as Color, CircleGlyph as Glyph, CircleSymbol as Symbol};
+    let accent = match color {
+        Color::Slate => "#64748b",
+        Color::Red => "#ef4444",
+        Color::Orange => "#f97316",
+        Color::Amber => "#f59e0b",
+        Color::Yellow => "#eab308",
+        Color::Lime => "#84cc16",
+        Color::Green => "#22c55e",
+        Color::Emerald => "#10b981",
+        Color::Teal => "#14b8a6",
+        Color::Cyan => "#06b6d4",
+        Color::Sky => "#0ea5e9",
+        Color::Blue => "#3b82f6",
+        Color::Indigo => "#6366f1",
+        Color::Violet => "#8b5cf6",
+        Color::Fuchsia => "#d946ef",
+        Color::Pink => "#ec4899",
+        Color::GrayHighContrast => "var(--text)",
+    };
+    let symbol_label = match symbol {
+        Symbol::Emoji { emoji } => emoji,
+        Symbol::Glyph { glyph } => match glyph {
+            Glyph::Lock => "🔒",
+            Glyph::Shield => "🛡",
+            Glyph::Eye => "◉",
+            Glyph::EyeOff => "◌",
+            Glyph::UserShield => "♙",
+            Glyph::Fingerprint => "◎",
+            Glyph::Key => "⚿",
+            Glyph::Diamond => "◇",
+            Glyph::Flame => "♨",
+            Glyph::Leaf => "♧",
+            Glyph::Stamp => "▣",
+            Glyph::Compass => "✥",
+            Glyph::Atom => "⚛",
+            Glyph::Bolt => "ϟ",
+            Glyph::Moon => "☾",
+            Glyph::Sun => "☀",
+            Glyph::Star => "☆",
+            Glyph::Globe => "⊕",
+            Glyph::Satellite => "✧",
+            Glyph::Ring => "◯",
+            Glyph::Chain => "∞",
+            Glyph::Tag => "⌑",
+            Glyph::Flag => "⚑",
+            Glyph::Scroll => "▤",
+            Glyph::Scale => "⚖",
+            Glyph::Hourglass => "⌛",
+            Glyph::Spark => "✦",
+        }
+        .to_owned(),
+    };
+    rsx! {
+        span { class: "circle-identity-badge", style: "--circle-accent: {accent}", "data-testid": "circle-identity-badge",
+            span { class: "circle-identity-symbol", "{symbol_label}" }
+            if let Some(short_name) = short_name { strong { "{short_name}" } }
+        }
     }
 }
 
@@ -179,9 +264,7 @@ mod tests {
             id: id.to_owned(),
             realm_id: "ak:realm:A28oJpDpEI80mVokdt5Yo0vuv0Z1SXEPt1X593Rirmn8".to_owned(),
             title: format!("Title {id}"),
-            short_name: "T".to_owned(),
-            color_token: "indigo".to_owned(),
-            symbol: "shield".to_owned(),
+            display: crate::operation::ak_ops::circle_display_from_title("T"),
             member_count: 3,
             state: arkret_sdk::CircleState::Active,
             viewer_is_member: true,

@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { expect, test } from "@playwright/test";
-import { CURRENT_STATION_ID } from "./mockArkretApi";
+import { CURRENT_STATION_ID, DEMO_REALM, validateMockSchema } from "./mockArkretApi";
 import {
   registerStrandsBeforeEach,
   latestTestId,
@@ -9,16 +10,42 @@ import {
   refreshServer,
   openSettings,
   writeLocalConfig,
+  submittedEvent,
+  assertRealmTreeSeeded,
 } from "./strandsHarness";
 
 registerStrandsBeforeEach();
+
+async function rejectCircleControl(page: import("@playwright/test").Page, kind: string) {
+  const outcome = { status: "rejected", reason_code: "capability_denied" };
+  validateMockSchema("schemas/authority-commit-operations.schema.json#/$defs/self_submit_outcome", outcome);
+  await page.route("**/_arkret/self/events", async route => {
+    const event = submittedEvent(route.request().postDataJSON());
+    if (event?.kind !== kind) { await route.fallback(); return; }
+    expect(event.scope_ref.kind).toBe("circle");
+    expect(event.scope_ref.circle_id).toBe("ak:circle:AVhDoodj6EFMf5ZQ1JXfSmM5ZNZrK3ekqYa4-EOvqSiE");
+    expect(event.producer_proof).toBeTruthy();
+    if (kind === "ak.circle.history_access") {
+      expect(event.payload.from).toBe("all_history_for_current_members");
+      expect(event.payload.to).toBe("since_join");
+      expect(event.payload.patch).toBeUndefined();
+    }
+    if (kind === "ak.circle.update") {
+      expect(event.payload.patch.title).toBe("Ops Circle");
+      expect(event.payload.patch.history_access).toBeUndefined();
+      expect(event.payload.patch.mls_group_id).toBeUndefined();
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(outcome) });
+  });
+}
+
 
 test("ordinary Circle list fails closed when the response contains a Sidecar profile", async ({
   page,
 }) => {
   await gotoAndDismissRecovery(
     page,
-    "/realms/ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk/circles",
+    `/realms/${DEMO_REALM}/circles`,
   );
   const panel = page.getByTestId("circles-panel");
   await expect(panel).toBeVisible();
@@ -32,7 +59,7 @@ test("Circle creation fails closed without a durable governance checkpoint", asy
 }) => {
   await gotoAndDismissRecovery(
     page,
-    "/realms/ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk/circles",
+    `/realms/${DEMO_REALM}/circles`,
   );
   const panel = page.getByTestId("circles-panel");
   await panel.getByTestId("circle-create-open").click();
@@ -40,12 +67,140 @@ test("Circle creation fails closed without a durable governance checkpoint", asy
   await page.getByTestId("circle-create-submit").click();
 
   await expect(panel.getByRole("status")).toContainText(
-    "has no durable verified governance checkpoint",
+    "membership authoring requires a complete verified parent Realm cut",
   );
   await expect(page).toHaveURL(/\/realms\/.*\/circles$/);
   await expect(panel.getByTestId("circle-detail")).not.toContainText(
     "Incident Response",
   );
+});
+
+test("Circle creation exposes matching configurable boundaries", async ({ page }) => {
+  await gotoAndDismissRecovery(page, `/realms/${DEMO_REALM}/circles`);
+  await page.getByTestId("circle-create-open").click();
+  const modal = page.getByTestId("circle-create-modal");
+  await modal.getByTestId("circle-create-title").fill("运营协作");
+  await modal.getByTestId("circle-create-short-name").fill("Ops");
+  await modal.getByLabel("Circle directory visibility").selectOption("realm_members");
+  await modal.getByLabel("Circle join rule").selectOption("knock");
+  await modal.getByLabel("Circle history").selectOption("all_history_for_current_members");
+  await expect(modal.locator(".circle-boundary-preview")).toContainText("RealmMembers");
+  await expect(modal.locator(".circle-boundary-preview")).toContainText("Knock");
+  await expect(modal.locator(".circle-boundary-preview")).toContainText("AllHistoryForCurrentMembers");
+  await expect(modal.getByTestId("circle-create-submit")).toBeEnabled();
+  await modal.getByTestId("circle-create-short-name").fill("运营");
+  await expect(modal.getByTestId("circle-create-submit")).toBeDisabled();
+});
+
+test("Circle detail exposes edit and protects irreversible retirement", async ({ page }, testInfo) => {
+  await gotoAndDismissRecovery(page, `/realms/${DEMO_REALM}/circles/ak:circle:AVhDoodj6EFMf5ZQ1JXfSmM5ZNZrK3ekqYa4-EOvqSiE`);
+  const detail = page.getByTestId("circle-detail");
+  await expect(detail.getByTestId("circle-self-membership")).toHaveText("Leave Circle");
+  await expect(detail.getByTestId("circle-identity-badge")).toContainText("Demo");
+  await detail.getByTestId("circle-edit").locator("summary").first().click();
+  await expect(detail.getByLabel("Circle title")).toHaveValue("Demo Circle");
+  await detail.getByLabel("Circle title").fill("Ops Circle");
+  await rejectCircleControl(page, "ak.circle.update");
+  await detail.getByTestId("circle-edit-save").click();
+  await expect(page.getByTestId("circle-status")).toContainText("Circle update failed");
+  await expect(detail.getByRole("heading", { name: "Demo Circle", exact: true })).toBeVisible();
+  await expect(detail.getByRole("option", { name: "Invite", exact: true })).toHaveCount(0);
+  await detail.getByTestId("circle-terminal-actions").locator("summary").first().click();
+  await expect(detail.getByTestId("circle-tombstone")).toBeDisabled();
+  await detail.getByTestId("circle-tombstone-confirm").check();
+  await expect(detail.getByTestId("circle-tombstone")).toBeEnabled();
+  await rejectCircleControl(page, "ak.circle.tombstone");
+  await detail.getByTestId("circle-tombstone").click();
+  await expect(page.getByTestId("circle-status")).toContainText("Circle retirement failed");
+  await expect(detail).toContainText("Active");
+  await detail.getByTestId("circle-tombstone-confirm").uncheck();
+  await expect(detail.getByTestId("circle-tombstone")).toBeDisabled();
+  await expect(detail.getByTestId("circle-history-restrict")).toHaveCount(0);
+  await detail.getByTestId("circle-edit").locator("summary").first().click();
+  await detail.getByRole("heading", { name: "Demo Circle", exact: true }).scrollIntoViewIfNeeded();
+  expect(await page.getByTestId("circles-panel").evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("circle-detail.png") });
+});
+
+test("Circle history can only tighten after explicit confirmation", async ({ page }) => {
+  const realm = DEMO_REALM;
+  const circle = "ak:circle:AVhDoodj6EFMf5ZQ1JXfSmM5ZNZrK3ekqYa4-EOvqSiE";
+  const actor = { kind: "account", account_id: { principal_id: "ak:did_core:web:alice.example", station_id: CURRENT_STATION_ID } };
+  const response = { realm_id: realm, circles: [{ circle_id: circle, realm_id: realm, title: "History Circle", display: { short_name: "History", color_token: "blue", symbol: { glyph: "ring" } }, directory_visibility: "members", join_rule: "invite", history_access: "all_history_for_current_members", state: "active", viewer_membership: "join", member_ids: [actor], created_by: actor, created_at: "2026-06-23T00:00:00.000Z" }] };
+  validateMockSchema("schemas/circle-operations.schema.json#/$defs/circle_list", response);
+  await page.route("**/_arkret/self/circles?**", async route => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(response) });
+  });
+  await gotoAndDismissRecovery(page, `/realms/${realm}/circles/${circle}`);
+  const detail = page.getByTestId("circle-detail");
+  await expect(detail).toContainText("Not end-to-end encrypted");
+  await detail.getByTestId("circle-terminal-actions").locator("summary").first().click();
+  await expect(detail.getByTestId("circle-history-restrict")).toBeDisabled();
+  await detail.getByTestId("circle-history-confirm").check();
+  await expect(detail.getByTestId("circle-history-restrict")).toBeEnabled();
+  await rejectCircleControl(page, "ak.circle.history_access");
+  await detail.getByTestId("circle-history-restrict").click();
+  await expect(page.getByTestId("circle-status")).toContainText("History change failed");
+  await expect(detail).toContainText("AllHistoryForCurrentMembers");
+});
+
+for (const [joinRule, action] of [["public", "Join Circle"], ["knock", "Request to join"], ["invite", null]] as const) {
+  test(`Circle directory ${joinRule} offers only its permitted self action`, async ({ page }) => {
+    const realm = DEMO_REALM;
+    const circle = "ak:circle:AVhDoodj6EFMf5ZQ1JXfSmM5ZNZrK3ekqYa4-EOvqSiE";
+    const response = { realm_id: realm, circles: [{ circle_id: circle, realm_id: realm, visibility: "realm_members", display: { color_token: "slate", symbol: { glyph: "ring" } }, member_count_bucket: "2-3", join_rule: joinRule, opaque_commitment: createHash("sha256").update(`ak.circle.preview.v1\0${realm}\0${circle}`).digest("hex") }] };
+    validateMockSchema("schemas/circle-operations.schema.json#/$defs/circle_list", response);
+    await page.route("**/_arkret/self/circles?**", async route => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(response) });
+    });
+    await gotoAndDismissRecovery(page, `/realms/${realm}/circles/${circle}`);
+    const detail = page.getByTestId("circle-detail");
+    await expect(detail).toContainText("Private details are visible after joining");
+    await expect(detail).not.toContainText("Demo Circle");
+    await expect(page.getByTestId("circle-preview-item").getByTestId("circle-identity-badge")).toHaveText("◯");
+    await expect(detail.getByTestId("circle-edit")).toHaveCount(0);
+    if (action) {
+      await expect(detail.getByTestId("circle-self-membership")).toHaveText(action);
+      let membershipWrites = 0;
+      page.on("request", request => {
+        if (request.method() === "POST" && /\/circles\/[^/]+\/members$/.test(new URL(request.url()).pathname)) membershipWrites += 1;
+      });
+      await detail.getByTestId("circle-self-membership").click();
+      if (joinRule === "public") {
+        await expect(page.getByTestId("circle-status")).toContainText("Membership update failed");
+        expect(membershipWrites).toBe(0);
+      } else {
+        await expect(page.getByTestId("circle-status")).toContainText("Join request submitted");
+        expect(membershipWrites).toBe(1);
+      }
+    } else {
+      await expect(detail.getByTestId("circle-self-membership")).toHaveCount(0);
+      await expect(detail).toContainText("A Circle manager must grant access");
+    }
+  });
+}
+
+test("Realm row menu reaches the Circle directory", async ({ page }) => {
+  // Navigation needs the bounded list, not a forged signed detail snapshot.
+  const frames = [
+    { kind: "delta", cursor: "ak:cursor:circle-menu", realm_list: {
+      snapshot_cursor: "ak:cursor:circle-list", snapshot_revision: 1,
+      items: [{ realm_id: DEMO_REALM, revision: 1, activity_position: 1, membership: "join", title: "Arkret Demo Realm" }],
+    } },
+    { kind: "catchup_complete", cursor: "ak:cursor:circle-menu" },
+  ];
+  for (const frame of frames) validateMockSchema("schemas/account-subscribe-frame.schema.json", frame);
+  await page.route("**/_arkret/self/account/subscribe?**", async route => {
+    await route.fulfill({ status: 200, contentType: "application/x-ndjson", body: frames.map(frame => JSON.stringify(frame)).join("\n") + "\n" });
+  });
+  await page.reload();
+  await assertRealmTreeSeeded(page);
+  const row = latestTestId(page, "client-shell").locator(".sidebar-row").filter({ hasText: "Arkret Demo Realm" }).first();
+  await row.hover();
+  await row.getByTestId("realm-tree-row-menu-button").click();
+  await row.getByTestId("realm-tree-row-circles-action").click();
+  await expect(page).toHaveURL(/\/realms\/.*\/circles$/);
+  await expect(page.getByTestId("circles-panel")).toBeVisible();
 });
 
 test("realm sidebar separates contact-based direct chats", async ({ page }) => {

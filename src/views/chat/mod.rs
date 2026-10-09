@@ -3274,6 +3274,12 @@ pub fn ChatPanel(
                     sidecar_route_pending,
                     embedded,
                     selected_channel_info: selected_channel_info.clone(),
+                    circle_encrypted: send_scope.as_ref().and_then(|scope| match state_store.read().installed_scope_mls_current(scope) {
+                        crate::current_projection::ScopeMlsCurrent::Activated(_) => Some(true),
+                        crate::current_projection::ScopeMlsCurrent::NotActivated => Some(false),
+                        crate::current_projection::ScopeMlsCurrent::Unknown => None,
+                    }),
+                    circle_display: selected_channel_info.as_ref().and_then(|channel| channel.scope_circle.as_ref()).and_then(|scope| eligible_circle_scopes().into_iter().find(|circle| circle.id == scope.circle_id).map(|circle| circle.display)),
                     authority: authority.clone(),
                     did: did.clone(),
                     principal_id: principal_core_id.clone(),

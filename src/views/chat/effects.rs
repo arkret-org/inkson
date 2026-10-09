@@ -1406,9 +1406,7 @@ fn use_eligible_circle_scopes(
                             id: circle.circle_id.to_string(),
                             realm_id: circle.realm_id.to_string(),
                             title: circle.title,
-                            short_name: circle.display.short_name,
-                            color_token: format!("{:?}", circle.display.color_token),
-                            symbol: format!("{:?}", circle.display.symbol),
+                            display: circle.display,
                             member_count: u32::try_from(circle.member_ids.len())
                                 .unwrap_or(u32::MAX),
                             state: circle.state,

@@ -56,7 +56,7 @@ pub use agent_identity::AgentIdentity;
 pub use agent_runtime_approval_prompt::AgentRuntimeApprovalPrompt;
 pub use avatar_uploader::{AvatarUploader, AvatarUploaderProps};
 pub use circle_scope_picker::{
-    CircleComposerBanner, CircleScopePicker, ConfidentialDiscussionOfBanner,
+    CircleComposerBanner, CircleIdentityBadge, CircleScopePicker, ConfidentialDiscussionOfBanner,
 };
 pub use device_authorization_prompt::DeviceAuthorizationPrompt;
 pub use did_resolution_health_banner::{DidResolutionHealth, DidResolutionHealthBanner};

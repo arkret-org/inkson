@@ -49,6 +49,8 @@
   width: min(1180px, 100%);
   margin: 0 auto;
   padding: 16px;
+  box-sizing: border-box;
+  min-width: 0;
 }
 
 .circle-realm-header,
@@ -74,6 +76,7 @@
 
 .circle-list,
 .circle-detail {
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--surface);
@@ -107,6 +110,19 @@
   align-content: start;
   gap: 22px;
   padding: 22px;
+}
+
+.circle-detail > * {
+  min-width: 0;
+}
+
+.circle-member-row .mono {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.circle-member-row button {
+  flex-shrink: 0;
 }
 
 .circle-boundary-grid {
@@ -167,4 +183,40 @@
   .circle-member-form {
     grid-template-columns: 1fr;
   }
+}
+
+.circle-edit {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.circle-edit > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.circle-edit > label {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.circle-identity-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 2px solid var(--circle-accent);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.circle-identity-symbol {
+  font-size: 1.1em;
+  line-height: 1;
 }
