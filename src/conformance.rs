@@ -5,6 +5,115 @@ use arkret_wire::{BindingKind, ServiceKind, ServiceOperationId, operation_bundle
 
 use crate::models::ServiceDescribe;
 
+/// A native conformance login uses the ordinary durable grant provider and
+/// active holder fence. Dropping the fixture invalidates all captured results.
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub struct NativeAccountSession {
+    previous: Option<crate::secure_key_store::ActiveDeviceSeedScope>,
+    previous_pending: Option<arkret_sdk::DeviceId>,
+    previous_signer: Option<std::sync::Arc<crate::event_signer::InksonEventSigner>>,
+    previous_mode: crate::operation::ProofMode,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+impl Drop for NativeAccountSession {
+    fn drop(&mut self) {
+        crate::identity::session_refresh::reset_session_grant_runtime();
+        crate::secure_key_store::set_active_device_seed_scope(
+            self.previous
+                .as_ref()
+                .map(|scope| (&scope.authority, &scope.device_id)),
+        );
+        crate::secure_key_store::set_pending_login_device_id(self.previous_pending.as_ref());
+        crate::event_signer::replace_active_signer(self.previous_signer.take());
+        crate::operation::set_proof_mode(self.previous_mode);
+    }
+}
+
+/// Restore an issuer-backed fixture through the same discovery, secure
+/// persistence and transport restoration used after an accepted login.
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub async fn restore_native_account_session(
+    outcome: &arkret_sdk::SessionGrantOutcome,
+    station_url: &str,
+    holder_seed_b64url: &str,
+    principal: &arkret_sdk::Did,
+    identity_seed: &[u8; 32],
+) -> anyhow::Result<NativeAccountSession> {
+    anyhow::ensure!(
+        outcome.account_id.station_id == outcome.audience_id,
+        "fixture grant audience differs from its Account"
+    );
+    anyhow::ensure!(
+        outcome.expires_at > chrono::Utc::now(),
+        "fixture grant is not live"
+    );
+    anyhow::ensure!(
+        arkret_sdk::project_did_to_core_id(principal)? == outcome.account_id.principal_id,
+        "fixture identity signer belongs to another principal"
+    );
+    let record = crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(
+        holder_seed_b64url,
+    )?;
+    let holder = crate::identity::account_auth::grant_dpop::device_handle_from_seed(
+        holder_seed_b64url,
+        &record.jkt,
+    )?;
+    anyhow::ensure!(
+        holder.canonical_session_public_jwk()? == outcome.session_public_key,
+        "fixture grant names another session public key"
+    );
+    let grant = crate::state::PersistedSessionGrant {
+        grant_jwt: outcome.session_grant.clone(),
+        session_private_key_pem: holder.session_signing_key_pkcs8_pem()?.to_string(),
+        grant_id: outcome.session_grant_id.to_string(),
+        audience_id: outcome.audience_id.clone(),
+        granted_scope: outcome.granted_scope.clone(),
+        account_id: outcome.account_id.clone(),
+        device_id: outcome
+            .device_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("native fixture requires a human Device"))?,
+        station_url: crate::config::validate_server_url(station_url)?,
+        grant_expires_at: Some(outcome.expires_at),
+        stored_at: chrono::Utc::now(),
+    };
+    let description = crate::station_connection::discover(grant.station_url.as_str()).await?;
+    anyhow::ensure!(
+        description.service_id == grant.audience_id,
+        "fixture grant names another Station"
+    );
+    let user = crate::secure_key_store::UserLocalStore::new(
+        grant.account_id.clone(),
+        grant.device_id.clone(),
+    )?;
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    user.save_grant_binding_seed_b64url_durable(secure.as_ref(), holder_seed_b64url)
+        .await?;
+    user.save_signing_seed_durable(secure.as_ref(), identity_seed)
+        .await?;
+    crate::state::store_session_grant_in_user_secure_store_durable(&user, secure.as_ref(), &grant)
+        .await?;
+    let session = NativeAccountSession {
+        previous: crate::secure_key_store::active_device_seed_scope(),
+        previous_pending: crate::secure_key_store::pending_login_device_id(),
+        previous_signer: crate::event_signer::replace_active_signer(Some(std::sync::Arc::new(
+            crate::event_signer::build_ed25519_device_signer(
+                *identity_seed,
+                principal.as_str(),
+                grant.device_id.as_str(),
+            ),
+        ))),
+        previous_mode: crate::operation::current_proof_mode(),
+    };
+    crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
+    crate::identity::session_refresh::reset_session_grant_runtime();
+    user.activate();
+    crate::identity::session_refresh::provide_authenticated_sdk_client(grant.station_url.as_str())
+        .await?;
+    Ok(session)
+}
+
 /// Baseline operations for a view or background task. Optional actions (media,
 /// encrypted authoring, recovery, etc.) keep their own operation/feature checks.
 /// These are local product requirements, not new wire profiles or features.
