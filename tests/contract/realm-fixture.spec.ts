@@ -352,7 +352,7 @@ test("New Root bootstrap registers its native Realm before exact historical read
   const creatorJoin = fixture.committed_events.findIndex(({ event }) => event.kind === "ak.member.state");
   const original = fixture.committed_events.slice(0, creatorJoin + 1);
   expect(original[0].event.kind).toBe("ak.realm.create");
-  expect(original[0].event.scope_ref).toEqual({ kind: "root" });
+  expect(original[0].event.scope_ref).toEqual({ kind: "realm_genesis" });
   expect(original[0].event).not.toHaveProperty("realm_id");
   const request = {
     unit_kind: "ordinary_realm_bootstrap",
