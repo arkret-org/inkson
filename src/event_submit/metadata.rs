@@ -73,8 +73,7 @@ impl EventSubmitter {
         ) {
             return Ok(intent);
         }
-        let body =
-            crate::mls::send_gate::ApplicationBody::of_event(intent.kind(), intent.payload())?;
+        let body = crate::mls::send_gate::ApplicationBody::of_event(&intent)?;
         let changes_profile = intent.kind() == &arkret_sdk::EventKind::StrandUpdate
             && intent
                 .payload()

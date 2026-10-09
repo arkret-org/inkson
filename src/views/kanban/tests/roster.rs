@@ -573,8 +573,8 @@ fn resolved_member_display_uses_persisted_current_account_handle() {
     );
 }
 
-/// Negative case locked by
-/// `tasks/spec-done/2026-09-04-2153-member-roster-subject-carrier-prose-and-schema-disagree.md`:
+/// Negative case locked by the full ActorId contract in
+/// `arkret-spec/spec/v1/zh/models/common-fields.md`:
 /// one principal with accounts at two Stations is two subjects. A handle
 /// cached for the Station-B account MUST NOT decorate the Station-A member
 /// row, and the row MUST still raise its own lookup instead of reusing that

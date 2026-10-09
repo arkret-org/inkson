@@ -17,11 +17,7 @@ impl EventSubmitter {
             let SelfAuthoritySubmitRequest::Event(submission) = item.request() else {
                 continue;
             };
-            if crate::mls::send_gate::ApplicationBody::of_event(
-                &submission.event.kind,
-                &submission.event.payload,
-            )?
-            .is_none()
+            if crate::mls::send_gate::ApplicationBody::of_event(&submission.event)?.is_none()
                 || self
                     .ensure_queued_application_send_gate(item.request())
                     .await

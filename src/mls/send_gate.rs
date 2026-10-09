@@ -458,100 +458,90 @@ pub(crate) enum ApplicationBody {
     Encrypted(Vec<arkret_sdk::EncryptedEnvelope>),
 }
 
+/// Read SDK payload bindings from an intent or its immutable authored Event.
+/// Keeping the envelope intact prevents pairing a kind with another payload.
+pub(crate) trait ApplicationEvent: arkret_sdk::EventMetadataSendGateExt {
+    fn kind(&self) -> &arkret_sdk::EventKind;
+    fn typed_payload<K: arkret_sdk::EventSpec>(&self) -> anyhow::Result<K::Payload>;
+}
+
+impl ApplicationEvent for arkret_sdk::EventIntent {
+    fn kind(&self) -> &arkret_sdk::EventKind {
+        self.kind()
+    }
+
+    fn typed_payload<K: arkret_sdk::EventSpec>(&self) -> anyhow::Result<K::Payload> {
+        let payload = self.typed_payload::<K>()?;
+        K::validate_payload(&payload)?;
+        Ok(payload)
+    }
+}
+
+impl ApplicationEvent for arkret_sdk::Event {
+    fn kind(&self) -> &arkret_sdk::EventKind {
+        &self.kind
+    }
+
+    fn typed_payload<K: arkret_sdk::EventSpec>(&self) -> anyhow::Result<K::Payload> {
+        Ok(arkret_sdk::EventPayloadExt::typed_payload::<K>(self)?)
+    }
+}
+
 impl ApplicationBody {
-    /// The gated body of one Event, or `None` when the kind carries no
-    /// application content the send gate governs.
-    ///
-    /// Message create and revise carry exactly one of `content` or
-    /// `encrypted_content` (plus optional `encrypted_metadata`); both shapes
-    /// are gated. A reaction is gated only when it carries an encrypted
-    /// payload, because only then does it cite an epoch.
-    pub(crate) fn of_event(
-        kind: &arkret_sdk::EventKind,
-        payload: &std::collections::BTreeMap<String, serde_json::Value>,
-    ) -> anyhow::Result<Option<Self>> {
-        let envelope = |field: &str| -> anyhow::Result<Option<arkret_sdk::EncryptedEnvelope>> {
-            payload
-                .get(field)
-                .map(|value| serde_json::from_value(value.clone()))
-                .transpose()
-                .map_err(|error| anyhow::anyhow!("{} {field}: {error}", kind.as_str()))
-        };
-        match kind {
-            arkret_sdk::EventKind::SpaceCreate | arkret_sdk::EventKind::StrandCreate => {
-                let object = payload
-                    .get("object")
-                    .and_then(serde_json::Value::as_object)
-                    .ok_or_else(|| anyhow::anyhow!("invalid metadata create object"))?;
-                if let Some(encrypted) = object.get("encrypted_metadata") {
-                    let envelope = serde_json::from_value(encrypted.clone())?;
-                    Ok(Some(Self::Encrypted(vec![envelope])))
-                } else if ["title", "summary", "labels", "avatar_blob_ref", "metadata"]
-                    .iter()
-                    .any(|key| object.contains_key(*key))
-                {
-                    Ok(Some(Self::Plaintext))
-                } else {
-                    Ok(None)
-                }
-            }
-            arkret_sdk::EventKind::SpaceUpdate | arkret_sdk::EventKind::StrandUpdate => {
-                let Some(patch) = payload.get("patch").and_then(serde_json::Value::as_object)
-                else {
-                    return Ok(None);
-                };
-                let mut encrypted = Vec::new();
-                let mut plaintext = false;
-                for (path, operation) in patch {
-                    let root = path.split('.').next().unwrap_or_default();
-                    if root == "encrypted_metadata" {
-                        anyhow::ensure!(
-                            path == "encrypted_metadata"
-                                && operation.get("$op").and_then(serde_json::Value::as_str)
-                                    == Some("set"),
-                            "encrypted metadata requires whole-envelope set"
-                        );
-                        encrypted.push(serde_json::from_value(
-                            operation.get("value").cloned().unwrap_or_default(),
-                        )?);
-                    } else if matches!(
-                        root,
-                        "title" | "summary" | "labels" | "avatar_blob_ref" | "metadata"
-                    ) {
-                        plaintext = true;
-                    }
-                }
+    /// The gated body of one SDK Event or intent, or `None` when its kind
+    /// carries no application content the send gate governs.
+    pub(crate) fn of_event(event: &impl ApplicationEvent) -> anyhow::Result<Option<Self>> {
+        use arkret_sdk::event_spec;
+        match event.kind() {
+            arkret_sdk::EventKind::SpaceCreate
+            | arkret_sdk::EventKind::StrandCreate
+            | arkret_sdk::EventKind::SpaceUpdate
+            | arkret_sdk::EventKind::StrandUpdate => {
+                let metadata = event.event_metadata_send_gate()?.ok_or_else(|| {
+                    anyhow::anyhow!("metadata Event has no SDK send-gate projection")
+                })?;
                 anyhow::ensure!(
-                    !plaintext || encrypted.is_empty(),
+                    !metadata.user_metadata_present || metadata.encrypted_metadata.is_empty(),
                     "metadata write mixes plaintext and ciphertext"
                 );
-                Ok(if plaintext {
+                Ok(if !metadata.encrypted_metadata.is_empty() {
+                    Some(Self::Encrypted(metadata.encrypted_metadata))
+                } else if metadata.user_metadata_present {
                     Some(Self::Plaintext)
-                } else if encrypted.is_empty() {
-                    None
                 } else {
-                    Some(Self::Encrypted(encrypted))
+                    None
                 })
             }
-            arkret_sdk::EventKind::MessageCreate | arkret_sdk::EventKind::MessageRevise => {
-                let content = envelope("encrypted_content")?;
-                let metadata = envelope("encrypted_metadata")?;
-                Ok(Some(match (content, metadata) {
-                    (Some(content), metadata) => {
-                        Self::Encrypted(std::iter::once(content).chain(metadata).collect())
-                    }
-                    (None, None) => Self::Plaintext,
-                    (None, Some(_)) => anyhow::bail!(
-                        "{} encrypted_metadata requires encrypted_content",
-                        kind.as_str()
-                    ),
-                }))
+            arkret_sdk::EventKind::MessageCreate => {
+                let payload = event.typed_payload::<event_spec::MessageCreate>()?;
+                payload.to_value()?;
+                Self::of_message(payload.encrypted_content, payload.encrypted_metadata).map(Some)
+            }
+            arkret_sdk::EventKind::MessageRevise => {
+                let payload = event.typed_payload::<event_spec::MessageRevise>()?;
+                Self::of_message(payload.encrypted_content, payload.encrypted_metadata).map(Some)
             }
             arkret_sdk::EventKind::ReactionAdd => {
-                Ok(envelope("encrypted_payload")?.map(|payload| Self::Encrypted(vec![payload])))
+                let payload = event.typed_payload::<event_spec::ReactionAdd>()?;
+                Ok(payload
+                    .encrypted_payload
+                    .map(|envelope| Self::Encrypted(vec![envelope])))
             }
             _ => Ok(None),
         }
+    }
+
+    fn of_message(
+        content: Option<arkret_sdk::EncryptedEnvelope>,
+        metadata: Option<arkret_sdk::EncryptedEnvelope>,
+    ) -> anyhow::Result<Self> {
+        Ok(match (content, metadata) {
+            (Some(content), metadata) => {
+                Self::Encrypted(std::iter::once(content).chain(metadata).collect())
+            }
+            (None, None) => Self::Plaintext,
+            (None, Some(_)) => anyhow::bail!("encrypted_metadata requires encrypted_content"),
+        })
     }
 }
 
@@ -709,40 +699,320 @@ mod tests {
         );
     }
 
+    const STRAND: &str = "ak:strand:AT3ARBdH1FM6GjXK9ulTx-YMvQOXys39dlUzZV6KyID9";
+    const SPACE: &str = "ak:space:AT3ARBdH1FM6GjXK9ulTx-YMvQOXys39dlUzZV6KyID9";
+
+    fn actor() -> arkret_sdk::ActorId {
+        crate::test_support::account_actor("ak:did_core:web:alice.example")
+    }
+
+    fn draft() -> arkret_sdk::TypedEventDraft<arkret_sdk::event_spec::MessageCreate> {
+        arkret_sdk::TypedEventDraft::new(
+            scope(),
+            actor(),
+            arkret_sdk::MessageCreatePayload::with_content(
+                arkret_sdk::StrandId::new(STRAND).unwrap(),
+                "discussion",
+                arkret_sdk::ContentBlock::text("message"),
+            ),
+        )
+        .unwrap()
+    }
+
+    // The persisted intent boundary can receive malformed JSON; authored
+    // Events can likewise be recovered from storage. Exercise both actual
+    // SDK readers, without replacing the production payload dispatch.
+    fn assert_payload_body(
+        kind: arkret_sdk::EventKind,
+        payload: serde_json::Value,
+        expected: Option<ApplicationBody>,
+    ) {
+        let mut intent =
+            serde_json::to_value(draft().into_intent(crate::clock::now_utc()).unwrap()).unwrap();
+        intent["kind"] = serde_json::to_value(&kind).unwrap();
+        intent["payload"] = payload.clone();
+        let intent: arkret_sdk::EventIntent = serde_json::from_value(intent).unwrap();
+        let mut authored = draft()
+            .author_with_digest_suite(crate::clock::now_utc(), arkret_sdk::DigestSuite::Sha256)
+            .unwrap()
+            .event()
+            .clone();
+        authored.kind = kind;
+        authored.payload = payload.as_object().unwrap().clone().into_iter().collect();
+        assert_eq!(ApplicationBody::of_event(&intent).unwrap(), expected);
+        assert_eq!(ApplicationBody::of_event(&authored).unwrap(), expected);
+    }
+
+    fn assert_payload_rejected(kind: arkret_sdk::EventKind, payload: serde_json::Value) {
+        let mut intent =
+            serde_json::to_value(draft().into_intent(crate::clock::now_utc()).unwrap()).unwrap();
+        intent["kind"] = serde_json::to_value(&kind).unwrap();
+        intent["payload"] = payload.clone();
+        let intent: arkret_sdk::EventIntent = serde_json::from_value(intent).unwrap();
+        let mut authored = draft()
+            .author_with_digest_suite(crate::clock::now_utc(), arkret_sdk::DigestSuite::Sha256)
+            .unwrap()
+            .event()
+            .clone();
+        authored.kind = kind;
+        authored.payload = payload.as_object().unwrap().clone().into_iter().collect();
+        assert!(ApplicationBody::of_event(&intent).is_err());
+        assert!(ApplicationBody::of_event(&authored).is_err());
+    }
+
+    fn encrypted(kind: &str) -> arkret_sdk::EncryptedEnvelope {
+        let identity = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
+            actor(),
+            crate::test_support::device_id("ak:device:01904100-0000-7000-8000-000000000001"),
+        )
+        .unwrap();
+        let mut group = identity.create_group(&scope()).unwrap();
+        let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
+            "1.0",
+            "application/json",
+            arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+            scope(),
+            kind,
+            group.epoch(),
+            event(2),
+            group.local_content_sender_domain().unwrap(),
+            if kind == arkret_sdk::EventKind::ReactionAdd.as_str() {
+                arkret_sdk::EventContentRoutingContext::Reaction {
+                    target_ref: event(3),
+                    routing_window: 0,
+                    routing_tag: arkret_sdk::base64url_encode([7u8; 32]),
+                }
+            } else {
+                arkret_sdk::EventContentRoutingContext::None
+            },
+        )
+        .unwrap();
+        let payload = group.encrypt_payload(header, b"{}").unwrap();
+        arkret_sdk::mls::encrypted_envelope_from_payload(&payload).unwrap()
+    }
+
     #[test]
     fn only_message_content_and_encrypted_reactions_are_gated() {
+        use arkret_sdk::EventKind;
         use serde_json::json;
-        let payload = |value: serde_json::Value| {
-            value
-                .as_object()
-                .unwrap()
-                .clone()
-                .into_iter()
-                .collect::<std::collections::BTreeMap<_, _>>()
-        };
-        let message = payload(json!({"strand_id": "s", "track_name": "t", "content": {}}));
-        assert_eq!(
-            ApplicationBody::of_event(&arkret_sdk::EventKind::MessageCreate, &message).unwrap(),
-            Some(ApplicationBody::Plaintext)
+        assert_payload_body(
+            EventKind::MessageCreate,
+            json!({
+                "strand_id": STRAND, "track_name": "discussion",
+                "content": {"kind": "ak.content.text", "body": "message"}
+            }),
+            Some(ApplicationBody::Plaintext),
         );
-        assert_eq!(
-            ApplicationBody::of_event(&arkret_sdk::EventKind::MessageRevise, &message).unwrap(),
-            Some(ApplicationBody::Plaintext)
+        assert_payload_body(
+            EventKind::MessageRevise,
+            json!({
+                "message_id": arkret_sdk::MessageId::from_event_id(&event(3)),
+                "content": {"kind": "ak.content.text", "body": "revised"}
+            }),
+            Some(ApplicationBody::Plaintext),
         );
-        let reaction = payload(json!({"target_ref": "e", "key": "+1"}));
-        assert_eq!(
-            ApplicationBody::of_event(&arkret_sdk::EventKind::ReactionAdd, &reaction).unwrap(),
-            None
+        assert_payload_body(
+            EventKind::ReactionAdd,
+            json!({
+                "target_ref": arkret_sdk::MessageId::from_event_id(&event(3)), "key": "+1"
+            }),
+            None,
         );
-        assert_eq!(
-            ApplicationBody::of_event(&arkret_sdk::EventKind::MemberState, &message).unwrap(),
-            None
+        assert_payload_body(EventKind::MemberState, json!({}), None);
+        assert_payload_rejected(EventKind::MessageCreate, json!({"encrypted_metadata": {}}));
+    }
+
+    #[test]
+    fn typed_payload_readers_reject_wrong_kind_and_malformed_message_carriers() {
+        use arkret_sdk::EventKind;
+        use serde_json::json;
+        let message = json!({"strand_id": STRAND, "track_name": "discussion", "content": {
+            "kind": "ak.content.text", "body": "message"
+        }});
+        assert_payload_rejected(EventKind::MessageRevise, message.clone());
+        assert_payload_rejected(EventKind::ReactionAdd, message.clone());
+        assert_payload_rejected(EventKind::SpaceCreate, message.clone());
+        assert_payload_rejected(EventKind::StrandCreate, message.clone());
+        let mut absent = message.clone();
+        absent.as_object_mut().unwrap().remove("content");
+        assert_payload_rejected(EventKind::MessageCreate, absent);
+        let mut both = message.clone();
+        both["encrypted_content"] =
+            serde_json::to_value(encrypted(EventKind::MessageCreate.as_str())).unwrap();
+        assert_payload_rejected(EventKind::MessageCreate, both);
+        let mut unknown = message;
+        unknown["retired_field"] = json!(true);
+        assert_payload_rejected(EventKind::MessageCreate, unknown);
+    }
+
+    #[test]
+    fn encrypted_message_revise_and_reaction_preserve_all_epoch_references() {
+        use arkret_sdk::EventKind;
+        use serde_json::json;
+        for kind in [EventKind::MessageCreate, EventKind::MessageRevise] {
+            let envelope = encrypted(kind.as_str());
+            let mut payload =
+                json!({"encrypted_content": envelope, "encrypted_metadata": envelope});
+            if kind == EventKind::MessageCreate {
+                payload["strand_id"] = json!(STRAND);
+                payload["track_name"] = json!("discussion");
+            } else {
+                payload["message_id"] = json!(arkret_sdk::MessageId::from_event_id(&event(3)));
+            }
+            let body = ApplicationBody::Encrypted(vec![envelope.clone(), envelope]);
+            assert_payload_body(kind, payload, Some(body.clone()));
+            assert_eq!(
+                check_application_body_against(Ok(Some(current(0, 1, 1))), None, body.clone()),
+                Ok(())
+            );
+            assert_eq!(
+                check_application_body_against(Ok(Some(current(1, 1, 1))), None, body),
+                Err(MlsSendGateBlocked::EpochMismatch)
+            );
+        }
+        let envelope = encrypted(EventKind::ReactionAdd.as_str());
+        assert_payload_body(
+            EventKind::ReactionAdd,
+            json!({
+                "target_ref": arkret_sdk::MessageId::from_event_id(&event(3)), "key": "+1", "encrypted_payload": envelope
+            }),
+            Some(ApplicationBody::Encrypted(vec![envelope])),
         );
-        let metadata_only = payload(json!({"encrypted_metadata": {}}));
-        assert!(
-            ApplicationBody::of_event(&arkret_sdk::EventKind::MessageCreate, &metadata_only)
-                .is_err()
+    }
+
+    #[test]
+    fn metadata_create_and_patch_use_sdk_objects_and_whole_envelopes() {
+        use arkret_sdk::EventKind;
+        use serde_json::json;
+        let space = arkret_sdk::Space::create_object(
+            arkret_sdk::RealmId::new(REALM).unwrap(),
+            "list",
+            "title",
+            actor(),
         );
+        let strand = arkret_sdk::Strand::new_create(
+            arkret_sdk::RealmId::new(REALM).unwrap(),
+            "title",
+            actor(),
+        );
+        assert_payload_body(
+            EventKind::SpaceCreate,
+            json!({"object": space}),
+            Some(ApplicationBody::Plaintext),
+        );
+        assert_payload_body(
+            EventKind::StrandCreate,
+            json!({"object": strand}),
+            Some(ApplicationBody::Plaintext),
+        );
+        for (key, value) in [
+            ("title", json!(null)),
+            ("summary", json!(null)),
+            ("labels", json!([])),
+            ("avatar_blob_ref", json!(null)),
+        ] {
+            let mut private_space = space.clone();
+            private_space.title = None;
+            private_space.encrypted_metadata = Some(encrypted(EventKind::SpaceCreate.as_str()));
+            let mut payload = json!({"object": private_space});
+            payload["object"][key] = value;
+            assert_payload_rejected(EventKind::SpaceCreate, payload);
+        }
+        let mut null_metadata = json!({"object": strand});
+        null_metadata["object"]["metadata"] = json!(null);
+        null_metadata["object"]["encrypted_metadata"] =
+            json!(encrypted(EventKind::StrandCreate.as_str()));
+        assert_payload_rejected(EventKind::StrandCreate, null_metadata);
+        let mut private = strand.clone();
+        private.metadata = None;
+        let envelope = encrypted(EventKind::StrandCreate.as_str());
+        private.encrypted_metadata = Some(envelope.clone());
+        assert_payload_body(
+            EventKind::StrandCreate,
+            json!({"object": private}),
+            Some(ApplicationBody::Encrypted(vec![envelope])),
+        );
+        for kind in [EventKind::SpaceUpdate, EventKind::StrandUpdate] {
+            let target = if kind == EventKind::SpaceUpdate {
+                "space_id"
+            } else {
+                "target_ref"
+            };
+            let id = if kind == EventKind::SpaceUpdate {
+                SPACE
+            } else {
+                STRAND
+            };
+            let envelope = encrypted(kind.as_str());
+            let mut payload =
+                json!({"patch": {"encrypted_metadata": {"$op": "set", "value": envelope}}});
+            payload[target] = json!(id);
+            assert_payload_body(
+                kind.clone(),
+                payload,
+                Some(ApplicationBody::Encrypted(vec![envelope])),
+            );
+            let plain_path = if kind == EventKind::SpaceUpdate {
+                "title"
+            } else {
+                "metadata.title"
+            };
+            let mut plain = json!({"patch": {}});
+            plain["patch"][plain_path] = json!({"$op": "set", "value": "new"});
+            plain[target] = json!(id);
+            assert_payload_body(kind.clone(), plain, Some(ApplicationBody::Plaintext));
+            let structural_patch = if kind == EventKind::SpaceUpdate {
+                json!({"rank": "U"})
+            } else {
+                json!({"schema_refs": []})
+            };
+            let mut structural = json!({"patch": structural_patch});
+            structural[target] = json!(id);
+            assert_payload_body(kind, structural, None);
+        }
+    }
+
+    #[test]
+    fn metadata_patches_reject_malformed_mixed_and_partial_envelopes() {
+        use arkret_sdk::EventKind;
+        use serde_json::json;
+        for kind in [EventKind::SpaceUpdate, EventKind::StrandUpdate] {
+            let target = if kind == EventKind::SpaceUpdate {
+                "space_id"
+            } else {
+                "target_ref"
+            };
+            let id = if kind == EventKind::SpaceUpdate {
+                SPACE
+            } else {
+                STRAND
+            };
+            let envelope = encrypted(kind.as_str());
+            let plain_path = if kind == EventKind::SpaceUpdate {
+                "title"
+            } else {
+                "metadata.title"
+            };
+            let mut mixed = json!({"encrypted_metadata": {"$op": "set", "value": envelope}});
+            mixed[plain_path] = json!("plaintext");
+            for patch in [
+                json!(null),
+                json!([]),
+                json!({}),
+                json!({"encrypted_metadata": {"$op": "unset"}}),
+                json!({"encrypted_metadata": envelope}),
+                json!({"encrypted_metadata": {"$op": "set", "value": {}}}),
+                json!({"encrypted_metadata.ciphertext": {"$op": "set", "value": "AA"}}),
+                mixed,
+            ] {
+                let mut payload = json!({"patch": patch});
+                payload[target] = json!(id);
+                assert_payload_rejected(kind.clone(), payload);
+            }
+            let mut missing = json!({});
+            missing[target] = json!(id);
+            assert_payload_rejected(kind, missing);
+        }
     }
 
     #[test]

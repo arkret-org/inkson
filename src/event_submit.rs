@@ -2973,8 +2973,7 @@ impl EventSubmitter {
         if !matches!(
             intent.scope_ref(),
             arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
-        ) || crate::mls::send_gate::ApplicationBody::of_event(intent.kind(), intent.payload())?
-            .is_none()
+        ) || crate::mls::send_gate::ApplicationBody::of_event(intent)?.is_none()
         {
             return Ok(());
         }
@@ -3274,9 +3273,7 @@ impl EventSubmitter {
         ) {
             return Ok(());
         }
-        if let Some(body) =
-            crate::mls::send_gate::ApplicationBody::of_event(&event.kind, &event.payload)?
-        {
+        if let Some(body) = crate::mls::send_gate::ApplicationBody::of_event(event)? {
             let input = self.mls_send_gate_input(&event.scope_ref).ok_or_else(|| {
                 anyhow::anyhow!("outbound application send requires an account current index")
             })?;
@@ -3305,9 +3302,7 @@ impl EventSubmitter {
         ) {
             return Ok(());
         }
-        let Some(body) =
-            crate::mls::send_gate::ApplicationBody::of_event(intent.kind(), intent.payload())?
-        else {
+        let Some(body) = crate::mls::send_gate::ApplicationBody::of_event(intent)? else {
             return Ok(());
         };
         let input = self

@@ -252,8 +252,8 @@ fn member_handle_cache_is_realm_and_digest_scoped() {
 /// `discovery/discovery-directory.md` forbids merging the same principal's
 /// account at another Station, so the handle cache MUST NOT answer for a
 /// second Station out of the first Station's entry. This is the store half of
-/// the ruling recorded in
-/// `tasks/spec-done/2026-09-04-2153-member-roster-subject-carrier-prose-and-schema-disagree.md`.
+/// the full ActorId contract in
+/// `arkret-spec/spec/v1/zh/models/common-fields.md`.
 #[test]
 fn member_handle_cache_never_crosses_stations_for_one_principal() {
     let path = temp_state_path("member-handle-cache-station-isolation");
