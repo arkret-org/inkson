@@ -56,6 +56,13 @@ pub(crate) async fn current_principal_for_authority(
     http: &arkret_sdk::http_client::Client,
     authority: &arkret_sdk::AccountId,
 ) -> anyhow::Result<arkret_sdk::CurrentPrincipalOutcome> {
+    let own = http.own_station_result_client()?;
+    if let Some(own) = &own {
+        anyhow::ensure!(
+            own.session()?.account_id() == authority,
+            "current principal transport belongs to another Account"
+        );
+    }
     let generation = crate::identity::device_directory::session_cache_epoch();
     let active_scope = crate::secure_key_store::active_device_seed_scope();
     let request = arkret_sdk::CurrentPrincipalRequestBody {
@@ -63,14 +70,18 @@ pub(crate) async fn current_principal_for_authority(
         account_id: authority.clone(),
     };
     let result = http.current_principal(&request).await?;
+    if let Some(own) = &own {
+        own.check_session()?;
+    }
     anyhow::ensure!(
-        generation == crate::identity::device_directory::session_cache_epoch(),
+        own.is_some() || generation == crate::identity::device_directory::session_cache_epoch(),
         "current principal response belongs to an old identity session"
     );
     let current_scope = crate::secure_key_store::active_device_seed_scope();
     anyhow::ensure!(
-        active_scope.as_ref().map(|s| (&s.authority, &s.device_id))
-            == current_scope.as_ref().map(|s| (&s.authority, &s.device_id)),
+        own.is_some()
+            || active_scope.as_ref().map(|s| (&s.authority, &s.device_id))
+                == current_scope.as_ref().map(|s| (&s.authority, &s.device_id)),
         "current principal device scope changed during the request"
     );
     result.validate_for_request(&request)?;
