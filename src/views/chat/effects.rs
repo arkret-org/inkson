@@ -332,7 +332,8 @@ pub(super) fn ChatEffects(
     token: Signal<String>,
 ) -> Element {
     let base_url = crate::app::SessionContext::base_url_string();
-    let mut state_store = crate::app::SessionContext::get().state_store;
+    let session_context = crate::app::SessionContext::get();
+    let mut state_store = session_context.state_store;
     super::sidecar_restore::use_sidecar_restore(
         base_url.clone(),
         selected_realm_id.clone(),
@@ -436,34 +437,58 @@ pub(super) fn ChatEffects(
     {
         let base = base_url.clone();
         let account = authority.clone();
+        let device = device_id.clone();
         let session_epoch = crate::identity::device_directory::session_cache_epoch();
         let mut read_generation = use_signal(|| 0_u64);
         use_effect(use_reactive(
-            (&base, &account, &session_epoch),
-            move |(base, account, session_epoch)| {
+            (&base, &account, &device, &session_epoch),
+            move |(base, account, device, session_epoch)| {
                 let api_token = token();
-                let request_key = format!("{base}|{account}|{session_epoch}|{api_token}");
-                if owned_agent_sync_key_seen.peek().as_str() == request_key {
+                let session_generation = (session_context.session_generation)();
+                let inventory_revision = (session_context.owned_agents_rev)();
+                let selected_account = (session_context.active_account)();
+                let request_key = format!(
+                    "{base}|{account}|{device}|{session_epoch}|{session_generation}|{inventory_revision}|{api_token}"
+                );
+                let eligible = !api_token.trim().is_empty()
+                    && selected_account.as_ref().is_some_and(|selected| {
+                        selected.authority == account && selected.device_id == device
+                    });
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                tracing::warn!(eligible, "chat owned Agent inventory eligibility");
+                if eligible && owned_agent_sync_key_seen.peek().as_str() == request_key {
                     return;
                 }
-                owned_agent_sync_key_seen.set(request_key.clone());
+                owned_agent_sync_key_seen.set(if eligible {
+                    request_key.clone()
+                } else {
+                    String::new()
+                });
                 let generation = read_generation.peek().wrapping_add(1);
                 read_generation.set(generation);
                 event_sink.emit(ChatProjectionEvent::OwnedAgents(
                     std::collections::BTreeMap::new(),
                 ));
-                if api_token.trim().is_empty() {
+                if !eligible {
                     return;
                 }
-                let Ok(fence) = crate::transport::auth::AuthoringSessionFence::capture() else {
-                    return;
-                };
                 spawn(async move {
                     let current = || -> anyhow::Result<()> {
-                        fence.check()?;
+                        // This read waits for authentication restoration in the
+                        // session provider; it does not require a write signer.
                         anyhow::ensure!(
-                            crate::secure_key_store::active_device_seed_scope()
-                                .is_some_and(|scope| scope.authority == account)
+                            crate::identity::device_directory::session_cache_epoch()
+                                == session_epoch
+                                && *session_context.session_generation.peek() == session_generation
+                                && *session_context.owned_agents_rev.peek() == inventory_revision
+                                && session_context.active_account.peek().as_ref().is_some_and(
+                                    |selected| {
+                                        selected.authority == account
+                                            && selected.device_id == device
+                                    }
+                                )
+                                && *session_context.base_url.peek() == base
+                                && *token.peek() == api_token
                                 && owned_agent_sync_key_seen.peek().as_str() == request_key
                                 && *read_generation.peek() == generation,
                             "owned Agent inventory account or session changed"
@@ -493,9 +518,15 @@ pub(super) fn ChatEffects(
                         },
                     )
                     .await;
-                    if current().is_ok()
-                        && let Ok(agents) = result
-                    {
+                    let still_current = current().is_ok();
+                    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                    tracing::warn!(
+                        success = result.is_ok(),
+                        still_current,
+                        verified_count = result.as_ref().map_or(0, |agents| agents.len()),
+                        "chat owned Agent inventory completion"
+                    );
+                    if still_current && let Ok(agents) = result {
                         event_sink.emit(ChatProjectionEvent::OwnedAgents(agents));
                     }
                 });

@@ -18,15 +18,19 @@ pub(crate) struct AgentModeReadKey {
     pub realm: String,
     pub credential: String,
     pub session_epoch: u64,
-    pub realm_epoch: u64,
     pub sync_ready: bool,
-    pub generation: u64,
     pub ready: bool,
     pub complete: bool,
     pub reset: bool,
     pub head: Option<arkret_sdk::CommitStreamHead>,
     pub accounts: Vec<arkret_sdk::AccountId>,
 }
+
+// Only the governing Realm head invalidates a verified mode cut. The shared
+// projection generation and live notification epoch also advance for Sidecar
+// history and unrelated current rows; using either would cancel these reads
+// without a change to their authority. Session, completeness and reset fences
+// remain independent of the exact stream checkpoint.
 
 // Update the fence during render, before an older request can publish. The
 // generation also rejects leaving and returning to an identical scope (ABA).
@@ -36,6 +40,7 @@ fn use_mode_reads<K: Clone + PartialEq + 'static>(
     read: ModeRead<K>,
     wait: RetryWait,
     externally_current: Rc<dyn Fn(&K) -> bool>,
+    _read_origin: &'static str,
 ) -> Modes {
     let mut modes = use_signal(|| (0_u64, Modes::new()));
     let fence = use_hook(|| Rc::new(RefCell::new((key.clone(), 0_u64, true))));
@@ -65,7 +70,23 @@ fn use_mode_reads<K: Clone + PartialEq + 'static>(
             spawn(async move {
                 let current = || {
                     let state = fence.borrow();
-                    state.2 && state.0 == key && state.1 == generation && externally_current(&key)
+                    let mounted = state.2;
+                    let key_matches = state.0 == key;
+                    let generation_matches = state.1 == generation;
+                    let session_current = externally_current(&key);
+                    let valid = mounted && key_matches && generation_matches && session_current;
+                    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                    if !valid {
+                        tracing::warn!(
+                            read_origin = _read_origin,
+                            mounted,
+                            key_matches,
+                            generation_matches,
+                            session_current,
+                            "agent mode read superseded"
+                        );
+                    }
+                    valid
                 };
                 // A changing governing head can invalidate an otherwise successful
                 // HTTP response. Retry the verified operation, never its raw value.
@@ -80,6 +101,7 @@ fn use_mode_reads<K: Clone + PartialEq + 'static>(
                     let complete = result.len() == expected_count;
                     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
                     tracing::warn!(
+                        read_origin = _read_origin,
                         attempt,
                         expected_count,
                         verified_count = result.len(),
@@ -100,6 +122,28 @@ fn use_mode_reads<K: Clone + PartialEq + 'static>(
         },
     ));
     let (published_generation, snapshot) = modes();
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    {
+        let signature = (
+            generation,
+            published_generation,
+            snapshot_valid,
+            snapshot.len(),
+            expected_count,
+        );
+        let previous = use_hook(|| Rc::new(RefCell::new(None)));
+        if previous.borrow().as_ref() != Some(&signature) {
+            tracing::warn!(
+                read_origin = _read_origin,
+                snapshot_valid,
+                generation_matches = published_generation == generation,
+                verified_count = snapshot.len(),
+                expected_count,
+                "agent mode render snapshot"
+            );
+            *previous.borrow_mut() = Some(signature);
+        }
+    }
     if snapshot_valid && published_generation == generation {
         snapshot
     } else {
@@ -107,7 +151,32 @@ fn use_mode_reads<K: Clone + PartialEq + 'static>(
     }
 }
 
-pub(crate) fn use_agent_modes(key: AgentModeReadKey) -> Modes {
+pub(crate) fn use_agent_modes(key: AgentModeReadKey, read_origin: &'static str) -> Modes {
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    {
+        let previous = use_hook(|| Rc::new(RefCell::new(key.clone())));
+        let old = previous.borrow();
+        if *old != key {
+            tracing::warn!(
+                read_origin,
+                base_changed = old.base != key.base,
+                authority_changed = old.authority != key.authority,
+                realm_changed = old.realm != key.realm,
+                credential_changed = old.credential != key.credential,
+                session_epoch_changed = old.session_epoch != key.session_epoch,
+                sync_ready_changed = old.sync_ready != key.sync_ready,
+                ready_changed = old.ready != key.ready,
+                complete_changed = old.complete != key.complete,
+                reset_changed = old.reset != key.reset,
+                head_changed = old.head != key.head,
+                accounts_changed = old.accounts != key.accounts,
+                expected_count = key.accounts.len(),
+                "agent mode key invalidated"
+            );
+        }
+        drop(old);
+        *previous.borrow_mut() = key.clone();
+    }
     use_mode_reads(
         key.clone(),
         key.accounts.len(),
@@ -142,6 +211,7 @@ pub(crate) fn use_agent_modes(key: AgentModeReadKey) -> Modes {
         Rc::new(move |request: &AgentModeReadKey| {
             crate::identity::device_directory::session_cache_epoch() == request.session_epoch
         }),
+        read_origin,
     )
 }
 
@@ -154,6 +224,7 @@ mod tests {
     #[derive(Clone)]
     struct Harness {
         key: Rc<RefCell<Option<Signal<(String, String, u64)>>>>,
+        unrelated_revision: Rc<RefCell<Option<Signal<u64>>>>,
         observed: Rc<RefCell<Modes>>,
         calls: Rc<Cell<usize>>,
         read_ready: Rc<Cell<bool>>,
@@ -166,6 +237,9 @@ mod tests {
     fn harness(props: Harness) -> Element {
         let key = use_signal(|| ("account-a".to_owned(), "realm-a".to_owned(), 0));
         *props.key.borrow_mut() = Some(key);
+        let unrelated_revision = use_signal(|| 0_u64);
+        *props.unrelated_revision.borrow_mut() = Some(unrelated_revision);
+        let _ = unrelated_revision();
         let account = props.account.clone();
         let calls = props.calls.clone();
         let ready = props.read_ready.clone();
@@ -198,6 +272,7 @@ mod tests {
                 })
             }),
             Rc::new(move |_| external.get()),
+            "test",
         );
         *props.observed.borrow_mut() = result;
         rsx! { div {} }
@@ -213,6 +288,7 @@ mod tests {
         (
             Harness {
                 key: Rc::new(RefCell::new(None)),
+                unrelated_revision: Rc::new(RefCell::new(None)),
                 observed: Rc::new(RefCell::new(Modes::new())),
                 calls: Rc::new(Cell::new(0)),
                 read_ready: Rc::new(Cell::new(false)),
@@ -232,6 +308,33 @@ mod tests {
             dom.process_events();
             dom.render_immediate_to_vec();
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn agent_modes_inflight_read_survives_unrelated_projection_publication() {
+        let (props, _senders) = fixture();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        props.pending_reads.borrow_mut().push_back(receiver);
+        let mut dom = VirtualDom::new_with_props(harness, props.clone());
+        dom.rebuild_in_place();
+        drain(&mut dom);
+        let mut revision = props.unrelated_revision.borrow().unwrap();
+        for next in 1..=8 {
+            dom.in_runtime(|| revision.set(next));
+            drain(&mut dom);
+        }
+        assert_eq!(props.calls.get(), 1);
+        let result = Modes::from([(
+            props.account.clone(),
+            arkret_sdk::AgentInteractionMode::Private,
+        )]);
+        sender.send(result.clone()).unwrap();
+        drain(&mut dom);
+        assert_eq!(*props.observed.borrow(), result);
+        dom.in_runtime(|| revision.set(9));
+        drain(&mut dom);
+        assert_eq!(*props.observed.borrow(), result);
+        assert_eq!(props.calls.get(), 1);
     }
 
     #[tokio::test(flavor = "current_thread")]

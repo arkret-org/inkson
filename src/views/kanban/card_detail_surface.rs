@@ -353,9 +353,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                 realm: selected_realm_id.clone(),
                 credential: token(),
                 session_epoch: crate::identity::device_directory::session_cache_epoch(),
-                realm_epoch: realm_live_epoch(),
                 sync_ready: crate::app::account_sync_ready(&sync_cursor()),
-                generation: store.current_generation(),
                 ready: store.current_product_view_ready(&selected_realm_id),
                 complete: store
                     .current_product_view()
@@ -373,6 +371,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                     }),
                 accounts: mode_accounts,
             },
+            "card_members",
         )
     };
     let detail_send_scope = arkret_sdk::RealmId::new(selected_realm_id.clone())

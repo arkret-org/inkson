@@ -319,7 +319,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let sidecar_target_missing = private_draft && preview_sidecar_targets.is_empty();
     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
     let send_blocker_diagnostic = Some(format!(
-        "channel_unavailable={},private_gate={},target_missing={},route_pending={},send_pending={},private_draft={},mls_binding_pending={},binding_current_pending={},binding_local_keys_pending={},binding_roster_pending={},binding_authority_pending={},binding_send_probe_pending={}",
+        "mixed_private_targets={},mode_count={},channel_unavailable={},private_gate={},target_missing={},route_pending={},send_pending={},private_draft={},mls_binding_pending={},binding_current_pending={},binding_local_keys_pending={},binding_roster_pending={},binding_authority_pending={},binding_send_probe_pending={}",
+        mixed_draft,
+        interaction_modes.len(),
         selected_channel_unavailable,
         sidecar_send_blocked,
         sidecar_target_missing,

@@ -432,8 +432,12 @@ fn composer_agent_mode_route(
     let mut selected = Vec::new();
     let mut outside = false;
     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-    let (mut unknown_mode_count, mut unowned_private_count, mut missing_participant_count) =
-        (0, 0, 0);
+    let (
+        mut unknown_mode_count,
+        mut unowned_private_count,
+        mut missing_participant_count,
+        mut selected_participant_agent_count,
+    ) = (0, 0, 0, 0);
     for mention in mentions.iter().filter_map(MentionNode::as_mention) {
         let target = participants
             .iter()
@@ -461,6 +465,7 @@ fn composer_agent_mode_route(
                 unowned_private_count +=
                     usize::from(mode == Some(arkret_sdk::AgentInteractionMode::Private) && !owned);
                 missing_participant_count += usize::from(target.is_none());
+                selected_participant_agent_count += usize::from(target.is_some_and(|p| p.is_agent));
             }
             selected.push(
                 if mode == Some(arkret_sdk::AgentInteractionMode::Private) && !owned {
@@ -484,6 +489,8 @@ fn composer_agent_mode_route(
         tracing::warn!(
             ?scope,
             selected_agent_count = selected.len(),
+            known_mode_count = modes.len(),
+            selected_participant_agent_count,
             unknown_mode_count,
             unowned_private_count,
             missing_participant_count,
@@ -2308,9 +2315,7 @@ pub fn ChatPanel(
             realm: selected_realm_id.clone(),
             credential: token(),
             session_epoch: crate::identity::device_directory::session_cache_epoch(),
-            realm_epoch: realm_live_epoch(),
             sync_ready: account_sync_ready,
-            generation: store.current_generation(),
             ready: store.current_product_view_ready(&selected_realm_id),
             complete: store
                 .current_product_view()
@@ -2329,7 +2334,16 @@ pub fn ChatPanel(
             accounts: mode_accounts,
         }
     };
-    let interaction_modes_snapshot = agent_modes::use_agent_modes(mode_key);
+    let interaction_modes_snapshot = agent_modes::use_agent_modes(
+        mode_key,
+        if embedded {
+            "embedded_chat_composer"
+        } else if direct_mode {
+            "direct_chat_composer"
+        } else {
+            "realm_chat_composer"
+        },
+    );
     let mut public_agent_accounts = participants_for_messages
         .iter()
         .filter(|p| {
