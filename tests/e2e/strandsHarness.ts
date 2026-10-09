@@ -445,14 +445,29 @@ export async function writeLocalConfigAndReload(
   await page.waitForLoadState("domcontentloaded");
 }
 
-export async function preventSessionGrantReinjection(
+export async function reloadWithUnacceptedDevice(
   page: import("@playwright/test").Page,
+  deviceId: string,
 ) {
-  // Keep the init script from issuing another test grant on reload. The
-  // existing accepted grant remains in its original Device-scoped store.
-  await page.evaluate((injectionKey) => {
+  // Write only in the new document, before WASM can hydrate its config. The
+  // old runtime can still persist its accepted context between browser RPCs.
+  // Keep the original Device's secure grant intact and prevent the existing
+  // init script from issuing a replacement grant for this unaccepted Device.
+  await page.addInitScript(({ config, injectionKey }) => {
+    localStorage.setItem("inkson.config.v1", JSON.stringify(config));
     localStorage.setItem(injectionKey, "{}");
-  }, TEST_SESSION_INJECTION_KEY);
+    Object.assign(window, {
+      __deviceBoundaryBootWitness: {
+        deviceId: JSON.parse(localStorage.getItem("inkson.config.v1") ?? "{}")
+          .active_account?.device_id,
+        injectionDisabled: localStorage.getItem(injectionKey) === "{}",
+      },
+    });
+  }, {
+    config: testLocalConfig({ deviceId }),
+    injectionKey: TEST_SESSION_INJECTION_KEY,
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
 }
 
 export async function readLocalConfig(page: import("@playwright/test").Page) {

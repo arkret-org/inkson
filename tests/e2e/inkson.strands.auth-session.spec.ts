@@ -8,7 +8,7 @@ import {
   latestTestId,
   refreshServer,
   writeLocalConfigAndReload,
-  preventSessionGrantReinjection,
+  reloadWithUnacceptedDevice,
   readLocalConfig,
   addSessionGrantInjection,
   testLocalConfig,
@@ -357,7 +357,7 @@ test("connect refresh canonicalizes a stale locator while retaining the accepted
 
 test("changing the active device requires sign-in instead of silently restoring another device", async ({
   page,
-}) => {
+}, testInfo) => {
   const unacceptedDeviceId = "ak:device:01964137-0000-7000-8000-0000000000b0";
   let authenticatedWrites = 0;
   page.on("request", (request) => {
@@ -370,8 +370,23 @@ test("changing the active device requires sign-in instead of silently restoring 
     }
   });
   await expect(latestTestId(page, "status-label")).toContainText("Online");
-  await preventSessionGrantReinjection(page);
-  await writeLocalConfigAndReload(page, { device_id: unacceptedDeviceId });
+  await reloadWithUnacceptedDevice(page, unacceptedDeviceId);
+  const bootWitness = await page.evaluate(() => (
+    window as unknown as {
+      __deviceBoundaryBootWitness?: {
+        deviceId: string;
+        injectionDisabled: boolean;
+      };
+    }
+  ).__deviceBoundaryBootWitness);
+  await testInfo.attach("unaccepted-device-boot-boundary", {
+    body: JSON.stringify(bootWitness ?? null),
+    contentType: "application/json",
+  });
+  expect(bootWitness).toEqual({
+    deviceId: unacceptedDeviceId,
+    injectionDisabled: true,
+  });
   await expect(latestTestId(page, "login-panel")).toBeVisible({
     timeout: 30_000,
   });
