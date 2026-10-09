@@ -1451,13 +1451,23 @@ export async function mockArkretApi(
       const submittedEvents = submittedEntries.map(
         (entry: Record<string, any>) => entry.event ?? entry,
       );
-      const realmId = String(submittedEvents[0]?.realm_id ?? "");
+      const explicitRealm = submittedEvents.map((event: Record<string, any>) => event.realm_id)
+        .find((realm: unknown) => typeof realm === "string");
+      const existingCommit = Array.from(nativeFixtures.values()).flatMap(fixture => fixture.committed_events)
+        .find(full => full.event.event_id === submittedEvents[0]?.event_id);
+      const requestedRealm = explicitRealm ?? existingCommit?.commit.realm_id;
       const accepted = inksonWire<{ fixture: NativeRealmFixture; outcome: Record<string, any> }>("mock-realm-submit", {
-        fixture: nativeFixtures.get(realmId) ?? null,
+        fixture: requestedRealm ? nativeFixtures.get(String(requestedRealm)) ?? null : null,
         request: body,
         seed_b64url: options.currentDeviceSigningSeedB64url ?? "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
         device_id: currentDeviceId,
       });
+      const realmId = String(accepted.fixture.snapshot.realm_id);
+      if ((requestedRealm !== undefined && String(requestedRealm) !== realmId)
+        || accepted.fixture.committed_events.some(full => full.commit.realm_id !== realmId
+          || full.commit.stream_ref.realm_id !== realmId)) {
+        throw new Error("native accepted fixture has inconsistent Realm/stream bindings");
+      }
       nativeFixtures.set(realmId, accepted.fixture);
       for (const full of accepted.fixture.committed_events) {
         if (!projectionEvents.some(event => event.event_id === full.event.event_id)) projectionEvents.push(full.event);

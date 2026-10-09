@@ -342,6 +342,73 @@ async function mockReadFixture() {
   return { fixture, route: captured.handler() };
 }
 
+test("New Root bootstrap registers its native Realm before exact historical reads", async () => {
+  const captured = captureRouteHandler();
+  await mockArkretApi(captured.page as never, { includeDemoRealms: false });
+  const route = captured.handler();
+  const fixture = inksonWire<Fixture>("mock-realm-fixture", {
+    salt: 10, title: "New bootstrap Realm", plaintext_visible_services: { services: [] },
+  });
+  const creatorJoin = fixture.committed_events.findIndex(({ event }) => event.kind === "ak.member.state");
+  const original = fixture.committed_events.slice(0, creatorJoin + 1);
+  expect(original[0].event.kind).toBe("ak.realm.create");
+  expect(original[0].event.scope_ref).toEqual({ kind: "root" });
+  expect(original[0].event).not.toHaveProperty("realm_id");
+  const request = {
+    unit_kind: "ordinary_realm_bootstrap",
+    idempotency_key: "01904100-0000-7000-8000-000000000010",
+    events: original.map(full => ({ event: full.event })),
+  };
+  const submitted = await driveOnce(route, {
+    url: "https://local.host/_arkret/self/events", method: "POST", postData: request,
+  });
+  expect(submitted?.status).toBe(200);
+  const outcome = submitted?.body as any;
+  expect(outcome.status).toBe("committed");
+  expect(outcome.commits).toEqual(original.map(full => full.commit));
+  const realm = outcome.commits[0].realm_id;
+  expect(realm).toBe(fixture.snapshot.realm_id);
+  const head = await driveOnce(route, {
+    url: `https://local.host/_arkret/self/realm-state-snapshot/head?realm_id=${encodeURIComponent(realm)}`, method: "GET",
+  });
+  expect(head?.status).toBe(200);
+  const snapshot = head?.body as any;
+  expect(snapshot.realm_id).toBe(realm);
+  expect(snapshot.visible_stream_heads).toEqual([{
+    stream_ref: original.at(-1)!.commit.stream_ref,
+    stream_position: original.at(-1)!.commit.stream_position,
+    commit_id: original.at(-1)!.commit.commit_id,
+  }]);
+  const scanned = await driveOnce(route, {
+    url: "https://local.host/_arkret/self/streams/scan", method: "POST", postData: scanRequest(fixture),
+  });
+  expect(scanned?.status).toBe(200);
+  expect((scanned?.body as any).committed_events).toEqual(original);
+  const event = await driveOnce(route, {
+    url: `https://local.host/_arkret/self/committed-events/${encodeURIComponent(original[0].event.event_id)}`, method: "GET",
+  });
+  expect(event?.status).toBe(200);
+  expect(event?.body).toEqual(original[0]);
+  const keyRequest = signerRequest(fixture);
+  const keys = await driveOnce(route, {
+    url: "https://local.host/_arkret/self/signer-keys/query", method: "POST", postData: keyRequest,
+  });
+  expect(keys?.status).toBe(200);
+  expect(keys?.body).toMatchObject({
+    request_id: keyRequest.request_id, realm_id: realm, recipient_account_id: fixture.identity.account_id,
+    results: [{ status: "resolved", key: fixture.signer_facts[1].key, accepted_at: fixture.signer_facts[1].accepted_at }],
+  });
+  const other = inksonWire<Fixture>("mock-realm-fixture", { salt: 11, title: "Unregistered Realm" });
+  for (const bad of [
+    { ...keyRequest, realm_id: other.snapshot.realm_id },
+    { ...keyRequest, recipient_account_id: { ...fixture.identity.account_id, station_id: "ak:did_core:web:other.example" } },
+  ]) {
+    await expect(driveOnce(route, {
+      url: "https://local.host/_arkret/self/signer-keys/query", method: "POST", postData: bad,
+    })).rejects.toThrow();
+  }
+});
+
 test("Exact managed Agent current read proves never-written at the unchanged verified Realm head", async () => {
   const { fixture, route } = await mockReadFixture();
   const original = structuredClone(fixture);

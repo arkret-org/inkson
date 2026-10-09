@@ -775,6 +775,11 @@ fn sign_prepared_sidecar_event(
     Ok(event)
 }
 
+fn new_native_sidecar_operation_id() -> anyhow::Result<arkret_sdk::ProtocolOperationId> {
+    let operation = arkret_sdk::OperationId::new_v7_at(crate::clock::now_unix_ms());
+    arkret_sdk::ProtocolOperationId::new(operation.into_string()).map_err(anyhow::Error::msg)
+}
+
 async fn ensure_owned_agent_sidecar(
     base_url: &str,
     api_token: String,
@@ -832,10 +837,7 @@ async fn ensure_owned_agent_sidecar(
     }
     let operation_id = match pending.as_ref() {
         Some(pending) => pending.operation_id.clone(),
-        None => {
-            arkret_sdk::ProtocolOperationId::new(format!("ak:operation:sidecar.ensure.{nonce}"))
-                .map_err(anyhow::Error::msg)?
-        }
+        None => new_native_sidecar_operation_id()?,
     };
     let prepare = arkret_sdk::SidecarEnsureRequestBody::Prepare(
         arkret_sdk::SidecarEnsurePrepareRequestBody {
