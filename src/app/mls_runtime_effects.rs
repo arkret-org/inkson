@@ -375,7 +375,9 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 // Do not subscribe to every local-store write. The explicit
                 // durable epoch above is the only projection trigger.
                 let store = admit_state_store.peek();
-                crate::views::realm_admin::mls_admission_candidate_realms_for_actor(&store, &actor)
+                crate::mls::admission_reconcile::mls_admission_candidate_realms_for_actor(
+                    &store, &actor,
+                )
             };
             if candidate_realms.is_empty() {
                 // Make a stuck admin observable. wasm tracing is capped at
@@ -466,7 +468,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         let mut deferred_total = 0_usize;
                         let mut failures = Vec::<String>::new();
                         for (realm_id, _) in candidate_realms {
-                            match crate::views::realm_admin::reconcile_mls_admissions_for_realm(
+                            match crate::mls::admission_reconcile::reconcile_mls_admissions_for_realm(
                                 &api,
                                 admit_state_store,
                                 realm_id.clone(),

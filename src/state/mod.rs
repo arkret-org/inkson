@@ -86,6 +86,7 @@ pub(crate) use direct_conversation::DirectMessageContext;
 mod mls_welcome_discovery;
 pub use mls_welcome_discovery::MlsWelcomeDiscoveryProgress;
 pub(crate) mod current_index;
+pub(crate) mod realm_membership;
 pub(crate) use current_index::CurrentIndex;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use current_index::CurrentIndexLocation;

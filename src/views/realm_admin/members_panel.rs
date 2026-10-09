@@ -23,7 +23,6 @@ use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::views::helpers::{active_sync_token, actor_display_label, short_protocol_id};
 
-pub(super) mod admission;
 mod controller;
 mod effects;
 mod model;

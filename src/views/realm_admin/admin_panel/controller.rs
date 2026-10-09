@@ -265,7 +265,7 @@ impl RealmAdminController {
                     // complete-hint/MLS-roster agreement.
                     let roster_aligned = {
                         let store = self.state_store.read();
-                        super::super::members_panel::admission::
+                        crate::mls::admission_reconcile::
                             realm_mls_roster_matches_complete_membership_hint(
                                 &store,
                                 secure_store.as_ref(),

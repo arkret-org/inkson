@@ -4,7 +4,7 @@ use arkret_models_identity::HandleClaim;
 use arkret_sdk::identity::{
     HandleIssuerPolicyEntry, MentionRender, PrimaryHandleSelectInput, render_mention,
 };
-use arkret_sdk::sync::{MemberRosterEntry, MemberRosterMembership};
+use arkret_sdk::sync::MemberRosterMembership;
 use arkret_sdk::{AccountId, Handle};
 use serde_json::Value;
 
@@ -16,7 +16,7 @@ use crate::state::LocalStateStore;
 /// This is the typed `ak` roster entry
 /// (`account-subscribe-frame.schema.json#/$defs/member_roster_entry`) plus the
 /// membership value the projection carried. Field parsing goes through the SDK
-/// [`MemberRosterEntry`] so a wire rename cannot silently degrade to "no
+/// [`arkret_sdk::sync::MemberRosterEntry`] so a wire rename cannot silently degrade to "no
 /// handle, no petname" the way hand-rolled `Value` field reads do.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RealmMemberRow {
@@ -64,23 +64,8 @@ pub(crate) fn membership_wire_str(state: MemberRosterMembership) -> &'static str
 }
 
 pub(crate) fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMemberRow> {
-    let Some(members) = projection
-        .and_then(|root| root.get("member_roster_entries"))
-        .and_then(Value::as_array)
-    else {
-        return Vec::new();
-    };
     let mut rows = BTreeMap::new();
-    for member in members {
-        // Entries whose membership is not roster-visible (`leave` / `ban`) and
-        // entries that fail the R3.2 disclosure dependency are both rejected
-        // by the SDK type; neither may reach a display surface.
-        let Ok(entry) = serde_json::from_value::<MemberRosterEntry>(member.clone()) else {
-            continue;
-        };
-        if entry.validate().is_err() {
-            continue;
-        }
+    for entry in crate::state::realm_membership::validated_realm_roster_entries(projection) {
         let row = RealmMemberRow {
             actor_id: entry.actor_id,
             membership: Some(entry.membership),

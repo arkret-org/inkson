@@ -353,26 +353,9 @@ pub(super) fn mention_state_from_entries(
     }
 }
 
-pub(super) fn trimmed_string(value: Option<&Value>) -> Option<String> {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-pub(super) fn principal_core_key(value: &str) -> Option<String> {
-    crate::mls_api_helpers::principal_core_id(value)
-        .ok()
-        .map(|id| id.as_str().to_owned())
-}
-
-pub(super) fn is_local_account_actor(actor_key: &str, principal: &str) -> bool {
-    serde_json::from_str::<arkret_sdk::ActorId>(actor_key)
-        .ok()
-        .zip(crate::mls_api_helpers::local_account_actor_id(principal).ok())
-        .is_some_and(|(actor, local)| actor == local)
-}
+pub(super) use crate::state::realm_membership::{
+    is_local_account_actor, principal_core_key, trimmed_string,
+};
 
 pub(super) fn owned_agent_actor_key(principal: &str) -> Option<String> {
     let station = crate::operation::authoring_station_id().ok()?;
@@ -881,225 +864,27 @@ pub(super) fn local_pending_invite_profile_from_raw_operation(
     Some(profile)
 }
 
-/// Realm filter with fail-CLOSED semantics: only records whose `realm_id`
-/// exactly matches are included; unknown ownership is excluded. Contrast with
-/// `chat::model::agents::raw_operation_realm_matches_or_unscoped`, which
-/// fail-opens for unscoped local operations.
-pub(super) fn raw_operation_realm_matches_exact(
-    record: &RawOperationRecord,
-    realm_id: &str,
-) -> bool {
-    record.realm_id.as_deref().map(str::trim) == Some(realm_id.trim())
-}
-
-pub(super) fn raw_operation_payload_kind(payload: &Value) -> Option<String> {
-    trimmed_string(payload.get("kind").or_else(|| payload.get("wire_kind")))
-}
-
-pub(super) fn raw_operation_path_string(payload: &Value, path: &[&str]) -> Option<String> {
-    let mut current = payload;
-    for segment in path {
-        current = current.get(*segment)?;
-    }
-    trimmed_string(Some(current))
-}
-
-pub(super) fn raw_operation_is_accepted_fact(payload: &Value) -> bool {
-    matches!(
-        raw_operation_path_string(payload, &["write_state"]).as_deref(),
-        Some("synced" | "accepted")
-    ) || raw_operation_path_string(payload, &["event_id"]).is_some()
-        || raw_operation_path_string(payload, &["body", "event_id"]).is_some()
-        || raw_operation_path_string(payload, &["payload", "event_id"]).is_some()
-}
-
-pub(super) fn raw_operation_invite_ref(payload: &Value) -> Option<String> {
-    raw_operation_path_string(payload, &["body", "invite_ref"])
-        .or_else(|| raw_operation_path_string(payload, &["body", "invite_id"]))
-        .or_else(|| raw_operation_path_string(payload, &["payload", "invite_ref"]))
-        .or_else(|| raw_operation_path_string(payload, &["payload", "invite_id"]))
-        .or_else(|| {
-            trimmed_string(
-                payload
-                    .get("invite_ref")
-                    .or_else(|| payload.get("invite_id")),
-            )
-        })
-        .or_else(|| trimmed_string(payload.get("id")))
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct AcceptedInviteClaimRoute {
-    pub(super) destination_id: String,
-    pub(super) target_device_id: Option<String>,
-}
-
-pub(super) fn accepted_invite_claim_route(
-    store: &LocalStateStore,
-    realm_id: &str,
-    invitee_id: &str,
-) -> Option<AcceptedInviteClaimRoute> {
-    let state = store.load();
-    let accepted = state
-        .raw_operations
-        .iter()
-        .rev()
-        .filter(|record| raw_operation_realm_matches_exact(record, realm_id))
-        .find_map(|record| {
-            let payload = &record.payload;
-            if raw_operation_payload_kind(payload).as_deref() != Some(event_kind_str::INVITE_ACCEPT)
-                || !raw_operation_is_accepted_fact(payload)
-                || raw_member_actor_id(payload).as_deref() != Some(invitee_id)
-            {
-                return None;
-            }
-            Some((
-                raw_operation_invite_ref(payload)?,
-                raw_operation_path_string(payload, &["signing_device_id"]),
-            ))
-        })?;
-    let destination_id = state
-        .raw_operations
-        .iter()
-        .rev()
-        .filter(|record| raw_operation_realm_matches_exact(record, realm_id))
-        .find_map(|record| {
-            let payload = &record.payload;
-            if raw_operation_payload_kind(payload).as_deref() != Some(event_kind_str::INVITE_CREATE)
-                || !raw_operation_is_accepted_fact(payload)
-                || raw_invite_create_invitee(payload).as_deref() != Some(invitee_id)
-                || raw_operation_invite_ref(payload).as_deref() != Some(accepted.0.as_str())
-            {
-                return None;
-            }
-            raw_invite_create_account_id(payload)
-                .map(|account_id| account_id.station_id.to_string())
-        })?;
-    let target_device_id = accepted
-        .1
-        .map(arkret_sdk::DeviceId::new)
-        .transpose()
-        .ok()?
-        .map(|device| device.to_string());
-    Some(AcceptedInviteClaimRoute {
-        destination_id,
-        target_device_id,
-    })
-}
-
-pub(super) fn claim_target_device_id(
-    route: &AcceptedInviteClaimRoute,
-) -> anyhow::Result<Option<&str>> {
-    route.target_device_id.as_deref().map(Some).ok_or_else(|| {
-        anyhow::anyhow!(
-            "accepted human invite has no exact target device from its accepted Event proof"
-        )
-    })
-}
-
-pub(super) fn raw_member_actor_id(payload: &Value) -> Option<String> {
-    [
-        payload.pointer("/body/member_id"),
-        payload.pointer("/payload/member_id"),
-        payload.get("actor_id"),
-    ]
-    .into_iter()
-    .flatten()
-    .find_map(|value| {
-        serde_json::from_value::<arkret_sdk::ActorId>(value.clone())
-            .ok()
-            .map(|actor| actor.to_string())
-    })
-}
-
-pub(super) fn raw_member_membership(payload: &Value) -> Option<String> {
-    raw_operation_path_string(payload, &["body", "membership"])
-        .or_else(|| raw_operation_path_string(payload, &["payload", "membership"]))
-        .or_else(|| {
-            trimmed_string(
-                payload
-                    .get("membership")
-                    .or_else(|| payload.get("state"))
-                    .or_else(|| payload.get("status")),
-            )
-        })
-}
-
-pub(super) fn raw_invite_create_invitee(payload: &Value) -> Option<String> {
-    raw_invite_create_account_id(payload)
-        .map(|account_id| arkret_sdk::ActorId::account(account_id).to_string())
-}
-
-pub(super) fn raw_invite_create_account_id(payload: &Value) -> Option<arkret_sdk::AccountId> {
-    [
-        payload.pointer("/body/invitee_account_id"),
-        payload.pointer("/payload/invitee_account_id"),
-        payload.get("invitee_account_id"),
-    ]
-    .into_iter()
-    .flatten()
-    .find_map(|value| serde_json::from_value(value.clone()).ok())
-}
-
-pub(super) fn local_invitee_by_invite_id_for_realm(
-    records: &[RawOperationRecord],
-    realm_id: &str,
-) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    for record in records {
-        if !raw_operation_realm_matches_exact(record, realm_id) {
-            continue;
-        }
-        let payload = &record.payload;
-        if raw_operation_payload_kind(payload).as_deref() != Some(event_kind_str::INVITE_CREATE) {
-            continue;
-        }
-        let Some(invite_id) = raw_operation_invite_ref(payload) else {
-            continue;
-        };
-        let Some(invitee) = raw_invite_create_invitee(payload) else {
-            continue;
-        };
-        out.insert(invite_id, invitee);
-    }
-    out
-}
-
+pub(super) use crate::state::realm_membership::{
+    AcceptedInviteClaimRoute, accepted_invite_claim_route, claim_target_device_id,
+    local_invitee_by_invite_id_for_realm, raw_invite_create_account_id, raw_invite_create_invitee,
+    raw_member_actor_id, raw_member_membership, raw_operation_invite_ref,
+    raw_operation_is_accepted_fact, raw_operation_path_string, raw_operation_payload_kind,
+    raw_operation_realm_matches_exact,
+};
 pub(super) fn local_membership_profile_from_raw_operation(
     record: &RawOperationRecord,
     realm_id: &str,
     invitee_by_invite_id: &BTreeMap<String, String>,
 ) -> Option<MemberProfile> {
-    if !raw_operation_realm_matches_exact(record, realm_id) {
-        return None;
-    }
-    let payload = &record.payload;
-    if !raw_operation_is_accepted_fact(payload) {
-        return None;
-    }
-    match raw_operation_payload_kind(payload).as_deref()? {
-        event_kind_str::MEMBER_STATE => {
-            let actor_id = raw_member_actor_id(payload)?;
-            let membership = raw_member_membership(payload)?;
-            let mut profile = MemberProfile::bare(actor_id);
-            profile.membership = Some(membership);
-            profile.invite_id = raw_operation_invite_ref(payload);
-            Some(profile)
-        }
-        event_kind_str::INVITE_ACCEPT => {
-            let invite_id = raw_operation_invite_ref(payload);
-            let actor_id = raw_member_actor_id(payload).or_else(|| {
-                invite_id
-                    .as_ref()
-                    .and_then(|invite_id| invitee_by_invite_id.get(invite_id).cloned())
-            })?;
-            let mut profile = MemberProfile::bare(actor_id);
-            profile.membership = Some("join".to_owned());
-            profile.invite_id = invite_id;
-            Some(profile)
-        }
-        _ => None,
-    }
+    let fact = crate::state::realm_membership::local_membership_fact_from_raw_operation(
+        record,
+        realm_id,
+        invitee_by_invite_id,
+    )?;
+    let mut profile = MemberProfile::bare(fact.actor_id);
+    profile.membership = fact.membership;
+    profile.invite_id = fact.invite_id;
+    Some(profile)
 }
 
 pub(super) fn member_profile_matches(profile: &MemberProfile, query: &str) -> bool {

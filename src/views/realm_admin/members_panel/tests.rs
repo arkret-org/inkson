@@ -1,6 +1,19 @@
-use super::admission::*;
 use super::*;
+use crate::mls::admission::mls_admission_authoring_lock;
+use crate::mls::admission_reconcile::mls_admission_candidate_realms_for_actor;
+use crate::state::realm_membership::{MembershipCompleteness, projected_realm_membership_hint};
 use crate::test_support as fixture;
+
+fn joined_member_signature_for_realm(store: &LocalStateStore, realm_id: &str) -> String {
+    let mut dids: Vec<String> = projected_member_profiles_for_realm(store, realm_id)
+        .into_iter()
+        .filter(|member| member.normalized_membership() == Some("join"))
+        .map(|member| member.actor_id)
+        .collect();
+    dids.sort();
+    dids.dedup();
+    dids.join(",")
+}
 
 fn permission_checks(
     invite: anyhow::Result<bool>,

@@ -17,9 +17,6 @@ mod section;
 
 pub use admin_panel::RealmAdminPanel;
 pub use members_panel::RealmMembersPanel;
-pub(crate) use members_panel::admission::{
-    mls_admission_candidate_realms_for_actor, reconcile_mls_admissions_for_realm,
-};
 pub use organization::{RealmOrganizationPanel, ServerAdminSignal, is_server_admin};
 
 // NOTE: All build_signed_*_move helpers and record_submit_outcome have

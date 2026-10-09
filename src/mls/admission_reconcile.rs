@@ -1,4 +1,6 @@
-//! MLS admission for Realm invites.
+//! Inkson host coordination for Realm MLS admission.
+//!
+//! Session and SyncSignal access remains here, outside the pure MLS builders.
 //!
 //! Reconciles accepted invites into MLS group membership: which Realms still
 //! owe an admission commit, the membership completeness hint the decision
@@ -6,8 +8,15 @@
 //! be authored. Consumed by the MLS runtime effects as well as the members
 //! panel, and unrelated to how any of it is rendered.
 
-use super::*;
-pub(super) use crate::mls::admission::mls_admission_authoring_lock;
+use std::collections::BTreeSet;
+
+use anyhow::Context as _;
+use dioxus::prelude::*;
+use yoface::utils::text::short_protocol_id;
+
+pub(crate) use crate::mls::admission::mls_admission_authoring_lock;
+use crate::state::LocalStateStore;
+use crate::state::realm_membership::*;
 
 pub(crate) async fn submit_mls_admission_for_invitee(
     api: &crate::transport::TransportClient,
@@ -257,133 +266,6 @@ async fn direct_contact_claim_route(
     })
 }
 
-#[cfg(test)]
-pub(crate) fn joined_member_signature_for_realm(store: &LocalStateStore, realm_id: &str) -> String {
-    let mut dids: Vec<String> = projected_member_profiles_for_realm(store, realm_id)
-        .into_iter()
-        .filter(|member| member.normalized_membership() == Some("join"))
-        .map(|member| member.actor_id)
-        .collect();
-    dids.sort();
-    dids.dedup();
-    dids.join(",")
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum MembershipCompleteness {
-    #[default]
-    Unavailable,
-    Limited,
-    Complete,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct ProjectedRealmMembershipHint {
-    pub(super) joined: BTreeSet<String>,
-    pub(super) completeness: MembershipCompleteness,
-}
-
-/// Account-sync `members[]` is a current roster projection hint. It is more
-/// suitable than the bounded raw-operation cache for reconciliation wakeups,
-/// but it is not membership authority: the governance proof and server-side
-/// Event auth still gate every KeyPackage claim and MLS Commit.
-pub(super) fn projected_realm_membership_hint(
-    store: &LocalStateStore,
-    realm_id: &str,
-) -> ProjectedRealmMembershipHint {
-    let state = store.load();
-    let Some(projection) = state.realm_tree_projections.get(realm_id) else {
-        return ProjectedRealmMembershipHint::default();
-    };
-    let Some(_) = projection
-        .get("member_roster_entries")
-        .and_then(Value::as_array)
-    else {
-        return ProjectedRealmMembershipHint::default();
-    };
-    let joined = crate::views::member_display::realm_member_roster(Some(projection))
-        .into_iter()
-        .filter(|member| member.membership == Some(arkret_sdk::sync::MemberRosterMembership::Join))
-        .map(|member| member.actor_id.to_string())
-        .collect();
-    let completeness = if projection
-        .get("member_roster_entries_limited")
-        .and_then(Value::as_bool)
-        == Some(false)
-    {
-        MembershipCompleteness::Complete
-    } else {
-        MembershipCompleteness::Limited
-    };
-    ProjectedRealmMembershipHint {
-        joined,
-        completeness,
-    }
-}
-
-pub(super) fn accepted_membership_profiles_for_realm(
-    store: &LocalStateStore,
-    realm_id: &str,
-) -> Vec<MemberProfile> {
-    let state = store.load();
-    let invitee_by_invite_id =
-        local_invitee_by_invite_id_for_realm(&state.raw_operations, realm_id);
-    let mut rows =
-        BTreeMap::<String, (chrono::DateTime<chrono::Utc>, String, MemberProfile)>::new();
-    for record in &state.raw_operations {
-        if let Some(profile) =
-            local_membership_profile_from_raw_operation(record, realm_id, &invitee_by_invite_id)
-        {
-            let actor_id = profile.actor_id.clone();
-            let event_time = raw_operation_event_time(record);
-            let operation_id = record.operation_id.clone();
-            match rows.get(&actor_id) {
-                Some((current_time, current_operation_id, _))
-                    if event_time < *current_time
-                        || (event_time == *current_time
-                            && operation_id.as_str() <= current_operation_id.as_str()) => {}
-                _ => {
-                    rows.insert(actor_id, (event_time, operation_id, profile));
-                }
-            }
-        }
-    }
-    rows.into_values().map(|(_, _, profile)| profile).collect()
-}
-
-pub(super) fn raw_operation_event_time(
-    record: &RawOperationRecord,
-) -> chrono::DateTime<chrono::Utc> {
-    raw_operation_path_string(&record.payload, &["created_at"])
-        .and_then(|timestamp| chrono::DateTime::parse_from_rfc3339(&timestamp).ok())
-        .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
-        .unwrap_or(record.received_at)
-}
-
-/// Admission candidates combine the positive roster hint with locally verified
-/// membership state. Accepted state wins on conflict; the hint fills actors for
-/// which the bounded local state-event cache has no cell and wakes reconciliation
-/// when a membership-only projection arrives.
-pub(super) fn admission_joined_members_for_realm(
-    store: &LocalStateStore,
-    realm_id: &str,
-) -> BTreeSet<String> {
-    let hint = projected_realm_membership_hint(store, realm_id);
-    let mut joined = hint.joined;
-    for member in accepted_membership_profiles_for_realm(store, realm_id) {
-        let actor_id = member.actor_id.trim();
-        if actor_id.is_empty() {
-            continue;
-        }
-        if member.normalized_membership() == Some("join") {
-            joined.insert(actor_id.to_owned());
-        } else {
-            joined.remove(actor_id);
-        }
-    }
-    joined
-}
-
 pub(crate) fn realm_mls_roster_matches_complete_membership_hint(
     state_store: &LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -407,7 +289,7 @@ pub(crate) fn realm_mls_roster_matches_complete_membership_hint(
     .unwrap_or(false)
 }
 
-pub(super) fn admission_joined_member_signature_for_realm(
+pub(crate) fn admission_joined_member_signature_for_realm(
     store: &LocalStateStore,
     realm_id: &str,
 ) -> String {

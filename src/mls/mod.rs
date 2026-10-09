@@ -7,6 +7,7 @@
 pub(crate) mod accepted_artifact;
 pub mod account_recovery;
 pub(crate) mod admission;
+pub(crate) mod admission_reconcile;
 /// `epoch_update_required` repair: advance the MLS epoch so the Security Frontier
 /// covers the governance Seals a paused scope is missing.
 pub(crate) mod coverage_liveness;
