@@ -37,6 +37,9 @@ impl AcceptedPageRows for garth::own_station_results::OwnStationScanPage {
 pub(crate) async fn client_for_http(
     http: &arkret_sdk::http_client::Client,
 ) -> garth::Result<OwnStationResultClient> {
+    if let Some(client) = http.own_station_result_client()? {
+        return Ok(client);
+    }
     crate::identity::session_refresh::own_station_result_client_for_http(http)
         .await
         .map_err(|error| garth::Error::Protocol(error.to_string()))

@@ -51,7 +51,7 @@ struct CapabilityRow {
     subject: String,
     subject_actor: Option<arkret_sdk::ActorId>,
     expires_at: String,
-    issuer_authority_refs: Vec<String>,
+    issuer_authority_refs: Vec<IssuerAuthorityRef>,
     revision: arkret_wire::CurrentRevision,
 }
 
@@ -66,6 +66,8 @@ struct RelinquishConfirmation {
     capability_id: String,
     revision: arkret_wire::CurrentRevision,
 }
+
+const CONFIRMED_ROW_CHANGED: &str = "capability row changed; reload and confirm relinquish again";
 
 /// Map one authoritative SDK row onto a display row without separating its
 /// grant value from the exact current-result revision read atomically with it.
@@ -106,31 +108,35 @@ fn decode_capability_row(
             .min()
             .map(arkret_sdk::canonical::format_timestamp_canonical)
             .unwrap_or_default(),
-        issuer_authority_refs: grant
-            .issuer_authority_refs
-            .iter()
-            .map(|authority| match authority {
-                IssuerAuthorityRef::OwnedAgent {
-                    controller_account_id,
-                    ..
-                } => {
-                    format!("owned Agent controller {}", controller_account_id)
-                }
-                IssuerAuthorityRef::Grant { grant_id } => {
-                    format!("grant {}", grant_id.as_str())
-                }
-                IssuerAuthorityRef::RealmRoot {
-                    realm_id,
-                    authority_generation,
-                    ..
-                } => format!(
-                    "realm root {} generation {}",
-                    realm_id.as_str(),
-                    authority_generation
-                ),
-            })
-            .collect(),
+        issuer_authority_refs: grant.issuer_authority_refs.clone(),
         revision: effective.revision.clone(),
+    }
+}
+
+fn authority_label(authority: &IssuerAuthorityRef) -> String {
+    match authority {
+        IssuerAuthorityRef::OwnedAgent {
+            controller_account_id,
+            ..
+        } => crate::i18n::tr_args(
+            "settings.capabilities.authority_agent",
+            &[("account", controller_account_id.to_string())],
+        ),
+        IssuerAuthorityRef::Grant { grant_id } => crate::i18n::tr_args(
+            "settings.capabilities.authority_grant",
+            &[("grant", grant_id.to_string())],
+        ),
+        IssuerAuthorityRef::RealmRoot {
+            realm_id,
+            authority_generation,
+            ..
+        } => crate::i18n::tr_args(
+            "settings.capabilities.authority_root",
+            &[
+                ("realm", realm_id.to_string()),
+                ("generation", authority_generation.to_string()),
+            ],
+        ),
     }
 }
 
@@ -144,7 +150,7 @@ fn build_confirmed_relinquish_payload(
 ) -> anyhow::Result<arkret_sdk::CapabilityRelinquishPayload> {
     anyhow::ensure!(
         confirmation.capability_id == row.capability_id && confirmation.revision == row.revision,
-        "capability row changed; reload and confirm relinquish again"
+        CONFIRMED_ROW_CHANGED
     );
     Ok(arkret_sdk::CapabilityRelinquishPayload {
         grant_id: arkret_sdk::GrantId::new(row.capability_id.clone())?,
@@ -164,7 +170,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
     });
     let state_store = crate::app::SessionContext::get().state_store;
     let mut rows = use_signal(Vec::<CapabilityRow>::new);
-    let mut status = use_signal(String::new);
+    let mut status = use_signal(|| ("", Vec::<(&'static str, String)>::new()));
     let mut detail_for = use_signal(|| Option::<String>::None);
     // Subject-only relinquish confirmation binds the selected capability id
     // and exact current-result revision. Any list refresh invalidates it.
@@ -191,7 +197,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
         let Some(subject) =
             active_account().map(|account| arkret_sdk::ActorId::account(account.authority))
         else {
-            status.set("Failed to load capabilities: no authenticated account".to_owned());
+            status.set(("settings.capabilities.no_account", vec![]));
             return;
         };
         let realm_ids = state_store.read().known_realm_ids();
@@ -218,12 +224,18 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                         .iter()
                         .map(|(realm_id, row)| decode_capability_row(row, realm_id.as_str()))
                         .collect();
-                    status.set(format!("Loaded {} capabilities", decoded.len()));
+                    status.set((
+                        "settings.capabilities.loaded",
+                        vec![("count", decoded.len().to_string())],
+                    ));
                     rows.set(decoded);
                 }
                 Err(err) => {
                     rows.set(Vec::new());
-                    status.set(format!("Failed to load capabilities: {}", err.display()));
+                    status.set((
+                        "settings.capabilities.load_failed",
+                        api_error_feedback_args(&err),
+                    ));
                 }
             }
         });
@@ -232,18 +244,17 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
     rsx! {
         div { class: "event", "data-testid": "capability-list-panel",
             div { class: "event-head",
-                span { "Capabilities" }
+                span { {crate::i18n::tr("settings.capabilities.title")} }
             }
-            if !status.read().is_empty() {
-                div { class: "muted", "{status}" }
+            if !status.read().0.is_empty() {
+                div { class: "muted", {capability_feedback_text(&status.read())} }
             }
             if rows.read().is_empty() {
                 EmptyState {
-                    title: "No capabilities".to_owned(),
+                    title: crate::i18n::tr("settings.capabilities.empty_title"),
                     kind: EmptyStateKind::Empty,
                     message: Some(
-                        "No grants found for this actor. Either the projection is still warming up, or no grants have been issued yet."
-                            .to_owned(),
+                        crate::i18n::tr("settings.capabilities.empty_hint"),
                     ),
                     test_id: Some("capability-empty".to_owned()),
                 }
@@ -267,14 +278,14 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                     "data-expires-at": "{row.expires_at}",
                                     div { class: "event-head",
                                         span { "{row.action}" }
-                                        span { class: "muted", "expires {row.expires_at}" }
+                                        span { class: "muted", {crate::i18n::tr_args("settings.capabilities.expires", &[("time", row.expires_at.clone())])} }
                                     }
                                     div {
                                         class: "muted",
                                         title: "{row.issuer_id} → {row.subject}",
-                                        "issued by {issuer_did_label} → {subject_did_label}"
+                                        {crate::i18n::tr_args("settings.capabilities.issued", &[("issuer", issuer_did_label.clone()), ("subject", subject_did_label.clone())])}
                                     }
-                                    div { class: "muted mono", "scope {row.scope}" }
+                                    div { class: "muted mono", {crate::i18n::tr_args("settings.capabilities.scope", &[("scope", row.scope.clone())])} }
                                     div { class: "actions",
                                         Button {
                                             variant: ButtonVariant::Secondary,
@@ -284,7 +295,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                                 let id = row.capability_id.clone();
                                                 move |_| detail_for.set(Some(id.clone()))
                                             },
-                                            "Detail"
+                                            {crate::i18n::tr("settings.capabilities.detail")}
                                         }
                                         // Subject-only self-service: any member
                                         // may drop a grant they hold, with no
@@ -304,7 +315,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                                         relinquish_for.set(Some(confirmation.clone()));
                                                     }
                                                 },
-                                                "Relinquish"
+                                                {crate::i18n::tr("settings.capabilities.relinquish")}
                                             }
                                         }
                                     }
@@ -337,13 +348,13 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                 div {
                                     class: "event modal",
                                     div { class: "event-head",
-                                        span { "Relinquish capability" }
+                                        span { {crate::i18n::tr("settings.capabilities.relinquish_title")} }
                                         Button {
                                             variant: ButtonVariant::Ghost,
                                             size: ButtonSize::Icon,
                                             class: "btn",
                                             "data-testid": "capability-relinquish-close",
-                                            "aria-label": "Close relinquish confirmation",
+                                            "aria-label": crate::i18n::tr("settings.capabilities.close_relinquish"),
                                             onclick: move |_| relinquish_for.set(None),
                                             "×"
                                         }
@@ -352,20 +363,17 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                         "{capability_id_label} · {row.action}"
                                     }
                                     div { class: "muted", "data-testid": "capability-relinquish-impact",
-                                        "This permanently gives up the grant for yourself via "
-                                        "`ak.capability.relinquish`. It is subject-only: no revoke "
-                                        "authority is required or attached, and nobody else can use this "
-                                        "path on your behalf. The issuer can re-grant later if needed."
+                                        {crate::i18n::tr("settings.capabilities.impact")}
                                     }
                                     Label {
                                         html_for: "capability-relinquish-reason-input",
-                                        "Reason (optional, audit trail)"
+                                        {crate::i18n::tr("settings.capabilities.reason")}
                                     }
                                     Input {
                                         id: "capability-relinquish-reason-input",
                                         "data-testid": "capability-relinquish-reason-input",
                                         value: "{relinquish_reason}",
-                                        placeholder: "no longer needed",
+                                        placeholder: crate::i18n::tr("settings.capabilities.reason_placeholder"),
                                         oninput: move |event: FormEvent| relinquish_reason.set(event.value()),
                                     }
                                     div { class: "actions",
@@ -373,7 +381,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                             variant: ButtonVariant::Secondary,
                                             "data-testid": "capability-relinquish-cancel",
                                             onclick: move |_| relinquish_for.set(None),
-                                            "Cancel"
+                                            {crate::i18n::tr("common.cancel")}
                                         }
                                         Button {
                                             variant: ButtonVariant::Destructive,
@@ -386,15 +394,13 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                                     let api_token = token();
                                                     let actor = principal_id().trim().to_owned();
                                                     if actor.is_empty() {
-                                                        status.set("relinquish failed: account is not connected".to_owned());
+                                                        status.set(("settings.capabilities.disconnected", vec![]));
                                                         return;
                                                     }
                                                     let realm_id = match arkret_sdk::RealmId::new(row.realm_id.clone()) {
                                                         Ok(realm_id) => realm_id,
                                                         Err(err) => {
-                                                            status.set(format!(
-                                                                "relinquish build failed: invalid realm id: {err}"
-                                                            ));
+                                                            status.set(("settings.capabilities.invalid_realm", vec![("error", err.to_string())]));
                                                             return;
                                                         }
                                                     };
@@ -406,9 +412,11 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                                     ) {
                                                         Ok(payload) => payload,
                                                         Err(err) => {
-                                                            status.set(format!(
-                                                                "relinquish build failed: {err}"
-                                                            ));
+                                                            status.set(if err.to_string() == CONFIRMED_ROW_CHANGED {
+                                                                ("settings.capabilities.row_changed", vec![])
+                                                            } else {
+                                                                ("settings.capabilities.build_failed", vec![("error", err.to_string())])
+                                                            });
                                                             return;
                                                         }
                                                     };
@@ -427,11 +435,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                                         )
                                                         .await
                                                         {
-                                                            Ok(resp) => status.set(format!(
-                                                                "relinquish submitted for {}: event_id={} — the grant is void once the control move seals",
-                                                                short_protocol_id(&capability_for_msg),
-                                                                short_protocol_id(&resp.event_id),
-                                                            )),
+                                                            Ok(resp) => status.set(("settings.capabilities.submitted", vec![("grant", short_protocol_id(&capability_for_msg)), ("event", short_protocol_id(&resp.event_id))])),
                                                             Err(err) => {
                                                                 let text = err.display();
                                                                 if relinquish_failure_requires_refresh(&text) {
@@ -441,16 +445,13 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                                                         .wrapping_add(1);
                                                                     refresh_nonce.set(next_refresh);
                                                                 }
-                                                                let hint = relinquish_failure_hint(&text)
-                                                                    .map(|hint| format!(" — {hint}"))
-                                                                    .unwrap_or_default();
-                                                                status.set(format!("relinquish failed: {text}{hint}"));
+                                                                status.set(("settings.capabilities.failed", api_error_feedback_args(&err)));
                                                             }
                                                         }
                                                     });
                                                 }
                                             },
-                                            "Relinquish grant"
+                                            {crate::i18n::tr("settings.capabilities.confirm")}
                                         }
                                     }
                                 }
@@ -477,13 +478,13 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                 div {
                                     class: "event modal",
                                     div { class: "event-head",
-                                        span { "Authority audit" }
+                                        span { {crate::i18n::tr("settings.capabilities.audit")} }
                                         Button {
                                             variant: ButtonVariant::Ghost,
                                             size: ButtonSize::Icon,
                                             class: "btn",
                                             "data-testid": "capability-detail-close",
-                                            "aria-label": "Close capability detail",
+                                            "aria-label": crate::i18n::tr("settings.capabilities.close_detail"),
                                             onclick: move |_| detail_for.set(None),
                                             "×"
                                         }
@@ -493,7 +494,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                         div {
                                             class: "muted",
                                             "data-testid": "capability-authority-empty",
-                                            "Issuer authority is not available in this projection."
+                                            {crate::i18n::tr("settings.capabilities.authority_empty")}
                                         }
                                     } else {
                                         ol { class: "settings-list",
@@ -502,7 +503,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                                     class: "event",
                                                     "data-testid": "capability-authority-ref",
                                                     "data-ref-index": "{idx}",
-                                                    div { class: "mono", "{authority}" }
+                                                    div { class: "mono", "{authority_label(authority)}" }
                                                 }
                                             }
                                         }
@@ -517,21 +518,65 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
     }
 }
 
+// Keep the existing safe API-error classification, then translate at render time.
+// Local errors have no server envelope and retain their opaque message.
+pub(super) fn api_error_feedback_args(
+    error: &crate::transport::auth::ApiCallError,
+) -> Vec<(&'static str, String)> {
+    use crate::transport::auth::ApiCallError;
+    let key = match error {
+        ApiCallError::Unavailable(inner) if crate::api_error::is_response_format_error(inner) => {
+            crate::api_error::user_facing_error_key(inner)
+        }
+        ApiCallError::Unavailable(_) => Some("error.server_unavailable"),
+        ApiCallError::AuthExpired(_) => Some("error.session_expired"),
+        ApiCallError::Failed(inner) => crate::api_error::user_facing_error_key(inner),
+    };
+    match key {
+        Some(key) => vec![("error_i18n_key", key.to_owned())],
+        None => vec![("error", error.display())],
+    }
+}
+
+pub(super) fn localized_feedback_args(
+    args: &[(&'static str, String)],
+) -> Vec<(&'static str, String)> {
+    args.iter()
+        .map(|(key, value)| {
+            if *key == "error_i18n_key" {
+                ("error", crate::i18n::tr(value))
+            } else {
+                (*key, value.clone())
+            }
+        })
+        .collect()
+}
+
+fn capability_feedback_text(status: &(&str, Vec<(&'static str, String)>)) -> String {
+    let mut args = localized_feedback_args(&status.1);
+    if status.0 == "settings.capabilities.failed" {
+        let hint = args
+            .iter()
+            .find(|(key, _)| *key == "error")
+            .and_then(|(_, error)| relinquish_failure_hint(error))
+            .map(|key| format!(" — {}", crate::i18n::tr(key)))
+            .unwrap_or_default();
+        args.push(("hint", hint));
+    }
+    // Insert opaque server detail last so its own braces remain untouched.
+    args.sort_by_key(|(key, _)| *key == "error");
+    crate::i18n::tr_args(status.0, &args)
+}
+
 /// Operator guidance for the known relinquish rejection reasons, appended to
 /// the raw error text in the status line.
 fn relinquish_failure_hint(error_text: &str) -> Option<&'static str> {
     if error_text.contains("grant_relinquish_not_subject") {
-        Some(
-            "the server rejected this because the signer is not the grant's subject — only the \
-             subject may relinquish a grant; ask the issuer (or Realm owner) to revoke it instead",
-        )
+        Some("settings.capabilities.hint_subject")
     } else if error_text.contains("capability_target_unresolved")
         || error_text.contains("dependency_pending")
     {
-        Some(
-            "the grant is not yet resolved in the server projection — the relinquish stays \
-             pending until the grant row lands; retry after sync if it does not settle",
-        )
+        Some("settings.capabilities.hint_pending")
     } else {
         None
     }
@@ -544,6 +589,84 @@ fn relinquish_failure_requires_refresh(error_text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    #[test]
+    fn retained_authority_and_relinquish_error_follow_the_live_locale() {
+        let effective = sample_effective_row(json!({"kind": "condition", "required_claims": []}));
+        let row = decode_capability_row(&effective, "unused-fallback");
+        let failure = (
+            "settings.capabilities.failed",
+            vec![(
+                "error",
+                "grant_relinquish_not_subject: raw {hint} / 原文".to_owned(),
+            )],
+        );
+        let problem: arkret_sdk::Problem = serde_json::from_value(json!({
+            "type": "https://arkret.org/problems/internal_error",
+            "title": "Internal error", "status": 500,
+            "detail": "private server detail / 原文", "code": "internal_error"
+        }))
+        .unwrap();
+        let server_error = crate::transport::auth::ApiCallError::Failed(
+            crate::api_error::TransportClientError {
+                status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                error: problem,
+            }
+            .into(),
+        );
+        // Capture once, before either locale change, as an async completion does.
+        let retained_safe_error = super::api_error_feedback_args(&server_error);
+        let mut dom = dioxus::prelude::VirtualDom::new(|| dioxus::prelude::rsx! {});
+        dom.rebuild_in_place();
+        dom.in_scope(dioxus::prelude::ScopeId::ROOT, || {
+            let mut locale = dioxus::prelude::provide_context(crate::i18n::init_i18n_with_locale(
+                crate::i18n::UiLocale::En,
+            ));
+            for (language, authority, hint) in [
+                (
+                    crate::i18n::UiLocale::En,
+                    "realm root",
+                    "only the subject may relinquish",
+                ),
+                (
+                    crate::i18n::UiLocale::Zh,
+                    "Realm 根授权",
+                    "仅持有人可放弃授权",
+                ),
+                (
+                    crate::i18n::UiLocale::En,
+                    "realm root",
+                    "only the subject may relinquish",
+                ),
+            ] {
+                crate::i18n::set_locale(&mut locale, language);
+                let safe = super::localized_feedback_args(&retained_safe_error);
+                assert_eq!(safe[0].0, "error");
+                assert_eq!(safe[0].1, server_error.display());
+                assert!(
+                    safe[0]
+                        .1
+                        .contains(if language == crate::i18n::UiLocale::Zh {
+                            "与服务器通信时出现问题"
+                        } else {
+                            "Something went wrong while talking to the server"
+                        })
+                );
+                assert!(!safe[0].1.contains("private server detail"));
+                let label = super::authority_label(&row.issuer_authority_refs[0]);
+                assert!(label.contains(authority));
+                assert!(label.contains(effective.grant.realm_id.as_ref().unwrap().as_str()));
+                let text = super::capability_feedback_text(&failure);
+                assert!(text.contains(&failure.1[0].1));
+                assert!(text.contains(hint));
+                assert_eq!(
+                    row.issuer_authority_refs,
+                    effective.grant.issuer_authority_refs
+                );
+                assert_eq!(row.revision, effective.revision);
+            }
+        });
+    }
 
     use super::*;
 

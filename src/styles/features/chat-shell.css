@@ -24,6 +24,87 @@
   overflow: hidden;
 }
 
+/* The application sidebar reduces this workspace independently of the viewport. */
+.realm-body:has(.discussion-shell:not(.embedded)) {
+  container: discussion-workspace / inline-size;
+}
+
+@container discussion-workspace (max-width: 1100px) {
+  .discussion-shell:not(.embedded):not(.direct-mode) {
+    grid-template-columns: minmax(160px, 200px) minmax(0, 1fr) minmax(160px, 200px);
+    grid-template-rows: minmax(240px, 1fr) auto;
+  }
+
+  .discussion-shell.right-collapsed:not(.embedded):not(.direct-mode) {
+    grid-template-columns: minmax(160px, 200px) minmax(0, 1fr);
+  }
+
+  .discussion-shell.left-collapsed:not(.embedded):not(.direct-mode) {
+    grid-template-columns: 48px minmax(0, 1fr) minmax(160px, 200px);
+  }
+
+  .discussion-shell.left-collapsed.right-collapsed:not(.embedded):not(.direct-mode) {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .discussion-shell.direct-mode:not(.embedded) {
+    grid-template-columns: minmax(0, 1fr) minmax(160px, 200px);
+  }
+
+  .discussion-shell.direct-mode.right-collapsed:not(.embedded) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container discussion-workspace (max-width: 720px) {
+  .discussion-shell:not(.embedded):not(.direct-mode),
+  .discussion-shell.left-collapsed:not(.embedded):not(.direct-mode),
+  .discussion-shell.right-collapsed:not(.embedded):not(.direct-mode),
+  .discussion-shell.left-collapsed.right-collapsed:not(.embedded):not(.direct-mode),
+  .discussion-shell.direct-mode:not(.embedded),
+  .discussion-shell.direct-mode.right-collapsed:not(.embedded) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(260px, 58vh) auto;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .discussion-shell:not(.embedded) .discussion-sidebar-panel {
+    display: flex;
+    grid-column: 1;
+    grid-row: 3;
+    max-height: 190px;
+  }
+
+  .discussion-shell:not(.embedded) .discussion-left-rail {
+    display: grid;
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .discussion-shell:not(.embedded) .discussion-details-panel {
+    display: flex;
+    grid-column: 1;
+    grid-row: 4;
+  }
+
+  .discussion-shell:not(.embedded) .discussion-main-panel {
+    grid-column: 1;
+    grid-row: 1;
+    min-height: 260px;
+  }
+
+  .discussion-shell:not(.embedded) .discussion-composer {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .discussion-shell:not(.embedded) .discussion-status-slot {
+    grid-column: 1;
+  }
+}
+
 .discussion-shell.left-collapsed {
   grid-template-columns: 48px minmax(0, 1fr) minmax(260px, 320px);
 }

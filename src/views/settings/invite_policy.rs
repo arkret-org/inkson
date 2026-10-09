@@ -111,46 +111,119 @@ fn parse_list(value: &str) -> Vec<String> {
     list
 }
 
+fn introduction_kind_label(kind: &str) -> String {
+    INTRODUCTION_KINDS
+        .iter()
+        .find(|(value, _)| *value == kind)
+        .map(|(_, key)| tr(key))
+        .unwrap_or_else(|| kind.to_owned())
+}
+
+fn behavior_label(action: &InviteReceiveAction) -> String {
+    tr(match action {
+        InviteReceiveAction::Drop => "invite_policy.explicit.drop",
+        InviteReceiveAction::Quarantine => "invite_policy.explicit.quarantine",
+        InviteReceiveAction::Notify => "invite_policy.explicit.notify",
+    })
+}
+
 fn constraints_lines(constraints: &arkret_wire::ReceivePolicyConstraints) -> Vec<String> {
     let mut lines = Vec::new();
+    let mut push = |key, values| lines.push(crate::i18n::tr_args(key, &[("values", values)]));
     if let Some(kinds) = constraints.deployment_allowed_introduction_kinds.as_ref() {
-        lines.push(format!("permitted: {}", kinds.join(", ")));
+        push(
+            "invite_policy.constraints.permitted",
+            kinds
+                .iter()
+                .map(|kind| introduction_kind_label(kind))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
     }
     if !constraints.deployment_denied_introduction_kinds.is_empty() {
-        lines.push(format!(
-            "forbidden: {}",
-            constraints.deployment_denied_introduction_kinds.join(", ")
-        ));
+        push(
+            "invite_policy.constraints.forbidden",
+            constraints
+                .deployment_denied_introduction_kinds
+                .iter()
+                .map(|kind| introduction_kind_label(kind))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
     }
     if let Some(action) = constraints.handle_claim_max_behavior.as_ref() {
-        lines.push(format!("handle cap: {}", explicit_behavior_to_str(action)));
+        push(
+            "invite_policy.constraints.handle_cap",
+            behavior_label(action),
+        );
     }
     if let Some(action) = constraints.explicit_address_max_behavior.as_ref() {
-        lines.push(format!(
-            "explicit cap: {}",
-            explicit_behavior_to_str(action)
-        ));
+        push(
+            "invite_policy.constraints.explicit_cap",
+            behavior_label(action),
+        );
     }
     if let Some(domains) = constraints.allowed_handle_domains.as_ref() {
-        lines.push(format!("handle domains: {}", domains.join(", ")));
+        push("invite_policy.constraints.domains", domains.join(", "));
     }
     if let Some(services) = constraints.trusted_directory_ids.as_ref() {
-        lines.push(format!(
-            "directory services: {}",
+        push(
+            "invite_policy.constraints.directories",
             services
                 .iter()
                 .map(|did| did.as_str())
                 .collect::<Vec<_>>()
-                .join(", ")
-        ));
+                .join(", "),
+        );
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retained_server_constraints_retranslate_without_mutating_wire_values() {
+        let constraints: arkret_wire::ReceivePolicyConstraints =
+            serde_json::from_value(serde_json::json!({
+                "deployment_allowed_introduction_kinds": ["consent_grant"],
+                "deployment_denied_introduction_kinds": ["same_station"],
+                "handle_claim_max_behavior": "quarantine",
+                "explicit_address_max_behavior": "notify",
+                "allowed_handle_domains": ["original.example"],
+                "trusted_directory_ids": ["ak:did_core:web:directory.example"]
+            }))
+            .unwrap();
+        let original = serde_json::to_value(&constraints).unwrap();
+        let mut dom = VirtualDom::new(|| rsx! {});
+        dom.rebuild_in_place();
+        dom.in_scope(ScopeId::ROOT, || {
+            let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
+                crate::i18n::UiLocale::En,
+            ));
+            for (language, permitted, behavior) in [
+                (crate::i18n::UiLocale::En, "permitted:", "Hold for review"),
+                (crate::i18n::UiLocale::Zh, "允许：", "暂存待审"),
+                (crate::i18n::UiLocale::En, "permitted:", "Hold for review"),
+            ] {
+                crate::i18n::set_locale(&mut locale, language);
+                let lines = constraints_lines(&constraints);
+                assert_eq!(lines.len(), 6);
+                assert!(lines[0].starts_with(permitted));
+                assert!(lines[2].contains(behavior));
+                assert!(lines[4].contains("original.example"));
+                assert!(lines[5].contains("ak:did_core:web:directory.example"));
+                assert_eq!(serde_json::to_value(&constraints).unwrap(), original);
+            }
+        });
+    }
 }
 
 #[component]
 pub fn InvitePolicySettingsCard(token: Signal<String>) -> Element {
     let Some(account) = crate::app::SessionContext::get().active_account() else {
-        return rsx! { div { class: "error", "No active account" } };
+        return rsx! { div { class: "error", {tr("invite_policy.no_account")} } };
     };
     let account_id = account.authority;
     let subject_key = account_id.to_string();
@@ -179,7 +252,7 @@ fn InvitePolicySettingsCardBody(
     let mut policy = use_signal(move || InviteReceivePolicy::spec_default(initial_subject_id));
     let mut loaded = use_signal(|| false);
     let mut loading = use_signal(|| true);
-    let mut status = use_signal(String::new);
+    let mut status = use_signal(|| ("", Vec::<(&'static str, String)>::new()));
     let mut saving = use_signal(|| false);
     let mut constraints = use_signal(|| None::<arkret_wire::ReceivePolicyConstraints>);
 
@@ -218,9 +291,10 @@ fn InvitePolicySettingsCardBody(
                     }
                     Err(err) => {
                         // Graceful-degrade message; defaults stay in the form.
-                        status.set(
-                            tr("invite_policy.load_failed").replace("{error}", &err.display()),
-                        );
+                        status.set((
+                            "invite_policy.load_failed",
+                            super::capabilities::api_error_feedback_args(&err),
+                        ));
                     }
                 }
                 loading.set(false);
@@ -297,9 +371,9 @@ fn InvitePolicySettingsCardBody(
                             policy.set(next);
                         }
                     },
-                    SelectOption::<String> { index: 0usize, value: "drop".to_string(), text_value: "drop", {tr("invite_policy.explicit.drop")} }
-                    SelectOption::<String> { index: 1usize, value: "quarantine".to_string(), text_value: "quarantine", {tr("invite_policy.explicit.quarantine")} }
-                    SelectOption::<String> { index: 2usize, value: "notify".to_string(), text_value: "notify", {tr("invite_policy.explicit.notify")} }
+                    SelectOption::<String> { index: 0usize, value: "drop".to_string(), text_value: tr("invite_policy.explicit.drop"), {tr("invite_policy.explicit.drop")} }
+                    SelectOption::<String> { index: 1usize, value: "quarantine".to_string(), text_value: tr("invite_policy.explicit.quarantine"), {tr("invite_policy.explicit.quarantine")} }
+                    SelectOption::<String> { index: 2usize, value: "notify".to_string(), text_value: tr("invite_policy.explicit.notify"), {tr("invite_policy.explicit.notify")} }
                 }
                 div { class: "settings-grid compact",
                     label { class: "field",
@@ -307,7 +381,7 @@ fn InvitePolicySettingsCardBody(
                         input {
                             "data-testid": "invite-policy-handle-allowed-domains",
                             value: "{allowed_handle_domains}",
-                            placeholder: "example.com, team.example",
+                            placeholder: tr("invite_policy.allowed_domains_example"),
                             oninput: move |event: FormEvent| {
                                 let mut next = policy.read().clone();
                                 next.allowed_handle_domains = parse_list(&event.value());
@@ -320,7 +394,7 @@ fn InvitePolicySettingsCardBody(
                         input {
                             "data-testid": "invite-policy-handle-blocked-domains",
                             value: "{denied_handle_domains}",
-                            placeholder: "spam.example",
+                            placeholder: tr("invite_policy.blocked_domains_example"),
                             oninput: move |event: FormEvent| {
                                 let mut next = policy.read().clone();
                                 next.denied_handle_domains = parse_list(&event.value());
@@ -345,9 +419,9 @@ fn InvitePolicySettingsCardBody(
                             policy.set(next);
                         }
                     },
-                    SelectOption::<String> { index: 0usize, value: "drop".to_string(), text_value: "drop", {tr("invite_policy.explicit.drop")} }
-                    SelectOption::<String> { index: 1usize, value: "quarantine".to_string(), text_value: "quarantine", {tr("invite_policy.explicit.quarantine")} }
-                    SelectOption::<String> { index: 2usize, value: "notify".to_string(), text_value: "notify", {tr("invite_policy.explicit.notify")} }
+                    SelectOption::<String> { index: 0usize, value: "drop".to_string(), text_value: tr("invite_policy.explicit.drop"), {tr("invite_policy.explicit.drop")} }
+                    SelectOption::<String> { index: 1usize, value: "quarantine".to_string(), text_value: tr("invite_policy.explicit.quarantine"), {tr("invite_policy.explicit.quarantine")} }
+                    SelectOption::<String> { index: 2usize, value: "notify".to_string(), text_value: tr("invite_policy.explicit.notify"), {tr("invite_policy.explicit.notify")} }
                 }
                 div { class: "muted",
                     {tr("invite_policy.unknown_prefix")}
@@ -379,7 +453,7 @@ fn InvitePolicySettingsCardBody(
                             policy.set(next);
                         },
                     }
-                    span { " {tr(\"invite_policy.disclosure_toggle\")}" }
+                    span { {tr("invite_policy.disclosure_toggle")} }
                 }
                 label { class: "metric",
                     Switch {
@@ -401,7 +475,7 @@ fn InvitePolicySettingsCardBody(
                             policy.set(next);
                         },
                     }
-                    span { " {tr(\"invite_policy.discovery_disclosure_toggle\")}" }
+                    span { {tr("invite_policy.discovery_disclosure_toggle")} }
                 }
                 div { class: "muted", {tr("invite_policy.disclosure_hint")} }
             }
@@ -449,7 +523,7 @@ fn InvitePolicySettingsCardBody(
                                             let mut next = policy.read().clone();
                                             next.denied_actor_ids.retain(|actor| actor != &subject_actor);
                                             policy.set(next);
-                                            status.set(tr("invite_policy.unblocked_hint"));
+                                            status.set(("invite_policy.unblocked_hint", vec![]));
                                         }
                                     },
                                     {tr("invite_policy.unblock")}
@@ -475,7 +549,7 @@ fn InvitePolicySettingsCardBody(
                         to_save.schema = SchemaId::INVITE_RECEIVE_POLICY_V1.to_owned();
                         to_save.account_id = account_id.clone();
                         saving.set(true);
-                        status.set(tr("invite_policy.saving"));
+                        status.set(("invite_policy.saving", vec![]));
                         spawn(async move {
                             match with_authed_sdk_client(&base, api_token, |http| async move {
                                 crate::transport::account::set_invite_receive_policy(&http, &to_save).await
@@ -484,11 +558,9 @@ fn InvitePolicySettingsCardBody(
                             {
                                 Ok(server_policy) => {
                                     policy.set(server_policy);
-                                    status.set(tr("invite_policy.saved"));
+                                    status.set(("invite_policy.saved", vec![]));
                                 }
-                                Err(err) => status.set(
-                                    tr("invite_policy.save_failed").replace("{error}", &err.display()),
-                                ),
+                                Err(err) => status.set(("invite_policy.save_failed", super::capabilities::api_error_feedback_args(&err))),
                             }
                             saving.set(false);
                         });
@@ -497,8 +569,8 @@ fn InvitePolicySettingsCardBody(
                 }
             }
 
-            if !status.read().is_empty() {
-                div { class: "muted", "data-testid": "invite-policy-status", "{status}" }
+            if !status.read().0.is_empty() {
+                div { class: "muted", "data-testid": "invite-policy-status", {crate::i18n::tr_args(status.read().0, &super::capabilities::localized_feedback_args(&status.read().1))} }
             }
         }
     }

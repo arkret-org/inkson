@@ -38,7 +38,12 @@ impl garth::AccountSubscribeTransport for InksonAccountTransport {
     ) -> garth::Result<
         arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeSnapshotResult,
     > {
-        garth::AccountSubscribeTransport::subscribe(&self.http, request).await
+        let own = self.http.own_station_result_client()?;
+        let result = garth::AccountSubscribeTransport::subscribe(&self.http, request).await?;
+        if let Some(own) = own {
+            own.check_session()?;
+        }
+        Ok(result)
     }
 }
 
