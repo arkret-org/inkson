@@ -25,7 +25,8 @@
 /* P3B.2.3 — composer banner colour tokens. */
 .circle-composer-banner {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: start;
   gap: 10px;
   padding: 10px 12px;
   margin-bottom: 8px;
@@ -40,7 +41,16 @@
 
 .circle-composer-banner .banner-body {
   display: grid;
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
   gap: 2px;
+}
+
+.circle-composer-banner .circle-identity-badge {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .circle-realm {
