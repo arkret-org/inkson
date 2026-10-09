@@ -1902,6 +1902,14 @@ fn validate_floor_product_rows(
                     "agent_interaction",
                 )?;
             }
+            CurrentSelector::CallState { .. } => {
+                // Install the authenticated lifecycle axis as current state.
+                // Its create null predecessor is distinct from an Event delta;
+                // current readiness still requires the complete signed cut.
+                let current: arkret_models_collaboration::events_payloads::call::CallStateCurrentValue =
+                    closed_value(value, "call_state")?;
+                current.validate().map_err(protocol)?;
+            }
             CurrentSelector::ModerationFrankingProof { event_id } => {
                 // This is authenticated current state of the receipt, not an
                 // independently verified moderation evidence package. Garth
@@ -3640,6 +3648,72 @@ mod tests {
                 validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &rows).is_err()
             );
         }
+    }
+
+    #[test]
+    fn signed_floor_call_state_preserves_creation_and_rejects_invalid_current_or_stream() {
+        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let creator = crate::test_support::account_actor(ACTOR_ID);
+        let (bundle, _, items) =
+            crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                realm_id.clone(),
+                json!({"object": collaboration_genesis(GENESIS_SALT)}),
+                ordinary_bootstrap_entries(&creator),
+                "alice.example",
+                DEVICE_ID,
+            );
+        let commit = &items.last().unwrap().commit;
+        let head = arkret_wire::CommitStreamHead {
+            stream_ref: commit.stream_ref.clone(),
+            stream_position: commit.stream_position,
+            commit_id: commit.commit_id.clone(),
+        };
+        let rows_with = |value| {
+            let mut rows = soland_bootstrap_rows(&bundle, &items);
+            rows.push(TypedCurrentRow::Value {
+                selector: arkret_wire::CurrentSelector::CallState {
+                    call_id: arkret_sdk::CallId::from_event_id(&items[1].event.event_id),
+                },
+                source_stream_ref: head.stream_ref.clone(),
+                revision: arkret_wire::CurrentRevision {
+                    commit_id: head.commit_id.clone(),
+                    stream_position: head.stream_position,
+                },
+                value,
+            });
+            rows
+        };
+        let access = arkret_sdk::HistoryAccess::SinceJoin;
+        for value in [
+            json!({"from":null,"to":"scheduled"}),
+            json!({"from":null,"to":"ringing"}),
+            json!({"from":null,"to":"connecting"}),
+            json!({"from":"connecting","to":"active"}),
+        ] {
+            validate_signed_floor_rows(&realm_id, &bundle, &head, access, &rows_with(value))
+                .unwrap();
+        }
+        for value in [
+            json!({"to":"ringing"}),
+            json!({"from":null,"to":"active"}),
+            json!({"from":"active","to":"failed"}),
+            json!({"from":null,"to":"ringing","extra":true}),
+            json!({"from":"unknown","to":"active"}),
+        ] {
+            assert!(
+                validate_signed_floor_rows(&realm_id, &bundle, &head, access, &rows_with(value))
+                    .is_err()
+            );
+        }
+        let mut foreign = rows_with(json!({"from":null,"to":"ringing"}));
+        let TypedCurrentRow::Value {
+            source_stream_ref, ..
+        } = foreign.last_mut().unwrap();
+        *source_stream_ref = CommitStreamRef::Realm {
+            realm_id: arkret_sdk::RealmId::from_event_id(&items[2].event.event_id),
+        };
+        assert!(validate_signed_floor_rows(&realm_id, &bundle, &head, access, &foreign).is_err());
     }
 
     #[test]

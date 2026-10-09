@@ -417,6 +417,12 @@ impl NativeAccountHost {
         selected_realm_id: String,
     ) -> anyhow::Result<Self> {
         use crate::runtime::input::{StateStoreHandle, ValueCell, ValueReader};
+        if let Some(own) = http.own_station_result_client()? {
+            anyhow::ensure!(
+                own.session()?.account_id() == &authority,
+                "native Account host transport belongs to another Account"
+            );
+        }
         fn cell<T: Clone + 'static>(value: T) -> ValueCell<T> {
             let value = std::rc::Rc::new(std::cell::RefCell::new(value));
             let read = value.clone();
