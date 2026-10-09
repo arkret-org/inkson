@@ -149,7 +149,8 @@ test("fresh Sidecar rejection preserves its bound draft without publishing to th
 }) => {
   await openKanban(page);
   const sourceCard = page.getByTestId("kanban-card").first();
-  const sourceStrand = await sourceCard.getAttribute("data-strand-id");
+  const sourceStrand = await sourceCard.getByTestId("card-archive-button").getAttribute("data-strand-id");
+  expect(sourceStrand).toMatch(/^ak:strand:[A-Za-z0-9_-]{44}$/);
   const sourceRealm = decodeURIComponent(new URL(page.url()).pathname.split("/kanban/")[1].split("/")[0]);
   await sourceCard.click();
   const detailPopup = page.getByTestId("card-detail-modal");
