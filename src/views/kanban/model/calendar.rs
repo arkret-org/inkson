@@ -981,7 +981,7 @@ fn decrypt_rsvp_winner(
     }
     let strand = arkret_sdk::StrandId::new(strand_id.to_owned()).ok()?;
     let strand_value = current.entries.iter().find_map(|row| match row {
-        arkret_wire::TypedCurrentResult::Value {
+        arkret_wire::TypedCurrentRow::Value {
             selector:
                 arkret_wire::CurrentSelector::Strand {
                     strand_id: selected,

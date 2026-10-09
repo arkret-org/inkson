@@ -396,3 +396,44 @@ label.avatar-upload-button .ui-icon {
     border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   }
 }
+
+.settings-avatar-file-input { display: none; }
+.settings-avatar-crop-dialog {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: var(--layer-modal, 300);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 16px;
+  align-items: center;
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--surface-solid, var(--surface, #1a1d22));
+  box-shadow: 0 0 0 9999px rgba(20, 22, 30, 0.55), var(--shadow-lg, 0 24px 56px rgba(0, 0, 0, 0.22));
+}
+.settings-avatar-crop-stage {
+  position: relative;
+  width: min(180px, 70vw);
+  aspect-ratio: 1;
+  justify-self: center;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 1px solid var(--border-default, #333);
+  background: var(--bg-elevated, #1a1d22);
+}
+.settings-avatar-crop-controls {
+  display: grid;
+  gap: 10px;
+}
+.settings-avatar-crop-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform-origin: center;
+}

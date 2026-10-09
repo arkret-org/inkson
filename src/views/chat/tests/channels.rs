@@ -8,7 +8,7 @@ fn current_strand(
     realm: &str,
     title: &str,
     alternate_revision: bool,
-) -> arkret_wire::TypedCurrentResult {
+) -> arkret_wire::TypedCurrentRow {
     let event_id =
         arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [0x41; 32]);
     let strand_id = arkret_sdk::StrandId::from_event_id(&event_id);
@@ -25,7 +25,7 @@ fn current_strand(
         .insert("category".to_owned(), json!("support"));
 
     let revision_seed = if alternate_revision { 2 } else { 1 };
-    arkret_wire::TypedCurrentResult::Value {
+    arkret_wire::TypedCurrentRow::Value {
         selector: arkret_wire::CurrentSelector::Strand { strand_id },
         source_stream_ref: arkret_wire::CommitStreamRef::Realm {
             realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
@@ -38,11 +38,11 @@ fn current_strand(
     }
 }
 
-fn view(realm: &str, entries: Vec<arkret_wire::TypedCurrentResult>) -> RealmCurrentView {
+fn view(realm: &str, entries: Vec<arkret_wire::TypedCurrentRow>) -> RealmCurrentView {
     RealmCurrentView::new(realm, entries, true).unwrap()
 }
 
-fn channel_from_current(current: arkret_wire::TypedCurrentResult) -> ChannelEntity {
+fn channel_from_current(current: arkret_wire::TypedCurrentRow) -> ChannelEntity {
     channels_from_current_view(Some(&view(CHANNEL_REALM, vec![current])), CHANNEL_REALM)
         .into_iter()
         .next()
@@ -85,7 +85,7 @@ fn late_verified_circle_current_adds_channel_after_initial_empty_view() {
         arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [0x43; 32]);
     let circle_id = arkret_sdk::CircleId::from_event_id(&circle_event);
     let mut current = current_strand(CHANNEL_REALM, "Circle poll", false);
-    let arkret_wire::TypedCurrentResult::Value {
+    let arkret_wire::TypedCurrentRow::Value {
         source_stream_ref,
         value,
         ..
@@ -118,7 +118,7 @@ fn hidden_synthesis_discussion_keeps_its_exact_circle_scope() {
         arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [0x53; 32]);
     let circle_id = arkret_sdk::CircleId::from_event_id(&circle_event);
     let mut current = current_strand(CHANNEL_REALM, "Private synthesis card", false);
-    let arkret_wire::TypedCurrentResult::Value {
+    let arkret_wire::TypedCurrentRow::Value {
         source_stream_ref,
         value,
         ..

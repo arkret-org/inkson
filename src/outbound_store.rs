@@ -2064,7 +2064,7 @@ mod tests {
                 .unwrap();
         snapshot
             .current_state_entries
-            .push(arkret_sdk::TypedCurrentResult::Value {
+            .push(arkret_sdk::TypedCurrentRow::Value {
                 selector: arkret_sdk::CurrentSelector::RealmGenesis,
                 source_stream_ref: native.covering_commit().stream_ref.clone(),
                 revision: arkret_sdk::CurrentRevision {

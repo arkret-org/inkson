@@ -224,18 +224,17 @@ fn current_only_self_participant_keeps_the_account_viewer_handle_without_leaking
     store.switch_active_account(&account).unwrap();
     let handle = "alice:local.host";
     store.set_primary_handle_for_principal_id(principal, handle);
-    let entries =
-        [own.clone(), remote.clone()].map(|actor| arkret_wire::TypedCurrentResult::Value {
-            selector: arkret_wire::CurrentSelector::MemberState { actor_id: actor },
-            source_stream_ref: arkret_wire::CommitStreamRef::Realm {
-                realm_id: realm.parse().unwrap(),
-            },
-            revision: arkret_wire::CurrentRevision {
-                commit_id: arkret_sdk::RealmCommitId::from_digest([0x42; 32]),
-                stream_position: 2,
-            },
-            value: json!({"membership":"join","joined_at":"2026-10-08T00:00:00.000Z"}),
-        });
+    let entries = [own.clone(), remote.clone()].map(|actor| arkret_wire::TypedCurrentRow::Value {
+        selector: arkret_wire::CurrentSelector::MemberState { actor_id: actor },
+        source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+            realm_id: realm.parse().unwrap(),
+        },
+        revision: arkret_wire::CurrentRevision {
+            commit_id: arkret_sdk::RealmCommitId::from_digest([0x42; 32]),
+            stream_position: 2,
+        },
+        value: json!({"membership":"join","joined_at":"2026-10-08T00:00:00.000Z"}),
+    });
     store
         .install_current_product_view(
             crate::current_projection::RealmCurrentView::new(realm, entries.to_vec(), true)
@@ -262,7 +261,7 @@ fn current_only_self_participant_keeps_the_account_viewer_handle_without_leaking
     assert!(remote_row.handle_label.is_none());
 
     let mut departed = entries.to_vec();
-    let arkret_wire::TypedCurrentResult::Value { value, .. } = &mut departed[0];
+    let arkret_wire::TypedCurrentRow::Value { value, .. } = &mut departed[0];
     *value = json!({"membership":"leave"});
     store
         .install_current_product_view(
@@ -325,7 +324,7 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
         ]
     });
     const POLICY_REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    let policy = arkret_wire::TypedCurrentResult::Value {
+    let policy = arkret_wire::TypedCurrentRow::Value {
         selector: arkret_wire::CurrentSelector::RealmPolicyBundle,
         source_stream_ref: arkret_wire::CommitStreamRef::Realm {
             realm_id: arkret_sdk::RealmId::new(POLICY_REALM).unwrap(),
@@ -346,7 +345,7 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
 
     let temp = std::env::temp_dir().join(format!("inkson-chat-roster-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
-    let membership = arkret_wire::TypedCurrentResult::Value {
+    let membership = arkret_wire::TypedCurrentRow::Value {
         selector: arkret_wire::CurrentSelector::MemberState {
             actor_id: arkret_sdk::ActorId::account(bob_subject),
         },

@@ -2104,7 +2104,7 @@ mod removal_schedule_tests {
         assert!(removal_scope_stamp(&store, &scope, &desired).is_some());
 
         let mut entries = store.realm_current_state_entries(REALM);
-        let arkret_wire::TypedCurrentResult::Value { value, .. } = &mut entries[0];
+        let arkret_wire::TypedCurrentRow::Value { value, .. } = &mut entries[0];
         value["covered_key_access_revision"] = serde_json::json!(6);
         crate::test_support::install_current_entries(&mut store, REALM, entries);
         assert!(removal_scope_stamp(&store, &scope, &desired).is_none());

@@ -5,7 +5,7 @@ use std::sync::{Arc, OnceLock};
 
 use arkret_sdk::AccountId;
 use arkret_sdk::sync::{AccountSubscribeFrame, RealmDetailBaseline};
-use arkret_wire::{CurrentRevision, CurrentSelector, TypedCurrentResult};
+use arkret_wire::{CurrentRevision, CurrentSelector, TypedCurrentRow};
 use serde::{Deserialize, Serialize};
 
 /// A competing local publisher committed while this reader was verifying its cut.
@@ -126,15 +126,15 @@ fn target_of(selector: &CurrentSelector) -> CurrentTarget {
     }
 }
 
-fn selector_of(entry: &TypedCurrentResult) -> &CurrentSelector {
+fn selector_of(entry: &TypedCurrentRow) -> &CurrentSelector {
     match entry {
-        TypedCurrentResult::Value { selector, .. } => selector,
+        TypedCurrentRow::Value { selector, .. } => selector,
     }
 }
 
-fn revision_of(entry: &TypedCurrentResult) -> &CurrentRevision {
+fn revision_of(entry: &TypedCurrentRow) -> &CurrentRevision {
     match entry {
-        TypedCurrentResult::Value { revision, .. } => revision,
+        TypedCurrentRow::Value { revision, .. } => revision,
     }
 }
 
@@ -248,7 +248,7 @@ struct CurrentCoverageCleanup {
 #[derive(Clone, Debug)]
 struct CurrentInstallPlan {
     progress: CurrentRealmProgress,
-    writes: Vec<TypedCurrentResult>,
+    writes: Vec<TypedCurrentRow>,
     seen_selectors: Vec<String>,
     cleanup: Option<CurrentCoverageCleanup>,
     /// An invalidated snapshot must not reach secondary product projections.
@@ -260,8 +260,8 @@ struct CurrentInstallPlan {
 fn plan_current_entry(
     previous: &CurrentRealmProgress,
     baseline: Option<&RealmDetailBaseline>,
-    entry: &TypedCurrentResult,
-    old: Option<&TypedCurrentResult>,
+    entry: &TypedCurrentRow,
+    old: Option<&TypedCurrentRow>,
     verified_snapshot: bool,
 ) -> anyhow::Result<(bool, bool)> {
     let complete = baseline.is_some_and(|segment| {
@@ -278,11 +278,11 @@ fn plan_current_entry(
         );
         let old_revision = revision_of(old);
         let new_revision = revision_of(entry);
-        let TypedCurrentResult::Value {
+        let TypedCurrentRow::Value {
             source_stream_ref: old_source,
             ..
         } = old;
-        let TypedCurrentResult::Value {
+        let TypedCurrentRow::Value {
             source_stream_ref: new_source,
             ..
         } = entry;
@@ -322,8 +322,8 @@ fn plan_current_entry(
     Ok((!complete, seen))
 }
 
-fn cached_mls_value_valid(entry: &TypedCurrentResult) -> bool {
-    let TypedCurrentResult::Value {
+fn cached_mls_value_valid(entry: &TypedCurrentRow) -> bool {
+    let TypedCurrentRow::Value {
         selector, value, ..
     } = entry;
     match selector {
@@ -370,7 +370,7 @@ pub(crate) fn current_reads_any_stream(
             .iter()
             .any(|head| preview.contains(&head.stream_ref))
             || current.entries.iter().any(|row| {
-                let TypedCurrentResult::Value {
+                let TypedCurrentRow::Value {
                     source_stream_ref, ..
                 } = row;
                 preview.contains(source_stream_ref)
@@ -600,7 +600,7 @@ const MARK_STREAMS: [&str; 2] = ["progress/", "coverage/"];
 
 #[derive(Clone, Debug)]
 pub(crate) struct CurrentTargetPage {
-    pub entries: Vec<TypedCurrentResult>,
+    pub entries: Vec<TypedCurrentRow>,
     pub next_cursor: Option<String>,
 }
 
@@ -916,7 +916,7 @@ impl CurrentIndex {
         realm: &str,
         selector: &CurrentSelector,
         generation: u64,
-    ) -> anyhow::Result<Option<TypedCurrentResult>> {
+    ) -> anyhow::Result<Option<TypedCurrentRow>> {
         let prefix = self.row_prefix(realm, selector)?;
         let row_generation = self.latest_generation(&prefix, generation).await?;
         if let Some(retired) = self.retired(realm, selector, generation).await? {
@@ -948,7 +948,7 @@ impl CurrentIndex {
         realm: &str,
         selector: &CurrentSelector,
         generation: u64,
-    ) -> anyhow::Result<Option<TypedCurrentResult>> {
+    ) -> anyhow::Result<Option<TypedCurrentRow>> {
         let Some(entry) = self.raw_selector(realm, selector, generation).await? else {
             return Ok(None);
         };
@@ -978,7 +978,7 @@ impl CurrentIndex {
         &self,
         realm: &str,
         selector: &CurrentSelector,
-    ) -> anyhow::Result<Option<TypedCurrentResult>> {
+    ) -> anyhow::Result<Option<TypedCurrentRow>> {
         let _lease = self.lease.lock().await;
         self.visible_selector(realm, selector, self.generation.load(Ordering::Acquire))
             .await
@@ -987,7 +987,7 @@ impl CurrentIndex {
         &self,
         realm: &str,
         selector: &CurrentSelector,
-    ) -> anyhow::Result<Option<TypedCurrentResult>> {
+    ) -> anyhow::Result<Option<TypedCurrentRow>> {
         let _lease = self.lease.lock().await;
         anyhow::ensure!(
             !self.is_poisoned(),
@@ -1073,7 +1073,7 @@ impl CurrentIndex {
                 .ok_or_else(|| {
                     anyhow::anyhow!("Circle send requires an effective parent Realm join")
                 })?;
-            let TypedCurrentResult::Value {
+            let TypedCurrentRow::Value {
                 source_stream_ref: parent_source,
                 ..
             } = &parent;
@@ -1087,7 +1087,7 @@ impl CurrentIndex {
                 .ok_or_else(|| {
                     anyhow::anyhow!("Circle send requires a verified Circle member current")
                 })?;
-            let TypedCurrentResult::Value {
+            let TypedCurrentRow::Value {
                 source_stream_ref,
                 value,
                 ..
@@ -1119,7 +1119,7 @@ impl CurrentIndex {
             .await?;
         match entry {
             None => Ok(None),
-            Some(TypedCurrentResult::Value {
+            Some(TypedCurrentRow::Value {
                 selector: found,
                 value,
                 ..
@@ -1204,7 +1204,7 @@ impl CurrentIndex {
             .await?
         {
             None => Ok(None),
-            Some(TypedCurrentResult::Value {
+            Some(TypedCurrentRow::Value {
                 selector: found,
                 source_stream_ref,
                 value,
@@ -1227,7 +1227,7 @@ impl CurrentIndex {
         realm: &str,
         selector: &CurrentSelector,
         generation: u64,
-    ) -> anyhow::Result<Option<TypedCurrentResult>> {
+    ) -> anyhow::Result<Option<TypedCurrentRow>> {
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1482,7 +1482,7 @@ impl CurrentIndex {
         let realm = snapshot.realm_id.to_string();
         let entry = arkret_sdk::sync::RealmSyncEntry {
             current: Some(
-                arkret_models_collaboration::sync_frames::current_results::AccountCurrentResult {
+                arkret_models_collaboration::sync_frames::current_results::AccountCurrentView {
                     realm_id: snapshot.realm_id.clone(),
                     governance_generation: snapshot.governance_generation,
                     stream_heads: snapshot.visible_stream_heads.clone(),
@@ -1800,7 +1800,7 @@ impl CurrentIndex {
                 let mut accepted = Vec::new();
                 let mut delivered = std::collections::BTreeSet::new();
                 // `RealmSyncEntry::current` is the Station's typed
-                // `AccountCurrentResult`; its entries are already selected and
+                // `AccountCurrentView`; its entries are already selected and
                 // signed, so nothing is re-decoded out of opaque JSON here.
                 let entries = incoming
                     .current
@@ -2400,7 +2400,7 @@ impl CurrentIndex {
                     .get(key)
                     .await?
                     .ok_or_else(|| anyhow::anyhow!("current version disappeared"))?;
-                let entry: TypedCurrentResult = serde_json::from_slice(&bytes)?;
+                let entry: TypedCurrentRow = serde_json::from_slice(&bytes)?;
                 let row_generation = self.latest_generation(&row_prefix, generation).await?;
                 if self
                     .retired(&task.realm, &selector, generation)
@@ -2544,7 +2544,7 @@ mod tests {
             CurrentTarget::Realm
         );
     }
-    fn row(revision: u64, removed: bool) -> TypedCurrentResult {
+    fn row(revision: u64, removed: bool) -> TypedCurrentRow {
         serde_json::from_value(json!({
             "selector":{"kind":"realm_profile"},
             "source_stream_ref":{"kind":"realm","realm_id":REALM},
@@ -2552,7 +2552,7 @@ mod tests {
             "value":if removed{json!({"status":"removed"})}else{json!({"status":"value","value":null})}
         })).unwrap()
     }
-    fn device_generation_row(revision: u64) -> TypedCurrentResult {
+    fn device_generation_row(revision: u64) -> TypedCurrentRow {
         serde_json::from_value(json!({
             "selector":{"kind":"device_generation"},
             "source_stream_ref":{"kind":"realm","realm_id":REALM},
@@ -2561,7 +2561,7 @@ mod tests {
         }))
         .unwrap()
     }
-    fn mls_group_row(realm: &str, revision: u64) -> TypedCurrentResult {
+    fn mls_group_row(realm: &str, revision: u64) -> TypedCurrentRow {
         serde_json::from_value(json!({
             "selector":{"kind":"mls_group","scope_ref":{"kind":"realm","realm_id":realm}},
             "source_stream_ref":{"kind":"realm","realm_id":realm},
@@ -2580,7 +2580,7 @@ mod tests {
         .unwrap()
     }
     fn frame(
-        entries: Vec<TypedCurrentResult>,
+        entries: Vec<TypedCurrentRow>,
         baseline: Option<serde_json::Value>,
     ) -> AccountSubscribeFrame {
         realm_frame(REALM, entries, baseline)
@@ -2645,10 +2645,10 @@ mod tests {
         "ak:cursor:aw",
         "ak:cursor:bA",
     ];
-    fn realm_row(_realm: &str, revision: u64) -> TypedCurrentResult {
+    fn realm_row(_realm: &str, revision: u64) -> TypedCurrentRow {
         row(revision, false)
     }
-    fn member_row(_realm: &str, actor: &str, revision: u64) -> TypedCurrentResult {
+    fn member_row(_realm: &str, actor: &str, revision: u64) -> TypedCurrentRow {
         serde_json::from_value(json!({
             "selector":{"kind":"member_state","actor_id":{"kind":"service","service_id":actor}},
             "source_stream_ref":{"kind":"realm","realm_id":_realm},
@@ -2659,7 +2659,7 @@ mod tests {
     }
     fn realm_frame(
         realm: &str,
-        entries: Vec<TypedCurrentResult>,
+        entries: Vec<TypedCurrentRow>,
         baseline: Option<serde_json::Value>,
     ) -> AccountSubscribeFrame {
         let mut baseline = baseline;
@@ -2756,7 +2756,7 @@ mod tests {
     async fn closed_selector_without_product_region_has_exact_durable_target() {
         let path = path();
         let index = index(&path, 0).await;
-        let entry = TypedCurrentResult::Value {
+        let entry = TypedCurrentRow::Value {
             selector: CurrentSelector::MimiRoomBinding {
                 mimi_room_uri: arkret_wire::MimiRoomUri::new(
                     "mimi://mimi.example.com/rooms/01JSMIMI",
@@ -2960,7 +2960,7 @@ mod tests {
         let index = index(&path, 0).await;
         let realm = arkret_sdk::RealmId::new(REALM).unwrap();
         let row = member_row(REALM, "ak:did_core:web:parent-member.example", 1);
-        let TypedCurrentResult::Value {
+        let TypedCurrentRow::Value {
             selector: CurrentSelector::MemberState { actor_id: member },
             revision,
             ..
@@ -3009,7 +3009,7 @@ mod tests {
                 .is_err()
         );
         let mut left = member_row(REALM, "ak:did_core:web:parent-member.example", 2);
-        let TypedCurrentResult::Value { value, .. } = &mut left;
+        let TypedCurrentRow::Value { value, .. } = &mut left;
         *value = json!({"membership":"leave"});
         index
             .stage_frame(2, &frame(vec![left], None))
@@ -3046,7 +3046,7 @@ mod tests {
             "ak:did_core:web:member.example".parse().unwrap(),
             "ak:did_core:web:station.example".parse().unwrap(),
         ));
-        let TypedCurrentResult::Value {
+        let TypedCurrentRow::Value {
             selector,
             revision: parent_revision,
             ..
@@ -3059,7 +3059,7 @@ mod tests {
             commit_id: arkret_sdk::RealmCommitId::from_digest([8; 32]),
             stream_position: 1,
         };
-        let circle_member = TypedCurrentResult::Value {
+        let circle_member = TypedCurrentRow::Value {
             selector: CurrentSelector::CircleMemberState {
                 circle_id,
                 member_actor_id: member.clone(),
@@ -3069,7 +3069,7 @@ mod tests {
             value: json!({"membership":"join", "parent_membership_revision":parent_revision, "effective_at":"2026-09-30T00:00:00.000Z"}),
         };
         let mut group = mls_group_row(REALM, 1);
-        let TypedCurrentResult::Value {
+        let TypedCurrentRow::Value {
             selector,
             source_stream_ref,
             revision,
@@ -3110,7 +3110,7 @@ mod tests {
         );
         for (generation, membership) in [(1, "leave"), (2, "ban"), (3, "join")] {
             let mut changed_parent = parent.clone();
-            let TypedCurrentResult::Value {
+            let TypedCurrentRow::Value {
                 revision, value, ..
             } = &mut changed_parent;
             revision.commit_id =
@@ -3138,7 +3138,7 @@ mod tests {
             );
         }
         let mut renewed = circle_member.clone();
-        let TypedCurrentResult::Value {
+        let TypedCurrentRow::Value {
             revision, value, ..
         } = &mut renewed;
         revision.commit_id = arkret_sdk::RealmCommitId::from_digest([20; 32]);
@@ -3467,7 +3467,7 @@ mod tests {
     fn invalid_cached_mls_requires_verified_snapshot_and_preserves_fork_checks() {
         let fresh = mls_group_row(REALM, 7);
         let mut invalid = fresh.clone();
-        let TypedCurrentResult::Value { value, .. } = &mut invalid;
+        let TypedCurrentRow::Value { value, .. } = &mut invalid;
         value.as_object_mut().unwrap().remove("cipher_suite");
         let progress = CurrentRealmProgress::default();
         assert!(plan_current_entry(&progress, None, &fresh, Some(&invalid), false).is_err());
@@ -3477,16 +3477,16 @@ mod tests {
         );
         assert!(plan_current_entry(&progress, None, &invalid, Some(&fresh), true).is_err());
         let mut conflict = fresh.clone();
-        let TypedCurrentResult::Value { value, .. } = &mut conflict;
+        let TypedCurrentRow::Value { value, .. } = &mut conflict;
         value["epoch"] = json!(2);
         assert!(plan_current_entry(&progress, None, &conflict, Some(&fresh), true).is_err());
-        let TypedCurrentResult::Value { revision, .. } = &mut conflict;
+        let TypedCurrentRow::Value { revision, .. } = &mut conflict;
         revision.commit_id = "ak:realm_commit:Aaurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6ur"
             .parse()
             .unwrap();
         assert!(plan_current_entry(&progress, None, &conflict, Some(&invalid), true).is_err());
         let mut foreign = fresh.clone();
-        let TypedCurrentResult::Value {
+        let TypedCurrentRow::Value {
             source_stream_ref, ..
         } = &mut foreign;
         *source_stream_ref = arkret_sdk::CommitStreamRef::Realm {
@@ -3512,7 +3512,7 @@ mod tests {
         let mut value = serde_json::to_value(row(7, false)).unwrap();
         value["revision"]["commit_id"] =
             json!("ak:realm_commit:Aaurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6ur");
-        let fork: TypedCurrentResult = serde_json::from_value(value).unwrap();
+        let fork: TypedCurrentRow = serde_json::from_value(value).unwrap();
         assert!(
             plan_current_entry(
                 &CurrentRealmProgress::default(),
@@ -3717,7 +3717,7 @@ mod tests {
         actor: &str,
         revision: u64,
         membership: &str,
-    ) -> TypedCurrentResult {
+    ) -> TypedCurrentRow {
         serde_json::from_value(json!({
             "selector":{"kind":"member_state","actor_id":{"kind":"service","service_id":actor}},
             "source_stream_ref":{"kind":"realm","realm_id":realm},
@@ -3735,7 +3735,7 @@ mod tests {
         index: &CurrentIndex,
         mut generation: u64,
         realm: &str,
-        rows: Vec<TypedCurrentResult>,
+        rows: Vec<TypedCurrentRow>,
         snapshot: &str,
         cut: u64,
     ) -> u64 {
@@ -3758,11 +3758,7 @@ mod tests {
         }
         generation
     }
-    async fn realm_rows(
-        index: &CurrentIndex,
-        realm: &str,
-        limit: usize,
-    ) -> Vec<TypedCurrentResult> {
+    async fn realm_rows(index: &CurrentIndex, realm: &str, limit: usize) -> Vec<TypedCurrentRow> {
         let mut rows = Vec::new();
         let mut after: Option<String> = None;
         loop {
@@ -3805,7 +3801,7 @@ mod tests {
         assert_eq!(read.len(), 151);
         assert_eq!(selectors.len(), 151, "a row was read twice");
         assert!(read.iter().all(|entry| {
-            let TypedCurrentResult::Value {
+            let TypedCurrentRow::Value {
                 source_stream_ref, ..
             } = entry;
             source_stream_ref
@@ -4652,7 +4648,7 @@ mod tests {
     async fn one_maintenance_pass_reclaims_at_most_one_bounded_page() {
         let path = path();
         let store = index(&path, 0).await;
-        let members: Vec<TypedCurrentResult> = (0..120)
+        let members: Vec<TypedCurrentRow> = (0..120)
             .map(|index| {
                 member_row(
                     REALM,
@@ -4818,7 +4814,7 @@ mod tests {
         }
     }
 
-    fn selector_of(entry: &TypedCurrentResult) -> CurrentSelector {
+    fn selector_of(entry: &TypedCurrentRow) -> CurrentSelector {
         super::selector_of(entry).clone()
     }
 }

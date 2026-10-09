@@ -8,7 +8,7 @@ use arkret_sdk::{
     AgentSidecarExchangeControlsCurrentValue, AgentSidecarExchangeProjection,
     AgentSidecarExchangeRole, AgentSidecarExchangeStatus, AgentSidecarFoldedCheckpoint,
     CurrentSelector, EncryptedEnvelope, Event, EventId, EventKind, Hash, MessageMetadata, ScopeRef,
-    SidecarContextRef, TypedCurrentResult,
+    SidecarContextRef, TypedCurrentRow,
 };
 
 use crate::state::LocalStateStore;
@@ -290,7 +290,7 @@ pub(crate) fn rebuild_with_closes(
     let mut result = Vec::new();
     let mut closes = Vec::new();
     for row in &snapshot.current_state_entries {
-        let TypedCurrentResult::Value {
+        let TypedCurrentRow::Value {
             selector: CurrentSelector::Sidecar { sidecar_id },
             value,
             ..
@@ -317,7 +317,7 @@ pub(crate) fn rebuild_with_closes(
         let mut controls = BTreeMap::new();
         let mut attached = BTreeSet::new();
         for row in &snapshot.current_state_entries {
-            let TypedCurrentResult::Value {
+            let TypedCurrentRow::Value {
                 selector,
                 source_stream_ref,
                 revision,

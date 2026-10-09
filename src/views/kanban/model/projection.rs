@@ -125,7 +125,7 @@ pub(crate) fn overlay_local_board_space_options(
     mut options: Vec<BoardSpaceOption>,
     raw_operations: &[RawOperationRecord],
     realm_id: &str,
-    current_entries: &[arkret_wire::TypedCurrentResult],
+    current_entries: &[arkret_wire::TypedCurrentRow],
 ) -> Vec<BoardSpaceOption> {
     let terminal_ids = terminal_space_ids_from_current(current_entries, realm_id);
     options.retain(|option| !terminal_ids.contains(option.id.as_str()));
@@ -172,14 +172,14 @@ pub(crate) fn overlay_local_board_space_options(
 /// Metadata never supplies a structural parent; missing siblings remain
 /// unresolved rather than turning a List into a root or replaying its create.
 pub(crate) fn space_container_views_from_current(
-    entries: &[arkret_wire::TypedCurrentResult],
+    entries: &[arkret_wire::TypedCurrentRow],
     realm_id: &str,
 ) -> Vec<crate::state::projection_views::SpaceContainerProjectionView> {
-    use arkret_wire::{CommitStreamRef, CurrentSelector, TypedCurrentResult};
+    use arkret_wire::{CommitStreamRef, CurrentSelector, TypedCurrentRow};
 
     let value_for = |selector: &CurrentSelector| {
         entries.iter().find_map(|entry| {
-            let TypedCurrentResult::Value {
+            let TypedCurrentRow::Value {
                 selector: candidate,
                 source_stream_ref: CommitStreamRef::Realm { realm_id: source },
                 value,
@@ -194,7 +194,7 @@ pub(crate) fn space_container_views_from_current(
     let spaces = entries
         .iter()
         .filter_map(|entry| {
-            let TypedCurrentResult::Value {
+            let TypedCurrentRow::Value {
                 selector: CurrentSelector::Space { space_id },
                 source_stream_ref: CommitStreamRef::Realm { realm_id: source },
                 value,
@@ -348,13 +348,13 @@ pub(crate) fn kanban_operation_status_text(
 /// Read only negative lifecycle facts from the installed verified current index.
 /// This never grants visibility or reconstructs a missing container from history.
 pub(crate) fn terminal_space_ids_from_current(
-    entries: &[arkret_wire::TypedCurrentResult],
+    entries: &[arkret_wire::TypedCurrentRow],
     realm_id: &str,
 ) -> std::collections::BTreeSet<String> {
     entries
         .iter()
         .filter_map(|entry| {
-            let arkret_wire::TypedCurrentResult::Value {
+            let arkret_wire::TypedCurrentRow::Value {
                 selector: arkret_wire::CurrentSelector::Space { space_id },
                 source_stream_ref:
                     arkret_wire::CommitStreamRef::Realm {

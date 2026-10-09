@@ -132,3 +132,29 @@ pub(super) fn RealmOverrideRow(realm_id: String, label: String, token: Signal<St
         }
     }
 }
+
+/// The three crop controls differ only in their label, bounds and signal.
+#[component]
+pub(super) fn AvatarCropSlider(
+    label_key: &'static str,
+    test_id: &'static str,
+    mut value: Signal<i32>,
+    min: i32,
+    max: i32,
+    disabled: bool,
+) -> Element {
+    rsx! {
+        label { class: "form-field",
+            span { {crate::i18n::tr(label_key)} }
+            crate::ui::slider::Slider {
+                "data-testid": test_id,
+                min: min as f64,
+                max: max as f64,
+                step: 5.0,
+                value: value() as f64,
+                disabled,
+                on_value_change: move |next: f64| value.set((next as i32).clamp(min, max)),
+            }
+        }
+    }
+}

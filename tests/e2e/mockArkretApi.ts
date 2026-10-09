@@ -1367,7 +1367,7 @@ export async function mockArkretApi(
           }),
         });
       }
-      return json(route, principalServiceDescribe());
+      return json(route, principalServiceDescribe(`${url.origin}/`));
     }
 
     if (
@@ -2572,7 +2572,7 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/account/describe" &&
       route.request().method() === "GET"
     ) {
-      return json(route, principalServiceDescribe());
+      return json(route, principalServiceDescribe(`${url.origin}/`));
     }
 
     if (
@@ -2908,7 +2908,6 @@ export async function mockArkretApi(
           account_id,
           generation_state: {
             current_device_generation_ref: generationRef,
-            device_generation_status: "active",
           },
         })),
       });
@@ -3410,7 +3409,7 @@ export async function mockArkretApi(
       const keyState = {
         ...(personalAgentKeyStates.get(agentId) ?? {}),
         pairing_request_id: `pair-renew-${personalAgentCounter}`,
-        pairing_code: "pairing-secret-135791-e2e",
+        pairing_code: "13579100",
         pairing_expires_at: renewedExpiresAt,
       };
       personalAgents.set(agentId, {
@@ -3912,7 +3911,7 @@ function directoryServiceDescribe() {
   };
 }
 
-function principalServiceDescribe() {
+function principalServiceDescribe(baseUrl = "https://local.host/") {
   return {
     service_id: CURRENT_STATION_ID,
     service_resolution: {
@@ -3938,7 +3937,7 @@ function principalServiceDescribe() {
     ...currentHttpDescribeCapabilities([
       PRINCIPAL_DESCRIBE_BUNDLE,
       PRINCIPAL_HTTP_CORE_BUNDLE,
-    ]),
+    ], baseUrl),
     auth_metadata: {
       account_authority: {
         origin: "https://auth.local.host",

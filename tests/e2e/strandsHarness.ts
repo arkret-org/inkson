@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   CURRENT_STATION_ID,
   DEMO_REALM,
+  PRINCIPAL_CONTROL_REALM,
   mockArkretApi,
 } from "./mockArkretApi";
 
@@ -74,6 +75,9 @@ export function testLocalConfig(
     stations: [serverUrl],
     active_account: {
       profile_id: "ak:profile:e2e-alice",
+      // This is Alice's PCR fixture. DID overrides cover the existing stale
+      // identity refresh scenario; they are not a multi-account PCR mapping.
+      principal_control_realm_id: PRINCIPAL_CONTROL_REALM,
       authority: {
         principal_id:
           did === DEFAULT_ACCOUNT_DID
@@ -579,9 +583,20 @@ export function registerStrandsBeforeEach() {
       },
     );
     await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(latestTestId(page, "client-shell")).toBeVisible({
-      timeout: 120_000,
-    });
+    try {
+      await expect(latestTestId(page, "client-shell")).toBeVisible({
+        timeout: 120_000,
+      });
+    } catch (error) {
+      const diagnostics = {
+        url: page.url().split("?")[0],
+        consoleErrors: (consoleErrors.get(page) ?? []).slice(-12),
+        requests: (apiObservations.get(page) ?? []).slice(-20),
+      };
+      throw new Error(
+        `Authenticated client setup failed before product assertions: ${JSON.stringify(diagnostics)}\n${String(error)}`,
+      );
+    }
   });
 
   test.afterEach(async ({ page }, testInfo) => {

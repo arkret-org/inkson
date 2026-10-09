@@ -132,7 +132,7 @@ pub(crate) fn metadata_subject_for(store: &LocalStateStore, subject_id: &str) ->
                 .realm_current_view_entries(subject_id)
                 .and_then(|entries| {
                     entries.into_iter().find_map(|entry| match entry {
-                        arkret_wire::TypedCurrentResult::Value {
+                        arkret_wire::TypedCurrentRow::Value {
                             selector: arkret_wire::CurrentSelector::RealmProfile,
                             value,
                             ..
@@ -299,7 +299,7 @@ mod tests {
                 "_inkson_realm_profile_payload": accepted
             }),
         );
-        let current = arkret_wire::TypedCurrentResult::Value {
+        let current = arkret_wire::TypedCurrentRow::Value {
             selector: arkret_wire::CurrentSelector::RealmProfile,
             source_stream_ref: arkret_wire::CommitStreamRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),

@@ -91,7 +91,7 @@ pub(crate) fn channels_from_current_view(
         .iter()
         .cloned()
         .filter_map(|entry| match entry {
-            arkret_wire::TypedCurrentResult::Value {
+            arkret_wire::TypedCurrentRow::Value {
                 selector: arkret_wire::CurrentSelector::Strand { .. },
                 value,
                 ..
@@ -120,7 +120,7 @@ pub(crate) fn channels_from_current_view_with_store(
             .into_iter()
             .flatten()
             .find_map(|entry| {
-                let arkret_wire::TypedCurrentResult::Value {
+                let arkret_wire::TypedCurrentRow::Value {
                     selector, value, ..
                 } = entry;
                 match selector {

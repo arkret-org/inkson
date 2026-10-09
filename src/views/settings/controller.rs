@@ -22,6 +22,10 @@ pub(super) struct SettingsController {
     pub avatar_upload_status: Signal<String>,
     pub avatar_uploading: Signal<bool>,
     pub avatar_cache_status: Signal<String>,
+    pub avatar_removing: Signal<bool>,
+    pub avatar_reading: Signal<bool>,
+    pub settings_session: SettingsSessionSignals,
+    pub avatar_selection_epoch: Signal<AvatarSelectionEpoch>,
     pub pending_avatar_crop: Signal<Option<PendingAvatarCrop>>,
     pub avatar_crop_zoom: Signal<i32>,
     pub avatar_crop_x: Signal<i32>,
@@ -35,11 +39,89 @@ pub(super) struct SettingsController {
     pub profile_text_saving: Signal<bool>,
     pub mimi_directory: Signal<String>,
     pub mimi_receipt: Signal<String>,
+    pub mimi_directory_loading: Signal<bool>,
+    pub mimi_query_loading: Signal<bool>,
+    pub mimi_submit_loading: Signal<bool>,
+    pub mimi_proxy_loading: Signal<bool>,
+    pub mimi_submit_receipt: Signal<String>,
+    pub mimi_proxy_receipt: Signal<String>,
+
     pub push_state: Signal<String>,
     /// The UI theme preference, republished alongside every avatar change so
     /// the merged `ak.client.ui_state` patch never drops it.
     pub theme: Signal<String>,
     pub state_store: SyncSignal<crate::state::LocalStateStore>,
+}
+
+/// Root-owned session coordinates; each completion checks these synchronously,
+/// so an account switch is effective before the UI cleanup effect is polled.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct SettingsSessionSignals {
+    pub active_account: Signal<Option<crate::config::ActiveAccountContext>>,
+    pub base_url: Signal<String>,
+    pub token: Signal<String>,
+    pub generation: Signal<u64>,
+}
+
+#[derive(Clone, PartialEq)]
+pub(super) struct SettingsSessionStamp {
+    account: Option<(arkret_sdk::AccountId, arkret_sdk::DeviceId, String)>,
+    base_url: String,
+    token: String,
+    generation: u64,
+}
+
+impl SettingsSessionSignals {
+    pub(super) fn capture(self) -> SettingsSessionStamp {
+        SettingsSessionStamp {
+            account: (self.active_account)().map(|account| {
+                (
+                    account.authority,
+                    account.device_id,
+                    account.server_url.to_string(),
+                )
+            }),
+            base_url: (self.base_url)(),
+            token: (self.token)(),
+            generation: (self.generation)(),
+        }
+    }
+
+    pub(super) fn is_current(self, started: &SettingsSessionStamp) -> bool {
+        self.capture() == *started
+    }
+}
+
+/// UI cleanup subscribes to the same live roots as the synchronous completion
+/// fence; it does not create a second session authority or decide acceptance.
+pub(super) fn use_avatar_selection_boundary(mut controller: SettingsController) {
+    let mut previous = use_signal(|| None::<SettingsSessionStamp>);
+    use_effect(move || {
+        let subject = controller.settings_session.capture();
+        if previous.peek().as_ref() != Some(&subject) {
+            controller.cancel_avatar_crop();
+            controller.avatar_uploading.set(false);
+            controller.avatar_removing.set(false);
+            controller.avatar_cache_status.set(String::new());
+            controller.mimi_directory_loading.set(false);
+            controller.mimi_query_loading.set(false);
+            controller.mimi_submit_loading.set(false);
+            controller.mimi_proxy_loading.set(false);
+            controller
+                .mimi_directory
+                .set(crate::i18n::tr("settings.mimi.not_loaded"));
+            controller
+                .mimi_receipt
+                .set(crate::i18n::tr("settings.mimi.no_receipt"));
+            controller
+                .mimi_submit_receipt
+                .set(crate::i18n::tr("settings.mimi.no_receipt"));
+            controller
+                .mimi_proxy_receipt
+                .set(crate::i18n::tr("settings.mimi.no_receipt"));
+            previous.set(Some(subject));
+        }
+    });
 }
 
 impl SettingsController {
@@ -147,27 +229,53 @@ impl SettingsController {
         });
     }
 
+    /// Invalidate in-flight reads before clearing the staged editor.
+    pub(super) fn cancel_avatar_crop(self) {
+        let mut reading = self.avatar_reading;
+        reading.set(false);
+        let mut epoch = self.avatar_selection_epoch;
+        epoch.write().advance();
+        let mut pending = self.pending_avatar_crop;
+        pending.set(None);
+        let mut status = self.avatar_upload_status;
+        status.set(String::new());
+    }
+
     /// Read the picked image and stage it for cropping.
     ///
     /// Every rejection path clears the staged selection as well as the
-    /// uploading flag: a half-staged crop would offer a Save button with
+    /// reading flag: a half-staged crop would offer a Save button with
     /// nothing behind it.
     pub(super) fn stage_avatar_crop(self, file: dioxus::html::FileData, content_type: String) {
         let SettingsController {
+            settings_session,
             mut avatar_upload_status,
-            mut avatar_uploading,
+            mut avatar_selection_epoch,
+            mut avatar_reading,
             mut pending_avatar_crop,
             mut avatar_crop_zoom,
             mut avatar_crop_x,
             mut avatar_crop_y,
             ..
         } = self;
+        if (self.avatar_uploading)() || (self.avatar_removing)() {
+            return;
+        }
+        avatar_reading.set(true);
+        let started_session = settings_session.capture();
+        let selection_epoch = avatar_selection_epoch.write().advance();
         spawn(async move {
-            let bytes = match file.read_bytes().await {
+            let result = file.read_bytes().await;
+            if avatar_selection_epoch() != selection_epoch
+                || !settings_session.is_current(&started_session)
+            {
+                return;
+            }
+            avatar_reading.set(false);
+            let bytes = match result {
                 Ok(b) => b.to_vec(),
                 Err(err) => {
                     pending_avatar_crop.set(None);
-                    avatar_uploading.set(false);
                     avatar_upload_status.set(format!(
                         "{}: {err}",
                         crate::i18n::tr("settings.avatar.error"),
@@ -177,7 +285,6 @@ impl SettingsController {
             };
             if !content_type.starts_with("image/") {
                 pending_avatar_crop.set(None);
-                avatar_uploading.set(false);
                 avatar_upload_status.set(format!(
                     "{}: {}",
                     crate::i18n::tr("settings.avatar.error"),
@@ -189,7 +296,6 @@ impl SettingsController {
                 Ok(dimensions) => dimensions,
                 Err(err) => {
                     pending_avatar_crop.set(None);
-                    avatar_uploading.set(false);
                     avatar_upload_status.set(format!(
                         "{}: {err}",
                         crate::i18n::tr("settings.avatar.error"),
@@ -221,6 +327,7 @@ impl SettingsController {
         crop: crate::avatar_crop::AvatarCrop,
     ) {
         let SettingsController {
+            settings_session,
             theme,
             mut profile_avatar_blob_ref,
             mut avatar_upload_status,
@@ -230,7 +337,11 @@ impl SettingsController {
             mut state_store,
             ..
         } = self;
+        let started_session = settings_session.capture();
         spawn(async move {
+            if !settings_session.is_current(&started_session) {
+                return;
+            }
             let bytes = match crate::avatar_crop::crop_avatar_jpeg(&selection.bytes, crop) {
                 Ok(bytes) => bytes,
                 Err(err) => {
@@ -264,14 +375,18 @@ impl SettingsController {
                     return;
                 }
             };
-            match clients.blob().upload_bytes(bytes, "image/jpeg").await {
+            let upload_result = clients.blob().upload_bytes(bytes, "image/jpeg").await;
+            if !settings_session.is_current(&started_session) {
+                return;
+            }
+            match upload_result {
                 Ok(resp) => {
                     let blob_ref = resp.blob_ref.to_string();
                     let authority_evidence = state_store.read().recovery_material_evidence();
                     // Publish publicly first; only then refresh the
                     // local mirror so a failed profile update does not
                     // display an avatar that never became active.
-                    match async {
+                    let profile_result = async {
                         let authority_evidence = authority_evidence.ok_or_else(|| {
                             anyhow::anyhow!(
                                 "profile update requires durable accepted PCR authority evidence"
@@ -296,8 +411,11 @@ impl SettingsController {
                         .await
                         .map_err(|error| anyhow::anyhow!(error.display()))
                     }
-                    .await
-                    {
+                    .await;
+                    if !settings_session.is_current(&started_session) {
+                        return;
+                    }
+                    match profile_result {
                         Ok(_) => {
                             state_store
                                 .write()
@@ -356,16 +474,21 @@ impl SettingsController {
         first_profile_display_name: String,
     ) {
         let SettingsController {
+            settings_session,
             theme,
             mut profile_avatar_blob_ref,
-            mut avatar_uploading,
+            mut avatar_removing,
             mut avatar_cache_status,
             mut pending_avatar_crop,
             mut avatar_refresh_nonce,
             mut state_store,
             ..
         } = self;
+        let started_session = settings_session.capture();
         spawn(async move {
+            if !settings_session.is_current(&started_session) {
+                return;
+            }
             let authority_evidence = state_store.read().recovery_material_evidence();
             let result = async {
                 let authority_evidence = authority_evidence.ok_or_else(|| {
@@ -392,6 +515,9 @@ impl SettingsController {
                 .map_err(|error| anyhow::anyhow!(error.display()))
             }
             .await;
+            if !settings_session.is_current(&started_session) {
+                return;
+            }
             match result {
                 Ok(_) => {
                     state_store
@@ -406,11 +532,11 @@ impl SettingsController {
                     profile_avatar_blob_ref.set(String::new());
                     avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
                     pending_avatar_crop.set(None);
-                    avatar_uploading.set(false);
+                    avatar_removing.set(false);
                     avatar_cache_status.set(crate::i18n::tr("settings.avatar.removed"));
                 }
                 Err(err) => {
-                    avatar_uploading.set(false);
+                    avatar_removing.set(false);
                     avatar_cache_status.set(format!("Avatar removal failed: {err}"));
                     tracing::warn!("avatar profile clear failed: {err}");
                 }
@@ -462,16 +588,30 @@ impl SettingsController {
     /// MIMI interop probe: read the provider directory.
     pub(super) fn refresh_mimi_directory(self, base: String, api_token: String) {
         let SettingsController {
-            mut mimi_directory, ..
+            settings_session,
+            mut mimi_directory_loading,
+            mut mimi_directory,
+            ..
         } = self;
+        if mimi_directory_loading() {
+            return;
+        }
+        mimi_directory_loading.set(true);
+        let started_session = settings_session.capture();
         spawn(async move {
-            match with_authed_sdk_client(&base, api_token, |http| async move {
+            if !settings_session.is_current(&started_session) {
+                return;
+            }
+            let result = with_authed_sdk_client(&base, api_token, |http| async move {
                 http.mimi_provider_directory(None, &[])
                     .await
                     .map_err(anyhow::Error::from)
             })
-            .await
-            {
+            .await;
+            if !settings_session.is_current(&started_session) {
+                return;
+            }
+            match result {
                 Ok(directory) => {
                     let features = serde_json::to_string_pretty(&directory.mimi.features)
                         .unwrap_or_else(|_| "[]".to_owned());
@@ -490,16 +630,28 @@ impl SettingsController {
                     );
                 }
             }
+            mimi_directory_loading.set(false);
         });
     }
 
     /// MIMI interop probe: resolve a fixed identifier commitment.
     pub(super) fn query_mimi_identifiers(self, base: String, api_token: String) {
         let SettingsController {
-            mut mimi_receipt, ..
+            settings_session,
+            mut mimi_query_loading,
+            mut mimi_receipt,
+            ..
         } = self;
+        if mimi_query_loading() {
+            return;
+        }
+        mimi_query_loading.set(true);
+        let started_session = settings_session.capture();
         spawn(async move {
-            match with_authed_sdk_client(&base, api_token, |http| async move {
+            if !settings_session.is_current(&started_session) {
+                return;
+            }
+            let result = with_authed_sdk_client(&base, api_token, |http| async move {
                 let request = arkret_sdk::MimiIdentifierQueryRequestBody {
                     identifiers: vec![arkret_sdk::MimiIdentifier {
                         kind: arkret_sdk::MimiIdentifierKind::MimiUri,
@@ -521,8 +673,11 @@ impl SettingsController {
                 .await
                 .map_err(anyhow::Error::from)
             })
-            .await
-            {
+            .await;
+            if !settings_session.is_current(&started_session) {
+                return;
+            }
+            match result {
                 Ok(response) => {
                     let first = response
                         .matches
@@ -548,6 +703,7 @@ impl SettingsController {
                     );
                 }
             }
+            mimi_query_loading.set(false);
         });
     }
 
@@ -560,10 +716,21 @@ impl SettingsController {
         device: String,
     ) {
         let SettingsController {
-            mut mimi_receipt, ..
+            settings_session,
+            mut mimi_submit_loading,
+            mut mimi_submit_receipt,
+            ..
         } = self;
+        if mimi_submit_loading() {
+            return;
+        }
+        mimi_submit_loading.set(true);
+        let started_session = settings_session.capture();
         spawn(async move {
-            match with_authed_sdk_client(&base, api_token, |http| async move {
+            if !settings_session.is_current(&started_session) {
+                return;
+            }
+            let result = with_authed_sdk_client(&base, api_token, |http| async move {
                 let plaintext = br#"{"source_format":"text/markdown;variant=GFM-MIMI","body":"MIMI interop test from inkson","mimi_room_uri":"mimi://mimi.example.com/rooms/01JSMIMI"}"#;
                 let request = arkret_sdk::MimiSubmitMessageRequestBody {
                     sender_actor_id: actor,
@@ -590,22 +757,25 @@ impl SettingsController {
                 .await
                 .map_err(anyhow::Error::from)
             })
-            .await
-            {
+            .await;
+            if !settings_session.is_current(&started_session) {
+                return;
+            }
+            match result {
                 Ok(response) => {
-                    mimi_receipt.set(format!(
+                    mimi_submit_receipt.set(format!(
                         "submit-message event {} rejected {}",
                         response
                             .event_ref
                             .as_ref()
                             .map(ToString::to_string)
                             .unwrap_or_else(|| "no-event".to_owned()),
-                                response.rejections.len()
+                        response.rejections.len()
                     ));
                 }
                 Err(err) => {
                     let message = format!("MIMI submit failed: {}", err.display());
-                    mimi_receipt.set(message.clone());
+                    mimi_submit_receipt.set(message.clone());
                     crate::components::feedback::toast_error(
                         "feedback.mimi_failed",
                         vec![],
@@ -613,16 +783,28 @@ impl SettingsController {
                     );
                 }
             }
+            mimi_submit_loading.set(false);
         });
     }
 
     /// MIMI interop probe: proxy-download a fixed asset reference.
     pub(super) fn proxy_download_mimi_asset(self, base: String, api_token: String, actor: String) {
         let SettingsController {
-            mut mimi_receipt, ..
+            settings_session,
+            mut mimi_proxy_loading,
+            mut mimi_proxy_receipt,
+            ..
         } = self;
+        if mimi_proxy_loading() {
+            return;
+        }
+        mimi_proxy_loading.set(true);
+        let started_session = settings_session.capture();
         spawn(async move {
-            match with_authed_sdk_client(&base, api_token, |http| async move {
+            if !settings_session.is_current(&started_session) {
+                return;
+            }
+            let result = with_authed_sdk_client(&base, api_token, |http| async move {
                 let request = arkret_sdk::MimiProxyDownloadRequestBody {
                     asset_ref: arkret_sdk::NonEmptyString::new(
                         "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
@@ -640,10 +822,13 @@ impl SettingsController {
                 .await
                 .map_err(anyhow::Error::from)
             })
-            .await
-            {
+            .await;
+            if !settings_session.is_current(&started_session) {
+                return;
+            }
+            match result {
                 Ok(response) => {
-                    mimi_receipt.set(format!(
+                    mimi_proxy_receipt.set(format!(
                         "proxy-download {} headers {}",
                         response.download_ref,
                         response.headers.len()
@@ -651,7 +836,7 @@ impl SettingsController {
                 }
                 Err(err) => {
                     let message = format!("MIMI proxy download failed: {}", err.display());
-                    mimi_receipt.set(message.clone());
+                    mimi_proxy_receipt.set(message.clone());
                     crate::components::feedback::toast_error(
                         "feedback.mimi_failed",
                         vec![],
@@ -659,6 +844,7 @@ impl SettingsController {
                     );
                 }
             }
+            mimi_proxy_loading.set(false);
         });
     }
 
@@ -763,3 +949,7 @@ impl SettingsController {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "controller_tests.rs"]
+mod tests;

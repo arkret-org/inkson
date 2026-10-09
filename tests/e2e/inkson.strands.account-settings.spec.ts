@@ -65,7 +65,7 @@ test("account menu keeps the viewer fallback handle", async ({
   await dismissBlockingRecoveryModal(page);
   await latestTestId(page, "account-menu-button").click();
 
-  await expect(latestTestId(page, "account-menu-handles")).toHaveText("@alice:local.host");
+  await expect(latestTestId(page, "account-menu-handles")).toHaveText("alice:local.host");
 });
 
 test("settings language selector offers only English and Chinese", async ({ page }) => {
@@ -203,6 +203,79 @@ test("settings avatar upload fails closed before profile publication without dur
   await expect(page.getByTestId("settings-avatar-crop-editor")).toBeHidden();
 });
 
+test("avatar file replacement and cancellation ignore late reads", async ({ page }) => {
+  await gotoAndDismissRecovery(page, "/settings/account");
+  // Dioxus 0.7 WebFileData uses FileReader.readAsArrayBuffer, not Blob.arrayBuffer.
+  await page.evaluate(() => {
+    const original = FileReader.prototype.readAsArrayBuffer;
+    const pending: Array<() => Promise<void>> = [];
+    (window as any).__avatarReads = pending;
+    FileReader.prototype.readAsArrayBuffer = function (blob: Blob) {
+      if (blob instanceof File && blob.name.startsWith("delayed-")) {
+        pending.push(() => new Promise<void>((resolve) => {
+          this.addEventListener("loadend", () => resolve(), { once: true });
+          original.call(this, blob);
+        }));
+      } else {
+        original.call(this, blob);
+      }
+    };
+  });
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  const input = page.getByTestId("settings-avatar-input");
+  await input.setInputFiles({ name: "delayed-invalid.png", mimeType: "image/png", buffer: Buffer.from("invalid image") });
+  await expect(page.getByTestId("settings-avatar-read-cancel")).toBeVisible();
+  await input.setInputFiles({ name: "replacement.png", mimeType: "image/png", buffer: png });
+  await expect(page.getByTestId("settings-avatar-source-size")).toContainText("1 x 1");
+  const latestStatus = await page.getByTestId("settings-avatar-upload-progress").textContent();
+  await page.evaluate(() => (window as any).__avatarReads.shift()());
+  // Let FileReader's load event and the subsequent Dioxus render settle.
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.getByTestId("settings-avatar-source-size")).toContainText("1 x 1");
+  await expect(page.getByTestId("settings-avatar-upload-progress")).toHaveText(latestStatus!);
+  await page.getByTestId("settings-avatar-crop-cancel").click();
+
+  await input.setInputFiles({ name: "delayed-cancel.png", mimeType: "image/png", buffer: png });
+  await expect(page.getByTestId("settings-avatar-read-cancel")).toBeVisible();
+  await page.getByTestId("settings-avatar-read-cancel").click();
+  await page.evaluate(() => (window as any).__avatarReads.shift()());
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.getByTestId("settings-avatar-crop-editor")).toHaveCount(0);
+  await expect(page.getByTestId("settings-avatar-upload-progress")).toHaveCount(0);
+
+  await input.setInputFiles({ name: "fresh.png", mimeType: "image/png", buffer: png });
+  await expect(page.getByTestId("settings-avatar-crop-stage")).toBeVisible();
+  // Replay the original inline declarations on this DOM. Computed appearance
+  // must match the extracted feature classes, including tokens and cascade.
+  const replay = await page.evaluate(() => {
+    const probes: Array<[string, string, string[]]> = [
+      [".settings-avatar-crop-dialog", "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: var(--layer-modal, 300); display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 16px; align-items: center; width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; padding: 18px; border: 1px solid var(--border, #333); border-radius: var(--radius-lg, 12px); background: var(--surface-solid, var(--surface, #1a1d22)); box-shadow: 0 0 0 9999px rgba(20, 22, 30, 0.55), var(--shadow-lg, 0 24px 56px rgba(0, 0, 0, 0.22));", ["position", "left", "top", "transform", "z-index", "display", "grid-template-columns", "gap", "align-items", "width", "max-height", "overflow", "padding", "border", "border-radius", "background-color", "box-shadow"]],
+      [".settings-avatar-crop-stage", "position: relative; width: min(180px, 70vw); aspect-ratio: 1; justify-self: center; border-radius: 50%; overflow: hidden; border: 1px solid var(--border-default, #333); background: var(--bg-elevated, #1a1d22);", ["position", "width", "aspect-ratio", "justify-self", "border-radius", "overflow", "border", "background-color"]],
+      [".settings-avatar-crop-controls", "display: grid; gap: 10px;", ["display", "gap"]],
+      [".settings-avatar-crop-image", "width: 100%; height: 100%; object-fit: cover; transform-origin: center;", ["width", "height", "object-fit", "transform-origin", "transform"]],
+      [".settings-avatar-file-input", "display: none;", ["display"]],
+    ];
+    return probes.map(([selector, legacy, properties]) => {
+      const element = document.querySelector<HTMLElement>(selector)!;
+      const before = properties.map((property) => getComputedStyle(element).getPropertyValue(property));
+      const saved = element.getAttribute("style");
+      element.style.cssText += legacy;
+      const after = properties.map((property) => getComputedStyle(element).getPropertyValue(property));
+      if (saved === null) element.removeAttribute("style"); else element.setAttribute("style", saved);
+      return { selector, before, after };
+    });
+  });
+  for (const probe of replay) expect(probe.after, probe.selector).toEqual(probe.before);
+  // Invalid replacement must discard the previous valid crop.
+  await input.setInputFiles({ name: "invalid.png", mimeType: "image/png", buffer: Buffer.from("invalid image") });
+  await expect(page.getByTestId("settings-avatar-crop-editor")).toHaveCount(0);
+  await expect(page.getByTestId("settings-avatar-upload-progress")).not.toHaveText(latestStatus!);
+
+});
+
 test("light theme renders the sidebar with light navigation colors", async ({ page }) => {
   await openSettings(page);
   await page.getByTestId("settings-nav-item-theme").click();
@@ -276,6 +349,36 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
   await expect(page.getByTestId("mimi-action-receipt")).toContainText(
     "submit-message event ak:event:AX-AFSYZHl0U2MQP-Ng7mU-aOm_Flhf0pVBoHYUK6Shg rejected 0",
   );
+});
+
+test("MIMI concurrent actions keep separate pending states and late results", async ({ page }) => {
+  await gotoAndDismissRecovery(page, "/settings/mimi");
+  let releaseQuery!: () => void;
+  const heldQuery = new Promise<void>((resolve) => { releaseQuery = resolve; });
+  let queryRequests = 0;
+  await page.route("**/_arkret/open/mimi/identifiers/query", async (route) => {
+    queryRequests += 1;
+    await heldQuery;
+    await route.fallback();
+  });
+  await page.getByTestId("mimi-identifier-query").click();
+  await expect(page.getByTestId("mimi-identifier-query")).toBeDisabled();
+  await expect(page.getByTestId("mimi-submit-message")).toBeEnabled();
+  await expect(page.getByTestId("mimi-proxy-download")).toBeEnabled();
+  // A duplicate DOM click must not launch another query while pending.
+  await page.getByTestId("mimi-identifier-query").evaluate((element) => (element as HTMLElement).click());
+  await page.getByTestId("mimi-submit-message").click();
+  await page.getByTestId("mimi-proxy-download").click();
+  await expect(page.getByTestId("mimi-submit-receipt")).toContainText("submit-message event");
+  await expect(page.getByTestId("mimi-proxy-receipt")).toContainText("proxy-download https://");
+  const submitted = await page.getByTestId("mimi-submit-receipt").textContent();
+  const downloaded = await page.getByTestId("mimi-proxy-receipt").textContent();
+  releaseQuery();
+  await expect(page.getByTestId("mimi-query-receipt")).toContainText("identifier results 1");
+  await expect(page.getByTestId("mimi-identifier-query")).toBeEnabled();
+  await expect(page.getByTestId("mimi-submit-receipt")).toHaveText(submitted!);
+  await expect(page.getByTestId("mimi-proxy-receipt")).toHaveText(downloaded!);
+  expect(queryRequests).toBe(1);
 });
 
 test("account settings split account/server info and surface Agents", async ({ page }) => {
@@ -609,7 +712,6 @@ test("expired Agent pairing renews in place with a fresh handle", async ({ page 
 test("diagnostic and preview surfaces stay behind clear user-facing states", async ({ page }) => {
   await page.goto("/directory", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("directory-panel")).toBeVisible();
-  await expect(page.getByTestId("directory-three-axes-banner")).not.toHaveAttribute("open", "");
 
   // The Garth route-evaluator adapter is wired, so /call renders the real
   // dialer; joins remain fail-closed behind evaluator-verified route material.

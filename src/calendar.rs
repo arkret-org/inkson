@@ -69,7 +69,7 @@ pub(crate) fn build_encrypted_calendar_rsvp_event(
         .entries
         .iter()
         .find_map(|row| match row {
-            arkret_wire::TypedCurrentResult::Value {
+            arkret_wire::TypedCurrentRow::Value {
                 selector:
                     arkret_wire::CurrentSelector::Strand {
                         strand_id: selected,

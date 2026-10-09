@@ -677,7 +677,7 @@ pub(super) fn DirectStructurePanel(
                 .filter(|entry| {
                     matches!(
                         entry,
-                        arkret_sdk::TypedCurrentResult::Value {
+                        arkret_sdk::TypedCurrentRow::Value {
                             selector: arkret_sdk::CurrentSelector::Strand { .. },
                             ..
                         }

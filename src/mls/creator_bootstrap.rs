@@ -281,7 +281,7 @@ pub(crate) async fn should_resume_creator_genesis(
                 .realm_current_state_entries(realm_id)
                 .iter()
                 .any(|entry| {
-                    let arkret_wire::TypedCurrentResult::Value {
+                    let arkret_wire::TypedCurrentRow::Value {
                         selector, value, ..
                     } = entry;
                     matches!(selector, arkret_wire::CurrentSelector::RealmGenesis)

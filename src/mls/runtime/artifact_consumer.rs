@@ -691,7 +691,7 @@ async fn own_recovery_tail(
         .current_state_entries
         .iter()
         .filter_map(|row| match row {
-            arkret_wire::TypedCurrentResult::Value {
+            arkret_wire::TypedCurrentRow::Value {
                 selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref },
                 value,
                 ..
@@ -1958,7 +1958,7 @@ mod tests {
                 stream_position: 2,
                 commit_id: rows[1].commit.commit_id.clone(),
             }],
-            current_state_entries: vec![arkret_wire::TypedCurrentResult::Value {
+            current_state_entries: vec![arkret_wire::TypedCurrentRow::Value {
                 selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref: scope },
                 source_stream_ref: stream,
                 revision: arkret_wire::CurrentRevision {
@@ -2074,7 +2074,7 @@ mod tests {
                         request_id: request.request_id,
                         realm_id: request.realm_id,
                         recipient_account_id: request.recipient_account_id,
-                        results: vec![arkret_sdk::SignerKeyQueryResult::HistoricalResolved {
+                        results: vec![arkret_sdk::SignerKeyQueryOutcome::HistoricalResolved {
                             selector: request.queries[0].clone(),
                             accepted_at: original_accepted_at,
                             key: original_key.clone(),

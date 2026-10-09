@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use arkret_sdk::signatures::PublicKeyMaterial;
 use arkret_sdk::{
-    Did, DidCoreId, DidUrl, HistoricalSignerKeyQuerySender, RealmId, SignerKeyQueryResult,
+    Did, DidCoreId, DidUrl, HistoricalSignerKeyQuerySender, RealmId, SignerKeyQueryOutcome,
     SignerKeyQuerySelector, SignerKeysQueryRequestBody,
 };
 use serde_json::Value;
@@ -160,7 +160,7 @@ pub(crate) async fn prefetch_durable_historical_agent_keys(
             }
         };
         for result in outcome.results {
-            let SignerKeyQueryResult::HistoricalResolved {
+            let SignerKeyQueryOutcome::HistoricalResolved {
                 selector,
                 key,
                 accepted_at,
@@ -838,7 +838,7 @@ mod historical_result_tests {
                 request_id: request.request_id.clone(),
                 realm_id: request.realm_id.clone(),
                 recipient_account_id: request.recipient_account_id.clone(),
-                results: vec![SignerKeyQueryResult::HistoricalResolved {
+                results: vec![SignerKeyQueryOutcome::HistoricalResolved {
                     selector: expected_selector,
                     key: arkret_sdk::ResolvedSignerKey {
                         public_key_b64u: entry.public_key_b64u,

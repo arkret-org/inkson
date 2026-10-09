@@ -878,7 +878,7 @@ pub(super) mod tests {
             let revision = rows[number.min(rows.len() - 1)].commit();
             snapshot
                 .current_state_entries
-                .push(arkret_sdk::TypedCurrentResult::Value {
+                .push(arkret_sdk::TypedCurrentRow::Value {
                     selector: arkret_sdk::CurrentSelector::Strand { strand_id },
                     source_stream_ref: revision.stream_ref.clone(),
                     revision: arkret_sdk::CurrentRevision {

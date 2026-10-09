@@ -5,8 +5,8 @@ fn current_space_siblings(
     kind: &str,
     title: &str,
     parent: Option<&str>,
-) -> Vec<arkret_wire::TypedCurrentResult> {
-    use arkret_wire::{CommitStreamRef, CurrentRevision, CurrentSelector, TypedCurrentResult};
+) -> Vec<arkret_wire::TypedCurrentRow> {
+    use arkret_wire::{CommitStreamRef, CurrentRevision, CurrentSelector, TypedCurrentRow};
     let space_id = arkret_sdk::SpaceId::new(id).unwrap();
     let space = arkret_sdk::Space::new(
         space_id.clone(),
@@ -34,7 +34,7 @@ fn current_space_siblings(
         ),
     ]
     .into_iter()
-    .map(|(selector, value)| TypedCurrentResult::Value {
+    .map(|(selector, value)| TypedCurrentRow::Value {
         selector,
         source_stream_ref: CommitStreamRef::Realm {
             realm_id: arkret_sdk::RealmId::new(PENDING_TEST_REALM).unwrap(),
@@ -161,7 +161,7 @@ fn current_space_requires_exact_realm_and_complete_resolved_siblings() {
     ));
     assert!(space_container_views_from_current(&cycle, PENDING_TEST_REALM).is_empty());
     let mut foreign = entries.clone();
-    let arkret_wire::TypedCurrentResult::Value {
+    let arkret_wire::TypedCurrentRow::Value {
         source_stream_ref, ..
     } = &mut foreign[1];
     *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
@@ -560,7 +560,7 @@ fn terminal_current_suppresses_history_when_projection_omits_the_board() {
         .unwrap(),
     );
     space.state = Some(arkret_sdk::SpaceState::Tombstoned);
-    let entry = arkret_wire::TypedCurrentResult::Value {
+    let entry = arkret_wire::TypedCurrentRow::Value {
         selector: arkret_wire::CurrentSelector::Space {
             space_id: space.id.clone().unwrap(),
         },
@@ -602,7 +602,7 @@ fn terminal_current_suppresses_history_when_projection_omits_the_board() {
     );
 
     let mut foreign = entries.clone();
-    let arkret_wire::TypedCurrentResult::Value {
+    let arkret_wire::TypedCurrentRow::Value {
         source_stream_ref, ..
     } = &mut foreign[0]
     else {
@@ -614,7 +614,7 @@ fn terminal_current_suppresses_history_when_projection_omits_the_board() {
     };
     assert!(terminal_space_ids_from_current(&foreign, PENDING_TEST_REALM).is_empty());
     foreign = entries.clone();
-    let arkret_wire::TypedCurrentResult::Value { selector, .. } = &mut foreign[0] else {
+    let arkret_wire::TypedCurrentRow::Value { selector, .. } = &mut foreign[0] else {
         unreachable!()
     };
     *selector = arkret_wire::CurrentSelector::Space {

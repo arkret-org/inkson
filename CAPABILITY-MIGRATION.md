@@ -21,7 +21,7 @@ Realm's **current governance Station**, which answers with an authority-signed
 | Ordering | producer `actor_seq` + `hlc` + `prev_refs` | `RealmCommit { stream_ref, stream_position, previous_commit_ref }`, one commit per Event |
 | Streams | one Realm-global cursor | independent `CommitStreamRef::{Realm, Circle, Sidecar}` streams, each with its own position |
 | Catch-up | `ak.self.events.read.query` pages | `StreamScanRequest{realm_id, stream_ref, after_position, limit}` → `StreamScanOutcome{commits, truncated}` |
-| Current state | `ak:cell:*` current results | `RealmStateSnapshot.current_state_entries` — `TypedCurrentResult` keyed by `CurrentSelector` with a `CurrentRevision{commit_id, stream_position}` |
+| Current state | `ak:cell:*` current results | `RealmStateSnapshot.current_state_entries` — `TypedCurrentRow` keyed by `CurrentSelector` with a `CurrentRevision{commit_id, stream_position}` |
 | Realm authority | `ak.component.realm.authority_root.v1` cell + controller epoch | `RealmAuthorityBundle` (genesis + double-signed handoff chain + nonce-bound current assertion); `IssuerAuthorityRef::RealmAuthority{realm_id, governance_station_id, authority_generation, basis}` |
 | "Is this scope encrypted?" | create-locked `encryption_profile` + encryption floor | the scope has an accepted `ak.mls.genesis` (`CurrentSelector::MlsGroup{scope_ref}` → `MlsGroupCurrent`) — plaintext before, irreversibly RFC 9420 after |
 | MLS Welcome | `ak.mls.welcome` Event | `MlsWelcomeDelivery` (`ak:mls_welcome_delivery:<uuidv7>`), producer-signed, delivered inside `MlsCommitSubmission` |
@@ -67,7 +67,7 @@ Realm's **current governance Station**, which answers with an authority-signed
 | Capability grants | `src/operation/ak_ops/capability.rs` with `IssuerRealmAuthorityBasis::from_verified_bundle` | inline tests above |
 | Consent | `src/operation/ak_ops/consent.rs` (`ConsentRevokePayload.expected_revision` from `ConsentView.revision`), `src/transport/account.rs` on `PATH_SELF_CONSENT_RESULT*` | `src/views/settings/consent.rs` tests |
 | MLS Welcome admission | `src/mls/welcome_delivery.rs` — the host conversion between `MlsWelcomeDelivery` (wire) and `MlsWelcomeEnvelope` (provider), plus `enqueue_admissible_welcomes` over `garth::retain_admissible_welcomes` | `src/mls/welcome_delivery.rs` inline tests (epoch comes from the Commit, wrong Commit refused, Agent runtime needs its accepted key binding, foreign endpoint never queued) |
-| Current-state projection | `src/current_projection.rs` over `TypedCurrentResult` / `CurrentSelector`, incl. `scope_has_accepted_mls_genesis` | `src/local_state_tests/projections.rs` |
+| Current-state projection | `src/current_projection.rs` over `TypedCurrentRow` / `CurrentSelector`, incl. `scope_has_accepted_mls_genesis` | `src/local_state_tests/projections.rs` |
 | Chat, Direct Conversation, reactions, polls, read receipts, mentions | `src/views/chat/`, `src/messaging/`, `src/state/direct_conversation.rs` | `src/views/chat/tests/`, `tests/e2e/inkson.strands.chat-discussion.spec.ts` |
 | Circle, Realm, Space, Strand, Kanban, calendar | `src/circle.rs`, `src/circle_mls.rs`, `src/realm_tree.rs`, `src/views/kanban/`, `src/calendar.rs` | `src/views/kanban/tests/`, `tests/e2e/inkson.strands.kanban.spec.ts` |
 | Media / WebRTC (SFrame RFC 9420 exporter), push | `src/media/`, `src/rtc_transport/`, `src/push/` | `src/push/tests.rs`, `tests/cross_platform/push_*.spec.ts` |
@@ -168,7 +168,7 @@ implemented locally first.
 
 | Inkson call sites | Waits on |
 | --- | --- |
-| `src/state/current_index.rs` (71 errors; `TypedCurrentResult::{revision, target}` at :1605-:1606, `CleanupTask.target` at :1552, and the projector arity from :1570 onward) | whether a typed current result carries its own `CurrentRevision` and target, or is addressed only through `CurrentSelector`. The whole local current index is written against the former. |
+| `src/state/current_index.rs` (71 errors; `TypedCurrentRow::{revision, target}` at :1605-:1606, `CleanupTask.target` at :1552, and the projector arity from :1570 onward) | whether a typed current result carries its own `CurrentRevision` and target, or is addressed only through `CurrentSelector`. The whole local current index is written against the former. |
 | `src/operation/../operation_tests.rs` :586, :927, :969, :988, :1042, :1060, :1081; `src/transport/tests/envelopes_payloads.rs` :123, :144, :159, :213, :443, :453, :463 | the `*_cell_writes` / `cell_write_projector` family (`pre_authoring_cell_writes`, `project_registered_cell_writes(_with_pre_state)`, `direct_registered_cell_writes`) — 6 of 147 event kinds have `result_writes[]` today |
 | `src/views/realm_admin/admin_panel*`, `src/transport/realm_write.rs:817` (`RealmAuthorityRootValue`, `REALM_AUTHORITY_RESET`, `build_realm_authority_reset_intent`) | the authority-root typed current result and a `CurrentSelector` for it; see the `ak.realm.authority.reset` row under "Blocked by an SDK gap" |
 | `src/sync_engine.rs` `run_circle_scope_rotate_pass`; `src/circle_mls.rs` `MembershipRemovalSnapshot.{request, local_mls_leaves}` | the `member_state` family, one of the 7 registered families with no writer. The pass's premise was "local membership projections are never negative authority for an MLS Remove"; the successor authority is the member roster current result. |

@@ -187,7 +187,7 @@ impl LocalStateStore {
     pub(crate) fn realm_current_state_entries(
         &self,
         realm_id: &str,
-    ) -> Vec<arkret_wire::TypedCurrentResult> {
+    ) -> Vec<arkret_wire::TypedCurrentRow> {
         self.realm_current_view_entries(realm_id)
             .unwrap_or_default()
     }
@@ -995,7 +995,7 @@ impl LocalStateStore {
         }];
         let mut circles = std::collections::BTreeSet::new();
         for entry in self.realm_current_state_entries(realm.as_str()) {
-            if let arkret_wire::TypedCurrentResult::Value {
+            if let arkret_wire::TypedCurrentRow::Value {
                 selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref },
                 ..
             } = &entry

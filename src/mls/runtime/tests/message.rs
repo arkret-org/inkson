@@ -1988,7 +1988,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
         }),
     };
     let rows = vec![
-        arkret_wire::TypedCurrentResult::Value {
+        arkret_wire::TypedCurrentRow::Value {
             selector: arkret_wire::CurrentSelector::Strand {
                 strand_id: strand_id.clone(),
             },
@@ -1996,7 +1996,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
             revision: revision.clone(),
             value: serde_json::to_value(strand).unwrap(),
         },
-        arkret_wire::TypedCurrentResult::Value {
+        arkret_wire::TypedCurrentRow::Value {
             selector: arkret_wire::CurrentSelector::CalendarScheduleSource {
                 strand_id: strand_id.clone(),
             },
@@ -2004,7 +2004,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
             revision: revision.clone(),
             value: serde_json::to_value(source).unwrap(),
         },
-        arkret_wire::TypedCurrentResult::Value {
+        arkret_wire::TypedCurrentRow::Value {
             selector: arkret_wire::CurrentSelector::MlsGroup {
                 scope_ref: scope.clone(),
             },
@@ -2038,7 +2038,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
         )
     };
     let mut bad = rows.clone();
-    let arkret_wire::TypedCurrentResult::Value { value, .. } = &mut bad[1];
+    let arkret_wire::TypedCurrentRow::Value { value, .. } = &mut bad[1];
     value["metadata_context"]["signer_id"] =
         json!(fixture::account_actor("did:web:mallory.example"));
     fixture::install_current_entries(&mut state, realm, bad);

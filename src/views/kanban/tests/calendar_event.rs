@@ -633,7 +633,7 @@ fn strand_current_retains_the_independently_folded_rsvp_cells() {
         cards: vec![card],
         state: SpaceContainerLifecycleState::Active,
     }];
-    let row = arkret_wire::TypedCurrentResult::Value {
+    let row = arkret_wire::TypedCurrentRow::Value {
         selector: arkret_wire::CurrentSelector::Strand {
             strand_id: id.parse().unwrap(),
         },

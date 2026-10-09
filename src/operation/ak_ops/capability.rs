@@ -109,7 +109,7 @@ pub fn capability_revoke_from_effective_row(
 pub fn capability_revoke_from_owned_current(
     realm_id: &str,
     actor: &str,
-    row: &arkret_sdk::exact_current_results::CapabilityGrantExactCurrentResult,
+    row: &arkret_sdk::exact_current_results::CapabilityGrantExactCurrentRow,
     reason: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let realm = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;

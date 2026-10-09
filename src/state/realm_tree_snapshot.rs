@@ -176,7 +176,7 @@ impl LocalStateStore {
     pub(crate) fn realm_current_view_entries(
         &self,
         realm_id: &str,
-    ) -> Option<Vec<arkret_wire::TypedCurrentResult>> {
+    ) -> Option<Vec<arkret_wire::TypedCurrentRow>> {
         self.current_product_view()
             .and_then(|view| view.entries_for(realm_id).map(<[_]>::to_vec))
     }
@@ -274,7 +274,7 @@ impl LocalStateStore {
             .realm_current_state_entries(realm_id)
             .iter()
             .any(|entry| {
-                let arkret_wire::TypedCurrentResult::Value {
+                let arkret_wire::TypedCurrentRow::Value {
                     selector, value, ..
                 } = entry;
                 *selector == arkret_wire::CurrentSelector::RealmGenesis

@@ -48,7 +48,6 @@ use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
-use crate::ui::slider::Slider;
 use crate::views::helpers::{actor_display_label, short_protocol_id};
 
 /// Resolve the relative expiry picker choice into a typed UTC `clears_at`
@@ -573,10 +572,13 @@ pub fn SettingsPanel(
     let mut avatar_upload_status = use_signal(String::new);
     let mut avatar_uploading = use_signal(|| false);
     let mut avatar_cache_status = use_signal(String::new);
-    let mut pending_avatar_crop = use_signal(|| None::<PendingAvatarCrop>);
-    let mut avatar_crop_zoom = use_signal(|| 125_i32);
-    let mut avatar_crop_x = use_signal(|| 0_i32);
-    let mut avatar_crop_y = use_signal(|| 0_i32);
+    let mut avatar_removing = use_signal(|| false);
+    let avatar_reading = use_signal(|| false);
+    let avatar_selection_epoch = use_signal(AvatarSelectionEpoch::default);
+    let pending_avatar_crop = use_signal(|| None::<PendingAvatarCrop>);
+    let avatar_crop_zoom = use_signal(|| 125_i32);
+    let avatar_crop_x = use_signal(|| 0_i32);
+    let avatar_crop_y = use_signal(|| 0_i32);
     let mut avatar_refresh_nonce = use_signal(|| 0_u64);
     let mut profile_display_name = use_signal(|| account_primary_handle.clone());
     let mut profile_bio = use_signal(String::new);
@@ -585,6 +587,12 @@ pub fn SettingsPanel(
     let mut profile_hydration_subject = use_signal(String::new);
     let mimi_directory = use_signal(|| crate::i18n::tr("settings.mimi.not_loaded"));
     let mimi_receipt = use_signal(|| crate::i18n::tr("settings.mimi.no_receipt"));
+    let mimi_directory_loading = use_signal(|| false);
+    let mimi_query_loading = use_signal(|| false);
+    let mimi_submit_loading = use_signal(|| false);
+    let mimi_proxy_loading = use_signal(|| false);
+    let mimi_submit_receipt = use_signal(|| crate::i18n::tr("settings.mimi.no_receipt"));
+    let mimi_proxy_receipt = use_signal(|| crate::i18n::tr("settings.mimi.no_receipt"));
     let realm_watch_overrides = state_store.read().realm_watch_levels();
     let known_realms = known_realm_options(&state_store.read());
     let active_locale = locale();
@@ -606,6 +614,15 @@ pub fn SettingsPanel(
         avatar_upload_status,
         avatar_uploading,
         avatar_cache_status,
+        avatar_removing,
+        avatar_reading,
+        settings_session: controller::SettingsSessionSignals {
+            active_account: session.active_account,
+            base_url: session.base_url,
+            token,
+            generation: session.session_generation,
+        },
+        avatar_selection_epoch,
         pending_avatar_crop,
         avatar_crop_zoom,
         avatar_crop_x,
@@ -617,10 +634,17 @@ pub fn SettingsPanel(
         profile_text_saving,
         mimi_directory,
         mimi_receipt,
+        mimi_directory_loading,
+        mimi_query_loading,
+        mimi_submit_loading,
+        mimi_proxy_loading,
+        mimi_submit_receipt,
+        mimi_proxy_receipt,
         push_state,
         theme,
         state_store,
     };
+    controller::use_avatar_selection_boundary(controller);
     {
         let current_account = principal_id();
         let current_token = token();
@@ -897,7 +921,8 @@ pub fn SettingsPanel(
                                             "data-testid": "settings-avatar-input",
                                             r#type: "file",
                                             accept: "image/*",
-                                            style: "display: none;",
+                                            class: "settings-avatar-file-input",
+                                            disabled: avatar_uploading() || avatar_removing(),
                                             // A4b — Dioxus 0.7 `HasFileData::files()`
                                             // surfaces the dropped / picked file
                                             // list. Read bytes async then upload
@@ -905,21 +930,11 @@ pub fn SettingsPanel(
                                             // resulting blob URL to the profile.
                                             onchange: {
                                                 move |evt: Event<FormData>| {
-                                                    let files = evt.files();
-                                                    if files.is_empty() {
-                                                        pending_avatar_crop.set(None);
-                                                        avatar_uploading.set(false);
-                                                        avatar_upload_status.set(
-                                                            crate::i18n::tr("settings.avatar.error"),
-                                                        );
+                                                    if avatar_uploading() || avatar_removing() {
                                                         return;
                                                     }
-                                                    let Some(file) = files.into_iter().next() else {
-                                                        pending_avatar_crop.set(None);
-                                                        avatar_uploading.set(false);
-                                                        avatar_upload_status.set(
-                                                            crate::i18n::tr("settings.avatar.error"),
-                                                        );
+                                                    let Some(file) = evt.files().into_iter().next() else {
+                                                        // A dismissed file picker keeps the current crop.
                                                         return;
                                                     };
                                                     let content_type = file
@@ -933,13 +948,13 @@ pub fn SettingsPanel(
                                                 }
                                             },
                                         }
-                                        if avatar_uploading() {
+                                        if avatar_uploading() || avatar_removing() {
                                             Button {
                                                 variant: ButtonVariant::Secondary,
                                                 r#type: "button",
                                                 disabled: true,
                                                 span { class: "spinner-inline", "aria-hidden": "true" }
-                                                {crate::i18n::tr("settings.avatar.uploading")}
+                                                {crate::i18n::tr(if avatar_removing() { "settings.avatar.removing" } else { "settings.avatar.uploading" })}
                                             }
                                         } else {
                                             Label {
@@ -955,88 +970,70 @@ pub fn SettingsPanel(
                                                 open: true,
                                                 on_open_change: move |open: bool| {
                                                     if !open {
-                                                        if avatar_uploading() {
+                                                        if avatar_uploading() || avatar_removing() {
                                                             return;
                                                         }
-                                                        pending_avatar_crop.set(None);
-                                                        avatar_upload_status.set(String::new());
+                                                        controller.cancel_avatar_crop();
                                                     }
                                                 },
                                                 "data-testid": "settings-avatar-crop-editor",
                                                 "aria-label": crate::i18n::tr("settings.avatar.edit_dialog"),
                                                 div {
-                                                style: "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: var(--layer-modal, 300); display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 16px; align-items: center; width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; padding: 18px; border: 1px solid var(--border, #333); border-radius: var(--radius-lg, 12px); background: var(--surface-solid, var(--surface, #1a1d22)); box-shadow: 0 0 0 9999px rgba(20, 22, 30, 0.55), var(--shadow-lg, 0 24px 56px rgba(0, 0, 0, 0.22));",
+                                                class: "settings-avatar-crop-dialog",
                                                 div {
                                                     "data-testid": "settings-avatar-crop-stage",
-                                                    style: "position: relative; width: min(180px, 70vw); aspect-ratio: 1; justify-self: center; border-radius: 50%; overflow: hidden; border: 1px solid var(--border-default, #333); background: var(--bg-elevated, #1a1d22);",
+                                                    class: "settings-avatar-crop-stage",
                                                     img {
                                                         src: "{selection.preview_data_url}",
                                                         alt: crate::i18n::tr("settings.avatar.selected_alt"),
+                                                        class: "settings-avatar-crop-image",
                                                         style: format!(
-                                                            "width: 100%; height: 100%; object-fit: cover; transform-origin: center; transform: translate({}% , {}%) scale({});",
+                                                            "transform: translate({}% , {}%) scale({});",
                                                             avatar_crop_x() / 4,
                                                             avatar_crop_y() / 4,
                                                             avatar_crop_zoom() as f32 / 100.0,
                                                         ),
                                                     }
                                                 }
-                                                div { style: "display: grid; gap: 10px;",
+                                                div { class: "settings-avatar-crop-controls",
                                                     div { class: "muted", "data-testid": "settings-avatar-source-size",
                                                         {format!("{} x {} / {}", selection.dimensions.0, selection.dimensions.1, selection.media_type)}
                                                     }
-                                                    label { class: "form-field",
-                                                        span { {crate::i18n::tr("settings.avatar.zoom")} }
-                                                        Slider {
-                                                            "data-testid": "settings-avatar-crop-zoom",
-                                                            min: 100.0,
-                                                            max: 300.0,
-                                                            step: 5.0,
-                                                            value: avatar_crop_zoom() as f64,
-                                                            disabled: avatar_uploading(),
-                                                            on_value_change: move |value: f64| {
-                                                                avatar_crop_zoom.set((value as i32).clamp(100, 300));
-                                                            },
-                                                        }
+                                                    AvatarCropSlider {
+                                                        label_key: "settings.avatar.zoom",
+                                                        test_id: "settings-avatar-crop-zoom",
+                                                        value: avatar_crop_zoom,
+                                                        min: 100,
+                                                        max: 300,
+                                                        disabled: avatar_uploading() || avatar_removing() || avatar_reading(),
                                                     }
-                                                    label { class: "form-field",
-                                                        span { {crate::i18n::tr("settings.avatar.pan_x")} }
-                                                        Slider {
-                                                            "data-testid": "settings-avatar-crop-x",
-                                                            min: -100.0,
-                                                            max: 100.0,
-                                                            step: 5.0,
-                                                            value: avatar_crop_x() as f64,
-                                                            disabled: avatar_uploading(),
-                                                            on_value_change: move |value: f64| {
-                                                                avatar_crop_x.set((value as i32).clamp(-100, 100));
-                                                            },
-                                                        }
+                                                    AvatarCropSlider {
+                                                        label_key: "settings.avatar.pan_x",
+                                                        test_id: "settings-avatar-crop-x",
+                                                        value: avatar_crop_x,
+                                                        min: -100,
+                                                        max: 100,
+                                                        disabled: avatar_uploading() || avatar_removing() || avatar_reading(),
                                                     }
-                                                    label { class: "form-field",
-                                                        span { {crate::i18n::tr("settings.avatar.pan_y")} }
-                                                        Slider {
-                                                            "data-testid": "settings-avatar-crop-y",
-                                                            min: -100.0,
-                                                            max: 100.0,
-                                                            step: 5.0,
-                                                            value: avatar_crop_y() as f64,
-                                                            disabled: avatar_uploading(),
-                                                            on_value_change: move |value: f64| {
-                                                                avatar_crop_y.set((value as i32).clamp(-100, 100));
-                                                            },
-                                                        }
+                                                    AvatarCropSlider {
+                                                        label_key: "settings.avatar.pan_y",
+                                                        test_id: "settings-avatar-crop-y",
+                                                        value: avatar_crop_y,
+                                                        min: -100,
+                                                        max: 100,
+                                                        disabled: avatar_uploading() || avatar_removing() || avatar_reading(),
                                                     }
                                                     div { class: "actions",
                                                         Button {
                                                             variant: ButtonVariant::Secondary,
                                                             "data-testid": "settings-avatar-upload-cropped",
-                                                            disabled: avatar_uploading(),
+                                                            disabled: avatar_uploading() || avatar_removing() || avatar_reading(),
                                                             onclick: {
                                                                 let base = base_url();
                                                                 let api_token = token();
                                                                 let first_profile_display_name = account_primary_handle.clone();
                                                                 move |_| {
-                                                                    if avatar_uploading() {
+                                                                    if avatar_uploading() || avatar_removing() || avatar_reading() {
                                                                         return;
                                                                     }
                                                                     let Some(selection) = pending_avatar_crop.read().clone() else {
@@ -1056,7 +1053,7 @@ pub fn SettingsPanel(
                                                                     controller.upload_cropped_avatar(base, api_token, first_profile_display_name, selection, crop);
                                                                 }
                                                             },
-                                                            if avatar_uploading() {
+                                                            if avatar_uploading() || avatar_removing() || avatar_reading() {
                                                                 span { class: "spinner-inline", "aria-hidden": "true" }
                                                                 {crate::i18n::tr("settings.avatar.uploading")}
                                                             } else {
@@ -1066,13 +1063,12 @@ pub fn SettingsPanel(
                                                         Button {
                                                             variant: ButtonVariant::Secondary,
                                                             "data-testid": "settings-avatar-crop-cancel",
-                                                            disabled: avatar_uploading(),
+                                                            disabled: avatar_uploading() || avatar_removing(),
                                                             onclick: move |_| {
-                                                                if avatar_uploading() {
+                                                                if avatar_uploading() || avatar_removing() {
                                                                     return;
                                                                 }
-                                                                pending_avatar_crop.set(None);
-                                                                avatar_upload_status.set(String::new());
+                                                                controller.cancel_avatar_crop();
                                                             },
                                                             {crate::i18n::tr("settings.avatar.cancel_crop")}
                                                         }
@@ -1081,11 +1077,19 @@ pub fn SettingsPanel(
                                                 }
                                             }
                                         }
+                                        if avatar_reading() && pending_avatar_crop.read().is_none() {
+                                            Button {
+                                                variant: ButtonVariant::Secondary,
+                                                "data-testid": "settings-avatar-read-cancel",
+                                                onclick: move |_| controller.cancel_avatar_crop(),
+                                                {crate::i18n::tr("settings.avatar.cancel_crop")}
+                                            }
+                                        }
                                         if !profile_avatar_blob_ref().trim().is_empty() {
                                             Button {
                                                 variant: ButtonVariant::Secondary,
                                                 "data-testid": "settings-avatar-clear",
-                                                disabled: avatar_uploading(),
+                                                disabled: avatar_uploading() || avatar_removing(),
                                                 onclick: {
                                                     let base = base_url();
                                                     let api_token = token();
@@ -1094,11 +1098,11 @@ pub fn SettingsPanel(
                                                         let base = base.clone();
                                                         let api_token = api_token.clone();
                                                         let first_profile_display_name = first_profile_display_name.clone();
-                                                        if avatar_uploading() {
+                                                        if avatar_uploading() || avatar_removing() {
                                                             return;
                                                         }
-                                                        avatar_uploading.set(true);
-                                                        avatar_upload_status.set(String::new());
+                                                        avatar_removing.set(true);
+                                                        controller.cancel_avatar_crop();
                                                         avatar_cache_status.set(
                                                             crate::i18n::tr("settings.avatar.removing"),
                                                         );
@@ -1462,6 +1466,8 @@ pub fn SettingsPanel(
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "mimi-refresh-directory",
+                            disabled: mimi_directory_loading(),
+                            "aria-busy": mimi_directory_loading(),
                             onclick: {
                                 move |_| {
                                     let base = base_url();
@@ -1474,6 +1480,8 @@ pub fn SettingsPanel(
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "mimi-identifier-query",
+                            disabled: mimi_query_loading(),
+                            "aria-busy": mimi_query_loading(),
                             onclick: {
                                 move |_| {
                                     let base = base_url();
@@ -1486,6 +1494,8 @@ pub fn SettingsPanel(
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "mimi-submit-message",
+                            disabled: mimi_submit_loading(),
+                            "aria-busy": mimi_submit_loading(),
                             onclick: {
                                 move |_| {
                                     let base = base_url();
@@ -1500,6 +1510,8 @@ pub fn SettingsPanel(
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "mimi-proxy-download",
+                            disabled: mimi_proxy_loading(),
+                            "aria-busy": mimi_proxy_loading(),
                             onclick: {
                                 move |_| {
                                     let base = base_url();
@@ -1523,7 +1535,9 @@ pub fn SettingsPanel(
                             span { {crate::i18n::tr("settings.mimi.receipt_title")} }
                             span { {crate::i18n::tr("settings.mimi.receipt_badge")} }
                         }
-                        pre { "{mimi_receipt}" }
+                        pre { "data-testid": "mimi-query-receipt", "{mimi_receipt}" }
+                        pre { "data-testid": "mimi-submit-receipt", "{mimi_submit_receipt}" }
+                        pre { "data-testid": "mimi-proxy-receipt", "{mimi_proxy_receipt}" }
                     }
                 }
                         }

@@ -367,14 +367,14 @@ pub(crate) const MEMBER_ROSTER_CURRENT_CHANGES: &str = "member_roster_current_ch
 fn member_state_changes_from_current(
     entry: &RealmSyncEntry,
 ) -> serde_json::Result<Option<Vec<Value>>> {
-    use arkret_wire::{CurrentSelector, MemberStateCurrent, TypedCurrentResult};
+    use arkret_wire::{CurrentSelector, MemberStateCurrent, TypedCurrentRow};
 
     let Some(current) = entry.current.as_ref() else {
         return Ok(None);
     };
     let mut changes = Vec::new();
     for row in &current.entries {
-        let TypedCurrentResult::Value {
+        let TypedCurrentRow::Value {
             selector: CurrentSelector::MemberState { actor_id },
             value,
             ..

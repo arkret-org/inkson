@@ -542,7 +542,7 @@ pub(crate) fn space_container_views_from_projection_and_ops(
     projected: &[crate::state::projection_views::SpaceContainerProjectionView],
     ops: &[RawOperationRecord],
     realm_id: &str,
-    current_entries: &[arkret_wire::TypedCurrentResult],
+    current_entries: &[arkret_wire::TypedCurrentRow],
 ) -> Vec<crate::state::projection_views::SpaceContainerProjectionView> {
     let terminal_ids = terminal_space_ids_from_current(current_entries, realm_id);
     let aliases = event_derived_target_aliases(ops);
@@ -711,7 +711,7 @@ pub(crate) fn project_board_with_projection_for_actor(
     realm_id: &str,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
     self_actor_id: &str,
-    current_entries: &[arkret_wire::TypedCurrentResult],
+    current_entries: &[arkret_wire::TypedCurrentRow],
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
     let aliases = event_derived_target_aliases(ops);
     let preferred_board_id = resolve_event_derived_target_alias(&aliases, preferred_board_id);
@@ -799,19 +799,19 @@ pub(crate) enum StrandCurrentBasis {
 }
 
 pub(crate) fn strand_current_basis(
-    entries: &[arkret_wire::TypedCurrentResult],
+    entries: &[arkret_wire::TypedCurrentRow],
     strand_id: &arkret_sdk::StrandId,
 ) -> StrandCurrentBasis {
     let selector = arkret_wire::CurrentSelector::Strand {
         strand_id: strand_id.clone(),
     };
     let mut matching = entries.iter().filter(|entry| {
-        let arkret_wire::TypedCurrentResult::Value {
+        let arkret_wire::TypedCurrentRow::Value {
             selector: found, ..
         } = entry;
         *found == selector
     });
-    let Some(arkret_wire::TypedCurrentResult::Value { revision, .. }) = matching.next() else {
+    let Some(arkret_wire::TypedCurrentRow::Value { revision, .. }) = matching.next() else {
         return StrandCurrentBasis::Missing;
     };
     if matching.next().is_some() {
@@ -874,7 +874,7 @@ pub(crate) fn card_current_page(
 /// this card was folded from; they are not re-derived here.
 pub(crate) fn install_current_card_sources(
     columns: &mut [KanbanColumn],
-    entries: &[arkret_wire::TypedCurrentResult],
+    entries: &[arkret_wire::TypedCurrentRow],
     projected: &[crate::state::projection_views::StrandProjectionView],
     operations: &[RawOperationRecord],
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
@@ -956,13 +956,13 @@ pub(crate) fn install_current_card_sources(
             view.rsvps = card.calendar_rsvp_cells.clone();
             view.schedule_revision_source = decrypt_ctx.and_then(|ctx| {
                 let source_stream = entries.iter().find_map(|entry| {
-                    let arkret_sdk::TypedCurrentResult::Value { selector, source_stream_ref, .. } = entry;
+                    let arkret_sdk::TypedCurrentRow::Value { selector, source_stream_ref, .. } = entry;
                     matches!(selector, arkret_sdk::CurrentSelector::Strand { strand_id: id } if id == &strand_id)
                         .then_some(source_stream_ref)
                 })?;
                 let _ = ctx;
                 let mut sources = entries.iter().filter_map(|entry| {
-                    let arkret_sdk::TypedCurrentResult::Value { selector, source_stream_ref, revision: paired_revision, value } = entry;
+                    let arkret_sdk::TypedCurrentRow::Value { selector, source_stream_ref, revision: paired_revision, value } = entry;
                     matches!(selector, arkret_sdk::CurrentSelector::CalendarScheduleSource { strand_id: id } if id == &strand_id)
                         .then_some((source_stream_ref, paired_revision, value))
                 });
@@ -1020,7 +1020,7 @@ pub(crate) fn install_current_card_sources(
 
 /// Decode the Strand object the Station selected as current for `strand_id`.
 fn current_strand_value(
-    entries: &[arkret_wire::TypedCurrentResult],
+    entries: &[arkret_wire::TypedCurrentRow],
     strand_id: &arkret_sdk::StrandId,
 ) -> Option<arkret_sdk::Strand> {
     crate::current_projection::current_strand(entries, strand_id)

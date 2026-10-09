@@ -210,7 +210,7 @@ fn presence_members_follow_complete_current_and_drop_stale_roster_members() {
     let stale = presence_actor("stale.example", "station.example");
     let directory = tempfile::tempdir().unwrap();
     let mut store = LocalStateStore::with_path(directory.path().join("current-presence.json"));
-    let entries = vec![arkret_wire::TypedCurrentResult::Value {
+    let entries = vec![arkret_wire::TypedCurrentRow::Value {
         selector: arkret_wire::CurrentSelector::MemberState {
             actor_id: peer.clone(),
         },
@@ -245,7 +245,7 @@ fn presence_members_follow_complete_current_and_drop_stale_roster_members() {
         "complete membership cannot manufacture a self member"
     );
     let mut departed = entries;
-    let arkret_wire::TypedCurrentResult::Value { value, .. } = &mut departed[0];
+    let arkret_wire::TypedCurrentRow::Value { value, .. } = &mut departed[0];
     *value = json!({"membership":"leave"});
     store
         .install_current_product_view(

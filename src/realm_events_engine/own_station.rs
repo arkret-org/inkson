@@ -274,7 +274,7 @@ pub(super) async fn account_frame(
                 ));
             }
             for row in &snapshot.current_state_entries {
-                if let arkret_wire::TypedCurrentResult::Value {
+                if let arkret_wire::TypedCurrentRow::Value {
                     selector: arkret_wire::CurrentSelector::RealmGenesis,
                     value,
                     ..
@@ -288,7 +288,7 @@ pub(super) async fn account_frame(
                             .then_some(arkret_sdk::CollaborationRealmRole::DirectConversation),
                     );
                 }
-                if let arkret_wire::TypedCurrentResult::Value {
+                if let arkret_wire::TypedCurrentRow::Value {
                     selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref },
                     value,
                     ..
@@ -335,7 +335,7 @@ pub(super) fn validate_current_product(
     let (object, revision) = rows
         .iter()
         .find_map(|row| match row {
-            arkret_wire::TypedCurrentResult::Value {
+            arkret_wire::TypedCurrentRow::Value {
                 selector: arkret_wire::CurrentSelector::RealmGenesis,
                 value,
                 revision,
@@ -350,7 +350,7 @@ pub(super) fn validate_current_product(
     let root = rows
         .iter()
         .find_map(|row| match row {
-            arkret_wire::TypedCurrentResult::Value {
+            arkret_wire::TypedCurrentRow::Value {
                 selector: arkret_wire::CurrentSelector::RealmAuthorityRoot,
                 value,
                 ..

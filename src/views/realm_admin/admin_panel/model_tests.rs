@@ -17,23 +17,21 @@ fn capability_basis_requires_the_exact_verified_root_controller_and_generation()
         principal_id: "ak:did_core:web:alice.example".parse().unwrap(),
         station_id: "ak:did_core:web:station.example".parse().unwrap(),
     };
-    let row = |controller: arkret_sdk::AccountId, generation| {
-        arkret_wire::TypedCurrentResult::Value {
-            selector: arkret_wire::CurrentSelector::RealmAuthorityRoot,
-            source_stream_ref: arkret_wire::CommitStreamRef::Realm {
-                realm_id: realm.clone(),
-            },
-            revision: arkret_wire::CurrentRevision {
-                commit_id: arkret_wire::RealmCommitId::from_digest([1; 32]),
-                stream_position: 9,
-            },
-            value: serde_json::json!({
-                "controller_actor_id": arkret_sdk::ActorId::account(controller),
-                "controller_epoch": 2,
-                "authority_generation": generation,
-                "authority_event_ref": arkret_sdk::EventId::from_token_bytes(realm.token_bytes()).unwrap(),
-            }),
-        }
+    let row = |controller: arkret_sdk::AccountId, generation| arkret_wire::TypedCurrentRow::Value {
+        selector: arkret_wire::CurrentSelector::RealmAuthorityRoot,
+        source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+            realm_id: realm.clone(),
+        },
+        revision: arkret_wire::CurrentRevision {
+            commit_id: arkret_wire::RealmCommitId::from_digest([1; 32]),
+            stream_position: 9,
+        },
+        value: serde_json::json!({
+            "controller_actor_id": arkret_sdk::ActorId::account(controller),
+            "controller_epoch": 2,
+            "authority_generation": generation,
+            "authority_event_ref": arkret_sdk::EventId::from_token_bytes(realm.token_bytes()).unwrap(),
+        }),
     };
     let current = row(issuer.clone(), 0);
     let basis = capability_issuer_basis(REALM, &[current.clone()], &issuer).unwrap();
@@ -46,7 +44,7 @@ fn capability_basis_requires_the_exact_verified_root_controller_and_generation()
     assert!(capability_issuer_basis(REALM, &[current.clone(), current], &issuer).is_none());
     let reset_anchor = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [73; 32]);
     let mut reset = row(issuer.clone(), 1);
-    let arkret_wire::TypedCurrentResult::Value { value, .. } = &mut reset;
+    let arkret_wire::TypedCurrentRow::Value { value, .. } = &mut reset;
     value["authority_event_ref"] = serde_json::json!(reset_anchor);
     let reset_basis = capability_issuer_basis(REALM, &[reset], &issuer).unwrap();
     assert_eq!(reset_basis.authority_generation, 1);

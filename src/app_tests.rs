@@ -1167,7 +1167,7 @@ fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
 const ENCRYPTED_REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
 #[cfg(not(target_arch = "wasm32"))]
-fn encrypted_realm_current() -> arkret_wire::TypedCurrentResult {
+fn encrypted_realm_current() -> arkret_wire::TypedCurrentRow {
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(ENCRYPTED_REALM).unwrap(),
     };
@@ -1182,7 +1182,7 @@ fn encrypted_realm_current() -> arkret_wire::TypedCurrentResult {
         "public_tree_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
     }))
     .expect("valid MLS current value");
-    let current = arkret_wire::TypedCurrentResult::Value {
+    let current = arkret_wire::TypedCurrentRow::Value {
         selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref: scope },
         source_stream_ref: arkret_wire::CommitStreamRef::Realm {
             realm_id: arkret_wire::RealmId::new(ENCRYPTED_REALM).unwrap(),

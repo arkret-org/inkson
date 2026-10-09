@@ -5,7 +5,7 @@
 //! has to be re-derived from Event ordering, and there is no Realm-global
 //! position anywhere in this view.
 
-use arkret_wire::{CurrentSelector, RealmId, TypedCurrentResult};
+use arkret_wire::{CurrentSelector, RealmId, TypedCurrentRow};
 use serde_json::Value;
 
 /// The current results a Realm view needs before it can render its own
@@ -15,24 +15,24 @@ pub(crate) const REQUIRED_REALM_SELECTORS: [CurrentSelector; 2] = [
     CurrentSelector::RealmPolicyBundle,
 ];
 
-fn selector_of(entry: &TypedCurrentResult) -> &CurrentSelector {
-    let TypedCurrentResult::Value { selector, .. } = entry;
+fn selector_of(entry: &TypedCurrentRow) -> &CurrentSelector {
+    let TypedCurrentRow::Value { selector, .. } = entry;
     selector
 }
 
-fn value_of(entry: &TypedCurrentResult) -> &Value {
-    let TypedCurrentResult::Value { value, .. } = entry;
+fn value_of(entry: &TypedCurrentRow) -> &Value {
+    let TypedCurrentRow::Value { value, .. } = entry;
     value
 }
 
 fn entry_for<'a>(
-    entries: &'a [TypedCurrentResult],
+    entries: &'a [TypedCurrentRow],
     selector: &CurrentSelector,
-) -> Option<&'a TypedCurrentResult> {
+) -> Option<&'a TypedCurrentRow> {
     entries.iter().find(|entry| selector_of(entry) == selector)
 }
 
-pub(crate) fn required_realm_values_ready(entries: &[TypedCurrentResult]) -> bool {
+pub(crate) fn required_realm_values_ready(entries: &[TypedCurrentRow]) -> bool {
     if let Some(genesis) = entry_for(entries, &CurrentSelector::RealmGenesis)
         .map(value_of)
         .and_then(|value| serde_json::from_value::<arkret_sdk::RealmGenesis>(value.clone()).ok())
@@ -58,7 +58,7 @@ pub(crate) fn required_realm_values_ready(entries: &[TypedCurrentResult]) -> boo
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RealmCurrentView {
     pub realm_id: String,
-    pub entries: Vec<TypedCurrentResult>,
+    pub entries: Vec<TypedCurrentRow>,
     /// Whether the rows were read at one complete verified cut of the durable
     /// index (installed baseline, every authorized stream covered, no pending
     /// refresh). Only such a view may answer a selector's absence.
@@ -97,12 +97,12 @@ impl RealmCurrentView {
     /// Validate that every scope-carrying row belongs to `realm_id`.
     pub(crate) fn new(
         realm_id: &str,
-        entries: Vec<TypedCurrentResult>,
+        entries: Vec<TypedCurrentRow>,
         complete_cut: bool,
     ) -> anyhow::Result<Self> {
         let realm = RealmId::new(realm_id.to_owned())?;
         for entry in &entries {
-            if let TypedCurrentResult::Value {
+            if let TypedCurrentRow::Value {
                 selector: CurrentSelector::MemberState { .. },
                 source_stream_ref,
                 ..
@@ -151,7 +151,7 @@ impl RealmCurrentView {
 
     /// The rows of `realm_id`, or `None` when this view belongs to another
     /// Realm. `None` is "not installed", never an empty current set.
-    pub(crate) fn entries_for(&self, realm_id: &str) -> Option<&[TypedCurrentResult]> {
+    pub(crate) fn entries_for(&self, realm_id: &str) -> Option<&[TypedCurrentRow]> {
         (self.realm_id == realm_id.trim()).then_some(self.entries.as_slice())
     }
 
@@ -165,7 +165,7 @@ impl RealmCurrentView {
         }
         let mut joined = std::collections::BTreeSet::new();
         for entry in &self.entries {
-            if let TypedCurrentResult::Value {
+            if let TypedCurrentRow::Value {
                 selector: CurrentSelector::MemberState { actor_id },
                 value,
                 ..
@@ -186,7 +186,7 @@ impl RealmCurrentView {
 /// rows themselves stay in the index.
 pub(crate) fn apply_profile_summary(
     projection: &mut Value,
-    entries: &[TypedCurrentResult],
+    entries: &[TypedCurrentRow],
 ) -> anyhow::Result<()> {
     let Some(profile) = entry_for(entries, &CurrentSelector::RealmProfile)
         .map(value_of)
@@ -216,7 +216,7 @@ pub(crate) fn apply_profile_summary(
 
 /// Decode the current Strand value the Station selected for `strand_id`.
 pub(crate) fn current_strand(
-    entries: &[TypedCurrentResult],
+    entries: &[TypedCurrentRow],
     strand_id: &arkret_sdk::StrandId,
 ) -> Option<arkret_sdk::Strand> {
     let selector = CurrentSelector::Strand {
@@ -230,7 +230,7 @@ pub(crate) fn current_strand(
 /// The current MLS group of `scope_ref`, i.e. the evidence that this scope has
 /// an accepted `ak.mls.genesis` and is therefore irreversibly encrypted.
 pub(crate) fn current_mls_group(
-    entries: &[TypedCurrentResult],
+    entries: &[TypedCurrentRow],
     scope_ref: &arkret_sdk::ScopeRef,
 ) -> Option<arkret_wire::MlsGroupCurrent> {
     let selector = CurrentSelector::MlsGroup {
@@ -243,7 +243,7 @@ pub(crate) fn current_mls_group(
 }
 
 /// The Station-selected current `ak.realm.policy_bundle` value.
-pub(crate) fn current_realm_policy_bundle_value(entries: &[TypedCurrentResult]) -> Option<Value> {
+pub(crate) fn current_realm_policy_bundle_value(entries: &[TypedCurrentRow]) -> Option<Value> {
     entry_for(entries, &CurrentSelector::RealmPolicyBundle)
         .map(value_of)
         .cloned()
@@ -256,11 +256,11 @@ pub(crate) fn current_realm_policy_bundle_value(entries: &[TypedCurrentResult]) 
 /// settled empty result rather than an unknown one: the first write supersedes
 /// nothing.
 pub(crate) fn current_revision_for(
-    entries: &[TypedCurrentResult],
+    entries: &[TypedCurrentRow],
     selector: &CurrentSelector,
 ) -> Option<arkret_wire::CurrentRevision> {
     entry_for(entries, selector).map(|entry| {
-        let TypedCurrentResult::Value { revision, .. } = entry;
+        let TypedCurrentRow::Value { revision, .. } = entry;
         revision.clone()
     })
 }
@@ -301,7 +301,7 @@ mod tests {
             Some(std::collections::BTreeSet::from([actor])),
         );
         let mut stale = rows;
-        let TypedCurrentResult::Value {
+        let TypedCurrentRow::Value {
             source_stream_ref, ..
         } = &mut stale[0];
         *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
@@ -320,8 +320,8 @@ mod tests {
         }
     }
 
-    fn entry(selector: CurrentSelector, position: u64, value: Value) -> TypedCurrentResult {
-        TypedCurrentResult::Value {
+    fn entry(selector: CurrentSelector, position: u64, value: Value) -> TypedCurrentRow {
+        TypedCurrentRow::Value {
             selector,
             source_stream_ref: arkret_wire::CommitStreamRef::Realm {
                 realm_id: RealmId::new(REALM).unwrap(),

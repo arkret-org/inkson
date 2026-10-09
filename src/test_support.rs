@@ -387,7 +387,7 @@ pub(crate) fn install_accepted_mls_group_at_epoch(
             "public_tree_ref": format!("ak:blob:sha256:{}", "a".repeat(64)),
         },
     });
-    let entry: arkret_wire::TypedCurrentResult = serde_json::from_value(entry).unwrap();
+    let entry: arkret_wire::TypedCurrentRow = serde_json::from_value(entry).unwrap();
     install_current_entries(state, &realm_id, vec![entry]);
 }
 
@@ -403,14 +403,14 @@ pub(crate) fn install_complete_joined_members(
     entries.retain(|entry| {
         !matches!(
             entry,
-            arkret_wire::TypedCurrentResult::Value {
+            arkret_wire::TypedCurrentRow::Value {
                 selector: arkret_wire::CurrentSelector::MemberState { .. },
                 ..
             }
         )
     });
     for actor_id in members {
-        entries.push(arkret_wire::TypedCurrentResult::Value {
+        entries.push(arkret_wire::TypedCurrentRow::Value {
             selector: arkret_wire::CurrentSelector::MemberState { actor_id },
             source_stream_ref: arkret_wire::CommitStreamRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
@@ -439,10 +439,10 @@ pub(crate) fn install_complete_joined_members(
 pub(crate) fn install_current_entries(
     state: &mut crate::state::LocalStateStore,
     realm_id: &str,
-    rows: Vec<arkret_wire::TypedCurrentResult>,
+    rows: Vec<arkret_wire::TypedCurrentRow>,
 ) {
-    let selector = |entry: &arkret_wire::TypedCurrentResult| match entry {
-        arkret_wire::TypedCurrentResult::Value { selector, .. } => selector.clone(),
+    let selector = |entry: &arkret_wire::TypedCurrentRow| match entry {
+        arkret_wire::TypedCurrentRow::Value { selector, .. } => selector.clone(),
     };
     let mut entries = state
         .realm_current_view_entries(realm_id)

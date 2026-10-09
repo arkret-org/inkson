@@ -23,12 +23,12 @@ pub(super) fn governance_authoring_gate() -> Result<(), &'static str> {
 /// anchor across owner transfer and Station handoff, including after reset.
 pub(super) fn capability_issuer_basis(
     realm_id: &str,
-    entries: &[arkret_wire::TypedCurrentResult],
+    entries: &[arkret_wire::TypedCurrentRow],
     issuer: &arkret_sdk::AccountId,
 ) -> Option<crate::operation::ak_ops::IssuerRealmAuthorityBasis> {
     let realm: arkret_sdk::RealmId = realm_id.parse().ok()?;
     let mut roots = entries.iter().filter_map(|entry| {
-        let arkret_wire::TypedCurrentResult::Value { selector, source_stream_ref, value, .. } = entry;
+        let arkret_wire::TypedCurrentRow::Value { selector, source_stream_ref, value, .. } = entry;
         (matches!(selector, arkret_wire::CurrentSelector::RealmAuthorityRoot)
             && matches!(source_stream_ref, arkret_wire::CommitStreamRef::Realm { realm_id: source } if source == &realm))
             .then_some(value)

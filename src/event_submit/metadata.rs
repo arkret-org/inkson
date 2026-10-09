@@ -118,7 +118,7 @@ impl EventSubmitter {
                 let values = entries
                     .iter()
                     .filter_map(|entry| {
-                        let arkret_sdk::TypedCurrentResult::Value {
+                        let arkret_sdk::TypedCurrentRow::Value {
                             selector, value, ..
                         } = entry;
                         let matches = match selector {
@@ -234,7 +234,7 @@ impl EventSubmitter {
             let current = store.read(|state| {
                 let entries = state.realm_current_state_entries(realm.as_str());
                 let mut values = entries.iter().filter_map(|entry| {
-                    let arkret_sdk::TypedCurrentResult::Value { selector, value, .. } = entry;
+                    let arkret_sdk::TypedCurrentRow::Value { selector, value, .. } = entry;
                     matches!(selector, arkret_sdk::CurrentSelector::Strand { strand_id } if strand_id == &payload.target_ref)
                         .then_some(value)
                 });
