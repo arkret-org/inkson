@@ -35,6 +35,10 @@ pub(super) struct WatchRefreshQueue {
 }
 
 impl WatchRefreshQueue {
+    fn target_changed(&self, target: Option<&WatchRefreshTarget>) -> bool {
+        self.latest.as_ref().map(|(_, target)| target) != target
+    }
+
     fn enqueue(&mut self, target: Option<(u64, WatchRefreshTarget)>) -> bool {
         self.latest = target;
         if self.running || self.latest.is_none() {
@@ -1546,9 +1550,6 @@ impl ChatController {
         request: Option<arkret_sdk::StrandWatchCurrentRequestBody>,
     ) {
         let sequence = self.strand_watch_request.peek().wrapping_add(1);
-        self.strand_watch_request.set(sequence);
-        self.strand_watch_current.set(None);
-        self.watch_level_menu_open.set(false);
         let target = request.map(|request| {
             (
                 sequence,
@@ -1561,6 +1562,11 @@ impl ChatController {
             )
         });
         let mut queue = self.strand_watch_refresh.peek().clone();
+        if queue.target_changed(target.as_ref().map(|(_, target)| target)) {
+            self.watch_level_menu_open.set(false);
+        }
+        self.strand_watch_request.set(sequence);
+        self.strand_watch_current.set(None);
         let start = queue.enqueue(target);
         self.strand_watch_pending.set(queue.latest.is_some());
         self.strand_watch_refresh.set(queue);
@@ -1898,14 +1904,17 @@ mod composer_target_tests {
             },
         };
         let mut queue = WatchRefreshQueue::default();
+        assert!(queue.target_changed(Some(&target)));
         assert!(queue.enqueue(Some((1, target.clone()))));
         for sequence in 2..20 {
+            assert!(!queue.target_changed(Some(&target)));
             assert!(!queue.enqueue(Some((sequence, target.clone()))));
         }
         assert!(queue.has_newer(1));
         assert_eq!(queue.latest.as_ref().unwrap().0, 19);
         let mut replacement = target.clone();
         replacement.session_epoch += 1;
+        assert!(queue.target_changed(Some(&replacement)));
         assert!(!queue.enqueue(Some((20, replacement.clone()))));
         assert!(
             queue
@@ -1913,8 +1922,10 @@ mod composer_target_tests {
                 .as_ref()
                 .is_some_and(|(_, latest)| latest == &replacement)
         );
+        assert!(queue.target_changed(None));
         assert!(!queue.enqueue(None));
         assert!(queue.latest.is_none());
+        assert!(!queue.target_changed(None));
         queue.running = false;
         assert!(queue.enqueue(Some((21, target))));
     }

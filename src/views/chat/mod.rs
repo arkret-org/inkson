@@ -2838,7 +2838,7 @@ pub fn ChatPanel(
                                 DropdownMenu {
                                     class: "watch-level-picker", "data-testid": "watch-level-picker",
                                     disabled: !enabled,
-                                    open: enabled && (controller.watch_level_menu_open)(),
+                                    open: request.is_some() && (controller.watch_level_menu_open)(),
                                     on_open_change: move |open| {
                                         let mut menu = controller.watch_level_menu_open;
                                         menu.set(open);
@@ -2870,6 +2870,7 @@ pub fn ChatPanel(
                                                 class: if explicit_level == level { "watch-level-option active" } else { "watch-level-option" },
                                                 "data-watch-level": if level.is_none() { "default" } else { key.trim_start_matches("chat.watch_level.") },
                                                 "aria-selected": explicit_level == level,
+                                                "aria-disabled": !enabled,
                                                 on_select: {
                                                     let request = request.clone();
                                                     let base = base_url.clone();
