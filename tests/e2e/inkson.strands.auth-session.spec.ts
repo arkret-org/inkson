@@ -154,38 +154,53 @@ test("a follower takes over after the leader renderer crashes", async ({
   const isolatedBrowser = await chromium.launch({
     args: ["--process-per-tab"],
   });
-  const context = await isolatedBrowser.newContext();
-  const [leader, follower] = await Promise.all([
-    context.newPage(),
-    context.newPage(),
-  ]);
-  const initialConfig = testLocalConfig();
-  for (const tab of [leader, follower]) {
-    await mockArkretApi(tab);
-    await addSessionGrantInjection(tab);
-    await tab.addInitScript((config) => {
-      localStorage.setItem("inkson.config.v1", JSON.stringify(config));
-    }, initialConfig);
+  try {
+    const context = await isolatedBrowser.newContext();
+    const [leader, follower] = await Promise.all([
+      context.newPage(),
+      context.newPage(),
+    ]);
+    const initialConfig = testLocalConfig();
+    for (const tab of [leader, follower]) {
+      await mockArkretApi(tab);
+      await addSessionGrantInjection(tab);
+      await tab.addInitScript((config) => {
+        localStorage.setItem("inkson.config.v1", JSON.stringify(config));
+      }, initialConfig);
+    }
+
+    await leader.goto(baseURL ?? "/", { waitUntil: "domcontentloaded" });
+    await expect(latestTestId(leader, "client-shell")).toBeVisible({
+      timeout: 120_000,
+    });
+    await follower.goto(baseURL ?? "/", { waitUntil: "domcontentloaded" });
+    await expect(follower.getByTestId("web-leader-follower")).toBeVisible();
+
+    // Match Playwright's Chromium crash fixture with a real renderer fault.
+    const crashed = leader.waitForEvent("crash", { timeout: 10_000 });
+    let dispatchError: string | undefined;
+    void leader.goto("chrome://crash").catch((error: unknown) => {
+      dispatchError = String(error);
+    });
+    try {
+      await crashed;
+    } catch (error) {
+      throw new Error(
+        `Renderer crash was not observed; navigation: ${dispatchError ?? "pending"}\n${String(error)}`,
+      );
+    }
+    await expect(leader.evaluate(() => document.title)).rejects.toThrow(
+      /(?:Page|Target) crashed/i,
+    );
+    await follower.getByTestId("web-leader-retry").click();
+
+    await expect(latestTestId(follower, "client-shell")).toBeVisible({
+      timeout: 120_000,
+    });
+    await expect(follower.getByTestId("web-leader-follower")).toHaveCount(0);
+  } finally {
+    await isolatedBrowser.close();
   }
-
-  await leader.goto(baseURL ?? "/", { waitUntil: "domcontentloaded" });
-  await expect(latestTestId(leader, "client-shell")).toBeVisible({
-    timeout: 120_000,
-  });
-  await follower.goto(baseURL ?? "/", { waitUntil: "domcontentloaded" });
-  await expect(follower.getByTestId("web-leader-follower")).toBeVisible();
-
-  const cdp = await context.newCDPSession(leader);
-  const crashed = leader.waitForEvent("crash", { timeout: 10_000 });
-  void cdp.send("Page.crash").catch(() => undefined);
-  await crashed;
-  await follower.getByTestId("web-leader-retry").click();
-
-  await expect(latestTestId(follower, "client-shell")).toBeVisible({
-    timeout: 120_000,
-  });
-  await expect(follower.getByTestId("web-leader-follower")).toHaveCount(0);
-  await isolatedBrowser.close();
 });
 
 test("a browser without Web Locks fails closed before mounting writers", async ({

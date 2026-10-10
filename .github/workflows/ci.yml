@@ -17,7 +17,9 @@ env:
 jobs:
   rust-and-web:
     name: Rust tests and web build
-    runs-on: ubuntu-latest
+    # Playwright 1.60 documents missing Chromium crash events on Ubuntu 24.04.
+    # Keep the real renderer-crash recovery test on its supported Linux host.
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout inkson
         uses: actions/checkout@v6
