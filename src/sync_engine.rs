@@ -1511,14 +1511,22 @@ impl InksonAccountProjector {
             // claiming a complete Account cut. Keep current, Account cursor,
             // Station CAS and recipient ACK untouched until refetch succeeds.
             if !self.fence() {
-                return Ok(());
+                return Err(garth::Error::AuthorityCutBehind);
             }
-            for proof in &verified {
-                self.ctx
-                    .state_store
-                    .write(|store| proof.stage_independent_public_history(store))
-                    .map_err(garth::Error::Storage)?;
-            }
+            self.ctx
+                .state_store
+                .write(|store| {
+                    verified[0].project_transaction(store, |store| {
+                        if store.current_generation() != generation {
+                            return Err("current generation changed during stream recovery".into());
+                        }
+                        for proof in &verified {
+                            proof.stage_independent_public_history(store)?;
+                        }
+                        Ok(())
+                    })
+                })
+                .map_err(garth::Error::Storage)?;
             await_account_state_durable(&self.ctx, "independent stream history")
                 .await
                 .map_err(|error| garth::Error::Storage(error.to_string()))?;

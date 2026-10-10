@@ -236,10 +236,15 @@ pub(super) async fn account_frame(
             if replica.head(&window.stream_ref).is_none_or(|head| {
                 head.stream_position != expected || head.commit_id != window.head_commit_ref
             }) {
-                if replica
-                    .head(&window.stream_ref)
-                    .is_some_and(|head| head.stream_position < expected)
-                {
+                if replica.head(&window.stream_ref).is_some_and(|head| {
+                    head.stream_position < expected
+                        && (head.commit_id == window.head_commit_ref
+                            || snapshot.visible_stream_heads.iter().any(|signed| {
+                                signed.stream_ref == window.stream_ref
+                                    && signed.stream_position == expected
+                                    && signed.commit_id == window.head_commit_ref
+                            }))
+                }) {
                     accepted.stream_interruption.get_or_insert(
                         garth::Error::StreamTailIncomplete {
                             stream_ref: window.stream_ref.clone(),
