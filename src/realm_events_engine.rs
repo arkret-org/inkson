@@ -276,7 +276,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
     let mut backoff = RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING);
     let mut replica = garth::own_station_results::OwnStationReplica::new(realm_id_typed.clone());
     let mut replica_session = None;
-    let mut subscription_cursor = None;
+    let mut subscription_state = own_live::SubscriptionState::default();
 
     while is_active() {
         let http = match provide(ctx.base_url.get()).await {
@@ -309,7 +309,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
         if replica_session.as_ref() != Some(&session) {
             replica = garth::own_station_results::OwnStationReplica::new(realm_id_typed.clone());
             replica_session = Some(session);
-            subscription_cursor = None;
+            subscription_state.reset();
         }
         match own_live::subscription(
             &own,
@@ -319,7 +319,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
             &ctx,
             &is_active,
             &mut replica,
-            &mut subscription_cursor,
+            &mut subscription_state,
         )
         .await
         {
@@ -330,7 +330,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
                 if error.is_invalid_cursor() {
                     // Only this subscription handle is invalid. Independent
                     // verified stream heads and private MLS state survive.
-                    subscription_cursor = None;
+                    subscription_state.reset();
                 }
                 if garth::classify_error(&error) == garth::RunErrorClass::Unauthorized {
                     match crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(

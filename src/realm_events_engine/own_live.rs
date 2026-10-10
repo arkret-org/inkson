@@ -7,6 +7,18 @@ use super::*;
 
 const MAX_REPLAY_BYTES: usize = 64 * 1024 * 1024;
 
+#[derive(Default)]
+pub(super) struct SubscriptionState {
+    cursor: Option<String>,
+    catchup_complete: bool,
+}
+
+impl SubscriptionState {
+    pub(super) fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
 pub(super) async fn subscription<F: Fn() -> bool>(
     client: &OwnStationResultClient,
     http: &arkret_sdk::http_client::Client,
@@ -15,7 +27,7 @@ pub(super) async fn subscription<F: Fn() -> bool>(
     ctx: &RealmEventsEngineContext,
     is_active: &F,
     current: &mut OwnStationReplica,
-    resume: &mut Option<String>,
+    resume: &mut SubscriptionState,
 ) -> garth::Result<()> {
     use arkret_models_collaboration::sync_frames::committed_event_subscribe::CommittedEventSubscribeFrameKind as Kind;
     client.check_session()?;
@@ -23,14 +35,20 @@ pub(super) async fn subscription<F: Fn() -> bool>(
         http,
         &ctx.websocket_rail,
         realm.clone(),
-        resume.clone(),
+        resume.cursor.clone(),
     )
     .await?;
     client.check_session()?;
-    // The hint-rail cursor never proves that the independent scan completed.
-    // In particular, a failed initial scan must resume its durable head even
-    // when the reopened rail already has a cursor and no new Event hint.
-    follow_once(client, http, realm, projector, ctx, is_active, current).await?;
+    // A cursor alone never proves that the independent initial scan completed.
+    // After that scan succeeds, a normal long-poll rollover with a valid resume
+    // cursor continues this same session. Its replayed Event hints trigger the
+    // existing independent drain; an idle rollover need not re-admit the head.
+    // Failed catchup, an absent/refused cursor, a new session and a new engine
+    // run all retain the full durable-head verification path.
+    if !resume.catchup_complete || resume.cursor.is_none() {
+        follow_once(client, http, realm, projector, ctx, is_active, current).await?;
+        resume.catchup_complete = true;
+    }
     while is_active() {
         client.check_session()?;
         let frame = loop {
@@ -84,7 +102,7 @@ pub(super) async fn subscription<F: Fn() -> bool>(
         }
         match frame.kind {
             Kind::ResyncRequired => {
-                *resume = None;
+                resume.reset();
                 return Ok(());
             }
             Kind::Unauthorized => {
@@ -106,7 +124,7 @@ pub(super) async fn subscription<F: Fn() -> bool>(
         client.check_session()?;
         let terminal = frame.is_terminal();
         if let Some(cursor) = frame.cursor {
-            *resume = Some(cursor);
+            resume.cursor = Some(cursor);
         }
         if let Some(delay) = frame.reconnect_after_ms {
             crate::runtime_helpers::sleep_for(Duration::from_millis(delay)).await;

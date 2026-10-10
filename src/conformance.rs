@@ -5,6 +5,16 @@ use arkret_wire::{BindingKind, ServiceKind, ServiceOperationId, operation_bundle
 
 use crate::models::ServiceDescribe;
 
+/// Inspect the ordinary Account frame's admitted own-Station pages. Audit
+/// proof pages remain separate; every row access retains the live session fence.
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub fn own_station_account_pages(
+    frame: &crate::realm_events_engine::VerifiedAccountFrame,
+) -> garth::Result<&[garth::own_station_results::OwnStationScanPage]> {
+    frame.check_session()?;
+    Ok(frame.own_pages())
+}
+
 /// Inspect the ordinary durable current index without installing fixture rows.
 #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
 pub async fn retained_realm_current(
