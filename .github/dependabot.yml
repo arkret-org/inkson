@@ -8,13 +8,9 @@ updates:
       time: "09:00"
     open-pull-requests-limit: 5
 
-  - package-ecosystem: "cargo"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:15"
-    open-pull-requests-limit: 5
+  # Cargo path dependencies span sibling repositories. The scheduled
+  # cargo-dependency-maintenance.yml resolves the complete workspace and
+  # publishes exact-source candidates for the ordinary PR/compatibility gates.
 
   - package-ecosystem: "npm"
     directory: "/"

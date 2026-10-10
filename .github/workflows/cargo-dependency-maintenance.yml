@@ -1,0 +1,21 @@
+name: Cargo dependency maintenance
+
+on:
+  schedule:
+    - cron: '15 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cargo-dependency-maintenance
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    uses: arkret-org/arkret-rust-sdk/.github/workflows/cargo-dependency-updates.yml@main
+    with:
+      repository: inkson
+    secrets:
+      CI_REPO_TOKEN: ${{ secrets.CI_REPO_TOKEN }}
