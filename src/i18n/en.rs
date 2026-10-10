@@ -2002,6 +2002,184 @@ pub fn english_translations() -> TranslationDict {
     // policy). The HTTP error reply carries a stable
     // `code` / `reason` field that the toast layer maps via these
     // keys. zh translations follow in `chinese_translations()`.
+    dict.set("dashboard.object_state.active", "active");
+    dict.set("dashboard.object_state.archived", "archived");
+    dict.set("dashboard.object_state.redacted", "redacted");
+    dict.set("dashboard.contacts_loading", "Loading contacts");
+    dict.set("dashboard.contacts_unavailable", "Contacts unavailable");
+    dict.set("dashboard.active_strands", "Active strands");
+    dict.set("dashboard.open_board_view", "Open Board view");
+    dict.set("dashboard.realm_setup", "Realm Setup");
+    dict.set("dashboard.ready", "Ready");
+    dict.set("dashboard.sign_in", "Sign in");
+    dict.set(
+        "dashboard.setup_help",
+        "Bootstrap your first Realm and initial policy",
+    );
+    dict.set("dashboard.onboarding", "Onboarding");
+    dict.set("dashboard.onboarding_steps", "4 steps");
+    dict.set(
+        "dashboard.onboarding_help",
+        "Identity, device, and recovery setup",
+    );
+    dict.set("dashboard.recent_strands", "Recent Strands");
+    dict.set("dashboard.strand_title", "Title");
+    dict.set("dashboard.strand_space", "Space");
+    dict.set("dashboard.strand_state", "State");
+    dict.set("dashboard.strand_updated", "Updated");
+    dict.set("dashboard.strands_empty", "No recent strands loaded");
+    dict.set("dashboard.strands_signin", "Sign in to load recent strands");
+    dict.set("dashboard.current_board", "Current Board");
+    dict.set("dashboard.recent_activity", "Recent Activity");
+    dict.set("dashboard.activity_empty", "empty");
+    dict.set("dashboard.no_activity", "No activity loaded");
+    dict.set("dashboard.no_session_activity", "No session activity");
+    dict.set(
+        "dashboard.activity_sync_help",
+        "Sync has not returned recent events.",
+    );
+    dict.set(
+        "dashboard.activity_signin_help",
+        "Activity appears after authenticated sync.",
+    );
+    dict.set("dashboard.client_status", "Client Status");
+    dict.set("dashboard.sync_frontier", "Sync frontier");
+    dict.set("dashboard.loaded", "loaded");
+    dict.set("dashboard.not_connected", "not connected");
+    dict.set("dashboard.event_frontier", "Event frontier");
+    dict.set("dashboard.station_reported", "Station reported");
+    dict.set("dashboard.not_loaded", "Not loaded");
+    dict.set("dashboard.queued_writes", "Queued writes");
+    dict.set("dashboard.local_replay_queue", "local replay queue");
+    dict.set("dashboard.advanced_diagnostics", "Advanced Diagnostics");
+    dict.set("dashboard.checking_health", "Checking health");
+    dict.set("dashboard.run_health_checks", "Run health checks");
+    dict.set("dashboard.health_help", "Run checks after changing the Station. Collaboration starts in Spaces; operational checks stay here.");
+    dict.set("dashboard.realm_remark", "Remark");
+    dict.set("dashboard.client_status_help", "Operational status stays visible, but separate tool pages are no longer promoted in the main navigation.");
+    dict.set("dashboard.snapshot_lower_trust", "lower-trust");
+    dict.set("dashboard.snapshot_degraded", "degraded");
+    dict.set("dashboard.open_board", "Open Board");
+    dict.set(
+        "dashboard.contacts_delta",
+        "Pending {pending} · Direct {direct}",
+    );
+    dict.set("dashboard.notification_kind.message", "message");
+    dict.set("dashboard.notification_kind.mention", "mention");
+    dict.set("dashboard.notification_kind.reply", "reply");
+    dict.set("dashboard.notification_kind.assignment", "assignment");
+    dict.set("dashboard.notification_kind.schedule", "schedule");
+    dict.set("dashboard.notification_kind.invite", "invite");
+    dict.set("dashboard.notification_kind.reaction", "reaction");
+    dict.set("dashboard.notification_kind.policy", "policy");
+    dict.set("dashboard.notification_kind.call", "call");
+    dict.set("dashboard.notification_kind.applet", "applet");
+    dict.set("dashboard.notification_kind.agent", "agent");
+    dict.set("dashboard.notification_kind.moderation", "moderation");
+    dict.set("dashboard.notification_kind.system", "system");
+    dict.set("dashboard.health.describe", "Describe");
+    dict.set("dashboard.health.sync", "Sync");
+    dict.set("dashboard.health.identity", "Identity");
+    dict.set("dashboard.health.api", "API");
+    dict.set("dashboard.health.service", "{service} v{version}");
+    dict.set("dashboard.health.profiles", "{count} profiles");
+    dict.set("dashboard.health.error", "Error: {error}");
+    dict.set("search.index", "Search index");
+    dict.set("search.back", "Back to dashboard");
+    dict.set("search.no_body", "<no body>");
+    dict.set("search.open_task", "Open task");
+    dict.set("search.open_message", "Open message");
+    dict.set("search.open", "Open");
+    dict.set(
+        "search.account_unavailable",
+        "The active account is unavailable. Sign in again to search.",
+    );
+    dict.set("search.kind.message", "Message");
+
+    dict.set(
+        "login.create_identity",
+        "New here? Create a recoverable identity",
+    );
+    dict.set("login.connection.review", "Review changed server");
+    dict.set("login.connection.changed", "Server connection changed");
+    dict.set(
+        "login.connection.identity_changed",
+        "Server identity changed",
+    );
+    dict.set("login.connection.domain_changed", "Trust domain changed");
+    dict.set(
+        "login.connection.provider_changed",
+        "Sign-in provider changed",
+    );
+    dict.set(
+        "login.connection.warning",
+        "Only trust this change if you expected it. A new sign-in is required.",
+    );
+    dict.set("login.connection.details", "View changed details");
+    dict.set("login.connection.server", "Server: {url}");
+    dict.set("login.connection.previous", "Previous");
+    dict.set("login.connection.new", "New");
+    dict.set("login.connection.keep", "Keep previous connection");
+    dict.set("login.connection.trust", "Trust new connection");
+    dict.set("login.retry_verification", "Retry verification");
+    dict.set("login.connection.field.identity", "Server identity");
+    dict.set("login.connection.field.trust_domain", "Trust domain");
+    dict.set("login.connection.field.sign_in_service", "Sign-in service");
+    dict.set("login.connection.field.origin", "Origin");
+    dict.set("login.connection.field.url", "URL");
+    dict.set("login.connection.field.method", "Sign-in method");
+    dict.set("login.connection.field.type", "Type");
+    dict.set("login.connection.field.issuer", "Issuer");
+    dict.set("login.connection.field.provider", "Provider");
+    dict.set(
+        "login.connection.field.provider_discovery",
+        "Provider discovery",
+    );
+    dict.set("login.connection.field.client", "Client");
+    dict.set("login.connection.field.permissions", "Permissions");
+    dict.set("login.connection.field.grant_exchange", "Grant exchange");
+    dict.set(
+        "login.connection.field.identity_binding_methods",
+        "Identity binding methods",
+    );
+    dict.set(
+        "login.connection.field.numbered_method",
+        "Sign-in method {index} ({method})",
+    );
+    dict.set("applets.region", "Applet registry and bridge errors");
+    dict.set("applets.registry", "Applet registry");
+    dict.set("applets.registry_help", "Spec extensions/applet-integration.md §2 — registrations are emitted from a verified, signed Applet Package. The registry lists every ak.applet.registration the local raw-operation log has observed.");
+    dict.set("applets.registry_empty", "No applets registered yet. Use the signed Applet Package install flow below; registration is derived during commit.");
+    dict.set("applets.bridge_errors", "Bridge errors");
+    dict.set("applets.bridge_errors_empty", "No bridge errors observed.");
+    dict.set("applets.installed", "Installed applets");
+    dict.set("applets.close_install", "Close install");
+    dict.set("applets.open_install", "+ Install applet");
+    dict.set("applets.manifest_placeholder", "manifest URL or JSON body");
+    dict.set(
+        "applets.circle_placeholder",
+        "optional Circle id (ak:circle:…) — blank = Realm-wide",
+    );
+    dict.set(
+        "applets.actions_placeholder",
+        "approved actions, comma or newline separated",
+    );
+    dict.set("applets.allow_ghost", "allow Applet-managed Ghost Actors");
+    dict.set("applets.preview_plan", "Preview plan");
+    dict.set("applets.install", "Install applet");
+    dict.set("applets.installed_empty", "No applets installed.");
+    dict.set("applets.bot_creation_help", "Service installation supports zero or more independent Bots. Create Bots through the Applet's own management controls; this client has no authenticated Applet control connection. Any required approval must complete before acceptance.");
+    dict.set("applets.trace_events", "Trace events");
+    dict.set("applets.uninstall", "Uninstall");
+    dict.set(
+        "applets.trace_empty",
+        "No events observed for this applet yet.",
+    );
+    dict.set("applets.registered_count", "{count} registered");
+    dict.set("applets.operation_id", "operation_id {value}");
+    dict.set("applets.trace_title", "Accountability trace — {value}");
+    dict.set("applets.event_id", "event_id {value}");
+
     add_r3_error_keys(&mut dict);
     add_generic_error_keys(&mut dict);
 

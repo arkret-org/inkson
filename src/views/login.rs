@@ -526,7 +526,7 @@ pub fn LoginPanel(
                     div { class: "auth-footer",
                         Link {
                             to: crate::routes::Route::Register,
-                            "New here? Create a recoverable identity"
+                            {crate::i18n::tr("login.create_identity")}
                         }
                     }
                 }
@@ -555,46 +555,19 @@ pub fn LoginPanel(
                                 is_busy.set(false);
                             });
                         },
-                        "Review changed server"
+                        {crate::i18n::tr("login.connection.review")}
                     }
                 }
                 if let Some(change) = connection_change() {
                     div { class: "auth-status auth-connection-review", role: "alert",
                         "data-testid": "station-connection-review",
-                        strong { "Server connection changed" }
-                        ul { class: "auth-connection-summary",
-                            if change.previous.service_id != change.candidate.service_id {
-                                li { "Server identity changed" }
-                            }
-                            if change.previous.trust_domain != change.candidate.trust_domain {
-                                li { "Trust domain changed" }
-                            }
-                            if change.previous.auth_metadata != change.candidate.auth_metadata {
-                                li { "Sign-in provider changed" }
-                            }
-                        }
-                        p { "Only trust this change if you expected it. A new sign-in is required." }
-                        details { class: "auth-connection-details",
-                            summary { "View changed details" }
-                            p { class: "auth-connection-server", "Server: {change.candidate.base_url}" }
-                            for detail in crate::station_connection::connection_changes(&change) {
-                                div { class: "auth-connection-field",
-                                    strong { "{detail.label}" }
-                                    dl {
-                                        dt { "Previous" }
-                                        dd { "{detail.previous}" }
-                                        dt { "New" }
-                                        dd { "{detail.candidate}" }
-                                    }
-                                }
-                            }
-                        }
+                        {connection_review_details(&change)}
                         div { class: "auth-connection-actions",
                         Button {
                             variant: ButtonVariant::Ghost,
                             disabled: is_busy(),
                             onclick: move |_| connection_change.set(None),
-                            "Keep previous connection"
+                            {crate::i18n::tr("login.connection.keep")}
                         }
                         Button {
                             variant: ButtonVariant::Primary,
@@ -626,13 +599,13 @@ pub fn LoginPanel(
                                     });
                                 }
                             },
-                            "Trust new connection"
+                            {crate::i18n::tr("login.connection.trust")}
                         }
                         }
                     }
                 }
                 if let Some(resume_url) = callback_retry_url() {
-                    a { href: "{resume_url}", "data-testid": "retry-session-verification", "Retry verification" }
+                    a { href: "{resume_url}", "data-testid": "retry-session-verification", {crate::i18n::tr("login.retry_verification")} }
                 }
 
                 // G3.Y0 — session state surface for cotest's
@@ -708,6 +681,204 @@ pub fn LoginPanel(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+// Translate only names emitted by the Station review model. Unknown future
+// field names and every old/new value remain literal, including dotted keys.
+fn connection_review_field_label(label: &str) -> String {
+    label
+        .split(" · ")
+        .map(|field| {
+            let key = match field {
+                "Server identity" => Some("login.connection.field.identity"),
+                "Trust domain" => Some("login.connection.field.trust_domain"),
+                "Sign-in service" => Some("login.connection.field.sign_in_service"),
+                "Origin" => Some("login.connection.field.origin"),
+                "URL" => Some("login.connection.field.url"),
+                "Sign-in method" => Some("login.connection.field.method"),
+                "Type" => Some("login.connection.field.type"),
+                "Issuer" => Some("login.connection.field.issuer"),
+                "Provider" => Some("login.connection.field.provider"),
+                "Provider discovery" => Some("login.connection.field.provider_discovery"),
+                "Client" => Some("login.connection.field.client"),
+                "Permissions" => Some("login.connection.field.permissions"),
+                "Grant exchange" => Some("login.connection.field.grant_exchange"),
+                "Identity binding methods" => {
+                    Some("login.connection.field.identity_binding_methods")
+                }
+                _ => None,
+            };
+            if let Some(key) = key {
+                return crate::i18n::tr(key);
+            }
+            if let Some(numbered) = field.strip_prefix("Sign-in method ")
+                && let Some((index, method)) = numbered.split_once(" (")
+                && !index.is_empty()
+                && index.bytes().all(|byte| byte.is_ascii_digit())
+                && index.parse::<usize>().is_ok_and(|index| index > 0)
+                && let Some(method) = method.strip_suffix(')')
+            {
+                return crate::i18n::tr_args(
+                    "login.connection.field.numbered_method",
+                    &[("index", index.to_owned()), ("method", method.to_owned())],
+                );
+            }
+            field.to_owned()
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+fn connection_review_details(change: &crate::station_connection::ConnectionTrustChange) -> Element {
+    rsx! {
+        strong { {crate::i18n::tr("login.connection.changed")} }
+        ul { class: "auth-connection-summary",
+            if change.previous.service_id != change.candidate.service_id {
+                li { {crate::i18n::tr("login.connection.identity_changed")} }
+            }
+            if change.previous.trust_domain != change.candidate.trust_domain {
+                li { {crate::i18n::tr("login.connection.domain_changed")} }
+            }
+            if change.previous.auth_metadata != change.candidate.auth_metadata {
+                li { {crate::i18n::tr("login.connection.provider_changed")} }
+            }
+        }
+        p { {crate::i18n::tr("login.connection.warning")} }
+        details { class: "auth-connection-details",
+            summary { {crate::i18n::tr("login.connection.details")} }
+            p { class: "auth-connection-server", {crate::i18n::tr_args("login.connection.server", &[("url", change.candidate.base_url.clone())])} }
+            for detail in crate::station_connection::connection_changes(&change) {
+                div { class: "auth-connection-field",
+                    strong { {connection_review_field_label(&detail.label)} }
+                    dl {
+                        dt { {crate::i18n::tr("login.connection.previous")} }
+                        dd { "{detail.previous}" }
+                        dt { {crate::i18n::tr("login.connection.new")} }
+                        dd { "{detail.candidate}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod connection_review_locale_tests {
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+
+    use super::*;
+    use crate::i18n::{I18nSignal, UiLocale};
+
+    type LocaleHandle = Rc<RefCell<Option<I18nSignal>>>;
+
+    fn retained_review(
+        (handle, change): (
+            LocaleHandle,
+            crate::station_connection::ConnectionTrustChange,
+        ),
+    ) -> Element {
+        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
+        *handle.borrow_mut() = Some(locale);
+        let change = use_signal(move || change);
+        rsx! {
+            div {
+                {connection_review_details(&change.read())}
+                p { {connection_review_field_label("future_label.{url} / 原文")} }
+                p { {connection_review_field_label("Sign-in method unknown (oidc)")} }
+            }
+        }
+    }
+
+    fn apply_text_edits(
+        text: &mut BTreeMap<usize, String>,
+        edits: dioxus::core::Mutations,
+    ) -> usize {
+        let mut changed = 0;
+        for edit in edits.edits {
+            match edit {
+                dioxus::core::Mutation::CreateTextNode { id, value }
+                | dioxus::core::Mutation::SetText { id, value } => {
+                    text.insert(id.0, value);
+                    changed += 1;
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+
+    #[test]
+    fn station_review_rerenders_retained_changes_without_translating_original_values() {
+        let mut previous: arkret_sdk::StationConnectionBinding = serde_json::from_value(serde_json::json!({
+            "base_url": "https://station.example/",
+            "service_id": "ak:did_core:webvh:z6mkfixture",
+            "trust_domain": "ak:trust_domain:station.example",
+            "auth_metadata": {
+                "account_authority": { "origin": "https://auth.example", "gate_account_base_url": "https://auth.example/_arkret/gate/account" },
+                "methods": [{ "method": "oidc", "issuer_uri": "https://auth.example/", "client_id": "login.connection.new", "scopes": ["openid", "profile"], "grant_exchange": { "kind": "account_handoff" } }]
+            }
+        })).unwrap();
+        let mut second = previous.auth_metadata.methods[0].clone();
+        second.client_id = Some("unchanged-client".to_owned());
+        previous.auth_metadata.methods.push(second);
+        let mut candidate = previous.clone();
+        candidate.service_id = arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkchanged").unwrap();
+        candidate.trust_domain =
+            arkret_sdk::TrustDomainId::new("ak:trust_domain:new-station.example").unwrap();
+        candidate.auth_metadata.methods[0].client_id = Some("{index} {method} / 原文".to_owned());
+        let change = crate::station_connection::ConnectionTrustChange {
+            previous,
+            candidate,
+        };
+        let raw_values = crate::station_connection::connection_changes(&change)
+            .into_iter()
+            .flat_map(|detail| [detail.previous, detail.candidate])
+            .collect::<Vec<_>>();
+        let handle = Rc::new(RefCell::new(None));
+        let mut dom = VirtualDom::new_with_props(retained_review, (handle.clone(), change));
+        let mut text = BTreeMap::new();
+        apply_text_edits(&mut text, dom.rebuild_to_vec());
+        let english = text.clone();
+        assert!(
+            text.values()
+                .any(|value| value == "Sign-in method 1 (oidc) · Client")
+        );
+        let mut locale = handle.borrow().expect("review provides locale");
+        for language in [UiLocale::Zh, UiLocale::En] {
+            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
+            assert!(apply_text_edits(&mut text, dom.render_immediate_to_vec()) > 0);
+            for raw in &raw_values {
+                assert!(
+                    text.values().any(|value| value == raw),
+                    "original trust value disappeared: {raw}"
+                );
+            }
+            for unknown in ["future_label.{url} / 原文", "Sign-in method unknown (oidc)"] {
+                assert!(text.values().any(|value| value == unknown));
+            }
+            if language == UiLocale::Zh {
+                for expected in [
+                    "服务器连接已变更",
+                    "服务器身份已变更",
+                    "信任域已变更",
+                    "登录提供方已变更",
+                    "登录方式 1（oidc） · 客户端",
+                    "原值",
+                    "新值",
+                    "服务器：https://station.example/",
+                ] {
+                    assert!(
+                        text.values().any(|value| value == expected),
+                        "review text missing: {expected}"
+                    );
+                }
+            } else {
+                assert_eq!(text, english);
             }
         }
     }

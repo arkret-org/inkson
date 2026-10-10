@@ -639,6 +639,8 @@ export function registerStrandsBeforeEach() {
         "notifications are derived from index projections and respect per-realm mute rules",
         "notification feed controls and local mute feedback follow the active language",
         "dashboard notification previews stay literal across language changes",
+        "dashboard operational copy and health results follow the active language",
+        "global search results preserve local text and routes across language changes",
       ].includes(testInfo.title),
       encryptedDemoRealm: [
         "bootstrap login and sync shows the connected realm",

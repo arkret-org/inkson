@@ -1858,6 +1858,166 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("developer.profile.required", "所需 Profile id");
 
     // R3 spec sync (b47ff6ec) — Chinese error toast translations.
+    dict.set("dashboard.object_state.active", "活跃");
+    dict.set("dashboard.object_state.archived", "已归档");
+    dict.set("dashboard.object_state.redacted", "已删改");
+    dict.set("dashboard.contacts_loading", "正在加载联系人");
+    dict.set("dashboard.contacts_unavailable", "联系人暂不可用");
+    dict.set("dashboard.active_strands", "活跃 Strand");
+    dict.set("dashboard.open_board_view", "打开看板视图");
+    dict.set("dashboard.realm_setup", "Realm 设置");
+    dict.set("dashboard.ready", "就绪");
+    dict.set("dashboard.sign_in", "登录");
+    dict.set("dashboard.setup_help", "创建首个 Realm 并设置初始策略");
+    dict.set("dashboard.onboarding", "入门设置");
+    dict.set("dashboard.onboarding_steps", "4 个步骤");
+    dict.set("dashboard.onboarding_help", "身份、设备与恢复设置");
+    dict.set("dashboard.recent_strands", "最近的 Strand");
+    dict.set("dashboard.strand_title", "标题");
+    dict.set("dashboard.strand_space", "Space");
+    dict.set("dashboard.strand_state", "状态");
+    dict.set("dashboard.strand_updated", "更新时间");
+    dict.set("dashboard.strands_empty", "未加载最近的 Strand");
+    dict.set("dashboard.strands_signin", "登录以加载最近的 Strand");
+    dict.set("dashboard.current_board", "当前看板");
+    dict.set("dashboard.recent_activity", "最近活动");
+    dict.set("dashboard.activity_empty", "暂无");
+    dict.set("dashboard.no_activity", "未加载活动");
+    dict.set("dashboard.no_session_activity", "暂无会话活动");
+    dict.set("dashboard.activity_sync_help", "同步尚未返回最近的事件。");
+    dict.set("dashboard.activity_signin_help", "登录并同步后将显示活动。");
+    dict.set("dashboard.client_status", "客户端状态");
+    dict.set("dashboard.sync_frontier", "同步前沿");
+    dict.set("dashboard.loaded", "已加载");
+    dict.set("dashboard.not_connected", "未连接");
+    dict.set("dashboard.event_frontier", "事件前沿");
+    dict.set("dashboard.station_reported", "Station 已报告");
+    dict.set("dashboard.not_loaded", "未加载");
+    dict.set("dashboard.queued_writes", "排队的写入");
+    dict.set("dashboard.local_replay_queue", "本地重放队列");
+    dict.set("dashboard.advanced_diagnostics", "高级诊断");
+    dict.set("dashboard.checking_health", "正在检查运行状况");
+    dict.set("dashboard.run_health_checks", "检查运行状况");
+    dict.set(
+        "dashboard.health_help",
+        "更换 Station 后请运行检查。协作从 Space 开始，运行检查可在此查看。",
+    );
+    dict.set("dashboard.realm_remark", "备注");
+    dict.set(
+        "dashboard.client_status_help",
+        "运行状态仍然可见，独立工具页不再列在主导航中。",
+    );
+    dict.set("dashboard.snapshot_lower_trust", "信任较低");
+    dict.set("dashboard.snapshot_degraded", "降级");
+    dict.set("dashboard.open_board", "打开看板");
+    dict.set(
+        "dashboard.contacts_delta",
+        "待处理 {pending} · 私聊 {direct}",
+    );
+    dict.set("dashboard.notification_kind.message", "消息");
+    dict.set("dashboard.notification_kind.mention", "提及");
+    dict.set("dashboard.notification_kind.reply", "回复");
+    dict.set("dashboard.notification_kind.assignment", "分配");
+    dict.set("dashboard.notification_kind.schedule", "日程");
+    dict.set("dashboard.notification_kind.invite", "邀请");
+    dict.set("dashboard.notification_kind.reaction", "回应");
+    dict.set("dashboard.notification_kind.policy", "策略");
+    dict.set("dashboard.notification_kind.call", "通话");
+    dict.set("dashboard.notification_kind.applet", "小应用");
+    dict.set("dashboard.notification_kind.agent", "Agent");
+    dict.set("dashboard.notification_kind.moderation", "管理");
+    dict.set("dashboard.notification_kind.system", "系统");
+    dict.set("dashboard.health.describe", "服务说明");
+    dict.set("dashboard.health.sync", "同步");
+    dict.set("dashboard.health.identity", "身份");
+    dict.set("dashboard.health.api", "API");
+    dict.set("dashboard.health.service", "{service} v{version}");
+    dict.set("dashboard.health.profiles", "{count} 个配置档");
+    dict.set("dashboard.health.error", "错误：{error}");
+    dict.set("search.index", "搜索索引");
+    dict.set("search.back", "返回首页");
+    dict.set("search.no_body", "<无正文>");
+    dict.set("search.open_task", "打开任务");
+    dict.set("search.open_message", "打开消息");
+    dict.set("search.open", "打开");
+    dict.set(
+        "search.account_unavailable",
+        "当前账号不可用。请重新登录后搜索。",
+    );
+    dict.set("search.kind.message", "消息");
+
+    dict.set("login.create_identity", "第一次使用？创建可恢复的身份");
+    dict.set("login.connection.review", "检查服务器变更");
+    dict.set("login.connection.changed", "服务器连接已变更");
+    dict.set("login.connection.identity_changed", "服务器身份已变更");
+    dict.set("login.connection.domain_changed", "信任域已变更");
+    dict.set("login.connection.provider_changed", "登录提供方已变更");
+    dict.set(
+        "login.connection.warning",
+        "请仅在确认这是预期变更后信任新连接。你需要重新登录。",
+    );
+    dict.set("login.connection.details", "查看变更详情");
+    dict.set("login.connection.server", "服务器：{url}");
+    dict.set("login.connection.previous", "原值");
+    dict.set("login.connection.new", "新值");
+    dict.set("login.connection.keep", "保留原连接");
+    dict.set("login.connection.trust", "信任新连接");
+    dict.set("login.retry_verification", "重试验证");
+    dict.set("login.connection.field.identity", "服务器身份");
+    dict.set("login.connection.field.trust_domain", "信任域");
+    dict.set("login.connection.field.sign_in_service", "登录服务");
+    dict.set("login.connection.field.origin", "来源");
+    dict.set("login.connection.field.url", "地址");
+    dict.set("login.connection.field.method", "登录方式");
+    dict.set("login.connection.field.type", "类型");
+    dict.set("login.connection.field.issuer", "签发方");
+    dict.set("login.connection.field.provider", "提供方");
+    dict.set(
+        "login.connection.field.provider_discovery",
+        "提供方发现地址",
+    );
+    dict.set("login.connection.field.client", "客户端");
+    dict.set("login.connection.field.permissions", "权限");
+    dict.set("login.connection.field.grant_exchange", "授权交换");
+    dict.set(
+        "login.connection.field.identity_binding_methods",
+        "身份绑定方式",
+    );
+    dict.set(
+        "login.connection.field.numbered_method",
+        "登录方式 {index}（{method}）",
+    );
+    dict.set("applets.region", "小程序注册表与桥接错误");
+    dict.set("applets.registry", "小程序注册表");
+    dict.set("applets.registry_help", "规范 extensions/applet-integration.md 第 2 节：注册来自已验证签名的小程序包。注册表列出本地操作日志已观察到的每条 ak.applet.registration。");
+    dict.set(
+        "applets.registry_empty",
+        "尚未注册小程序。请使用下方已签名小程序包的安装流程；注册记录会在提交时生成。",
+    );
+    dict.set("applets.bridge_errors", "桥接错误");
+    dict.set("applets.bridge_errors_empty", "尚未观察到桥接错误。");
+    dict.set("applets.installed", "已安装的小程序");
+    dict.set("applets.close_install", "关闭安装表单");
+    dict.set("applets.open_install", "+ 安装小程序");
+    dict.set("applets.manifest_placeholder", "清单网址或 JSON 内容");
+    dict.set(
+        "applets.circle_placeholder",
+        "可选 Circle 标识（ak:circle:…）；留空表示整个 Realm",
+    );
+    dict.set("applets.actions_placeholder", "获批操作，以逗号或换行分隔");
+    dict.set("applets.allow_ghost", "允许由小程序管理的 Ghost Actor");
+    dict.set("applets.preview_plan", "预览计划");
+    dict.set("applets.install", "安装小程序");
+    dict.set("applets.installed_empty", "尚未安装小程序。");
+    dict.set("applets.bot_creation_help", "服务安装可以包含零个或多个独立 Bot。请通过小程序自己的管理入口创建 Bot；此客户端尚无已认证的小程序控制连接。所有必要审批都必须在接纳前完成。");
+    dict.set("applets.trace_events", "查看事件追踪");
+    dict.set("applets.uninstall", "卸载");
+    dict.set("applets.trace_empty", "尚未观察到此小程序的事件。");
+    dict.set("applets.registered_count", "已注册 {count} 个");
+    dict.set("applets.operation_id", "操作标识 {value}");
+    dict.set("applets.trace_title", "问责事件追踪 — {value}");
+    dict.set("applets.event_id", "事件标识 {value}");
+
     add_r3_error_keys_zh(&mut dict);
     add_generic_error_keys_zh(&mut dict);
 
