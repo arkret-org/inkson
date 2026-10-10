@@ -5,6 +5,29 @@ use arkret_wire::{BindingKind, ServiceKind, ServiceOperationId, operation_bundle
 
 use crate::models::ServiceDescribe;
 
+/// Inspect only the complete admitted private cut used by the product fold.
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub fn retained_sidecar_cut(
+    store: &crate::LocalStateStore,
+    scope: &arkret_sdk::ScopeRef,
+) -> anyhow::Result<(
+    arkret_sdk::RealmStateSnapshot,
+    Vec<arkret_sdk::CommittedEventFullView>,
+)> {
+    let arkret_sdk::ScopeRef::Sidecar {
+        realm_id,
+        sidecar_id,
+    } = scope
+    else {
+        anyhow::bail!("private cut inspection requires a Sidecar scope");
+    };
+    let (snapshot, histories) = store.verified_sidecar_inputs(realm_id.as_str())?;
+    let history = histories
+        .get(sidecar_id.as_str())
+        .ok_or_else(|| anyhow::anyhow!("the admitted cut does not cover this Sidecar"))?;
+    Ok((snapshot, history.clone()))
+}
+
 /// A native conformance login uses the ordinary durable grant provider and
 /// active holder fence. Dropping the fixture invalidates all captured results.
 #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]

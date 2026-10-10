@@ -722,6 +722,12 @@ impl LocalStateStore {
         }
     }
 
+    /// The exact native shard selected by the normal persistence boundary.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+    pub fn conformance_account_state_path(&self) -> PathBuf {
+        self.account_state_path(&self.effective_account_key())
+    }
+
     /// Dedicated atomic store for durable Signal sequence block reservations.
     /// It is intentionally separate from the large account-state snapshot: a
     /// second process can lock and advance this high-water without rewriting

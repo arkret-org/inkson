@@ -634,6 +634,27 @@ impl NativeAccountHost {
     }
 
     async fn catch_up_with_request(&self, request: SyncRequestBody) -> garth::Result<()> {
+        self.catch_up_with_transport(request, &self.projector.transport)
+            .await
+    }
+
+    /// Exercise the ordinary driver and projector with an independently
+    /// controlled subscription rail; all own-Station reads retain this host's
+    /// original session capability.
+    #[cfg(feature = "spec-conformance")]
+    pub async fn catch_up_with_conformance_transport<T: garth::AccountSubscribeTransport>(
+        &self,
+        transport: &T,
+    ) -> garth::Result<()> {
+        self.catch_up_with_transport(self.request.clone(), transport)
+            .await
+    }
+
+    async fn catch_up_with_transport<T: garth::AccountSubscribeTransport>(
+        &self,
+        request: SyncRequestBody,
+        transport: &T,
+    ) -> garth::Result<()> {
         struct OneWindow<'a> {
             projector: &'a InksonAccountProjector,
             control: SubscriptionControl,
@@ -670,7 +691,7 @@ impl NativeAccountHost {
         };
         let result = subscription
             .run(
-                &self.projector.transport,
+                transport,
                 &projector,
                 None,
                 arkret_sdk::ActorId::account(self.projector.ctx.account.authority.clone()),
