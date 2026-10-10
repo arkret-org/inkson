@@ -5204,67 +5204,6 @@ mod tests {
                 &keys,
             )
             .unwrap();
-        let atomic_path = directory.join("atomic-cut.json");
-        let mut atomic = LocalStateStore::with_path(&atomic_path);
-        atomic.save(before_new_cut.clone());
-        atomic.flush().unwrap();
-        let new_checkpoint = garth::AccountCursorCheckpoint {
-            cursor: "ak:cursor:verified-sidecar-new-cut".to_owned(),
-            ..old_checkpoint.clone()
-        };
-        let install_cut = |store: &mut LocalStateStore| -> Result<(), String> {
-            store.ingest_verified_message_history(&page)?;
-            store
-                .sidecar_history_at_snapshot(&snapshot)
-                .map_err(|error| error.to_string())?;
-            store.install_verified_sidecar_current(&VerifiedCurrentSnapshot {
-                snapshot: snapshot.clone(),
-            })?;
-            store
-                .save_account_checkpoint(&checkpoint_scope, new_checkpoint.clone())
-                .map_err(|error| error.to_string())
-        };
-        let before_atomic = serde_json::to_value(atomic.load()).unwrap();
-        let account_path = std::fs::read_dir(&directory)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .find(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("atomic-cut.account.")
-                    && path.extension().is_some_and(|ext| ext == "json")
-            })
-            .expect("the real account-state shard must have been persisted");
-        let bytes = std::fs::read(&account_path).unwrap();
-        let backup = account_path.with_extension("backup");
-        std::fs::rename(&account_path, &backup).unwrap();
-        std::fs::create_dir(&account_path).unwrap();
-        let failed = atomic.verified_projection_transaction(install_cut);
-        std::fs::remove_dir(&account_path).unwrap();
-        std::fs::rename(&backup, &account_path).unwrap();
-        assert!(failed.is_err());
-        assert_eq!(serde_json::to_value(atomic.load()).unwrap(), before_atomic);
-        assert_eq!(std::fs::read(&account_path).unwrap(), bytes);
-        assert_eq!(
-            serde_json::to_value(LocalStateStore::with_path(&atomic_path).load()).unwrap(),
-            before_atomic
-        );
-        atomic.verified_projection_transaction(install_cut).unwrap();
-        drop(atomic);
-        let atomic = LocalStateStore::with_path(&atomic_path);
-        assert_eq!(
-            atomic.load_account_checkpoint(&checkpoint_scope).unwrap(),
-            Some(new_checkpoint)
-        );
-        assert_eq!(
-            atomic.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
-            native
-        );
-        assert_eq!(
-            atomic.load().verified_sidecar_current.get(REALM_ID),
-            Some(&snapshot)
-        );
         let mut live_follow = LocalStateStore::with_path(directory.join("live-follow.json"));
         live_follow.save(before_new_cut.clone());
         let previous_current = live_follow.load().verified_sidecar_current;
@@ -5334,6 +5273,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(account_files.len(), 1);
         let account_file = &account_files[0];
+        let prior_bytes = std::fs::read(account_file).unwrap();
         let backup = account_file.with_extension("saved");
         std::fs::rename(account_file, &backup).unwrap();
         std::fs::create_dir(account_file).unwrap();
@@ -5366,6 +5306,7 @@ mod tests {
         assert_eq!(serde_json::to_value(failed.load()).unwrap(), failed_before);
         std::fs::remove_dir(account_file).unwrap();
         std::fs::rename(&backup, account_file).unwrap();
+        assert_eq!(std::fs::read(account_file).unwrap(), prior_bytes);
         let failed_reload = LocalStateStore::with_path(directory.join("failed-cut.json"));
         assert_eq!(
             serde_json::to_value(failed_reload.load()).unwrap(),
