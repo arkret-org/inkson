@@ -521,7 +521,7 @@ fn ContactRequestNotification(
     let session = crate::app::SessionContext::get();
     let mut inbox = use_context::<crate::app::ContactInbox>();
     let busy = use_signal(|| false);
-    let status = use_signal(String::new);
+    let status = use_signal(crate::views::contacts::ContactFeedback::default);
     let peer = contact.peer.contact_actor_id().to_string();
     let request_event_ref = contact.request_event_ref.as_ref().map(ToString::to_string);
     let label = crate::views::helpers::contact_peer_label(&session.state_store.read(), &contact);
@@ -546,7 +546,7 @@ fn ContactRequestNotification(
                             requester: peer.clone(), request_event_ref: request_event_ref.clone(),
                             verb: "accept".to_owned(),
                         },
-                        crate::i18n::tr("contacts.action.accepting"), busy, status,
+                        "contacts.action.accepting", busy, status,
                         EventHandler::new(move |_| {
                             if *session.session_generation.peek() == generation {
                                 inbox.0.write().retain(|row| {
@@ -565,7 +565,9 @@ fn ContactRequestNotification(
                 else { {crate::i18n::tr("contacts.action.accept")} }
             }
             if !status().is_empty() {
-                div { role: "status", class: "muted", "{status}" }
+                div { role: "status", class: "muted",
+                    {status.read().render()}
+                }
             }
         }
     }

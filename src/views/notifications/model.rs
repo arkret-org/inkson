@@ -381,8 +381,7 @@ fn notification_from_stored(
         id,
         source_event_id,
         title,
-        title_is_key: value.agent_runtime_approval().is_some()
-            || preview_string(&value, &["title"]).is_none(),
+        title_is_key: notification_title_is_key(&value),
         body,
         body_translation: notification_body_translation(&value),
         realm_id,
@@ -669,7 +668,11 @@ pub(crate) fn notification_eval_context(value: &StoredNotification) -> Notificat
     }
 }
 
-fn notification_title(value: &StoredNotification, kind: &str) -> String {
+pub(crate) fn notification_title_is_key(value: &StoredNotification) -> bool {
+    value.agent_runtime_approval().is_some() || preview_string(value, &["title"]).is_none()
+}
+
+pub(crate) fn notification_title(value: &StoredNotification, kind: &str) -> String {
     if value.agent_runtime_approval().is_some() {
         return "notifications.runtime_approval.title".to_owned();
     }
@@ -680,7 +683,7 @@ fn notification_title(value: &StoredNotification, kind: &str) -> String {
     }
 }
 
-fn notification_body_translation(
+pub(crate) fn notification_body_translation(
     value: &StoredNotification,
 ) -> Option<(&'static str, Vec<(&'static str, String)>)> {
     if value.agent_runtime_approval().is_some() {
@@ -717,7 +720,7 @@ impl UiNotification {
     }
 }
 
-fn notification_body(value: &StoredNotification) -> String {
+pub(crate) fn notification_body(value: &StoredNotification) -> String {
     if value.agent_runtime_approval().is_some() {
         return "Review the pending Agent runtime key request.".to_owned();
     }
