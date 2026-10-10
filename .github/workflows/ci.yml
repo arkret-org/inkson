@@ -210,7 +210,7 @@ jobs:
         shell: bash
         run: |
           nohup dx serve --platform web --features web --port 4528 --open false > ../inkson-lighthouse-server.log 2>&1 &
-          for i in {1..90}; do
+          for _ in {1..90}; do
             if curl -fsS http://127.0.0.1:4528 >/dev/null; then
               exit 0
             fi
