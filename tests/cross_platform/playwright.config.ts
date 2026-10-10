@@ -16,7 +16,9 @@
 // PATH; the lib-side build is unaffected).
 
 import { defineConfig, devices } from "@playwright/test";
+import { fileURLToPath } from "node:url";
 
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const baseURL =
   process.env.INKSON_CROSS_PLATFORM_BASE_URL ?? "http://127.0.0.1:4528";
 const shouldStartServer = !process.env.INKSON_CROSS_PLATFORM_BASE_URL;
@@ -66,16 +68,20 @@ export default defineConfig({
   projects,
   webServer: shouldStartServer
     ? {
-        // dx serve produces the wasm bundle; the matrix exercises it
+        // Finish the real WASM build before binding the HTTP socket. DX serve
+        // returns its rebuild page before the browser bundle is ready.
+        // The matrix exercises the bundle
         // through the browser's native APIs (SubtleCrypto, PushManager,
         // localStorage). Distinct port from the e2e harness so the two
         // can run side-by-side in CI.
         command:
-          "dx serve --platform web --features web --addr 127.0.0.1 --port 4528 --open false --hot-reload false --watch false",
-        url: baseURL,
+          "dx build --platform web --features web && node tests/e2e/staticServer.mjs target/dx/inkson/debug/web/public 4528 tests/cross_platform/fixtures",
+        cwd: repositoryRoot,
+        url: `${baseURL}/wasm/inkson.js`,
         reuseExistingServer: !process.env.CI,
         // A clean WASM build can take several minutes before the socket opens.
         timeout: 900_000,
+        env: { CARGO_TARGET_DIR: "target" },
       }
     : undefined,
 });

@@ -3,12 +3,13 @@ import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
-const [publicDirectoryArgument, portArgument] = process.argv.slice(2);
+const [publicDirectoryArgument, portArgument, fixtureDirectoryArgument] = process.argv.slice(2);
 if (!publicDirectoryArgument || !portArgument) {
-  throw new Error("usage: node staticServer.mjs <public-directory> <port>");
+  throw new Error("usage: node staticServer.mjs <public-directory> <port> [fixture-directory]");
 }
 
 const publicDirectory = resolve(publicDirectoryArgument);
+const fixtureDirectory = fixtureDirectoryArgument ? resolve(fixtureDirectoryArgument) : null;
 const port = Number.parseInt(portArgument, 10);
 if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error(`invalid port: ${portArgument}`);
@@ -25,11 +26,11 @@ const contentTypes = new Map([
   [".woff2", "font/woff2"],
 ]);
 
-async function existingFile(pathname) {
-  const candidate = normalize(join(publicDirectory, pathname));
+async function existingFile(directory, pathname) {
+  const candidate = normalize(join(directory, pathname));
   if (
-    candidate !== publicDirectory &&
-    !candidate.startsWith(`${publicDirectory}${sep}`)
+    candidate !== directory &&
+    !candidate.startsWith(`${directory}${sep}`)
   ) {
     return null;
   }
@@ -58,10 +59,13 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  const requestedFile = await existingFile(pathname.replace(/^\/+/, ""));
+  const relativePath = pathname.replace(/^\/+/, "");
+  const requestedFile =
+    (await existingFile(publicDirectory, relativePath)) ??
+    (fixtureDirectory ? await existingFile(fixtureDirectory, relativePath) : null);
   const file =
     requestedFile ??
-    (extname(pathname) ? null : await existingFile("index.html"));
+    (extname(pathname) ? null : await existingFile(publicDirectory, "index.html"));
   if (!file) {
     response.writeHead(404, { "Cache-Control": "no-store" });
     response.end();

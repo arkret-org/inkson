@@ -61,65 +61,6 @@ const READABLE_PROBES: Record<LeakField, string> = {
   draft_content: "hidden draft content",
 };
 
-const PUSH_WORKER_SCRIPT = `
-  const LEAK_FIELDS = ${JSON.stringify(LEAK_FIELDS)};
-  const WAKEUP_KINDS = new Set(${JSON.stringify(WAKEUP_KINDS)});
-
-  self.addEventListener("install", (event) => {
-    event.waitUntil(self.skipWaiting());
-  });
-
-  self.addEventListener("activate", (event) => {
-    event.waitUntil(self.clients.claim());
-  });
-
-  function receiveEnvelope(payload) {
-    const incoming = payload && typeof payload === "object" ? payload : {};
-    const outbound = {
-      type: "inkson.push.receive",
-      reason: incoming.reason === "background_sync_needed"
-        ? "background_sync_needed"
-        : "background_sync_needed",
-    };
-    if (WAKEUP_KINDS.has(incoming.wakeup_kind)) {
-      outbound.wakeupKind = incoming.wakeup_kind;
-    }
-    return {
-      ...outbound,
-      leaked: LEAK_FIELDS.filter((field) => Object.prototype.hasOwnProperty.call(outbound, field)),
-      hasDisplayText: LEAK_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(outbound, field)),
-      receivedProbeKeys: LEAK_FIELDS.filter((field) => Object.prototype.hasOwnProperty.call(incoming, field)),
-    };
-  }
-
-  async function notifyClients(payload) {
-    const clients = await self.clients.matchAll({ includeUncontrolled: true, type: "window" });
-    const message = receiveEnvelope(payload);
-    for (const client of clients) {
-      client.postMessage(message);
-    }
-  }
-
-  self.addEventListener("push", (event) => {
-    let payload = {};
-    try {
-      payload = event.data ? event.data.json() : {};
-    } catch (_) {
-      payload = {};
-    }
-    event.waitUntil(notifyClients(payload));
-  });
-
-  self.addEventListener("message", (event) => {
-    if (event.data && event.data.type === "simulate-push") {
-      const pending = notifyClients(event.data.payload || {});
-      if (typeof event.waitUntil === "function") {
-        event.waitUntil(pending);
-      }
-    }
-  });
-`;
-
 async function simulatePushReceive(
   page: Page,
   payload: Record<string, string>,
@@ -130,10 +71,12 @@ async function simulatePushReceive(
         scope: "/",
       });
       const ready = await navigator.serviceWorker.ready;
-      let worker = ready.active || registration.active || registration.waiting || registration.installing;
-      if (!worker) {
+      const initialWorker =
+        ready.active || registration.active || registration.waiting || registration.installing;
+      if (!initialWorker) {
         throw new Error("service worker did not become active");
       }
+      let worker: ServiceWorker = initialWorker;
 
       if (worker.state !== "activated") {
         await new Promise<void>((resolve) => {
@@ -193,14 +136,7 @@ function expectBlindWakeup(received: ReceivedPush, wakeupKind?: WakeupKind): voi
 }
 
 test.describe("desktop push receive smoke", () => {
-  test.beforeEach(async ({ context, page }) => {
-    await context.route(`**${PUSH_SW_PATH}`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/javascript",
-        body: PUSH_WORKER_SCRIPT,
-      });
-    });
+  test.beforeEach(async ({ page }) => {
     await gotoOrSkip(page, "/");
     await waitForBundleReady(page);
     await ensureServiceWorkerAvailable(page);
