@@ -6,6 +6,7 @@ import {
   openSettings,
   dismissBlockingRecoveryModal,
 } from "./strandsHarness";
+import { CURRENT_ACCOUNT_ACTOR_ID, CURRENT_ACCOUNT_ID, DEMO_INVITE_ID, INVITED_REALM } from "./mockArkretApi";
 
 registerStrandsBeforeEach();
 
@@ -67,6 +68,15 @@ test("invite preview disclosed stays loading then visible and only Accept joins"
   await expect(page.getByTestId("notifications-status")).toContainText(
     "Joined Realm",
   );
+  const request = writes.find(request => request.path.endsWith("/events")
+    && request.body.includes("ak.invite.accept"));
+  expect(request).toBeDefined();
+  const submission = JSON.parse(request!.body);
+  const event = submission.event ?? submission;
+  expect(event.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
+  expect(event.realm_id).toBe(INVITED_REALM);
+  expect(event.payload).toEqual({ invite_id: DEMO_INVITE_ID,
+    previous_state: "pending", invitee_account_id: CURRENT_ACCOUNT_ID });
 });
 
 test("invite preview restricted remains preview-only", async ({ page }) => {

@@ -2240,9 +2240,6 @@ pub fn ChatPanel(
     ));
     let all_messages_snapshot = merged_timeline.read();
     let visible_messages = visible_timeline.read();
-    // Context props carry row changes. Retain the mounted feed across sync and
-    // lifecycle updates so its scroll position and focused controls survive.
-    let timeline_scope_key = format!("{selected_realm_id}\u{1f}{selected_channel_value}");
     // P3B.2.4 — per-strand Circle-scope lookup used by the
     // message accent rail. We index by `strand_id` once instead of
     // searching the `channels` Vec for every rendered message.
@@ -3184,8 +3181,10 @@ pub fn ChatPanel(
                         "Private exchange history is awaiting verified Sidecar history. Original Strand messages remain available."
                     }
                 }
+                // Context props carry row changes. Retain the mounted feed across sync and
+                // lifecycle updates so its scroll position and focused controls survive.
                 ChatTimeline {
-                    key: "{timeline_scope_key}",
+                    key: format!("{selected_realm_id}\u{1f}{selected_channel_value}"),
                     controller,
                     context: ChatTimelineContext {
                         embedded,

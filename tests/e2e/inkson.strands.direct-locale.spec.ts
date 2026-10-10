@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { BOB_ACCOUNT_ID } from "./mockArkretApi";
 import {
   gotoAndDismissRecovery,
   openSettings,
@@ -66,7 +67,7 @@ test("Direct structure local controls preserve action values and existing MLS an
     await gotoAndDismissRecovery(page, "/contacts/manage");
     const shell = page.getByTestId("client-shell");
     await shell.getByTestId("realm-sidebar-tab-direct").click();
-    await shell.getByTestId("direct-conversation-row").filter({ hasText: "ak:did_core:web:bob.example" }).click();
+    await shell.getByTestId("direct-conversation-row").filter({ hasText: BOB_ACCOUNT_ID.principal_id }).click();
     await expect(page).toHaveURL(/\/direct\/ak:realm:AUEAoXMJeJWBETvkqm7gk4imduk7g-l8bim19OPFQDaO\/ak:strand:Ae9PN2rTd0Dojs9yS8iLnfheJtjSEZ3mgDDyONpztHUd$/);
     const panel = page.getByTestId("direct-structure");
     await expect(panel).toBeVisible();

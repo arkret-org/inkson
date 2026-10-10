@@ -235,18 +235,36 @@ jobs:
               output.write(f"INKSON_WIRE_BIN={executables[0]}\n")
           PY
 
+      - name: Browser regression preflight
+        id: browser-preflight
+        working-directory: inkson
+        env:
+          PLAYWRIGHT_HTML_OPEN: never
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report-preflight
+        # These are the same five regressions in the complete suite below.
+        # Fail promptly with diagnostics, then require all 111 when they pass.
+        run: >-
+          npm run e2e -- --reporter=line,html --output=test-results-preflight
+          --grep ' (?:invite preview disclosed stays loading then visible and only Accept joins|directory search refuses unindexed Realms and exposes only public Realm metadata|realm sidebar separates contact-based direct chats|dashboard summarizes unread notifications from sync projection|configured recovery session can create a Realm)$'
+
       - name: Browser end-to-end tests
         id: browser-e2e
         working-directory: inkson
+        env:
+          PLAYWRIGHT_HTML_OPEN: never
         # Print each failed assertion immediately while the remaining suite runs.
-        run: npm run e2e -- --reporter=line
+        run: npm run e2e -- --reporter=line,html
 
       - name: Preserve failed E2E diagnostics
-        if: always() && steps.browser-e2e.outcome == 'failure'
+        if: always() && (steps.browser-preflight.outcome == 'failure' || steps.browser-e2e.outcome == 'failure')
         uses: actions/upload-artifact@v7
         with:
           name: inkson-e2e-diagnostics-${{ github.run_id }}
-          path: inkson/test-results/
+          path: |
+            inkson/test-results/
+            inkson/playwright-report/
+            inkson/test-results-preflight/
+            inkson/playwright-report-preflight/
           if-no-files-found: ignore
 
       - name: Start web preview for Lighthouse

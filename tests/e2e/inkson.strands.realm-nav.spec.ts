@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import {
   CURRENT_STATION_ID, CURRENT_ACCOUNT_ID, CURRENT_ACCOUNT_ACTOR_ID,
-  CURRENT_ASSISTANT_ACCOUNT_ID, DEMO_REALM, INVITED_REALM,
+  CURRENT_ASSISTANT_ACCOUNT_ID, BOB_ACCOUNT_ID, BOB_HELPER_ACCOUNT_ID,
+  DIRECT_BOB_HELPER_REALM, DIRECT_BOB_HELPER_STRAND, DEMO_REALM, INVITED_REALM,
   DEMO_PARENT_MEMBERSHIP_REVISION, validateMockSchema,
 } from "./mockArkretApi";
 import {
@@ -334,11 +335,11 @@ test("realm sidebar separates contact-based direct chats", async ({ page }) => {
   ).toHaveCount(1);
   const bobContactRow = shell
     .getByTestId("direct-conversation-row")
-    .filter({ hasText: "ak:did_core:web:bob.example" });
+    .filter({ hasText: BOB_ACCOUNT_ID.principal_id });
   await expect(bobContactRow).toContainText("DM");
   await expect(bobContactRow).toHaveAttribute(
     "aria-label",
-    "Chat with ak:did_core:web:bob.example",
+    `Chat with ${BOB_ACCOUNT_ID.principal_id}`,
   );
   await expect(
     shell
@@ -350,17 +351,24 @@ test("realm sidebar separates contact-based direct chats", async ({ page }) => {
     /\/direct\/ak:realm:AUEAoXMJeJWBETvkqm7gk4imduk7g-l8bim19OPFQDaO\/ak:strand:Ae9PN2rTd0Dojs9yS8iLnfheJtjSEZ3mgDDyONpztHUd$/,
   );
   await shell.getByTestId("realm-sidebar-tab-direct").click();
+  const helperRequest = page.waitForRequest(request =>
+    request.method() === "POST" &&
+    new URL(request.url()).pathname === "/_arkret/self/direct-conversations/resolve");
   await shell
     .getByTestId("contact-sidebar-agent-row")
     .filter({ hasText: "Bob Helper" })
     .click();
-  await expect(page).toHaveURL(/\/direct\/ak:realm:[^/]+\/ak:strand:[^/]+$/);
+  expect((await helperRequest).postDataJSON().peer).toEqual({
+    kind: "agent", actor_id: { kind: "account", account_id: BOB_HELPER_ACCOUNT_ID },
+    controller_account_id: BOB_ACCOUNT_ID,
+  });
+  await expect(page).toHaveURL(`/direct/${DIRECT_BOB_HELPER_REALM}/${DIRECT_BOB_HELPER_STRAND}`);
   await shell.getByTestId("realm-sidebar-tab-direct").click();
   await shell.getByTestId("realm-sidebar-manage-home-button").click();
   await expect(page).toHaveURL(/\/contacts\/manage$/);
   const contactsManagePage = shell.getByTestId("contacts-manage-page");
   await expect(contactsManagePage).toBeVisible();
-  await expect(contactsManagePage).toContainText("ak:did_core:web:bob.example");
+  await expect(contactsManagePage).toContainText(BOB_ACCOUNT_ID.principal_id);
   await expect(contactsManagePage.locator(".realm-manage-hero")).toHaveCount(0);
   await expect(
     contactsManagePage.locator('input[type="checkbox"]'),

@@ -19,6 +19,10 @@ const DIRECT_BOB_REALM =
   "ak:realm:AUEAoXMJeJWBETvkqm7gk4imduk7g-l8bim19OPFQDaO";
 const DIRECT_BOB_STRAND =
   "ak:strand:Ae9PN2rTd0Dojs9yS8iLnfheJtjSEZ3mgDDyONpztHUd";
+export const DIRECT_BOB_HELPER_REALM =
+  "ak:realm:Ab8b2glgQEo48OSA-g8P4SfHSFLwgN1jG8Jv-AlcdVnI";
+export const DIRECT_BOB_HELPER_STRAND =
+  "ak:strand:AQAG6N7vDa1nxssksTCIdqNm-FTDJoKuBrHIclJ7FBy0";
 const DIRECT_OWN_AGENT_REALM =
   "ak:realm:AbhO_nhWEZ7jojF3JULUGyzIUTiHNshUWblbkJCr7NbP";
 const DIRECT_OWN_AGENT_STRAND =
@@ -127,6 +131,7 @@ type InksonWireCommand =
   | "contact-request-verify"
   | "mock-realm-fixture"
   | "mock-realm-verify"
+  | "mock-realm-authority-bundle"
   | "mock-current-principal"
   | "mock-realm-scan"
   | "mock-exact-current"
@@ -244,8 +249,6 @@ const currentDirectoryDocument = inksonWire<Record<string, unknown>>(
   "service-document",
   { service_kind: "directory_service" },
 );
-export const DEMO_INVITE_ID =
-  "ak:invite:AZYDg8DDhw3K_txXc2FaKw9baWMbenl1vvUcRFfpjp3K";
 type NativeRealmFixture = {
   snapshot: Record<string, any>;
   committed_events: Array<{ commit: Record<string, any>; event: Record<string, any> }>;
@@ -253,6 +256,7 @@ type NativeRealmFixture = {
   source_create: Record<string, any>;
   source_authorization: Record<string, any>;
   identity: { did: string; account_id: { principal_id: string; station_id: string }; principal_control_realm_id: string; document: Record<string, any>; inception_log_entry: Record<string, any>; resolution: Record<string, any> };
+  invite_recipient?: { identity: NativeRealmFixture["identity"]; source_create: Record<string, any>; source_authorization: Record<string, any> };
   account_entry: Record<string, any>;
   ids: Record<string, string>;
   public_blobs?: Record<string, string>;
@@ -267,6 +271,7 @@ type NativeRealmFixture = {
     binding_log_entry: Record<string, any>;
     genesis: { event: Record<string, any>; commit: Record<string, any> };
     runtime_authorization: { event: Record<string, any>; commit: Record<string, any> };
+    provision: { event: Record<string, any>; commit: Record<string, any> };
   };
 };
 const nativeRealm = (
@@ -276,7 +281,13 @@ const nativeRealm = (
   salt, title, board, empty_board, encrypted, demo_notification,
 });
 const DEMO_REALM_FIXTURE = nativeRealm(9, "Arkret Demo Realm", true);
-const INVITED_NATIVE_FIXTURE = nativeRealm(10, "Invited Realm");
+const INVITED_NATIVE_FIXTURE = inksonWire<NativeRealmFixture>("mock-realm-fixture", {
+  salt: 10, title: "Invited Realm", directed_invite: true,
+});
+export const DEMO_INVITE_ID = INVITED_NATIVE_FIXTURE.ids.invite;
+export const BOB_ACCOUNT_ID = INVITED_NATIVE_FIXTURE.identity.account_id;
+export const BOB_HELPER_ACCOUNT_ID = INVITED_NATIVE_FIXTURE.managed_agent.account_id;
+if (!DEMO_INVITE_ID) throw new Error("directed Invite fixture omits its accepted InviteCreate ID");
 const CHILD_REALM_FIXTURE = nativeRealm(11, "Launch Realm");
 const GRANDCHILD_REALM_FIXTURE = nativeRealm(12, "Launch Deep Realm");
 const LOW_FLOOR_REALM_FIXTURE = nativeRealm(13, "Low floor fixture Realm");
@@ -805,7 +816,6 @@ export async function mockArkretApi(
     encryption_profile: string;
   }> = [];
   const projectionEvents: Array<Record<string, unknown>> = [];
-  let inviteAuthorityEvents: Array<Record<string, unknown>> = [];
   const demoNative = options.encryptedDemoRealm || options.emptyBoard || options.demoNotification
     ? nativeRealm(
         9, "Arkret Demo Realm", true, options.emptyBoard ?? false,
@@ -836,7 +846,6 @@ export async function mockArkretApi(
   if (options.invitePreview !== undefined) {
     registerNative(INVITED_NATIVE_FIXTURE);
     invitedRealmId = String(INVITED_NATIVE_FIXTURE.snapshot.realm_id);
-    inviteAuthorityEvents = INVITED_NATIVE_FIXTURE.committed_events.map(full => full.event);
   }
   let serverDidDocument: Record<string, unknown> =
     currentPrincipalServiceResolution.normalized_did_document;
@@ -1119,10 +1128,7 @@ export async function mockArkretApi(
           {
             invite_id: DEMO_INVITE_ID,
             realm_id: invitedRealmId,
-            inviter_account_id: {
-              principal_id: "ak:did_core:web:bob.example",
-              station_id: CURRENT_STATION_ID,
-            },
+            inviter_account_id: INVITED_NATIVE_FIXTURE.identity.account_id,
             authority_locator_hints: [
               {
                 service_kind: "station",
@@ -1136,50 +1142,16 @@ export async function mockArkretApi(
         ],
       };
   const inviteAuthorityBundle = () => {
-    const genesisEvent = inviteAuthorityEvents.find(
-      (event) => event.kind === "ak.realm.create",
-    );
-    if (!genesisEvent) {
-      throw new Error("invite preview fixture has no Realm genesis Event");
-    }
-    const genesis = committedEventView(genesisEvent, 0);
-    const realmStreamHead = {
-      stream_ref: { kind: "realm", realm_id: invitedRealmId },
-      stream_position: 0,
-      commit_id: genesis.commit.commit_id,
-    };
-    return {
-      realm_id: invitedRealmId,
-      genesis_event: genesis.event,
-      genesis_commit: genesis.commit,
-      authority_transitions: [],
-      current_generation: 0,
-      current_service_id: CURRENT_STATION_ID,
-      current_route_record: currentPrincipalServiceResolution,
-      realm_stream_head: realmStreamHead,
-      bundle_issued_at: "2026-09-27T00:00:00.000Z",
-      current_assertion: {
-        realm_id: invitedRealmId,
-        current_generation: 0,
-        current_service_id: CURRENT_STATION_ID,
-        last_handoff_ref: null,
-        realm_stream_head: realmStreamHead,
-        nonce: "AQEBAQEBAQEBAQEBAQEBAQ",
-        expires_at: "2099-09-27T00:00:00.000Z",
-        signature: {
-          context: "ak.realm_authority_current_assertion_signature.v1",
-          signature_algorithm: "Ed25519",
-          verification_method: `${CURRENT_STATION_DID}#realm-authority`,
-          signed_digest: canonicalSha256({
-            realm_id: invitedRealmId,
-            current_generation: 0,
-          }),
-          created_at: "2026-09-27T00:00:00.000Z",
-          sig: "A".repeat(86),
-        },
-      },
-    };
+    const fixture = nativeFixtures.get(invitedRealmId);
+    if (!fixture) throw new Error("invite preview has no accepted native authority source");
+    return inksonWire<Record<string, any>>("mock-realm-authority-bundle", fixture);
   };
+  const nativeReadable = (fixture: NativeRealmFixture) =>
+    !fixture.invite_recipient || fixture.snapshot.current_state_entries.some(
+      (row: Record<string, any>) => row.selector?.kind === "member_state"
+        && canonicalJson(row.selector.actor_id) === canonicalJson(CURRENT_ACCOUNT_ACTOR_ID)
+        && row.value?.membership === "join",
+    );
   let invitePreviewAttempts = 0;
   const accountDeviceSummaries = () =>
     Array.from(accountDevices.values()).map((device) => {
@@ -1392,7 +1364,7 @@ export async function mockArkretApi(
     if (url.hostname === "server.local" && url.pathname === "/webvh/service/did-witness.json") {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(currentPrincipalServiceResolution.method_history_evidence.witness_records) });
     }
-    if (url.hostname === "directory.local" && url.pathname === "/.well-known/did.json") {
+    if (url.hostname === "directory.example" && url.pathname === "/.well-known/did.json") {
       return route.fulfill({ status: 200, contentType: "application/did+json", body: canonicalJson(currentDirectoryDocument) });
     }
     if (url.hostname === "alice.example" && url.pathname === "/webvh/alice/did.json") {
@@ -1400,6 +1372,19 @@ export async function mockArkretApi(
     }
     if (url.hostname === "alice.example" && url.pathname === "/webvh/alice/did.jsonl") {
       return route.fulfill({ status: 200, contentType: "application/jsonl", body: canonicalJson(DEMO_REALM_FIXTURE.identity.inception_log_entry) + "\n" });
+    }
+    if (url.hostname === "bob.example" && url.pathname === "/webvh/bob/did.json") {
+      return route.fulfill({ status: 200, contentType: "application/did+json", body: canonicalJson(INVITED_NATIVE_FIXTURE.identity.document) });
+    }
+    if (url.hostname === "bob.example" && url.pathname === "/webvh/bob/did.jsonl") {
+      return route.fulfill({ status: 200, contentType: "application/jsonl", body: canonicalJson(INVITED_NATIVE_FIXTURE.identity.inception_log_entry) + "\n" });
+    }
+    if (url.hostname === "agents.example" && url.pathname === "/webvh/helper/did.json") {
+      return route.fulfill({ status: 200, contentType: "application/did+json", body: canonicalJson(INVITED_NATIVE_FIXTURE.managed_agent.binding_log_entry.state) });
+    }
+    if (url.hostname === "agents.example" && url.pathname === "/webvh/helper/did.jsonl") {
+      const entries = [INVITED_NATIVE_FIXTURE.managed_agent.inception_log_entry, INVITED_NATIVE_FIXTURE.managed_agent.binding_log_entry];
+      return route.fulfill({ status: 200, contentType: "application/jsonl", body: entries.map(canonicalJson).join("\n") + "\n" });
     }
     if (url.hostname === "agents.example" && url.pathname === "/webvh/assistant/did.json") {
       return route.fulfill({ status: 200, contentType: "application/did+json", body: canonicalJson(demoNative.managed_agent.binding_log_entry.state) });
@@ -1584,6 +1569,19 @@ export async function mockArkretApi(
         if (!projectionEvents.some(event => event.event_id === full.event.event_id)) projectionEvents.push(full.event);
       }
       for (const event of submittedEvents) {
+        if (event.kind === "ak.invite.accept") {
+          expect(event.payload.invite_id).toBe(DEMO_INVITE_ID);
+          expect(event.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
+          expect(nativeReadable(accepted.fixture)).toBe(true);
+          const profile = accepted.fixture.snapshot.current_state_entries.find(
+            (row: Record<string, any>) => row.selector.kind === "realm_profile",
+          )?.value;
+          if (!createdRealms.some(realm => realm.id === realmId)) {
+            createdRealms.push({ id: realmId, title: profile?.title ?? "Invited Realm",
+              summary: profile?.summary ?? "", encryption_profile: "none" });
+          }
+          continue;
+        }
         if (
           event.kind === "ak.circle.archive" ||
           event.kind === "ak.circle.restore" ||
@@ -2268,7 +2266,13 @@ export async function mockArkretApi(
         to_device: {
           deliveries: [],
         },
-        account_data: { events: [] },
+        account_data: {
+          events: [],
+          ...(inviteDeliveryContent ? { station_cas: { upserts: [{
+            account_data_key: "ak.account.invite_delivery", revision: 1,
+            content: inviteDeliveryContent, updated_at: inviteDeliveryContent.updated_at,
+          }], removals: [] } } : {}),
+        },
         device_lists: { changed_ids: [], left_ids: [] },
         notifications: {
           // The SDK fixture supplies closed deltas and their actual accepted
@@ -2322,7 +2326,7 @@ export async function mockArkretApi(
         preview: {
           realm_id: invitedRealmId,
           join_rule: "invite",
-          history_access: "since_join",
+          history_access: "all_history_for_current_members",
           governance_generation: 0,
           display_name: "Preview-only Realm",
         },
@@ -2415,11 +2419,13 @@ export async function mockArkretApi(
         .map((realm) => realm.trim())
         .filter(Boolean);
       const frames: Array<Record<string, unknown>> = projectionEvents
-        .filter(
-          (event) =>
-            requestedRealms.length === 0 ||
-            requestedRealms.includes(eventRealmId(event)),
-        )
+        .filter((event) => {
+          const realmId = eventRealmId(event);
+          const fixture = nativeFixtures.get(realmId);
+          if (!fixture) throw new Error(`committed subscription has no registered native source for ${realmId}`);
+          return nativeReadable(fixture) &&
+            (requestedRealms.length === 0 || requestedRealms.includes(realmId));
+        })
         .map((payload, index) => ({
           kind: "committed_event",
           realm_id: eventRealmId(payload),
@@ -2452,7 +2458,7 @@ export async function mockArkretApi(
       const requestedRealm =
         typeof requestBody.realm_id === "string" ? requestBody.realm_id : "";
       const fixture = nativeFixtures.get(requestedRealm);
-      if (!fixture) return json(route, {
+      if (!fixture || !nativeReadable(fixture)) return json(route, {
         type: streamScanCapabilityDeniedDescriptor.type_uri,
         title: streamScanCapabilityDeniedDescriptor.title,
         status: streamScanCapabilityDeniedDescriptor.http_status,
@@ -2475,8 +2481,12 @@ export async function mockArkretApi(
       const requestedEventId = decodeURIComponent(committedEventMatch[1]);
       // Recovery authority reads the exact founding PCR unit, separately from
       // the collaboration Realm's committed stream and Account baseline.
-      for (const fixture of nativeFixtures.values()) {
-        const source = [fixture.source_create, fixture.source_authorization].find(
+      for (const fixture of [demoNative, INVITED_NATIVE_FIXTURE, ...nativeFixtures.values()]) {
+        const source = [fixture.source_create, fixture.source_authorization,
+          fixture.invite_recipient?.source_create, fixture.invite_recipient?.source_authorization,
+          fixture.managed_agent.genesis, fixture.managed_agent.runtime_authorization,
+          fixture.managed_agent.provision,
+        ].filter((full): full is Record<string, any> => full !== undefined).find(
           full => full.event.event_id === requestedEventId,
         );
         if (source) return json(route, source);
@@ -2485,7 +2495,7 @@ export async function mockArkretApi(
         (event) => event.event_id === requestedEventId,
       );
       if (index < 0) {
-        return json(route, { error: { code: "not_found" } }, 404);
+        throw new Error(`native committed Event resource has no exact accepted source for ${requestedEventId}`);
       }
       return json(route, committedEventView(projectionEvents[index], index));
     }
@@ -2522,22 +2532,22 @@ export async function mockArkretApi(
     if (url.pathname === "/_arkret/self/current-results/exact" && route.request().method() === "POST") {
       const request = route.request().postDataJSON();
       const fixture = nativeFixtures.get(String(request.realm_id));
-      if (!fixture) throw new Error("exact current request has no registered native Realm");
+      if (!fixture || !nativeReadable(fixture)) throw new Error("exact current request has no readable native Realm");
       return json(route, inksonWire("mock-exact-current", { fixture, request }));
     }
 
     if (url.pathname === "/_arkret/self/realm-state-snapshot/head" && route.request().method() === "GET") {
       const fixture = nativeFixtures.get(url.searchParams.get("realm_id") ?? "");
-      return fixture ? json(route, fixture.snapshot) : snapshotUnavailable(route);
+      return fixture && nativeReadable(fixture) ? json(route, fixture.snapshot) : snapshotUnavailable(route);
     }
     if (/^\/_arkret\/self\/realm-state-snapshot\/[^/]+$/.test(url.pathname) && route.request().method() === "GET") {
       const fixture = nativeFixtures.get(url.searchParams.get("realm_id") ?? "");
-      return fixture && fixture.snapshot.snapshot_id === decodeURIComponent(url.pathname.split("/").at(-1) ?? "") ? json(route, fixture.snapshot) : snapshotUnavailable(route);
+      return fixture && nativeReadable(fixture) && fixture.snapshot.snapshot_id === decodeURIComponent(url.pathname.split("/").at(-1) ?? "") ? json(route, fixture.snapshot) : snapshotUnavailable(route);
     }
     if (url.pathname === "/_arkret/self/signer-keys/query" && route.request().method() === "POST") {
       const request = await route.request().postDataJSON();
       const fixture = nativeFixtures.get(request.realm_id);
-      return fixture ? json(route, inksonWire("mock-realm-signer-keys", { fixture, request })) : json(route, { error: { code: "not_found" } }, 404);
+      return fixture && nativeReadable(fixture) ? json(route, inksonWire("mock-realm-signer-keys", { fixture, request })) : json(route, { error: { code: "not_found" } }, 404);
     }
     if (
       url.pathname === "/_arkret/root/identity/describe" &&
@@ -2634,10 +2644,7 @@ export async function mockArkretApi(
           {
             peer: {
               kind: "human",
-              account_id: {
-                principal_id: "ak:did_core:web:bob.example",
-                station_id: CURRENT_STATION_ID,
-              },
+              account_id: BOB_ACCOUNT_ID,
             },
             state: "accepted",
             request_event_ref:
@@ -2663,22 +2670,14 @@ export async function mockArkretApi(
             },
             contact_agents: [
               {
-                actor_id: {
-                  kind: "service",
-                  service_id: "ak:did_core:web:agents.example:bob-helper",
-                },
-                controller_account_id: {
-                  principal_id: "ak:did_core:web:bob.example",
-                  station_id: CURRENT_STATION_ID,
-                },
+                actor_id: { kind: "account", account_id: BOB_HELPER_ACCOUNT_ID },
+                controller_account_id: BOB_ACCOUNT_ID,
                 display_name: "Bob Helper",
                 agent_slug: "helper",
                 avatar_blob_ref: DEMO_BLOB_REF,
                 direct_conversation: {
-                  realm_id:
-                    "ak:realm:Ab8b2glgQEo48OSA-g8P4SfHSFLwgN1jG8Jv-AlcdVnI",
-                  main_strand_id:
-                    "ak:strand:AQAG6N7vDa1nxssksTCIdqNm-FTDJoKuBrHIclJ7FBy0",
+                  realm_id: DIRECT_BOB_HELPER_REALM,
+                  main_strand_id: DIRECT_BOB_HELPER_STRAND,
                   binding_event_ref:
                     "ak:event:ARhOgV4T1qZleEVITbO4iNd_ggoy771-VwFQBRHzRm4x",
                   state: "found",
@@ -2777,7 +2776,9 @@ export async function mockArkretApi(
           "locator_ref",
           "shared_realm",
         ],
-        explicit_address_behavior: "quarantine",
+        // Invite-preview cases start with an already delivered holder-private
+        // entry under an explicit notify policy; dispatch admission is separate.
+        explicit_address_behavior: options.invitePreview !== undefined ? "notify" : "quarantine",
         unknown_invites: "quarantine",
         denied_actor_ids: [
           {
@@ -2810,11 +2811,19 @@ export async function mockArkretApi(
         canonicalJson(peer.actor_id) === canonicalJson({
           kind: "account", account_id: CURRENT_ASSISTANT_ACCOUNT_ID,
         });
-      if (ownedAgent) expect(peer.controller_account_id).toEqual(CURRENT_ACCOUNT_ID);
-      else expect(peer).toEqual({
-        kind: "human",
-        account_id: { principal_id: "ak:did_core:web:bob.example", station_id: CURRENT_STATION_ID },
+      const foreignAgent = peer.kind === "agent" &&
+        canonicalJson(peer.actor_id) === canonicalJson({
+          kind: "account", account_id: BOB_HELPER_ACCOUNT_ID,
+        });
+      if (ownedAgent) expect(peer).toEqual({
+        kind: "agent", actor_id: { kind: "account", account_id: CURRENT_ASSISTANT_ACCOUNT_ID },
+        controller_account_id: CURRENT_ACCOUNT_ID,
       });
+      else if (foreignAgent) expect(peer).toEqual({
+        kind: "agent", actor_id: { kind: "account", account_id: BOB_HELPER_ACCOUNT_ID },
+        controller_account_id: BOB_ACCOUNT_ID,
+      });
+      else expect(peer).toEqual({ kind: "human", account_id: BOB_ACCOUNT_ID });
       const pairKey = inksonWire<{ pair_key: string }>("direct-conversation-pair-key", {
         trust_domain: "ak:trust_domain:server.local",
         holder: CURRENT_ACCOUNT_ID,
@@ -2824,13 +2833,14 @@ export async function mockArkretApi(
         state: "found",
         coordinates: {
           pair_key: pairKey,
-          realm_id: ownedAgent ? DIRECT_OWN_AGENT_REALM : DIRECT_BOB_REALM,
-          main_strand_id: ownedAgent
-            ? DIRECT_OWN_AGENT_STRAND
-            : DIRECT_BOB_STRAND,
+          realm_id: ownedAgent ? DIRECT_OWN_AGENT_REALM
+            : foreignAgent ? DIRECT_BOB_HELPER_REALM : DIRECT_BOB_REALM,
+          main_strand_id: ownedAgent ? DIRECT_OWN_AGENT_STRAND
+            : foreignAgent ? DIRECT_BOB_HELPER_STRAND : DIRECT_BOB_STRAND,
           binding_event_ref: ownedAgent
             ? "ak:event:AUsIM7jMWF-QEkZ3Fd8dVqgxiIcM5iASgTtudL5PCcGL"
-            : "ak:event:AQmnyvvBmKOWOEOSD2rAYsVBQn6vJ_wdbdUY8CKUGB5c",
+            : foreignAgent ? "ak:event:ARhOgV4T1qZleEVITbO4iNd_ggoy771-VwFQBRHzRm4x"
+              : "ak:event:AQmnyvvBmKOWOEOSD2rAYsVBQn6vJ_wdbdUY8CKUGB5c",
         },
         group_state_ref: ownedAgent
           ? "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh"
@@ -3793,12 +3803,13 @@ export async function mockArkretApi(
       const accountDataKey = decodeURIComponent(accountDataMatch[1]);
       return json(route, {
         account_data_key: accountDataKey,
-        revision: 0,
+        revision: accountDataKey === "ak.account.invite_delivery" && inviteDeliveryContent ? 1 : 0,
         content:
           accountDataKey === "ak.account.invite_delivery"
             ? inviteDeliveryContent
             : null,
-        updated_at: "2026-04-28T12:00:00.000Z",
+        updated_at: accountDataKey === "ak.account.invite_delivery" && inviteDeliveryContent
+          ? inviteDeliveryContent.updated_at : "2026-04-28T12:00:00.000Z",
       });
     }
 
@@ -3911,7 +3922,7 @@ function directoryServiceDescribe() {
     supported_profiles: [],
     ...currentHttpDescribeCapabilities(
       [DIRECTORY_DESCRIBE_BUNDLE, DIRECTORY_PUBLIC_READ_BUNDLE],
-      "https://directory.local/",
+      "https://directory.example/",
     ),
     supported_features: [],
     auth_metadata: {},

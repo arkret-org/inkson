@@ -63,6 +63,7 @@ fn main() -> Result<()> {
         "contact-request-verify" => contact_request_verify(input)?,
         "mock-realm-fixture" => realm_fixture::build(input)?,
         "mock-realm-verify" => realm_fixture::verify(input)?,
+        "mock-realm-authority-bundle" => realm_fixture::authority_bundle(input)?,
         "mock-current-principal" => realm_fixture::current_principal(input)?,
         "mock-realm-scan" => realm_fixture::scan(input)?,
         "mock-exact-current" => realm_fixture::exact_current(input)?,
@@ -500,7 +501,7 @@ fn service_resolution(input: Value) -> Result<arkret_sdk::AuthenticatedServiceRe
     let resolution = match kind {
         arkret_wire::ServiceKind::Station => mock_service_authority()?.resolution,
         arkret_wire::ServiceKind::DirectoryService => {
-            let did = arkret_wire::Did::new("did:web:directory.local".to_owned())?;
+            let did = arkret_wire::Did::new("did:web:directory.example".to_owned())?;
             let key = ed25519_dalek::SigningKey::from_bytes(&[32; 32]);
             let method = format!("{did}#signing-1");
             let document: arkret_models_identity::DidDocument = serde_json::from_value(json!({
@@ -510,7 +511,7 @@ fn service_resolution(input: Value) -> Result<arkret_sdk::AuthenticatedServiceRe
                     "publicKeyMultibase":arkret_sdk::ed25519_pubkey_to_did_key_multibase(key.verifying_key().as_bytes())}],
                 "assertionMethod":[method],
                 "service":[{"id":format!("{did}#arkret"),"type":"ArkretService",
-                    "serviceKind":kind.as_str(),"serviceEndpoint":"https://directory.local/"}]
+                    "serviceKind":kind.as_str(),"serviceEndpoint":"https://directory.example/"}]
             }))?;
             // Directory reads use independently fetched current did:web state;
             // they do not supply historical signer or Realm authority evidence.

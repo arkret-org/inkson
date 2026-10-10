@@ -31,6 +31,8 @@ struct BuildInput {
     #[serde(default)]
     demo_notification: bool,
     #[serde(default)]
+    directed_invite: bool,
+    #[serde(default)]
     plaintext_visible_services: Option<PlaintextVisibleServicesPayload>,
 }
 
@@ -43,6 +45,8 @@ struct Fixture {
     source_create: CommittedEventFullView,
     source_authorization: CommittedEventFullView,
     identity: FixtureIdentity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    invite_recipient: Option<FixturePrincipalSource>,
     account_entry: arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry,
     ids: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -142,6 +146,14 @@ struct FixtureIdentity {
     resolution: PrincipalResolutionProjection,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FixturePrincipalSource {
+    identity: FixtureIdentity,
+    source_create: CommittedEventFullView,
+    source_authorization: CommittedEventFullView,
+}
+
 struct Builder {
     authority: MockServiceAuthority,
     actor: ActorId,
@@ -156,6 +168,8 @@ struct Builder {
     ids: BTreeMap<String, String>,
     public_blobs: BTreeMap<String, Base64UrlString>,
     managed_agent: Option<ManagedAgentFixture>,
+    invite_recipient: Option<Box<Builder>>,
+    directed_invite: bool,
 }
 
 fn at(position: usize) -> chrono::DateTime<chrono::Utc> {
@@ -233,13 +247,21 @@ impl Builder {
         let seed: [u8; 32] = base64url_decode(&input.seed_b64url)?
             .try_into()
             .map_err(|_| anyhow::anyhow!("fixture producer seed must contain 32 bytes"))?;
-        let endpoint = url::Url::parse("https://alice.example/")?;
+        let endpoint = url::Url::parse(if input.directed_invite {
+            "https://bob.example/"
+        } else {
+            "https://alice.example/"
+        })?;
         let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(1);
         let inception = arkret_signatures::webvh::prepare_service_inception_with_did_key_seed(
             &mut rng,
             &arkret_signatures::webvh::ServiceInceptionInput {
                 principal_endpoint: &endpoint,
-                local_id: "alice",
+                local_id: if input.directed_invite {
+                    "bob"
+                } else {
+                    "alice"
+                },
                 also_known_as: &[],
                 version_time: at(0),
                 did_key_fragment: Some("signing-1"),
@@ -446,8 +468,25 @@ impl Builder {
             ids: BTreeMap::new(),
             public_blobs: BTreeMap::new(),
             managed_agent: None,
+            invite_recipient: None,
+            directed_invite: input.directed_invite,
         };
         result.managed_agent = Some(result.build_managed_agent()?);
+        if input.directed_invite {
+            let recipient = BuildInput {
+                salt: 10,
+                title: String::new(),
+                seed_b64url: default_seed(),
+                device_id: default_device(),
+                board: false,
+                empty_board: true,
+                encrypted: false,
+                demo_notification: false,
+                directed_invite: false,
+                plaintext_visible_services: None,
+            };
+            result.invite_recipient = Some(Box::new(Self::new(&recipient)?));
+        }
         Ok(result)
     }
 
@@ -534,7 +573,11 @@ impl Builder {
         let endpoint = url::Url::parse("https://agents.example/")?;
         let inception = prepare_agent_inception(&AgentInceptionInput {
             principal_endpoint: &endpoint,
-            local_id: "assistant",
+            local_id: if self.directed_invite {
+                "helper"
+            } else {
+                "assistant"
+            },
             controller_principal_id: &controller.principal_id,
             version_time: time(2),
             root_seed: &[41; 32],
@@ -827,10 +870,19 @@ impl Builder {
 
     fn append_signed(&mut self, event: Event) -> Result<Event> {
         let accepted_at = event.created_at;
-        ensure!(
-            event.actor_id == self.actor,
-            "fixture Event belongs to another Account actor"
-        );
+        let producer = if event.actor_id == self.actor {
+            &*self
+        } else {
+            let recipient = self
+                .invite_recipient
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("fixture Event belongs to another Account actor"))?;
+            ensure!(
+                event.kind == EventKind::InviteAccept && event.actor_id == recipient.actor,
+                "fixture secondary producer may only accept its own directed Invite"
+            );
+            recipient
+        };
         event.verify_event_id_matches_content_with_digest_suite(DigestSuite::Sha256)?;
         arkret_sdk::validate_event_payload(&event.kind, &serde_json::to_value(&event.payload)?)?;
         let proof = event
@@ -840,12 +892,12 @@ impl Builder {
         let fact = arkret_models_collaboration::authority_commit::HumanHistoricalSignerFact {
             event_id: event.event_id.clone(),
             actor: event.actor_id.clone(),
-            device_id: self.source_authorization.event.payload["device_id"]
+            device_id: producer.source_authorization.event.payload["device_id"]
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("authorization device missing"))?
                 .parse()?,
             verification_method: proof.verification_method.clone(),
-            key: self.key.clone(),
+            key: producer.key.clone(),
             accepted_at,
         };
         fact.validate_event_binding(&event, DigestSuite::Sha256)?;
@@ -873,7 +925,7 @@ impl Builder {
             &arkret_sdk::canonical::canonical_json_bytes(&event.digest_payload()?)?,
             &event.actor_id,
             &arkret_signatures::PublicKeyMaterial::Ed25519Raw {
-                bytes: self.signer.verifying_key().to_bytes().to_vec(),
+                bytes: producer.signer.verifying_key().to_bytes().to_vec(),
             },
             DigestSuite::Sha256,
         )?;
@@ -1112,6 +1164,109 @@ impl Builder {
                     }),
                 )?;
             }
+            EventKind::InviteAccept => {
+                use arkret_models_collaboration::governance::membership_invite::{
+                    InviteAcceptPayload, InviteCreatePayload, InviteDirectedInviteeValue,
+                    InviteLiveTargetOccupant, InvitePreviousState,
+                };
+                let payload: InviteAcceptPayload = serde_json::from_value(payload)?;
+                payload.validate_actor(&full.event.actor_id)?;
+                let recipient = self.invite_recipient.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("fixture has no registered directed Invite recipient")
+                })?;
+                ensure!(
+                    full.event.actor_id == recipient.actor
+                        && full.event.scope_ref
+                            == (ScopeRef::Realm {
+                                realm_id: full.event.realm_id.clone()
+                            })
+                        && payload.invitee_account_id.as_ref()
+                            == Some(&recipient.identity.account_id)
+                        && payload.previous_state == InvitePreviousState::Pending,
+                    "directed Invite acceptance differs from its registered recipient/prestate"
+                );
+                let source = self
+                    .events
+                    .iter()
+                    .find(|source| {
+                        source.event.kind == EventKind::InviteCreate
+                            && InviteId::from_event_id(&source.event.event_id) == payload.invite_id
+                            && source.event.realm_id == full.event.realm_id
+                    })
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("directed Invite acceptance has no accepted Create")
+                    })?;
+                let create: InviteCreatePayload =
+                    source.event.typed_payload::<event_spec::InviteCreate>()?;
+                ensure!(
+                    create.invitee_account_id == recipient.identity.account_id
+                        && full.event.created_at < create.expires_at,
+                    "directed Invite create recipient or expiry differs"
+                );
+                let expected = [
+                    (
+                        CurrentSelector::InviteLifecycle {
+                            invite_id: payload.invite_id.clone(),
+                        },
+                        serde_json::to_value(InviteState::Pending)?,
+                    ),
+                    (
+                        CurrentSelector::InviteDirectedInvitee {
+                            invite_id: payload.invite_id.clone(),
+                        },
+                        serde_json::to_value(InviteDirectedInviteeValue {
+                            invitee_account_id: create.invitee_account_id.clone(),
+                        })?,
+                    ),
+                    (
+                        CurrentSelector::InviteLiveTarget {
+                            invitee_account_id: create.invitee_account_id.clone(),
+                        },
+                        serde_json::to_value(Some(InviteLiveTargetOccupant {
+                            create_event_id: source.event.event_id.clone(),
+                        }))?,
+                    ),
+                ];
+                for (selector, expected_value) in expected {
+                    ensure!(
+                        self.rows.iter().any(|row| matches!(row,
+                        TypedCurrentRow::Value { selector: actual, value, .. }
+                            if actual == &selector && value == &expected_value)),
+                        "directed Invite acceptance does not match its locked current prestate"
+                    );
+                }
+                let member = CurrentSelector::MemberState {
+                    actor_id: full.event.actor_id.clone(),
+                };
+                ensure!(self.rows.iter().any(|row| matches!(row,
+                    TypedCurrentRow::Value { selector, value, .. }
+                        if selector == &member && value.get("membership").and_then(Value::as_str) == Some("leave"))),
+                    "directed Invite acceptance requires an accepted leave prestate");
+                // All preconditions precede the three writes; every result is
+                // bound to this same accepted Event and Commit.
+                self.row(
+                    full,
+                    CurrentSelector::InviteLifecycle {
+                        invite_id: payload.invite_id,
+                    },
+                    InviteState::Accepted,
+                )?;
+                self.row(
+                    full,
+                    member,
+                    arkret_wire::MemberStateCurrent {
+                        membership: arkret_wire::MembershipState::Join,
+                        joined_at: None,
+                    },
+                )?;
+                self.row(
+                    full,
+                    CurrentSelector::InviteLiveTarget {
+                        invitee_account_id: create.invitee_account_id,
+                    },
+                    Option::<InviteLiveTargetOccupant>::None,
+                )?;
+            }
             EventKind::RealmArchive | EventKind::RealmRestore => {
                 // The registered lifecycle current value is the closed archived
                 // boolean object; this bounded projection has no raw-row input.
@@ -1274,6 +1429,13 @@ impl Builder {
             source_create: self.source_create,
             source_authorization: self.source_authorization,
             identity: self.identity,
+            invite_recipient: self
+                .invite_recipient
+                .map(|recipient| FixturePrincipalSource {
+                    identity: recipient.identity,
+                    source_create: recipient.source_create,
+                    source_authorization: recipient.source_authorization,
+                }),
             account_entry,
             ids: self.ids,
             public_blobs: self.public_blobs,
@@ -1286,7 +1448,7 @@ impl Builder {
 }
 
 pub(super) fn build(input: Value) -> Result<Value> {
-    let input: BuildInput = serde_json::from_value(input)?;
+    let mut input: BuildInput = serde_json::from_value(input)?;
     ensure!(
         [9, 10, 11, 12, 13].contains(&input.salt),
         "fixture salt is not registered"
@@ -1295,6 +1457,14 @@ pub(super) fn build(input: Value) -> Result<Value> {
         !input.demo_notification || (input.salt == 9 && !input.encrypted),
         "demo notification requires the registered unencrypted Demo Realm"
     );
+    if input.directed_invite {
+        ensure!(
+            input.salt == 10 && !input.board && !input.encrypted && !input.demo_notification,
+            "directed Invite requires the registered plaintext invited Realm"
+        );
+        input.seed_b64url = base64url_encode([2; 32]);
+        input.device_id = "ak:device:01964137-0000-7000-8000-0000000000b1".to_owned();
+    }
     let mut builder = Builder::new(&input)?;
     inkson::operation::set_authoring_station_id(Some(builder.authority.service_id.clone()));
     let did = builder.identity.did.to_string();
@@ -1580,6 +1750,31 @@ pub(super) fn build(input: Value) -> Result<Value> {
             ),
         )?;
     }
+    if let Some(recipient) = builder.invite_recipient.as_deref() {
+        let account = recipient.identity.account_id.clone();
+        let actor = recipient.actor.clone();
+        let digest = Hash::new(canonical::sha256_digest(&canonical::canonical_json_bytes(
+            &serde_json::to_value(arkret_models_collaboration::governance::invite_addressing::IntroductionEvidence::ExplicitAddress)?,
+        )?))?;
+        builder.author::<event_spec::MemberState>(&realm,
+            arkret_models_collaboration::governance::membership_invite::MembershipPayload::transition(
+                arkret_models_collaboration::governance::membership_invite::MembershipPayloadState::Leave,
+                actor, "Directed Invite recipient is not a member",
+            ).with_realm_id(realm.clone()))?;
+        let create = builder.author::<event_spec::InviteCreate>(
+            &realm,
+            arkret_models_collaboration::governance::membership_invite::InviteCreatePayload::new(
+                account,
+                digest,
+                chrono::DateTime::parse_from_rfc3339("2099-09-27T00:00:00.000Z")?
+                    .with_timezone(&chrono::Utc),
+            ),
+        )?;
+        builder.ids.insert(
+            "invite".to_owned(),
+            InviteId::from_event_id(&create.event_id).to_string(),
+        );
+    }
     serde_json::to_value(builder.finish()?).map_err(Into::into)
 }
 
@@ -1604,12 +1799,17 @@ fn validate_fixture(fixture: &Fixture) -> Result<Fixture> {
     let configuration = BuildInput {
         salt: 9,
         title: String::new(),
-        seed_b64url: default_seed(),
+        seed_b64url: if fixture.invite_recipient.is_some() {
+            base64url_encode([2; 32])
+        } else {
+            default_seed()
+        },
         device_id,
         board: false,
         empty_board: true,
         encrypted: false,
         demo_notification: false,
+        directed_invite: fixture.invite_recipient.is_some(),
         plaintext_visible_services: None,
     };
     let mut builder = Builder::new(&configuration)?;
@@ -1648,6 +1848,81 @@ pub(super) fn verify(input: Value) -> Result<Value> {
     Ok(json!({ "verified": true }))
 }
 
+fn require_fixture_readable(fixture: &Fixture) -> Result<()> {
+    if let Some(recipient) = &fixture.invite_recipient {
+        let member = CurrentSelector::MemberState {
+            actor_id: ActorId::account(recipient.identity.account_id.clone()),
+        };
+        ensure!(fixture.snapshot.current_state_entries.iter().any(|row| matches!(row,
+            TypedCurrentRow::Value { selector, value, .. }
+                if selector == &member && value.get("membership").and_then(Value::as_str) == Some("join"))),
+            "directed Invite fixture is not ordinarily readable before accepted join");
+    }
+    Ok(())
+}
+
+pub(super) fn authority_bundle(input: Value) -> Result<Value> {
+    let fixture: Fixture = serde_json::from_value(input)?;
+    let fixture = validate_fixture(&fixture)?;
+    let authority = mock_service_authority()?;
+    let genesis = fixture
+        .committed_events
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("authority fixture has no accepted Genesis"))?;
+    let head = fixture
+        .snapshot
+        .visible_stream_heads
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("authority fixture has no accepted Head"))?
+        .clone();
+    let issued_at = chrono::Utc::now();
+    let mut assertion = arkret_wire::RealmAuthorityCurrentAssertion {
+        realm_id: fixture.snapshot.realm_id.clone(),
+        current_generation: 0,
+        current_service_id: authority.service_id.clone(),
+        last_handoff_ref: None,
+        realm_stream_head: head.clone(),
+        nonce: Base64UrlString::new(base64url_encode([1; 16])).map_err(anyhow::Error::msg)?,
+        expires_at: issued_at + chrono::Duration::minutes(5),
+        signature: arkret_signatures::detached_object::sign_detached_object(
+            &json!({}),
+            arkret_wire::DetachedSignatureContext::RealmAuthorityCurrentAssertion,
+            authority.verification_method.clone(),
+            issued_at,
+            &authority.signing_key,
+        )?,
+    };
+    assertion.signature = arkret_signatures::detached_object::sign_detached_object(
+        &unsigned(&assertion, &["signature"])?,
+        arkret_wire::DetachedSignatureContext::RealmAuthorityCurrentAssertion,
+        authority.verification_method.clone(),
+        issued_at,
+        &authority.signing_key,
+    )?;
+    let bundle = arkret_wire::RealmAuthorityBundle {
+        realm_id: fixture.snapshot.realm_id,
+        genesis_event: genesis.event.clone(),
+        genesis_commit: genesis.commit.clone(),
+        authority_transitions: vec![],
+        current_generation: 0,
+        current_service_id: authority.service_id,
+        current_route_record: serde_json::to_value(authority.resolution)?,
+        realm_stream_head: head,
+        bundle_issued_at: issued_at,
+        current_assertion: assertion,
+    };
+    bundle.validate_shape()?;
+    arkret_signatures::detached_object::verify_detached_object_signature(
+        &bundle.current_assertion.signature,
+        &unsigned(&bundle.current_assertion, &["signature"])?,
+        arkret_wire::DetachedSignatureContext::RealmAuthorityCurrentAssertion,
+        &arkret_signatures::PublicKeyMaterial::Ed25519Raw {
+            bytes: authority.signing_key.verifying_key().to_bytes().to_vec(),
+        },
+    )?;
+    serde_json::to_value(bundle).map_err(Into::into)
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ScanInput {
@@ -1658,6 +1933,7 @@ struct ScanInput {
 pub(super) fn scan(input: Value) -> Result<Value> {
     let input: ScanInput = serde_json::from_value(input)?;
     let fixture = validate_fixture(&input.fixture)?;
+    require_fixture_readable(&fixture)?;
     let request = input.request;
     request.validate()?;
     ensure!(
@@ -1685,13 +1961,21 @@ pub(super) fn signer_keys(input: Value) -> Result<Value> {
     use arkret_models_identity::signer_key_operations::*;
     let input: SignerInput = serde_json::from_value(input)?;
     let fixture = validate_fixture(&input.fixture)?;
+    require_fixture_readable(&fixture)?;
     input.request.validate()?;
     ensure!(
         input.request.realm_id == fixture.snapshot.realm_id,
         "signer query fixture Realm mismatch"
     );
     ensure!(
-        input.request.recipient_account_id == fixture.identity.account_id,
+        input.request.recipient_account_id
+            == fixture
+                .invite_recipient
+                .as_ref()
+                .map_or(&fixture.identity.account_id, |source| &source
+                    .identity
+                    .account_id)
+                .clone(),
         "signer query fixture recipient Account mismatch"
     );
     let mut results = Vec::new();
@@ -1756,6 +2040,7 @@ pub(super) fn exact_current(input: Value) -> Result<Value> {
     let input: ExactCurrentInput = serde_json::from_value(input)?;
     input.request.validate()?;
     let fixture = validate_fixture(&input.fixture)?;
+    require_fixture_readable(&fixture)?;
     ensure!(
         input.request.realm_id == fixture.snapshot.realm_id,
         "exact current request belongs to another Realm"
@@ -1824,11 +2109,31 @@ pub(super) fn submit(input: Value) -> Result<Value> {
         empty_board: true,
         encrypted: false,
         demo_notification: false,
+        directed_invite: false,
         plaintext_visible_services: None,
     };
     let mut builder = Builder::new(&configuration)?;
     if let Some(fixture) = input.fixture {
         let fixture = validate_fixture(&fixture)?;
+        if let Some(recipient) = &fixture.invite_recipient {
+            ensure!(
+                recipient.identity.account_id == builder.identity.account_id,
+                "submit directed Invite recipient Account mismatch"
+            );
+            let inviter = BuildInput {
+                salt: 10,
+                title: String::new(),
+                seed_b64url: base64url_encode([2; 32]),
+                device_id: "ak:device:01964137-0000-7000-8000-0000000000b1".to_owned(),
+                board: false,
+                empty_board: true,
+                encrypted: false,
+                demo_notification: false,
+                directed_invite: true,
+                plaintext_visible_services: None,
+            };
+            builder = Builder::new(&inviter)?;
+        }
         builder.public_blobs = fixture.public_blobs.clone();
         ensure!(
             fixture.identity.account_id == builder.identity.account_id,
@@ -1920,4 +2225,185 @@ pub(super) fn current_principal(input: Value) -> Result<Value> {
     };
     outcome.validate_for_request(&input.request)?;
     serde_json::to_value(outcome).map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use arkret_models_collaboration::governance::membership_invite::{
+        InviteAcceptPayload, InvitePreviousState,
+    };
+
+    use super::*;
+
+    fn invited_builder() -> Result<Builder> {
+        let fixture: Fixture = serde_json::from_value(build(json!({
+            "salt": 10, "title": "Invited Realm", "directed_invite": true,
+        }))?)?;
+        validate_fixture(&fixture)?;
+        assert!(require_fixture_readable(&fixture).is_err());
+        let configuration: BuildInput = serde_json::from_value(json!({
+            "salt": 10, "title": "", "directed_invite": true,
+            "seed_b64url": base64url_encode([2; 32]),
+            "device_id": "ak:device:01964137-0000-7000-8000-0000000000b1",
+        }))?;
+        let mut builder = Builder::new(&configuration)?;
+        for full in fixture.committed_events {
+            builder.append_signed(full.event)?;
+            assert_eq!(
+                builder.events.last().map(|row| &row.commit),
+                Some(&full.commit)
+            );
+        }
+        builder.ids = fixture.ids;
+        Ok(builder)
+    }
+
+    fn accept_event(
+        builder: &Builder,
+        invite: InviteId,
+        previous: InvitePreviousState,
+        ordinal: usize,
+    ) -> Result<Event> {
+        let recipient = builder
+            .invite_recipient
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("recipient source missing"))?;
+        let mut authored = TypedEventDraft::<event_spec::InviteAccept>::new(
+            ScopeRef::Realm {
+                realm_id: builder.events[0].event.realm_id.clone(),
+            },
+            recipient.actor.clone(),
+            InviteAcceptPayload::directed(invite, recipient.identity.account_id.clone(), previous),
+        )?
+        .author_with_digest_suite(at(ordinal), DigestSuite::Sha256)?;
+        arkret_sdk::signatures::sign_event(
+            &mut authored,
+            &recipient.signer,
+            arkret_sdk::signatures::SignEventOptions::new().with_created_at(at(ordinal)),
+        )?;
+        Ok(authored.into_event())
+    }
+
+    #[test]
+    fn directed_invite_accept_installs_one_atomic_cut_and_replays_exactly() -> Result<()> {
+        let mut builder = invited_builder()?;
+        let invite: InviteId = builder.ids["invite"].parse()?;
+        let event = accept_event(&builder, invite.clone(), InvitePreviousState::Pending, 1000)?;
+        let original_len = builder.events.len();
+        builder.append_signed(event.clone())?;
+        let accepted = builder
+            .events
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("accept missing"))?;
+        let recipient = builder
+            .invite_recipient
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("recipient missing"))?;
+        let expected = [
+            (
+                CurrentSelector::InviteLifecycle { invite_id: invite },
+                json!("accepted"),
+            ),
+            (
+                CurrentSelector::MemberState {
+                    actor_id: recipient.actor.clone(),
+                },
+                json!({"membership":"join"}),
+            ),
+            (
+                CurrentSelector::InviteLiveTarget {
+                    invitee_account_id: recipient.identity.account_id.clone(),
+                },
+                Value::Null,
+            ),
+        ];
+        for (selector, expected_value) in expected {
+            let row = builder
+                .rows
+                .iter()
+                .find(|row| {
+                    matches!(row,
+                TypedCurrentRow::Value { selector: actual, .. } if actual == &selector)
+                })
+                .ok_or_else(|| anyhow::anyhow!("atomic result missing"))?;
+            let TypedCurrentRow::Value {
+                source_stream_ref,
+                revision,
+                value,
+                ..
+            } = row;
+            assert_eq!(source_stream_ref, &accepted.commit.stream_ref);
+            assert_eq!(revision.commit_id, accepted.commit.commit_id);
+            assert_eq!(revision.stream_position, accepted.commit.stream_position);
+            assert_eq!(value, &expected_value);
+        }
+        assert_eq!(builder.events.len(), original_len + 1);
+        let fixture = builder.finish()?;
+        require_fixture_readable(&fixture)?;
+        validate_fixture(&fixture)?;
+        let replay = submit(json!({"fixture":fixture,"request":{"event":event}}))?;
+        assert_eq!(replay["outcome"]["status"], "duplicate");
+        assert_eq!(replay["fixture"], serde_json::to_value(&fixture)?);
+        Ok(())
+    }
+
+    #[test]
+    fn directed_invite_accept_rejects_missing_wrong_and_terminal_prestate_without_writes()
+    -> Result<()> {
+        let mut builder = invited_builder()?;
+        let invite: InviteId = builder.ids["invite"].parse()?;
+        let missing = InviteId::from_event_id(&builder.source_create.event.event_id);
+        let rows = builder.rows.clone();
+        let events = builder.events.clone();
+        let foreign_actor = TypedEventDraft::<event_spec::InviteAccept>::new(
+            ScopeRef::Realm {
+                realm_id: builder.events[0].event.realm_id.clone(),
+            },
+            builder.actor.clone(),
+            InviteAcceptPayload::directed(
+                invite.clone(),
+                builder.identity.account_id.clone(),
+                InvitePreviousState::Pending,
+            ),
+        )?
+        .author_with_digest_suite(at(1000), DigestSuite::Sha256)?;
+        assert!(builder.append(foreign_actor).is_err());
+        assert_eq!(builder.rows, rows);
+        assert_eq!(builder.events, events);
+        for (id, previous) in [
+            (missing, InvitePreviousState::Pending),
+            (invite.clone(), InvitePreviousState::Claimed),
+        ] {
+            let rows = builder.rows.clone();
+            let events = builder.events.clone();
+            assert!(
+                builder
+                    .append_signed(accept_event(&builder, id, previous, 1000)?)
+                    .is_err()
+            );
+            assert_eq!(builder.rows, rows);
+            assert_eq!(builder.events, events);
+        }
+        builder.append_signed(accept_event(
+            &builder,
+            invite.clone(),
+            InvitePreviousState::Pending,
+            1000,
+        )?)?;
+        let rows = builder.rows.clone();
+        let events = builder.events.clone();
+        assert!(
+            builder
+                .append_signed(accept_event(
+                    &builder,
+                    invite,
+                    InvitePreviousState::Pending,
+                    1001
+                )?)
+                .is_err()
+        );
+        assert_eq!(builder.rows, rows);
+        assert_eq!(builder.events, events);
+        Ok(())
+    }
 }
