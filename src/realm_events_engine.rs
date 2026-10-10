@@ -5065,7 +5065,70 @@ mod tests {
             .install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)
             .unwrap();
         let before_new_cut = reopened.load();
+        let prior_position = reopened.verified_sidecar_inputs(REALM_ID).unwrap().1
+            [sidecar.as_str()]
+        .last()
+        .unwrap()
+        .commit
+        .stream_position;
         assert!(!reopened.has_pending_sidecar_history(REALM_ID));
+        let mut missing_tail = snapshot.clone();
+        let missing_head = missing_tail
+            .visible_stream_heads
+            .iter_mut()
+            .find(|head| head.stream_ref == stream)
+            .unwrap();
+        missing_head.stream_position = 2;
+        missing_head.commit_id = arkret_sdk::RealmCommitId::from_digest([122; 32]);
+        station.sign_snapshot(&mut missing_tail);
+        let mut missing_verifier = replica.fork_verified_authority().unwrap();
+        missing_verifier
+            .install_verified_current_snapshot_heads(&missing_tail, &freshness, &keys)
+            .unwrap();
+        let missing_before = serde_json::to_value(reopened.load()).unwrap();
+        let mut missing_staged = false;
+        let missing_result = reopened.verified_projection_transaction(|store| {
+            store.install_verified_sidecar_current(&VerifiedCurrentSnapshot {
+                snapshot: missing_tail.clone(),
+            })?;
+            store
+                .save_account_checkpoint(
+                    &account_scope(),
+                    garth::AccountCursorCheckpoint {
+                        cursor: "ak:cursor:sidecar-position-2".into(),
+                        station_cas: garth::StationCasProjection::default(),
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            missing_staged = true;
+            store
+                .sidecar_history_at_snapshot(&missing_tail)
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        });
+        assert!(missing_result.is_err());
+        assert!(
+            missing_staged,
+            "the refusal must come from missing authenticated history"
+        );
+        assert_eq!(
+            serde_json::to_value(reopened.load()).unwrap(),
+            missing_before
+        );
+        let missing_reload = LocalStateStore::with_path(&path);
+        assert_eq!(
+            serde_json::to_value(missing_reload.load()).unwrap(),
+            missing_before
+        );
+        println!(
+            "SYNC_CHECKPOINT_CASE {}",
+            json!({
+                "case_id":"sidecar_missing_tail_does_not_install_newer_current_or_checkpoint", "assertions":5,
+                "stream_kind":"sidecar", "candidate_position":missing_tail.visible_stream_heads.iter().find(|head| head.stream_ref == stream).unwrap().stream_position,
+                "prior_position":prior_position, "durable":missing_result.is_ok(),
+                "checkpoint_advanced":missing_reload.load().sync_cursor != before_new_cut.sync_cursor
+            })
+        );
         let incomplete_cut = reopened.verified_projection_transaction(|store| {
             store.install_verified_sidecar_current(&VerifiedCurrentSnapshot {
                 snapshot: snapshot.clone(),
@@ -5149,7 +5212,7 @@ mod tests {
         reopened.ingest_verified_message_history(&page).unwrap();
         assert!(!reopened.has_pending_sidecar_history(REALM_ID));
         let mut ahead = LocalStateStore::with_path(directory.join("ahead.json"));
-        ahead.save(before_new_cut);
+        ahead.save(before_new_cut.clone());
         ahead.ingest_verified_message_history(&page).unwrap();
         assert_eq!(
             ahead.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
@@ -5157,6 +5220,133 @@ mod tests {
         );
         let stream_key = serde_json::to_string(&stream).unwrap();
         assert_eq!(ahead.load().verified_sidecar_history[&stream_key].len(), 2);
+        let mut failed = LocalStateStore::with_path(directory.join("failed-cut.json"));
+        failed.save(before_new_cut.clone());
+        failed
+            .save_account_checkpoint(
+                &account_scope(),
+                garth::AccountCursorCheckpoint {
+                    cursor: "ak:cursor:sidecar-retained".into(),
+                    station_cas: garth::StationCasProjection::default(),
+                },
+            )
+            .unwrap();
+        failed.flush().unwrap();
+        let failed_before = serde_json::to_value(failed.load()).unwrap();
+        let account_files = std::fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("failed-cut.account.")
+                    && path
+                        .extension()
+                        .is_some_and(|extension| extension == "json")
+            })
+            .filter(|path| {
+                serde_json::from_slice::<serde_json::Value>(&std::fs::read(path).unwrap()).unwrap()
+                    ["sync_cursor"]
+                    == "ak:cursor:sidecar-retained"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(account_files.len(), 1);
+        let account_file = &account_files[0];
+        let backup = account_file.with_extension("saved");
+        std::fs::rename(account_file, &backup).unwrap();
+        std::fs::create_dir(account_file).unwrap();
+        let mut candidate_validated = false;
+        let failed_cut = failed.verified_projection_transaction(|store| {
+            store.ingest_verified_message_history(&page)?;
+            store
+                .sidecar_history_at_snapshot(&snapshot)
+                .map_err(|error| error.to_string())?;
+            store.install_verified_sidecar_current(&VerifiedCurrentSnapshot {
+                snapshot: snapshot.clone(),
+            })?;
+            store
+                .save_account_checkpoint(
+                    &account_scope(),
+                    garth::AccountCursorCheckpoint {
+                        cursor: "ak:cursor:sidecar-position-1".into(),
+                        station_cas: garth::StationCasProjection::default(),
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            candidate_validated = true;
+            Ok(())
+        });
+        assert!(failed_cut.is_err());
+        assert!(
+            candidate_validated,
+            "the candidate must reach the real durable write"
+        );
+        assert_eq!(serde_json::to_value(failed.load()).unwrap(), failed_before);
+        std::fs::remove_dir(account_file).unwrap();
+        std::fs::rename(&backup, account_file).unwrap();
+        let failed_reload = LocalStateStore::with_path(directory.join("failed-cut.json"));
+        assert_eq!(
+            serde_json::to_value(failed_reload.load()).unwrap(),
+            failed_before
+        );
+        assert_eq!(
+            failed_reload.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            vec![native[0].clone()]
+        );
+        println!(
+            "SYNC_CHECKPOINT_CASE {}",
+            json!({
+                "case_id":"sidecar_projection_transaction_failure_preserves_prior_cut", "assertions":6,
+                "stream_kind":"sidecar", "candidate_position":snapshot.visible_stream_heads.iter().find(|head| head.stream_ref == stream).unwrap().stream_position,
+                "prior_position":prior_position, "durable":failed_cut.is_ok(),
+                "checkpoint_advanced":serde_json::to_value(failed_reload.load()).unwrap()["sync_cursor"] != failed_before["sync_cursor"]
+            })
+        );
+        let mut atomic = LocalStateStore::with_path(directory.join("atomic-cut.json"));
+        atomic.save(before_new_cut);
+        let atomic_before = atomic.load();
+        let installed = atomic.verified_projection_transaction(|store| {
+            store.ingest_verified_message_history(&page)?;
+            store
+                .sidecar_history_at_snapshot(&snapshot)
+                .map_err(|error| error.to_string())?;
+            store.install_verified_sidecar_current(&VerifiedCurrentSnapshot {
+                snapshot: snapshot.clone(),
+            })?;
+            store
+                .save_account_checkpoint(
+                    &account_scope(),
+                    garth::AccountCursorCheckpoint {
+                        cursor: "ak:cursor:sidecar-position-1".into(),
+                        station_cas: garth::StationCasProjection::default(),
+                    },
+                )
+                .map_err(|error| error.to_string())
+        });
+        assert!(installed.is_ok());
+        let atomic_reload = LocalStateStore::with_path(directory.join("atomic-cut.json"));
+        assert_eq!(
+            serde_json::to_value(atomic_reload.load()).unwrap(),
+            serde_json::to_value(atomic.load()).unwrap()
+        );
+        assert_eq!(
+            atomic_reload.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            native
+        );
+        assert_eq!(
+            atomic_reload.load().sync_cursor.as_deref(),
+            Some("ak:cursor:sidecar-position-1")
+        );
+        println!(
+            "SYNC_CHECKPOINT_CASE {}",
+            json!({
+                "case_id":"sidecar_history_current_projection_same_cut_before_checkpoint", "assertions":4,
+                "stream_kind":"sidecar", "candidate_position":snapshot.visible_stream_heads.iter().find(|head| head.stream_ref == stream).unwrap().stream_position,
+                "prior_position":prior_position, "durable":installed.is_ok(),
+                "checkpoint_advanced":atomic_reload.load().sync_cursor != atomic_before.sync_cursor
+            })
+        );
         ahead
             .verified_projection_transaction(|store| {
                 store
@@ -5169,6 +5359,16 @@ mod tests {
             .unwrap();
         assert_eq!(
             ahead.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            native
+        );
+        ahead.flush().unwrap();
+        let complete_reload = LocalStateStore::with_path(directory.join("ahead.json"));
+        assert_eq!(
+            serde_json::to_value(complete_reload.load()).unwrap(),
+            serde_json::to_value(ahead.load()).unwrap()
+        );
+        assert_eq!(
+            complete_reload.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
             native
         );
         let complete = ahead.load();
