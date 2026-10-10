@@ -1503,6 +1503,27 @@ impl InksonAccountProjector {
             return Err(garth::Error::AuthorityCutBehind);
         }
         self.validate_station_cas_batch(batch).await?;
+        let interruption = verified
+            .iter_mut()
+            .find_map(|proof| proof.take_stream_interruption());
+        if let Some(error) = interruption {
+            // Each independent verified prefix can advance its history without
+            // claiming a complete Account cut. Keep current, Account cursor,
+            // Station CAS and recipient ACK untouched until refetch succeeds.
+            if !self.fence() {
+                return Ok(());
+            }
+            for proof in &verified {
+                self.ctx
+                    .state_store
+                    .write(|store| proof.stage_independent_public_history(store))
+                    .map_err(garth::Error::Storage)?;
+            }
+            await_account_state_durable(&self.ctx, "independent stream history")
+                .await
+                .map_err(|error| garth::Error::Storage(error.to_string()))?;
+            return Err(error);
+        }
         for (index, (frame, proof)) in batch.frames.iter().zip(verified.iter()).enumerate() {
             let final_checkpoint = (index + 1 == batch.frames.len())
                 .then_some(next_checkpoint.as_ref())

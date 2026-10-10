@@ -212,7 +212,14 @@ pub(super) async fn account_frame(
             let rows = claimed.remove(&window.stream_ref).unwrap_or_default();
             let mut replica = OwnStationReplica::new(realm_id.clone());
             replica.install_bound_snapshot(&response)?;
-            let pages = window_pages(&client, &realm_id, &response, &mut replica, window).await?;
+            let pages =
+                match window_pages(&client, &realm_id, &response, &mut replica, window).await {
+                    Err(error) if error.is_stream_interruption() => {
+                        accepted.stream_interruption.get_or_insert(error);
+                        continue;
+                    }
+                    other => other?,
+                };
             let Some(pages) = pages else {
                 accepted.preview_streams.insert(window.stream_ref.clone());
                 continue;
@@ -229,6 +236,17 @@ pub(super) async fn account_frame(
             if replica.head(&window.stream_ref).is_none_or(|head| {
                 head.stream_position != expected || head.commit_id != window.head_commit_ref
             }) {
+                if replica
+                    .head(&window.stream_ref)
+                    .is_some_and(|head| head.stream_position < expected)
+                {
+                    accepted.stream_interruption.get_or_insert(
+                        garth::Error::StreamTailIncomplete {
+                            stream_ref: window.stream_ref.clone(),
+                        },
+                    );
+                    continue;
+                }
                 return Err(protocol(
                     "Account window differs from own Station continuous stream",
                 ));

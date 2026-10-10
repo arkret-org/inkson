@@ -1099,6 +1099,8 @@ fn require_genesis_readable_floor(outcome: &arkret_sdk::StreamScanOutcome) -> ga
 
 #[derive(Default)]
 pub struct VerifiedAccountFrame {
+    /// Recoverable stream-local interruption; no complete Account cut exists.
+    stream_interruption: Option<garth::Error>,
     pages: Vec<garth::VerifiedScanPage>,
     own_pages: Vec<garth::own_station_results::OwnStationScanPage>,
     own_replicas: BTreeMap<CommitStreamRef, garth::own_station_results::OwnStationReplica>,
@@ -1156,9 +1158,20 @@ impl VerifiedAccountFrame {
         &self,
         store: &mut crate::state::LocalStateStore,
     ) -> Result<(), String> {
+        self.stage_own_checkpoints_for(store, false)
+    }
+
+    fn stage_own_checkpoints_for(
+        &self,
+        store: &mut crate::state::LocalStateStore,
+        public_only: bool,
+    ) -> Result<(), String> {
         if let Some(client) = &self.own_client {
             self.check_session().map_err(|error| error.to_string())?;
             for (stream, replica) in &self.own_replicas {
+                if public_only && matches!(stream, CommitStreamRef::Sidecar { .. }) {
+                    continue;
+                }
                 store.stage_own_station_commit_stream_checkpoint(
                     client,
                     replica,
@@ -1168,6 +1181,33 @@ impl VerifiedAccountFrame {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn stage_independent_public_history(
+        &self,
+        store: &mut crate::state::LocalStateStore,
+    ) -> Result<(), String> {
+        self.project_transaction(store, |store| {
+            for page in &self.own_pages {
+                let rows = page.rows().map_err(|error| error.to_string())?;
+                // Private Sidecar history/current always crosses one same-cut
+                // barrier. Public history alone does not assert typed current.
+                if rows.is_empty()
+                    || rows.iter().any(|row| {
+                        matches!(row.commit().stream_ref, CommitStreamRef::Sidecar { .. })
+                    })
+                {
+                    continue;
+                }
+                store.ingest_verified_message_history(page)?;
+                crate::identity::agent_signer_evidence::index_verified_committed_page(store, page)?;
+            }
+            self.stage_own_checkpoints_for(store, true)
+        })
+    }
+
+    pub(crate) fn take_stream_interruption(&mut self) -> Option<garth::Error> {
+        self.stream_interruption.take()
     }
 
     pub(crate) fn own_pages(&self) -> &[garth::own_station_results::OwnStationScanPage] {
