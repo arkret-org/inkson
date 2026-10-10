@@ -19,10 +19,57 @@ use crate::views::helpers::short_protocol_id;
 /// `message` is `1..2000`).
 const CONTACT_MESSAGE_MAX: usize = 2000;
 
+/// Retain UI copy and opaque values until rendering, so in-flight and completed
+/// feedback follows the active locale without rerunning the Contact operation.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ContactFeedback {
+    key: &'static str,
+    literal: Option<(&'static str, String)>,
+    api_error: Option<std::rc::Rc<crate::transport::auth::ApiCallError>>,
+}
+
+impl ContactFeedback {
+    pub(crate) fn new(key: &'static str) -> Self {
+        Self {
+            key,
+            ..Self::default()
+        }
+    }
+
+    fn with_literal(mut self, name: &'static str, value: impl ToString) -> Self {
+        self.literal = Some((name, value.to_string()));
+        self
+    }
+
+    fn with_api_error(mut self, error: crate::transport::auth::ApiCallError) -> Self {
+        self.api_error = Some(std::rc::Rc::new(error));
+        self
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.key.is_empty()
+    }
+
+    pub(crate) fn render(&self) -> String {
+        if self.is_empty() {
+            return String::new();
+        }
+        // Only one opaque argument is inserted. Its own braces are never
+        // interpreted as placeholders, and API diagnostics stay undisclosed.
+        if let Some(error) = &self.api_error {
+            crate::i18n::tr_args(self.key, &[("error", error.display())])
+        } else if let Some((name, value)) = &self.literal {
+            crate::i18n::tr_args(self.key, &[(*name, value.clone())])
+        } else {
+            tr(self.key)
+        }
+    }
+}
+
 fn save_contact_remark(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     mut busy: Signal<bool>,
-    mut row_status: Signal<String>,
+    mut row_status: Signal<ContactFeedback>,
     base_url: String,
     api_token: String,
     principal_id: arkret_sdk::DidCoreId,
@@ -33,7 +80,7 @@ fn save_contact_remark(
         return;
     };
     busy.set(true);
-    row_status.set(tr("contacts.remark.saving"));
+    row_status.set(ContactFeedback::new("contacts.remark.saving"));
     spawn(async move {
         let result = crate::views::settings::save_contact_remark_edit(
             base_url,
@@ -50,10 +97,10 @@ fn save_contact_remark(
             Ok(remark) => {
                 let principal = remark.subject.principal_id.to_string();
                 state_store.write().set_contact_remark(principal, remark);
-                row_status.set(tr(success_key));
+                row_status.set(ContactFeedback::new(success_key));
             }
             Err(error) => {
-                row_status.set(tr("contacts.action_failed").replace("{error}", &error.display()))
+                row_status.set(ContactFeedback::new("contacts.action_failed").with_api_error(error))
             }
         }
         busy.set(false);
@@ -87,7 +134,7 @@ pub fn ContactNewPanel(
     let base_url = crate::app::SessionContext::base_url_string();
     let mut target = use_signal(String::new);
     let mut message = use_signal(String::new);
-    let mut status = use_signal(String::new);
+    let mut status = use_signal(ContactFeedback::default);
     let mut sending = use_signal(|| false);
 
     let message_len = message.read().chars().count();
@@ -138,7 +185,7 @@ pub fn ContactNewPanel(
                                 .iter().map(|scope| (*scope).to_owned()).collect::<Vec<_>>();
                             let greeting = message().trim().to_owned();
                             sending.set(true);
-                            status.set(tr("contacts.new.sending"));
+                            status.set(ContactFeedback::new("contacts.new.sending"));
                             spawn(async move {
                                 let greeting_opt = if greeting.is_empty() {
                                     None
@@ -156,14 +203,14 @@ pub fn ContactNewPanel(
                                 .await
                                 {
                                     Ok(_) => {
-                                        status.set(tr("contacts.new.sent"));
+                                        status.set(ContactFeedback::new("contacts.new.sent"));
                                         message.set(String::new());
                                         if let Some(cb) = on_submitted {
                                             cb.call(());
                                         }
                                     }
                                     Err(err) => status.set(
-                                        tr("contacts.new.send_failed").replace("{error}", &err.display()),
+                                        ContactFeedback::new("contacts.new.send_failed").with_api_error(err),
                                     ),
                                 }
                                 sending.set(false);
@@ -177,7 +224,7 @@ pub fn ContactNewPanel(
                 div {
                     class: "muted",
                     "data-testid": "contact-request-status",
-                    "{status}"
+                    {status.read().render()}
                 }
             }
         }
@@ -196,7 +243,7 @@ fn ContactRow(
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
     let nav = use_navigator();
-    let mut row_status = use_signal(String::new);
+    let mut row_status = use_signal(ContactFeedback::default);
     let mut busy = use_signal(|| false);
     let mut confirm_block = use_signal(|| false);
     let grants_invite = contact
@@ -453,7 +500,7 @@ fn ContactRow(
                                 let Ok(principal_id) =
                                     arkret_sdk::DidCoreId::new(peer_principal.clone())
                                 else {
-                                    row_status.set(tr("contacts.petname.invalid_principal"));
+                                    row_status.set(ContactFeedback::new("contacts.petname.invalid_principal"));
                                     return;
                                 };
                                 let edit =
@@ -485,7 +532,7 @@ fn ContactRow(
                                 let Ok(principal_id) =
                                     arkret_sdk::DidCoreId::new(peer_principal.clone())
                                 else {
-                                    row_status.set(tr("contacts.petname.invalid_principal"));
+                                    row_status.set(ContactFeedback::new("contacts.petname.invalid_principal"));
                                     return;
                                 };
                                 let edit =
@@ -574,7 +621,7 @@ fn ContactRow(
                                             peer: peer.clone(),
                                             scopes: scopes.clone(),
                                         },
-                                        tr("contacts.scope_update.saving"),
+                                        "contacts.scope_update.saving",
                                         busy,
                                         row_status,
                                         on_changed,
@@ -625,11 +672,11 @@ fn ContactRow(
                                         128,
                                     )
                                 {
-                                    row_status.set(format!("{}: {error}", tr("contacts.petname.invalid")));
+                                    row_status.set(ContactFeedback::new("contacts.petname.invalid").with_literal("error", error));
                                     return;
                                 }
                                 let Ok(principal_id) = arkret_sdk::DidCoreId::new(peer.clone()) else {
-                                    row_status.set(tr("contacts.petname.invalid_principal"));
+                                    row_status.set(ContactFeedback::new("contacts.petname.invalid_principal"));
                                     return;
                                 };
                                 let edit = crate::account_data::ContactRemarkEdit::Petname(
@@ -667,7 +714,7 @@ fn ContactRow(
                                     base.clone(),
                                     token(),
                                     ContactRowAction::Respond { requester: peer.clone(), request_event_ref: request_event_ref.clone(), verb: "accept".to_owned() },
-                                    tr("contacts.action.accepting"),
+                                    "contacts.action.accepting",
                                     busy,
                                     row_status,
                                     on_changed,
@@ -691,7 +738,7 @@ fn ContactRow(
                                     base.clone(),
                                     token(),
                                     ContactRowAction::Respond { requester: peer.clone(), request_event_ref: request_event_ref.clone(), verb: "reject".to_owned() },
-                                    tr("contacts.action.rejecting"),
+                                    "contacts.action.rejecting",
                                     busy,
                                     row_status,
                                     on_changed,
@@ -713,7 +760,7 @@ fn ContactRow(
                         variant: ButtonVariant::Ghost,
                         "data-testid": "contact-withdraw-{peer}",
                         disabled: true,
-                        title: "Unavailable until the Contact lineage basis is exposed",
+                        title: tr("contacts.lineage_unavailable"),
                         onclick: {
                             let base = base_url.clone();
                             let peer = peer.clone();
@@ -722,7 +769,7 @@ fn ContactRow(
                                     base.clone(),
                                     token(),
                                     ContactRowAction::Tombstone { peer: peer.clone(), block: false },
-                                    tr("contacts.action.withdrawing"),
+                                    "contacts.action.withdrawing",
                                     busy,
                                     row_status,
                                     on_changed,
@@ -746,7 +793,7 @@ fn ContactRow(
                                 let peer = peer.clone();
                                 let api_token = token();
                                 busy.set(true);
-                                row_status.set(tr("contacts.dm.opening"));
+                                row_status.set(ContactFeedback::new("contacts.dm.opening"));
                                 let initiating_account = crate::app::SessionContext::get().active_account();
                                 let fence = crate::transport::auth::AuthoringSessionFence::capture();
                                 dioxus::core::spawn_forever(async move {
@@ -756,7 +803,7 @@ fn ContactRow(
                                     };
                                     let completion_fence = fence.clone();
                                     let feedback_fence = fence.clone();
-                                    let mut set_status = move |message: String| {
+                                    let mut set_status = move |message: ContactFeedback| {
                                         if feedback_fence.check().is_err() { return; }
                                         if let Ok(mut status) = row_status.try_write() { *status = message; }
                                     };
@@ -794,13 +841,13 @@ fn ContactRow(
                                                 DirectConversationEntry::Openable => {
                                                     match crate::transport::account::direct_conversation_coordinates(&outcome) {
                                                         Some(coordinates) => {
-                                                            set_status(String::new());
+                                                            set_status(ContactFeedback::default());
                                                             nav.push(Route::DirectConversation {
                                                                 realm_id: coordinates.realm_id.to_string(),
                                                                 strand_id: coordinates.main_strand_id.to_string(),
                                                             });
                                                         }
-                                                        None => set_status(tr("contacts.dm.not_ready")),
+                                                        None => set_status(ContactFeedback::new("contacts.dm.not_ready")),
                                                     }
                                                 }
                                                 DirectConversationEntry::Suspended => {
@@ -821,17 +868,17 @@ fn ContactRow(
                                                                         ).await
                                                                     },
                                                                 ).await {
-                                                                    Ok(_) => set_status("Direct Conversation self-rejoin accepted; normal MLS Add/Welcome reconciliation is pending.".to_owned()),
-                                                                    Err(error) => set_status(format!("Direct Conversation self-rejoin unavailable: {}", error.display())),
+                                                                    Ok(_) => set_status(ContactFeedback::new("contacts.dm.rejoin_pending")),
+                                                                    Err(error) => set_status(ContactFeedback::new("contacts.dm.rejoin_failed").with_api_error(error)),
                                                                 },
-                                                                None => set_status(tr("contacts.dm.not_ready")),
+                                                                None => set_status(ContactFeedback::new("contacts.dm.not_ready")),
                                                             }
                                                         } else {
-                                                            set_status(tr("contacts.dm.not_ready"));
+                                                            set_status(ContactFeedback::new("contacts.dm.not_ready"));
                                                         }
                                                     } else {
-                                                        set_status(format!(
-                                                            "Direct Conversation is locally blocked: {}",
+                                                        set_status(ContactFeedback::new("contacts.dm.locally_blocked").with_literal(
+                                                            "blockers",
                                                             local_blockers
                                                                 .iter()
                                                                 .map(|blocker| blocker.as_str())
@@ -848,7 +895,7 @@ fn ContactRow(
                                                     let peer_did = serde_json::from_str::<arkret_sdk::ActorId>(&peer).ok().and_then(|actor| actor.as_account_id().cloned());
                                                     match (actor, peer_did) {
                                                         (Some(actor), Some(peer_did)) => {
-                                                            set_status(tr("contacts.dm.creating"));
+                                                            set_status(ContactFeedback::new("contacts.dm.creating"));
                                                             let resolve_for_create = outcome.clone();
                                                             let resolve_store = state_store.clone();
                                                             let resolve_peer = peer.clone();
@@ -881,35 +928,32 @@ fn ContactRow(
                                                             {
                                                                 Ok(resolved) => {
                                                                     if crate::transport::account::direct_conversation_coordinates(&resolved).is_some() {
-                                                                        set_status(String::new());
+                                                                        set_status(ContactFeedback::default());
 
                                                                     } else {
-                                                                        set_status(tr("contacts.dm.not_ready"));
+                                                                        set_status(ContactFeedback::new("contacts.dm.not_ready"));
                                                                     }
                                                                 }
-                                                                Err(error) => set_status(format!(
-                                                                    "Direct Conversation creation failed: {}",
-                                                                    error.display()
-                                                                )),
+                                                                Err(error) => set_status(ContactFeedback::new("contacts.dm.create_failed").with_api_error(error)),
                                                             }
                                                         }
-                                                        _ => set_status(tr("contacts.dm.not_ready")),
+                                                        _ => set_status(ContactFeedback::new("contacts.dm.not_ready")),
                                                     }
                                                 }
                                                 // The other participant is the founder. Waiting never
                                                 // grants create authority, so we show a waiting state
                                                 // instead of offering a create action.
                                                 DirectConversationEntry::AwaitingFounder => {
-                                                    set_status(tr("contacts.dm.awaiting_founder"));
+                                                    set_status(ContactFeedback::new("contacts.dm.awaiting_founder"));
                                                 }
                                                 DirectConversationEntry::Unavailable => {
-                                                    set_status(tr("contacts.dm.not_ready"));
+                                                    set_status(ContactFeedback::new("contacts.dm.not_ready"));
                                                 }
                                             }
                                         }
                                         Err(err) => {
                                             set_status(
-                                                tr("contacts.dm.open_failed").replace("{error}", &err.display()),
+                                                ContactFeedback::new("contacts.dm.open_failed").with_api_error(err),
                                             )
                                         }
                                     }
@@ -963,7 +1007,7 @@ fn ContactRow(
                         variant: ButtonVariant::Destructive,
                         "data-testid": "contact-block-{peer}",
                         disabled: true,
-                        title: "Unavailable until the Contact lineage basis is exposed",
+                        title: tr("contacts.lineage_unavailable"),
                         onclick: move |_| confirm_block.set(true),
                         {tr("contacts.action.block")}
                     }
@@ -992,7 +1036,7 @@ fn ContactRow(
                                         base.clone(),
                                         token(),
                                         ContactRowAction::Tombstone { peer: peer.clone(), block: true },
-                                        tr("contacts.action.blocking"),
+                                        "contacts.action.blocking",
                                         busy,
                                         row_status,
                                         on_changed,
@@ -1016,7 +1060,7 @@ fn ContactRow(
                 div {
                     class: "muted",
                     "data-testid": "contact-row-status-{peer}",
-                    "{row_status}"
+                    {row_status.read().render()}
                 }
             }
         }
@@ -1061,14 +1105,14 @@ pub(crate) fn run_contact_action(
     base: String,
     api_token: String,
     action: ContactRowAction,
-    pending_msg: String,
+    pending_key: &'static str,
     mut busy: Signal<bool>,
-    mut row_status: Signal<String>,
+    mut row_status: Signal<ContactFeedback>,
     on_changed: EventHandler<()>,
     confirmation: Option<ContactAcceptConfirmation>,
 ) {
     busy.set(true);
-    row_status.set(pending_msg);
+    row_status.set(ContactFeedback::new(pending_key));
     let confirmation_base = base.clone();
     let confirmation_token = api_token.clone();
     spawn(async move {
@@ -1112,7 +1156,7 @@ pub(crate) fn run_contact_action(
         };
         match result {
             Ok(()) => {
-                row_status.set(String::new());
+                row_status.set(ContactFeedback::default());
                 if let Some(confirmation) = confirmation {
                     crate::views::settings::push_contact_remark_edit(
                         confirmation_base,
@@ -1126,7 +1170,7 @@ pub(crate) fn run_contact_action(
                 on_changed.call(());
             }
             Err(err) => {
-                row_status.set(tr("contacts.action_failed").replace("{error}", &err.display()))
+                row_status.set(ContactFeedback::new("contacts.action_failed").with_api_error(err))
             }
         }
         busy.set(false);
@@ -1143,7 +1187,8 @@ pub fn ContactsPanel(token: Signal<String>, #[props(default)] advanced: bool) ->
     let mut contacts = use_signal(Vec::<ContactListRow>::new);
     use_effect(move || contacts.set(contact_inbox.0()));
     let mut status = use_signal(|| "loading".to_owned());
-    let mut error = use_signal(|| Option::<String>::None);
+    let mut error =
+        use_signal(|| Option::<std::rc::Rc<crate::transport::auth::ApiCallError>>::None);
     let mut reload = use_signal(|| 0_u32);
     let mut loaded_generation = use_signal(|| u32::MAX);
     // M0.2 - "Add Contact" is a popup modal, not a standalone /contacts/new page.
@@ -1177,7 +1222,7 @@ pub fn ContactsPanel(token: Signal<String>, #[props(default)] advanced: bool) ->
                         status.set(format!("contacts {count}"));
                     }
                     Err(err) => {
-                        error.set(Some(err.display()));
+                        error.set(Some(std::rc::Rc::new(err)));
                         status.set("error".to_owned());
                     }
                 }
@@ -1218,11 +1263,11 @@ pub fn ContactsPanel(token: Signal<String>, #[props(default)] advanced: bool) ->
                             } }
                         }
 
-                        if let Some(message) = error.read().clone() {
+                        if let Some(error) = error.read().clone() {
                             div {
                                 class: "event error-banner",
                                 "data-testid": "contacts-error",
-                                div { class: "muted", {tr("contacts.load_error").replace("{error}", &message)} }
+                                div { class: "muted", {crate::i18n::tr_args("contacts.load_error", &[("error", error.display())])} }
                                 div { class: "actions",
                                     Button {
                                         variant: ButtonVariant::Secondary,
@@ -1293,6 +1338,128 @@ pub fn ContactsPanel(token: Signal<String>, #[props(default)] advanced: bool) ->
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod feedback_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::*;
+    use crate::i18n::{I18nSignal, UiLocale};
+    use crate::transport::auth::ApiCallError;
+
+    type LocaleHandle = Rc<RefCell<Option<I18nSignal>>>;
+
+    fn retained_feedback_surface(
+        (handle, feedback): (LocaleHandle, Vec<ContactFeedback>),
+    ) -> Element {
+        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
+        *handle.borrow_mut() = Some(locale);
+        // Capture once, as the request/row action does. Only the locale changes
+        // after mount: it must independently schedule a real render update.
+        let retained = use_signal(move || feedback);
+        let text = retained
+            .read()
+            .iter()
+            .map(ContactFeedback::render)
+            .collect::<Vec<_>>();
+        rsx! {
+            div {
+                for (index, value) in text.into_iter().enumerate() {
+                    p { key: "{index}", "{value}" }
+                }
+            }
+        }
+    }
+
+    fn rendered_text(edits: dioxus::core::Mutations) -> Vec<String> {
+        let mut text = edits
+            .edits
+            .into_iter()
+            .filter_map(|edit| match edit {
+                dioxus::core::Mutation::CreateTextNode { value, .. }
+                | dioxus::core::Mutation::SetText { value, .. } => Some(value),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        text.sort();
+        text
+    }
+
+    #[test]
+    fn retained_contact_feedback_rerenders_with_locale_and_keeps_opaque_values() {
+        let problem: arkret_sdk::Problem = serde_json::from_value(serde_json::json!({
+            "type": "https://arkret.org/problems/internal_error", "title": "Internal error",
+            "status": 500, "detail": "private server detail / 原文", "code": "internal_error"
+        }))
+        .unwrap();
+        let feedback = vec![
+            ContactFeedback::new("contacts.action.accepting"),
+            ContactFeedback::new("contacts.petname.saved"),
+            ContactFeedback::new("contacts.petname.invalid")
+                .with_literal("error", "{error} / contacts.title / 原文"),
+            ContactFeedback::new("contacts.dm.locally_blocked")
+                .with_literal("blockers", "{blockers}, local_block, consent_withdrawn"),
+            ContactFeedback::new("contacts.action_failed").with_api_error(ApiCallError::Failed(
+                crate::api_error::TransportClientError {
+                    status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                    error: problem,
+                }
+                .into(),
+            )),
+            ContactFeedback::new("contacts.action_failed").with_api_error(
+                ApiCallError::Unavailable(anyhow::anyhow!("private unavailable diagnostic")),
+            ),
+            ContactFeedback::new("contacts.action_failed").with_api_error(
+                ApiCallError::AuthExpired(anyhow::anyhow!("private session diagnostic")),
+            ),
+            ContactFeedback::new("contacts.new.send_failed").with_api_error(ApiCallError::Failed(
+                anyhow::anyhow!("{}", "local validation {error} / contacts.title / 原文"),
+            )),
+        ];
+        let handle = Rc::new(RefCell::new(None));
+        let mut dom =
+            VirtualDom::new_with_props(retained_feedback_surface, (handle.clone(), feedback));
+        let english = [
+            "Accepting…",
+            "Petname saved",
+            "Invalid petname: {error} / contacts.title / 原文",
+            "This direct chat is blocked on this device: {blockers}, local_block, consent_withdrawn",
+            "Action failed: Something went wrong while talking to the server. Try again.",
+            "Action failed: The server is unavailable right now. Check the server address, or wait a moment and try again.",
+            "Action failed: Your session has expired. Sign in again to continue.",
+            "Failed to send: local validation {error} / contacts.title / 原文",
+        ];
+        let chinese = [
+            "正在接受…",
+            "备注名已保存",
+            "备注名无效：{error} / contacts.title / 原文",
+            "此私聊在本机被阻止：{blockers}, local_block, consent_withdrawn",
+            "操作失败:与服务器通信时出现问题。请重试。",
+            "操作失败:服务器当前不可用。请检查服务器地址,或稍等片刻后重试。",
+            "操作失败:登录已过期。请重新登录以继续。",
+            "发送失败:local validation {error} / contacts.title / 原文",
+        ];
+        let expected = |values: &[&str]| {
+            let mut values = values
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>();
+            values.sort();
+            values
+        };
+        assert_eq!(rendered_text(dom.rebuild_to_vec()), expected(&english));
+        let mut locale = handle.borrow().expect("surface provides locale");
+        for (language, copy) in [(UiLocale::Zh, &chinese), (UiLocale::En, &english)] {
+            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
+            // These are actual DOM text edits caused by changing the locale
+            // signal. No feedback action or manual helper render runs here.
+            let actual = rendered_text(dom.render_immediate_to_vec());
+            assert_eq!(actual, expected(copy));
+            assert!(actual.iter().all(|value| !value.contains("private")));
         }
     }
 }

@@ -2164,6 +2164,27 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
 /// realm-admin "invite from contacts" block. zh follows in
 /// [`add_contacts_keys_zh`].
 fn add_contacts_keys(dict: &mut TranslationDict) {
+    dict.set(
+        "contacts.dm.rejoin_pending",
+        "Rejoining the direct chat was accepted. Waiting for the encrypted session to be ready.",
+    );
+    dict.set(
+        "contacts.dm.rejoin_failed",
+        "Could not rejoin the direct chat: {error}",
+    );
+    dict.set(
+        "contacts.dm.locally_blocked",
+        "This direct chat is blocked on this device: {blockers}",
+    );
+    dict.set(
+        "contacts.dm.create_failed",
+        "Could not create the direct chat: {error}",
+    );
+    dict.set(
+        "contacts.lineage_unavailable",
+        "This action is unavailable until the contact relationship can be verified.",
+    );
+    dict.set("dashboard.notifications_open", "Open notifications");
     // ── ContactsPanel ─────────────────────────────────────────────────
     dict.set("contacts.title", "Contacts");
     dict.set("contacts.add_button", "Add contact");
@@ -2262,7 +2283,7 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.remark.saving", "Saving…");
     dict.set("contacts.petname.cleared", "Petname cleared");
     dict.set("contacts.petname.badge", "Petname");
-    dict.set("contacts.petname.invalid", "Invalid petname");
+    dict.set("contacts.petname.invalid", "Invalid petname: {error}");
     dict.set(
         "contacts.petname.invalid_principal",
         "Invalid Contact principal",

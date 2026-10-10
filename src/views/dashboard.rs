@@ -14,10 +14,29 @@ use crate::views::helpers::short_protocol_id;
 struct DashboardNotificationSummary {
     id: String,
     title: String,
+    title_is_key: bool,
     body: String,
+    body_translation: Option<(&'static str, Vec<(&'static str, String)>)>,
     kind: String,
     timestamp: String,
     read: bool,
+}
+
+impl DashboardNotificationSummary {
+    fn render_title(&self) -> String {
+        if self.title_is_key {
+            tr(&self.title)
+        } else {
+            self.title.clone()
+        }
+    }
+
+    fn render_body(&self) -> String {
+        match &self.body_translation {
+            Some((key, args)) => crate::i18n::tr_args(key, args),
+            None => self.body.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -436,14 +455,14 @@ pub fn DashboardPanel(
                 div { class: "stack",
                     div { class: "surface", "data-testid": "pinned-notifications",
                         div { class: "row surface-head",
-                            strong { "Notifications" }
+                            strong { {tr("nav.notifications")} }
                             Link {
                                 class: "btn icon sm ghost ml-auto",
                                 "data-testid": "pinned-notifications-open",
                                 to: Route::Notifications,
                                 onclick: move |_| view.set(super::AppView::Notifications),
-                                title: "Open notifications",
-                                "aria-label": "Open notifications",
+                                title: tr("dashboard.notifications_open"),
+                                "aria-label": tr("dashboard.notifications_open"),
                                 UiIcon { name: "inbox" }
                             }
                         }
@@ -463,16 +482,15 @@ pub fn DashboardPanel(
                                     Link {
                                         class: "m-list-item",
                                         "data-testid": "dashboard-notification-card",
+                                        "data-notification-id": "{notification.id}",
+                                        "data-kind": "{notification.kind}",
                                         key: "{notification.id}",
                                         to: Route::Notifications,
                                         onclick: move |_| view.set(super::AppView::Notifications),
                                         span { class: "avatar xs", if notification.read { "✓" } else { "!" } }
                                         span { class: "grow",
-                                            // `title` may be a server-provided string or an i18n
-                                            // default-title key — `tr()` translates keys and
-                                            // passes unknown strings through unchanged.
-                                            span { class: "title f-13", {crate::i18n::tr(&notification.title)} }
-                                            span { class: "sub", "{notification.body}" }
+                                            span { class: "title f-13", "data-testid": "dashboard-notification-title", {notification.render_title()} }
+                                            span { class: "sub", "data-testid": "dashboard-notification-body", {notification.render_body()} }
                                         }
                                         span { class: "pill muted xs", "{notification.kind}" }
                                     }
@@ -617,42 +635,18 @@ fn dashboard_notification_summaries(
                 &value.notification_kind(),
             )
             .to_owned();
-            let is_runtime_approval = value.agent_runtime_approval().is_some();
-            let title = if is_runtime_approval {
-                Some("Agent runtime approval".to_owned())
-            } else {
-                match value {
-                    crate::state::StoredNotification::Event { notification, .. } => {
-                        crate::state::projection::notifications::event_preview_string(
-                            notification,
-                            &["title"],
-                        )
-                    }
-                    crate::state::StoredNotification::Invite { .. } => None,
-                }
-            }
-            .unwrap_or_else(|| default_notification_title(&kind).to_owned());
-            let body = if is_runtime_approval {
-                Some("Review the pending Agent runtime key request.".to_owned())
-            } else {
-                match value {
-                    crate::state::StoredNotification::Event { notification, .. } => {
-                        crate::state::projection::notifications::event_preview_string(
-                            notification,
-                            &["body", "summary"],
-                        )
-                    }
-                    crate::state::StoredNotification::Invite { invite } => Some(format!(
-                        "You were invited to join {}.",
-                        crate::views::helpers::short_protocol_id(invite.realm_id.as_str())
-                    )),
-                }
-            }
-            .unwrap_or_else(|| "Notification".to_owned());
+            // Keep presentation provenance until rendering. Locale changes must not
+            // translate literal previews that happen to match dictionary keys.
+            let title = notification_title(value, &kind);
+            let title_is_key = notification_title_is_key(value);
+            let body = notification_body(value);
+            let body_translation = notification_body_translation(value);
             Some(DashboardNotificationSummary {
                 id,
                 title,
+                title_is_key,
                 body,
+                body_translation,
                 kind,
                 timestamp: arkret_sdk::canonical::format_timestamp_canonical(value.created_at()),
                 read: client_state.read,
@@ -713,8 +707,11 @@ fn contact_summary_delta(summary: &DashboardContactsSummary) -> String {
     )
 }
 
-// Shared with the notifications model (single source):
-use crate::views::notifications::default_notification_title;
+// Shared with the notifications model; this dashboard does not hydrate or
+// apply the feed's separate delivery filters.
+use crate::views::notifications::{
+    notification_body, notification_body_translation, notification_title, notification_title_is_key,
+};
 
 // The projection label helpers below return i18n KEYS; render sites pass
 // them through `tr()` (model helpers stay runtime-free so unit tests can
@@ -948,5 +945,214 @@ mod tests {
 
         assert_eq!(strands.len(), 1);
         assert_eq!(strands[0].realm_id, realm_a);
+    }
+
+    #[test]
+    fn dashboard_notification_previews_keep_literal_keys_and_defaults_follow_locale() {
+        use dioxus::prelude::*;
+
+        use super::dashboard_notification_summaries;
+        use crate::state::projection::notifications::test_event_notification;
+        use crate::state::{ClientLocalState, NotificationClientState};
+
+        let realm = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+        let event = |ordinal, preview| {
+            test_event_notification(
+                ordinal,
+                arkret_sdk::NotificationKind::Message,
+                realm,
+                None,
+                preview,
+            )
+        };
+        let defaults = event(901, json!({}));
+        let literal = event(
+            902,
+            json!({
+                "title": "notifications.default_title.message",
+                "body": "Original {realm} {error} / 原文"
+            }),
+        );
+        let literal_body_key = event(
+            903,
+            json!({"title": "Original {title}", "summary": "notifications.default_body"}),
+        );
+        let explicit_empty = event(904, json!({"title": "", "body": ""}));
+        let archived = event(905, json!({"title": "Archived literal preview"}));
+        let mut snapshot = ClientLocalState::default();
+        snapshot.notification_client_state.insert(
+            literal.notification_id(),
+            NotificationClientState {
+                read: true,
+                archived: false,
+            },
+        );
+        snapshot.notification_client_state.insert(
+            archived.notification_id(),
+            NotificationClientState {
+                read: false,
+                archived: true,
+            },
+        );
+        snapshot.notification_projection = vec![
+            defaults.clone(),
+            literal.clone(),
+            literal_body_key.clone(),
+            explicit_empty.clone(),
+            archived,
+        ];
+        let rows = dashboard_notification_summaries(&snapshot);
+        assert_eq!(
+            rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>(),
+            vec![
+                explicit_empty.notification_id(),
+                literal_body_key.notification_id(),
+                literal.notification_id(),
+                defaults.notification_id(),
+            ]
+        );
+        let by_id = |id: &str| rows.iter().find(|row| row.id == id).unwrap();
+        assert!(by_id(&literal.notification_id()).read);
+        let original_snapshot = snapshot.clone();
+        let mut dom = VirtualDom::new(|| rsx! {});
+        dom.rebuild_in_place();
+        dom.in_scope(ScopeId::ROOT, || {
+            let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
+                crate::i18n::UiLocale::En,
+            ));
+            for (language, title, body) in [
+                (crate::i18n::UiLocale::En, "New message", "Notification"),
+                (crate::i18n::UiLocale::Zh, "新消息", "通知"),
+                (crate::i18n::UiLocale::En, "New message", "Notification"),
+            ] {
+                crate::i18n::set_locale(&mut locale, language);
+                assert_eq!(by_id(&defaults.notification_id()).render_title(), title);
+                assert_eq!(by_id(&defaults.notification_id()).render_body(), body);
+                assert_eq!(
+                    by_id(&literal.notification_id()).render_title(),
+                    "notifications.default_title.message"
+                );
+                assert_eq!(
+                    by_id(&literal.notification_id()).render_body(),
+                    "Original {realm} {error} / 原文"
+                );
+                assert_eq!(
+                    by_id(&literal_body_key.notification_id()).render_title(),
+                    "Original {title}"
+                );
+                assert_eq!(
+                    by_id(&literal_body_key.notification_id()).render_body(),
+                    "notifications.default_body"
+                );
+                assert_eq!(by_id(&explicit_empty.notification_id()).render_title(), "");
+                assert_eq!(by_id(&explicit_empty.notification_id()).render_body(), "");
+                assert_eq!(dashboard_notification_summaries(&snapshot), rows);
+                assert_eq!(
+                    snapshot.notification_projection,
+                    original_snapshot.notification_projection
+                );
+                assert_eq!(
+                    snapshot.notification_client_state,
+                    original_snapshot.notification_client_state
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn dashboard_invite_and_runtime_approval_copy_retranslates_retained_summaries() {
+        use dioxus::prelude::*;
+
+        use super::dashboard_notification_summaries;
+        use crate::state::projection::notifications::{
+            raw_notifications_from_sources, test_invite,
+        };
+        use crate::state::{ClientLocalState, StoredInviteNotification, StoredNotification};
+
+        let realm = "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
+        let invite = test_invite(1, realm);
+        let delta = arkret_sdk::sync::NotificationDelta::try_new(
+            arkret_sdk::NotificationIdentity::AgentApproval(
+                arkret_sdk::NotificationId::new(
+                    "ak:notification:01964137-0000-7000-8000-000000000004",
+                )
+                .unwrap(),
+            ),
+            arkret_sdk::sync::NotificationDeltaAction::Upsert,
+            Some(arkret_sdk::sync::NotificationData::AgentRuntimeApproval(
+                arkret_sdk::sync::AgentRuntimeApprovalNotificationData {
+                    approval_request_id: arkret_sdk::sync::AgentRuntimeApprovalRequestId::new(
+                        "agent_runtime_approval:01964137-0000-7000-8000-000000000005",
+                    )
+                    .unwrap(),
+                    agent_id: crate::mls_api_helpers::principal_core_id("did:web:agent.example")
+                        .unwrap(),
+                    requested_at: chrono::DateTime::parse_from_rfc3339("2026-05-29T00:00:00.000Z")
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
+                    expires_at: chrono::DateTime::parse_from_rfc3339("2026-05-29T00:10:00.000Z")
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
+                },
+            )),
+        )
+        .unwrap();
+        let mut snapshot = ClientLocalState::default();
+        snapshot.notification_projection = raw_notifications_from_sources(Some(&[delta]), &[]);
+        snapshot
+            .notification_projection
+            .push(StoredNotification::Invite {
+                invite: StoredInviteNotification {
+                    invite_id: invite.id,
+                    realm_id: invite.realm_id,
+                    created_at: invite.created_at,
+                },
+            });
+        let rows = dashboard_notification_summaries(&snapshot);
+        assert_eq!(rows.len(), 2);
+        let invitation = rows.iter().find(|row| row.kind == "invite").unwrap();
+        let approval = rows
+            .iter()
+            .find(|row| row.id.starts_with("ak:notification:"))
+            .unwrap();
+        let short_realm = crate::views::helpers::short_protocol_id(realm);
+        let mut dom = VirtualDom::new(|| rsx! {});
+        dom.rebuild_in_place();
+        dom.in_scope(ScopeId::ROOT, || {
+            let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
+                crate::i18n::UiLocale::En,
+            ));
+            for (language, invite_title, approval_title, approval_body) in [
+                (
+                    crate::i18n::UiLocale::En,
+                    "Realm invite",
+                    "Agent runtime approval",
+                    "Review the pending Agent runtime key request.",
+                ),
+                (
+                    crate::i18n::UiLocale::Zh,
+                    "Realm 邀请",
+                    "Agent 运行授权审批",
+                    "审查待处理的 Agent 运行密钥请求。",
+                ),
+                (
+                    crate::i18n::UiLocale::En,
+                    "Realm invite",
+                    "Agent runtime approval",
+                    "Review the pending Agent runtime key request.",
+                ),
+            ] {
+                crate::i18n::set_locale(&mut locale, language);
+                assert_eq!(invitation.render_title(), invite_title);
+                let invite_body = match language {
+                    crate::i18n::UiLocale::En => format!("You were invited to join {short_realm}."),
+                    crate::i18n::UiLocale::Zh => format!("你收到了加入 {short_realm} 的邀请。"),
+                };
+                assert_eq!(invitation.render_body(), invite_body);
+                assert_eq!(approval.render_title(), approval_title);
+                assert_eq!(approval.render_body(), approval_body);
+                assert_eq!(dashboard_notification_summaries(&snapshot), rows);
+            }
+        });
     }
 }

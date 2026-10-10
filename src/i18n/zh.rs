@@ -1990,6 +1990,21 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
 /// Chinese translations for the contacts surfaces — mirrors
 /// [`add_contacts_keys`].
 fn add_contacts_keys_zh(dict: &mut TranslationDict) {
+    dict.set(
+        "contacts.dm.rejoin_pending",
+        "已受理重新加入私聊。正在等待加密会话就绪。",
+    );
+    dict.set("contacts.dm.rejoin_failed", "无法重新加入私聊：{error}");
+    dict.set(
+        "contacts.dm.locally_blocked",
+        "此私聊在本机被阻止：{blockers}",
+    );
+    dict.set("contacts.dm.create_failed", "无法创建私聊：{error}");
+    dict.set(
+        "contacts.lineage_unavailable",
+        "验证联系人关系后才能执行此操作。",
+    );
+    dict.set("dashboard.notifications_open", "打开通知");
     // ── ContactsPanel ─────────────────────────────────────────────────
     dict.set("contacts.title", "联系人");
     dict.set("contacts.add_button", "添加联系人");
@@ -2070,7 +2085,7 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.remark.saving", "正在保存…");
     dict.set("contacts.petname.cleared", "备注名已清除");
     dict.set("contacts.petname.badge", "备注名");
-    dict.set("contacts.petname.invalid", "备注名无效");
+    dict.set("contacts.petname.invalid", "备注名无效：{error}");
     dict.set("contacts.petname.invalid_principal", "联系人主体无效");
     dict.set("contacts.petname.confusable_warning", "疑似冒充联系人");
     dict.set(
