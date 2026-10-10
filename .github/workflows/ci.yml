@@ -201,9 +201,46 @@ jobs:
           --test mls_data_plane_wasm
           --test wasm_indexed_db_capacity
 
-      - name: Browser end-to-end tests
+      - name: Build the native E2E fixture verifier once
         working-directory: inkson
-        run: npm run e2e
+        run: |
+          cargo metadata --locked --no-deps --format-version 1 > "$RUNNER_TEMP/inkson-e2e-metadata.json"
+          cargo build --locked --profile joint-e2e --features spec-conformance --bin inkson-wire --message-format=json-render-diagnostics > "$RUNNER_TEMP/inkson-e2e-build.jsonl"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          temporary = Path(os.environ["RUNNER_TEMP"])
+          metadata = json.loads((temporary / "inkson-e2e-metadata.json").read_text())
+          package_id = next(package["id"] for package in metadata["packages"] if package["name"] == "inkson")
+          artifacts = [json.loads(line) for line in (temporary / "inkson-e2e-build.jsonl").read_text().splitlines()]
+          executables = [Path(artifact["executable"]).resolve() for artifact in artifacts
+                         if artifact.get("reason") == "compiler-artifact"
+                         and artifact.get("package_id") == package_id
+                         and artifact["target"]["name"] == "inkson-wire"
+                         and artifact.get("executable")]
+          if len(executables) != 1 or not executables[0].is_file():
+              raise SystemExit("Expected one built native inkson-wire executable")
+          if not executables[0].is_relative_to(Path(metadata["target_directory"]).resolve()):
+              raise SystemExit("The native fixture verifier is outside Cargo's resolved target directory")
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write(f"INKSON_WIRE_BIN={executables[0]}\n")
+          PY
+
+      - name: Browser end-to-end tests
+        id: browser-e2e
+        working-directory: inkson
+        # Print each failed assertion immediately while the remaining suite runs.
+        run: npm run e2e -- --reporter=line
+
+      - name: Preserve failed E2E diagnostics
+        if: always() && steps.browser-e2e.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: inkson-e2e-diagnostics-${{ github.run_id }}
+          path: inkson/test-results/
+          if-no-files-found: ignore
 
       - name: Start web preview for Lighthouse
         working-directory: inkson
