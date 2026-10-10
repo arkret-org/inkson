@@ -334,6 +334,119 @@ fn applet_value_label(key: &'static str, value: &str) -> String {
     crate::i18n::tr_args(key, &[("value", value.to_owned())])
 }
 
+/// Transient presentation state; retained errors are rendered with the current locale.
+/// This type is neither an installation authority nor a protocol/persistence model.
+#[derive(Clone, Debug)]
+enum AppletInstallFeedback {
+    InvalidManifest,
+    PreviewAccountUnavailable,
+    InvalidRealm(String),
+    AuthorityUnavailable,
+    Previewing,
+    InvalidScope(String),
+    MissingPackageDigest,
+    PlanReady {
+        scopes: usize,
+        actions: usize,
+        digest: String,
+    },
+    ScopeMismatch,
+    InvalidPreview(String),
+    PreviewFailed(std::sync::Arc<crate::transport::auth::ApiCallError>),
+    PreviewRequired,
+    Installing,
+    Installed(String),
+    PartiallyInstalled {
+        applet_id: String,
+        rejected: usize,
+    },
+    InstallFailed(std::sync::Arc<crate::transport::auth::ApiCallError>),
+    RevokeAccountUnavailable,
+    Revoking,
+    Revoked(usize),
+    RevokeFailed(std::sync::Arc<crate::transport::auth::ApiCallError>),
+}
+
+impl AppletInstallFeedback {
+    fn render(&self) -> String {
+        use AppletInstallFeedback::*;
+
+        use crate::i18n::tr_args;
+        match self {
+            InvalidManifest => tr("applets.feedback.invalid_manifest"),
+            PreviewAccountUnavailable => tr("applets.feedback.preview_account_unavailable"),
+            InvalidRealm(error) => tr_args(
+                "applets.feedback.invalid_realm",
+                &[("error", error.clone())],
+            ),
+            AuthorityUnavailable => tr("applets.feedback.authority_unavailable"),
+            Previewing => tr("applets.feedback.previewing"),
+            // Existing local validation diagnostics remain literal parameters.
+            InvalidScope(error) => error.clone(),
+            MissingPackageDigest => tr("applets.feedback.missing_package_digest"),
+            PlanReady {
+                scopes,
+                actions,
+                digest,
+            } => tr_args(
+                "applets.feedback.plan_ready",
+                &[
+                    ("scopes", scopes.to_string()),
+                    ("actions", actions.to_string()),
+                    ("digest", digest.clone()),
+                ],
+            ),
+            ScopeMismatch => tr("applets.feedback.scope_mismatch"),
+            InvalidPreview(error) => tr_args(
+                "applets.feedback.invalid_preview",
+                &[("error", error.clone())],
+            ),
+            PreviewFailed(error) => tr_args(
+                "applets.feedback.preview_failed",
+                &[("error", error.display())],
+            ),
+            PreviewRequired => tr("applets.feedback.preview_required"),
+            Installing => tr("applets.feedback.installing"),
+            Installed(applet_id) => tr_args(
+                "applets.feedback.installed",
+                &[("applet_id", applet_id.clone())],
+            ),
+            PartiallyInstalled {
+                applet_id,
+                rejected,
+            } => tr_args(
+                "applets.feedback.partially_installed",
+                &[
+                    ("rejected", rejected.to_string()),
+                    ("applet_id", applet_id.clone()),
+                ],
+            ),
+            InstallFailed(error) => tr_args(
+                "applets.feedback.install_failed",
+                &[("error", error.display())],
+            ),
+            RevokeAccountUnavailable => tr("applets.feedback.revoke_account_unavailable"),
+            Revoking => tr("applets.feedback.revoking"),
+            Revoked(count) => tr_args("applets.feedback.revoked", &[("count", count.to_string())]),
+            RevokeFailed(error) => tr_args(
+                "applets.feedback.revoke_failed",
+                &[("error", error.display())],
+            ),
+        }
+    }
+}
+
+fn applet_install_feedback(status: Option<&AppletInstallFeedback>) -> Element {
+    let text = status
+        .map(AppletInstallFeedback::render)
+        .unwrap_or_default();
+    rsx! {
+        if !text.is_empty() {
+            div { class: "muted", "data-testid": "applet-install-status", "{text}" }
+        }
+    }
+}
+
 #[component]
 pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element {
     // A4 — base_url / state_store from session context instead of props.
@@ -346,7 +459,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     // ─────────────────────────────────────────────────────────────
     let mut install_open = use_signal(|| false);
     let mut install_manifest = use_signal(String::new);
-    let mut install_status = use_signal(String::new);
+    let mut install_status = use_signal(|| Option::<AppletInstallFeedback>::None);
     // The exact typed preview snapshot is the sole confirm-state authority.
     // Any input change discards it atomically.
     let mut install_preview = use_signal(|| Option::<AppletInstallPreviewSnapshot>::None);
@@ -608,18 +721,14 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                applet_install_material_from_manifest(&kind)
                                            else {
                                                install_preview.set(None);
-                                               install_status
-                                                   .set("input must be a closed AppletInstallPreviewRequestBody whose registration Event manifest carries registration_epoch_evidence".to_owned());
+                                               install_status.set(Some(AppletInstallFeedback::InvalidManifest));
                                                return;
                                            };
                                            let base = base.clone();
                                            let realm = realm.clone();
                                            let api_token = token();
                                            let Some(account) = active_account.peek().clone() else {
-                                               install_status.set(
-                                                   "cannot preview install: active account context is unavailable"
-                                                       .to_owned(),
-                                               );
+                                               install_status.set(Some(AppletInstallFeedback::PreviewAccountUnavailable));
                                                return;
                                            };
                                            let actor_id = account.principal_id().clone();
@@ -628,7 +737,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                            let realm_typed = match arkret_sdk::RealmId::new(realm.clone()) {
                                                Ok(realm_id) => realm_id,
                                                Err(error) => {
-                                                   install_status.set(format!("cannot preview install: invalid Realm id: {error}"));
+                                                   install_status.set(Some(AppletInstallFeedback::InvalidRealm(error.to_string())));
                                                    return;
                                                }
                                            };
@@ -637,10 +746,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                &realm_typed,
                                            );
                                            let Some(issuer_authority_basis) = issuer_authority_basis else {
-                                               install_status.set(
-                                                   "cannot preview install: verified governing Station authority lineage is unavailable"
-                                                       .to_owned(),
-                                               );
+                                               install_status.set(Some(AppletInstallFeedback::AuthorityUnavailable));
                                                return;
                                            };
                                            let circle = install_circle_id();
@@ -652,7 +758,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                            } else {
                                                AppletGhostActorMode::Disallowed
                                            };
-                                           install_status.set("previewing install plan…".to_owned());
+                                           install_status.set(Some(AppletInstallFeedback::Previewing));
                                            spawn(async move {
                                                let effective_scope = match applet_effective_scope(
                                                    &realm,
@@ -660,7 +766,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                ) {
                                                    Ok(scope) => scope,
                                                    Err(err) => {
-                                                       install_status.set(err);
+                                                       install_status.set(Some(AppletInstallFeedback::InvalidScope(err)));
                                                        return;
                                                    }
                                                };
@@ -675,9 +781,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                let package_digest = match package.package_digest.clone() {
                                                    Some(value) => value,
                                                    None => {
-                                                       install_status.set(
-                                                           "Applet package has no signed package_digest".to_owned(),
-                                                       );
+                                                       install_status.set(Some(AppletInstallFeedback::MissingPackageDigest));
                                                        return;
                                                    }
                                                };
@@ -751,30 +855,24 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                                basis: requested_basis,
                                                                preview,
                                                            }));
-                                                           install_status.set(format!(
-                                                               "plan ready ({} scope(s), {} action(s)); digest {}",
-                                                               scope_count,
-                                                               actions.len(),
-                                                               short_protocol_id(&digest),
-                                                           ));
+                                                           install_status.set(Some(AppletInstallFeedback::PlanReady {
+                                                               scopes: scope_count,
+                                                               actions: actions.len(),
+                                                               digest: short_protocol_id(&digest),
+                                                           }));
                                                        }
                                                        Ok(_) => {
                                                            install_preview.set(None);
-                                                           install_status.set(
-                                                               "preview invalid: effective_scope does not match the request"
-                                                                   .to_owned(),
-                                                           );
+                                                           install_status.set(Some(AppletInstallFeedback::ScopeMismatch));
                                                        }
                                                        Err(err) => {
                                                            install_preview.set(None);
-                                                           install_status.set(format!("preview invalid: {err}"));
+                                                           install_status.set(Some(AppletInstallFeedback::InvalidPreview(err.to_string())));
                                                        }
                                                    },
                                                    Err(err) => {
                                                        install_preview.set(None);
-                                                       install_status.set(format!(
-                                                           "preview failed: {}", err.display()
-                                                       ));
+                                                       install_status.set(Some(AppletInstallFeedback::PreviewFailed(std::sync::Arc::new(err))));
                                                    }
                                                }
                                            });
@@ -791,12 +889,12 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                        let base = base_url.clone();
                                        move |_| {
                                            let Some(snapshot) = install_preview() else {
-                                               install_status.set("preview the plan before installing".to_owned());
+                                               install_status.set(Some(AppletInstallFeedback::PreviewRequired));
                                                return;
                                            };
                                            let base = base.clone();
                                            let api_token = token();
-                                           install_status.set("installing applet…".to_owned());
+                                           install_status.set(Some(AppletInstallFeedback::Installing));
                                            spawn(async move {
                                                let idem = snapshot.preview.plan.plan_digest.to_string();
                                                let result = with_authed_sdk_client(&base, api_token, |http| async move {
@@ -814,17 +912,17 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                    Ok(outcome) => {
                                                        use arkret_models_integration::AppletInstallEffectiveStatus as Status;
                                                        let aid = short_protocol_id(&outcome.applet_id);
-                                                       let line = match outcome.effective_status {
+                                                       let feedback = match outcome.effective_status {
                                                            Status::Installed => {
-                                                               format!("✅ Service installed: applet_id {aid}. Bots are created separately by the Applet.")
+                                                               AppletInstallFeedback::Installed(aid)
                                                            }
-                                                           Status::PartiallyInstalled => format!(
-                                                               "⚠ partially installed: applet_id {aid} — {} scope(s) rejected",
-                                                               outcome.rejections.len(),
-                                                           ),
+                                                           Status::PartiallyInstalled => AppletInstallFeedback::PartiallyInstalled {
+                                                               applet_id: aid,
+                                                               rejected: outcome.rejections.len(),
+                                                           },
                                                        };
                                                        let installed = matches!(outcome.effective_status, Status::Installed);
-                                                       install_status.set(line);
+                                                       install_status.set(Some(feedback));
                                                        // Keep the form open on a partial outcome so the
                                                        // admin can adjust and retry denied scopes.
                                                        if installed {
@@ -836,9 +934,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                            install_preview.set(None);
                                                        }
                                                    }
-                                                   Err(err) => install_status.set(format!(
-                                                       "install failed: {}", err.display()
-                                                   )),
+                                                   Err(err) => install_status.set(Some(AppletInstallFeedback::InstallFailed(std::sync::Arc::new(err)))),
                                                }
                                            });
                                        }
@@ -846,9 +942,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                    {tr("applets.install")}
                                }
                            }
-                           if !install_status().is_empty() {
-                               div { class: "muted", "data-testid": "applet-install-status", "{install_status}" }
-                           }
+                           {applet_install_feedback(install_status.read().as_ref())}
                        }
                    }
 
@@ -901,11 +995,11 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                        let aid = aid.clone();
                                                        let api_token = token();
                                                        let Some(account) = active_account.peek().clone() else {
-                                                           install_status.set("revoke failed: active account context is unavailable".to_owned());
+                                                           install_status.set(Some(AppletInstallFeedback::RevokeAccountUnavailable));
                                                            return;
                                                        };
                                                        let principal_id = account.authority.principal_id;
-                                                       install_status.set("revoking applet…".to_owned());
+                                                       install_status.set(Some(AppletInstallFeedback::Revoking));
                                                        spawn(async move {
                                                            let reason_code = arkret_sdk::ReasonCode::PolicyRevoked;
                                                            let revoke_mode = AppletRevokeMode::RevokeRuntimeOnly;
@@ -970,12 +1064,8 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                            })
                                                            .await;
                                                            match result {
-                                                               Ok(outcome) => install_status.set(format!(
-                                                                   "revoked: {} ref(s)", outcome.revoked_refs.len()
-                                                               )),
-                                                               Err(err) => install_status.set(format!(
-                                                                   "revoke failed: {}", err.display()
-                                                               )),
+                                                               Ok(outcome) => install_status.set(Some(AppletInstallFeedback::Revoked(outcome.revoked_refs.len()))),
+                                                               Err(err) => install_status.set(Some(AppletInstallFeedback::RevokeFailed(std::sync::Arc::new(err)))),
                                                            }
                                                        });
                                                    }
@@ -1076,6 +1166,202 @@ mod tests {
     use crate::i18n::{I18nSignal, UiLocale};
 
     type LocaleHandle = Rc<RefCell<Option<I18nSignal>>>;
+
+    type FeedbackHandle =
+        Rc<RefCell<Option<(I18nSignal, Signal<Option<super::AppletInstallFeedback>>)>>>;
+
+    fn retained_applet_feedback(handle: FeedbackHandle) -> Element {
+        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
+        let status = use_signal(|| Option::<super::AppletInstallFeedback>::None);
+        *handle.borrow_mut() = Some((locale, status));
+        // The production feedback surface retains values and typed API errors;
+        // this test does not execute installation or the session-dependent panel.
+        let status = status.read();
+        super::applet_install_feedback(status.as_ref())
+    }
+
+    fn feedback_div_count(dom: &VirtualDom, node: &dioxus::core::VNode) -> usize {
+        fn template_count(
+            dom: &VirtualDom,
+            node: &dioxus::core::VNode,
+            template: &dioxus::core::TemplateNode,
+        ) -> usize {
+            use dioxus::core::{DynamicNode, TemplateAttribute, TemplateNode};
+            match template {
+                TemplateNode::Element {
+                    tag,
+                    attrs,
+                    children,
+                    ..
+                } => {
+                    let is_status = *tag == "div"
+                        && attrs.iter().any(|attribute| {
+                            matches!(
+                                attribute,
+                                TemplateAttribute::Static {
+                                    name: "data-testid",
+                                    value: "applet-install-status",
+                                    ..
+                                }
+                            )
+                        });
+                    usize::from(is_status)
+                        + children
+                            .iter()
+                            .map(|child| template_count(dom, node, child))
+                            .sum::<usize>()
+                }
+                TemplateNode::Dynamic { id } => match &node.dynamic_nodes[*id] {
+                    DynamicNode::Fragment(nodes) => nodes
+                        .iter()
+                        .map(|child| feedback_div_count(dom, child))
+                        .sum(),
+                    // Dioxus wraps the app in mounted Suspense/Error components.
+                    // Follow the actual child scope rather than guessing a ScopeId.
+                    DynamicNode::Component(component) => {
+                        let scope = component
+                            .mounted_scope(*id, node, dom)
+                            .expect("rendered feedback component is mounted");
+                        feedback_div_count(dom, scope.root_node())
+                    }
+                    _ => 0,
+                },
+                TemplateNode::Text { .. } => 0,
+            }
+        }
+
+        node.template
+            .roots
+            .iter()
+            .map(|root| template_count(dom, node, root))
+            .sum()
+    }
+
+    #[test]
+    fn retained_applet_feedback_rerenders_original_parameters_and_safe_api_errors() {
+        use std::sync::Arc;
+
+        use super::AppletInstallFeedback as Feedback;
+        use crate::transport::auth::ApiCallError;
+
+        let handle = Rc::new(RefCell::new(None));
+        let mut dom = VirtualDom::new_with_props(retained_applet_feedback, handle.clone());
+        assert!(text_edits(dom.rebuild_to_vec()).is_empty());
+        assert_eq!(feedback_div_count(&dom, dom.base_scope().root_node()), 0);
+        let (mut locale, mut status) = handle.borrow().expect("surface provides signals");
+        dom.in_runtime(|| status.set(Some(Feedback::InvalidScope(String::new()))));
+        assert!(text_edits(dom.render_immediate_to_vec()).is_empty());
+        assert_eq!(feedback_div_count(&dom, dom.base_scope().root_node()), 0);
+        for language in [UiLocale::Zh, UiLocale::En] {
+            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
+            assert!(text_edits(dom.render_immediate_to_vec()).is_empty());
+            assert_eq!(feedback_div_count(&dom, dom.base_scope().root_node()), 0);
+        }
+        let original = "applets.registry {value} {scopes} {actions} {digest} {rejected} 原文";
+        let server_detail = "applets.registry {error} private server detail";
+        let diagnostic = "private diagnostic {error}";
+        let problem = arkret_sdk::Problem::new("internal_error", 500, server_detail)
+            .with_extension("reason_detail", serde_json::json!(diagnostic));
+        let server_error = Arc::new(ApiCallError::Failed(anyhow::Error::new(
+            crate::api_error::TransportClientError {
+                status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                error: problem,
+            },
+        )));
+        let local_error = Arc::new(ApiCallError::Failed(anyhow::anyhow!(original)));
+        let cases = [
+            (
+                Feedback::PlanReady { scopes: 2, actions: 3, digest: original.to_owned() },
+                format!("plan ready (2 scope(s), 3 action(s)); digest {original}"),
+                format!("计划已就绪（2 个范围，3 项操作）；摘要 {original}"),
+            ),
+            (
+                Feedback::PartiallyInstalled { applet_id: original.to_owned(), rejected: 4 },
+                format!("⚠ partially installed: applet_id {original} — 4 scope(s) rejected"),
+                format!("⚠ 部分安装成功：applet_id {original} — 4 个范围被拒绝"),
+            ),
+            (
+                Feedback::Installed(String::new()),
+                "✅ Service installed: applet_id . Bots are created separately by the Applet.".to_owned(),
+                "✅ Service 已安装：applet_id 。Bot 由小程序另行创建。".to_owned(),
+            ),
+            (
+                Feedback::InvalidRealm(original.to_owned()),
+                format!("cannot preview install: invalid Realm id: {original}"),
+                format!("无法预览安装：Realm 标识无效：{original}"),
+            ),
+            (
+                Feedback::InvalidScope(original.to_owned()),
+                original.to_owned(),
+                original.to_owned(),
+            ),
+            (
+                Feedback::InvalidPreview(original.to_owned()),
+                format!("preview invalid: {original}"),
+                format!("预览无效：{original}"),
+            ),
+            (
+                Feedback::PreviewFailed(local_error.clone()),
+                format!("preview failed: {original}"),
+                format!("预览失败：{original}"),
+            ),
+            (
+                Feedback::InstallFailed(server_error.clone()),
+                "install failed: Something went wrong while talking to the server. Try again.".to_owned(),
+                "安装失败：与服务器通信时出现问题。请重试。".to_owned(),
+            ),
+            (
+                Feedback::RevokeFailed(server_error.clone()),
+                "revoke failed: Something went wrong while talking to the server. Try again.".to_owned(),
+                "撤销失败：与服务器通信时出现问题。请重试。".to_owned(),
+            ),
+            (
+                Feedback::Revoked(0),
+                "revoked: 0 ref(s)".to_owned(),
+                "已撤销：0 个引用".to_owned(),
+            ),
+            (
+                Feedback::PreviewFailed(Arc::new(ApiCallError::Unavailable(anyhow::anyhow!(server_detail)))),
+                "preview failed: The server is unavailable right now. Check the server address, or wait a moment and try again.".to_owned(),
+                "预览失败：服务器当前不可用。请检查服务器地址,或稍等片刻后重试。".to_owned(),
+            ),
+            (
+                Feedback::PreviewFailed(Arc::new(ApiCallError::AuthExpired(anyhow::anyhow!(server_detail)))),
+                "preview failed: Your session has expired. Sign in again to continue.".to_owned(),
+                "预览失败：登录已过期。请重新登录以继续。".to_owned(),
+            ),
+        ];
+        for (feedback, english, chinese) in cases {
+            dom.in_runtime(|| status.set(Some(feedback.clone())));
+            assert_eq!(
+                text_edits(dom.render_immediate_to_vec()),
+                vec![english.clone()]
+            );
+            assert_eq!(feedback_div_count(&dom, dom.base_scope().root_node()), 1);
+            for (language, text) in [(UiLocale::Zh, chinese), (UiLocale::En, english)] {
+                dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
+                let edits = text_edits(dom.render_immediate_to_vec());
+                // An unchanged literal diagnostic has no text mutation.
+                if matches!(feedback, Feedback::InvalidScope(_)) {
+                    assert!(edits.is_empty());
+                } else {
+                    assert_eq!(edits, vec![text]);
+                }
+            }
+            if let Feedback::InstallFailed(error) | Feedback::RevokeFailed(error) =
+                status.read().as_ref().expect("feedback is retained")
+            {
+                assert!(Arc::ptr_eq(error, &server_error));
+                let (_, envelope) = crate::api_error::api_error_status_and_envelope(error.inner())
+                    .expect("original server envelope is retained");
+                assert_eq!(envelope.detail, server_detail);
+                assert_eq!(envelope.extensions["reason_detail"], diagnostic);
+            }
+            dom.in_runtime(|| status.set(None));
+            assert!(text_edits(dom.render_immediate_to_vec()).is_empty());
+            assert_eq!(feedback_div_count(&dom, dom.base_scope().root_node()), 0);
+        }
+    }
 
     fn retained_applet_labels(handle: LocaleHandle) -> Element {
         let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));

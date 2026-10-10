@@ -95,3 +95,67 @@ test("applet registry and install form copy follow the active language without a
   }
   expect(sideEffects).toEqual([]);
 });
+
+test("applet preview validation follows the selected language and preserves literal form input without requests", async ({ page }) => {
+  const sideEffects: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (
+      path === "/_arkret/self/events" ||
+      path.endsWith("/realm-joins/prepare") ||
+      (path.startsWith("/_arkret/") && path.split("/").includes("applets"))
+    ) {
+      sideEffects.push(`${request.method()} ${path}`);
+    }
+  });
+  await refreshServer(page);
+  const literalManifest = '{"description":"applets.feedback.invalid_manifest {error} 原文"}';
+  const literalCircle = "applets.registry {value} 原文";
+  const literalActions = "ak.message.create,\nak.applet.ghost.provision";
+  for (const language of ["en", "zh", "en"] as const) {
+    await openSettings(page);
+    await page.getByTestId("settings-nav-item-theme").click();
+    await page.getByTestId(`language-${language}`).click();
+    await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", language);
+    // Public navigation remounts the panel. Only native VDom coverage claims
+    // locale changes for an already retained feedback value.
+    await openApplets(page);
+    const panel = page.getByTestId("applets-panel");
+    const toggle = panel.getByTestId("applet-install-button");
+    await toggle.click();
+    const manifest = panel.getByTestId("applet-install-manifest-input");
+    const circle = panel.getByTestId("applet-install-circle-input");
+    const actions = panel.getByTestId("applet-install-approve-actions-input");
+    await manifest.fill(literalManifest);
+    await circle.fill(literalCircle);
+    await actions.fill(literalActions);
+    const ghost = panel.getByTestId("applet-install-allow-ghost");
+    await ghost.click();
+    await expect(ghost).toHaveAttribute("aria-checked", "true");
+    const confirm = panel.getByTestId("applet-install-confirm-button");
+    const status = panel.getByTestId("applet-install-status");
+    await expect(confirm).toBeDisabled();
+    await expect(status).toHaveCount(0);
+    await panel.getByTestId("applet-install-verify-button").click();
+    const expected = language === "zh"
+      ? "输入必须是完整的 AppletInstallPreviewRequestBody，且注册事件清单携带 registration_epoch_evidence"
+      : "input must be a closed AppletInstallPreviewRequestBody whose registration Event manifest carries registration_epoch_evidence";
+    await expect(status).toHaveText(expected);
+    await expect(manifest).toHaveValue(literalManifest);
+    await expect(circle).toHaveValue(literalCircle);
+    await expect(actions).toHaveValue(literalActions);
+    await expect(ghost).toHaveAttribute("aria-checked", "true");
+    await expect(confirm).toBeDisabled();
+    await expect(panel.getByTestId("applet-row")).toHaveCount(0);
+    await toggle.click();
+    await expect(status).toHaveCount(0);
+    await toggle.click();
+    await expect(status).toHaveText(expected);
+    await expect(manifest).toHaveValue(literalManifest);
+    await expect(circle).toHaveValue(literalCircle);
+    await expect(actions).toHaveValue(literalActions);
+    await expect(ghost).toHaveAttribute("aria-checked", "true");
+    await expect(confirm).toBeDisabled();
+  }
+  expect(sideEffects).toEqual([]);
+});

@@ -2180,6 +2180,109 @@ pub fn english_translations() -> TranslationDict {
     dict.set("applets.trace_title", "Accountability trace — {value}");
     dict.set("applets.event_id", "event_id {value}");
 
+    dict.set("applets.feedback.invalid_manifest", "input must be a closed AppletInstallPreviewRequestBody whose registration Event manifest carries registration_epoch_evidence");
+    dict.set(
+        "applets.feedback.preview_account_unavailable",
+        "cannot preview install: active account context is unavailable",
+    );
+    dict.set(
+        "applets.feedback.invalid_realm",
+        "cannot preview install: invalid Realm id: {error}",
+    );
+    dict.set(
+        "applets.feedback.authority_unavailable",
+        "cannot preview install: verified governing Station authority lineage is unavailable",
+    );
+    dict.set("applets.feedback.previewing", "previewing install plan…");
+    dict.set(
+        "applets.feedback.missing_package_digest",
+        "Applet package has no signed package_digest",
+    );
+    dict.set(
+        "applets.feedback.plan_ready",
+        "plan ready ({scopes} scope(s), {actions} action(s)); digest {digest}",
+    );
+    dict.set(
+        "applets.feedback.scope_mismatch",
+        "preview invalid: effective_scope does not match the request",
+    );
+    dict.set(
+        "applets.feedback.invalid_preview",
+        "preview invalid: {error}",
+    );
+    dict.set("applets.feedback.preview_failed", "preview failed: {error}");
+    dict.set(
+        "applets.feedback.preview_required",
+        "preview the plan before installing",
+    );
+    dict.set("applets.feedback.installing", "installing applet…");
+    dict.set(
+        "applets.feedback.installed",
+        "✅ Service installed: applet_id {applet_id}. Bots are created separately by the Applet.",
+    );
+    dict.set(
+        "applets.feedback.partially_installed",
+        "⚠ partially installed: applet_id {applet_id} — {rejected} scope(s) rejected",
+    );
+    dict.set("applets.feedback.install_failed", "install failed: {error}");
+    dict.set(
+        "applets.feedback.revoke_account_unavailable",
+        "revoke failed: active account context is unavailable",
+    );
+    dict.set("applets.feedback.revoking", "revoking applet…");
+    dict.set("applets.feedback.revoked", "revoked: {count} ref(s)");
+    dict.set("applets.feedback.revoke_failed", "revoke failed: {error}");
+    dict.set("chat.composer.sending", "Sending…");
+    dict.set("chat.composer.opening", "Opening…");
+    dict.set("chat.composer.private_scope", "Private Sidecar: you and your currently authorized Agents. Group members do not receive this message.");
+    dict.set("chat.composer.mixed_targets", "Agent modes are unknown or these targets cannot share a scope. Edit the mentions to continue.");
+    dict.set(
+        "chat.composer.private_not_ready",
+        "Private Sidecar not ready",
+    );
+    dict.set("chat.composer.reply_missing", "Replying to a message");
+    dict.set("chat.composer.no_matches", "No matches");
+    dict.set("chat.composer.poll", "Poll");
+    dict.set("chat.composer.create_poll", "Create poll");
+    dict.set("chat.composer.add_option", "Add option");
+    dict.set("chat.composer.send_poll", "Send poll");
+    dict.set("chat.composer.search_members", "Search members");
+    dict.set("chat.composer.mention_member", "Mention member");
+    dict.set("chat.composer.add_attachment", "Add attachment");
+    dict.set("chat.composer.schedule_message", "Schedule message");
+    dict.set("chat.composer.poll_question", "Question");
+    dict.set("chat.composer.poll_option", "Option {number}");
+    dict.set("chat.composer.remove_mention", "Remove mention @{member}");
+    dict.set(
+        "chat.composer.private_keys_pending",
+        "Waiting for this device's private Sidecar encryption keys.",
+    );
+    dict.set(
+        "chat.composer.private_target_missing",
+        "Select an Agent with @ before sending this private message",
+    );
+    dict.set(
+        "chat.composer.private_state_pending",
+        "Waiting for this device's verified private encryption state.",
+    );
+    dict.set("chat.composer.placeholder_mentions", "Message this discussion. Use @alice:example.com to mention a member or #task-123 to link a card.");
+    dict.set(
+        "chat.composer.placeholder_direct",
+        "Message this discussion. Use #task-123 to link a card.",
+    );
+    dict.set(
+        "chat.composer.circle_scope",
+        "Circle discussion: {strand}. Only members authorized to read this Circle.",
+    );
+    dict.set(
+        "chat.composer.direct_scope",
+        "Direct conversation: {strand}. The two conversation participants.",
+    );
+    dict.set(
+        "chat.composer.original_scope",
+        "Original Strand: {strand}. Members authorized to read this scope.",
+    );
+
     add_r3_error_keys(&mut dict);
     add_generic_error_keys(&mut dict);
 

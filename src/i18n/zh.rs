@@ -2018,6 +2018,109 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("applets.trace_title", "问责事件追踪 — {value}");
     dict.set("applets.event_id", "事件标识 {value}");
 
+    dict.set("applets.feedback.invalid_manifest", "输入必须是完整的 AppletInstallPreviewRequestBody，且注册事件清单携带 registration_epoch_evidence");
+    dict.set(
+        "applets.feedback.preview_account_unavailable",
+        "无法预览安装：当前账号上下文不可用",
+    );
+    dict.set(
+        "applets.feedback.invalid_realm",
+        "无法预览安装：Realm 标识无效：{error}",
+    );
+    dict.set(
+        "applets.feedback.authority_unavailable",
+        "无法预览安装：已验证的治理 Station 权威来源不可用",
+    );
+    dict.set("applets.feedback.previewing", "正在预览安装计划…");
+    dict.set(
+        "applets.feedback.missing_package_digest",
+        "小程序包缺少已签名的 package_digest",
+    );
+    dict.set(
+        "applets.feedback.plan_ready",
+        "计划已就绪（{scopes} 个范围，{actions} 项操作）；摘要 {digest}",
+    );
+    dict.set(
+        "applets.feedback.scope_mismatch",
+        "预览无效：effective_scope 与请求不一致",
+    );
+    dict.set("applets.feedback.invalid_preview", "预览无效：{error}");
+    dict.set("applets.feedback.preview_failed", "预览失败：{error}");
+    dict.set("applets.feedback.preview_required", "安装前请先预览计划");
+    dict.set("applets.feedback.installing", "正在安装小程序…");
+    dict.set(
+        "applets.feedback.installed",
+        "✅ Service 已安装：applet_id {applet_id}。Bot 由小程序另行创建。",
+    );
+    dict.set(
+        "applets.feedback.partially_installed",
+        "⚠ 部分安装成功：applet_id {applet_id} — {rejected} 个范围被拒绝",
+    );
+    dict.set("applets.feedback.install_failed", "安装失败：{error}");
+    dict.set(
+        "applets.feedback.revoke_account_unavailable",
+        "撤销失败：当前账号上下文不可用",
+    );
+    dict.set("applets.feedback.revoking", "正在撤销小程序…");
+    dict.set("applets.feedback.revoked", "已撤销：{count} 个引用");
+    dict.set("applets.feedback.revoke_failed", "撤销失败：{error}");
+    dict.set("chat.composer.sending", "发送中…");
+    dict.set("chat.composer.opening", "打开中…");
+    dict.set(
+        "chat.composer.private_scope",
+        "私密对话：仅你与当前获授权的 Agent。群组成员不会收到这条消息。",
+    );
+    dict.set(
+        "chat.composer.mixed_targets",
+        "Agent 模式未知，或这些目标无法共用对话范围。请修改提及对象后继续。",
+    );
+    dict.set("chat.composer.private_not_ready", "私密对话尚未就绪");
+    dict.set("chat.composer.reply_missing", "正在回复一条消息");
+    dict.set("chat.composer.no_matches", "没有匹配的成员");
+    dict.set("chat.composer.poll", "投票");
+    dict.set("chat.composer.create_poll", "创建投票");
+    dict.set("chat.composer.add_option", "添加选项");
+    dict.set("chat.composer.send_poll", "发送投票");
+    dict.set("chat.composer.search_members", "搜索成员");
+    dict.set("chat.composer.mention_member", "提及成员");
+    dict.set("chat.composer.add_attachment", "添加附件");
+    dict.set("chat.composer.schedule_message", "定时发送消息");
+    dict.set("chat.composer.poll_question", "问题");
+    dict.set("chat.composer.poll_option", "选项 {number}");
+    dict.set("chat.composer.remove_mention", "移除提及 @{member}");
+    dict.set(
+        "chat.composer.private_keys_pending",
+        "正在等待此设备的私密对话加密密钥。",
+    );
+    dict.set(
+        "chat.composer.private_target_missing",
+        "发送这条私密消息前，请先用 @ 选择一个 Agent",
+    );
+    dict.set(
+        "chat.composer.private_state_pending",
+        "正在等待验证此设备的私密对话加密状态。",
+    );
+    dict.set(
+        "chat.composer.placeholder_mentions",
+        "在此讨论中发送消息。用 @alice:example.com 提及成员，或用 #task-123 链接卡片。",
+    );
+    dict.set(
+        "chat.composer.placeholder_direct",
+        "在此讨论中发送消息。用 #task-123 链接卡片。",
+    );
+    dict.set(
+        "chat.composer.circle_scope",
+        "Circle 讨论：{strand}。仅限获授权读取此 Circle 的成员。",
+    );
+    dict.set(
+        "chat.composer.direct_scope",
+        "直接对话：{strand}。仅限两位对话参与者。",
+    );
+    dict.set(
+        "chat.composer.original_scope",
+        "原始 Strand：{strand}。仅限获授权读取此范围的成员。",
+    );
+
     add_r3_error_keys_zh(&mut dict);
     add_generic_error_keys_zh(&mut dict);
 

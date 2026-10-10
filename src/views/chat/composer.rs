@@ -55,11 +55,154 @@ pub(super) fn chat_mentions_enabled(direct_mode: bool) -> bool {
     !direct_mode
 }
 
-pub(super) fn chat_composer_placeholder(mentions_enabled: bool) -> &'static str {
-    if mentions_enabled {
-        "Message this discussion. Use @alice:example.com to mention a member or #task-123 to link a card."
+pub(super) fn chat_composer_placeholder(mentions_enabled: bool) -> String {
+    crate::i18n::tr(if mentions_enabled {
+        "chat.composer.placeholder_mentions"
     } else {
-        "Message this discussion. Use #task-123 to link a card."
+        "chat.composer.placeholder_direct"
+    })
+}
+
+/// Local presentation copy is keyed by the typed route, never by user text.
+fn composer_scope_label(
+    route: arkret_sdk::AgentMentionRoute,
+    scope: arkret_sdk::AgentMentionComposerScope,
+    strand: &str,
+) -> String {
+    if matches!(
+        route,
+        arkret_sdk::AgentMentionRoute::Sidecar
+            | arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets
+    ) {
+        return crate::i18n::tr("chat.composer.private_scope");
+    }
+    let key = match scope {
+        arkret_sdk::AgentMentionComposerScope::Circle => "chat.composer.circle_scope",
+        arkret_sdk::AgentMentionComposerScope::Direct => "chat.composer.direct_scope",
+        arkret_sdk::AgentMentionComposerScope::Realm
+        | arkret_sdk::AgentMentionComposerScope::Sidecar => "chat.composer.original_scope",
+    };
+    crate::i18n::tr_args(key, &[("strand", strand.to_owned())])
+}
+
+#[cfg(test)]
+mod composer_locale_tests {
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+
+    use super::*;
+    use crate::i18n::{I18nSignal, UiLocale};
+
+    type LocaleHandle = Rc<RefCell<(Option<I18nSignal>, usize)>>;
+
+    fn retained_composer_labels(handle: LocaleHandle) -> Element {
+        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
+        handle.borrow_mut().0 = Some(locale);
+        let original = use_signal(move || {
+            handle.borrow_mut().1 += 1;
+            "chat.composer.sending {strand} {member} 原文".to_owned()
+        });
+        let raw = original();
+        // Exercise production presentation helpers and the real send-button
+        // component, without mounting session-dependent authoring lifecycle.
+        rsx! {
+            div {
+                p { {chat_composer_placeholder(true)} }
+                p { {chat_composer_placeholder(false)} }
+                for scope in [arkret_sdk::AgentMentionComposerScope::Realm, arkret_sdk::AgentMentionComposerScope::Circle, arkret_sdk::AgentMentionComposerScope::Direct] {
+                    p { {composer_scope_label(arkret_sdk::AgentMentionRoute::Shared, scope, &raw)} }
+                }
+                p { {composer_scope_label(arkret_sdk::AgentMentionRoute::Sidecar, arkret_sdk::AgentMentionComposerScope::Realm, &raw)} }
+                p { "{raw}" }
+                OrdinarySendActions {
+                    plaintext: false,
+                    plaintext_disabled: true,
+                    secure_disabled: true,
+                    mls_binding_pending: true,
+                    creator_bootstrap_pending: false,
+                    secure_title: raw.to_string(),
+                    opening: false,
+                    sending: true,
+                    on_plaintext: move |_| {},
+                    on_secure: move |_| {},
+                }
+                OrdinarySendActions {
+                    plaintext: false,
+                    plaintext_disabled: true,
+                    secure_disabled: true,
+                    mls_binding_pending: true,
+                    creator_bootstrap_pending: false,
+                    secure_title: raw.to_string(),
+                    opening: true,
+                    on_plaintext: move |_| {},
+                    on_secure: move |_| {},
+                }
+            }
+        }
+    }
+
+    fn apply_text_edits(
+        text: &mut BTreeMap<usize, String>,
+        edits: dioxus::core::Mutations,
+    ) -> usize {
+        let mut changed = 0;
+        for edit in edits.edits {
+            match edit {
+                dioxus::core::Mutation::CreateTextNode { id, value }
+                | dioxus::core::Mutation::SetText { id, value } => {
+                    text.insert(id.0, value);
+                    changed += 1;
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+
+    #[test]
+    fn retained_composer_labels_rerender_without_translating_original_draft_or_identifiers() {
+        let handle = Rc::new(RefCell::new((None, 0)));
+        let mut dom = VirtualDom::new_with_props(retained_composer_labels, handle.clone());
+        let mut text = BTreeMap::new();
+        apply_text_edits(&mut text, dom.rebuild_to_vec());
+        let english = text.clone();
+        let raw = "chat.composer.sending {strand} {member} 原文";
+        assert!(text.values().any(|value| value == "Sending…"));
+        assert!(text.values().any(|value| value == "Opening…"));
+        assert!(text.values().any(|value| value
+            == &format!("Original Strand: {raw}. Members authorized to read this scope.")));
+        let mut locale = handle.borrow().0.expect("composer labels provide locale");
+        for language in [UiLocale::Zh, UiLocale::En] {
+            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
+            assert!(apply_text_edits(&mut text, dom.render_immediate_to_vec()) > 0);
+            assert!(text.values().any(|value| value == raw));
+            assert_eq!(
+                handle.borrow().1,
+                1,
+                "locale changes must retain the original signal"
+            );
+            if language == UiLocale::Zh {
+                for expected in [
+                    "发送中…".to_owned(),
+                    "打开中…".to_owned(),
+                    format!("原始 Strand：{raw}。仅限获授权读取此范围的成员。"),
+                    format!("Circle 讨论：{raw}。仅限获授权读取此 Circle 的成员。"),
+                    format!("直接对话：{raw}。仅限两位对话参与者。"),
+                    "私密对话：仅你与当前获授权的 Agent。群组成员不会收到这条消息。".to_owned(),
+                    "在此讨论中发送消息。用 @alice:example.com 提及成员，或用 #task-123 链接卡片。"
+                        .to_owned(),
+                    "在此讨论中发送消息。用 #task-123 链接卡片。".to_owned(),
+                ] {
+                    assert!(
+                        text.values().any(|value| value == &expected),
+                        "missing label: {expected}"
+                    );
+                }
+            } else {
+                assert_eq!(text, english);
+            }
+        }
     }
 }
 
@@ -190,9 +333,9 @@ fn OrdinarySendActions(
                 }
             },
             if sending {
-                "Sending…"
+                {crate::i18n::tr("chat.composer.sending")}
             } else if opening {
-                "Opening…"
+                {crate::i18n::tr("chat.composer.opening")}
             } else {
                 {crate::i18n::tr("chat.send")}
             }
@@ -207,7 +350,7 @@ fn OrdinarySendActions(
                 disabled: secure_disabled,
                 onclick: on_secure,
                 if opening {
-                    "Opening…"
+                    {crate::i18n::tr("chat.composer.opening")}
                 } else {
                     {crate::i18n::tr("chat.send_secure")}
                 }
@@ -836,23 +979,15 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
             div { class: "{composer_class}", "data-testid": "chat-composer",
                 div { class: "composer-send-scope", "data-testid": "composer-send-scope",
                     "data-send-route": format!("{:?}", preview_route),
-                    if preview_route == arkret_sdk::AgentMentionRoute::Sidecar || preview_route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets {
-                        span { "Private Sidecar: you and your currently authorized Agents. Group members do not receive this message." }
-                    } else if composer_scope == arkret_sdk::AgentMentionComposerScope::Circle {
-                        span { "Circle discussion: {selected_channel_value}. Only members authorized to read this Circle." }
-                    } else if composer_scope == arkret_sdk::AgentMentionComposerScope::Direct {
-                        span { "Direct conversation: {selected_channel_value}. The two conversation participants." }
-                    } else {
-                        span { "Original Strand: {selected_channel_value}. Members authorized to read this scope." }
-                    }
+                    span { {composer_scope_label(preview_route, composer_scope, &selected_channel_value)} }
                     if preview_route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets {
-                        span { role: "alert", "Agent modes are unknown or these targets cannot share a scope. Edit the mentions to continue." }
+                        span { role: "alert", {crate::i18n::tr("chat.composer.mixed_targets")} }
                     }
                 }
                 if private_draft && sidecar_send_blocked {
                     div { class: "event warning-banner", "data-testid": "sidecar-readiness-gate", role: "alert",
-                        strong { "Private Sidecar not ready" }
-                        span { {sidecar_send_block_reason.clone().unwrap_or_else(|| "Waiting for this device's private Sidecar encryption keys.".to_owned())} }
+                        strong { {crate::i18n::tr("chat.composer.private_not_ready")} }
+                        span { {sidecar_send_block_reason.clone().unwrap_or_else(|| crate::i18n::tr("chat.composer.private_keys_pending"))} }
                     }
                 }
                 // P3B.2.3 — Circle composer banner. Rendered
@@ -890,13 +1025,13 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             }
                         } else {
                             div { class: "chat-reply-quote chat-reply-quote-missing",
-                                "Replying to a message"
+                                {crate::i18n::tr("chat.composer.reply_missing")}
                             }
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
                             onclick: move |_| reply_to_message.set(None),
-                            "Cancel"
+                            {crate::i18n::tr("common.cancel")}
                         }
                     }
                 }
@@ -1069,7 +1204,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 Input {
                                     r#type: "text",
                                     class: "mention-picker-query",
-                                    placeholder: "Search members",
+                                    placeholder: crate::i18n::tr("chat.composer.search_members"),
                                     value: "{mention_picker_state.read().query}",
                                     oninput: move |event: FormEvent| {
                                         mention_picker_state.write().set_query(event.value());
@@ -1080,7 +1215,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     r#type: "button",
                                     "data-testid": "mention-picker-close-button",
                                     onclick: move |_| mention_picker_state.write().close(),
-                                    "Close"
+                                    {crate::i18n::tr("common.close")}
                                 }
                             }
                             {
@@ -1127,7 +1262,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 rsx! {
                                     div { class: "mention-suggestions",
                                         if matches.is_empty() {
-                                            div { class: "muted", "No matches" }
+                                            div { class: "muted", {crate::i18n::tr("chat.composer.no_matches")} }
                                         } else {
                                             for candidate in matches {
                                                 {
@@ -1198,8 +1333,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 r#type: "button",
                                 class: "composer-tool-button",
                                 "data-testid": "mention-trigger-button",
-                                title: "Mention member",
-                                "aria-label": "Mention member",
+                                title: crate::i18n::tr("chat.composer.mention_member"),
+                                "aria-label": crate::i18n::tr("chat.composer.mention_member"),
                                 onclick: move |_| {
                                     let mut state = mention_picker_state.write();
                                     if state.open {
@@ -1216,8 +1351,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             r#type: "button",
                             class: "composer-tool-button",
                             "data-testid": "attachment-menu-button",
-                            title: "Add attachment",
-                            "aria-label": "Add attachment",
+                            title: crate::i18n::tr("chat.composer.add_attachment"),
+                            "aria-label": crate::i18n::tr("chat.composer.add_attachment"),
                             onclick: move |_| {
                                 let current = attachment_menu_open();
                                 attachment_menu_open.set(!current);
@@ -1231,15 +1366,15 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 class: "composer-tool-button",
                                 "data-testid": "open-poll-composer-button",
                                 disabled: selected_channel_unavailable || selected_realm_pending_mls_binding,
-                                title: "Create poll",
-                                "aria-label": "Create poll",
+                                title: crate::i18n::tr("chat.composer.create_poll"),
+                                "aria-label": crate::i18n::tr("chat.composer.create_poll"),
                                 onclick: move |_| {
                                     attachment_menu_open.set(false);
                                     poll_draft.set(Some(
                                         crate::messaging::polls::PollDraft::new(),
                                     ));
                                 },
-                                "Poll"
+                                {crate::i18n::tr("chat.composer.poll")}
                             }
                         }
                         // Scheduled send (spec personal-productivity.md §4) is
@@ -1253,8 +1388,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 r#type: "button",
                                 class: "composer-tool-button",
                                 "data-testid": "open-scheduled-send-panel-button",
-                                title: "Schedule message",
-                                "aria-label": "Schedule message",
+                                title: crate::i18n::tr("chat.composer.schedule_message"),
+                                "aria-label": crate::i18n::tr("chat.composer.schedule_message"),
                                 onclick: move |_| {
                                     let open = scheduled_send_panel_open();
                                     scheduled_send_panel_open.set(!open);
@@ -1277,7 +1412,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 crate::messaging::polls::PollDraft::new(),
                                             ));
                                         },
-                                        "Create poll"
+                                        {crate::i18n::tr("chat.composer.create_poll")}
                                     }
                                 }
                             }
@@ -1296,7 +1431,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     button {
                                         class: "mention-chip-remove",
                                         r#type: "button",
-                                        "aria-label": "Remove mention @{chip.insert_label()}",
+                                        "aria-label": crate::i18n::tr_args("chat.composer.remove_mention", &[("member", chip.insert_label().to_owned())]),
                                         onclick: {
                                             let subject_account_id = chip.subject_account_id.clone();
                                             move |_| {
@@ -1331,7 +1466,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         Input {
                             r#type: "text",
                             "data-testid": "poll-question-input",
-                            placeholder: "Question",
+                            placeholder: crate::i18n::tr("chat.composer.poll_question"),
                             value: "{draft.question}",
                             oninput: move |event: FormEvent| {
                                 if let Some(current) = poll_draft.write().as_mut() {
@@ -1344,7 +1479,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 r#type: "text",
                                 "data-testid": "poll-option-input",
                                 "data-option-index": "{idx as i64}",
-                                placeholder: "Option {idx + 1}",
+                                placeholder: crate::i18n::tr_args("chat.composer.poll_option", &[("number", (idx + 1).to_string())]),
                                 value: "{option}",
                                 oninput: move |event: FormEvent| {
                                     if let Some(current) = poll_draft.write().as_mut() {
@@ -1363,7 +1498,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         current.add_option();
                                     }
                                 },
-                                "Add option"
+                                {crate::i18n::tr("chat.composer.add_option")}
                             }
                             Button {
                                 variant: ButtonVariant::Primary,
@@ -1461,13 +1596,13 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         );
                                     }
                                 },
-                                "Send poll"
+                                {crate::i18n::tr("chat.composer.send_poll")}
                             }
                             Button {
                                 variant: ButtonVariant::Secondary,
                                 r#type: "button",
                                 onclick: move |_| poll_draft.set(None),
-                                "Cancel"
+                                {crate::i18n::tr("common.cancel")}
                             }
                         }
                     }
@@ -1502,11 +1637,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         mls_binding_pending: !private_draft && selected_realm_pending_mls_binding,
                         creator_bootstrap_pending: !private_draft && creator_mls_bootstrap_pending,
                         secure_title: if sidecar_target_missing {
-                            "Select an Agent with @ before sending this private message".to_owned()
+                            crate::i18n::tr("chat.composer.private_target_missing")
                         } else if private_draft && active_sidecar_session.is_none() {
                             crate::i18n::tr("chat.sidecar.open_and_send")
                         } else if private_draft { sidecar_send_block_reason.clone().unwrap_or_else(|| {
-                            "Waiting for this device's verified private encryption state.".to_owned()
+                            crate::i18n::tr("chat.composer.private_state_pending")
                         }) } else { selected_realm_pending_mls_binding_reason.clone().unwrap_or_else(|| {
                             creator_mls_bootstrap_pending_reason.unwrap_or_default().to_owned()
                         }) },
