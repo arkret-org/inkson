@@ -24,15 +24,8 @@ try {
         if (-not $ps) {
             throw "pwsh or powershell is required to prepare the Docker context"
         }
-        # The image build fetches the private `yoface` git dependency, so it
-        # needs a GitHub token with read access to arkret-org/yoface, mounted
-        # as the `github_token` build secret.
-        if (-not $env:GITHUB_TOKEN) {
-            throw "GITHUB_TOKEN must be set: the image build fetches the private yoface git dependency"
-        }
         & $ps.Path -ExecutionPolicy Bypass -File "scripts/prepare-docker-context.ps1"
         & docker build -f "docker-context/inkson/Dockerfile" `
-            --secret "id=github_token,env=GITHUB_TOKEN" `
             -t $ImageTag "docker-context"
     }
 

@@ -1,15 +1,15 @@
 # syntax=docker/dockerfile:1.7
 # Build context must contain `inkson/` and all of its sibling path dependencies.
-# `yoface` is NOT among them: it is a private cargo git dependency, so the
-# build fetches it from github.com/arkret-org/yoface and needs a GitHub token
-# with read access, mounted as the `github_token` build secret.
+# Cargo fetches the public `yoface` git dependency from GitHub.
 # From the parent directory run:
-#   GITHUB_TOKEN=<pat> docker build -f inkson/Dockerfile \
-#     --secret id=github_token,env=GITHUB_TOKEN -t inkson-web .
+#   docker build -f inkson/Dockerfile -t inkson-web .
 
 FROM rust:bookworm AS build
 
 ARG DIOXUS_CLI_VERSION=0.7.10
+
+RUN apt-get update && apt-get install -y --no-install-recommends python3 && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
@@ -24,22 +24,19 @@ COPY inkson ./inkson
 
 WORKDIR /workspace/inkson
 
-# `inkson/.cargo/config.toml` sets `net.git-fetch-with-cli`, so cargo fetches
-# the private `yoface` dependency through git and asks this credential helper
-# for the token. The helper reads the secret at call time, so the token lives
-# only in the tmpfs mount for the duration of this layer — it never lands in
-# the build cache or the image.
+# Cache mounts do not survive into later stages. Copy the completed bundle
+# into the image layer before the target cache is unmounted.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/workspace/inkson/target \
-    --mount=type=secret,id=github_token,required=true \
-    git config --global credential.helper \
-        '!f() { echo username=x-access-token; echo "password=$(cat /run/secrets/github_token)"; }; f' && \
-    dx build --platform web --release
+    dx build --platform web --release && \
+    target_dir="$(cargo metadata --locked --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')" && \
+    test -f "$target_dir/dx/inkson/release/web/public/index.html" && \
+    cp -a "$target_dir/dx/inkson/release/web/public" /web-public
 
 FROM nginx:1.29-alpine
 
-COPY --from=build /workspace/inkson/target/dx/inkson/release/web/public /usr/share/nginx/html
+COPY --from=build /web-public /usr/share/nginx/html
 
 EXPOSE 80
 

@@ -178,7 +178,7 @@ The repository includes CI for:
 
 CI checks out `arkret-rust-sdk`, `garth`, and `chime` next to `inkson` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names use those three names under `${OWNER}`.
 
-`yoface` is not one of them: it is a private cargo git dependency (`git = "https://github.com/arkret-org/yoface"`, branch `main`), so cargo fetches it instead of reading a sibling checkout. `.cargo/config.toml` sets `net.git-fetch-with-cli` so the fetch goes through git and picks up credentials; every workflow installs a `url.…insteadOf` rewrite backed by `CI_REPO_TOKEN` (GitHub Actions) or `GITHUB_COM_TOKEN` (Gitea, which needs a GitHub PAT because a Gitea token cannot authenticate against github.com). The image build receives the same token as the `github_token` build secret.
+`yoface` is a public Cargo git dependency (`git = "https://github.com/arkret-org/yoface"`, branch `main`), so Cargo fetches it instead of reading a sibling checkout. The Docker build does not require a GitHub token.
 
 ### Gitea Actions
 
@@ -194,12 +194,11 @@ cargo test --locked
 
 The expected Gitea repository names use the three dependency repository names under `${OWNER}`.
 
-The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing `inkson`, `arkret-rust-sdk`, `garth`, and `chime`. The build fetches `yoface` from GitHub, so it needs a token with read access to `arkret-org/yoface` mounted as the `github_token` build secret:
+The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing `inkson`, `arkret-rust-sdk`, `garth`, and `chime`:
 
 ```powershell
-$env:GITHUB_TOKEN = "<pat>"
 powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1
-docker build -f docker-context/inkson/Dockerfile --secret id=github_token,env=GITHUB_TOKEN -t inkson-web docker-context
+docker build -f docker-context/inkson/Dockerfile -t inkson-web docker-context
 ```
 
 Local release evidence commands are documented in [`docs/RELEASING.md`](docs/RELEASING.md). The release plan is local-only: no tag creation, registry push, crates.io publish, notarization submit, ticket stapling, timestamp authority, or Sigstore transparency-log upload is part of the phase-3 workflow.
