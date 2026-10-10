@@ -193,6 +193,9 @@ jobs:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
           CHROMEDRIVER: ${{ steps.setup-chrome.outputs.chromedriver-path }}
           WASM_BINDGEN_TEST_WEBDRIVER_JSON: ${{ runner.temp }}/inkson-webdriver.json
+          # The runner's default 20s covers the whole binary. This suite also
+          # observes a real cancelled 12s timer after its large IndexedDB cases.
+          WASM_BINDGEN_TEST_TIMEOUT: "120"
         run: >-
           cargo test --locked --target wasm32-unknown-unknown
           --test mls_data_plane_wasm
