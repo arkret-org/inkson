@@ -631,11 +631,12 @@ export function registerStrandsBeforeEach() {
       ? "restricted"
       : testInfo.title.startsWith("invite preview retries")
         ? "retry_once"
-        : invitePreviewTest
+        : invitePreviewTest || testInfo.title === "dashboard summarizes unread notifications from sync projection"
           ? "disclosed"
           : undefined;
     const scenario = await mockArkretApi(page, {
       demoNotification: [
+        "dashboard summarizes unread notifications from sync projection",
         "notifications are derived from index projections and respect per-realm mute rules",
         "notification feed controls and local mute feedback follow the active language",
         "dashboard notification previews stay literal across language changes",
@@ -671,6 +672,7 @@ export function registerStrandsBeforeEach() {
         "kanban hides list creation until a board exists",
       ),
       preseedRecoveryMaterial:
+        testInfo.title.startsWith("invite preview disclosed") ||
         testInfo.title.startsWith("configured recovery session") ||
         testInfo.title.startsWith("setup, onboarding, and Board entry") ||
         testInfo.title.startsWith(

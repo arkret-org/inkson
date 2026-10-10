@@ -21,6 +21,11 @@ jobs:
     # Keep the real renderer-crash recovery test on its supported Linux host.
     runs-on: ubuntu-22.04
     steps:
+      - name: Install Python for locked TOML tool resolution
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+
       - name: Checkout inkson
         uses: actions/checkout@v6
         with:

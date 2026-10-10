@@ -117,6 +117,8 @@ type InksonWireCommand =
   | "did-key-from-seed"
   | "sha256-canonical-json"
   | "service-resolution"
+  | "service-document"
+  | "direct-conversation-pair-key"
   | "principal-locator"
   | "validate-mock-response"
   | "contact-request-prepare"
@@ -233,12 +235,22 @@ const currentPrincipalServiceResolution = inksonWire<Record<string, any>>(
 );
 export const CURRENT_STATION_ID = String(currentPrincipalServiceResolution.service_id);
 export const CURRENT_STATION_DID = String(currentPrincipalServiceResolution.normalized_did_document.did);
+const currentDirectoryServiceResolution = inksonWire<Record<string, any>>(
+  "service-resolution",
+  { service_kind: "directory_service" },
+);
+const currentDirectoryDid = String(currentDirectoryServiceResolution.normalized_did_document.did);
+const currentDirectoryDocument = inksonWire<Record<string, unknown>>(
+  "service-document",
+  { service_kind: "directory_service" },
+);
 export const DEMO_INVITE_ID =
   "ak:invite:AZYDg8DDhw3K_txXc2FaKw9baWMbenl1vvUcRFfpjp3K";
 type NativeRealmFixture = {
   snapshot: Record<string, any>;
   committed_events: Array<{ commit: Record<string, any>; event: Record<string, any> }>;
   signer_facts: Array<Record<string, any>>;
+  source_create: Record<string, any>;
   source_authorization: Record<string, any>;
   identity: { did: string; account_id: { principal_id: string; station_id: string }; principal_control_realm_id: string; document: Record<string, any>; inception_log_entry: Record<string, any>; resolution: Record<string, any> };
   account_entry: Record<string, any>;
@@ -279,6 +291,11 @@ export const CURRENT_ASSISTANT_ACCOUNT_ID = DEMO_REALM_FIXTURE.managed_agent.acc
 export const CURRENT_ASSISTANT_PCR = DEMO_REALM_FIXTURE.managed_agent.principal_control_realm_id;
 export const PRINCIPAL_CONTROL_REALM = DEMO_REALM_FIXTURE.identity.principal_control_realm_id;
 export const DEMO_REALM = String(DEMO_REALM_FIXTURE.snapshot.realm_id);
+export const INVITED_REALM = String(INVITED_NATIVE_FIXTURE.snapshot.realm_id);
+export const DEMO_PARENT_MEMBERSHIP_REVISION = DEMO_REALM_FIXTURE.snapshot.current_state_entries.find(
+  (row: any) => row.selector.kind === "member_state" &&
+    canonicalJson(row.selector.actor_id) === canonicalJson(CURRENT_ACCOUNT_ACTOR_ID),
+)!.revision;
 const CHILD_REALM = String(CHILD_REALM_FIXTURE.snapshot.realm_id);
 const GRANDCHILD_REALM = String(GRANDCHILD_REALM_FIXTURE.snapshot.realm_id);
 const LOW_FLOOR_REALM = String(LOW_FLOOR_REALM_FIXTURE.snapshot.realm_id);
@@ -1375,6 +1392,9 @@ export async function mockArkretApi(
     if (url.hostname === "server.local" && url.pathname === "/webvh/service/did-witness.json") {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(currentPrincipalServiceResolution.method_history_evidence.witness_records) });
     }
+    if (url.hostname === "directory.local" && url.pathname === "/.well-known/did.json") {
+      return route.fulfill({ status: 200, contentType: "application/did+json", body: canonicalJson(currentDirectoryDocument) });
+    }
     if (url.hostname === "alice.example" && url.pathname === "/webvh/alice/did.json") {
       return route.fulfill({ status: 200, contentType: "application/did+json", body: canonicalJson(DEMO_REALM_FIXTURE.identity.document) });
     }
@@ -1395,6 +1415,9 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/describe" &&
       route.request().method() === "GET"
     ) {
+      if (url.searchParams.get("service_kind") === "directory_service") {
+        return json(route, directoryServiceDescribe());
+      }
       if (url.hostname === "auth.local.host") {
         return route.fulfill({
           status: 404,
@@ -2450,6 +2473,14 @@ export async function mockArkretApi(
     );
     if (committedEventMatch && route.request().method() === "GET") {
       const requestedEventId = decodeURIComponent(committedEventMatch[1]);
+      // Recovery authority reads the exact founding PCR unit, separately from
+      // the collaboration Realm's committed stream and Account baseline.
+      for (const fixture of nativeFixtures.values()) {
+        const source = [fixture.source_create, fixture.source_authorization].find(
+          full => full.event.event_id === requestedEventId,
+        );
+        if (source) return json(route, source);
+      }
       const index = projectionEvents.findIndex(
         (event) => event.event_id === requestedEventId,
       );
@@ -2769,18 +2800,30 @@ export async function mockArkretApi(
         string,
         unknown
       >;
-      const peer = body.peer as
-        string | { agent_id?: string; principal_id?: string } | undefined;
-      const peerId =
-        typeof peer === "string"
-          ? peer
-          : (peer?.agent_id ?? peer?.principal_id ?? "");
-      const ownedAgent = peerId === "ak:did_core:web:agents.example:assistant";
+      const peer = body.peer as {
+        kind: "human" | "agent";
+        account_id?: Record<string, string>;
+        actor_id?: Record<string, unknown>;
+        controller_account_id?: Record<string, string>;
+      };
+      const ownedAgent = peer.kind === "agent" &&
+        canonicalJson(peer.actor_id) === canonicalJson({
+          kind: "account", account_id: CURRENT_ASSISTANT_ACCOUNT_ID,
+        });
+      if (ownedAgent) expect(peer.controller_account_id).toEqual(CURRENT_ACCOUNT_ID);
+      else expect(peer).toEqual({
+        kind: "human",
+        account_id: { principal_id: "ak:did_core:web:bob.example", station_id: CURRENT_STATION_ID },
+      });
+      const pairKey = inksonWire<{ pair_key: string }>("direct-conversation-pair-key", {
+        trust_domain: "ak:trust_domain:server.local",
+        holder: CURRENT_ACCOUNT_ID,
+        body,
+      }).pair_key;
       return json(route, {
         state: "found",
         coordinates: {
-          pair_key:
-            "sha256:e8c24c1badc48eefa472a1700e87a6597a95aedfab8cbe3173f1622b9ad427b5",
+          pair_key: pairKey,
           realm_id: ownedAgent ? DIRECT_OWN_AGENT_REALM : DIRECT_BOB_REALM,
           main_strand_id: ownedAgent
             ? DIRECT_OWN_AGENT_STRAND
@@ -3815,6 +3858,9 @@ export async function mockArkretApi(
       /^\/_arkret\/open\/services\/[^/]+\/resolution$/.test(url.pathname) &&
       route.request().method() === "GET"
     ) {
+      if (decodeURIComponent(url.pathname.split("/")[4]) === currentDirectoryServiceResolution.service_id) {
+        return json(route, currentDirectoryServiceResolution);
+      }
       return json(route, inksonWire("service-resolution", {}));
     }
 
@@ -3853,11 +3899,11 @@ function directoryRealmResolution() {
 
 function directoryServiceDescribe() {
   return {
-    service_id: CURRENT_STATION_ID,
+    service_id: currentDirectoryServiceResolution.service_id,
     service_resolution: {
-      did: CURRENT_STATION_DID,
-      method_history_head: "development-unverified",
-      version_id: "development-unverified",
+      did: currentDirectoryDid,
+      method_history_head: currentDirectoryServiceResolution.method_history_evidence.boundary.to_method_history_head,
+      version_id: currentDirectoryServiceResolution.method_history_evidence.boundary.to_version_id,
     },
     trust_domain: "ak:trust_domain:server.local",
     service_kind: "directory_service",
@@ -3865,7 +3911,7 @@ function directoryServiceDescribe() {
     supported_profiles: [],
     ...currentHttpDescribeCapabilities(
       [DIRECTORY_DESCRIBE_BUNDLE, DIRECTORY_PUBLIC_READ_BUNDLE],
-      "https://server.local/_arkret/find/directory",
+      "https://directory.local/",
     ),
     supported_features: [],
     auth_metadata: {},
@@ -3880,6 +3926,13 @@ function directoryServiceDescribe() {
 }
 
 function principalServiceDescribe(baseUrl = "https://local.host/") {
+  // The local HTTP listener is a proxy for the canonical HTTPS Station.
+  // ServiceDescribe advertises the canonical binding, never the proxy ingress.
+  const transport = new URL(baseUrl);
+  if (transport.protocol === "http:" && transport.port === "8787" &&
+    ["127.0.0.1", "localhost", "[::1]"].includes(transport.hostname)) {
+    baseUrl = "https://local.host/";
+  }
   return {
     service_id: CURRENT_STATION_ID,
     service_resolution: {

@@ -28,6 +28,12 @@ struct ValidateMockResponseInput {
     value: Value,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ServiceResolutionInput {
+    service_kind: Option<arkret_wire::ServiceKind>,
+}
+
 struct MockServiceAuthority {
     resolution: arkret_sdk::AuthenticatedServiceResolution,
     signing_key: ed25519_dalek::SigningKey,
@@ -42,8 +48,12 @@ fn main() -> Result<()> {
     let output = match command.as_str() {
         "canonical-json" => canonical_json(input)?,
         "sha256-canonical-json" => sha256_canonical_json(input)?,
-        "service-resolution" => service_resolution()?,
+        "service-resolution" => serde_json::to_value(service_resolution(input)?)?,
+        "service-document" => {
+            serde_json::to_value(service_resolution(input)?.normalized_did_document)?
+        }
         "principal-locator" => principal_locator(input)?,
+        "direct-conversation-pair-key" => direct_conversation_pair_key(input)?,
         "did-key-from-seed" => did_key_from_seed(input)?,
         "demo-realm-genesis" => demo_realm_genesis()?,
         "validate-mock-response" => validate_mock_response(input)?,
@@ -78,6 +88,27 @@ fn did_key_from_seed(input: Value) -> Result<Value> {
         arkret_sdk::ed25519_pubkey_to_did_key_multibase(signing_key.verifying_key().as_bytes());
     Ok(json!({ "did_key": format!("did:key:{multibase}"),
         "public_key_b64url": arkret_sdk::base64url_encode(signing_key.verifying_key().as_bytes()) }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectConversationPairInput {
+    trust_domain: arkret_sdk::TrustDomainId,
+    holder: arkret_sdk::AccountId,
+    body: arkret_sdk::DirectConversationResolveRequestBody,
+}
+
+fn direct_conversation_pair_key(input: Value) -> Result<Value> {
+    use arkret_sdk::{DirectConversationPairKeyParticipant, direct_conversation_pair_key};
+    let input: DirectConversationPairInput = serde_json::from_value(input)?;
+    let pair_key = direct_conversation_pair_key(
+        input.trust_domain,
+        DirectConversationPairKeyParticipant::unmapped(arkret_sdk::ActorId::Account {
+            account_id: input.holder,
+        }),
+        DirectConversationPairKeyParticipant::unmapped(input.body.peer.contact_actor_id()),
+    )?;
+    Ok(json!({ "pair_key": pair_key }))
 }
 
 #[derive(Deserialize)]
@@ -461,9 +492,38 @@ fn mock_service_authority() -> Result<MockServiceAuthority> {
     })
 }
 
-fn service_resolution() -> Result<Value> {
-    serde_json::to_value(mock_service_authority()?.resolution)
-        .context("serialize service-resolution fixture")
+fn service_resolution(input: Value) -> Result<arkret_sdk::AuthenticatedServiceResolution> {
+    let input: ServiceResolutionInput = serde_json::from_value(input)?;
+    let kind = input
+        .service_kind
+        .unwrap_or(arkret_wire::ServiceKind::Station);
+    let resolution = match kind {
+        arkret_wire::ServiceKind::Station => mock_service_authority()?.resolution,
+        arkret_wire::ServiceKind::DirectoryService => {
+            let did = arkret_wire::Did::new("did:web:directory.local".to_owned())?;
+            let key = ed25519_dalek::SigningKey::from_bytes(&[32; 32]);
+            let method = format!("{did}#signing-1");
+            let document: arkret_models_identity::DidDocument = serde_json::from_value(json!({
+                "@context":["https://www.w3.org/ns/did/v1"],
+                "id":did,
+                "verificationMethod":[{"id":method,"type":"Multikey","controller":did,
+                    "publicKeyMultibase":arkret_sdk::ed25519_pubkey_to_did_key_multibase(key.verifying_key().as_bytes())}],
+                "assertionMethod":[method],
+                "service":[{"id":format!("{did}#arkret"),"type":"ArkretService",
+                    "serviceKind":kind.as_str(),"serviceEndpoint":"https://directory.local/"}]
+            }))?;
+            // Directory reads use independently fetched current did:web state;
+            // they do not supply historical signer or Realm authority evidence.
+            arkret_identity::build_authenticated_did_web_service_resolution(
+                arkret_wire::project_did_to_core_id(&did)?,
+                kind.as_str().to_owned(),
+                document,
+                chrono::Utc::now(),
+            )?
+        }
+        _ => bail!("service fixture supports only Station and Directory roles"),
+    };
+    Ok(resolution)
 }
 
 fn principal_locator(input: Value) -> Result<Value> {

@@ -218,31 +218,40 @@ test("topbar notifications drawer keeps the active realm navigation visible", as
   expect(page.url()).toBe(realmUrl);
 });
 
-test("directory search refuses unannounced Realms and still resolves organizations", async ({
+test("directory search refuses unindexed Realms and exposes only public Realm metadata", async ({
   page,
 }) => {
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "POST" && (
+      path === "/_arkret/self/realm-joins/prepare" ||
+      path === "/_arkret/self/events" ||
+      path === "/_arkret/self/event-batches"
+    )) writes.push(path);
+  });
   await page.getByTestId("topbar-search-button").click();
   await page.getByTestId("global-search-input").fill("demo");
   await page.getByTestId("global-search-input").press("Enter");
   await expect(page.getByTestId("directory-panel")).toBeVisible();
 
   await page.getByTestId("directory-search-input").fill("demo");
-  await page.getByTestId("directory-search-button").click();
-  await expect(page.getByTestId("directory-result")).toHaveCount(0);
-
-  await page.getByTestId("tab-organizations").click();
-  await page.getByTestId("directory-search-input").fill("arkret");
-  await page.getByTestId("directory-search-button").click();
-  await expect(page.getByTestId("org-result")).toContainText("Arkret Labs");
-  await expect(page.getByTestId("org-result")).toContainText("arkret.example");
-  await page.getByTestId("org-search-members").click();
-  await expect(page.getByTestId("tab-actors")).toHaveAttribute(
-    "data-style",
-    "primary",
+  const response = page.waitForResponse((value) =>
+    value.request().method() === "POST" &&
+    new URL(value.url()).pathname === "/_arkret/find/directory/search-realms",
   );
-  await expect(page.getByTestId("directory-search-input")).toHaveValue(
-    "arkret.example",
-  );
+  await page.getByTestId("directory-search-button").click();
+  const result = await response;
+  expect(result.status()).toBe(200);
+  expect(result.request().postDataJSON()).toEqual({ query: "demo", limit: 20 });
+  expect(await result.json()).toMatchObject({ realms: [] });
+  await expect(page.getByTestId("directory-realm-result")).toHaveCount(0);
+  // discovery-directory.md sections 1 and 9 exclude identity-object searches.
+  await expect(page.getByTestId("tab-organizations")).toHaveCount(0);
+  await expect(page.getByTestId("tab-actors")).toHaveCount(0);
+  await expect(page.getByTestId("org-result")).toHaveCount(0);
+  await expect(page.getByTestId("org-search-members")).toHaveCount(0);
+  expect(writes).toEqual([]);
 });
 
 test("command palette closes with Escape and outside click", async ({

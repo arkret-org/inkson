@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { expect, test } from "@playwright/test";
-import { CURRENT_STATION_ID, DEMO_REALM, validateMockSchema } from "./mockArkretApi";
+import {
+  CURRENT_STATION_ID, CURRENT_ACCOUNT_ID, CURRENT_ACCOUNT_ACTOR_ID,
+  CURRENT_ASSISTANT_ACCOUNT_ID, DEMO_REALM, INVITED_REALM,
+  DEMO_PARENT_MEMBERSHIP_REVISION, validateMockSchema,
+} from "./mockArkretApi";
 import {
   registerStrandsBeforeEach,
   latestTestId,
@@ -54,12 +58,30 @@ test("ordinary Circle list fails closed when the response contains a Sidecar pro
   await expect(panel).not.toContainText("Alice AI Sidecar");
 });
 
-test("Circle creation fails closed without a durable governance checkpoint", async ({
+test("Circle creation fails closed without a complete verified parent Realm cut", async ({
   page,
 }) => {
+  // This canonical Realm is deliberately absent from the Account baseline.
+  const response = { realm_id: INVITED_REALM, circles: [] };
+  validateMockSchema("schemas/circle-operations.schema.json#/$defs/circle_list", response);
+  await page.route("**/_arkret/self/circles?**", async route => {
+    if (new URL(route.request().url()).searchParams.get("realm_id") !== INVITED_REALM) {
+      await route.fallback(); return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(response) });
+  });
+  const writes: string[] = [];
+  page.on("request", request => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "POST" &&
+      (["/_arkret/self/events", "/_arkret/self/event-batches", "/_arkret/self/circles"].includes(path) ||
+        /^\/_arkret\/self\/circles\/[^/]+\/members$/.test(path))) {
+      writes.push(request.url());
+    }
+  });
   await gotoAndDismissRecovery(
     page,
-    `/realms/${DEMO_REALM}/circles`,
+    `/realms/${INVITED_REALM}/circles`,
   );
   const panel = page.getByTestId("circles-panel");
   await panel.getByTestId("circle-create-open").click();
@@ -70,9 +92,10 @@ test("Circle creation fails closed without a durable governance checkpoint", asy
     "membership authoring requires a complete verified parent Realm cut",
   );
   await expect(page).toHaveURL(/\/realms\/.*\/circles$/);
-  await expect(panel.getByTestId("circle-detail")).not.toContainText(
-    "Incident Response",
-  );
+  await expect(panel).not.toContainText("Incident Response");
+  await expect(panel.getByTestId("circle-list-item")).toHaveCount(0);
+  await expect(panel.getByTestId("circle-detail")).not.toContainText("Incident Response");
+  expect(writes).toEqual([]);
 });
 
 test("Circle creation exposes matching configurable boundaries", async ({ page }) => {
@@ -162,13 +185,26 @@ for (const [joinRule, action] of [["public", "Join Circle"], ["knock", "Request 
     if (action) {
       await expect(detail.getByTestId("circle-self-membership")).toHaveText(action);
       let membershipWrites = 0;
+      const memberEvents: Array<Record<string, any>> = [];
       page.on("request", request => {
-        if (request.method() === "POST" && /\/circles\/[^/]+\/members$/.test(new URL(request.url()).pathname)) membershipWrites += 1;
+        if (request.method() === "POST" && /\/circles\/[^/]+\/members$/.test(new URL(request.url()).pathname)) {
+          membershipWrites += 1;
+          memberEvents.push(request.postDataJSON().member_event.event);
+        }
       });
       await detail.getByTestId("circle-self-membership").click();
       if (joinRule === "public") {
-        await expect(page.getByTestId("circle-status")).toContainText("Membership update failed");
-        expect(membershipWrites).toBe(0);
+        await expect(page.getByTestId("circle-status")).toContainText("Membership updated");
+        expect(membershipWrites).toBe(1);
+        expect(memberEvents).toHaveLength(1);
+        const event = memberEvents[0];
+        expect(event.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
+        expect(event.scope_ref).toEqual({ kind: "circle", realm_id: realm, circle_id: circle });
+        expect(event.payload).toMatchObject({
+          circle_id: circle, member_id: CURRENT_ACCOUNT_ACTOR_ID, membership: "join",
+          parent_membership_revision: DEMO_PARENT_MEMBERSHIP_REVISION,
+        });
+        expect(event.producer_proof).toBeTruthy();
       } else {
         await expect(page.getByTestId("circle-status")).toContainText("Join request submitted");
         expect(membershipWrites).toBe(1);
@@ -362,12 +398,9 @@ test("owned agent opens an independent two-principal Direct Conversation Realm",
   await expect((await directResponse).ok()).toBeTruthy();
   expect(directRequestBody).toEqual({
     peer: {
-      agent_id: "ak:did_core:web:agents.example:assistant",
-      controller_account_id: {
-        principal_id: "ak:did_core:web:alice.example",
-        station_id: CURRENT_STATION_ID,
-      },
       kind: "agent",
+      actor_id: { kind: "account", account_id: CURRENT_ASSISTANT_ACCOUNT_ID },
+      controller_account_id: CURRENT_ACCOUNT_ID,
     },
   });
   await expect(page).toHaveURL(
@@ -501,7 +534,7 @@ test("dashboard summarizes unread notifications from sync projection", async ({
     "New message",
   );
   await expect(page.getByTestId("pinned-notifications")).toContainText(
-    "New invite",
+    "Realm invite",
   );
 });
 

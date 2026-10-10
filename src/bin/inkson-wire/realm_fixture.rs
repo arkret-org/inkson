@@ -40,6 +40,7 @@ struct Fixture {
     snapshot: RealmStateSnapshot,
     committed_events: Vec<CommittedEventFullView>,
     signer_facts: Vec<arkret_models_collaboration::authority_commit::HumanHistoricalSignerFact>,
+    source_create: CommittedEventFullView,
     source_authorization: CommittedEventFullView,
     identity: FixtureIdentity,
     account_entry: arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry,
@@ -146,6 +147,7 @@ struct Builder {
     actor: ActorId,
     signer: Ed25519PayloadSigner,
     key: arkret_models_identity::signer_key_operations::ResolvedSignerKey,
+    source_create: CommittedEventFullView,
     source_authorization: CommittedEventFullView,
     identity: FixtureIdentity,
     events: Vec<CommittedEventFullView>,
@@ -378,7 +380,7 @@ impl Builder {
             arkret_sdk::signatures::SignEventOptions::new().with_created_at(at(1)),
         )?;
         arkret_bootstrap::build_pcr_genesis_unit(
-            create.into_event(),
+            create.event().clone(),
             authorization.event().clone(),
         )?;
         let resolution = PrincipalResolutionProjection {
@@ -392,13 +394,17 @@ impl Builder {
             &authority,
             &authorization,
             1,
-            Some(source_create.commit_id),
-            source_create.event_ref,
+            Some(source_create.commit_id.clone()),
+            source_create.event_ref.clone(),
             None,
         )?;
         let source_authorization = CommittedEventFullView {
             commit: source_commit,
             event: authorization.into_event(),
+        };
+        let source_create = CommittedEventFullView {
+            commit: source_create,
+            event: create.into_event(),
         };
         let key = arkret_models_identity::signer_key_operations::ResolvedSignerKey {
             public_key_b64u: Base64UrlString::new(base64url_encode(
@@ -431,6 +437,7 @@ impl Builder {
             actor,
             signer,
             key,
+            source_create,
             source_authorization,
             identity,
             events: vec![],
@@ -1264,6 +1271,7 @@ impl Builder {
             snapshot,
             committed_events: self.events,
             signer_facts: self.facts,
+            source_create: self.source_create,
             source_authorization: self.source_authorization,
             identity: self.identity,
             account_entry,
@@ -1609,6 +1617,10 @@ fn validate_fixture(fixture: &Fixture) -> Result<Fixture> {
     ensure!(
         serde_json::to_value(&fixture.identity)? == serde_json::to_value(&builder.identity)?,
         "fixture principal inception or Account binding changed"
+    );
+    ensure!(
+        fixture.source_create == builder.source_create,
+        "fixture source Realm creation changed"
     );
     ensure!(
         fixture.source_authorization == builder.source_authorization,
