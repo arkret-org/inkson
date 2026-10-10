@@ -110,7 +110,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   DIOXUS_CLI_VERSION: "0.7.10"
-  # Private `yoface` git dependency — see .github/workflows/ci.yml.
+  # Fetch the public yoface Cargo git dependency through the git CLI.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
@@ -168,15 +168,13 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
-      # `yoface` is a private cargo git dependency, not a sibling checkout.
-      # See .github/workflows/ci.yml for the rationale.
-      - name: Authenticate cargo for the private yoface git dependency
-        run: git config --global url."https://x-access-token:${{ secrets.CI_REPO_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
-
       - name: Install Linux desktop dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            dbus-x11 \
+            gnome-keyring \
+            libsecret-tools \
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
@@ -211,7 +209,7 @@ jobs:
         # build (~5 min) and the Playwright browser install (~3 min)
         # so a regression there fails the matrix in well under a
         # minute on each browser shard.
-        run: cargo test --locked --lib
+        run: bash scripts/test-native-with-keystore.sh --locked --lib
 
       - name: Install Dioxus CLI
         run: cargo install dioxus-cli --version "${DIOXUS_CLI_VERSION}" --locked

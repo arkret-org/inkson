@@ -21,8 +21,8 @@ NO_BUILD="${INKSON_NO_BUILD:-0}"
 mkdir -p "${DIST_DIR}"
 
 if [[ ! -f "${ARTIFACT_PATH}" && "${NO_BUILD}" != "1" ]]; then
-    echo "Artifact missing; running cargo build --release"
-    cargo build --release
+    echo "Artifact missing; running cargo build --release --features desktop"
+    cargo build --release --features desktop
 fi
 
 UNAME_S="$(uname -s)"

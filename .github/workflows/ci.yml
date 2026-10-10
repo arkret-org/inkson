@@ -11,10 +11,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   DIOXUS_CLI_VERSION: "0.7.10"
-  # Private `yoface` git dependency: cargo must fetch through the git CLI so
-  # the credential rewrite installed below applies. Redundant with
-  # inkson/.cargo/config.toml, but also covers cargo runs started outside the
-  # inkson directory.
+  # Fetch the public yoface Cargo git dependency through the git CLI.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
@@ -55,18 +52,13 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
-      # `yoface` is no longer a sibling path dependency: Cargo.toml pulls it
-      # straight from `github.com/arkret-org/yoface` (branch `main`). The repo
-      # is private, so cargo needs the same token the sibling checkouts use.
-      # `net.git-fetch-with-cli` (inkson/.cargo/config.toml) makes cargo shell
-      # out to git, which honours this credential rewrite.
-      - name: Authenticate cargo for the private yoface git dependency
-        run: git config --global url."https://x-access-token:${{ secrets.CI_REPO_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
-
       - name: Install Linux desktop dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            dbus-x11 \
+            gnome-keyring \
+            libsecret-tools \
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
@@ -126,7 +118,7 @@ jobs:
 
       - name: Rust tests
         working-directory: inkson
-        run: cargo test
+        run: bash scripts/test-native-with-keystore.sh --locked
 
       # Production-path gate: build + test without optional local UI surfaces.
       - name: cargo check (no-default-features, prod path)
@@ -139,7 +131,7 @@ jobs:
 
       - name: Web build
         working-directory: inkson
-        run: dx build --platform web
+        run: dx build --platform web --features web
 
       - name: Install Playwright browser
         working-directory: inkson
@@ -188,7 +180,7 @@ jobs:
         working-directory: inkson
         shell: bash
         run: |
-          nohup dx serve --platform web --port 4528 --open false > ../inkson-lighthouse-server.log 2>&1 &
+          nohup dx serve --platform web --features web --port 4528 --open false > ../inkson-lighthouse-server.log 2>&1 &
           for i in {1..90}; do
             if curl -fsS http://127.0.0.1:4528 >/dev/null; then
               exit 0

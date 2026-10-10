@@ -53,6 +53,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            dbus-x11 \
+            gnome-keyring \
+            libsecret-tools \
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
@@ -74,7 +77,7 @@ jobs:
 
       - name: Rust tests
         working-directory: inkson
-        run: cargo test --locked
+        run: bash scripts/test-native-with-keystore.sh --locked
 
   platform-checks:
     name: Web and cross-platform checks
@@ -142,7 +145,7 @@ jobs:
 
       - name: Dioxus web build
         working-directory: inkson
-        run: dx build --platform web --release
+        run: dx build --platform web --features web --release
 
       - name: Linux target check
         working-directory: inkson

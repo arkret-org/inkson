@@ -29,7 +29,7 @@ WORKDIR /workspace/inkson
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/workspace/inkson/target \
-    dx build --platform web --release && \
+    dx build --platform web --features web --release && \
     target_dir="$(cargo metadata --locked --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')" && \
     test -f "$target_dir/dx/inkson/release/web/public/index.html" && \
     cp -a "$target_dir/dx/inkson/release/web/public" /web-public

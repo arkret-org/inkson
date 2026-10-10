@@ -27,14 +27,14 @@ try {
     }
 
     if (-not $BinaryPath) {
-        # `cargo build --release` writes into the target directory configured
+        # `cargo build --release --features desktop` writes into the target directory configured
         # by the workspace-level `../.cargo/config.toml`, which is shared by
         # every sibling repository and is not `<repo>/target`. Ask cargo.
         $BinaryPath = Get-InksonBinaryPath -RepositoryRoot $repoRoot
     }
 
     if (-not (Test-Path -LiteralPath $BinaryPath)) {
-        throw "inkson binary not found at $BinaryPath — run `cargo build --release` first"
+        throw "inkson binary not found at $BinaryPath — run `cargo build --release --features desktop` first"
     }
 
     New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
@@ -54,7 +54,7 @@ try {
 
     if ($cargoBundle) {
         Write-Host "Using cargo-bundle ($($cargoBundle.Source))"
-        & cargo bundle --release --target-dir $DistDir 2>&1 | Tee-Object -Variable bundleOutput
+        & cargo bundle --release --features desktop --target-dir $DistDir 2>&1 | Tee-Object -Variable bundleOutput
         $evidence.bundler = "cargo-bundle"
         $candidate = Get-ChildItem -Path $DistDir -Recurse -Filter "inkson.app" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($candidate) {
@@ -63,7 +63,7 @@ try {
     }
     elseif ($dxBundle) {
         Write-Host "Using dx bundle ($($dxBundle.Source))"
-        & dx bundle --release --platform macos --out-dir $DistDir 2>&1 | Tee-Object -Variable bundleOutput
+        & dx bundle --release --platform macos --features desktop --out-dir $DistDir 2>&1 | Tee-Object -Variable bundleOutput
         $evidence.bundler = "dx"
         $candidate = Get-ChildItem -Path $DistDir -Recurse -Filter "*.app" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($candidate) {

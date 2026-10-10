@@ -44,7 +44,7 @@ The `justfile` mirrors the same build plan for local use:
 ## 1. macOS desktop
 
 ```bash
-cargo build --release
+cargo build --release --features desktop
 ./scripts/codesign-dryrun.sh
 ```
 
@@ -65,7 +65,7 @@ certificate; the dry-run script is **NOT for production use**.
 ## 2. Windows desktop
 
 ```powershell
-cargo build --release
+cargo build --release --features desktop
 powershell -ExecutionPolicy Bypass -File scripts/codesign-dryrun.ps1
 ```
 
@@ -88,7 +88,7 @@ The MSI build uses WiX 4 and lands at `dist/inkson-windows.msi`. It is
 ## 3. Linux desktop
 
 ```bash
-cargo build --release
+cargo build --release --features desktop
 ./scripts/codesign-dryrun.sh
 ```
 
@@ -112,7 +112,7 @@ The script wraps `cargo-deb` / `cargo-generate-rpm` / `appimagetool` /
 ## 4. Web build (Dioxus → WebAssembly)
 
 ```bash
-dx build --platform web --release
+dx build --platform web --features web --release
 ```
 
 Outputs land under `target/dx/inkson/release/web/`. Serve with any static

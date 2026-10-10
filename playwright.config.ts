@@ -50,7 +50,7 @@ export default defineConfig({
   projects: browserProjects,
   webServer: shouldStartServer
     ? {
-        command: `dx build --platform web --profile ${e2eBuildProfile} --features wasm-localstorage-secrets-test && node tests/e2e/staticServer.mjs ${e2eCargoTargetDir}/dx/inkson/${e2eBundleDirectory}/web/public ${serverPort}`,
+        command: `dx build --platform web --profile ${e2eBuildProfile} --features web,wasm-localstorage-secrets-test && node tests/e2e/staticServer.mjs ${e2eCargoTargetDir}/dx/inkson/${e2eBundleDirectory}/web/public ${serverPort}`,
         // Build completion precedes socket binding, so tests can never observe
         // Dioxus' intermediate rebuild shell or a stale WASM/CSS pair.
         url: `${baseURL}/wasm/inkson.js`,

@@ -11,7 +11,7 @@ function Get-CargoTargetDirectory {
     .DESCRIPTION
         The workspace-level `../.cargo/config.toml` points `build.target-dir`
         at one directory shared by every sibling repository, so the artifacts
-        `cargo build --release` produces no longer land in `<repo>/target/`.
+        `cargo build --release --features desktop` produces no longer land in `<repo>/target/`.
         Cargo knows where it writes; ask it instead of assuming a layout.
     #>
     param(

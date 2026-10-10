@@ -71,7 +71,7 @@ export default defineConfig({
         // localStorage). Distinct port from the e2e harness so the two
         // can run side-by-side in CI.
         command:
-          "dx serve --platform web --addr 127.0.0.1 --port 4528 --open false --hot-reload false --watch false",
+          "dx serve --platform web --features web --addr 127.0.0.1 --port 4528 --open false --hot-reload false --watch false",
         url: baseURL,
         reuseExistingServer: !process.env.CI,
         // A clean WASM build can take several minutes before the socket opens.

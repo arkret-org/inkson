@@ -28,7 +28,7 @@ or upload Sigstore transparency-log entries.
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test --locked
-dx build --platform web --release
+dx build --platform web --features web --release
 npm ci
 npm run e2e
 ```
@@ -36,7 +36,7 @@ npm run e2e
 Run the Lighthouse budget against a local web preview:
 
 ```powershell
-dx serve --platform web --port 4528 --open false
+dx serve --platform web --features web --port 4528 --open false
 powershell -ExecutionPolicy Bypass -File scripts/lighthouse-local.ps1 -Url http://127.0.0.1:4528
 ```
 
@@ -45,7 +45,7 @@ powershell -ExecutionPolicy Bypass -File scripts/lighthouse-local.ps1 -Url http:
 Build the native binary locally:
 
 ```powershell
-cargo build --release
+cargo build --release --features desktop
 ```
 
 Generate signing evidence without remote submission:

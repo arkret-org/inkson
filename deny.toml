@@ -7,6 +7,8 @@ no-default-features = false
 
 [advisories]
 version = 2
+# Include unsound advisories in transitive renderer dependencies.
+unsound = "all"
 yanked = "warn"
 ignore = [
     # Dioxus desktop's Linux backend is still GTK3. No compatible GTK4 backend

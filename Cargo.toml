@@ -74,6 +74,11 @@ zeroize = "1.9"
 # the submit guard refuses to ship envelopes that were never signed by a
 # real signer.
 default = []
+# Library consumers do not choose a UI renderer. Application builds select
+# their actual renderer explicitly, keeping desktop system libraries optional.
+app = []
+desktop = ["app", "dioxus/desktop"]
+web = ["app", "dioxus/web"]
 # Deferred protocol surfaces are compiled by default for unit coverage but
 # hidden from the local 1.0 UI unless explicitly opted in.
 experimental-discussion-promote = []
@@ -99,6 +104,11 @@ wasm-localstorage-secrets-test = []
 #     `--features mobile-android,mobile-ios` to cross-compile-check.
 mobile-android = []
 mobile-ios = []
+
+[[bin]]
+name = "inkson"
+path = "src/main.rs"
+required-features = ["app"]
 
 [[bin]]
 name = "inkson-wire"
@@ -220,7 +230,7 @@ arkret-egress-reqwest = { version = "0.3.0", path = "../arkret-rust-sdk/crates/e
 # MLS, signer and platform-keystore integrations. Crypto capabilities are
 # selected directly on `arkret-crypto`.
 arkret-sdk = { workspace = true, features = ["client", "mls", "signer", "keystore-macos", "keystore-linux", "keystore-windows"] }
-dioxus = { workspace = true, features = ["desktop", "web"] }
+dioxus = { workspace = true }
 fs2 = "0.4.3"
 garth = { path = "../garth", default-features = false, features = ["native"] }
 reqwest = { workspace = true, default-features = false, features = ["json", "multipart", "rustls", "stream", "form"] }
@@ -255,7 +265,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 # `sleep_for` uses for HTTP retry backoff in the wasm build.
 # See the non-wasm note above.
 arkret-sdk = { workspace = true, features = ["client", "mls", "signer"] }
-dioxus = { workspace = true, features = ["web"] }
+dioxus = { workspace = true }
 garth = { path = "../garth", default-features = false, features = ["wasm"] }
 gloo-timers = { workspace = true, features = ["futures"] }
 js-sys = { workspace = true }
@@ -332,6 +342,8 @@ web-sys = { workspace = true, features = [
 chrono = { workspace = true }
 
 [dev-dependencies]
+# Upload fixtures use serialized FileData without selecting a native renderer.
+dioxus-html = { version = "=0.7.10", default-features = false, features = ["serialize"] }
 arkret-test-kit = { path = "../arkret-rust-sdk/crates/test-kit" }
 arkret-schema-conformance = { version = "0.3.0", path = "../arkret-rust-sdk/crates/schema-conformance", default-features = false }
 arkret-sdk = { workspace = true, features = ["mls-test-utils"] }

@@ -164,7 +164,7 @@ by sending them a direct message.
 
 **Fix**: check `docs/lighthouse-budget.json` for the current budgets. A
 regression usually means a new dependency landed without webpack
-splitting; run `cargo build --release` then `dx serve` and inspect the
+splitting; run `cargo build --release --features desktop` then `dx serve` and inspect the
 network panel.
 
 ---

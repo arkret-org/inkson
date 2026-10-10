@@ -20,7 +20,7 @@ try {
     }
 
     if (-not $BinaryPath) {
-        # `cargo build --release` writes into the target directory configured
+        # `cargo build --release --features desktop` writes into the target directory configured
         # by the workspace-level `../.cargo/config.toml`, which is shared by
         # every sibling repository and is not `<repo>/target`. Ask cargo.
         $BinaryPath = Get-InksonBinaryPath -RepositoryRoot $repoRoot

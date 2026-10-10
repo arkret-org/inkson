@@ -25,14 +25,14 @@ try {
     }
 
     if (-not $BinaryPath) {
-        # `cargo build --release` writes into the target directory configured
+        # `cargo build --release --features desktop` writes into the target directory configured
         # by the workspace-level `../.cargo/config.toml`, which is shared by
         # every sibling repository and is not `<repo>/target`. Ask cargo.
         $BinaryPath = Get-InksonBinaryPath -RepositoryRoot $repoRoot -WindowsBinary
     }
 
     if (-not (Test-Path -LiteralPath $BinaryPath)) {
-        throw "inkson.exe not found at $BinaryPath — run `cargo build --release` first"
+        throw "inkson.exe not found at $BinaryPath — run `cargo build --release --features desktop` first"
     }
 
     New-Item -ItemType Directory -Force -Path $DistDir | Out-Null

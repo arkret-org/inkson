@@ -24,7 +24,7 @@
     Where to write evidence. Default: dist/signing/.
 
 .PARAMETER NoBuild
-    Skip `cargo build --release` even if the artifact is missing.
+    Skip `cargo build --release --features desktop` even if the artifact is missing.
 
 .EXAMPLE
     pwsh -File scripts/codesign-dryrun.ps1
@@ -62,15 +62,15 @@ try {
     New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 
     if (-not $ArtifactPath) {
-        # `cargo build --release` writes into the target directory configured
+        # `cargo build --release --features desktop` writes into the target directory configured
         # by the workspace-level `../.cargo/config.toml`, which is shared by
         # every sibling repository and is not `<repo>/target`. Ask cargo.
         $ArtifactPath = Get-InksonBinaryPath -RepositoryRoot $repoRoot -WindowsBinary:$isWindowsHost
     }
 
     if (-not $NoBuild -and -not (Test-Path -LiteralPath $ArtifactPath)) {
-        Write-Host "Artifact missing; running cargo build --release"
-        & cargo build --release
+        Write-Host "Artifact missing; running cargo build --release --features desktop"
+        & cargo build --release --features desktop
     }
 
     $artifactExists = Test-Path -LiteralPath $ArtifactPath

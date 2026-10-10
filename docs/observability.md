@@ -14,7 +14,7 @@ To raise verbosity in a dev session:
 
 | Target | How |
 | --- | --- |
-| Native | `RUST_LOG=inkson=debug,arkret=info cargo run` |
+| Native | `RUST_LOG=inkson=debug,arkret=info cargo run --features desktop` |
 | Web | DevTools → Console; pass `?log=debug` if your dev server honours it. |
 
 Log line fields you can rely on:
@@ -55,7 +55,7 @@ capture for the web target depends on the browser's reporting hooks
 
 ```powershell
 $env:SENTRY_DSN = "https://<key>@<org>.ingest.sentry.io/<project>"
-cargo build --release
+cargo build --release --features desktop
 ./target/release/inkson
 ```
 

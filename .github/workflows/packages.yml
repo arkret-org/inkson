@@ -13,7 +13,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Private `yoface` git dependency — see .github/workflows/ci.yml.
+  # Fetch the public yoface Cargo git dependency through the git CLI.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
@@ -64,11 +64,6 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
-      # `yoface` is a private cargo git dependency, not a sibling checkout.
-      # See .github/workflows/ci.yml for the rationale.
-      - name: Authenticate cargo for the private yoface git dependency
-        run: git config --global url."https://x-access-token:${{ secrets.CI_REPO_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
-
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
         run: |
@@ -90,12 +85,23 @@ jobs:
 
       - name: Build release binary
         working-directory: inkson
-        run: cargo build --release
+        run: cargo build --release --features desktop
+
+      # Library/Web graphs do not establish desktop dependency safety. Keep
+      # unsound advisories fatal for the real Linux desktop renderer graph.
+      - name: Audit the desktop renderer dependencies
+        if: runner.os == 'Linux'
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: inkson/Cargo.toml
+          arguments: --features desktop
+          command: check
+          command-arguments: advisories
 
       - name: Prepare artifact directory
         shell: pwsh
         run: |
-          New-Item -ItemKind Directory -Force -Path "dist/${{ matrix.package_name }}"
+          New-Item -ItemType Directory -Force -Path "dist/${{ matrix.package_name }}"
           Copy-Item -LiteralPath "inkson/${{ matrix.artifact_path }}" -Destination "dist/${{ matrix.package_name }}/${{ matrix.binary_name }}"
           Copy-Item -LiteralPath "inkson/README.md" -Destination "dist/${{ matrix.package_name }}/README.md"
 

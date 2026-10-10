@@ -97,7 +97,7 @@ jobs:
         shell: pwsh
         working-directory: inkson
         run: |
-          New-Item -ItemKind Directory -Force -Path dist/web-image | Out-Null
+          New-Item -ItemType Directory -Force -Path dist/web-image | Out-Null
           Move-Item -Force ../trivy-image.json dist/web-image/trivy-image.json
           ./scripts/web-image-evidence.ps1 -ImageTag "${{ env.IMAGE_NAME }}" -SkipBuild
 

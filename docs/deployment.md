@@ -53,7 +53,7 @@ Privacy requirements:
 Build locally:
 
 ```powershell
-cargo build --release
+cargo build --release --features desktop
 powershell -ExecutionPolicy Bypass -File scripts/signing-dry-run.ps1
 ```
 

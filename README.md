@@ -143,7 +143,7 @@ npm install
 npm run e2e
 ```
 
-The Playwright runner builds the web bundle with `dx build --platform web --profile joint-e2e --features wasm-localstorage-secrets-test` (into `target/playwright-e2e`) and serves it via `node tests/e2e/staticServer.mjs` on port 4727, exercising the web shell against mocked `/_arkret/*` responses. Use `INKSON_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
+The Playwright runner builds the web bundle with `dx build --platform web --profile joint-e2e --features web,wasm-localstorage-secrets-test` (into `target/playwright-e2e`) and serves it via `node tests/e2e/staticServer.mjs` on port 4727, exercising the web shell against mocked `/_arkret/*` responses. Use `INKSON_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
 
 That validation runs on its own too, without a browser and without the WASM build:
 
@@ -177,6 +177,8 @@ The repository includes CI for:
 - `Dependabot`: weekly updates for GitHub Actions, Cargo, npm, and Docker.
 
 CI checks out `arkret-rust-sdk`, `garth`, and `chime` next to `inkson` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names use those three names under `${OWNER}`.
+
+Library consumers use the default features without a renderer. Build the desktop application with `cargo build --release --features desktop` or the Web application with `dx build --platform web --features web`. The main application binary requires `app`, which both renderer features enable. The desktop backend still includes the upstream GTK3 `glib` dependency affected by RUSTSEC-2024-0429; excluding that backend from a library build does not resolve the desktop advisory.
 
 `yoface` is a public Cargo git dependency (`git = "https://github.com/arkret-org/yoface"`, branch `main`), so Cargo fetches it instead of reading a sibling checkout. The Docker build does not require a GitHub token.
 
