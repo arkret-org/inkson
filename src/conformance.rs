@@ -5,6 +5,40 @@ use arkret_wire::{BindingKind, ServiceKind, ServiceOperationId, operation_bundle
 
 use crate::models::ServiceDescribe;
 
+/// Inspect the ordinary durable current index without installing fixture rows.
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub async fn retained_realm_current(
+    store: &crate::LocalStateStore,
+    account: &arkret_sdk::AccountId,
+    realm: &arkret_sdk::RealmId,
+) -> anyhow::Result<serde_json::Value> {
+    anyhow::ensure!(
+        store.active_authority().as_ref() == Some(account),
+        "current readback account mismatch"
+    );
+    let index =
+        crate::state::CurrentIndex::open_committed(account, store.current_index_location(), || {
+            Ok(store.load().current_generation)
+        })
+        .await?;
+    let mut entries = Vec::new();
+    let mut after = None;
+    loop {
+        let page = index
+            .read_realm_page(realm.as_str(), after.as_deref(), 100)
+            .await?;
+        entries.extend(page.entries);
+        after = page.next_cursor;
+        if after.is_none() {
+            break;
+        }
+    }
+    Ok(serde_json::json!({
+        "progress": index.read_progress(realm.as_str()).await?,
+        "entries": entries,
+    }))
+}
+
 /// Inspect only the complete admitted private cut used by the product fold.
 #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
 pub fn retained_sidecar_cut(
