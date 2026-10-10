@@ -3584,9 +3584,51 @@ mod tests {
         assert!(restored.load().local_device_refresh_pending);
         assert_eq!(
             restored.load_account_checkpoint(&scope).unwrap(),
+            Some(checkpoint.clone())
+        );
+        let before = serde_json::to_value(store.load()).unwrap();
+        let prefix = format!("{}.account.", path.file_stem().unwrap().to_string_lossy());
+        let account_path = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(&prefix)
+                    && path.extension().is_some_and(|ext| ext == "json")
+            })
+            .expect("the real account-state shard must have been persisted");
+        let durable_bytes = std::fs::read(&account_path).unwrap();
+        let backup = account_path.with_extension("backup");
+        std::fs::rename(&account_path, &backup).unwrap();
+        std::fs::create_dir(&account_path).unwrap();
+        let newer = garth::AccountCursorCheckpoint {
+            cursor: "ak:cursor:newer-undurable-account-batch".to_owned(),
+            ..checkpoint.clone()
+        };
+        let failed = store.verified_projection_transaction(|store| {
+            store.set_local_device_refresh_pending(false);
+            store
+                .save_account_checkpoint(&scope, newer)
+                .map_err(|error| error.to_string())
+        });
+        std::fs::remove_dir(&account_path).unwrap();
+        std::fs::rename(&backup, &account_path).unwrap();
+        assert!(
+            failed.is_err(),
+            "an actual filesystem failure must refuse the transaction"
+        );
+        assert_eq!(serde_json::to_value(store.load()).unwrap(), before);
+        assert_eq!(std::fs::read(&account_path).unwrap(), durable_bytes);
+        let restored = LocalStateStore::with_path(&path);
+        assert_eq!(serde_json::to_value(restored.load()).unwrap(), before);
+        assert_eq!(
+            restored.load_account_checkpoint(&scope).unwrap(),
             Some(checkpoint)
         );
         let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(account_path);
     }
 
     fn sdk_realm_id() -> arkret_sdk::RealmId {
