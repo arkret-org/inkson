@@ -96,7 +96,7 @@ jobs:
         uses: anchore/sbom-action/download-syft@v0.20.6
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v4
+        uses: sigstore/cosign-installer@v4.1.2
 
       - name: Generate local image evidence
         shell: pwsh
