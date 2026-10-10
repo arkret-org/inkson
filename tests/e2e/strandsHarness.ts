@@ -635,6 +635,10 @@ export function registerStrandsBeforeEach() {
           ? "disclosed"
           : undefined;
     const scenario = await mockArkretApi(page, {
+      demoNotification: [
+        "notifications are derived from index projections and respect per-realm mute rules",
+        "notification feed controls and local mute feedback follow the active language",
+      ].includes(testInfo.title),
       encryptedDemoRealm: [
         "bootstrap login and sync shows the connected realm",
         "selected Realm security badge matches its encrypted sidebar marker",

@@ -1482,6 +1482,118 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.empty.create_button", "Create Strand");
 
     // Notifications panel (group tabs + toolbar tooltips)
+    dict.set(
+        "notifications.no_account",
+        "Active account context is unavailable.",
+    );
+    dict.set("notifications.panel_label", "Notifications");
+    dict.set("notifications.grouping_label", "Notification grouping");
+    dict.set("notifications.open_chat", "Open chat");
+    dict.set("notifications.tooltip.mark_read", "Mark read");
+    dict.set("notifications.tooltip.mark_unread", "Mark unread");
+    dict.set("notifications.tooltip.archive", "Archive");
+    dict.set("notifications.tooltip.mute_realm", "Mute this realm");
+    dict.set(
+        "notifications.feedback.refresh_failed",
+        "Notification refresh: {error}",
+    );
+    dict.set(
+        "notifications.feedback.all_cursor_failed",
+        "All loaded notifications marked read locally; read cursor creation failed: {error}",
+    );
+    dict.set(
+        "notifications.feedback.all_read_local",
+        "All loaded notifications marked read locally.",
+    );
+    dict.set(
+        "notifications.feedback.all_read_syncing",
+        "All loaded notifications marked read; syncing {count} read cursor(s)...",
+    );
+    dict.set(
+        "notifications.feedback.all_read_synced",
+        "All loaded notifications marked read; synced {count} read cursor(s).",
+    );
+    dict.set(
+        "notifications.feedback.all_projection_failed",
+        "Read cursors synced but local projection update failed: {error}",
+    );
+    dict.set(
+        "notifications.feedback.all_sync_failed",
+        "All loaded notifications marked read locally; read cursor sync failed: {error}",
+    );
+    dict.set(
+        "notifications.feedback.cursor_failed",
+        "Notification marked read locally; read cursor creation failed: {error}",
+    );
+    dict.set(
+        "notifications.feedback.unread_local",
+        "Notification marked unread locally.",
+    );
+    dict.set(
+        "notifications.feedback.read_local",
+        "Notification marked read locally.",
+    );
+    dict.set(
+        "notifications.feedback.read_syncing",
+        "Notification marked read; syncing read cursor...",
+    );
+    dict.set(
+        "notifications.feedback.read_synced",
+        "Notification marked read and synced.",
+    );
+    dict.set(
+        "notifications.feedback.projection_failed",
+        "Read cursor synced but local projection update failed: {error}",
+    );
+    dict.set(
+        "notifications.feedback.sync_failed",
+        "Notification marked read locally; read cursor sync failed: {error}",
+    );
+    dict.set(
+        "notifications.feedback.archive_unavailable",
+        "Notification archived locally; cross-device sync unavailable: {error}",
+    );
+    dict.set(
+        "notifications.feedback.archived",
+        "Notification archived on all your devices.",
+    );
+    dict.set(
+        "notifications.feedback.archive_failed",
+        "Notification archived locally; cross-device sync failed: {error}",
+    );
+    dict.set(
+        "notifications.feedback.accepting",
+        "Accepting Realm invite for {realm}...",
+    );
+    dict.set("notifications.feedback.joined", "Joined Realm {realm}.");
+    dict.set(
+        "notifications.feedback.accept_failed",
+        "Accept invite failed: {error}",
+    );
+    dict.set(
+        "notifications.feedback.muted",
+        "Muted notifications for {realm}.",
+    );
+    dict.set(
+        "notifications.feedback.queued",
+        "Action queued for {title}.",
+    );
+    dict.set("contacts.state.expired", "Expired");
+    dict.set(
+        "notifications.runtime_approval.title",
+        "Agent runtime approval",
+    );
+    dict.set(
+        "notifications.runtime_approval.body",
+        "Review the pending Agent runtime key request.",
+    );
+    dict.set("notifications.default_body", "Notification");
+    dict.set(
+        "notifications.invite_body",
+        "You were invited to join {realm}.",
+    );
+    dict.set("notifications.scope.realm", "Realm");
+    dict.set("notifications.scope.space", "Space");
     dict.set("notifications.feed_title", "Notification feed");
     dict.set(
         "notifications.invite_preview.loading",

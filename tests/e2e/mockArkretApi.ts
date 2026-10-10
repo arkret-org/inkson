@@ -87,6 +87,7 @@ type MockArkretApiOptions = {
   assistantKeyBinding?: "missing" | "mismatched";
   emptyBoard?: boolean;
   encryptedDemoRealm?: boolean;
+  demoNotification?: boolean;
   invitePreview?: "disclosed" | "restricted" | "retry_once";
   invitePreviewDelayMs?: number;
   contactRequestOutcome?: "failed" | "tampered";
@@ -193,6 +194,7 @@ type NativeRealmFixture = {
   account_entry: Record<string, any>;
   ids: Record<string, string>;
   public_blobs?: Record<string, string>;
+  notification_deltas?: Array<Record<string, unknown>>;
   managed_agent: {
     did: string;
     account_id: { principal_id: string; station_id: string };
@@ -205,8 +207,12 @@ type NativeRealmFixture = {
     runtime_authorization: { event: Record<string, any>; commit: Record<string, any> };
   };
 };
-const nativeRealm = (salt: number, title: string, board = false, empty_board = false, encrypted = false) =>
-  inksonWire<NativeRealmFixture>("mock-realm-fixture", { salt, title, board, empty_board, encrypted });
+const nativeRealm = (
+  salt: number, title: string, board = false, empty_board = false,
+  encrypted = false, demo_notification = false,
+) => inksonWire<NativeRealmFixture>("mock-realm-fixture", {
+  salt, title, board, empty_board, encrypted, demo_notification,
+});
 const DEMO_REALM_FIXTURE = nativeRealm(9, "Arkret Demo Realm", true);
 const INVITED_NATIVE_FIXTURE = nativeRealm(10, "Invited Realm");
 const CHILD_REALM_FIXTURE = nativeRealm(11, "Launch Realm");
@@ -704,8 +710,11 @@ export async function mockArkretApi(
   }> = [];
   const projectionEvents: Array<Record<string, unknown>> = [];
   let inviteAuthorityEvents: Array<Record<string, unknown>> = [];
-  const demoNative = options.encryptedDemoRealm || options.emptyBoard
-    ? nativeRealm(9, "Arkret Demo Realm", true, options.emptyBoard ?? false, options.encryptedDemoRealm ?? false)
+  const demoNative = options.encryptedDemoRealm || options.emptyBoard || options.demoNotification
+    ? nativeRealm(
+        9, "Arkret Demo Realm", true, options.emptyBoard ?? false,
+        options.encryptedDemoRealm ?? false, options.demoNotification ?? false,
+      )
     : DEMO_REALM_FIXTURE;
   const DEMO_REALM = String(demoNative.snapshot.realm_id);
   const DEMO_BOARD_SPACE = demoNative.ids.board;
@@ -2025,94 +2034,6 @@ export async function mockArkretApi(
       const demoProjectionEvents = projectionEvents.filter(
         (event) => eventRealmId(event) === DEMO_REALM,
       );
-      const notificationEvents = includeDemoRealms
-        ? [
-            {
-              event_id: "ak:event:AYMlm81t-z3S1gmmf9y7mEjg4EoUVLa9JapMVEiyY2p7",
-              kind: "ak.account_data.set",
-              realm_id: DEMO_REALM,
-              scope_ref: { kind: "realm", realm_id: DEMO_REALM },
-              actor_id: accountActorId,
-              actor_seq: 101,
-              created_at: "2026-04-28T12:01:00.000Z",
-              hlc: "019641370001-0000-12345678",
-              prev_refs: [],
-              payload: {
-                key: "ak.notifications.projection.v1",
-                 expected_server_revision: 0,
-                body: {
-                  id: "ak:notification:01964137-0000-7000-8000-000000000001",
-                  schema: "ak.schema.notification.v1",
-                  actor_id: accountPrincipalCoreId,
-                  source_event_id:
-                    "ak:event:AYMlm81t-z3S1gmmf9y7mEjg4EoUVLa9JapMVEiyY2p7",
-                  realm_id: DEMO_REALM,
-                  notification_kind: "message",
-                  priority: "normal",
-                  state: "unread",
-                  preview: {
-                    title: "New message",
-                    body: "Alice sent a message in Demo Realm",
-                    event_kind: "ak.message.create",
-                  },
-                  created_at: "2026-04-28T12:01:00.000Z",
-                },
-              },
-              refs: [],
-              proofs: [
-                {
-                  kind: "detached_jws",
-                  verification_method: `${accountPrincipalId}#${currentDeviceId}`,
-                  event_digest: `sha256:${"0".repeat(64)}`,
-                  created_at: "2026-04-28T12:01:00.000Z",
-                  jws: "e30..c2ln",
-                },
-              ],
-            },
-            {
-              event_id: "ak:event:Aaa8behhWSeKSNCcHiTuAoq1xiTXvuVAQxja-XifnQv2",
-              kind: "ak.account_data.set",
-              realm_id: DEMO_REALM,
-              scope_ref: { kind: "realm", realm_id: DEMO_REALM },
-              actor_id: accountActorId,
-              actor_seq: 102,
-              created_at: "2026-04-28T12:02:00.000Z",
-              hlc: "019641370002-0000-12345678",
-              prev_refs: [],
-              payload: {
-                key: "ak.notifications.projection.v1",
-                 expected_server_revision: 0,
-                body: {
-                  id: "ak:notification:01964137-0000-7000-8000-000000000002",
-                  schema: "ak.schema.notification.v1",
-                  actor_id: accountPrincipalCoreId,
-                  source_event_id:
-                    "ak:event:Aaa8behhWSeKSNCcHiTuAoq1xiTXvuVAQxja-XifnQv2",
-                  realm_id: DEMO_REALM,
-                  notification_kind: "invite",
-                  priority: "normal",
-                  state: "unread",
-                  preview: {
-                    title: "New invite",
-                    body: "You were invited to review Demo Realm",
-                    event_kind: "ak.invite.create",
-                  },
-                  created_at: "2026-04-28T12:02:00.000Z",
-                },
-              },
-              refs: [],
-              proofs: [
-                {
-                  kind: "detached_jws",
-                  verification_method: `${accountPrincipalId}#${currentDeviceId}`,
-                  event_digest: `sha256:${"0".repeat(64)}`,
-                  created_at: "2026-04-28T12:02:00.000Z",
-                  jws: "e30..c2ln",
-                },
-              ],
-            },
-          ]
-        : [];
       const frame = {
         kind: "delta",
         cursor: "ak:cursor:e2e-2",
@@ -2245,20 +2166,15 @@ export async function mockArkretApi(
         to_device: {
           deliveries: [],
         },
-        account_data: {
-          events: notificationEvents.map((event) => ({
-            event_id: event.event_id,
-            kind: event.kind,
-            realm_id: event.realm_id,
-            scope_ref: event.scope_ref,
-            actor_id: event.actor_id,
-            created_at: event.created_at,
-            payload: event.payload,
-            producer_proof: (event.proofs as Array<Record<string, unknown>>)[0],
-          })),
-        },
+        account_data: { events: [] },
         device_lists: { changed_ids: [], left_ids: [] },
-        notifications: { items: [] },
+        notifications: {
+          // The SDK fixture supplies closed deltas and their actual accepted
+          // source binding; do not reconstruct protocol fields in this mock.
+          items: includeDemoRealms && options.demoNotification
+            ? structuredClone(demoNative.notification_deltas ?? [])
+            : [],
+        },
       };
       for (const [realmId, entry] of Object.entries(frame.realms)) {
         const fixture = nativeFixtures.get(realmId);

@@ -6,8 +6,8 @@
 use dioxus::prelude::*;
 
 use super::model::{
-    UiNotification, UiNotificationAction, hydrate_notifications_with_privacy_gate,
-    read_cursor_targets,
+    NotificationFeedback, UiNotification, UiNotificationAction,
+    hydrate_notifications_with_privacy_gate, read_cursor_targets,
 };
 use crate::notification_rules::{dnd_settings_from_account_data, push_rules_from_account_data};
 use crate::state::LocalStateStore;
@@ -20,7 +20,7 @@ pub(crate) fn refresh_notifications(
     authority: arkret_sdk::AccountId,
     mut state_store: SyncSignal<LocalStateStore>,
     mut notifications: Signal<Vec<UiNotification>>,
-    mut status_msg: Signal<String>,
+    mut status_msg: Signal<NotificationFeedback>,
 ) {
     spawn(async move {
         let session_credential = session_credential();
@@ -86,10 +86,13 @@ pub(crate) fn refresh_notifications(
                     )
                 };
                 notifications.set(hydrated);
-                status_msg.set(String::new());
+                status_msg.set(NotificationFeedback::default());
             }
             Err(err) => {
-                status_msg.set(format!("Notification refresh: {}", err.display()));
+                status_msg.set(
+                    NotificationFeedback::new("notifications.feedback.refresh_failed")
+                        .with_api_error(err),
+                );
             }
         }
     });
@@ -102,7 +105,7 @@ pub(crate) fn mark_all_notifications_read(
     device_id: String,
     mut state_store: SyncSignal<LocalStateStore>,
     mut notifications: Signal<Vec<UiNotification>>,
-    mut status_msg: Signal<String>,
+    mut status_msg: Signal<NotificationFeedback>,
 ) {
     let snapshot = notifications();
     let ids = snapshot
@@ -142,21 +145,24 @@ pub(crate) fn mark_all_notifications_read(
     let markers = match markers {
         Ok(markers) => markers,
         Err(error) => {
-            status_msg.set(format!(
-                "All loaded notifications marked read locally; read cursor creation failed: {error:#}"
-            ));
+            status_msg.set(
+                NotificationFeedback::new("notifications.feedback.all_cursor_failed")
+                    .with("error", format!("{error:#}")),
+            );
             return;
         }
     };
     if markers.is_empty() {
-        status_msg.set("All loaded notifications marked read locally.".to_owned());
+        status_msg.set(NotificationFeedback::new(
+            "notifications.feedback.all_read_local",
+        ));
         return;
     }
 
-    status_msg.set(format!(
-        "All loaded notifications marked read; syncing {} read cursor(s)...",
-        markers.len()
-    ));
+    status_msg.set(
+        NotificationFeedback::new("notifications.feedback.all_read_syncing")
+            .with("count", markers.len()),
+    );
     spawn(async move {
         let marker_count = markers.len();
         match with_event_submitter(&base_url, session_credential, |sub| async move {
@@ -178,18 +184,20 @@ pub(crate) fn mark_all_notifications_read(
                         .map(|_| ())
                 });
                 match persisted {
-                    Ok(()) => status_msg.set(format!(
-                        "All loaded notifications marked read; synced {marker_count} read cursor(s)."
-                    )),
-                    Err(error) => status_msg.set(format!(
-                        "Read cursors synced but local projection update failed: {error:#}"
-                    )),
+                    Ok(()) => status_msg.set(
+                        NotificationFeedback::new("notifications.feedback.all_read_synced")
+                            .with("count", marker_count),
+                    ),
+                    Err(error) => status_msg.set(
+                        NotificationFeedback::new("notifications.feedback.all_projection_failed")
+                            .with("error", format!("{error:#}")),
+                    ),
                 }
             }
-            Err(err) => status_msg.set(format!(
-                "All loaded notifications marked read locally; read cursor sync failed: {}",
-                err.display()
-            )),
+            Err(err) => status_msg.set(
+                NotificationFeedback::new("notifications.feedback.all_sync_failed")
+                    .with_api_error(err),
+            ),
         }
     });
 }
@@ -204,7 +212,7 @@ pub(crate) fn mark_notification_read_state(
     read: bool,
     mut state_store: SyncSignal<LocalStateStore>,
     mut notifications: Signal<Vec<UiNotification>>,
-    mut status_msg: Signal<String>,
+    mut status_msg: Signal<NotificationFeedback>,
 ) {
     let notification_id = notification.id.clone();
     notifications.with_mut(|items| {
@@ -234,9 +242,10 @@ pub(crate) fn mark_notification_read_state(
             ) {
                 Ok(marker) => Some(marker),
                 Err(error) => {
-                    status_msg.set(format!(
-                        "Notification marked read locally; read cursor creation failed: {error:#}"
-                    ));
+                    status_msg.set(
+                        NotificationFeedback::new("notifications.feedback.cursor_failed")
+                            .with("error", format!("{error:#}")),
+                    );
                     return;
                 }
             }
@@ -245,15 +254,21 @@ pub(crate) fn mark_notification_read_state(
         }
     };
     if !read {
-        status_msg.set("Notification marked unread locally.".to_owned());
+        status_msg.set(NotificationFeedback::new(
+            "notifications.feedback.unread_local",
+        ));
         return;
     }
     let Some(marker) = marker else {
-        status_msg.set("Notification marked read locally.".to_owned());
+        status_msg.set(NotificationFeedback::new(
+            "notifications.feedback.read_local",
+        ));
         return;
     };
 
-    status_msg.set("Notification marked read; syncing read cursor...".to_owned());
+    status_msg.set(NotificationFeedback::new(
+        "notifications.feedback.read_syncing",
+    ));
     spawn(async move {
         match with_event_submitter(&base_url, session_credential, |sub| async move {
             crate::transport::account::submit_read_cursor_advance(&sub, &marker).await
@@ -261,15 +276,17 @@ pub(crate) fn mark_notification_read_state(
         .await
         {
             Ok(outcome) => match state_store.write().apply_read_cursor_outcome(outcome) {
-                Ok(_) => status_msg.set("Notification marked read and synced.".to_owned()),
-                Err(error) => status_msg.set(format!(
-                    "Read cursor synced but local projection update failed: {error:#}"
+                Ok(_) => status_msg.set(NotificationFeedback::new(
+                    "notifications.feedback.read_synced",
                 )),
+                Err(error) => status_msg.set(
+                    NotificationFeedback::new("notifications.feedback.projection_failed")
+                        .with("error", format!("{error:#}")),
+                ),
             },
-            Err(err) => status_msg.set(format!(
-                "Notification marked read locally; read cursor sync failed: {}",
-                err.display()
-            )),
+            Err(err) => status_msg.set(
+                NotificationFeedback::new("notifications.feedback.sync_failed").with_api_error(err),
+            ),
         }
     });
 }
@@ -293,7 +310,7 @@ pub(crate) fn set_notification_inbox_state(
     state: arkret_sdk::NotificationInboxState,
     mut state_store: SyncSignal<LocalStateStore>,
     mut notifications: Signal<Vec<UiNotification>>,
-    mut status_msg: Signal<String>,
+    mut status_msg: Signal<NotificationFeedback>,
 ) {
     notifications.with_mut(|items| {
         if let Some(entry) = items
@@ -319,9 +336,10 @@ pub(crate) fn set_notification_inbox_state(
         ) {
             Ok(candidate) => candidate,
             Err(error) => {
-                status_msg.set(format!(
-                    "Notification archived locally; cross-device sync unavailable: {error:#}"
-                ));
+                status_msg.set(
+                    NotificationFeedback::new("notifications.feedback.archive_unavailable")
+                        .with("error", format!("{error:#}")),
+                );
                 return;
             }
         };
@@ -343,11 +361,11 @@ pub(crate) fn set_notification_inbox_state(
         })
         .await
         {
-            Ok(_) => status_msg.set("Notification archived on all your devices.".to_owned()),
-            Err(err) => status_msg.set(format!(
-                "Notification archived locally; cross-device sync failed: {}",
-                err.display()
-            )),
+            Ok(_) => status_msg.set(NotificationFeedback::new("notifications.feedback.archived")),
+            Err(err) => status_msg.set(
+                NotificationFeedback::new("notifications.feedback.archive_failed")
+                    .with_api_error(err),
+            ),
         }
     });
 }
@@ -391,7 +409,7 @@ pub(crate) fn run_notification_action(
     authority: arkret_sdk::AccountId,
     state_store: SyncSignal<LocalStateStore>,
     notifications: Signal<Vec<UiNotification>>,
-    status_msg: Signal<String>,
+    status_msg: Signal<NotificationFeedback>,
     notification_id: String,
     action: UiNotificationAction,
 ) {
@@ -422,17 +440,17 @@ fn accept_invite_notification(
     authority: arkret_sdk::AccountId,
     mut state_store: SyncSignal<LocalStateStore>,
     mut notifications: Signal<Vec<UiNotification>>,
-    mut status_msg: Signal<String>,
+    mut status_msg: Signal<NotificationFeedback>,
     notification_id: String,
     realm_id: String,
     invite_id: String,
     credential: Option<crate::state::StoredInviteCredential>,
 ) {
     let accepted_realm = realm_id;
-    status_msg.set(format!(
-        "Accepting Realm invite for {}...",
-        short_protocol_id(&accepted_realm)
-    ));
+    status_msg.set(
+        NotificationFeedback::new("notifications.feedback.accepting")
+            .with("realm", short_protocol_id(&accepted_realm)),
+    );
     spawn(async move {
         let accepted_realm_for_api = accepted_realm.clone();
         let session_credential = session_credential();
@@ -498,10 +516,7 @@ fn accept_invite_notification(
                 crate::app::runtime_adapter::state_store_handle(state_store),
             )
             .await?;
-            accepted_status.set(format!(
-                "Joined Realm {}.",
-                short_protocol_id(&accepted_realm_for_api)
-            ));
+            accepted_status.set(NotificationFeedback::new("notifications.feedback.joined").with("realm", short_protocol_id(&accepted_realm_for_api)));
             let account_data = state_store.write().current_account_data_events();
             Ok::<_, anyhow::Error>((account_data, accepted_title, delivery_cell))
         })
@@ -545,13 +560,10 @@ fn accept_invite_notification(
                     &notification_id,
                     &accepted_realm,
                 );
-                status_msg.set(format!(
-                    "Joined Realm {}.",
-                    short_protocol_id(&accepted_realm)
-                ));
+                status_msg.set(NotificationFeedback::new("notifications.feedback.joined").with("realm", short_protocol_id(&accepted_realm)));
             }
             Err(err) => {
-                status_msg.set(format!("Accept invite failed: {}", err.display()));
+                status_msg.set(NotificationFeedback::new("notifications.feedback.accept_failed").with_api_error(err));
             }
         }
     });
