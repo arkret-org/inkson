@@ -143,6 +143,32 @@ jobs:
         with:
           install-chromedriver: true
 
+      - name: Bind WebAssembly tests to the installed Chrome
+        env:
+          TEST_CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
+          TEST_CHROMEDRIVER: ${{ steps.setup-chrome.outputs.chromedriver-path }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          browser = os.environ["TEST_CHROME"]
+          driver = os.environ["TEST_CHROMEDRIVER"]
+          versions = [subprocess.check_output([binary, "--version"], text=True).strip()
+                      for binary in (browser, driver)]
+          majors = [re.search(r"\b(\d+)\.", version).group(1) for version in versions]
+          if majors[0] != majors[1]:
+              raise SystemExit(f"Chrome/ChromeDriver version mismatch: {versions}")
+          print("Matched browser and driver:", *versions, sep="\n")
+          # wasm-bindgen-test-runner reads WebDriver capabilities; CHROME is
+          # not a browser selector and leaves the runner's system Chrome in use.
+          destination = Path(os.environ["RUNNER_TEMP"]) / "inkson-webdriver.json"
+          destination.write_text(json.dumps({"goog:chromeOptions": {"binary": browser}}))
+          PY
+
       - name: Resolve locked wasm-bindgen version
         working-directory: inkson
         run: |
@@ -165,8 +191,8 @@ jobs:
         working-directory: inkson
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
-          CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
           CHROMEDRIVER: ${{ steps.setup-chrome.outputs.chromedriver-path }}
+          WASM_BINDGEN_TEST_WEBDRIVER_JSON: ${{ runner.temp }}/inkson-webdriver.json
         run: >-
           cargo test --locked --target wasm32-unknown-unknown
           --test mls_data_plane_wasm
