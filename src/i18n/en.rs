@@ -2283,6 +2283,156 @@ pub fn english_translations() -> TranslationDict {
         "Original Strand: {strand}. Members authorized to read this scope.",
     );
 
+    dict.set("circles.page.state_active", "Active");
+    dict.set("circles.page.state_archived", "Archived");
+    dict.set("circles.page.state_tombstoned", "Tombstoned");
+    dict.set("circles.page.membership_join", "Member");
+    dict.set("circles.page.membership_knock", "Requested");
+    dict.set("circles.page.membership_leave", "Left");
+    dict.set("circles.page.membership_ban", "Banned");
+    dict.set("circles.page.membership_viewer", "Directory viewer");
+    dict.set(
+        "circles.page.encrypted",
+        "Independent MLS group · E2EE active",
+    );
+    dict.set("circles.page.unencrypted", "Restricted delivery · not E2EE");
+    dict.set("circles.page.heading", "Circles");
+    dict.set("circles.page.new", "New Circle");
+    dict.set("circles.page.loading", "Loading Circles…");
+    dict.set("circles.page.empty", "No ordinary Circles");
+    dict.set(
+        "circles.page.empty_help",
+        "Create a Circle for a smaller collaboration boundary. Agent Sidecars never appear here.",
+    );
+    dict.set("circles.page.preview", "Circle preview");
+    dict.set("circles.page.directory", "Directory");
+    dict.set("circles.page.membership", "Membership");
+    dict.set("circles.page.your_access", "Your access");
+    dict.set("circles.page.join_rule", "Join rule");
+    dict.set("circles.page.history", "History");
+    dict.set("circles.page.encryption", "Encryption");
+    dict.set("circles.page.not_encrypted", "Not end-to-end encrypted");
+    dict.set("circles.page.plaintext_warning", "This Circle remains a restricted delivery and query boundary until its own MLS genesis is accepted. The server may read plaintext.");
+    dict.set("circles.page.members", "Members");
+    dict.set(
+        "circles.page.members_private",
+        "Member identities are available only to active Circle members.",
+    );
+    dict.set("circles.page.remove", "Remove");
+    dict.set("circles.page.add_member", "Add member");
+    dict.set("circles.page.request", "Request (knock)");
+    dict.set("circles.page.leave", "Leave");
+    dict.set("circles.page.ban", "Ban");
+    dict.set("circles.page.apply", "Apply");
+    dict.set("circles.page.archive", "Archive");
+    dict.set("circles.page.restore", "Restore");
+    dict.set("circles.page.directory_preview", "Directory preview");
+    dict.set(
+        "circles.page.preview_private",
+        "Private details are visible after joining this Circle.",
+    );
+    dict.set("circles.page.select", "Select a Circle");
+    dict.set(
+        "circles.page.select_help",
+        "Review the exact membership and encryption boundary before creating scoped content.",
+    );
+    dict.set("circles.page.create", "Create Circle");
+    dict.set("circles.page.title", "Title");
+    dict.set(
+        "circles.page.short_name",
+        "Short name (ASCII, unique in this Realm)",
+    );
+    dict.set("circles.page.summary", "Summary");
+    dict.set("circles.page.since_join", "Since joining");
+    dict.set(
+        "circles.page.all_history",
+        "All history for current members",
+    );
+    dict.set("circles.page.e2ee", "End-to-end encryption");
+    dict.set("circles.page.boundary_preview", "Boundary preview");
+    dict.set("circles.page.boundary_help", "Starts as restricted delivery only. E2EE becomes active only after this Circle's own MLS genesis is accepted.");
+    dict.set("circles.page.nav_label", "Ordinary Circles");
+    dict.set(
+        "circles.page.actor_placeholder",
+        "Complete member ActorId JSON",
+    );
+    dict.set("circles.page.actor_label", "Circle member ActorId");
+    dict.set("circles.page.membership_state", "Circle membership state");
+    dict.set("circles.page.short_name_label", "Circle short name");
+    dict.set("circles.page.history_label", "Circle history");
+    dict.set(
+        "circles.page.help",
+        "Circles restrict membership, history, delivery and encryption inside this Realm.",
+    );
+    dict.set("circles.page.member_count", " · {count} members");
+    dict.set("circles.page.preview_count", "{count} members · {rule}");
+    dict.set("circles.page.active_count", "{count} active members");
+    dict.set("circles.page.approximate_count", "{count} (approximate)");
+    dict.set("circles.page.initial_member", "Initial member: {member}");
+    dict.set("circles.page.directory_value", "Directory: {value}");
+    dict.set("circles.page.join_rule_value", "Join rule: {value}");
+    dict.set("circles.page.history_value", "History: {value}");
+    dict.set(
+        "circles.controls.directory_visibility",
+        "Directory visibility",
+    );
+    dict.set(
+        "circles.controls.directory_visibility_aria",
+        "Circle directory visibility",
+    );
+    dict.set("circles.controls.members_only", "Circle members only");
+    dict.set(
+        "circles.controls.realm_preview",
+        "Preview for Realm members",
+    );
+    dict.set("circles.controls.join_rule", "Join rule");
+    dict.set("circles.controls.join_rule_aria", "Circle join rule");
+    dict.set("circles.controls.public_join", "Any active Realm member");
+    dict.set("circles.controls.knock_join", "Request approval");
+    dict.set("circles.controls.invite_join", "Added by a Circle manager");
+    dict.set("circles.controls.leave", "Leave Circle");
+    dict.set("circles.controls.withdraw", "Withdraw request");
+    dict.set("circles.controls.join", "Join Circle");
+    dict.set("circles.controls.request_join", "Request to join");
+    dict.set(
+        "circles.controls.terminal_unavailable",
+        "This Circle is permanently unavailable.",
+    );
+    dict.set(
+        "circles.controls.manager_access",
+        "A Circle manager must grant access. Preview access does not include Circle content.",
+    );
+    dict.set("circles.controls.edit", "Edit Circle");
+    dict.set(
+        "circles.controls.management_required",
+        "Changes require Circle management permission.",
+    );
+    dict.set("circles.controls.title", "Title");
+    dict.set("circles.controls.title_aria", "Circle title");
+    dict.set(
+        "circles.controls.short_name",
+        "Short name (ASCII, unique in this Realm)",
+    );
+    dict.set("circles.controls.short_name_aria", "Circle short name");
+    dict.set("circles.controls.summary", "Summary");
+    dict.set("circles.controls.summary_aria", "Circle summary");
+    dict.set("circles.controls.save_changes", "Save changes");
+    dict.set("circles.controls.irreversible", "Irreversible changes");
+    dict.set(
+        "circles.controls.irreversible_permission",
+        "These actions require Circle management permission and cannot be undone.",
+    );
+    dict.set(
+        "circles.controls.history_confirm",
+        "I understand history will be restricted to each member's join boundary.",
+    );
+    dict.set("circles.controls.restrict_history", "Restrict history");
+    dict.set(
+        "circles.controls.terminal_confirm",
+        "I understand this Circle will become permanently unavailable.",
+    );
+    dict.set("circles.controls.retire", "Permanently retire Circle");
+
     add_r3_error_keys(&mut dict);
     add_generic_error_keys(&mut dict);
 

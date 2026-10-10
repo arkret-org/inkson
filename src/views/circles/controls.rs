@@ -8,22 +8,22 @@ pub(super) fn CirclePolicyFields(
     mut join_rule: Signal<arkret_sdk::CircleJoinRule>,
 ) -> Element {
     rsx! {
-        label { "Directory visibility" }
+        label { {crate::i18n::tr("circles.controls.directory_visibility")} }
         select {
-            "aria-label": "Circle directory visibility",
+            "aria-label": crate::i18n::tr("circles.controls.directory_visibility_aria"),
             value: if visibility() == arkret_sdk::CircleDirectoryVisibility::Members { "members" } else { "realm_members" },
             onchange: move |event| visibility.set(if event.value() == "members" { arkret_sdk::CircleDirectoryVisibility::Members } else { arkret_sdk::CircleDirectoryVisibility::RealmMembers }),
-            option { value: "members", "Circle members only" }
-            option { value: "realm_members", "Preview for Realm members" }
+            option { value: "members", {crate::i18n::tr("circles.controls.members_only")} }
+            option { value: "realm_members", {crate::i18n::tr("circles.controls.realm_preview")} }
         }
-        label { "Join rule" }
+        label { {crate::i18n::tr("circles.controls.join_rule")} }
         select {
-            "aria-label": "Circle join rule",
+            "aria-label": crate::i18n::tr("circles.controls.join_rule_aria"),
             value: match join_rule() { arkret_sdk::CircleJoinRule::Public => "public", arkret_sdk::CircleJoinRule::Knock => "knock", arkret_sdk::CircleJoinRule::Invite => "invite" },
             onchange: move |event| join_rule.set(match event.value().as_str() { "public" => arkret_sdk::CircleJoinRule::Public, "knock" => arkret_sdk::CircleJoinRule::Knock, _ => arkret_sdk::CircleJoinRule::Invite }),
-            option { value: "public", "Any active Realm member" }
-            option { value: "knock", "Request approval" }
-            option { value: "invite", "Added by a Circle manager" }
+            option { value: "public", {crate::i18n::tr("circles.controls.public_join")} }
+            option { value: "knock", {crate::i18n::tr("circles.controls.knock_join")} }
+            option { value: "invite", {crate::i18n::tr("circles.controls.invite_join")} }
         }
     }
 }
@@ -34,12 +34,12 @@ fn self_transition(
 ) -> Option<(arkret_sdk::CircleMembership, &'static str)> {
     use arkret_sdk::{CircleJoinRule as Rule, CircleMembership as Member};
     match membership {
-        Some(Member::Join) => Some((Member::Leave, "Leave Circle")),
-        Some(Member::Knock) => Some((Member::Leave, "Withdraw request")),
+        Some(Member::Join) => Some((Member::Leave, "circles.controls.leave")),
+        Some(Member::Knock) => Some((Member::Leave, "circles.controls.withdraw")),
         Some(Member::Ban) => None,
         Some(Member::Leave) | None => match join_rule {
-            Rule::Public => Some((Member::Join, "Join Circle")),
-            Rule::Knock => Some((Member::Knock, "Request to join")),
+            Rule::Public => Some((Member::Join, "circles.controls.join")),
+            Rule::Knock => Some((Member::Knock, "circles.controls.request_join")),
             Rule::Invite => None,
         },
     }
@@ -61,10 +61,10 @@ pub(super) fn CircleSelfMembership(
     let session = crate::app::SessionContext::get();
     let base = crate::app::SessionContext::base_url_string();
     if terminal {
-        return rsx! { p { class: "muted", "This Circle is permanently unavailable." } };
+        return rsx! { p { class: "muted", {crate::i18n::tr("circles.controls.terminal_unavailable")} } };
     }
     let Some((target, label)) = self_transition(join_rule, membership) else {
-        return rsx! { p { class: "muted", "A Circle manager must grant access. Preview access does not include Circle content." } };
+        return rsx! { p { class: "muted", {crate::i18n::tr("circles.controls.manager_access")} } };
     };
     rsx! {
         button {
@@ -108,7 +108,7 @@ pub(super) fn CircleSelfMembership(
                     busy.set(false);
                 });
             },
-            "{label}"
+            {crate::i18n::tr(label)}
         }
     }
 }
@@ -136,15 +136,15 @@ pub(super) fn CircleEditForm(
     let base = crate::app::SessionContext::base_url_string();
     rsx! {
         details { class: "circle-edit", "data-testid": "circle-edit",
-            summary { "Edit Circle" }
-            p { class: "muted", "Changes require Circle management permission." }
+            summary { {crate::i18n::tr("circles.controls.edit")} }
+            p { class: "muted", {crate::i18n::tr("circles.controls.management_required")} }
             div { class: "workflow-form",
-                label { "Title" }
-                input { value: "{title}", "aria-label": "Circle title", oninput: move |event| title.set(event.value()) }
-                label { "Short name (ASCII, unique in this Realm)" }
-                input { value: "{short_name}", "aria-label": "Circle short name", oninput: move |event| short_name.set(event.value()) }
-                label { "Summary" }
-                textarea { value: "{summary}", "aria-label": "Circle summary", oninput: move |event| summary.set(event.value()) }
+                label { {crate::i18n::tr("circles.controls.title")} }
+                input { value: "{title}", "aria-label": crate::i18n::tr("circles.controls.title_aria"), oninput: move |event| title.set(event.value()) }
+                label { {crate::i18n::tr("circles.controls.short_name")} }
+                input { value: "{short_name}", "aria-label": crate::i18n::tr("circles.controls.short_name_aria"), oninput: move |event| short_name.set(event.value()) }
+                label { {crate::i18n::tr("circles.controls.summary")} }
+                textarea { value: "{summary}", "aria-label": crate::i18n::tr("circles.controls.summary_aria"), oninput: move |event| summary.set(event.value()) }
                 CirclePolicyFields { visibility, join_rule }
                 button {
                     class: "secondary", r#type: "button", "data-testid": "circle-edit-save",
@@ -171,7 +171,7 @@ pub(super) fn CircleEditForm(
                             busy.set(false);
                         });
                     },
-                    "Save changes"
+                    {crate::i18n::tr("circles.controls.save_changes")}
                 }
             }
         }
@@ -198,12 +198,12 @@ pub(super) fn CircleTerminalActions(
     }
     rsx! {
         details { class: "circle-edit", "data-testid": "circle-terminal-actions",
-            summary { "Irreversible changes" }
-            p { class: "muted", "These actions require Circle management permission and cannot be undone." }
+            summary { {crate::i18n::tr("circles.controls.irreversible")} }
+            p { class: "muted", {crate::i18n::tr("circles.controls.irreversible_permission")} }
             if state == arkret_sdk::CircleState::Active && history_access == arkret_sdk::HistoryAccess::AllHistoryForCurrentMembers {
                 label {
                     input { r#type: "checkbox", checked: history_confirm(), "data-testid": "circle-history-confirm", onchange: move |event| history_confirm.set(event.checked()) }
-                    "I understand history will be restricted to each member's join boundary."
+                    {crate::i18n::tr("circles.controls.history_confirm")}
                 }
                 button {
                     class: "secondary", r#type: "button", disabled: busy() || !history_confirm(), "data-testid": "circle-history-restrict",
@@ -228,12 +228,12 @@ pub(super) fn CircleTerminalActions(
                             });
                         }
                     },
-                    "Restrict history"
+                    {crate::i18n::tr("circles.controls.restrict_history")}
                 }
             }
             label {
                 input { r#type: "checkbox", checked: terminal_confirm(), "data-testid": "circle-tombstone-confirm", onchange: move |event| terminal_confirm.set(event.checked()) }
-                "I understand this Circle will become permanently unavailable."
+                {crate::i18n::tr("circles.controls.terminal_confirm")}
             }
             button {
                 class: "secondary danger", r#type: "button", disabled: busy() || !terminal_confirm(), "data-testid": "circle-tombstone",
@@ -252,7 +252,7 @@ pub(super) fn CircleTerminalActions(
                         busy.set(false);
                     });
                 },
-                "Permanently retire Circle"
+                {crate::i18n::tr("circles.controls.retire")}
             }
         }
     }
@@ -279,6 +279,281 @@ mod tests {
                 self_transition(rule, Some(Member::Knock)).unwrap().0,
                 Member::Leave
             );
+        }
+    }
+
+    use std::cell::RefCell;
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::rc::Rc;
+
+    use arkret_sdk::CircleDirectoryVisibility as Visibility;
+    use dioxus::prelude::*;
+
+    use crate::i18n::{I18nSignal, UiLocale};
+
+    type PolicyHandle = Rc<
+        RefCell<(
+            Option<I18nSignal>,
+            Option<Signal<Visibility>>,
+            Option<Signal<Rule>>,
+            usize,
+        )>,
+    >;
+
+    fn retained_policy_fields(handle: PolicyHandle) -> Element {
+        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
+        let visibility = use_signal(|| {
+            handle.borrow_mut().3 += 1;
+            Visibility::Members
+        });
+        let join_rule = use_signal(|| {
+            handle.borrow_mut().3 += 1;
+            Rule::Knock
+        });
+        {
+            let mut state = handle.borrow_mut();
+            state.0 = Some(locale);
+            state.1 = Some(visibility);
+            state.2 = Some(join_rule);
+        }
+        let label = self_transition(join_rule(), None)
+            .map(|(_, key)| key)
+            .unwrap_or("circles.controls.manager_access");
+        rsx! {
+            super::CirclePolicyFields { visibility, join_rule }
+            // The production typed transition helper is exercised without
+            // mounting session-dependent membership authoring lifecycle.
+            p { {crate::i18n::tr(label)} }
+            for membership in [Some(Member::Join), Some(Member::Knock)] {
+                p { {crate::i18n::tr(self_transition(join_rule(), membership).expect("joined and pending members can leave").1)} }
+            }
+        }
+    }
+
+    fn apply_policy_edits(
+        text: &mut BTreeMap<usize, String>,
+        attrs: &mut BTreeMap<(usize, &'static str), String>,
+        edits: dioxus::core::Mutations,
+    ) -> usize {
+        use dioxus::core::{AttributeValue, Mutation};
+        let mut changed = 0;
+        for edit in edits.edits {
+            match edit {
+                Mutation::CreateTextNode { id, value } | Mutation::SetText { id, value } => {
+                    text.insert(id.0, value);
+                    changed += 1;
+                }
+                Mutation::SetAttribute {
+                    id,
+                    name,
+                    value: AttributeValue::Text(value),
+                    ..
+                } => {
+                    attrs.insert((id.0, name), value);
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+
+    fn policy_option_values(dom: &VirtualDom, node: &dioxus::core::VNode) -> BTreeSet<String> {
+        fn visit(
+            dom: &VirtualDom,
+            node: &dioxus::core::VNode,
+            template: &dioxus::core::TemplateNode,
+            values: &mut BTreeSet<String>,
+        ) {
+            use dioxus::core::{DynamicNode, TemplateAttribute, TemplateNode};
+            match template {
+                TemplateNode::Element {
+                    tag,
+                    attrs,
+                    children,
+                    ..
+                } => {
+                    if *tag == "option" {
+                        for attr in *attrs {
+                            if let TemplateAttribute::Static {
+                                name: "value",
+                                value,
+                                ..
+                            } = attr
+                            {
+                                values.insert((*value).to_owned());
+                            }
+                        }
+                    }
+                    for child in *children {
+                        visit(dom, node, child, values);
+                    }
+                }
+                TemplateNode::Dynamic { id } => match &node.dynamic_nodes[*id] {
+                    DynamicNode::Fragment(children) => {
+                        for child in children {
+                            values.extend(policy_option_values(dom, child));
+                        }
+                    }
+                    DynamicNode::Component(component) => {
+                        let scope = component
+                            .mounted_scope(*id, node, dom)
+                            .expect("policy component is mounted");
+                        values.extend(policy_option_values(dom, scope.root_node()));
+                    }
+                    _ => {}
+                },
+                TemplateNode::Text { .. } => {}
+            }
+        }
+        let mut values = BTreeSet::new();
+        for root in node.template.roots {
+            visit(dom, node, root, &mut values);
+        }
+        values
+    }
+
+    #[test]
+    fn retained_circle_policy_labels_rerender_without_changing_typed_choices_or_membership_targets()
+    {
+        let handle = Rc::new(RefCell::new((None, None, None, 0)));
+        let mut dom = VirtualDom::new_with_props(retained_policy_fields, handle.clone());
+        let mut text = BTreeMap::new();
+        let mut attrs = BTreeMap::new();
+        apply_policy_edits(&mut text, &mut attrs, dom.rebuild_to_vec());
+        let mut locale = handle.borrow().0.expect("policy locale");
+        let mut visibility = handle.borrow().1.expect("typed visibility signal");
+        let mut join_rule = handle.borrow().2.expect("typed join-rule signal");
+        let visibility_id = attrs
+            .iter()
+            .find_map(|((id, name), value)| {
+                (*name == "aria-label" && value == "Circle directory visibility").then_some(*id)
+            })
+            .expect("production visibility select");
+        let join_rule_id = attrs
+            .iter()
+            .find_map(|((id, name), value)| {
+                (*name == "aria-label" && value == "Circle join rule").then_some(*id)
+            })
+            .expect("production join-rule select");
+        let wire_options = ["members", "realm_members", "public", "knock", "invite"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            policy_option_values(&dom, dom.base_scope().root_node()),
+            wire_options
+        );
+        for selected_visibility in [Visibility::Members, Visibility::RealmMembers] {
+            for selected_rule in [Rule::Public, Rule::Knock, Rule::Invite] {
+                dom.in_runtime(|| {
+                    visibility.set(selected_visibility);
+                    join_rule.set(selected_rule);
+                });
+                apply_policy_edits(&mut text, &mut attrs, dom.render_immediate_to_vec());
+                let english = text.clone();
+                let english_attrs = attrs.clone();
+                let target = self_transition(selected_rule, None).map(|(target, _)| target);
+                assert_eq!(
+                    target,
+                    match selected_rule {
+                        Rule::Public => Some(Member::Join),
+                        Rule::Knock => Some(Member::Knock),
+                        Rule::Invite => None,
+                    }
+                );
+                for language in [UiLocale::Zh, UiLocale::En] {
+                    dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
+                    assert!(
+                        apply_policy_edits(&mut text, &mut attrs, dom.render_immediate_to_vec())
+                            > 0
+                    );
+                    dom.in_runtime(|| {
+                        assert_eq!(visibility(), selected_visibility);
+                        assert_eq!(join_rule(), selected_rule);
+                    });
+                    assert_eq!(
+                        handle.borrow().3,
+                        2,
+                        "locale changes retain both typed signals"
+                    );
+                    assert_eq!(
+                        self_transition(selected_rule, None).map(|(target, _)| target),
+                        target
+                    );
+                    assert_eq!(
+                        self_transition(selected_rule, Some(Member::Leave))
+                            .map(|(target, _)| target),
+                        target
+                    );
+                    assert!(self_transition(selected_rule, Some(Member::Ban)).is_none());
+                    for membership in [Member::Join, Member::Knock] {
+                        assert_eq!(
+                            self_transition(selected_rule, Some(membership))
+                                .map(|(target, _)| target),
+                            Some(Member::Leave)
+                        );
+                    }
+                    assert_eq!(
+                        attrs.get(&(visibility_id, "value")).map(String::as_str),
+                        Some(if selected_visibility == Visibility::Members {
+                            "members"
+                        } else {
+                            "realm_members"
+                        })
+                    );
+                    assert_eq!(
+                        attrs.get(&(join_rule_id, "value")).map(String::as_str),
+                        Some(match selected_rule {
+                            Rule::Public => "public",
+                            Rule::Knock => "knock",
+                            Rule::Invite => "invite",
+                        })
+                    );
+                    assert_eq!(
+                        policy_option_values(&dom, dom.base_scope().root_node()),
+                        wire_options
+                    );
+                    if language == UiLocale::Zh {
+                        for expected in [
+                            "目录可见性",
+                            "仅 Circle 成员",
+                            "允许 Realm 成员预览",
+                            "加入规则",
+                            "任何有效的 Realm 成员",
+                            "申请批准",
+                            "由 Circle 管理者添加",
+                            "退出 Circle",
+                            "撤回申请",
+                        ] {
+                            assert!(
+                                text.values().any(|value| value == expected),
+                                "missing label: {expected}"
+                            );
+                        }
+                        assert_eq!(
+                            attrs
+                                .get(&(visibility_id, "aria-label"))
+                                .map(String::as_str),
+                            Some("Circle 目录可见性")
+                        );
+                        assert_eq!(
+                            attrs.get(&(join_rule_id, "aria-label")).map(String::as_str),
+                            Some("Circle 加入规则")
+                        );
+                        let expected = match selected_rule {
+                            Rule::Public => "加入 Circle",
+                            Rule::Knock => "申请加入",
+                            Rule::Invite => {
+                                "必须由 Circle 管理者授予访问权限。预览权限不包含 Circle 内容。"
+                            }
+                        };
+                        assert!(text.values().any(|value| value == expected));
+                    } else {
+                        assert_eq!(text, english);
+                        assert_eq!(attrs, english_attrs);
+                    }
+                }
+            }
         }
     }
 }

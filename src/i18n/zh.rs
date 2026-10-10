@@ -2121,6 +2121,150 @@ pub fn chinese_translations() -> TranslationDict {
         "原始 Strand：{strand}。仅限获授权读取此范围的成员。",
     );
 
+    dict.set("circles.page.state_active", "活跃");
+    dict.set("circles.page.state_archived", "已归档");
+    dict.set("circles.page.state_tombstoned", "已永久停用");
+    dict.set("circles.page.membership_join", "成员");
+    dict.set("circles.page.membership_knock", "已申请");
+    dict.set("circles.page.membership_leave", "已退出");
+    dict.set("circles.page.membership_ban", "已禁止加入");
+    dict.set("circles.page.membership_viewer", "目录浏览者");
+    dict.set("circles.page.encrypted", "独立 MLS 群组 · 已启用端到端加密");
+    dict.set(
+        "circles.page.unencrypted",
+        "限制投递范围 · 未启用端到端加密",
+    );
+    dict.set("circles.page.heading", "Circles");
+    dict.set("circles.page.new", "新建 Circle");
+    dict.set("circles.page.loading", "正在加载 Circles…");
+    dict.set("circles.page.empty", "暂无普通 Circle");
+    dict.set(
+        "circles.page.empty_help",
+        "创建 Circle，缩小协作范围。Agent 的私密对话不会显示在这里。",
+    );
+    dict.set("circles.page.preview", "Circle 预览");
+    dict.set("circles.page.directory", "目录");
+    dict.set("circles.page.membership", "成员关系");
+    dict.set("circles.page.your_access", "你的访问权限");
+    dict.set("circles.page.join_rule", "加入规则");
+    dict.set("circles.page.history", "历史记录");
+    dict.set("circles.page.encryption", "加密");
+    dict.set("circles.page.not_encrypted", "尚未启用端到端加密");
+    dict.set(
+        "circles.page.plaintext_warning",
+        "在此 Circle 自己的 MLS 初始事件被接受前，它只限制投递和查询范围。服务器仍可能读取明文。",
+    );
+    dict.set("circles.page.members", "成员");
+    dict.set(
+        "circles.page.members_private",
+        "只有当前 Circle 成员才能查看成员身份。",
+    );
+    dict.set("circles.page.remove", "移除");
+    dict.set("circles.page.add_member", "添加成员");
+    dict.set("circles.page.request", "申请加入");
+    dict.set("circles.page.leave", "退出");
+    dict.set("circles.page.ban", "禁止加入");
+    dict.set("circles.page.apply", "应用");
+    dict.set("circles.page.archive", "归档");
+    dict.set("circles.page.restore", "恢复");
+    dict.set("circles.page.directory_preview", "目录预览");
+    dict.set(
+        "circles.page.preview_private",
+        "加入此 Circle 后才能查看私密详情。",
+    );
+    dict.set("circles.page.select", "选择一个 Circle");
+    dict.set(
+        "circles.page.select_help",
+        "创建限定范围的内容前，请先确认成员和加密边界。",
+    );
+    dict.set("circles.page.create", "创建 Circle");
+    dict.set("circles.page.title", "标题");
+    dict.set(
+        "circles.page.short_name",
+        "简称（ASCII 字符，在此 Realm 内唯一）",
+    );
+    dict.set("circles.page.summary", "简介");
+    dict.set("circles.page.since_join", "加入之后");
+    dict.set("circles.page.all_history", "当前成员可查看全部历史");
+    dict.set("circles.page.e2ee", "端到端加密");
+    dict.set("circles.page.boundary_preview", "边界预览");
+    dict.set(
+        "circles.page.boundary_help",
+        "初始状态只限制投递范围。此 Circle 自己的 MLS 初始事件被接受后，才会启用端到端加密。",
+    );
+    dict.set("circles.page.nav_label", "普通 Circles");
+    dict.set("circles.page.actor_placeholder", "完整的成员 ActorId JSON");
+    dict.set("circles.page.actor_label", "Circle 成员 ActorId");
+    dict.set("circles.page.membership_state", "Circle 成员状态");
+    dict.set("circles.page.short_name_label", "Circle 简称");
+    dict.set("circles.page.history_label", "Circle 历史记录");
+    dict.set(
+        "circles.page.help",
+        "Circles 在此 Realm 内限制成员、历史记录、投递和加密范围。",
+    );
+    dict.set("circles.page.member_count", " · {count} 位成员");
+    dict.set("circles.page.preview_count", "{count} 位成员 · {rule}");
+    dict.set("circles.page.active_count", "{count} 位当前成员");
+    dict.set("circles.page.approximate_count", "{count}（约数）");
+    dict.set("circles.page.initial_member", "初始成员：{member}");
+    dict.set("circles.page.directory_value", "目录：{value}");
+    dict.set("circles.page.join_rule_value", "加入规则：{value}");
+    dict.set("circles.page.history_value", "历史记录：{value}");
+    dict.set("circles.controls.directory_visibility", "目录可见性");
+    dict.set(
+        "circles.controls.directory_visibility_aria",
+        "Circle 目录可见性",
+    );
+    dict.set("circles.controls.members_only", "仅 Circle 成员");
+    dict.set("circles.controls.realm_preview", "允许 Realm 成员预览");
+    dict.set("circles.controls.join_rule", "加入规则");
+    dict.set("circles.controls.join_rule_aria", "Circle 加入规则");
+    dict.set("circles.controls.public_join", "任何有效的 Realm 成员");
+    dict.set("circles.controls.knock_join", "申请批准");
+    dict.set("circles.controls.invite_join", "由 Circle 管理者添加");
+    dict.set("circles.controls.leave", "退出 Circle");
+    dict.set("circles.controls.withdraw", "撤回申请");
+    dict.set("circles.controls.join", "加入 Circle");
+    dict.set("circles.controls.request_join", "申请加入");
+    dict.set(
+        "circles.controls.terminal_unavailable",
+        "此 Circle 已永久不可用。",
+    );
+    dict.set(
+        "circles.controls.manager_access",
+        "必须由 Circle 管理者授予访问权限。预览权限不包含 Circle 内容。",
+    );
+    dict.set("circles.controls.edit", "编辑 Circle");
+    dict.set(
+        "circles.controls.management_required",
+        "修改需要 Circle 管理权限。",
+    );
+    dict.set("circles.controls.title", "标题");
+    dict.set("circles.controls.title_aria", "Circle 标题");
+    dict.set(
+        "circles.controls.short_name",
+        "短名（ASCII，在此 Realm 内唯一）",
+    );
+    dict.set("circles.controls.short_name_aria", "Circle 短名");
+    dict.set("circles.controls.summary", "简介");
+    dict.set("circles.controls.summary_aria", "Circle 简介");
+    dict.set("circles.controls.save_changes", "保存修改");
+    dict.set("circles.controls.irreversible", "不可撤销的修改");
+    dict.set(
+        "circles.controls.irreversible_permission",
+        "这些操作需要 Circle 管理权限，且无法撤销。",
+    );
+    dict.set(
+        "circles.controls.history_confirm",
+        "我了解历史记录将限制在每位成员自加入起的范围内。",
+    );
+    dict.set("circles.controls.restrict_history", "限制历史记录");
+    dict.set(
+        "circles.controls.terminal_confirm",
+        "我了解此 Circle 将变为永久不可用。",
+    );
+    dict.set("circles.controls.retire", "永久停用 Circle");
+
     add_r3_error_keys_zh(&mut dict);
     add_generic_error_keys_zh(&mut dict);
 

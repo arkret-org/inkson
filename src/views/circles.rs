@@ -18,30 +18,41 @@ fn valid_short_name(value: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, b' ' | b'_' | b'-'))
 }
 
-fn lifecycle_label(state: arkret_sdk::CircleState) -> &'static str {
+fn lifecycle_label(state: arkret_sdk::CircleState) -> String {
     match state {
-        arkret_sdk::CircleState::Active => "Active",
-        arkret_sdk::CircleState::Archived => "Archived",
-        arkret_sdk::CircleState::Tombstoned => "Tombstoned",
+        arkret_sdk::CircleState::Active => crate::i18n::tr("circles.page.state_active"),
+        arkret_sdk::CircleState::Archived => crate::i18n::tr("circles.page.state_archived"),
+        arkret_sdk::CircleState::Tombstoned => crate::i18n::tr("circles.page.state_tombstoned"),
     }
 }
 
-fn membership_label(state: Option<arkret_sdk::CircleMembership>) -> &'static str {
+fn membership_label(state: Option<arkret_sdk::CircleMembership>) -> String {
     match state {
-        Some(arkret_sdk::CircleMembership::Join) => "Member",
-        Some(arkret_sdk::CircleMembership::Knock) => "Requested",
-        Some(arkret_sdk::CircleMembership::Leave) => "Left",
-        Some(arkret_sdk::CircleMembership::Ban) => "Banned",
-        None => "Directory viewer",
+        Some(arkret_sdk::CircleMembership::Join) => crate::i18n::tr("circles.page.membership_join"),
+        Some(arkret_sdk::CircleMembership::Knock) => {
+            crate::i18n::tr("circles.page.membership_knock")
+        }
+        Some(arkret_sdk::CircleMembership::Leave) => {
+            crate::i18n::tr("circles.page.membership_leave")
+        }
+        Some(arkret_sdk::CircleMembership::Ban) => crate::i18n::tr("circles.page.membership_ban"),
+        None => crate::i18n::tr("circles.page.membership_viewer"),
     }
 }
 
-fn encryption_label(mls_group_id: Option<&str>) -> &'static str {
+fn encryption_label(mls_group_id: Option<&str>) -> String {
     if mls_group_id.is_some() {
-        "Independent MLS group · E2EE active"
+        crate::i18n::tr("circles.page.encrypted")
     } else {
-        "Restricted delivery · not E2EE"
+        crate::i18n::tr("circles.page.unencrypted")
     }
+}
+
+fn initial_member_label(principal: &str) -> String {
+    crate::i18n::tr_args(
+        "circles.page.initial_member",
+        &[("member", principal.to_owned())],
+    )
 }
 
 fn preview_member_count(bucket: arkret_sdk::CircleMemberCountBucket) -> &'static str {
@@ -138,22 +149,22 @@ pub fn CirclesPanel(
     rsx! {
         main { class: "circle-realm", "data-testid": "circles-panel",
             header { class: "circle-realm-header",
-                h1 { "Circles" }
-                HelpTip { text: "Circles restrict membership, history, delivery and encryption inside this Realm." }
+                h1 { {crate::i18n::tr("circles.page.heading")} }
+                HelpTip { text: crate::i18n::tr("circles.page.help") }
                 div { class: "actions",
                     button {
                         class: "secondary",
                         r#type: "button",
                         disabled: busy(),
                         onclick: move |_| refresh += 1,
-                        "Refresh"
+                        {crate::i18n::tr("common.refresh")}
                     }
                     button {
                         class: "primary",
                         r#type: "button",
                         "data-testid": "circle-create-open",
                         onclick: move |_| create_open.set(true),
-                        "New Circle"
+                        {crate::i18n::tr("circles.page.new")}
                     }
                 }
             }
@@ -171,13 +182,13 @@ pub fn CirclesPanel(
             }
 
             div { class: "circle-realm-grid",
-                nav { class: "circle-list", "aria-label": "Ordinary Circles",
+                nav { class: "circle-list", "aria-label": crate::i18n::tr("circles.page.nav_label"),
                     if loading() {
-                        p { class: "muted", "Loading Circles…" }
+                        p { class: "muted", {crate::i18n::tr("circles.page.loading")} }
                     } else if circles().is_empty() && previews().is_empty() {
                         div { class: "circle-empty",
-                            h2 { "No ordinary Circles" }
-                            p { class: "muted", "Create a Circle for a smaller collaboration boundary. Agent Sidecars never appear here." }
+                            h2 { {crate::i18n::tr("circles.page.empty")} }
+                            p { class: "muted", {crate::i18n::tr("circles.page.empty_help")} }
                         }
                     } else {
                         for circle in circles() {
@@ -195,7 +206,7 @@ pub fn CirclesPanel(
                                 }
                                 span { class: "muted",
                                     CircleIdentityBadge { color: circle.display.color_token, symbol: circle.display.symbol.clone(), short_name: circle.display.short_name.clone() }
-                                    " · {circle.member_ids.len()} members"
+                                    {crate::i18n::tr_args("circles.page.member_count", &[("count", circle.member_ids.len().to_string())])}
                                 }
                                 span { class: "muted", "{encryption_label(circle.mls_group_id.as_deref())}" }
                             }
@@ -210,11 +221,11 @@ pub fn CirclesPanel(
                                     circle_id: preview.circle_id.to_string(),
                                 },
                                 div { class: "circle-list-item-head",
-                                    strong { "Circle preview" }
-                                    span { class: "pill", "Directory" }
+                                    strong { {crate::i18n::tr("circles.page.preview")} }
+                                    span { class: "pill", {crate::i18n::tr("circles.page.directory")} }
                                 }
                                 CircleIdentityBadge { color: preview.display.color_token, symbol: preview.display.symbol.clone() }
-                                span { class: "muted", "{preview_member_count(preview.member_count_bucket)} members · {preview.join_rule:?}" }
+                                span { class: "muted", {crate::i18n::tr_args("circles.page.preview_count", &[("count", preview_member_count(preview.member_count_bucket).to_owned()), ("rule", format!("{:?}", preview.join_rule))])} }
                             }
                         }
                     }
@@ -233,20 +244,20 @@ pub fn CirclesPanel(
                             span { class: "pill", "{lifecycle_label(circle.state)}" }
                         }
                         div { class: "circle-boundary-grid",
-                            div { strong { "Membership" } span {
-                                "{circle.member_ids.len()} active members"
+                            div { strong { {crate::i18n::tr("circles.page.membership")} } span {
+                                {crate::i18n::tr_args("circles.page.active_count", &[("count", circle.member_ids.len().to_string())])}
                             } }
-                            div { strong { "Your access" } span { "{membership_label(circle.viewer_membership)}" } }
-                            div { strong { "Join rule" } span { "{circle.join_rule:?}" } }
-                            div { strong { "History" } span { "{circle.history_access:?}" } }
-                            div { strong { "Directory" } span { "{circle.directory_visibility:?}" } }
-                            div { strong { "Encryption" } span { "{encryption_label(circle.mls_group_id.as_deref())}" } }
+                            div { strong { {crate::i18n::tr("circles.page.your_access")} } span { "{membership_label(circle.viewer_membership)}" } }
+                            div { strong { {crate::i18n::tr("circles.page.join_rule")} } span { "{circle.join_rule:?}" } }
+                            div { strong { {crate::i18n::tr("circles.page.history")} } span { "{circle.history_access:?}" } }
+                            div { strong { {crate::i18n::tr("circles.page.directory")} } span { "{circle.directory_visibility:?}" } }
+                            div { strong { {crate::i18n::tr("circles.page.encryption")} } span { "{encryption_label(circle.mls_group_id.as_deref())}" } }
                         }
 
                         if circle.mls_group_id.is_none() {
                             div { class: "circle-security-warning",
-                                strong { "Not end-to-end encrypted" }
-                                p { "This Circle remains a restricted delivery and query boundary until its own MLS genesis is accepted. The server may read plaintext." }
+                                strong { {crate::i18n::tr("circles.page.not_encrypted")} }
+                                p { {crate::i18n::tr("circles.page.plaintext_warning")} }
                             }
                         }
 
@@ -271,9 +282,9 @@ pub fn CirclesPanel(
                             principal_id: principal_id.clone(), token, busy, refresh, status,
                         }
                         section { class: "circle-members-section",
-                            h3 { "Members" }
+                            h3 { {crate::i18n::tr("circles.page.members")} }
                             if circle.member_ids.is_empty() {
-                                p { class: "muted", "Member identities are available only to active Circle members." }
+                                p { class: "muted", {crate::i18n::tr("circles.page.members_private")} }
                             } else {
                                 for member in circle.member_ids.iter() {
                                     div { class: "circle-member-row", key: "{member}",
@@ -314,7 +325,7 @@ pub fn CirclesPanel(
                                                     });
                                                 }
                                             },
-                                            "Remove"
+                                            {crate::i18n::tr("circles.page.remove")}
                                         }
                                     }
                                 }
@@ -323,21 +334,21 @@ pub fn CirclesPanel(
                                 input {
                                     r#type: "text",
                                     value: "{member_actor}",
-                                    placeholder: "Complete member ActorId JSON",
-                                    "aria-label": "Circle member ActorId",
+                                    placeholder: crate::i18n::tr("circles.page.actor_placeholder"),
+                                    "aria-label": crate::i18n::tr("circles.page.actor_label"),
                                     oninput: move |event| member_actor.set(event.value()),
                                 }
                                 select {
                                     value: "{member_state}",
-                                    "aria-label": "Circle membership state",
+                                    "aria-label": crate::i18n::tr("circles.page.membership_state"),
                                     onchange: move |event| member_state.set(event.value()),
 
-                                    option { value: "join", "Add member" }
+                                    option { value: "join", {crate::i18n::tr("circles.page.add_member")} }
                                     if circle.join_rule == arkret_sdk::CircleJoinRule::Knock {
-                                        option { value: "knock", "Request (knock)" }
+                                        option { value: "knock", {crate::i18n::tr("circles.page.request")} }
                                     }
-                                    option { value: "leave", "Leave" }
-                                    option { value: "ban", "Ban" }
+                                    option { value: "leave", {crate::i18n::tr("circles.page.leave")} }
+                                    option { value: "ban", {crate::i18n::tr("circles.page.ban")} }
                                 }
                                 button {
                                     class: "secondary",
@@ -383,7 +394,7 @@ pub fn CirclesPanel(
                                             });
                                         }
                                     },
-                                    "Apply"
+                                    {crate::i18n::tr("circles.page.apply")}
                                 }
                             }
                         }
@@ -418,7 +429,7 @@ pub fn CirclesPanel(
                                             });
                                         }
                                     },
-                                    "Archive"
+                                    {crate::i18n::tr("circles.page.archive")}
                                 }
                             } else if circle.state == arkret_sdk::CircleState::Archived {
                                 button {
@@ -449,16 +460,16 @@ pub fn CirclesPanel(
                                             });
                                         }
                                     },
-                                    "Restore"
+                                    {crate::i18n::tr("circles.page.restore")}
                                 }
                             }
                         }
                     } else if let Some(preview) = selected_preview {
                         div { class: "circle-detail-heading",
                             div {
-                                p { class: "eyebrow", "Directory preview" }
-                                h2 { "Circle preview" }
-                                p { class: "muted", "Private details are visible after joining this Circle." }
+                                p { class: "eyebrow", {crate::i18n::tr("circles.page.directory_preview")} }
+                                h2 { {crate::i18n::tr("circles.page.preview")} }
+                                p { class: "muted", {crate::i18n::tr("circles.page.preview_private")} }
                             }
                         }
                         CircleSelfMembership {
@@ -468,13 +479,13 @@ pub fn CirclesPanel(
                             token, busy, refresh, status,
                         }
                         div { class: "circle-boundary-grid",
-                            div { strong { "Members" } span { "{preview_member_count(preview.member_count_bucket)} (approximate)" } }
-                            div { strong { "Join rule" } span { "{preview.join_rule:?}" } }
+                            div { strong { {crate::i18n::tr("circles.page.members")} } span { {crate::i18n::tr_args("circles.page.approximate_count", &[("count", preview_member_count(preview.member_count_bucket).to_owned())])} } }
+                            div { strong { {crate::i18n::tr("circles.page.join_rule")} } span { "{preview.join_rule:?}" } }
                         }
                     } else {
                         div { class: "circle-empty",
-                            h2 { "Select a Circle" }
-                            p { class: "muted", "Review the exact membership and encryption boundary before creating scoped content." }
+                            h2 { {crate::i18n::tr("circles.page.select")} }
+                            p { class: "muted", {crate::i18n::tr("circles.page.select_help")} }
                         }
                     }
                 }
@@ -484,41 +495,41 @@ pub fn CirclesPanel(
                 div { class: "discussion-modal-backdrop", "data-testid": "circle-create-modal",
                     div { class: "discussion-modal circle-create-modal",
                         div { class: "discussion-modal-head",
-                            h2 { "Create Circle" }
-                            button { class: "secondary", r#type: "button", onclick: move |_| create_open.set(false), "Cancel" }
+                            h2 { {crate::i18n::tr("circles.page.create")} }
+                            button { class: "secondary", r#type: "button", onclick: move |_| create_open.set(false), {crate::i18n::tr("common.cancel")} }
                         }
                         div { class: "workflow-form",
-                            label { "Title" }
+                            label { {crate::i18n::tr("circles.page.title")} }
                             input { r#type: "text", value: "{create_title}", oninput: move |event| create_title.set(event.value()), "data-testid": "circle-create-title" }
-                            label { "Short name (ASCII, unique in this Realm)" }
+                            label { {crate::i18n::tr("circles.page.short_name")} }
                             input {
-                                value: "{create_short_name}", "aria-label": "Circle short name",
+                                value: "{create_short_name}", "aria-label": crate::i18n::tr("circles.page.short_name_label"),
                                 "data-testid": "circle-create-short-name",
                                 oninput: move |event| create_short_name.set(event.value()),
                             }
-                            label { "Summary" }
+                            label { {crate::i18n::tr("circles.page.summary")} }
                             textarea { value: "{create_summary}", oninput: move |event| create_summary.set(event.value()) }
                             CirclePolicyFields { visibility: create_visibility, join_rule: create_join_rule }
-                            label { "History" }
+                            label { {crate::i18n::tr("circles.page.history")} }
                             select {
-                                "aria-label": "Circle history", value: if create_history() == arkret_sdk::HistoryAccess::SinceJoin { "since_join" } else { "all_history_for_current_members" },
+                                "aria-label": crate::i18n::tr("circles.page.history_label"), value: if create_history() == arkret_sdk::HistoryAccess::SinceJoin { "since_join" } else { "all_history_for_current_members" },
                                 onchange: move |event| create_history.set(if event.value() == "since_join" { arkret_sdk::HistoryAccess::SinceJoin } else { arkret_sdk::HistoryAccess::AllHistoryForCurrentMembers }),
-                                option { value: "since_join", "Since joining" }
-                                option { value: "all_history_for_current_members", "All history for current members" }
+                                option { value: "since_join", {crate::i18n::tr("circles.page.since_join")} }
+                                option { value: "all_history_for_current_members", {crate::i18n::tr("circles.page.all_history")} }
                             }
                             label {
                                 input { r#type: "checkbox", checked: create_encrypted(),
                                     "data-testid": "circle-create-encrypted",
                                     onchange: move |event| create_encrypted.set(event.checked()) }
-                                "End-to-end encryption"
+                                {crate::i18n::tr("circles.page.e2ee")}
                             }
                             div { class: "circle-boundary-preview",
-                                strong { "Boundary preview" }
-                                p { "Initial member: {principal_id}" }
-                                p { "Directory: {create_visibility():?}" }
-                                p { "Join rule: {create_join_rule():?}" }
-                                p { "History: {create_history():?}" }
-                                p { "Starts as restricted delivery only. E2EE becomes active only after this Circle's own MLS genesis is accepted." }
+                                strong { {crate::i18n::tr("circles.page.boundary_preview")} }
+                                p { {initial_member_label(&principal_id)} }
+                                p { {crate::i18n::tr_args("circles.page.directory_value", &[("value", format!("{:?}", create_visibility()))])} }
+                                p { {crate::i18n::tr_args("circles.page.join_rule_value", &[("value", format!("{:?}", create_join_rule()))])} }
+                                p { {crate::i18n::tr_args("circles.page.history_value", &[("value", format!("{:?}", create_history()))])} }
+                                p { {crate::i18n::tr("circles.page.boundary_help")} }
                             }
                         }
                         div { class: "discussion-modal-actions",
@@ -639,7 +650,7 @@ pub fn CirclesPanel(
                                         });
                                     }
                                 },
-                                "Create Circle"
+                                {crate::i18n::tr("circles.page.create")}
                             }
                         }
                     }
@@ -670,5 +681,128 @@ mod tests {
             "Independent MLS group · E2EE active"
         );
         assert_eq!(encryption_label(None), "Restricted delivery · not E2EE");
+    }
+}
+
+#[cfg(test)]
+mod locale_tests {
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+
+    use super::*;
+    use crate::i18n::{I18nSignal, UiLocale};
+
+    type LocaleHandle = Rc<RefCell<(Option<I18nSignal>, usize)>>;
+
+    fn retained_circle_labels(handle: LocaleHandle) -> Element {
+        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
+        handle.borrow_mut().0 = Some(locale);
+        let original = use_signal(move || {
+            handle.borrow_mut().1 += 1;
+            "circles.page.membership_join {member} 原文".to_owned()
+        });
+        let raw = original();
+        // Render the same production helpers as the Circle list and create preview.
+        // No session-dependent controls or authoring lifecycle are mounted here.
+        rsx! {
+            div {
+                for state in [arkret_sdk::CircleState::Active, arkret_sdk::CircleState::Archived, arkret_sdk::CircleState::Tombstoned] {
+                    p { {lifecycle_label(state)} }
+                }
+                for membership in [Some(arkret_sdk::CircleMembership::Join), Some(arkret_sdk::CircleMembership::Knock), Some(arkret_sdk::CircleMembership::Leave), Some(arkret_sdk::CircleMembership::Ban), None] {
+                    p { {membership_label(membership)} }
+                }
+                p { {encryption_label(Some(&raw))} }
+                p { {encryption_label(None)} }
+                p { {initial_member_label(&raw)} }
+                p { "{raw}" }
+            }
+        }
+    }
+
+    fn apply_text_edits(
+        text: &mut BTreeMap<usize, String>,
+        edits: dioxus::core::Mutations,
+    ) -> usize {
+        let mut changed = 0;
+        for edit in edits.edits {
+            match edit {
+                dioxus::core::Mutation::CreateTextNode { id, value }
+                | dioxus::core::Mutation::SetText { id, value } => {
+                    text.insert(id.0, value);
+                    changed += 1;
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+
+    #[test]
+    fn retained_circle_labels_rerender_typed_boundaries_without_translating_original_parameters() {
+        let handle = Rc::new(RefCell::new((None, 0)));
+        let mut dom = VirtualDom::new_with_props(retained_circle_labels, handle.clone());
+        let mut text = BTreeMap::new();
+        assert!(apply_text_edits(&mut text, dom.rebuild_to_vec()) > 0);
+        let english = text.clone();
+        let raw = "circles.page.membership_join {member} 原文";
+        for expected in [
+            "Active",
+            "Archived",
+            "Tombstoned",
+            "Member",
+            "Requested",
+            "Left",
+            "Banned",
+            "Directory viewer",
+            "Independent MLS group · E2EE active",
+            "Restricted delivery · not E2EE",
+        ] {
+            assert!(
+                text.values().any(|value| value == expected),
+                "missing label: {expected}"
+            );
+        }
+        assert!(
+            text.values()
+                .any(|value| value == &format!("Initial member: {raw}"))
+        );
+        let mut locale = handle.borrow().0.expect("Circle labels provide locale");
+        for language in [UiLocale::Zh, UiLocale::En] {
+            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
+            assert!(apply_text_edits(&mut text, dom.render_immediate_to_vec()) > 0);
+            assert!(text.values().any(|value| value == raw));
+            assert_eq!(
+                handle.borrow().1,
+                1,
+                "the original signal must survive locale changes"
+            );
+            if language == UiLocale::Zh {
+                for expected in [
+                    "活跃",
+                    "已归档",
+                    "已永久停用",
+                    "成员",
+                    "已申请",
+                    "已退出",
+                    "已禁止加入",
+                    "目录浏览者",
+                    "独立 MLS 群组 · 已启用端到端加密",
+                    "限制投递范围 · 未启用端到端加密",
+                ] {
+                    assert!(
+                        text.values().any(|value| value == expected),
+                        "missing label: {expected}"
+                    );
+                }
+                assert!(
+                    text.values()
+                        .any(|value| value == &format!("初始成员：{raw}"))
+                );
+            } else {
+                assert_eq!(text, english);
+            }
+        }
     }
 }
