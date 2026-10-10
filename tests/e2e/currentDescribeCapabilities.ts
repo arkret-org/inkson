@@ -7,7 +7,10 @@ export const DIRECTORY_PUBLIC_READ_BUNDLE =
 export const DIRECTORY_DESCRIBE_BUNDLE =
   "ak.operation_bundle.directory_service.describe.v1";
 
-export function currentHttpDescribeCapabilities(operationBundleIds, baseUrl) {
+export function currentHttpDescribeCapabilities(
+  operationBundleIds: readonly string[],
+  baseUrl?: string | null,
+) {
   return {
     supported_operation_bundles: [...operationBundleIds],
     transport_bindings: [

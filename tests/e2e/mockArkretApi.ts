@@ -66,7 +66,10 @@ type StrandProjection = {
   board_space_id?: string;
   list_space_id?: string;
   rank?: string;
-  assigned_actor_ids?: string[];
+  assigned_actor_ids?: Array<{
+    kind: "account";
+    account_id: { principal_id: string; station_id: string };
+  }>;
   fields?: Record<string, unknown>;
 };
 
@@ -218,7 +221,7 @@ const streamScanOperationId = "ak.self.committed_event.read.scan.v1";
 const streamScanCapabilityDeniedDescriptor = (() => {
   const descriptor = activeMockErrorDescriptor("capability_denied");
   const operations = mockOperationErrorMapping.operations.filter((operation) => operation.operation_id === streamScanOperationId);
-  const universalCodes = mockOperationErrorMapping.rules.universal_codes.match(/[a-z][a-z0-9_]+/g) ?? [];
+  const universalCodes: string[] = mockOperationErrorMapping.rules.universal_codes.match(/[a-z][a-z0-9_]+/g) ?? [];
   if (operations.length !== 1 || !universalCodes.includes(descriptor.code)) {
     throw new Error(`stream scan capability denial is not registered for ${streamScanOperationId}`);
   }
@@ -581,7 +584,7 @@ export async function mockArkretApi(
   // through this one value rather than spelling the shape again.
   const accountActorId = { kind: "account", account_id: accountId };
   const accountActorIdFor = (principalCoreId: string) => ({
-    kind: "account",
+    kind: "account" as const,
     account_id: { principal_id: principalCoreId, station_id: CURRENT_STATION_ID },
   });
   const primaryHandle =
@@ -2496,7 +2499,7 @@ export async function mockArkretApi(
       const fixture = nativeFixtures.get(url.searchParams.get("realm_id") ?? "");
       return fixture ? json(route, fixture.snapshot) : snapshotUnavailable(route);
     }
-    if (url.pathname.startsWith("/_arkret/self/realm-state-snapshot/") && route.request().method() === "GET") {
+    if (/^\/_arkret\/self\/realm-state-snapshot\/[^/]+$/.test(url.pathname) && route.request().method() === "GET") {
       const fixture = nativeFixtures.get(url.searchParams.get("realm_id") ?? "");
       return fixture && fixture.snapshot.snapshot_id === decodeURIComponent(url.pathname.split("/").at(-1) ?? "") ? json(route, fixture.snapshot) : snapshotUnavailable(route);
     }
@@ -3350,12 +3353,20 @@ export async function mockArkretApi(
       // Both active and paused agents may replace without a forced pause; the
       // branch is bootstrap for a never-keyed agent, replacement otherwise
       // (key-management.md §3.6.1).
-      const keyState = {
+      const keyState: Record<string, unknown> = {
         ...(personalAgentKeyStates.get(agentId) ?? {}),
         pairing_request_id: `pair-renew-${personalAgentCounter}`,
         pairing_code: "13579100",
         pairing_expires_at: renewedExpiresAt,
       };
+      const controllerAccount = keyState.controller_account_id;
+      if (
+        typeof controllerAccount !== "object" || controllerAccount === null ||
+        !("principal_id" in controllerAccount) ||
+        typeof controllerAccount.principal_id !== "string"
+      ) {
+        throw new Error("Agent key renewal requires its accepted controller Account");
+      }
       personalAgents.set(agentId, {
         ...agent,
         updated_at: "2026-07-06T00:30:00.000Z",
@@ -3367,7 +3378,7 @@ export async function mockArkretApi(
         controller_authorization_ref: keyState.controller_authorization_ref,
         requested_scope_digest: canonicalSha256({
           agent_id: keyState.agent_id,
-          controller_principal_id: keyState.controller_account_id.principal_id,
+          controller_principal_id: controllerAccount.principal_id,
           kind: "ak.agent.requested_scope_commitment.v1",
           requested_scope: keyState.requested_scope,
         }),
