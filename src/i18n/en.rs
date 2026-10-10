@@ -2002,6 +2002,100 @@ pub fn english_translations() -> TranslationDict {
     // policy). The HTTP error reply carries a stable
     // `code` / `reason` field that the toast layer maps via these
     // keys. zh translations follow in `chinese_translations()`.
+    dict.set("dashboard.object_state.active", "active");
+    dict.set("dashboard.object_state.archived", "archived");
+    dict.set("dashboard.object_state.redacted", "redacted");
+    dict.set("dashboard.contacts_loading", "Loading contacts");
+    dict.set("dashboard.contacts_unavailable", "Contacts unavailable");
+    dict.set("dashboard.active_strands", "Active strands");
+    dict.set("dashboard.open_board_view", "Open Board view");
+    dict.set("dashboard.realm_setup", "Realm Setup");
+    dict.set("dashboard.ready", "Ready");
+    dict.set("dashboard.sign_in", "Sign in");
+    dict.set(
+        "dashboard.setup_help",
+        "Bootstrap your first Realm and initial policy",
+    );
+    dict.set("dashboard.onboarding", "Onboarding");
+    dict.set("dashboard.onboarding_steps", "4 steps");
+    dict.set(
+        "dashboard.onboarding_help",
+        "Identity, device, and recovery setup",
+    );
+    dict.set("dashboard.recent_strands", "Recent Strands");
+    dict.set("dashboard.strand_title", "Title");
+    dict.set("dashboard.strand_space", "Space");
+    dict.set("dashboard.strand_state", "State");
+    dict.set("dashboard.strand_updated", "Updated");
+    dict.set("dashboard.strands_empty", "No recent strands loaded");
+    dict.set("dashboard.strands_signin", "Sign in to load recent strands");
+    dict.set("dashboard.current_board", "Current Board");
+    dict.set("dashboard.recent_activity", "Recent Activity");
+    dict.set("dashboard.activity_empty", "empty");
+    dict.set("dashboard.no_activity", "No activity loaded");
+    dict.set("dashboard.no_session_activity", "No session activity");
+    dict.set(
+        "dashboard.activity_sync_help",
+        "Sync has not returned recent events.",
+    );
+    dict.set(
+        "dashboard.activity_signin_help",
+        "Activity appears after authenticated sync.",
+    );
+    dict.set("dashboard.client_status", "Client Status");
+    dict.set("dashboard.sync_frontier", "Sync frontier");
+    dict.set("dashboard.loaded", "loaded");
+    dict.set("dashboard.not_connected", "not connected");
+    dict.set("dashboard.event_frontier", "Event frontier");
+    dict.set("dashboard.station_reported", "Station reported");
+    dict.set("dashboard.not_loaded", "Not loaded");
+    dict.set("dashboard.queued_writes", "Queued writes");
+    dict.set("dashboard.local_replay_queue", "local replay queue");
+    dict.set("dashboard.advanced_diagnostics", "Advanced Diagnostics");
+    dict.set("dashboard.checking_health", "Checking health");
+    dict.set("dashboard.run_health_checks", "Run health checks");
+    dict.set("dashboard.health_help", "Run checks after changing the Station. Collaboration starts in Spaces; operational checks stay here.");
+    dict.set("dashboard.realm_remark", "Remark");
+    dict.set("dashboard.client_status_help", "Operational status stays visible, but separate tool pages are no longer promoted in the main navigation.");
+    dict.set("dashboard.snapshot_lower_trust", "lower-trust");
+    dict.set("dashboard.snapshot_degraded", "degraded");
+    dict.set("dashboard.open_board", "Open Board");
+    dict.set(
+        "dashboard.contacts_delta",
+        "Pending {pending} · Direct {direct}",
+    );
+    dict.set("dashboard.notification_kind.message", "message");
+    dict.set("dashboard.notification_kind.mention", "mention");
+    dict.set("dashboard.notification_kind.reply", "reply");
+    dict.set("dashboard.notification_kind.assignment", "assignment");
+    dict.set("dashboard.notification_kind.schedule", "schedule");
+    dict.set("dashboard.notification_kind.invite", "invite");
+    dict.set("dashboard.notification_kind.reaction", "reaction");
+    dict.set("dashboard.notification_kind.policy", "policy");
+    dict.set("dashboard.notification_kind.call", "call");
+    dict.set("dashboard.notification_kind.applet", "applet");
+    dict.set("dashboard.notification_kind.agent", "agent");
+    dict.set("dashboard.notification_kind.moderation", "moderation");
+    dict.set("dashboard.notification_kind.system", "system");
+    dict.set("dashboard.health.describe", "Describe");
+    dict.set("dashboard.health.sync", "Sync");
+    dict.set("dashboard.health.identity", "Identity");
+    dict.set("dashboard.health.api", "API");
+    dict.set("dashboard.health.service", "{service} v{version}");
+    dict.set("dashboard.health.profiles", "{count} profiles");
+    dict.set("dashboard.health.error", "Error: {error}");
+    dict.set("search.index", "Search index");
+    dict.set("search.back", "Back to dashboard");
+    dict.set("search.no_body", "<no body>");
+    dict.set("search.open_task", "Open task");
+    dict.set("search.open_message", "Open message");
+    dict.set("search.open", "Open");
+    dict.set(
+        "search.account_unavailable",
+        "The active account is unavailable. Sign in again to search.",
+    );
+    dict.set("search.kind.message", "Message");
+
     add_r3_error_keys(&mut dict);
     add_generic_error_keys(&mut dict);
 

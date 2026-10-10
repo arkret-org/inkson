@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use arkret_sdk::contact_operations::ContactScope;
 use dioxus::prelude::*;
 use dioxus_router::Link;
@@ -18,6 +20,7 @@ struct DashboardNotificationSummary {
     body: String,
     body_translation: Option<(&'static str, Vec<(&'static str, String)>)>,
     kind: String,
+    kind_label_key: &'static str,
     timestamp: String,
     read: bool,
 }
@@ -55,9 +58,79 @@ impl DashboardContactsSummary {
 
 fn projection_object_state_label(state: &arkret_sdk::ObjectState) -> &'static str {
     match state {
-        arkret_sdk::ObjectState::Active => "active",
-        arkret_sdk::ObjectState::Archived => "archived",
-        arkret_sdk::ObjectState::Redacted => "redacted",
+        arkret_sdk::ObjectState::Active => "dashboard.object_state.active",
+        arkret_sdk::ObjectState::Archived => "dashboard.object_state.archived",
+        arkret_sdk::ObjectState::Redacted => "dashboard.object_state.redacted",
+    }
+}
+
+fn dashboard_realm_description(description: Option<&str>) -> String {
+    description
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| tr("dashboard.open_board"))
+}
+
+#[derive(Clone)]
+enum DashboardHealthValue {
+    Service {
+        service: arkret_sdk::ServiceKind,
+        version: arkret_sdk::ServiceProtocolVersion,
+    },
+    Profiles(usize),
+    EndpointError(String),
+    ApiError(Rc<crate::transport::auth::ApiCallError>),
+}
+
+impl DashboardHealthValue {
+    fn render(&self) -> String {
+        match self {
+            Self::Service { service, version } => crate::i18n::tr_args(
+                "dashboard.health.service",
+                &[
+                    ("service", service.to_string()),
+                    ("version", version.to_string()),
+                ],
+            ),
+            Self::Profiles(count) => {
+                crate::i18n::tr_args("dashboard.health.profiles", &[("count", count.to_string())])
+            }
+            Self::EndpointError(error) => {
+                crate::i18n::tr_args("dashboard.health.error", &[("error", error.clone())])
+            }
+            Self::ApiError(error) => {
+                crate::i18n::tr_args("dashboard.health.error", &[("error", error.display())])
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+struct DashboardHealthCheck {
+    name_key: &'static str,
+    value: DashboardHealthValue,
+}
+
+impl DashboardHealthCheck {
+    fn new(name_key: &'static str, value: DashboardHealthValue) -> Self {
+        Self { name_key, value }
+    }
+}
+
+fn dashboard_notification_kind_key(kind: &arkret_sdk::NotificationKind) -> &'static str {
+    match kind {
+        arkret_sdk::NotificationKind::Message => "dashboard.notification_kind.message",
+        arkret_sdk::NotificationKind::Mention => "dashboard.notification_kind.mention",
+        arkret_sdk::NotificationKind::Reply => "dashboard.notification_kind.reply",
+        arkret_sdk::NotificationKind::Assignment => "dashboard.notification_kind.assignment",
+        arkret_sdk::NotificationKind::Schedule => "dashboard.notification_kind.schedule",
+        arkret_sdk::NotificationKind::Invite => "dashboard.notification_kind.invite",
+        arkret_sdk::NotificationKind::Reaction => "dashboard.notification_kind.reaction",
+        arkret_sdk::NotificationKind::Policy => "dashboard.notification_kind.policy",
+        arkret_sdk::NotificationKind::Call => "dashboard.notification_kind.call",
+        arkret_sdk::NotificationKind::Applet => "dashboard.notification_kind.applet",
+        arkret_sdk::NotificationKind::Agent => "dashboard.notification_kind.agent",
+        arkret_sdk::NotificationKind::Moderation => "dashboard.notification_kind.moderation",
+        arkret_sdk::NotificationKind::System => "dashboard.notification_kind.system",
     }
 }
 
@@ -75,11 +148,11 @@ pub fn DashboardPanel(
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
-    let mut protocol_health = use_signal(Vec::<(String, String)>::new);
+    let mut protocol_health = use_signal(Vec::<DashboardHealthCheck>::new);
     let mut health_loading = use_signal(|| false);
     let mut contacts_summary = use_signal(Option::<DashboardContactsSummary>::default);
     let mut contacts_loaded_for = use_signal(String::new);
-    let mut contacts_status = use_signal(String::new);
+    let mut contacts_status = use_signal(Option::<&'static str>::default);
     let has_session = !token().trim().is_empty();
     let sync_cursor_label = short_protocol_id(&sync_cursor);
     let frontier_state_label = short_protocol_id(&frontier_state);
@@ -153,7 +226,7 @@ pub fn DashboardPanel(
         if contacts_loaded_for() != contacts_load_key {
             contacts_loaded_for.set(contacts_load_key);
             contacts_summary.set(None);
-            contacts_status.set("Loading contacts".to_owned());
+            contacts_status.set(Some("dashboard.contacts_loading"));
             let base = base_url.clone();
             spawn(async move {
                 match crate::transport::auth::with_endpoint_clients(
@@ -166,22 +239,22 @@ pub fn DashboardPanel(
                 {
                     Ok(response) => {
                         contacts_summary.set(Some(dashboard_contacts_summary(&response.contacts)));
-                        contacts_status.set(String::new());
+                        contacts_status.set(None);
                     }
                     Err(_) => {
                         contacts_summary.set(None);
-                        contacts_status.set("Contacts unavailable".to_owned());
+                        contacts_status.set(Some("dashboard.contacts_unavailable"));
                     }
                 }
             });
         }
     } else if !contacts_loaded_for().is_empty()
         || contacts_summary().is_some()
-        || !contacts_status().is_empty()
+        || contacts_status().is_some()
     {
         contacts_loaded_for.set(String::new());
         contacts_summary.set(None);
-        contacts_status.set(String::new());
+        contacts_status.set(None);
     }
     // The sync-backed operation log is already the authorized source for the
     // event-sourced Board projection. Reusing it here avoids a second
@@ -208,7 +281,7 @@ pub fn DashboardPanel(
         .as_ref()
         .map(|summary| summary.accepted.to_string())
         .unwrap_or_else(|| {
-            if has_session && contacts_status() == "Loading contacts" {
+            if has_session && contacts_status() == Some("dashboard.contacts_loading") {
                 "...".to_owned()
             } else {
                 "0".to_owned()
@@ -218,10 +291,10 @@ pub fn DashboardPanel(
         tr("contacts.sign_in")
     } else if let Some(summary) = contacts_summary_snapshot.as_ref() {
         contact_summary_delta(summary)
-    } else if contacts_status().is_empty() {
+    } else if contacts_status().is_none() {
         tr("contacts.empty")
     } else {
-        contacts_status()
+        contacts_status().map(tr).unwrap_or_default()
     };
     rsx! {
         div { class: "timeline", "data-testid": "dashboard-panel",
@@ -262,26 +335,26 @@ pub fn DashboardPanel(
                                 view.set(super::AppView::Kanban);
                             }
                         },
-                        div { class: "lbl", "Active strands" }
+                        div { class: "lbl", {tr("dashboard.active_strands")} }
                         div { class: "val", "{visible_recent_strands.len()}" }
-                        div { class: "delta", "Open Board view" }
+                        div { class: "delta", {tr("dashboard.open_board_view")} }
                     }
                 } else {
                     Link {
                         class: "metric",
                         to: Route::Setup,
                         onclick: move |_| view.set(super::AppView::Setup),
-                        div { class: "lbl", "Realm Setup" }
-                        div { class: "val", if has_session { "Ready" } else { "Sign in" } }
-                        div { class: "delta", "Bootstrap your first Realm and initial policy" }
+                        div { class: "lbl", {tr("dashboard.realm_setup")} }
+                        div { class: "val", if has_session { {tr("dashboard.ready")} } else { {tr("dashboard.sign_in")} } }
+                        div { class: "delta", {tr("dashboard.setup_help")} }
                     }
                     Link {
                         class: "metric",
                         to: Route::Onboarding,
                         onclick: move |_| view.set(super::AppView::Onboarding),
-                        div { class: "lbl", "Onboarding" }
-                        div { class: "val", "4 steps" }
-                        div { class: "delta", "Identity, device, and recovery setup" }
+                        div { class: "lbl", {tr("dashboard.onboarding")} }
+                        div { class: "val", {tr("dashboard.onboarding_steps")} }
+                        div { class: "delta", {tr("dashboard.onboarding_help")} }
                     }
                 }
             }
@@ -341,8 +414,8 @@ pub fn DashboardPanel(
                                         };
                                         let snapshot_badge = snapshot_status.as_ref().and_then(|status| {
                                             match status.trust_state {
-                                                crate::realm_state_snapshot::RealmStateSnapshotTrustState::LowerTrust => Some("lower-trust"),
-                                                crate::realm_state_snapshot::RealmStateSnapshotTrustState::Degraded => Some("degraded"),
+                                                crate::realm_state_snapshot::RealmStateSnapshotTrustState::LowerTrust => Some("dashboard.snapshot_lower_trust"),
+                                                crate::realm_state_snapshot::RealmStateSnapshotTrustState::Degraded => Some("dashboard.snapshot_degraded"),
                                                 crate::realm_state_snapshot::RealmStateSnapshotTrustState::Verified => None,
                                             }
                                         });
@@ -369,21 +442,21 @@ pub fn DashboardPanel(
                                             span { class: "grow",
                                                 span { class: "title", "{display_name}" }
                                                 span { class: "sub",
-                                                    {node.description.as_deref().unwrap_or("Open Board")}
+                                                    {dashboard_realm_description(node.description.as_deref())}
                                                 }
                                             }
                                             if has_remark {
                                                 span {
                                                     class: "pill muted xs",
                                                     "data-testid": "dashboard-realm-tree-realm-remark-badge",
-                                                    "备注"
+                                                    {tr("dashboard.realm_remark")}
                                                 }
                                             }
                                             if let Some(snapshot_badge) = snapshot_badge {
                                                 span {
                                                     class: "pill muted xs",
                                                     "data-testid": "dashboard-realm-tree-snapshot-badge",
-                                                    "{snapshot_badge}"
+                                                    {tr(snapshot_badge)}
                                                 }
                                             }
                                             span { class: "pill muted xs", "{kind_label}" }
@@ -397,23 +470,23 @@ pub fn DashboardPanel(
 
                     div { class: "surface", "data-testid": "recent-boards",
                         div { class: "row surface-head",
-                            strong { "Recent Strands" }
+                            strong { {tr("dashboard.recent_strands")} }
                         }
                         table { class: "tbl compact",
                             thead {
                                 tr {
                                     th { "" }
-                                    th { "Title" }
-                                    th { "Space" }
-                                    th { "State" }
-                                    th { "Updated" }
+                                    th { {tr("dashboard.strand_title")} }
+                                    th { {tr("dashboard.strand_space")} }
+                                    th { {tr("dashboard.strand_state")} }
+                                    th { {tr("dashboard.strand_updated")} }
                                 }
                             }
                             tbody {
                                 if visible_recent_strands.is_empty() {
                                     tr {
                                         td { class: "dim", colspan: "5",
-                                            if has_session { "No recent strands loaded" } else { "Sign in to load recent strands" }
+                                            if has_session { {tr("dashboard.strands_empty")} } else { {tr("dashboard.strands_signin")} }
                                         }
                                     }
                                 } else {
@@ -422,8 +495,8 @@ pub fn DashboardPanel(
                                             key: "{strand.strand_id}",
                                             td { class: "dim", "" }
                                             td { "{strand.title}" }
-                                            td { "Current Board" }
-                                            td { "{projection_object_state_label(&strand.state)}" }
+                                            td { {tr("dashboard.current_board")} }
+                                            td { {tr(projection_object_state_label(&strand.state))} }
                                             td {
                                                 {strand.fields
                                                     .get("due_at")
@@ -439,13 +512,13 @@ pub fn DashboardPanel(
                     }
 
                     div { class: "surface pad", "data-testid": "activity-feed",
-                        div { class: "section-title mb-8", "Recent Activity" }
+                        div { class: "section-title mb-8", {tr("dashboard.recent_activity")} }
                         div { class: "stack-sm",
                             div { class: "m-list-item",
-                                span { class: "pill muted xs", "empty" }
+                                span { class: "pill muted xs", {tr("dashboard.activity_empty")} }
                                 span { class: "grow",
-                                    span { class: "title", if has_session { "No activity loaded" } else { "No session activity" } }
-                                    span { class: "sub", if has_session { "Sync has not returned recent events." } else { "Activity appears after authenticated sync." } }
+                                    span { class: "title", if has_session { {tr("dashboard.no_activity")} } else { {tr("dashboard.no_session_activity")} } }
+                                    span { class: "sub", if has_session { {tr("dashboard.activity_sync_help")} } else { {tr("dashboard.activity_signin_help")} } }
                                 }
                             }
                         }
@@ -492,7 +565,7 @@ pub fn DashboardPanel(
                                             span { class: "title f-13", "data-testid": "dashboard-notification-title", {notification.render_title()} }
                                             span { class: "sub", "data-testid": "dashboard-notification-body", {notification.render_body()} }
                                         }
-                                        span { class: "pill muted xs", "{notification.kind}" }
+                                        span { class: "pill muted xs", "data-testid": "dashboard-notification-kind", {tr(notification.kind_label_key)} }
                                     }
                                 }
                             }
@@ -501,29 +574,29 @@ pub fn DashboardPanel(
 
                     div { class: "surface", "data-testid": "operations-surface",
                         div { class: "row surface-head",
-                            strong { "Client Status" }
+                            strong { {tr("dashboard.client_status")} }
                             span { class: "ml-auto",
-                                HelpTip { text: "Operational status stays visible, but separate tool pages are no longer promoted in the main navigation." }
+                                HelpTip { text: tr("dashboard.client_status_help") }
                             }
                         }
                         div { class: "settings-row",
                             div {
-                                div { class: "label f-12", "Sync frontier" }
+                                div { class: "label f-12", {tr("dashboard.sync_frontier")} }
                                 div { class: "sub mono", title: "{sync_cursor}", "{sync_cursor_label}" }
                             }
-                            span { class: if has_session { "pill success dot" } else { "pill muted xs" }, if has_session { "loaded" } else { "not connected" } }
+                            span { class: if has_session { "pill success dot" } else { "pill muted xs" }, if has_session { {tr("dashboard.loaded")} } else { {tr("dashboard.not_connected")} } }
                         }
                         div { class: "settings-row",
                             div {
-                                div { class: "label f-12", "Event frontier" }
-                                div { class: "sub", if has_session { "Station reported" } else { "Not loaded" } }
+                                div { class: "label f-12", {tr("dashboard.event_frontier")} }
+                                div { class: "sub", if has_session { {tr("dashboard.station_reported")} } else { {tr("dashboard.not_loaded")} } }
                             }
                             span { class: "mono f-11", "data-testid": "event-frontier-card", title: "{frontier_state}", "{frontier_state_label}" }
                         }
                         div { class: "settings-row",
                             div {
-                                div { class: "label f-12", "Queued writes" }
-                                div { class: "sub", "local replay queue" }
+                                div { class: "label f-12", {tr("dashboard.queued_writes")} }
+                                div { class: "sub", {tr("dashboard.local_replay_queue")} }
                             }
                             span { class: "mono f-11", "{device_queue}" }
                         }
@@ -536,15 +609,15 @@ pub fn DashboardPanel(
                                 },
                                 onclick: move |_| view.set(super::AppView::Settings),
                                 UiIcon { name: "settings" }
-                                "Advanced Diagnostics"
+                                {tr("dashboard.advanced_diagnostics")}
                             }
                             Button {
                                 variant: ButtonVariant::Ghost,
                                 size: ButtonSize::Icon,
                                 class: "btn sm ml-auto",
                                 "data-testid": "check-health-button",
-                                title: if health_loading() { "Checking health" } else { "Run health checks" },
-                                "aria-label": if health_loading() { "Checking health" } else { "Run health checks" },
+                                title: tr(if health_loading() { "dashboard.checking_health" } else { "dashboard.run_health_checks" }),
+                                "aria-label": tr(if health_loading() { "dashboard.checking_health" } else { "dashboard.run_health_checks" }),
                                 disabled: health_loading(),
                                 onclick: {
                                     let base = base_url.clone();
@@ -563,16 +636,16 @@ pub fn DashboardPanel(
                                                 |api| async move {
                                                     let mut rows = Vec::new();
                                                     match api.describe().await {
-                                                        Ok(d) => rows.push(("Describe".to_owned(), format!("{} v{}", d.service_kind, d.protocol_version))),
-                                                        Err(e) => rows.push(("Describe".to_owned(), format!("Error: {e}"))),
+                                                        Ok(d) => rows.push(DashboardHealthCheck::new("dashboard.health.describe", DashboardHealthValue::Service { service: d.service_kind, version: d.protocol_version })),
+                                                        Err(e) => rows.push(DashboardHealthCheck::new("dashboard.health.describe", DashboardHealthValue::EndpointError(e.to_string()))),
                                                     }
                                                     match async { crate::transport::account::sync_describe(&api.sdk_http_client()?).await }.await {
-                                                        Ok(s) => rows.push(("Sync".to_owned(), format!("{} profiles", s.supported_profiles.len()))),
-                                                        Err(e) => rows.push(("Sync".to_owned(), format!("Error: {e}"))),
+                                                        Ok(s) => rows.push(DashboardHealthCheck::new("dashboard.health.sync", DashboardHealthValue::Profiles(s.supported_profiles.len()))),
+                                                        Err(e) => rows.push(DashboardHealthCheck::new("dashboard.health.sync", DashboardHealthValue::EndpointError(e.to_string()))),
                                                     }
                                                     match async { crate::transport::account::identity_describe(&api.sdk_http_client()?).await }.await {
-                                                        Ok(i) => rows.push(("Identity".to_owned(), format!("{} v{}", i.service_kind, i.protocol_version))),
-                                                        Err(e) => rows.push(("Identity".to_owned(), format!("Error: {e}"))),
+                                                        Ok(i) => rows.push(DashboardHealthCheck::new("dashboard.health.identity", DashboardHealthValue::Service { service: i.service_kind, version: i.protocol_version })),
+                                                        Err(e) => rows.push(DashboardHealthCheck::new("dashboard.health.identity", DashboardHealthValue::EndpointError(e.to_string()))),
                                                     }
                                                     Ok::<_, anyhow::Error>(rows)
                                                 },
@@ -580,9 +653,9 @@ pub fn DashboardPanel(
                                             .await;
                                             let checks = match result {
                                                 Ok(rows) => rows,
-                                                Err(err) => vec![(
-                                                    "API".to_owned(),
-                                                    format!("Error: {}", err.display()),
+                                                Err(err) => vec![DashboardHealthCheck::new(
+                                                    "dashboard.health.api",
+                                                    DashboardHealthValue::ApiError(Rc::new(err)),
                                                 )],
                                             };
                                             protocol_health.set(checks);
@@ -595,13 +668,13 @@ pub fn DashboardPanel(
                         }
                         div { style: "padding: 12px 16px;",
                             if protocol_health().is_empty() {
-                                div { class: "muted f-12", "Run checks after changing the Station. Collaboration starts in Spaces; operational checks stay here." }
+                                div { class: "muted f-12", {tr("dashboard.health_help")} }
                             } else {
                                 div { class: "stack-sm",
-                                    for (name, status) in protocol_health() {
-                                        div { class: "settings-row",
-                                            div { class: "label f-12", "{name}" }
-                                            span { class: "mono f-11", "{status}" }
+                                    for check in protocol_health() {
+                                        div { class: "settings-row", "data-testid": "dashboard-health-row", "data-check": "{check.name_key}",
+                                            div { class: "label f-12", "data-testid": "dashboard-health-name", {tr(check.name_key)} }
+                                            span { class: "mono f-11", "data-testid": "dashboard-health-value", {check.value.render()} }
                                         }
                                     }
                                 }
@@ -648,6 +721,7 @@ fn dashboard_notification_summaries(
                 body,
                 body_translation,
                 kind,
+                kind_label_key: dashboard_notification_kind_key(&value.notification_kind()),
                 timestamp: arkret_sdk::canonical::format_timestamp_canonical(value.created_at()),
                 read: client_state.read,
             })
@@ -700,10 +774,12 @@ fn dashboard_contacts_summary(
 }
 
 fn contact_summary_delta(summary: &DashboardContactsSummary) -> String {
-    format!(
-        "Pending {} · Direct {}",
-        summary.pending(),
-        summary.direct_ready
+    crate::i18n::tr_args(
+        "dashboard.contacts_delta",
+        &[
+            ("pending", summary.pending().to_string()),
+            ("direct", summary.direct_ready.to_string()),
+        ],
     )
 }
 
@@ -1154,5 +1230,218 @@ mod tests {
                 assert_eq!(dashboard_notification_summaries(&snapshot), rows);
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod locale_regression_tests {
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::i18n::{I18nSignal, UiLocale};
+    use crate::transport::auth::ApiCallError;
+
+    type LocaleHandle = Rc<RefCell<Option<I18nSignal>>>;
+
+    fn retained_dashboard_feedback(
+        (handle, checks): (LocaleHandle, Vec<DashboardHealthCheck>),
+    ) -> Element {
+        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
+        *handle.borrow_mut() = Some(locale);
+        // Capture the same result once. A locale change, with no new request or
+        // result assignment, must schedule real text mutations independently.
+        let retained = use_signal(move || checks);
+        let contacts = use_signal(|| DashboardContactsSummary {
+            accepted: 2,
+            pending_incoming: 1,
+            pending_outgoing: 2,
+            direct_ready: 2,
+        });
+        let contact_status = use_signal(|| {
+            [
+                "dashboard.contacts_loading",
+                "dashboard.contacts_unavailable",
+            ]
+        });
+        let mut values = vec![
+            contact_summary_delta(&contacts.read()),
+            dashboard_realm_description(None),
+            dashboard_realm_description(Some("dashboard.open_board")),
+            dashboard_realm_description(Some("Original {error} {version} / 原文")),
+            dashboard_realm_description(Some("")),
+            tr(dashboard_notification_kind_key(
+                &arkret_sdk::NotificationKind::Message,
+            )),
+        ];
+        values.extend(contact_status.read().iter().map(|key| tr(key)));
+        for state in [
+            arkret_sdk::ObjectState::Active,
+            arkret_sdk::ObjectState::Archived,
+            arkret_sdk::ObjectState::Redacted,
+        ] {
+            values.push(tr(projection_object_state_label(&state)));
+        }
+        for check in retained.read().iter() {
+            values.push(tr(check.name_key));
+            values.push(check.value.render());
+        }
+        rsx! {
+            div {
+                for (index, value) in values.into_iter().enumerate() {
+                    p { key: "{index}", "{value}" }
+                }
+            }
+        }
+    }
+
+    fn apply_text_edits(
+        text: &mut BTreeMap<usize, String>,
+        edits: dioxus::core::Mutations,
+    ) -> usize {
+        let mut changed = 0;
+        for edit in edits.edits {
+            match edit {
+                dioxus::core::Mutation::CreateTextNode { id, value }
+                | dioxus::core::Mutation::SetText { id, value } => {
+                    text.insert(id.0, value);
+                    changed += 1;
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+
+    #[test]
+    fn cached_dashboard_health_and_contact_status_rerender_without_replacing_results() {
+        let problem: arkret_sdk::Problem = serde_json::from_value(serde_json::json!({
+            "type": "https://arkret.org/problems/internal_error", "title": "Internal error",
+            "status": 500, "detail": "private server detail / 原文", "code": "internal_error"
+        }))
+        .unwrap();
+        let checks = vec![
+            DashboardHealthCheck::new(
+                "dashboard.health.describe",
+                DashboardHealthValue::Service {
+                    service: arkret_sdk::ServiceKind::Station,
+                    version: arkret_sdk::ServiceProtocolVersion::V1,
+                },
+            ),
+            DashboardHealthCheck::new("dashboard.health.sync", DashboardHealthValue::Profiles(9)),
+            DashboardHealthCheck::new(
+                "dashboard.health.identity",
+                DashboardHealthValue::EndpointError(
+                    "Original {error} {count} / dashboard.health.error / 原文".to_owned(),
+                ),
+            ),
+            DashboardHealthCheck::new(
+                "dashboard.health.api",
+                DashboardHealthValue::ApiError(Rc::new(ApiCallError::Failed(
+                    crate::api_error::TransportClientError {
+                        status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                        error: problem,
+                    }
+                    .into(),
+                ))),
+            ),
+            DashboardHealthCheck::new(
+                "dashboard.health.api",
+                DashboardHealthValue::ApiError(Rc::new(ApiCallError::Unavailable(
+                    anyhow::anyhow!("private unavailable diagnostic"),
+                ))),
+            ),
+            DashboardHealthCheck::new(
+                "dashboard.health.api",
+                DashboardHealthValue::ApiError(Rc::new(ApiCallError::AuthExpired(
+                    anyhow::anyhow!("private session diagnostic"),
+                ))),
+            ),
+            DashboardHealthCheck::new(
+                "dashboard.health.api",
+                DashboardHealthValue::ApiError(Rc::new(ApiCallError::Failed(anyhow::anyhow!(
+                    "{}",
+                    "Local {error} / 原文"
+                )))),
+            ),
+        ];
+        let handle = Rc::new(RefCell::new(None));
+        let mut dom =
+            VirtualDom::new_with_props(retained_dashboard_feedback, (handle.clone(), checks));
+        let mut text = BTreeMap::new();
+        apply_text_edits(&mut text, dom.rebuild_to_vec());
+        let expected = |language: UiLocale| {
+            let mut values = if language == UiLocale::Zh {
+                vec![
+                    "待处理 3 · 私聊 2",
+                    "打开看板",
+                    "消息",
+                    "正在加载联系人",
+                    "联系人暂不可用",
+                    "活跃",
+                    "已归档",
+                    "已删改",
+                    "服务说明",
+                    "同步",
+                    "9 个配置档",
+                    "身份",
+                    "错误：Original {error} {count} / dashboard.health.error / 原文",
+                    "错误：与服务器通信时出现问题。请重试。",
+                    "错误：服务器当前不可用。请检查服务器地址,或稍等片刻后重试。",
+                    "错误：登录已过期。请重新登录以继续。",
+                    "错误：Local {error} / 原文",
+                ]
+            } else {
+                vec![
+                    "Pending 3 · Direct 2",
+                    "Open Board",
+                    "message",
+                    "Loading contacts",
+                    "Contacts unavailable",
+                    "active",
+                    "archived",
+                    "redacted",
+                    "Describe",
+                    "Sync",
+                    "9 profiles",
+                    "Identity",
+                    "Error: Original {error} {count} / dashboard.health.error / 原文",
+                    "Error: Something went wrong while talking to the server. Try again.",
+                    "Error: The server is unavailable right now. Check the server address, or wait a moment and try again.",
+                    "Error: Your session has expired. Sign in again to continue.",
+                    "Error: Local {error} / 原文",
+                ]
+            };
+            values.extend([
+                "dashboard.open_board",
+                "Original {error} {version} / 原文",
+                "",
+                "station v1.0",
+                "API",
+                "API",
+                "API",
+                "API",
+            ]);
+            let mut values = values
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>();
+            values.sort();
+            values
+        };
+        let actual = |text: &BTreeMap<usize, String>| {
+            let mut values = text.values().cloned().collect::<Vec<_>>();
+            values.sort();
+            values
+        };
+        assert_eq!(actual(&text), expected(UiLocale::En));
+        let mut locale = handle.borrow().expect("dashboard surface provides locale");
+        for language in [UiLocale::Zh, UiLocale::En] {
+            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
+            let changed = apply_text_edits(&mut text, dom.render_immediate_to_vec());
+            assert!(changed > 0, "locale must cause actual DOM text mutations");
+            assert_eq!(actual(&text), expected(language));
+            assert!(text.values().all(|value| !value.contains("private")));
+        }
     }
 }

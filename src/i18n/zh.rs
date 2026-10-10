@@ -1858,6 +1858,94 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("developer.profile.required", "所需 Profile id");
 
     // R3 spec sync (b47ff6ec) — Chinese error toast translations.
+    dict.set("dashboard.object_state.active", "活跃");
+    dict.set("dashboard.object_state.archived", "已归档");
+    dict.set("dashboard.object_state.redacted", "已删改");
+    dict.set("dashboard.contacts_loading", "正在加载联系人");
+    dict.set("dashboard.contacts_unavailable", "联系人暂不可用");
+    dict.set("dashboard.active_strands", "活跃 Strand");
+    dict.set("dashboard.open_board_view", "打开看板视图");
+    dict.set("dashboard.realm_setup", "Realm 设置");
+    dict.set("dashboard.ready", "就绪");
+    dict.set("dashboard.sign_in", "登录");
+    dict.set("dashboard.setup_help", "创建首个 Realm 并设置初始策略");
+    dict.set("dashboard.onboarding", "入门设置");
+    dict.set("dashboard.onboarding_steps", "4 个步骤");
+    dict.set("dashboard.onboarding_help", "身份、设备与恢复设置");
+    dict.set("dashboard.recent_strands", "最近的 Strand");
+    dict.set("dashboard.strand_title", "标题");
+    dict.set("dashboard.strand_space", "Space");
+    dict.set("dashboard.strand_state", "状态");
+    dict.set("dashboard.strand_updated", "更新时间");
+    dict.set("dashboard.strands_empty", "未加载最近的 Strand");
+    dict.set("dashboard.strands_signin", "登录以加载最近的 Strand");
+    dict.set("dashboard.current_board", "当前看板");
+    dict.set("dashboard.recent_activity", "最近活动");
+    dict.set("dashboard.activity_empty", "暂无");
+    dict.set("dashboard.no_activity", "未加载活动");
+    dict.set("dashboard.no_session_activity", "暂无会话活动");
+    dict.set("dashboard.activity_sync_help", "同步尚未返回最近的事件。");
+    dict.set("dashboard.activity_signin_help", "登录并同步后将显示活动。");
+    dict.set("dashboard.client_status", "客户端状态");
+    dict.set("dashboard.sync_frontier", "同步前沿");
+    dict.set("dashboard.loaded", "已加载");
+    dict.set("dashboard.not_connected", "未连接");
+    dict.set("dashboard.event_frontier", "事件前沿");
+    dict.set("dashboard.station_reported", "Station 已报告");
+    dict.set("dashboard.not_loaded", "未加载");
+    dict.set("dashboard.queued_writes", "排队的写入");
+    dict.set("dashboard.local_replay_queue", "本地重放队列");
+    dict.set("dashboard.advanced_diagnostics", "高级诊断");
+    dict.set("dashboard.checking_health", "正在检查运行状况");
+    dict.set("dashboard.run_health_checks", "检查运行状况");
+    dict.set(
+        "dashboard.health_help",
+        "更换 Station 后请运行检查。协作从 Space 开始，运行检查可在此查看。",
+    );
+    dict.set("dashboard.realm_remark", "备注");
+    dict.set(
+        "dashboard.client_status_help",
+        "运行状态仍然可见，独立工具页不再列在主导航中。",
+    );
+    dict.set("dashboard.snapshot_lower_trust", "信任较低");
+    dict.set("dashboard.snapshot_degraded", "降级");
+    dict.set("dashboard.open_board", "打开看板");
+    dict.set(
+        "dashboard.contacts_delta",
+        "待处理 {pending} · 私聊 {direct}",
+    );
+    dict.set("dashboard.notification_kind.message", "消息");
+    dict.set("dashboard.notification_kind.mention", "提及");
+    dict.set("dashboard.notification_kind.reply", "回复");
+    dict.set("dashboard.notification_kind.assignment", "分配");
+    dict.set("dashboard.notification_kind.schedule", "日程");
+    dict.set("dashboard.notification_kind.invite", "邀请");
+    dict.set("dashboard.notification_kind.reaction", "回应");
+    dict.set("dashboard.notification_kind.policy", "策略");
+    dict.set("dashboard.notification_kind.call", "通话");
+    dict.set("dashboard.notification_kind.applet", "小应用");
+    dict.set("dashboard.notification_kind.agent", "Agent");
+    dict.set("dashboard.notification_kind.moderation", "管理");
+    dict.set("dashboard.notification_kind.system", "系统");
+    dict.set("dashboard.health.describe", "服务说明");
+    dict.set("dashboard.health.sync", "同步");
+    dict.set("dashboard.health.identity", "身份");
+    dict.set("dashboard.health.api", "API");
+    dict.set("dashboard.health.service", "{service} v{version}");
+    dict.set("dashboard.health.profiles", "{count} 个配置档");
+    dict.set("dashboard.health.error", "错误：{error}");
+    dict.set("search.index", "搜索索引");
+    dict.set("search.back", "返回首页");
+    dict.set("search.no_body", "<无正文>");
+    dict.set("search.open_task", "打开任务");
+    dict.set("search.open_message", "打开消息");
+    dict.set("search.open", "打开");
+    dict.set(
+        "search.account_unavailable",
+        "当前账号不可用。请重新登录后搜索。",
+    );
+    dict.set("search.kind.message", "消息");
+
     add_r3_error_keys_zh(&mut dict);
     add_generic_error_keys_zh(&mut dict);
 

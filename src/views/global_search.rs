@@ -37,24 +37,39 @@ use crate::views::helpers::{actor_display_label, short_protocol_id};
 /// signature compact.
 type ResultRows = Vec<Value>;
 
-/// Extract a renderable snippet body from a soland search result row.
-/// Falls back to `<no body>` so the UI still renders something even
-/// when the row only carries metadata.
-pub fn result_snippet(result: &Value) -> String {
+/// Extract literal snippet text without interpreting it as a translation key.
+/// `None` marks metadata-only rows; explicit empty text remains `Some`.
+pub fn result_snippet(result: &Value) -> Option<String> {
     if let Some(body) = result
         .get("content")
         .and_then(|c| c.get("body"))
         .and_then(Value::as_str)
     {
-        return body.to_owned();
+        return Some(body.to_owned());
     }
     if let Some(summary) = result.get("summary").and_then(Value::as_str) {
-        return summary.to_owned();
+        return Some(summary.to_owned());
     }
     if let Some(title) = result.get("title").and_then(Value::as_str) {
-        return title.to_owned();
+        return Some(title.to_owned());
     }
-    "<no body>".to_owned()
+    None
+}
+
+// Resolve UI defaults only while rendering. Search projections remain literal.
+fn render_result_snippet(result: &Value) -> String {
+    result_snippet(result).unwrap_or_else(|| tr("search.no_body"))
+}
+
+fn render_result_kind(result: &Value) -> String {
+    match result
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("message")
+    {
+        "message" => tr("search.kind.message"),
+        kind => kind.to_owned(),
+    }
 }
 
 pub fn result_actor_id(result: &Value) -> String {
@@ -65,7 +80,7 @@ pub fn result_actor_id(result: &Value) -> String {
 pub struct SearchDestination {
     pub route: Route,
     pub seal: Option<String>,
-    pub label: String,
+    pub label_key: &'static str,
 }
 
 pub fn local_decrypted_index_search(
@@ -178,7 +193,7 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
                 tab: String::new(),
             },
             seal: Some(task_id),
-            label: "Open task".to_owned(),
+            label_key: "search.open_task",
         });
     }
 
@@ -192,7 +207,7 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
                 message: message_id.clone(),
             },
             seal: Some(message_id),
-            label: "Open message".to_owned(),
+            label_key: "search.open_message",
         });
     }
 
@@ -218,7 +233,7 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
     Some(SearchDestination {
         route,
         seal: string_field(result, &["seal", "seal_id", "target_ref"]),
-        label: "Open".to_owned(),
+        label_key: "search.open",
     })
 }
 
@@ -239,7 +254,7 @@ pub fn GlobalSearchPanel(
     let mut query = use_signal(|| initial_query.clone());
     let results = use_signal(ResultRows::new);
     let loading = use_signal(|| false);
-    let mut error_msg = use_signal(String::new);
+    let mut error_key = use_signal(|| None::<&'static str>);
     let has_searched = use_signal(|| false);
     let navigator = use_navigator();
 
@@ -250,7 +265,7 @@ pub fn GlobalSearchPanel(
         let q = initial_query_for_effect.clone();
         if !q.trim().is_empty() {
             let Some(account) = active_account.peek().clone() else {
-                error_msg.set("active account context is unavailable".to_owned());
+                error_key.set(Some("search.account_unavailable"));
                 return;
             };
             run_search(
@@ -260,7 +275,7 @@ pub fn GlobalSearchPanel(
                 account.device_id,
                 results,
                 loading,
-                error_msg,
+                error_key,
                 has_searched,
             );
         }
@@ -271,7 +286,7 @@ pub fn GlobalSearchPanel(
             div { class: "event",
                 div { class: "event-head",
                     span { {tr("search.title")} }
-                    span { class: "muted", "Search index" }
+                    span { class: "muted", "data-testid": "global-search-index-label", {tr("search.index")} }
                 }
                 form {
                     onsubmit: move |evt| {
@@ -279,7 +294,7 @@ pub fn GlobalSearchPanel(
                         let q = query();
                         if q.trim().is_empty() { return; }
                         let Some(account) = active_account.peek().clone() else {
-                            error_msg.set("active account context is unavailable".to_owned());
+                            error_key.set(Some("search.account_unavailable"));
                             return;
                         };
                         run_search(
@@ -289,7 +304,7 @@ pub fn GlobalSearchPanel(
                             account.device_id,
                             results,
                             loading,
-                            error_msg,
+                            error_key,
                             has_searched,
                         );
                     },
@@ -315,10 +330,10 @@ pub fn GlobalSearchPanel(
                 }
             }
 
-            if !error_msg().is_empty() {
+            if let Some(key) = error_key() {
                 div { class: "event", "data-testid": "global-search-results-error",
                     div { class: "event-head", span { {tr("search.results.error")} } }
-                    div { class: "muted", "{error_msg}" }
+                    div { class: "muted", {tr(key)} }
                 }
             } else if loading() {
                 div { class: "event", "data-testid": "global-search-results-loading",
@@ -336,7 +351,7 @@ pub fn GlobalSearchPanel(
                 div { "data-testid": "global-search-results",
                     for (idx, result) in results().into_iter().enumerate() {
                         {
-                            let snippet = result_snippet(&result);
+                            let snippet = render_result_snippet(&result);
                             let destination = result_destination(&result);
                             let realm_id_text = result
                                 .get("realm_id")
@@ -344,11 +359,8 @@ pub fn GlobalSearchPanel(
                                 .unwrap_or("-")
                                 .to_owned();
                             let sender = result_actor_id(&result);
-                            let kind = result
-                                .get("kind")
-                                .and_then(Value::as_str)
-                                .unwrap_or("message")
-                                .to_owned();
+                            let kind = render_result_kind(&result);
+                            let destination_label = destination.as_ref().map(|target| tr(target.label_key)).unwrap_or_default();
                             let destination_for_button = destination.clone();
                             let realm_id_label = short_protocol_id(&realm_id_text);
                             let sender_label = actor_display_label(&state_store.read(), &sender);
@@ -383,10 +395,10 @@ pub fn GlobalSearchPanel(
                                                     span {
                                                         "data-testid": "global-search-result-seal",
                                                         "data-seal": "{seal}",
-                                                        "{target.label}: {seal}"
+                                                        "{destination_label}: {seal}"
                                                     }
                                                 } else {
-                                                    "{target.label}"
+                                                    "{destination_label}"
                                                 }
                                             }
                                         }
@@ -407,7 +419,7 @@ pub fn GlobalSearchPanel(
                     onclick: move |_| {
                         let _ = navigator.push(Route::Dashboard);
                     },
-                    "Back to dashboard"
+                    {tr("search.back")}
                 }
             }
         }
@@ -422,7 +434,7 @@ fn run_search(
     device_id: arkret_sdk::DeviceId,
     mut results: Signal<ResultRows>,
     mut loading: Signal<bool>,
-    mut error_msg: Signal<String>,
+    mut error_key: Signal<Option<&'static str>>,
     mut has_searched: Signal<bool>,
 ) {
     let query_trimmed = q.trim().to_owned();
@@ -430,7 +442,7 @@ fn run_search(
         return;
     }
     loading.set(true);
-    error_msg.set(String::new());
+    error_key.set(None);
     has_searched.set(true);
     let realm_ids: Vec<String> = Vec::new();
     let store = state_store.read();
@@ -459,16 +471,62 @@ mod tests {
     #[test]
     fn result_snippet_prefers_body_then_summary_then_title() {
         let with_body = json!({"content": {"body": "hello world"}});
-        assert_eq!(result_snippet(&with_body), "hello world");
+        assert_eq!(result_snippet(&with_body).as_deref(), Some("hello world"));
 
         let with_summary = json!({"summary": "matched query"});
-        assert_eq!(result_snippet(&with_summary), "matched query");
+        assert_eq!(
+            result_snippet(&with_summary).as_deref(),
+            Some("matched query")
+        );
 
         let with_title = json!({"title": "Demo Realm"});
-        assert_eq!(result_snippet(&with_title), "Demo Realm");
+        assert_eq!(result_snippet(&with_title).as_deref(), Some("Demo Realm"));
 
         let empty = json!({});
-        assert_eq!(result_snippet(&empty), "<no body>");
+        assert_eq!(result_snippet(&empty), None);
+    }
+
+    #[test]
+    fn result_text_provenance_preserves_empty_keys_and_braces() {
+        for literal in ["", "search.no_body", "{query} / 原文"] {
+            let body =
+                json!({"content": {"body": literal}, "summary": "ignored", "title": "ignored"});
+            let summary = json!({"summary": literal, "title": "ignored"});
+            let title = json!({"title": literal});
+            for row in [body, summary, title] {
+                assert_eq!(result_snippet(&row).as_deref(), Some(literal));
+            }
+        }
+        assert_eq!(result_snippet(&json!({"content": {"body": null}})), None);
+
+        let realm_id = "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE";
+        let task = result_destination(
+            &json!({"realm_id": realm_id, "task_id": "task{seal}", "message_id": "ignored"}),
+        )
+        .unwrap();
+        assert_eq!(task.label_key, "search.open_task");
+        assert_eq!(task.seal.as_deref(), Some("task{seal}"));
+        assert_eq!(
+            task.route,
+            Route::KanbanTask {
+                realm_id: realm_id.to_owned(),
+                task_id: "task{seal}".to_owned(),
+                tab: String::new()
+            }
+        );
+        let fallback = result_destination(
+            &json!({"realm_id": realm_id, "surface": "unknown", "seal": "search.open"}),
+        )
+        .unwrap();
+        assert_eq!(fallback.label_key, "search.open");
+        assert_eq!(fallback.seal.as_deref(), Some("search.open"));
+        assert_eq!(
+            fallback.route,
+            Route::Realm {
+                realm_id: realm_id.to_owned()
+            }
+        );
+        assert!(result_destination(&json!({"task_id": "missing-realm"})).is_none());
     }
 
     #[test]
@@ -725,5 +783,104 @@ mod tests {
         assert_eq!(filtered.results.len(), 1);
         assert_eq!(filtered.results[0]["realm_id"], second_realm_id);
         assert_eq!(filtered.results[0]["content"]["body"], "needle second");
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod locale_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::*;
+    use crate::i18n::{I18nSignal, UiLocale};
+
+    type LocaleHandle = Rc<RefCell<Option<I18nSignal>>>;
+
+    fn retained_search_surface((handle, rows): (LocaleHandle, ResultRows)) -> Element {
+        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
+        *handle.borrow_mut() = Some(locale);
+        // Capture the result and feedback once. Locale updates alone must
+        // schedule rendering; no query, projection, or route changes here.
+        let rows = use_signal(move || rows);
+        let error = use_signal(|| Some("search.account_unavailable"));
+        let texts = rows
+            .read()
+            .iter()
+            .map(|row| {
+                let target = result_destination(row).unwrap();
+                format!(
+                    "{} | {} | {} | {}",
+                    render_result_kind(row),
+                    render_result_snippet(row),
+                    tr(target.label_key),
+                    target.seal.as_deref().unwrap_or_default()
+                )
+            })
+            .collect::<Vec<_>>();
+        rsx! {
+            div {
+                for (index, text) in texts.into_iter().enumerate() {
+                    p { key: "{index}", "{text}" }
+                }
+                if let Some(key) = error() {
+                    p { {tr(key)} }
+                }
+            }
+        }
+    }
+
+    fn text_edits(edits: dioxus::core::Mutations) -> Vec<String> {
+        let mut text = edits
+            .edits
+            .into_iter()
+            .filter_map(|edit| match edit {
+                dioxus::core::Mutation::CreateTextNode { value, .. }
+                | dioxus::core::Mutation::SetText { value, .. } => Some(value),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        text.sort();
+        text
+    }
+
+    #[test]
+    fn retained_search_results_and_feedback_rerender_without_interpreting_literals() {
+        let realm_id = "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE";
+        let rows = vec![
+            json!({"realm_id": realm_id}),
+            json!({"realm_id": realm_id, "task_id": "task{seal}", "content": {"body": "search.no_body"}}),
+            json!({"realm_id": realm_id, "event_id": "message{seal}", "summary": "", "title": "ignored"}),
+            json!({"realm_id": realm_id, "kind": "search.kind.message", "title": "{query} / 原文"}),
+        ];
+        let handle = Rc::new(RefCell::new(None));
+        let mut dom = VirtualDom::new_with_props(retained_search_surface, (handle.clone(), rows));
+        let english = [
+            "Message | <no body> | Open | ",
+            "Message | search.no_body | Open task | task{seal}",
+            "Message |  | Open message | message{seal}",
+            "search.kind.message | {query} / 原文 | Open | ",
+            "The active account is unavailable. Sign in again to search.",
+        ];
+        let chinese = [
+            "消息 | <无正文> | 打开 | ",
+            "消息 | search.no_body | 打开任务 | task{seal}",
+            "消息 |  | 打开消息 | message{seal}",
+            "search.kind.message | {query} / 原文 | 打开 | ",
+            "当前账号不可用。请重新登录后搜索。",
+        ];
+        let expected = |values: &[&str]| {
+            let mut values = values
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>();
+            values.sort();
+            values
+        };
+        assert_eq!(text_edits(dom.rebuild_to_vec()), expected(&english));
+        let mut locale = handle.borrow().expect("surface provides locale");
+        for (language, copy) in [(UiLocale::Zh, &chinese), (UiLocale::En, &english)] {
+            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
+            assert_eq!(text_edits(dom.render_immediate_to_vec()), expected(copy));
+        }
     }
 }
