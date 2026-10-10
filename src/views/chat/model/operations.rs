@@ -369,6 +369,7 @@ pub(crate) async fn chat_content_block_for_body_with_upload(
         .await
 }
 
+#[cfg(test)]
 pub(crate) fn chat_message_create_operation_with_content(
     realm_id: &str,
     actor: &str,
@@ -457,6 +458,7 @@ pub(crate) fn chat_message_authoring_intent(
     Ok(intent)
 }
 
+#[cfg(test)]
 fn chat_message_create_operation_with_content_inner(
     realm_id: &str,
     actor: &str,

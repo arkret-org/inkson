@@ -1182,7 +1182,8 @@ fn encrypted_realm_current() -> arkret_wire::TypedCurrentRow {
         "public_tree_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
     }))
     .expect("valid MLS current value");
-    let current = arkret_wire::TypedCurrentRow::Value {
+
+    arkret_wire::TypedCurrentRow::Value {
         selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref: scope },
         source_stream_ref: arkret_wire::CommitStreamRef::Realm {
             realm_id: arkret_wire::RealmId::new(ENCRYPTED_REALM).unwrap(),
@@ -1192,8 +1193,7 @@ fn encrypted_realm_current() -> arkret_wire::TypedCurrentRow {
             stream_position: 4,
         },
         value: serde_json::to_value(group).unwrap(),
-    };
-    current
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

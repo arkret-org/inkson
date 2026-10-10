@@ -10,9 +10,6 @@ use arkret_wire::event_kind_str;
 
 use super::*;
 
-pub(crate) const POSITION_UNAVAILABLE_COLUMN_ID: &str =
-    "inkson:diagnostic:strand-position-unavailable";
-
 /// Stable presentation order for local annotations; this is not causal order.
 /// then `operation_id` for determinism. Returns borrows so callers fold without
 /// cloning the whole set.
@@ -365,7 +362,6 @@ fn apply_rsvp_set_to_view(
             source_event_id: event_id.to_string(),
             source_event_digest: source_event_digest.clone(),
             entry: entry.clone(),
-            ..Default::default()
         });
     cell.winner = Some(crate::state::projection_views::RsvpWinnerProjectionView {
         source_event_id: event_id.to_string(),
@@ -721,20 +717,19 @@ pub(crate) fn project_board_with_projection_for_actor(
         realm_id,
         current_entries,
     );
-    if let Some(ctx) = decrypt_ctx {
-        if let Some((account, device)) = ctx.identity {
-            if let Ok(device) = arkret_sdk::DeviceId::new(device.to_owned()) {
-                for view in &mut containers {
-                    if let Some(title) = crate::views::metadata::current_title(
-                        ctx.state_store,
-                        realm_id,
-                        &view.space_id,
-                        account,
-                        &device,
-                    ) {
-                        view.title = title;
-                    }
-                }
+    if let Some(ctx) = decrypt_ctx
+        && let Some((account, device)) = ctx.identity
+        && let Ok(device) = arkret_sdk::DeviceId::new(device.to_owned())
+    {
+        for view in &mut containers {
+            if let Some(title) = crate::views::metadata::current_title(
+                ctx.state_store,
+                realm_id,
+                &view.space_id,
+                account,
+                &device,
+            ) {
+                view.title = title;
             }
         }
     }
@@ -758,27 +753,6 @@ pub(crate) fn project_board_with_projection_for_actor(
     let columns = overlay_local_card_update_records(columns, ops, decrypt_ctx);
     let columns = overlay_local_card_assignment_records(columns, ops);
     (columns, board_options, board_id)
-}
-
-fn take_card(columns: &mut [KanbanColumn], strand_id: &str) -> Option<KanbanCard> {
-    for column in columns {
-        if let Some(index) = column.cards.iter().position(|card| card.id == strand_id) {
-            return Some(column.cards.remove(index));
-        }
-    }
-    None
-}
-
-fn projected_card(
-    projected: &[crate::state::projection_views::StrandProjectionView],
-    strand_id: &str,
-    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
-    actor: &str,
-) -> Option<KanbanCard> {
-    projected
-        .iter()
-        .find(|strand| strand.strand_id == strand_id)
-        .map(|strand| card_from_strand_projection_for_actor(strand, decrypt_ctx, actor))
 }
 
 /// Readiness of the Station's typed current result for one Strand.
@@ -857,10 +831,10 @@ pub(crate) fn card_current_page(
         .skip(page.min(pages - 1) * PAGE_SIZE)
         .take(PAGE_SIZE)
         .collect::<Vec<_>>();
-    if let Some(id) = selected.and_then(|card| arkret_sdk::StrandId::new(card.id.clone()).ok()) {
-        if !requested.contains(&id) {
-            requested.push(id);
-        }
+    if let Some(id) = selected.and_then(|card| arkret_sdk::StrandId::new(card.id.clone()).ok())
+        && !requested.contains(&id)
+    {
+        requested.push(id);
     }
     requested.sort();
     (requested, pages)
@@ -909,12 +883,17 @@ pub(crate) fn install_current_card_sources(
                 .iter()
                 .find(|row| row.strand_id == card.id)
                 .cloned()
-                .unwrap_or_else(|| {
+                .or_else(|| {
                     serde_json::from_value(serde_json::json!({
                         "strand_id": card.id, "realm_id": strand.realm_id, "state": "active"
                     }))
-                    .expect("complete lifecycle view defaults")
+                    .ok()
                 });
+            let Some(mut view) = view.take() else {
+                card.authoring_basis = None;
+                card.state = CardState::Quarantined;
+                continue;
+            };
             let opened_metadata = decrypt_ctx.and_then(|ctx| {
                 let (account, device) = ctx.identity?;
                 let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;

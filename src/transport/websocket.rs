@@ -508,13 +508,6 @@ pub(crate) mod tests_support {
             },
         )
     }
-
-    pub(crate) fn describe_with_websocket() -> arkret_sdk::ServiceDescribe {
-        super::tests::describe_with(
-            "ak.operation_bundle.station.websocket.v1",
-            super::tests::websocket_transport(super::CLIENT_MAX_FRAME_BYTES),
-        )
-    }
 }
 
 #[cfg(test)]

@@ -290,7 +290,7 @@ pub(crate) fn generate_creator_epoch_zero(
         crate::mls_api_helpers::ordinary_mls_identity(authority.clone(), device_id.clone())
             .map_err(MlsRuntimeError::Identity)?;
     let mut group = identity
-        .create_group_with_governance_binding(&effective_scope, &governance_binding)
+        .create_group_with_governance_binding(effective_scope, governance_binding)
         .map_err(|err| MlsRuntimeError::Genesis(format!("create group: {err}")))?;
     let device_authorize_event_id = match &group.identity().endpoint {
         arkret_sdk::MlsEndpointIdentity::HumanDevice {

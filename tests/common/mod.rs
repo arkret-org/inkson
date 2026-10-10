@@ -14,9 +14,8 @@ use inkson::operation::LocalOperation;
 
 /// The `did:key` multibase of a Principal Control Realm's inception root key.
 ///
-/// Mirrors `event_builders::test_inception_root_key_multibase`: these tests
-/// are built only from `inkson`'s public surface, so the fixture is duplicated
-/// rather than reached through a `cfg(test)` helper.
+/// Uses the shared development key derivation; integration tests supply their
+/// own authoring inputs through Inkson's public surface.
 pub fn test_inception_root_key_multibase(principal_did: &str) -> String {
     arkret_sdk::ed25519_pubkey_to_did_key_multibase(
         arkret_test_kit::keys::development_verifying_key(&format!(

@@ -20,7 +20,7 @@ use crate::state::realm_membership::*;
 
 pub(crate) async fn submit_mls_admission_for_invitee(
     api: &crate::transport::TransportClient,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -525,16 +525,15 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             actor_id: peer_actor,
             controller_account_id,
         } = &peer
+            && *controller_account_id == account.authority
         {
-            if *controller_account_id == account.authority {
-                let current = current_owned_agent_endpoint(&http, peer_actor, &account.authority)
-                    .await?
-                    .context("owned Agent has no current runtime endpoint")?;
-                if !group_endpoints.contains(&current) {
-                    let peer_actor = peer_actor.to_string();
-                    if !pending.iter().any(|(actor, _)| actor == &peer_actor) {
-                        pending.push((peer_actor, None));
-                    }
+            let current = current_owned_agent_endpoint(&http, peer_actor, &account.authority)
+                .await?
+                .context("owned Agent has no current runtime endpoint")?;
+            if !group_endpoints.contains(&current) {
+                let peer_actor = peer_actor.to_string();
+                if !pending.iter().any(|(actor, _)| actor == &peer_actor) {
+                    pending.push((peer_actor, None));
                 }
             }
         }

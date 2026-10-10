@@ -1876,6 +1876,100 @@ fn use_composer_state(target: ComposerTarget) -> ComposerState {
 #[path = "controller_context_tests.rs"]
 mod controller_context_tests;
 
+pub(super) fn use_chat_controller(
+    selected_realm_id: &str,
+    initial_strand_id: &str,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+) -> ChatController {
+    let initial_default_channel = (!selected_realm_id.trim().is_empty())
+        .then(|| discussion_channel_for_strand(initial_strand_id))
+        .flatten();
+    let initial_selected_channel = initial_default_channel
+        .as_ref()
+        .map(|channel| channel.strand_id.clone())
+        .unwrap_or_default();
+    let initial_channels = initial_default_channel
+        .clone()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let selected_channel = use_signal(move || initial_selected_channel);
+    let composer = use_composer_state(ComposerTarget {
+        authority: authority.clone(),
+        device_id: device_id.clone(),
+        realm_id: selected_realm_id.to_owned(),
+        strand_id: selected_channel(),
+    });
+    ChatController {
+        channels: use_signal(move || initial_channels),
+        selected_channel,
+        messages: use_signal(Vec::<ChatMessage>::new),
+        draft: composer.draft,
+        typing_throttle: crate::perf::use_typing_throttle(3_000, 4_000),
+        compose_dragover: composer.compose_dragover,
+        compose_upload_status: composer.compose_upload_status,
+        shared_pins: use_signal(Vec::<SharedMessagePin>::new),
+        private_saved_targets: use_signal(std::collections::BTreeSet::<String>::new),
+        private_saved_account_data: use_signal(
+            std::collections::BTreeMap::<String, serde_json::Value>::new,
+        ),
+        message_context_menu: composer.message_context_menu,
+        moderation_report_draft: composer.moderation_report_draft,
+        moderation_report_pending: composer.moderation_report_pending,
+        new_channel_name: use_signal(String::new),
+        new_channel_topic: use_signal(String::new),
+        new_channel_create_card: use_signal(|| false),
+        create_dialog_open: use_signal(|| false),
+        strand_watch_level: use_signal(|| WatchLevel::All),
+        strand_watch_current: use_signal(|| None),
+        strand_watch_pending: use_signal(|| false),
+        strand_watch_request: use_signal(|| 0),
+        strand_watch_refresh: use_signal(WatchRefreshQueue::default),
+        watch_level_menu_open: use_signal(|| false),
+        status_msg: composer.status_msg,
+        queued_outbound_local_operation_ids: use_signal(std::collections::BTreeSet::<String>::new),
+        is_online: use_signal(navigator_online),
+        reply_to_message: composer.reply_to_message,
+        editing_message: composer.editing_message,
+        edit_draft: composer.edit_draft,
+        redact_confirm: composer.redact_confirm,
+        reaction_picker: composer.reaction_picker,
+        initial_sync_requested: use_signal(|| false),
+        initial_sync_finished: use_signal(|| false),
+        mention_picker_state: composer.mention_picker_state,
+        owned_agent_slugs: use_signal(std::collections::BTreeMap::<String, String>::new),
+        owned_agent_sync_key_seen: use_signal(String::new),
+        agent_participation_visibility: use_signal(std::collections::BTreeMap::<String, bool>::new),
+        agent_participation_sync_key_seen: use_signal(String::new),
+        attachment_menu_open: composer.attachment_menu_open,
+        poll_draft: composer.poll_draft,
+        poll_cards: use_signal(Vec::<crate::messaging::polls::PollCard>::new),
+        typing_actors: use_signal(Vec::<String>::new),
+        typing_next_expires_at_ms: use_signal(|| None),
+        presence_states: use_signal(std::collections::BTreeMap::<String, String>::new),
+        presence_labels: use_signal(std::collections::BTreeMap::<String, String>::new),
+        presence_status_messages: use_signal(std::collections::BTreeMap::<String, String>::new),
+        presence_sync_key_seen: use_signal(String::new),
+        presence_announce_key_seen: use_signal(String::new),
+        presence_heartbeat_tick: use_signal(|| 0),
+        promote_discussion_draft: use_signal(
+            crate::messaging::discussion_promote::PromoteDiscussionDraft::default,
+        ),
+        promoted_targets: use_signal(std::collections::BTreeMap::<String, String>::new),
+        latest_read_cursor: composer.latest_read_cursor,
+        blocked_show_anyway: use_signal(std::collections::BTreeSet::<String>::new),
+        account_display_name: use_signal(String::new),
+        track_filter: use_signal(|| "discussion_only".to_owned()),
+        left_panel_open: use_signal(|| true),
+        eligible_circle_scopes: use_signal(Vec::new),
+        eligible_circle_scope_request_key_seen: use_signal(String::new),
+        eligible_circle_scope_request_in_flight: use_signal(|| false),
+        new_channel_scope: use_signal(crate::circle::CircleScope::default),
+        sidecar_send_pending: use_signal(|| false),
+        member_handle_fetching: use_signal(std::collections::BTreeSet::new),
+    }
+}
+
 #[cfg(test)]
 mod composer_target_tests {
     use std::cell::RefCell;
@@ -2083,99 +2177,5 @@ mod composer_target_tests {
             dom.render_immediate_to_vec();
             dom.in_runtime(|| assert!((control.borrow().unwrap().1.draft)().is_empty()));
         }
-    }
-}
-
-pub(super) fn use_chat_controller(
-    selected_realm_id: &str,
-    initial_strand_id: &str,
-    authority: &arkret_sdk::AccountId,
-    device_id: &arkret_sdk::DeviceId,
-) -> ChatController {
-    let initial_default_channel = (!selected_realm_id.trim().is_empty())
-        .then(|| discussion_channel_for_strand(initial_strand_id))
-        .flatten();
-    let initial_selected_channel = initial_default_channel
-        .as_ref()
-        .map(|channel| channel.strand_id.clone())
-        .unwrap_or_default();
-    let initial_channels = initial_default_channel
-        .clone()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let selected_channel = use_signal(move || initial_selected_channel);
-    let composer = use_composer_state(ComposerTarget {
-        authority: authority.clone(),
-        device_id: device_id.clone(),
-        realm_id: selected_realm_id.to_owned(),
-        strand_id: selected_channel(),
-    });
-    ChatController {
-        channels: use_signal(move || initial_channels),
-        selected_channel,
-        messages: use_signal(Vec::<ChatMessage>::new),
-        draft: composer.draft,
-        typing_throttle: crate::perf::use_typing_throttle(3_000, 4_000),
-        compose_dragover: composer.compose_dragover,
-        compose_upload_status: composer.compose_upload_status,
-        shared_pins: use_signal(Vec::<SharedMessagePin>::new),
-        private_saved_targets: use_signal(std::collections::BTreeSet::<String>::new),
-        private_saved_account_data: use_signal(
-            std::collections::BTreeMap::<String, serde_json::Value>::new,
-        ),
-        message_context_menu: composer.message_context_menu,
-        moderation_report_draft: composer.moderation_report_draft,
-        moderation_report_pending: composer.moderation_report_pending,
-        new_channel_name: use_signal(String::new),
-        new_channel_topic: use_signal(String::new),
-        new_channel_create_card: use_signal(|| false),
-        create_dialog_open: use_signal(|| false),
-        strand_watch_level: use_signal(|| WatchLevel::All),
-        strand_watch_current: use_signal(|| None),
-        strand_watch_pending: use_signal(|| false),
-        strand_watch_request: use_signal(|| 0),
-        strand_watch_refresh: use_signal(WatchRefreshQueue::default),
-        watch_level_menu_open: use_signal(|| false),
-        status_msg: composer.status_msg,
-        queued_outbound_local_operation_ids: use_signal(std::collections::BTreeSet::<String>::new),
-        is_online: use_signal(navigator_online),
-        reply_to_message: composer.reply_to_message,
-        editing_message: composer.editing_message,
-        edit_draft: composer.edit_draft,
-        redact_confirm: composer.redact_confirm,
-        reaction_picker: composer.reaction_picker,
-        initial_sync_requested: use_signal(|| false),
-        initial_sync_finished: use_signal(|| false),
-        mention_picker_state: composer.mention_picker_state,
-        owned_agent_slugs: use_signal(std::collections::BTreeMap::<String, String>::new),
-        owned_agent_sync_key_seen: use_signal(String::new),
-        agent_participation_visibility: use_signal(std::collections::BTreeMap::<String, bool>::new),
-        agent_participation_sync_key_seen: use_signal(String::new),
-        attachment_menu_open: composer.attachment_menu_open,
-        poll_draft: composer.poll_draft,
-        poll_cards: use_signal(Vec::<crate::messaging::polls::PollCard>::new),
-        typing_actors: use_signal(Vec::<String>::new),
-        typing_next_expires_at_ms: use_signal(|| None),
-        presence_states: use_signal(std::collections::BTreeMap::<String, String>::new),
-        presence_labels: use_signal(std::collections::BTreeMap::<String, String>::new),
-        presence_status_messages: use_signal(std::collections::BTreeMap::<String, String>::new),
-        presence_sync_key_seen: use_signal(String::new),
-        presence_announce_key_seen: use_signal(String::new),
-        presence_heartbeat_tick: use_signal(|| 0),
-        promote_discussion_draft: use_signal(
-            crate::messaging::discussion_promote::PromoteDiscussionDraft::default,
-        ),
-        promoted_targets: use_signal(std::collections::BTreeMap::<String, String>::new),
-        latest_read_cursor: composer.latest_read_cursor,
-        blocked_show_anyway: use_signal(std::collections::BTreeSet::<String>::new),
-        account_display_name: use_signal(String::new),
-        track_filter: use_signal(|| "discussion_only".to_owned()),
-        left_panel_open: use_signal(|| true),
-        eligible_circle_scopes: use_signal(Vec::new),
-        eligible_circle_scope_request_key_seen: use_signal(String::new),
-        eligible_circle_scope_request_in_flight: use_signal(|| false),
-        new_channel_scope: use_signal(crate::circle::CircleScope::default),
-        sidecar_send_pending: use_signal(|| false),
-        member_handle_fetching: use_signal(std::collections::BTreeSet::new),
     }
 }

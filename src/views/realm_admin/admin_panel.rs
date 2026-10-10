@@ -163,7 +163,8 @@ pub fn RealmAdminPanel(
         })
     };
     let governance_authoring_error = governance_authoring_gate()
-        .expect_err("owner transfer/reset require verified authority-root current");
+        .err()
+        .unwrap_or(VERIFIED_AUTHORITY_ROOT_UNAVAILABLE);
     // Every write below is one named command on this bundle; the rsx keeps
     // only the synchronous half of each click.
     let controller = RealmAdminController {

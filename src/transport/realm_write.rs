@@ -663,21 +663,6 @@ pub async fn grant_realm_admin(
     submitter.submit_sdk_event(&event).await
 }
 
-/// Revoke a Realm-admin grant via `ak.capability.revoke`. `grant_id`
-/// MUST be the id of the grant established by [`grant_realm_admin`]
-/// (the soland reducer locates the cell by `grant_id`).
-pub async fn revoke_realm_admin(
-    submitter: &EventSubmitter,
-    realm_id: &str,
-    actor_id: &str,
-    grant_id: &str,
-    reason: Option<&str>,
-) -> anyhow::Result<SubmitEventResult> {
-    let event = ak_ops::capability_revoke(realm_id, actor_id, grant_id, reason)?
-        .build_sdk_event("inkson")?;
-    submitter.submit_sdk_event(&event).await
-}
-
 /// Seal a moderation disposition via `ak.moderation.decision`. The cell
 /// subject is the moderated `target_ref`; the sealed decision Event's own
 /// id is the reference later lift events resolve. `decision` is

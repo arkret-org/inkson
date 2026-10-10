@@ -153,31 +153,3 @@ pub fn scoped_discussion_strand_create(
     strand.scope_circle_id = Some(circle_id_value(circle_id)?);
     Ok(strand_create_operation(realm_id, actor, strand)?.circle_id(circle_id))
 }
-
-/// Build the private-side relation from a Circle-scoped discussion Strand
-/// back to the public seal Strand/message.
-pub(crate) fn confidential_discussion_relation_create(
-    realm_id: &str,
-    actor: &str,
-    private_strand_id: &str,
-    public_seal_ref: &str,
-    circle_id: &str,
-    current: &crate::event_submit::VerifiedRelationCurrent,
-) -> anyhow::Result<TypedOperationBuilder> {
-    // No relation id is minted here: `TypedOperationBuilder` stamps the derived one
-    // as `unsigned.local_target_ref` once the envelope exists.
-    Ok(
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::RelationCreate>(
-            realm_id,
-            actor,
-            super::relation::relation_create_payload(
-                "confidential_discussion_of",
-                private_strand_id.into(),
-                public_seal_ref.into(),
-                arkret_sdk::RelationPrimaryConflictDomainKind::From,
-                current,
-            )?,
-        )
-        .circle_id(circle_id),
-    )
-}

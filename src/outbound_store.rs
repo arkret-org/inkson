@@ -59,6 +59,7 @@ fn committed_changes() -> &'static tokio::sync::watch::Sender<u64> {
     CHANGES.get_or_init(|| tokio::sync::watch::channel(0).0)
 }
 
+#[cfg(test)]
 pub(crate) fn subscribe_committed_changes() -> tokio::sync::watch::Receiver<u64> {
     committed_changes().subscribe()
 }
@@ -168,7 +169,9 @@ impl DurableOutboundState {
                 None => MlsCreatorBootstrapRejection::new(
                     record,
                     reason
-                        .expect("typed authority rejection has its reason")
+                        .ok_or_else(|| {
+                            garth::Error::Storage("typed authority rejection has no reason".into())
+                        })?
                         .clone(),
                     absence.clone(),
                 )?,
@@ -212,13 +215,14 @@ impl DurableOutboundState {
         for record in &self.creator_bootstrap_records {
             if let Some(diagnostic) = record.quarantine_diagnostic() {
                 for item in &self.items {
+                    let serialized_item = serde_json::to_value(item)?;
                     if creator_quarantine::belongs_to_attempt(
-                        &serde_json::to_value(item)?,
+                        &serialized_item,
                         record.intent(),
                         diagnostic.recovery_record(),
                     ) || diagnostic.related_recovery_records().iter().any(|raw| {
                         creator_quarantine::belongs_to_attempt(
-                            &serde_json::to_value(item).expect("queue serialization"),
+                            &serialized_item,
                             record.intent(),
                             raw,
                         )
@@ -483,6 +487,7 @@ impl DurableOutboundState {
     }
 }
 
+#[cfg(test)]
 fn decode_snapshot(raw: Option<&str>) -> garth::Result<DurableOutboundState> {
     let state: DurableOutboundState = match raw {
         Some(raw) => serde_json::from_str(raw)
@@ -795,17 +800,15 @@ async fn mutate_state_in_file<R>(
     result
 }
 
+type CreatorDecision = (
+    arkret_sdk::EventId,
+    MlsCreatorBootstrapVerifiedAbsence,
+    Option<arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+);
+
 #[derive(Clone)]
 pub(crate) struct InksonOutboundStore {
-    creator_decision: std::sync::Arc<
-        std::sync::Mutex<
-            Option<(
-                arkret_sdk::EventId,
-                MlsCreatorBootstrapVerifiedAbsence,
-                Option<arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
-            )>,
-        >,
-    >,
+    creator_decision: std::sync::Arc<std::sync::Mutex<Option<CreatorDecision>>>,
     #[cfg(not(target_arch = "wasm32"))]
     path: std::path::PathBuf,
     #[cfg(not(target_arch = "wasm32"))]
@@ -916,12 +919,12 @@ impl InksonOutboundStore {
                     ));
                 }
             }
-            if let Some(existing) = state.mls_commit_checkpoints.get(&event_id) {
-                if existing != &checkpoint {
-                    return Err(garth::Error::Protocol(
-                        "MLS retry substituted its original private checkpoint".into(),
-                    ));
-                }
+            if let Some(existing) = state.mls_commit_checkpoints.get(&event_id)
+                && existing != &checkpoint
+            {
+                return Err(garth::Error::Protocol(
+                    "MLS retry substituted its original private checkpoint".into(),
+                ));
             }
             let mut queue = garth::SendQueue::from_snapshot(garth::SendQueueSnapshot {
                 items: std::mem::take(&mut state.items),
@@ -1076,6 +1079,7 @@ impl InksonOutboundStore {
 
     /// The verified gate decision is published with a terminal authority answer,
     /// never as a refreshed pin or an unregistered active-state amendment.
+    #[cfg(test)]
     pub(crate) fn remember_creator_absence(
         &self,
         decision: (arkret_sdk::EventId, MlsCreatorBootstrapVerifiedAbsence),
@@ -1099,6 +1103,7 @@ impl InksonOutboundStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) async fn freeze_creator_intent(
         &self,
         intent: MlsCreatorBootstrapIntent,
@@ -1209,6 +1214,7 @@ impl InksonOutboundStore {
 
     /// Compare the whole previously read record while holding the vault's
     /// native OS lock or IndexedDB CAS. The queue and record share one commit.
+    #[cfg(test)]
     pub(crate) async fn accept_creator_realm(
         &self,
         expected: MlsCreatorBootstrapRecord,
@@ -1232,6 +1238,7 @@ impl InksonOutboundStore {
             .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn pin_creator_governance(
         &self,
         expected: MlsCreatorBootstrapRecord,
@@ -1308,6 +1315,7 @@ impl InksonOutboundStore {
     }
 
     /// Bind exact verified acceptance and stop its retained ledger atomically.
+    #[cfg(test)]
     pub(crate) async fn accept_creator_genesis(
         &self,
         expected: MlsCreatorBootstrapRecord,
@@ -1423,6 +1431,7 @@ impl InksonOutboundStore {
         .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn supersede_creator(
         &self,
         expected: MlsCreatorBootstrapRecord,
@@ -1472,6 +1481,7 @@ impl InksonOutboundStore {
         .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn reopen_creator(
         &self,
         expected: MlsCreatorBootstrapRecord,
@@ -1545,15 +1555,13 @@ impl InksonOutboundStore {
                 .creator_bootstrap_records
                 .iter()
                 .find(|record| record.intent().effective_scope() == &event.scope_ref)
-            {
-                if record
+                && record
                     .queued_genesis()
                     .is_none_or(|queued| queued.signed_genesis().event() != event)
-                {
-                    return Err(garth::Error::Storage(
-                        "accepted artifact cannot adopt a losing creator private unit".into(),
-                    ));
-                }
+            {
+                return Err(garth::Error::Storage(
+                    "accepted artifact cannot adopt a losing creator private unit".into(),
+                ));
             }
             Ok(())
         })
@@ -1851,10 +1859,9 @@ mod tests {
 
     // Successful creator writes and ingress retirement publish one process-wide watch.
     // Hold this lock for the whole test, before any device-scope test guard.
-    fn creator_watch_test_guard() -> std::sync::MutexGuard<'static, ()> {
-        static GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        GATE.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    fn creator_watch_test_gate() -> &'static tokio::sync::Mutex<()> {
+        static GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        &GATE
     }
 
     fn creator_fixture(device: &str) -> (MlsCreatorBootstrapIntent, garth::QueuedSubmission) {
@@ -1885,7 +1892,7 @@ mod tests {
             event
                 .sign_ed25519(
                     "did:web:alice.example",
-                    &format!("did:web:alice.example#{device}"),
+                    format!("did:web:alice.example#{device}"),
                     &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
                 )
                 .unwrap();
@@ -1909,7 +1916,7 @@ mod tests {
 
     #[tokio::test]
     async fn ordinary_queue_commits_do_not_invalidate_creator_readiness() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().lock().await;
         let store = garth::MemorySecureKeyStore::default();
         let key = "inkson.outbound.v1::readiness.standard";
         let directory = tempfile::tempdir().unwrap();
@@ -2045,7 +2052,7 @@ mod tests {
 
     #[tokio::test]
     async fn own_station_creator_vault_lock_session_aba_preserves_original_and_frozen_queue() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().lock().await;
         use arkret_sdk::http_client::own_station_results::{
             OwnStationResultClient, OwnStationSessionSnapshot, OwnStationSessionSource,
         };
@@ -2088,7 +2095,7 @@ mod tests {
         unsigned.as_object_mut().unwrap().remove("signature");
         snapshot.snapshot_id =
             arkret_sdk::RealmSnapshotId::from_digest(arkret_sdk::canonical::sha256_bytes(
-                &arkret_sdk::canonical::canonical_json_bytes(&unsigned).unwrap(),
+                arkret_sdk::canonical::canonical_json_bytes(&unsigned).unwrap(),
             ));
         let account = intent.owner_actor_id().as_account_id().unwrap().clone();
         let binding = arkret_sdk::StationConnectionBinding {
@@ -2176,7 +2183,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_acceptance_failure_keeps_intent_and_exact_queue_then_reopens() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().lock().await;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("standard.json");
         let store = InksonOutboundStore::for_test_path(path.clone());
@@ -2591,7 +2598,7 @@ mod tests {
                 serde_json::from_slice(&original_private).unwrap();
             let authority = ready.intent().owner_actor_id().as_account_id().unwrap();
             let secret =
-                crate::event_submit::original_creator_checkpoint_secret(&ready, secrets, authority)
+                crate::event_submit::original_creator_checkpoint_secret(ready, secrets, authority)
                     .unwrap();
             if private_cut == "ciphertext" {
                 let first = if envelope.ciphertext_hex.starts_with('0') {
@@ -2713,7 +2720,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_pin_failure_and_stale_holder_keep_the_single_durable_cut() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().lock().await;
         use arkret_models_collaboration::mls_creator_bootstrap::{
             MlsCreatorBootstrapDeviceAuthority, MlsCreatorBootstrapGovernanceEvidence,
         };
@@ -3429,7 +3436,7 @@ mod tests {
     #[tokio::test]
     async fn creator_native_record_requires_the_original_device_secret_without_plaintext_fallback()
     {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().lock().await;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("standard.json");
         let (intent, submission) = creator_fixture(CREATOR_DEVICE);
@@ -3569,7 +3576,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_circle_create_and_initial_join_share_one_recoverable_cut() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().lock().await;
         use arkret_sdk::*;
         let (realm_intent, _) = creator_fixture(CREATOR_DEVICE);
         let realm = realm_intent.effective_scope().realm_id().clone();
@@ -3597,7 +3604,7 @@ mod tests {
         create
             .sign_ed25519(
                 "did:web:alice.example",
-                &format!("did:web:alice.example#{CREATOR_DEVICE}"),
+                format!("did:web:alice.example#{CREATOR_DEVICE}"),
                 &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
             )
             .unwrap();
@@ -3633,7 +3640,7 @@ mod tests {
         member
             .sign_ed25519(
                 "did:web:alice.example",
-                &format!("did:web:alice.example#{CREATOR_DEVICE}"),
+                format!("did:web:alice.example#{CREATOR_DEVICE}"),
                 &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
             )
             .unwrap();
@@ -3645,7 +3652,7 @@ mod tests {
         discussion
             .sign_ed25519(
                 "did:web:alice.example",
-                &format!("did:web:alice.example#{CREATOR_DEVICE}"),
+                format!("did:web:alice.example#{CREATOR_DEVICE}"),
                 &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
             )
             .unwrap();
@@ -3744,7 +3751,7 @@ mod tests {
         event
             .sign_ed25519(
                 "did:web:alice.example",
-                &format!("did:web:alice.example#{CREATOR_DEVICE}"),
+                format!("did:web:alice.example#{CREATOR_DEVICE}"),
                 &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
             )
             .unwrap();
@@ -3806,7 +3813,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_discussion_vault_failure_and_reopen_preserve_one_original() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().lock().await;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("standard.json");
         let store = InksonOutboundStore::for_test_path(path.clone());
@@ -3916,7 +3923,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_discussion_completed_receipts_remain_readable_when_new_writes_are_blocked() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().lock().await;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("standard.json");
         let store = InksonOutboundStore::for_test_path(path.clone());
@@ -3994,7 +4001,7 @@ mod tests {
 
     #[test]
     fn creator_discussion_independent_writers_join_the_original_public_event() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().blocking_lock();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("standard.json");
         let (intent, create) = creator_fixture(CREATOR_DEVICE);
@@ -4055,7 +4062,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_discussion_rejects_scope_signer_and_selection_substitution() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().lock().await;
         let directory = tempfile::tempdir().unwrap();
         let store = InksonOutboundStore::for_test_path(directory.path().join("standard.json"));
         let (intent, create) = creator_fixture(CREATOR_DEVICE);
@@ -4124,7 +4131,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_intent_and_create_queue_survive_reopen_together() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().lock().await;
         let directory = std::env::temp_dir().join(format!(
             "inkson-creator-intent-{}",
             arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms())
@@ -4168,7 +4175,7 @@ mod tests {
 
     #[test]
     fn independent_native_creator_holders_keep_one_immutable_intent() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().blocking_lock();
         let directory = std::env::temp_dir().join(format!(
             "inkson-creator-race-{}",
             arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms())
@@ -4215,7 +4222,7 @@ mod tests {
 
     #[tokio::test]
     async fn creator_intent_failure_never_publishes_half_a_create() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().lock().await;
         let (intent, submission) = creator_fixture(CREATOR_DEVICE);
         assert!(
             mutate_state_in_store(
@@ -4701,7 +4708,7 @@ mod tests {
 
     #[tokio::test]
     async fn retired_ingress_queue_is_preserved_and_new_work_survives_reopen() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().lock().await;
         let store = garth::MemorySecureKeyStore::default();
         let key = "inkson.outbound.v1::nsA.standard";
         let retired = retired_ingress_fixture();
@@ -4753,7 +4760,7 @@ mod tests {
 
     #[tokio::test]
     async fn retired_ingress_cleanup_is_durable_in_native_file() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().lock().await;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("standard.json");
         let retired = retired_ingress_fixture();
@@ -4783,7 +4790,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_retired_ingress_counter_is_durably_archived_once() {
-        let _creator_watch = creator_watch_test_guard();
+        let _creator_watch = creator_watch_test_gate().lock().await;
         for counter in [0, u64::MAX] {
             let store = garth::MemorySecureKeyStore::default();
             let key = "inkson.outbound.v1::nsA.standard";

@@ -3,9 +3,7 @@
 //! Static deduplication gates for client-core extraction.
 //!
 //! These guards pin surfaces that have already been removed from inkson. They
-//! intentionally do not assert that the `ArkretApi` struct itself is gone (its
-//! remaining god-object methods + E8 orchestration are still live work), but
-//! they DO pin the `src/api/**` submodules that have been fully extracted:
+//! pin the `src/api/**` submodules that have been fully extracted:
 //! the durable/ephemeral event engine now lives in `crate::event_submit`
 //! (`api::events`/`api::agent` deleted), and the applet/moderation surfaces
 //! moved to the SDK http-client via the keystone. Reintroducing any of these
@@ -48,13 +46,14 @@ fn ordinary_event_submit_uses_garth_durable_outbound() {
     assert!(
         submit.contains("OutboundEngine::new(")
             && submit.contains("InksonOutboundStore::open(")
-            && submit.contains(".enqueue(submission)")
+            && submit.contains(".enqueue(write.submission.clone())")
             && submit.contains("drain_outbound"),
         "ordinary Inkson SDK events must enter Garth's durable queue and resume after restart"
     );
     assert!(
         submit.contains("QueuedSubmission::new(")
-            && submit.contains(".submit_next(&authority_client, &options)")
+            && submit.contains(".submit_next_checked(&authority_client, &options,")
+            && submit.contains("ensure_queued_application_send_gate(&request)")
             && !submit.contains("submit_sdk_event_direct"),
         "the durable Garth queue must own the frozen submission's HTTP tail"
     );
@@ -95,7 +94,9 @@ fn mls_readiness_remains_commit_proven() {
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", consumer_path.display()));
     assert!(
         consumer.contains("accepted_commit_for_welcome(api, &delivery)")
-            && consumer.contains("scan_stream(&stream_ref")
+            && consumer.contains(".scan_commit_stream(&arkret_wire::StreamScanRequest")
+            && consumer.contains("consume_bound_scan_row(&client, &reference, exact)")
+            && consumer.contains("client.check_session()")
             && consumer.contains("install_accepted_welcome(")
             && consumer.contains("converge_accepted_mls_artifacts"),
         "only an authority-committed MLS transition may publish ready MLS state"

@@ -297,7 +297,7 @@ fn account_switch_and_reload_isolate_private_plaintext_and_user_projections() {
         assert!(store.load().sync_cursor.is_none());
         assert!(store.load().realm_tree_projections.is_empty());
         store.save_private_plaintext(realm, strand, "body", &format!("\"private-{index}\""));
-        store.save_sync_cursor(&format!("cursor-{index}"));
+        store.save_sync_cursor(format!("cursor-{index}"));
         store.save_realm_tree_projection(
             realm,
             serde_json::json!({"summary": format!("realm-{index}")}),

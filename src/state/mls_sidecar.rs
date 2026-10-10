@@ -452,6 +452,7 @@ impl LocalStateStore {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn staged_mls_checkpoint_for_scope_and_group(
         &self,
         effective_scope: &arkret_sdk::ScopeRef,
@@ -699,22 +700,6 @@ impl LocalStateStore {
     /// Realm so it is never re-emitted (idempotent).
     pub fn mark_mls_genesis_emitted(&mut self, realm_id: impl Into<String>) -> Result<(), String> {
         self.mark_mls_genesis_emitted_for_effective_scope(realm_id, None)
-    }
-
-    /// Record a successfully accepted `ak.mls.genesis` event and seed the
-    /// local MLS group-state frontier with that accepted Event id. This lets an
-    /// immediately-following self-update or AddMember commit cite a real
-    /// `ak:event:*` base group-state ref before the next sync response arrives.
-    pub(crate) fn mark_mls_genesis_emitted_with_event(
-        &mut self,
-        realm_id: impl Into<String>,
-        genesis_event_id: &arkret_sdk::EventId,
-    ) -> Result<LocalStatePersistBarrier, String> {
-        self.mark_mls_genesis_emitted_for_effective_scope_with_event(
-            realm_id,
-            None,
-            genesis_event_id,
-        )
     }
 
     pub fn mark_mls_genesis_emitted_for_effective_scope(

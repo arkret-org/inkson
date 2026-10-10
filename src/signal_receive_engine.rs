@@ -433,9 +433,6 @@ impl InksonSignalSink {
     }
 }
 
-const SIGNAL_PLAINTEXT_KIND_TYPING: &str = "ak.typing";
-const SIGNAL_PLAINTEXT_KIND_READ_RECEIPT: &str = "ak.receipt.read";
-
 fn call_current_attempt_matches(
     store: &crate::state::LocalStateStore,
     authority: &arkret_sdk::AccountId,

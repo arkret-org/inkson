@@ -25,7 +25,7 @@ pub(crate) fn new_contact_operation_binding()
     let nonce = operation
         .as_str()
         .strip_prefix("ak:operation:")
-        .expect("SDK OperationId retains its registered prefix")
+        .ok_or_else(|| anyhow::anyhow!("SDK OperationId has an unregistered prefix"))?
         .to_owned();
     Ok((
         ProtocolOperationId::new(operation.into_string()).map_err(anyhow::Error::msg)?,
@@ -34,10 +34,13 @@ pub(crate) fn new_contact_operation_binding()
 }
 
 pub(crate) fn default_contact_scopes() -> Vec<ContactScope> {
-    DEFAULT_CONTACT_SCOPE_NAMES
-        .iter()
-        .map(|scope| contact_scope(scope).expect("default Contact scopes are registered"))
-        .collect()
+    vec![
+        ContactScope::Invite,
+        ContactScope::DirectMessage,
+        ContactScope::VoiceCall,
+        ContactScope::VideoCall,
+        ContactScope::Presence,
+    ]
 }
 
 #[cfg(test)]
@@ -202,9 +205,9 @@ where
     match initial {
         Ok(outcome) => {
             validate(&outcome)?;
-            return Ok(outcome);
+            Ok(outcome)
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => Err(error.into()),
     }
 }
 

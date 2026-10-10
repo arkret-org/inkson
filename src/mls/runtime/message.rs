@@ -289,7 +289,7 @@ fn decrypt_application_payload_for_scope_internal(
     device_id: &DeviceId,
     payload: &arkret_sdk::EncryptedPayload,
     effective_scope: &arkret_sdk::ScopeRef,
-    verified_sender_domain: Option<&[u8]>,
+    _verified_sender_domain: Option<&[u8]>,
 ) -> Option<Vec<u8>> {
     if state_store.realm_projection_has_retired_minimal_metadata_marker(realm_id) {
         return None;
@@ -466,57 +466,6 @@ pub fn verified_author_group_view_for_scope(
     Some(group.author_group_state_view(group_state_ref))
 }
 
-#[cfg(test)]
-mod agent_authorization_tests {
-    use super::*;
-
-    #[test]
-    fn same_key_reauthorization_cannot_replace_the_accepted_leaf_authorization() {
-        let actor = crate::test_support::account_actor("did:web:agent.example");
-        let authorization =
-            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [51; 32]);
-        let replacement =
-            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [52; 32]);
-        let method = arkret_sdk::DidUrl::new("did:web:agent.example#runtime").unwrap();
-        let signing = ed25519_dalek::SigningKey::from_bytes(&[31; 32]);
-        let key = signing.verifying_key().to_bytes();
-        let identity = arkret_sdk::ArkretMlsIdentity::new_agent(
-            actor.clone(),
-            method,
-            authorization.clone(),
-            arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(signing),
-        )
-        .unwrap();
-        let scope = arkret_sdk::ScopeRef::Realm {
-            realm_id: arkret_sdk::RealmId::new(
-                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            )
-            .unwrap(),
-        };
-        let mut group = identity.create_group(&scope).unwrap();
-        group
-            .install_local_creator_binding(actor.clone(), None)
-            .unwrap();
-        let state_ref = authorization.as_str();
-        let view = agent_author_view_from_verified_group(&group, state_ref).unwrap();
-        let group_id = group.group_id();
-        let mut claim = arkret_sdk::mls::AgentMlsSignerClaim {
-            group_id: group_id.as_str(),
-            epoch: group.epoch(),
-            group_state_ref: state_ref,
-            signer_actor_id: &actor,
-            signing_key: &key,
-            agent_key_authorize_event_id: &authorization,
-        };
-        assert_eq!(
-            arkret_sdk::mls::verify_ordinary_agent_mls_binding(&view, &claim).unwrap(),
-            0
-        );
-        claim.agent_key_authorize_event_id = &replacement;
-        assert!(arkret_sdk::mls::verify_ordinary_agent_mls_binding(&view, &claim).is_err());
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn restore_author_group_for_scope(
     state_store: &crate::state::LocalStateStore,
@@ -651,22 +600,19 @@ pub(crate) fn mls_group_member_actor_ids_for_effective_scope(
 ) -> Option<Vec<arkret_sdk::ActorId>> {
     let snapshot = state_store.mls_checkpoint_for_effective_scope(realm_id, circle_id)?;
     let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
-        .map_err(|error| {
+        .inspect_err(|_error| {
             tracing::warn!("MLS reconciliation checkpoint key is unavailable");
-            error
         })
         .ok()?;
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
-        .map_err(|error| {
+        .inspect_err(|_error| {
             tracing::warn!("MLS reconciliation checkpoint restore failed");
-            error
         })
         .ok()?;
     group
         .member_actor_ids()
-        .map_err(|error| {
+        .inspect_err(|_error| {
             tracing::warn!("MLS reconciliation verified leaf bindings are unavailable");
-            error
         })
         .ok()
 }
@@ -982,7 +928,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     ) {
         return Err(MlsRuntimeError::EncryptionTransitionPending);
     }
-    let mut encrypt_one =
+    let encrypt_one =
         |group: &mut arkret_sdk::ArkretMlsGroup, payload_content_type: &str, bytes: &[u8]| {
             let sender_domain = group
                 .local_content_sender_domain()
@@ -1186,5 +1132,56 @@ fn runtime_effective_scope(
             })?,
         }),
         None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
+    }
+}
+
+#[cfg(test)]
+mod agent_authorization_tests {
+    use super::*;
+
+    #[test]
+    fn same_key_reauthorization_cannot_replace_the_accepted_leaf_authorization() {
+        let actor = crate::test_support::account_actor("did:web:agent.example");
+        let authorization =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [51; 32]);
+        let replacement =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [52; 32]);
+        let method = arkret_sdk::DidUrl::new("did:web:agent.example#runtime").unwrap();
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[31; 32]);
+        let key = signing.verifying_key().to_bytes();
+        let identity = arkret_sdk::ArkretMlsIdentity::new_agent(
+            actor.clone(),
+            method,
+            authorization.clone(),
+            arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(signing),
+        )
+        .unwrap();
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            )
+            .unwrap(),
+        };
+        let mut group = identity.create_group(&scope).unwrap();
+        group
+            .install_local_creator_binding(actor.clone(), None)
+            .unwrap();
+        let state_ref = authorization.as_str();
+        let view = agent_author_view_from_verified_group(&group, state_ref).unwrap();
+        let group_id = group.group_id();
+        let mut claim = arkret_sdk::mls::AgentMlsSignerClaim {
+            group_id: group_id.as_str(),
+            epoch: group.epoch(),
+            group_state_ref: state_ref,
+            signer_actor_id: &actor,
+            signing_key: &key,
+            agent_key_authorize_event_id: &authorization,
+        };
+        assert_eq!(
+            arkret_sdk::mls::verify_ordinary_agent_mls_binding(&view, &claim).unwrap(),
+            0
+        );
+        claim.agent_key_authorize_event_id = &replacement;
+        assert!(arkret_sdk::mls::verify_ordinary_agent_mls_binding(&view, &claim).is_err());
     }
 }

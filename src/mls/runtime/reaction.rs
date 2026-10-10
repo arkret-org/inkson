@@ -21,38 +21,7 @@ fn reaction_routing_tag_from_key(
         .map_err(|error| MlsRuntimeError::Encrypt(format!("reaction routing HMAC key: {error}")))?;
     let normalized = arkret_sdk::canonical::to_nfc(canonical_emoji);
     mac.update(normalized.as_bytes());
-    Ok(arkret_sdk::base64url_encode(&mac.finalize().into_bytes()))
-}
-
-#[cfg(test)]
-mod routing_tag_tests {
-    use super::reaction_routing_tag_from_key;
-
-    #[test]
-    fn registered_reaction_hmac_vector_normalizes_emoji_bytes() {
-        // arkret-private-kdf-fixture.json:
-        // ak.vector.reaction.routing_hmac_kat.v1. The SDK separately tests
-        // the exporter root and target/window key expansion.
-        let key = hex::decode("0599b6e51be62e8baf6cdec6bf5f326fe1a7c3cf1d56e38d091029b5a7dcf675")
-            .unwrap();
-        let expected = arkret_sdk::base64url_encode(
-            &hex::decode("e61c8ae48d2cf86d721e73c9f72969aacdff69fdbbbf5383a18e17173d2bdddb")
-                .unwrap(),
-        );
-        assert_eq!(
-            reaction_routing_tag_from_key(&key, "e\u{301}").unwrap(),
-            expected
-        );
-        assert_eq!(reaction_routing_tag_from_key(&key, "é").unwrap(), expected);
-        let skin_tone = arkret_sdk::base64url_encode(
-            &hex::decode("65a3319be4bc655c9967c470fe339c129ffb46fea1b5a125fe4665a4576a0158")
-                .unwrap(),
-        );
-        assert_eq!(
-            reaction_routing_tag_from_key(&key, "👍🏽").unwrap(),
-            skin_tone
-        );
-    }
+    Ok(arkret_sdk::base64url_encode(mac.finalize().into_bytes()))
 }
 
 /// Content type for the encrypted real-emoji payload of a reaction.
@@ -213,4 +182,35 @@ pub fn encrypt_reaction_with_device_snapshot(
         routing_tag,
         encrypted_payload,
     })
+}
+
+#[cfg(test)]
+mod routing_tag_tests {
+    use super::reaction_routing_tag_from_key;
+
+    #[test]
+    fn registered_reaction_hmac_vector_normalizes_emoji_bytes() {
+        // arkret-private-kdf-fixture.json:
+        // ak.vector.reaction.routing_hmac_kat.v1. The SDK separately tests
+        // the exporter root and target/window key expansion.
+        let key = hex::decode("0599b6e51be62e8baf6cdec6bf5f326fe1a7c3cf1d56e38d091029b5a7dcf675")
+            .unwrap();
+        let expected = arkret_sdk::base64url_encode(
+            hex::decode("e61c8ae48d2cf86d721e73c9f72969aacdff69fdbbbf5383a18e17173d2bdddb")
+                .unwrap(),
+        );
+        assert_eq!(
+            reaction_routing_tag_from_key(&key, "e\u{301}").unwrap(),
+            expected
+        );
+        assert_eq!(reaction_routing_tag_from_key(&key, "é").unwrap(), expected);
+        let skin_tone = arkret_sdk::base64url_encode(
+            hex::decode("65a3319be4bc655c9967c470fe339c129ffb46fea1b5a125fe4665a4576a0158")
+                .unwrap(),
+        );
+        assert_eq!(
+            reaction_routing_tag_from_key(&key, "👍🏽").unwrap(),
+            skin_tone
+        );
+    }
 }

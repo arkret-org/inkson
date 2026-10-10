@@ -841,9 +841,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                })
                                                .await;
                                                match result {
-                                                   Ok((preview, requested_basis)) => match (|| {
-                                                       approved_actions_from_plan(&preview.plan, &package)
-                                                   })() {
+                                                   Ok((preview, requested_basis)) => match approved_actions_from_plan(&preview.plan, &package) {
                                                        Ok(actions)
                                                            if preview.plan.effective_scope == effective_scope
     =>
@@ -986,11 +984,14 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                onclick: {
                                                    let base = base_url.clone();
                                                    let effective_scope = installed_scope.clone();
-                                                   let realm = effective_scope.realm_id_opt().unwrap().to_string();
+                                                   let realm = effective_scope.realm_id_opt().map(ToString::to_string);
                                                    let aid = applet_id.clone();
                                                    move |_| {
                                                        let base = base.clone();
-                                                       let realm = realm.clone();
+                                                       let Some(realm) = realm.clone() else {
+                                                           install_status.set(Some(AppletInstallFeedback::RevokeAccountUnavailable));
+                                                           return;
+                                                       };
                                                        let effective_scope = effective_scope.clone();
                                                        let aid = aid.clone();
                                                        let api_token = token();

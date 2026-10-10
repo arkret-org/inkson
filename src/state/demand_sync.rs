@@ -438,16 +438,10 @@ impl LocalStateStore {
             .into_values()
             .collect()
     }
-    pub(crate) fn account_data_events_baseline_complete(&self) -> bool {
-        self.load()
-            .demand_sync
-            .channels
-            .get(&Channel::AccountDataEvents)
-            .is_some_and(|state| state.complete)
-    }
     /// Dedicated controller-private Agent draft projection. Values have already
     /// passed the SDK's closed live | terminal-redacted decoder; removal
     /// tombstones stay internal so callers cannot mistake them for live rows.
+    #[cfg(test)]
     pub(crate) fn agent_draft_pending_intents(&self) -> Vec<Value> {
         self.cached
             .demand_sync
@@ -460,6 +454,7 @@ impl LocalStateStore {
     /// Snapshot of what this device has already accepted, with no new frame
     /// applied. It carries the account subscription's own resume cursor — never
     /// a commit-stream position — and the Realm projections already folded.
+    #[cfg(test)]
     pub(crate) fn current_account_projection_step(&mut self) -> crate::models::AccountSyncStep {
         self.ensure_cached_loaded();
         crate::models::AccountSyncStep {
@@ -536,13 +531,13 @@ impl LocalStateStore {
         let views = FrameViews::decode(frame)?;
         // Validate every conflict before mutating the cache: LocalStateStore::batch coalesces
         // writes but does not roll back a returned error.
-        if let Some(page) = &views.realm_list {
-            if self.cached.demand_sync.list_snapshot.as_ref() == Some(&page.snapshot_cursor) {
-                anyhow::ensure!(
-                    self.cached.demand_sync.list_revision == page.snapshot_revision,
-                    "Realm list snapshot changed revision"
-                );
-            }
+        if let Some(page) = &views.realm_list
+            && self.cached.demand_sync.list_snapshot.as_ref() == Some(&page.snapshot_cursor)
+        {
+            anyhow::ensure!(
+                self.cached.demand_sync.list_revision == page.snapshot_revision,
+                "Realm list snapshot changed revision"
+            );
         }
         for row in views.realm_list.iter().flat_map(|page| &page.items).chain(
             views
@@ -558,23 +553,22 @@ impl LocalStateStore {
             }
         }
         let mut accepted = frame.clone();
-        if let Some(baseline) = &views.baseline {
-            if self.cached.demand_sync.global_snapshot.as_deref()
+        if let Some(baseline) = &views.baseline
+            && self.cached.demand_sync.global_snapshot.as_deref()
                 != Some(baseline.snapshot_cursor.as_str())
-            {
-                self.cached.demand_sync.global_snapshot = Some(baseline.snapshot_cursor.clone());
-                self.cached.demand_sync.channels = [
-                    Channel::AccountDataEvents,
-                    Channel::StationCas,
-                    Channel::DeviceLists,
-                    Channel::Notifications,
-                    Channel::AgentDraftPendingIntents,
-                ]
-                .into_iter()
-                .map(|channel| (channel, BaselineChannelState::default()))
-                .collect();
-                self.cached.demand_sync.agent_draft_pending_baseline = None;
-            }
+        {
+            self.cached.demand_sync.global_snapshot = Some(baseline.snapshot_cursor.clone());
+            self.cached.demand_sync.channels = [
+                Channel::AccountDataEvents,
+                Channel::StationCas,
+                Channel::DeviceLists,
+                Channel::Notifications,
+                Channel::AgentDraftPendingIntents,
+            ]
+            .into_iter()
+            .map(|channel| (channel, BaselineChannelState::default()))
+            .collect();
+            self.cached.demand_sync.agent_draft_pending_baseline = None;
         }
         let baseline = |channel| {
             views
@@ -963,16 +957,15 @@ impl LocalStateStore {
                         .cloned()
                         .collect::<Vec<_>>();
                     for key in stale {
-                        if let Some(event) = self.cached.demand_sync.account_events.remove(&key) {
-                            if let Ok(notification) =
+                        if let Some(event) = self.cached.demand_sync.account_events.remove(&key)
+                            && let Ok(notification) =
                                 serde_json::from_value::<arkret_sdk::Notification>(Value::Object(
                                     event.payload.into_iter().collect(),
                                 ))
-                            {
-                                self.cached.notification_projection.retain(|item| {
-                                    item.notification_id() != notification.id.as_str()
-                                });
-                            }
+                        {
+                            self.cached
+                                .notification_projection
+                                .retain(|item| item.notification_id() != notification.id.as_str());
                         }
                         self.cached.saved_account_data.remove(&key);
                         self.remove_scheduled_send_account_data_entry(&key);

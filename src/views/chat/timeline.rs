@@ -186,20 +186,6 @@ pub(super) fn mention_nodes_to_values(mentions: &[MentionNode]) -> Vec<serde_jso
         .collect()
 }
 
-pub(super) fn scroll_chat_feed_to_latest() {
-    let script = r#"
-setTimeout(() => {
-  const panels = document.querySelectorAll('[data-testid="chat-panel"]');
-  const panel = panels[panels.length - 1];
-  const feed = panel && panel.querySelector('[data-testid="message-list"]');
-  if (feed) {
-    feed.scrollTop = feed.scrollHeight;
-  }
-}, 0);
-"#;
-    let _ = document::eval(script);
-}
-
 pub(super) fn scroll_chat_feed_to_offset(scroll_top: f64) {
     let script = format!(
         r#"

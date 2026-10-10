@@ -116,24 +116,6 @@ impl KeysEndpoints<'_> {
 }
 
 impl MlsEndpoints<'_> {
-    /// Read exact accepted Genesis public bytes through this member's Account
-    /// Station. Callers must independently verify the Genesis/target cut and
-    /// roster proof before installing any MLS leaf binding.
-    pub async fn member_group_state_material(
-        &self,
-        request: &arkret_sdk::MlsMemberGroupStateMaterialReadRequestBody,
-    ) -> anyhow::Result<arkret_sdk::ValidatedMlsGroupStateMaterial> {
-        let outcome = self
-            .transport
-            .http()
-            .self_mls_group_state_material(request)
-            .await
-            .map_err(anyhow::Error::from)?;
-        outcome
-            .validate_for_request(&request.as_peer_request())
-            .map_err(anyhow::Error::from)
-    }
-
     /// Fetch one unverified historical roster page from this member's Account
     /// Station. The caller must verify the complete signed page set, each
     /// attestor and the RFC public tree before binding any MLS leaf.

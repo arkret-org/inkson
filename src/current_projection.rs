@@ -249,22 +249,6 @@ pub(crate) fn current_realm_policy_bundle_value(entries: &[TypedCurrentRow]) -> 
         .cloned()
 }
 
-/// The authority revision the Station committed one selector's current value
-/// at, for `expected_revision` CAS on the next write to that selector.
-///
-/// `None` means the selector has no committed current value yet, which is a
-/// settled empty result rather than an unknown one: the first write supersedes
-/// nothing.
-pub(crate) fn current_revision_for(
-    entries: &[TypedCurrentRow],
-    selector: &CurrentSelector,
-) -> Option<arkret_wire::CurrentRevision> {
-    entry_for(entries, selector).map(|entry| {
-        let TypedCurrentRow::Value { revision, .. } = entry;
-        revision.clone()
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use arkret_wire::{CurrentRevision, RealmCommitId};

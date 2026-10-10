@@ -293,7 +293,7 @@ fn unscoped_chat_seed_cannot_enter_ordinary_realm_projection() {
         source,
         "private body",
     );
-    let scoped_seed = verified_scope_timeline_seed(&[private_seed.clone()]);
+    let scoped_seed = verified_scope_timeline_seed(std::slice::from_ref(&private_seed));
     assert!(scoped_seed.is_empty());
     assert!(project_visible_messages(&scoped_seed, source, realm, None, &[], false).is_empty());
     assert!(

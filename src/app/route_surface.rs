@@ -14,7 +14,7 @@ pub(super) fn direct_conversation_peer_id(
         if contact
             .direct_conversation
             .as_ref()
-            .is_some_and(&matches_route)
+            .is_some_and(matches_route)
         {
             return crate::models::contact_peer_id(contact).to_string();
         }
@@ -22,7 +22,7 @@ pub(super) fn direct_conversation_peer_id(
             agent
                 .direct_conversation
                 .as_ref()
-                .is_some_and(&matches_route)
+                .is_some_and(matches_route)
         }) {
             return agent.actor_id.signing_principal_id().to_string();
         }
@@ -414,7 +414,10 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         }
                     },
                     Route::Setup | Route::SetupSection { .. } => {
-                        if setup_feature(&route).is_none_or(|feature| feature.ready(server_description.as_ref())) {
+                        if let Some(feature) = setup_feature(&route)
+                            && !feature.ready(server_description.as_ref()) {
+                            rsx! { FeatureGateNotice { feature, missing: feature.missing_requirements(server_description.as_ref()), pending: server_description.is_none() } }
+                        } else {
                             rsx! {
                                 crate::views::setup::SetupPanel {
                                     plaintext_service_id: active_service_id.clone(),
@@ -427,8 +430,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                     section: route.setup_section().map(str::to_owned),
                                 }
                             }
-                        } else {
-                            rsx! { FeatureGateNotice { feature: setup_feature(&route).expect("setup feature is unavailable"), missing: (setup_feature(&route).expect("setup feature is unavailable")).missing_requirements(server_description.as_ref()), pending: server_description.is_none() } }
                         }
                     },
                     Route::Settings

@@ -670,6 +670,43 @@ impl CachePersistQueue {
 }
 
 #[cfg(target_arch = "wasm32")]
+pub(crate) async fn browser_storage_estimate() -> anyhow::Result<Option<BrowserStorageEstimate>> {
+    use js_sys::Reflect;
+    use wasm_bindgen::JsValue;
+    use wasm_bindgen_futures::JsFuture;
+
+    let window = web_sys::window().context("browser window is unavailable")?;
+    let promise = window
+        .navigator()
+        .storage()
+        .estimate()
+        .map_err(|error| anyhow::anyhow!("browser storage estimate failed: {error:?}"))?;
+    let estimate = JsFuture::from(promise)
+        .await
+        .map_err(|error| anyhow::anyhow!("browser storage estimate rejected: {error:?}"))?;
+    let read_bytes = |field: &str| -> anyhow::Result<u64> {
+        let value = Reflect::get(&estimate, &JsValue::from_str(field))
+            .map_err(|error| anyhow::anyhow!("browser storage {field} read failed: {error:?}"))?
+            .as_f64()
+            .with_context(|| format!("browser storage {field} is missing"))?;
+        anyhow::ensure!(
+            value.is_finite() && value >= 0.0,
+            "browser storage {field} is invalid"
+        );
+        Ok(value as u64)
+    };
+    Ok(Some(BrowserStorageEstimate {
+        usage_bytes: read_bytes("usage")?,
+        quota_bytes: read_bytes("quota")?,
+    }))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn browser_storage_estimate() -> anyhow::Result<Option<BrowserStorageEstimate>> {
+    Ok(None)
+}
+
+#[cfg(target_arch = "wasm32")]
 mod cache_persist_driver {
     use std::sync::{Mutex, OnceLock};
 
@@ -852,41 +889,4 @@ mod cache_persist_tests {
         queue.complete("account-a", Ok(()));
         replacement.await.unwrap().unwrap();
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) async fn browser_storage_estimate() -> anyhow::Result<Option<BrowserStorageEstimate>> {
-    use js_sys::Reflect;
-    use wasm_bindgen::JsValue;
-    use wasm_bindgen_futures::JsFuture;
-
-    let window = web_sys::window().context("browser window is unavailable")?;
-    let promise = window
-        .navigator()
-        .storage()
-        .estimate()
-        .map_err(|error| anyhow::anyhow!("browser storage estimate failed: {error:?}"))?;
-    let estimate = JsFuture::from(promise)
-        .await
-        .map_err(|error| anyhow::anyhow!("browser storage estimate rejected: {error:?}"))?;
-    let read_bytes = |field: &str| -> anyhow::Result<u64> {
-        let value = Reflect::get(&estimate, &JsValue::from_str(field))
-            .map_err(|error| anyhow::anyhow!("browser storage {field} read failed: {error:?}"))?
-            .as_f64()
-            .with_context(|| format!("browser storage {field} is missing"))?;
-        anyhow::ensure!(
-            value.is_finite() && value >= 0.0,
-            "browser storage {field} is invalid"
-        );
-        Ok(value as u64)
-    };
-    Ok(Some(BrowserStorageEstimate {
-        usage_bytes: read_bytes("usage")?,
-        quota_bytes: read_bytes("quota")?,
-    }))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) async fn browser_storage_estimate() -> anyhow::Result<Option<BrowserStorageEstimate>> {
-    Ok(None)
 }

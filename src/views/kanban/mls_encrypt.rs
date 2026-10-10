@@ -232,7 +232,7 @@ pub(super) async fn encrypt_private_card_detail_patch_values_with_store_for_effe
     if values.is_empty() {
         return Ok((
             EncryptedPatchPlan::plaintext(patch),
-            EncryptedWriteMlsEvents::default(),
+            EncryptedWriteMlsEvents,
         ));
     }
     let plaintext_values = values
@@ -462,7 +462,7 @@ pub(super) async fn dispatch_card_detail_update(
     } else {
         (
             EncryptedPatchPlan::plaintext(patch),
-            EncryptedWriteMlsEvents::default(),
+            EncryptedWriteMlsEvents,
         )
     };
     // R4: feed the guard the three-state security signal. An explicit

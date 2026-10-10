@@ -1053,50 +1053,6 @@ async fn reconcile_sidecar_mls_attempt(
         .map_err(Into::into)
 }
 
-/// Restore can repair obsolete leaves without a new ensure ceremony or a
-/// KeyPackage claim. Missing desired endpoints stay in the explicit Add lane.
-pub(crate) async fn reconcile_restored_sidecar_membership(
-    api: &crate::transport::TransportClient,
-    state: &StateStoreHandle,
-    authority: &arkret_sdk::AccountId,
-    device: &arkret_sdk::DeviceId,
-    view: &arkret_sdk::AgentSidecarView,
-    guard: ReconciliationGuard,
-) -> anyhow::Result<arkret_sdk::AgentSidecarView> {
-    guard()?;
-    genesis_binding(view, authority)?;
-    let scope = arkret_sdk::ScopeRef::Sidecar {
-        realm_id: view.sidecar.realm_id.clone(),
-        sidecar_id: view.sidecar.id.clone(),
-    };
-    let lock = crate::mls::admission::mls_admission_authoring_lock(&format!(
-        "{authority}|{device}|{}",
-        scope.canonical_mls_group_id()?
-    ));
-    let _lock = lock.lock().await;
-    guard()?;
-    let submitter = api
-        .event_submitter()?
-        .with_authority(authority.clone())
-        .with_state_store(state.clone());
-    submitter.drain_mls_outbound().await?;
-    guard()?;
-    anyhow::ensure!(
-        !submitter
-            .has_pending_mls_admission_for_realm(scope.realm_id().as_str())
-            .await?,
-        "an original durable MLS transition is still converging"
-    );
-    guard()?;
-    reconcile_existing_sidecar_leaves(api, state, authority, device, &view.sidecar.id, &guard)
-        .await?;
-    guard()?;
-    api.sdk_http_client()?
-        .agent_sidecar_get(&view.sidecar.id)
-        .await
-        .map_err(Into::into)
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use arkret_sdk::{

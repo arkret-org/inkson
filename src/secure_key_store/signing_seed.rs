@@ -123,16 +123,16 @@ pub fn set_active_device_seed_scope(scope: Option<(&AccountId, &DeviceId)>) {
         authority: authority.clone(),
         device_id: device_id.clone(),
     });
-    if let Ok(mut guard) = ACTIVE_DEVICE_SEED_SCOPE.write() {
-        if guard.scope != normalized {
-            match guard.epoch.checked_add(1) {
-                Some(epoch) => {
-                    guard.epoch = epoch;
-                    guard.scope = normalized;
-                }
-                None => {
-                    guard.scope = None;
-                }
+    if let Ok(mut guard) = ACTIVE_DEVICE_SEED_SCOPE.write()
+        && guard.scope != normalized
+    {
+        match guard.epoch.checked_add(1) {
+            Some(epoch) => {
+                guard.epoch = epoch;
+                guard.scope = normalized;
+            }
+            None => {
+                guard.scope = None;
             }
         }
     }

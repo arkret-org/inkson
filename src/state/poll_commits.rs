@@ -187,6 +187,7 @@ impl LocalStateStore {
             .cloned())
     }
 
+    #[cfg(test)]
     pub(crate) fn save_verified_commit_stream_cursor(
         &mut self,
         stream_ref: &arkret_sdk::CommitStreamRef,
@@ -214,48 +215,6 @@ impl LocalStateStore {
             }
             return Err(format!("persist verified commit stream cursor: {error}"));
         }
-        Ok(())
-    }
-
-    pub(crate) fn verified_commit_stream_anchor(
-        &self,
-        stream_ref: &arkret_sdk::CommitStreamRef,
-    ) -> Result<Option<arkret_sdk::RealmCommit>, String> {
-        let key = serde_json::to_string(stream_ref).map_err(|error| error.to_string())?;
-        Ok(self
-            .load()
-            .verified_commit_stream_anchors
-            .get(&key)
-            .cloned())
-    }
-
-    /// Stage one signed checkpoint in the existing projection transaction.
-    /// The caller awaits its durable barrier before installing the candidate.
-    pub(crate) fn stage_verified_commit_stream_checkpoint(
-        &mut self,
-        replica: &garth::RealmReplica,
-        stream_ref: &arkret_sdk::CommitStreamRef,
-    ) -> Result<(), String> {
-        let head = replica
-            .verified_head(stream_ref)
-            .ok_or("checkpoint has no verified head")?;
-        let anchor = replica
-            .verified_anchor(stream_ref)
-            .ok_or("checkpoint has no signed anchor")?;
-        if head.stream_ref != anchor.stream_ref
-            || head.stream_position != anchor.stream_position
-            || head.commit_id != anchor.commit_id
-        {
-            return Err("signed checkpoint differs from verified head".to_owned());
-        }
-        let key = serde_json::to_string(stream_ref).map_err(|error| error.to_string())?;
-        self.ensure_cached_loaded();
-        self.cached
-            .verified_commit_stream_cursors
-            .insert(key.clone(), head.clone());
-        self.cached
-            .verified_commit_stream_anchors
-            .insert(key, anchor.clone());
         Ok(())
     }
 
@@ -300,13 +259,12 @@ impl LocalStateStore {
         }
         let key = serde_json::to_string(stream_ref).map_err(|e| e.to_string())?;
         self.ensure_cached_loaded();
-        if let Some(old) = self.cached.verified_commit_stream_cursors.get(&key) {
-            if old.stream_ref != head.stream_ref
+        if let Some(old) = self.cached.verified_commit_stream_cursors.get(&key)
+            && (old.stream_ref != head.stream_ref
                 || head.stream_position < old.stream_position
-                || (head.stream_position == old.stream_position && head.commit_id != old.commit_id)
-            {
-                return Err("own-Station checkpoint regresses or forks the durable stream".into());
-            }
+                || (head.stream_position == old.stream_position && head.commit_id != old.commit_id))
+        {
+            return Err("own-Station checkpoint regresses or forks the durable stream".into());
         }
 
         if anchor.is_none() {
@@ -520,6 +478,7 @@ impl LocalStateStore {
         Ok(changed)
     }
 
+    #[cfg(test)]
     pub(crate) fn verified_message_commit(
         &self,
         event_id: &arkret_sdk::EventId,
@@ -650,7 +609,7 @@ fn merge_verified_poll_page(
                 && commit.previous_commit_ref.as_ref() == Some(&prefix.head.commit_id)
         });
         let start_position = if extends && full {
-            previous.expect("extended range").start_position
+            previous.map_or(commit.stream_position, |prefix| prefix.start_position)
         } else {
             commit.stream_position
         };
@@ -790,7 +749,7 @@ mod tests {
             unsigned.as_object_mut().unwrap().remove("signature");
             commit.commit_id =
                 arkret_sdk::RealmCommitId::from_digest(arkret_sdk::canonical::sha256_bytes(
-                    &arkret_sdk::canonical::canonical_json_bytes(&unsigned).unwrap(),
+                    arkret_sdk::canonical::canonical_json_bytes(&unsigned).unwrap(),
                 ));
             serde_json::json!({"commit":commit,"event_disclosure":{"status":"withheld"}})
         };

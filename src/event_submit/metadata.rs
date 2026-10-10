@@ -204,25 +204,23 @@ impl EventSubmitter {
                     arkret_sdk::ScopeRef::Sidecar { sidecar_id, .. } => (None, Some(sidecar_id)),
                     _ => (None, None),
                 };
-                Ok::<_, anyhow::Error>(
-                    crate::mls::runtime::encrypt_message_with_device_snapshot(
-                        state,
-                        secure.as_ref(),
-                        realm.as_str(),
-                        &endpoint.authority,
-                        &endpoint.device_id,
-                        "application/json",
-                        intent.kind().as_str(),
-                        group_ref,
-                        &bytes,
-                        None,
-                        None,
-                        None,
-                        circle,
-                        sidecar,
-                    )
-                    .map_err(|error| anyhow::anyhow!(error.user_message()))?,
+                crate::mls::runtime::encrypt_message_with_device_snapshot(
+                    state,
+                    secure.as_ref(),
+                    realm.as_str(),
+                    &endpoint.authority,
+                    &endpoint.device_id,
+                    "application/json",
+                    intent.kind().as_str(),
+                    group_ref,
+                    &bytes,
+                    None,
+                    None,
+                    None,
+                    circle,
+                    sidecar,
                 )
+                .map_err(|error| anyhow::anyhow!(error.user_message()))
             })?;
             Ok(arkret_sdk::mls::encrypted_envelope_from_payload(
                 &encryption.content,
@@ -363,7 +361,10 @@ fn validate_strand_metadata_patch(
     patch: &arkret_sdk::Patch,
 ) -> anyhow::Result<()> {
     let mut opened = serde_json::to_value(current)?;
-    opened.as_object_mut().unwrap().remove("encrypted_metadata");
+    opened
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("serialized Strand metadata is not an object"))?
+        .remove("encrypted_metadata");
     opened["metadata"] = plaintext;
     let post: arkret_sdk::Strand = serde_json::from_value(patch.apply(&opened)?)?;
     validate_plaintext_strand_profile(&post)

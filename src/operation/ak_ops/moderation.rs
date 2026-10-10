@@ -228,8 +228,7 @@ mod tests {
             "reviewer_lift",
             &current,
         )
-        .err()
-        .expect("an absent decision must fail closed");
+        .expect_err("an absent decision must fail closed");
         assert!(error.to_string().contains("not present"));
     }
 }

@@ -1100,7 +1100,7 @@ impl InksonAccountProjector {
         cursor: &str,
         verified: &crate::realm_events_engine::VerifiedAccountFrame,
         next_checkpoint: Option<&(garth::CursorScope, garth::AccountCursorCheckpoint)>,
-        previous_generation: u64,
+        _previous_generation: u64,
     ) -> garth::Result<()> {
         if frame.kind == AccountSubscribeFrameKind::ResyncRequired {
             return self.reset_account_context().await;
@@ -1133,9 +1133,14 @@ impl InksonAccountProjector {
             .await
             .map_err(crate::state::current_index::current_stage_error)?;
         let previous_generation = current_stage.previous_generation();
-        let response =
-            AccountFrameStep::new(current_stage.filtered_frame().clone(), cursor.to_owned())
-                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let response = AccountFrameStep::new(
+            current_stage
+                .filtered_frame()
+                .map_err(crate::state::current_index::current_stage_error)?
+                .clone(),
+            cursor.to_owned(),
+        )
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         if !self.fence() {
             return Ok(());
         }
@@ -1188,7 +1193,11 @@ impl InksonAccountProjector {
                         store.install_verified_sidecar_current(snapshot)?;
                     }
                     let staged = store
-                        .prepare_account_demand_frame(current_stage.filtered_frame())
+                        .prepare_account_demand_frame(
+                            current_stage
+                                .filtered_frame()
+                                .map_err(|error| error.to_string())?,
+                        )
                         .map_err(|error| error.to_string())?;
                     let effects = apply_account_frame_payload(store, &response, &self.ctx)
                         .map_err(|error| format!("{error:#}"))?;
@@ -1342,7 +1351,10 @@ impl InksonAccountProjector {
             .ctx
             .state_store
             .read(|store| scope_rotate_realm_ids(response, store));
-        if !realm_ids.is_empty() || self.removal_schedule.lock().unwrap().has_pending() {
+        if !realm_ids.is_empty()
+            || removal_schedule_lock(&self.removal_schedule)
+                .is_some_and(|schedule| schedule.has_pending())
+        {
             run_circle_scope_rotate_pass(
                 self.start_generation,
                 self.generation.clone(),
@@ -1847,7 +1859,7 @@ pub(crate) async fn publish_current_product_view(
     // cut is read before and after the pages and must be the same durable
     // generation both times.
     guard()?;
-    let cut_before = index.read_complete_cut(&realm_id).await?;
+    let cut_before = index.read_complete_cut(realm_id).await?;
     guard()?;
     #[cfg(feature = "wasm-localstorage-secrets-test")]
     tracing::warn!(
@@ -1859,7 +1871,7 @@ pub(crate) async fn publish_current_product_view(
     let mut after: Option<String> = None;
     loop {
         let page = index
-            .read_realm_page(&realm_id, after.as_deref(), CURRENT_VIEW_PAGE)
+            .read_realm_page(realm_id, after.as_deref(), CURRENT_VIEW_PAGE)
             .await?;
         guard()?;
         entries.extend(page.entries);
@@ -1869,7 +1881,7 @@ pub(crate) async fn publish_current_product_view(
         }
     }
     guard()?;
-    let cut_after = index.read_complete_cut(&realm_id).await?;
+    let cut_after = index.read_complete_cut(realm_id).await?;
     guard()?;
     let complete_cut = cut_before.is_some() && cut_before == cut_after;
     #[cfg(feature = "wasm-localstorage-secrets-test")]
@@ -1879,7 +1891,7 @@ pub(crate) async fn publish_current_product_view(
         complete_cut,
         "joint current product publication"
     );
-    let view = crate::current_projection::RealmCurrentView::new(&realm_id, entries, complete_cut)?;
+    let view = crate::current_projection::RealmCurrentView::new(realm_id, entries, complete_cut)?;
     guard()?;
     state_store.write(|store| {
         guard()?;
@@ -2224,6 +2236,18 @@ fn removal_session_current(
 
 /// Reconcile occupied RFC MLS leaves with the authenticated Station. Local
 /// membership projections are never negative authority for an MLS Remove.
+fn removal_schedule_lock(
+    schedule: &std::sync::Mutex<RemovalSchedule>,
+) -> Option<std::sync::MutexGuard<'_, RemovalSchedule>> {
+    match schedule.lock() {
+        Ok(guard) => Some(guard),
+        Err(error) => {
+            tracing::error!(%error, "MLS removal schedule is poisoned; reconciliation remains pending");
+            None
+        }
+    }
+}
+
 async fn run_circle_scope_rotate_pass(
     start_generation: u64,
     generation: crate::runtime::input::ValueReader<u64>,
@@ -2239,7 +2263,9 @@ async fn run_circle_scope_rotate_pass(
     let authority = &ctx.account.authority;
     let device = &ctx.account.device_id;
     let actor = ctx.account.principal_id().to_string();
-    let Some(realm) = schedule.lock().unwrap().next_realm(realm_ids) else {
+    let Some(realm) =
+        removal_schedule_lock(schedule).and_then(|mut schedule| schedule.next_realm(realm_ids))
+    else {
         return;
     };
     {
@@ -2311,7 +2337,9 @@ async fn run_circle_scope_rotate_pass(
             })
             .collect::<Vec<_>>();
         let selected_scopes = {
-            let mut scheduling = schedule.lock().unwrap();
+            let Some(mut scheduling) = removal_schedule_lock(schedule) else {
+                return;
+            };
             let round = scheduling.scopes.entry(realm.clone()).or_default();
             let count = relevant_scopes.len();
             if count == 0 {
@@ -2365,9 +2393,10 @@ async fn run_circle_scope_rotate_pass(
                         all_reconciled = false;
                         continue;
                     };
-                    schedule
-                        .lock()
-                        .unwrap()
+                    let Some(mut scheduling) = removal_schedule_lock(schedule) else {
+                        return;
+                    };
+                    scheduling
                         .scopes
                         .entry(realm.clone())
                         .or_default()
@@ -2390,7 +2419,7 @@ async fn run_circle_scope_rotate_pass(
             };
             let submitted = crate::transport::auth::with_authed_api(&base, token.clone(), |api| {
                 let frozen = &frozen;
-                let scope = &scope;
+                let _scope = &scope;
                 let generation = &generation;
                 let actor = &actor;
                 async move {
@@ -2475,7 +2504,9 @@ async fn run_circle_scope_rotate_pass(
             }
         }
         if removal_session_current(start_generation, &generation, ctx) {
-            let mut scheduling = schedule.lock().unwrap();
+            let Some(mut scheduling) = removal_schedule_lock(schedule) else {
+                return;
+            };
             let round = scheduling.scopes.entry(realm.clone()).or_default();
             let complete = all_reconciled
                 && ctx.state_store.write(|store| {

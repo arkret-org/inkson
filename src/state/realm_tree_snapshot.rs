@@ -68,37 +68,6 @@ impl LocalStateStore {
         }
     }
 
-    pub(crate) fn product_current_strands(
-        &self,
-        authority: &arkret_sdk::AccountId,
-        realm: &str,
-    ) -> Option<Vec<arkret_sdk::StrandId>> {
-        self.product_current_demand
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .as_ref()
-            .filter(|(a, r, ..)| a == authority && r == realm)
-            .map(|(_, _, strands, _)| strands.clone())
-    }
-
-    /// Extra typed current selectors the active product view is demanding on
-    /// top of the Realm-required ones. Each is a domain coordinate the Station
-    /// answers with its own `CurrentRevision`; there is no Realm-global
-    /// revision to demand.
-    pub(crate) fn product_current_selectors(
-        &self,
-        authority: &arkret_sdk::AccountId,
-        realm: &str,
-    ) -> Vec<arkret_wire::CurrentSelector> {
-        self.product_current_demand
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .as_ref()
-            .filter(|(a, r, ..)| a == authority && r == realm)
-            .map(|(_, _, _, selectors)| selectors.clone())
-            .unwrap_or_default()
-    }
-
     pub(crate) fn realm_tree_projection(&self, realm_id: &str) -> Option<Value> {
         self.with_unoverlaid_account_fields(|state| {
             state.realm_tree_projections.get(realm_id).cloned()

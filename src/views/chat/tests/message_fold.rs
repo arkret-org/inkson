@@ -1147,8 +1147,12 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
     assert_eq!(committed[1].commit.stream_position, 2);
     let create = serde_json::to_value(&committed[0].event).unwrap();
     let redaction = serde_json::to_value(&committed[1].event).unwrap();
-    let visible =
-        chat_messages_from_events_with_sidecar(realm.as_str(), &[create.clone()], None, None);
+    let visible = chat_messages_from_events_with_sidecar(
+        realm.as_str(),
+        std::slice::from_ref(&create),
+        None,
+        None,
+    );
     assert_eq!(visible.len(), 1);
     assert_eq!(visible[0].body, "secret");
     assert!(!visible[0].redacted);

@@ -11,15 +11,6 @@ fn event_timestamp() -> chrono::DateTime<chrono::Utc> {
     crate::clock::now_utc_millis()
 }
 
-/// Canonical timestamp for payload/object fields that bind an Event instant.
-///
-/// Create payloads must carry `payload.object.created_at == Event.created_at`.
-/// Both values therefore use the Event profile's fixed three-digit millisecond
-/// representation.
-fn payload_timestamp_wire(created_at: chrono::DateTime<chrono::Utc>) -> String {
-    arkret_sdk::canonical::format_timestamp_canonical(created_at)
-}
-
 /// Build a Realm bootstrap against the exact Station captured by the
 /// authenticated submitter. Production create flows use this entry point so a
 /// transient reconnect cannot clear a process-global selection between UI
@@ -38,7 +29,7 @@ pub fn build_realm_bootstrap_steps_for_station(
     history_access: &str,
     security_class: &str,
     federation_policy: &str,
-    digest_algorithm: &str,
+    _digest_algorithm: &str,
     trust_domain: &str,
     plaintext_visible_services: &[String],
     alias: Option<&str>,
@@ -271,22 +262,6 @@ pub(crate) fn parse_wire_enum<T: serde::de::DeserializeOwned>(
 ) -> anyhow::Result<T> {
     serde_json::from_value(Value::String(value.trim().to_owned()))
         .map_err(|err| anyhow::anyhow!("invalid {field} {value:?}: {err}"))
-}
-
-/// The `did:key` multibase of a Principal Control Realm's inception root key.
-///
-/// A real Ed25519 verification key on the shared development derivation. The
-/// constant this replaced, `[7u8; 32]`, does not decompress to a curve point,
-/// so `decode_ed25519_multibase` was handed a frozen key no signature could
-/// ever be checked against.
-#[cfg(test)]
-pub(crate) fn test_inception_root_key_multibase(principal_did: &str) -> String {
-    arkret_sdk::ed25519_pubkey_to_did_key_multibase(
-        arkret_test_kit::keys::development_verifying_key(&format!(
-            "{principal_did}#inception-root"
-        ))
-        .as_bytes(),
-    )
 }
 
 /// Build the closed `ak.schema.realm_genesis.v1` object as the SDK strong type.
@@ -739,7 +714,7 @@ pub fn build_space_lifecycle_event(
     // derived by the receiver from the registered FSM contract for this kind,
     // so naming it here would just be a second, unsigned copy of the reducer's
     // own rule.
-    let (prior_state, _) = match &kind {
+    let (_prior_state, _) = match &kind {
         EventKind::SpaceArchive => ("active", "archived"),
         EventKind::SpaceRestore => ("archived", "active"),
         // For tombstone, prior state may be either active or archived.
@@ -1061,7 +1036,7 @@ fn build_realm_alias_payload_event(
     realm_id: &str,
     actor_id: &str,
     payload: arkret_sdk::RealmAliasPayload,
-    expected_head: Value,
+    _expected_head: Value,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let created_at = event_timestamp();
     TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmAlias>(realm_id, actor_id, payload)
@@ -1074,7 +1049,7 @@ fn build_realm_alias_payload_event_for_station(
     realm_id: &str,
     actor_id: &str,
     payload: arkret_sdk::RealmAliasPayload,
-    expected_head: Value,
+    _expected_head: Value,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let created_at = event_timestamp();
     TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::RealmAlias>(
@@ -1213,7 +1188,7 @@ fn build_member_state_transition_event_for_station(
     realm_id: &str,
     actor_id: &str,
     member_actor_id: &arkret_sdk::ActorId,
-    from_state: Option<&str>,
+    _from_state: Option<&str>,
     to_state: &str,
     reason: &str,
     agent_controller_binding: Option<arkret_sdk::AgentControllerMembershipBinding>,

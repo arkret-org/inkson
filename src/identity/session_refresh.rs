@@ -484,12 +484,6 @@ impl arkret_sdk::http_client::own_station_results::OwnStationSessionSource
     }
 }
 
-pub(crate) async fn provide_own_station_result_client(
-    station_url: &str,
-) -> anyhow::Result<arkret_sdk::http_client::own_station_results::OwnStationResultClient> {
-    own_station_result_client(station_url, None).await
-}
-
 pub(crate) async fn own_station_result_client_for_http(
     http: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<arkret_sdk::http_client::own_station_results::OwnStationResultClient> {

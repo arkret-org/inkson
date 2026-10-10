@@ -455,7 +455,7 @@ mod tests {
             unsigned.as_object_mut().unwrap().remove("signature");
             snapshot.snapshot_id =
                 arkret_sdk::RealmSnapshotId::from_digest(arkret_sdk::canonical::sha256_bytes(
-                    &arkret_sdk::canonical::canonical_json_bytes(&unsigned).unwrap(),
+                    arkret_sdk::canonical::canonical_json_bytes(&unsigned).unwrap(),
                 ));
             snapshot
         };

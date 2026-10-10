@@ -176,7 +176,8 @@ mod committed_producer_proof_tests {
             .expect("an unresolved Applet executor remains visible and flagged");
         assert_eq!(message.sender, "ak:did_core:web:ghost.example");
         assert_eq!(message.crypto_state, MessageCryptoState::NeedsVerification);
-        let timeline = chat_messages_from_events_with_sidecar(REALM, &[event.clone()], None, None);
+        let timeline =
+            chat_messages_from_events_with_sidecar(REALM, std::slice::from_ref(&event), None, None);
         assert_eq!(
             timeline.len(),
             1,

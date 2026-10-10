@@ -390,6 +390,7 @@ fn canonical_calendar_date_time(field: &str, value: &str, all_day: bool) -> Resu
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn calendar_rsvp_operation(
     realm_id: &str,
     actor_id: &str,
@@ -837,6 +838,7 @@ impl CalendarRsvpDisplay {
 ///
 /// `occurrence` is the instance the card is showing, or `None` for the series.
 /// Instance answers override the series fallback and the two are never unioned.
+#[cfg(test)]
 pub(crate) fn calendar_rsvp_display(
     cells: &[crate::state::projection_views::RsvpCellProjectionView],
     schedule_revision_basis: &[String],

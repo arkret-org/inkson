@@ -313,8 +313,12 @@ fn verified_circle_poll_revote_survives_durable_reopen_and_retains_circle_heads(
     let mut store = LocalStateStore::with_path(&path);
     store.ingest_verified_message_commits(&page).unwrap();
     store.ingest_verified_message_commits(&page).unwrap();
-    let cards =
-        poll_cards_from_events_with_sidecar(REALM, &[visible_poll.clone()], Some(&store), None);
+    let cards = poll_cards_from_events_with_sidecar(
+        REALM,
+        std::slice::from_ref(&visible_poll),
+        Some(&store),
+        None,
+    );
     assert_eq!(cards.len(), 1);
     assert!(!cards[0].provisional);
     assert_eq!(

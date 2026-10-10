@@ -674,7 +674,7 @@ mod tests {
     fn authority(principal_did: &str, server_id: &str) -> AccountId {
         let did = Did::new(principal_did).unwrap();
         AccountId::new(
-            DidCoreId::from(project_did_to_core_id(&did).unwrap()),
+            project_did_to_core_id(&did).unwrap(),
             DidCoreId::new(server_id).unwrap(),
         )
     }

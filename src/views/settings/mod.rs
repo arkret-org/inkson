@@ -662,9 +662,7 @@ pub fn SettingsPanel(
             let api_token = current_token.clone();
             spawn(async move {
                 match with_authed_sdk_client(&base, api_token, |http| async move {
-                    crate::transport::account::account_viewer(&http)
-                        .await
-                        .map_err(anyhow::Error::from)
+                    crate::transport::account::account_viewer(&http).await
                 })
                 .await
                 {

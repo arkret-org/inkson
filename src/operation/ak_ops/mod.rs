@@ -222,7 +222,7 @@ pub(super) fn strand_reorder_payload(
 /// with `patch_unset_redactable_field` / `patch_path_reducer_managed` off the
 /// wire in the first place.
 pub(super) fn patch_from_value(
-    target_ref: &str,
+    _target_ref: &str,
     patch: Value,
 ) -> anyhow::Result<arkret_sdk::Patch> {
     let patch: arkret_sdk::Patch = serde_json::from_value(patch)

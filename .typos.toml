@@ -1,5 +1,8 @@
 [default]
 extend-ignore-re = [
+    # Exact short opaque fixtures remain too short for the general rules.
+    "Y2xhaW0tcmVxdWVzdC0wMTIzNDU2Nzg5",
+    "bG9jYXRvci1zZWNyZXQtMTIzNDU2Nzg5",
     # multibase/base58 strings (did:key, did:webvh)
     "z[1-9A-HJ-NP-Za-km-z]{20,}",
     # long base64 / base64url runs (keys, JWT segments, fixtures)
@@ -24,6 +27,7 @@ extend-exclude = [
 [default.extend-words]
 Dioxus = "Dioxus"
 OpenMLS = "OpenMLS"
+hax = "hax"
 inkson = "inkson"
 authz = "authz"
 to_device = "to_device"

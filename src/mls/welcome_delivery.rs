@@ -16,12 +16,17 @@
 //! Both inputs are supplied by the caller and checked against the delivery, so
 //! this never invents an endpoint identity or an epoch.
 
+#[cfg(test)]
 use arkret_models_crypto::{MlsEndpointIdentity, MlsWelcomeEnvelope};
+#[cfg(test)]
 use arkret_sdk::{Event, EventId, Hash, MlsCommitPayload};
-use arkret_wire::{MlsWelcomeDelivery, MlsWelcomeRecipientEndpoint};
+use arkret_wire::MlsWelcomeDelivery;
+#[cfg(test)]
+use arkret_wire::MlsWelcomeRecipientEndpoint;
 
 /// The accepted Agent-key authorization a Welcome addressed to an Agent runtime
 /// binds to. Human-device recipients need none.
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AgentRuntimeKeyBinding {
     pub(crate) agent_id: arkret_sdk::DidCoreId,
@@ -36,6 +41,7 @@ pub(crate) struct AgentRuntimeKeyBinding {
 /// in `commit_event_ref`; its `governance_binding` supplies the group id and
 /// the joined epoch. An Agent runtime recipient additionally requires the
 /// accepted key binding for the delivery's verification method.
+#[cfg(test)]
 pub(crate) fn welcome_envelope_from_delivery(
     delivery: &MlsWelcomeDelivery,
     commit_event: &Event,
@@ -91,6 +97,7 @@ pub(crate) fn welcome_envelope_from_delivery(
     })
 }
 
+#[cfg(test)]
 fn endpoint_identity(
     delivery: &MlsWelcomeDelivery,
     agent_key_binding: Option<&AgentRuntimeKeyBinding>,
@@ -140,6 +147,7 @@ fn endpoint_identity(
 /// `garth::retain_admissible_welcomes` decides admissibility on the wire object;
 /// this converts only the deliveries it kept, so a delivery for another endpoint
 /// never reaches the provider.
+#[cfg(test)]
 pub(crate) fn enqueue_admissible_welcomes(
     queue: &mut garth::MlsInstallQueue,
     welcomes: impl IntoIterator<Item = MlsWelcomeDelivery>,
@@ -468,7 +476,7 @@ mod tests {
         };
         assert_eq!(
             writer
-                .ingest_recipient_deliveries(&[branch.clone()])
+                .ingest_recipient_deliveries(std::slice::from_ref(&branch))
                 .unwrap(),
             1
         );

@@ -221,9 +221,11 @@ mod tests {
 
     use super::*;
 
+    type ModeKeySignal = Rc<RefCell<Option<Signal<(String, String, u64)>>>>;
+
     #[derive(Clone)]
     struct Harness {
-        key: Rc<RefCell<Option<Signal<(String, String, u64)>>>>,
+        key: ModeKeySignal,
         unrelated_revision: Rc<RefCell<Option<Signal<u64>>>>,
         observed: Rc<RefCell<Modes>>,
         calls: Rc<Cell<usize>>,
@@ -378,7 +380,7 @@ mod tests {
                 props.external_current.set(false);
             } else {
                 let mut signal = props.key.borrow().unwrap();
-                let original = dom.in_runtime(|| signal());
+                let original = dom.in_runtime(&*signal);
                 let next = match change {
                     0 => ("account-b".into(), original.1.clone(), 0),
                     1 => (original.0.clone(), "realm-b".into(), 0),
@@ -415,7 +417,7 @@ mod tests {
             dom.rebuild_in_place();
             drain(&mut dom);
             let mut signal = props.key.borrow().unwrap();
-            let original = dom.in_runtime(|| signal());
+            let original = dom.in_runtime(&*signal);
             let next = match change {
                 0 => ("account-b".into(), original.1.clone(), 0),
                 1 => (original.0.clone(), "realm-b".into(), 0),

@@ -183,6 +183,7 @@ pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
 /// `local_authoritative` history records. The value is the closed SDK record
 /// map keyed by epoch; raw exporter material therefore remains coupled to its
 /// exact durable local-state reference and winning transition tuple.
+#[cfg(any(test, target_arch = "wasm32"))]
 pub(crate) const MLS_HISTORY_SECRET_KEY_PREFIX: &str = "inkson.mls_history_secret.v1.";
 
 /// Account-scoped cache for decrypted MLS application plaintext and the

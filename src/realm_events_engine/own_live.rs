@@ -377,7 +377,7 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
                     .state_store
                     .read(|store| store.current_generation()))
             },
-            &snapshot,
+            snapshot,
             &guard,
         )
         .await
@@ -396,9 +396,9 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
                 changed += store.ingest_verified_message_history(page)?;
                 crate::identity::agent_signer_evidence::index_verified_committed_page(store, page)?;
             }
-            changed += ingest_realm_batch(store, &projector.realm_id, &batch);
-            store.stage_own_station_commit_stream_checkpoint(client, &replica, stream, &pages)?;
-            store.install_own_station_sidecar_current(&snapshot)?;
+            changed += ingest_realm_batch(store, &projector.realm_id, batch);
+            store.stage_own_station_commit_stream_checkpoint(client, replica, stream, pages)?;
+            store.install_own_station_sidecar_current(snapshot)?;
             snapshot.value().map_err(|error| error.to_string())?;
             if !is_active() || store.active_authority() != Some(account.clone()) {
                 return Err("live current account or route changed before commit".into());
@@ -673,7 +673,7 @@ pub(super) mod tests {
         body.as_object_mut().unwrap().remove("signature");
         commit.commit_id =
             arkret_sdk::RealmCommitId::from_digest(arkret_sdk::canonical::sha256_bytes(
-                &arkret_sdk::canonical::canonical_json_bytes(&body).unwrap(),
+                arkret_sdk::canonical::canonical_json_bytes(&body).unwrap(),
             ));
         commit =
             crate::test_support::committed_event::FixtureStation::did_web().seal_commit(commit);
@@ -710,7 +710,7 @@ pub(super) mod tests {
         body.as_object_mut().unwrap().remove("signature");
         snapshot.snapshot_id =
             arkret_sdk::RealmSnapshotId::from_digest(arkret_sdk::canonical::sha256_bytes(
-                &arkret_sdk::canonical::canonical_json_bytes(&body).unwrap(),
+                arkret_sdk::canonical::canonical_json_bytes(&body).unwrap(),
             ));
         crate::test_support::committed_event::FixtureStation::did_web()
             .sign_snapshot(&mut snapshot);
@@ -898,7 +898,7 @@ pub(super) mod tests {
         body.as_object_mut().unwrap().remove("signature");
         snapshot.snapshot_id =
             arkret_sdk::RealmSnapshotId::from_digest(arkret_sdk::canonical::sha256_bytes(
-                &arkret_sdk::canonical::canonical_json_bytes(&body).unwrap(),
+                arkret_sdk::canonical::canonical_json_bytes(&body).unwrap(),
             ));
         crate::test_support::committed_event::FixtureStation::did_web().sign_snapshot(snapshot);
     }
@@ -1027,7 +1027,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn own_live_since_join_bootstrap_persists_current_head_without_historical_rows() {
         let row = withheld(5, Some(arkret_sdk::RealmCommitId::from_digest([43; 32])));
-        let mut snapshot = current_snapshot(&[row.clone()], 1);
+        let mut snapshot = current_snapshot(std::slice::from_ref(&row), 1);
         snapshot.retention_and_history_floor.stream_floors[0].oldest_position = 3;
         seal_current_snapshot(&mut snapshot);
         let head = snapshot.visible_stream_heads[0].clone();
@@ -1091,7 +1091,7 @@ pub(super) mod tests {
         // A later route starts from the join-time durable head, even if a new
         // Commit was accepted before the user first opened that route.
         let next = withheld(6, Some(head.commit_id.clone()));
-        let mut later = current_snapshot(&[next.clone()], 1);
+        let mut later = current_snapshot(std::slice::from_ref(&next), 1);
         later.retention_and_history_floor.stream_floors[0].oldest_position = 3;
         seal_current_snapshot(&mut later);
         let account = store.lock().unwrap().active_authority().unwrap();
@@ -1186,27 +1186,28 @@ pub(super) mod tests {
             assert!(current_changed);
             assert_eq!(projector.realm_live_epoch.get(), chat_count as u64);
             let _ = changed;
-            let local = store.lock().unwrap();
-            assert_eq!(
-                local.sync_cursor().as_deref(),
-                Some("ak:cursor:unchanged-account")
-            );
-            assert_eq!(
-                local
-                    .verified_commit_stream_cursor(&stream)
-                    .unwrap()
-                    .as_ref(),
-                replica.head(&stream)
-            );
-            let view = local.current_product_view().unwrap();
-            assert!(view.complete_cut);
-            let visible = garth::direct_structure::DirectStructureView::from_current(
-                &realm,
-                view.entries_for(realm.as_str()).unwrap(),
-            )
-            .unwrap();
-            assert_eq!(visible.chats.len(), chat_count);
-            drop(local);
+            {
+                let local = store.lock().unwrap();
+                assert_eq!(
+                    local.sync_cursor().as_deref(),
+                    Some("ak:cursor:unchanged-account")
+                );
+                assert_eq!(
+                    local
+                        .verified_commit_stream_cursor(&stream)
+                        .unwrap()
+                        .as_ref(),
+                    replica.head(&stream)
+                );
+                let view = local.current_product_view().unwrap();
+                assert!(view.complete_cut);
+                let visible = garth::direct_structure::DirectStructureView::from_current(
+                    &realm,
+                    view.entries_for(realm.as_str()).unwrap(),
+                )
+                .unwrap();
+                assert_eq!(visible.chats.len(), chat_count);
+            }
             server.join().unwrap();
             // A repeated identical authenticated original shares the durable
             // generation. No Account frame/cursor is manufactured.
@@ -1385,7 +1386,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn own_live_current_hidden_heads_and_governance_watermarks_survive_scope_omission() {
         let first = withheld(0, None);
-        let mut initial = current_snapshot(&[first.clone()], 1);
+        let mut initial = current_snapshot(std::slice::from_ref(&first), 1);
         let sidecar_stream = CommitStreamRef::Sidecar {
             realm_id: initial.realm_id.clone(),
             sidecar_id: arkret_sdk::SidecarId::from_event_id(&arkret_sdk::EventId::from_digest(
@@ -1552,13 +1553,13 @@ pub(super) mod tests {
             );
             assert_eq!(local.sync_cursor().as_deref(), Some("ak:cursor:retained"));
         }
-        let index = crate::state::CurrentIndex::open_committed(
-            &account.authority,
-            store.lock().unwrap().current_index_location(),
-            || Ok(0),
-        )
-        .await
-        .unwrap();
+        let index_location = store.lock().unwrap().current_index_location();
+        let index =
+            crate::state::CurrentIndex::open_committed(&account.authority, index_location, || {
+                Ok(0)
+            })
+            .await
+            .unwrap();
         assert!(index.is_poisoned());
         assert!(
             index

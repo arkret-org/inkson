@@ -147,7 +147,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
     // Direct-grant form state.
     let mut grant_form_open = use_signal(|| false);
     let mut grant_scope = use_signal(String::new);
-    let grant_scope_selected = use_memo(move || (!grant_scope().is_empty()).then(|| grant_scope()));
+    let grant_scope_selected = use_memo(move || (!grant_scope().is_empty()).then(&*grant_scope));
     let mut grant_grantee = use_signal(String::new);
     // The actor branch is matched on the complete ActorId, so the grantee's
     // own Station is part of what is being granted, never an implicit local
@@ -161,7 +161,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
     let mut request_form_open = use_signal(|| false);
     let mut request_scope = use_signal(String::new);
     let request_scope_selected =
-        use_memo(move || (!request_scope().is_empty()).then(|| request_scope()));
+        use_memo(move || (!request_scope().is_empty()).then(&*request_scope));
     let mut request_holder = use_signal(String::new);
     let mut request_holder_station = use_signal(String::new);
 

@@ -1286,9 +1286,9 @@ fn card_current_keeps_value_and_revision_together_across_remote_replacement() {
         cards: vec![test_card(id, "U")],
         state: SpaceContainerLifecycleState::Active,
     }];
-    install_current_card_sources(&mut columns, &[a.clone()], &[], &[], None, "");
+    install_current_card_sources(&mut columns, std::slice::from_ref(&a), &[], &[], None, "");
     let editor_snapshot = columns[0].cards[0].clone();
-    install_current_card_sources(&mut columns, &[b.clone()], &[], &[], None, "");
+    install_current_card_sources(&mut columns, std::slice::from_ref(&b), &[], &[], None, "");
     assert_eq!(editor_snapshot.title, "A");
     assert_eq!(editor_snapshot.authoring_basis.unwrap(), event_a);
     assert_eq!(columns[0].cards[0].title, "B");

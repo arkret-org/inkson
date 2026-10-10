@@ -45,19 +45,6 @@ pub(crate) fn watch_level_label_key(level: WatchLevel) -> &'static str {
     }
 }
 
-pub(crate) fn watch_level_wire_value(level: WatchLevel) -> &'static str {
-    level.as_wire()
-}
-
-#[cfg(test)]
-pub(crate) fn watch_level_from_wire(value: &str) -> WatchLevel {
-    if value == "none" {
-        WatchLevel::Muted
-    } else {
-        WatchLevel::from_wire(value).unwrap_or(WatchLevel::All)
-    }
-}
-
 /// Detect the per-message redaction tombstone surfaced by soland on the sync
 /// timeline (spec strand-and-message.md §9). The server folds a redacted
 /// `ak.message.create` into a tombstone form carrying `redacted: true` /
@@ -705,7 +692,7 @@ fn ordinary_chat_event_proof(
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Option<ChatProofVerdict> {
-    let Some(envelope) = message_candidates(event).into_iter().find(|candidate| {
+    let envelope = message_candidates(event).into_iter().find(|candidate| {
         candidate
             .get("producer_proof")
             .and_then(Value::as_object)
@@ -714,12 +701,8 @@ fn ordinary_chat_event_proof(
                 .get("actor_id")
                 .and_then(actor_principal_from_value)
                 .is_some_and(|actor| !actor.trim().is_empty())
-    }) else {
-        return None;
-    };
-    let Some(signed_realm_id) = envelope.get("realm_id").and_then(Value::as_str) else {
-        return None;
-    };
+    })?;
+    let signed_realm_id = envelope.get("realm_id").and_then(Value::as_str)?;
     if !realm_id.is_empty() && realm_id != signed_realm_id {
         return None;
     }
@@ -731,12 +714,9 @@ fn ordinary_chat_event_proof(
     ) {
         return None;
     }
-    let Some(scope) = envelope
+    let scope = envelope
         .get("scope_ref")
-        .and_then(|value| serde_json::from_value::<arkret_sdk::ScopeRef>(value.clone()).ok())
-    else {
-        return None;
-    };
+        .and_then(|value| serde_json::from_value::<arkret_sdk::ScopeRef>(value.clone()).ok())?;
     match scope {
         arkret_sdk::ScopeRef::Realm {
             realm_id: scope_realm_id,

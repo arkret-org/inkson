@@ -435,7 +435,7 @@ async fn device_authoring_requeries_only_across_a_same_session_device_refresh() 
                         &body
                     };
                 write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
-                stream.write_all(&body).unwrap();
+                stream.write_all(body).unwrap();
             }
             expected_queries
         });
@@ -2156,7 +2156,10 @@ async fn retryable_authority_answer_is_durable_and_really_resubmits_after_restar
     );
     let frozen = event_submission(&event).unwrap();
     let expected = arkret_sdk::canonical::canonical_json_bytes(&frozen.request).unwrap();
-    let directory = std::env::temp_dir().join(format!("inkson-message-retry-{}", uuid_v7()));
+    let directory = std::env::temp_dir().join(format!(
+        "inkson-message-retry-{}",
+        arkret_sdk::identifiers::uuid_v7_at(crate::clock::now_unix_ms())
+    ));
     let store = InksonOutboundStore::for_test_path(directory.join("standard.json"));
     let engine = OutboundEngine::new(store.clone(), InksonHostClock);
     engine.enqueue(frozen).await.unwrap();

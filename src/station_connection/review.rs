@@ -36,11 +36,23 @@ pub(crate) fn connection_changes(change: &ConnectionTrustChange) -> Vec<Connecti
     }
     // Walk serialized metadata so optional fields, additions/removals, and
     // future authentication fields cannot silently disappear from the review.
-    let previous = serde_json::to_value(&change.previous.auth_metadata)
-        .expect("authentication metadata is serializable");
-    let candidate = serde_json::to_value(&change.candidate.auth_metadata)
-        .expect("authentication metadata is serializable");
-    changed_fields(&previous, &candidate, "", &mut details);
+    match (
+        serde_json::to_value(&change.previous.auth_metadata),
+        serde_json::to_value(&change.candidate.auth_metadata),
+    ) {
+        (Ok(previous), Ok(candidate)) => changed_fields(&previous, &candidate, "", &mut details),
+        (previous, candidate) => details.push(ConnectionChangeDetail {
+            label: "Authentication metadata could not be reviewed".into(),
+            previous: previous
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_default(),
+            candidate: candidate
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_default(),
+        }),
+    }
     details
 }
 

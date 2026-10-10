@@ -554,7 +554,7 @@ mod historical_result_tests {
             actor: selector.agent_actor_id.clone(),
             verification_method: selector.verification_method.clone(),
             public_key_b64u: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
-                &public_key,
+                public_key,
             ))
             .unwrap(),
             authorization_ref: committed_ref(

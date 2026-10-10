@@ -34,7 +34,7 @@ fn capability_basis_requires_the_exact_verified_root_controller_and_generation()
         }),
     };
     let current = row(issuer.clone(), 0);
-    let basis = capability_issuer_basis(REALM, &[current.clone()], &issuer).unwrap();
+    let basis = capability_issuer_basis(REALM, std::slice::from_ref(&current), &issuer).unwrap();
     assert_eq!(basis.authority_generation, 0);
     assert_eq!(
         basis.authority_event_ref,

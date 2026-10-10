@@ -487,9 +487,6 @@ impl<H> StreamRail<H> {
     pub fn http(&self) -> &H {
         &self.http
     }
-    pub fn is_websocket(&self) -> bool {
-        self.rail.is_live()
-    }
 }
 impl<H: garth::AccountSubscribeTransport> garth::AccountSubscribeTransport for StreamRail<H> {
     async fn subscribe(
@@ -561,6 +558,113 @@ impl<H: garth::AccountSubscribeTransport> garth::AccountSubscribeTransport for S
                     }
                 }
             }
+        }
+    }
+}
+
+pub enum CommittedRailSource {
+    Http { stream: arkret_sdk::http_client::CommittedEventSubscribeFrameStream, rail: WebSocketRail, parameters: WebSocketOpenParameters },
+    Socket { channel: SocketChannel, trace: arkret_models_collaboration::sync_frames::committed_event_subscribe::CommittedEventStreamTrace },
+}
+impl CommittedRailSource {
+    pub async fn open(
+        http: &arkret_sdk::http_client::Client,
+        rail: &WebSocketRail,
+        realm: arkret_sdk::RealmId,
+        after: Option<String>,
+    ) -> garth::Result<Self> {
+        let parameters = WebSocketOpenParameters::Events(WebSocketEventsOpenParameters {
+            realm_ids: Some(vec![realm.clone()]),
+            actor_ids: None,
+            catchup: after.as_ref().map(|_| true),
+            after: after.clone(),
+        });
+        if let Some(channel) = rail.open(parameters.clone())? {
+            return Ok(Self::Socket { channel, trace: arkret_models_collaboration::sync_frames::committed_event_subscribe::CommittedEventStreamTrace::new(after.is_some(), after) });
+        }
+        let mut options =
+            arkret_sdk::http_client::CommittedEventSubscribeOptions::new().realm(realm);
+        if let Some(after) = after {
+            options = options.after(after).catchup(true);
+        }
+        Ok(Self::Http {
+            stream: http.committed_event_subscribe_frames(&options).await?,
+            rail: rail.clone(),
+            parameters,
+        })
+    }
+    pub async fn next_frame(&mut self) -> garth::Result<Option<arkret_models_collaboration::sync_frames::committed_event_subscribe::CommittedEventSubscribeFrame>>{
+        match self {
+            Self::Socket { channel, trace } => {
+                let frame = channel.next_event_frame().await?;
+                if let Some(frame) = &frame {
+                    trace
+                        .push(frame)
+                        .map_err(|e| garth::Error::Protocol(e.to_string()))?;
+                }
+                Ok(frame)
+            }
+            Self::Http {
+                stream,
+                rail,
+                parameters,
+            } => loop {
+                use futures_util::future::{Either, select};
+                if rail.can_open(parameters) {
+                    return Err(garth::Error::Http("committed transport handoff".to_owned()));
+                }
+                match select(Box::pin(stream.next_frame()), Box::pin(InksonPacer.pace())).await {
+                    Either::Left((frame, _)) => return Ok(frame?),
+                    Either::Right((paced, _)) => {
+                        paced?;
+                    }
+                }
+            },
+        }
+    }
+}
+
+pub enum SignalRailSource {
+    Http {
+        stream: arkret_sdk::http_client::SignalSubscribeFrameStream,
+        rail: WebSocketRail,
+    },
+    Socket(SocketChannel),
+}
+impl SignalRailSource {
+    pub async fn open(
+        http: &arkret_sdk::http_client::Client,
+        rail: &WebSocketRail,
+    ) -> garth::Result<Self> {
+        if let Some(channel) = rail.open(WebSocketOpenParameters::Signal(
+            WebSocketSignalOpenParameters {},
+        ))? {
+            return Ok(Self::Socket(channel));
+        }
+        Ok(Self::Http {
+            stream: http.signal_subscribe_frames().await?,
+            rail: rail.clone(),
+        })
+    }
+}
+impl garth::signal::SignalFrameSource for SignalRailSource {
+    async fn next_frame(&mut self) -> garth::Result<Option<arkret_wire::SignalStreamFrame>> {
+        match self {
+            Self::Socket(channel) => garth::signal::SignalFrameSource::next_frame(channel).await,
+            Self::Http { stream, rail } => loop {
+                use futures_util::future::{Either, select};
+                if rail.can_open(&WebSocketOpenParameters::Signal(
+                    WebSocketSignalOpenParameters {},
+                )) {
+                    return Err(garth::Error::Http("Signal transport handoff".to_owned()));
+                }
+                match select(Box::pin(stream.next_frame()), Box::pin(InksonPacer.pace())).await {
+                    Either::Left((frame, _)) => return Ok(frame?),
+                    Either::Right((paced, _)) => {
+                        paced?;
+                    }
+                }
+            },
         }
     }
 }
@@ -761,112 +865,5 @@ mod tests {
         assert!(
             matches!(connection.next_command(), Some(WebSocketClientFrame::Open {channel_id,..}) if channel_id==event.id)
         );
-    }
-}
-
-pub enum CommittedRailSource {
-    Http { stream: arkret_sdk::http_client::CommittedEventSubscribeFrameStream, rail: WebSocketRail, parameters: WebSocketOpenParameters },
-    Socket { channel: SocketChannel, trace: arkret_models_collaboration::sync_frames::committed_event_subscribe::CommittedEventStreamTrace },
-}
-impl CommittedRailSource {
-    pub async fn open(
-        http: &arkret_sdk::http_client::Client,
-        rail: &WebSocketRail,
-        realm: arkret_sdk::RealmId,
-        after: Option<String>,
-    ) -> garth::Result<Self> {
-        let parameters = WebSocketOpenParameters::Events(WebSocketEventsOpenParameters {
-            realm_ids: Some(vec![realm.clone()]),
-            actor_ids: None,
-            catchup: after.as_ref().map(|_| true),
-            after: after.clone(),
-        });
-        if let Some(channel) = rail.open(parameters.clone())? {
-            return Ok(Self::Socket { channel, trace: arkret_models_collaboration::sync_frames::committed_event_subscribe::CommittedEventStreamTrace::new(after.is_some(), after) });
-        }
-        let mut options =
-            arkret_sdk::http_client::CommittedEventSubscribeOptions::new().realm(realm);
-        if let Some(after) = after {
-            options = options.after(after).catchup(true);
-        }
-        Ok(Self::Http {
-            stream: http.committed_event_subscribe_frames(&options).await?,
-            rail: rail.clone(),
-            parameters,
-        })
-    }
-    pub async fn next_frame(&mut self) -> garth::Result<Option<arkret_models_collaboration::sync_frames::committed_event_subscribe::CommittedEventSubscribeFrame>>{
-        match self {
-            Self::Socket { channel, trace } => {
-                let frame = channel.next_event_frame().await?;
-                if let Some(frame) = &frame {
-                    trace
-                        .push(frame)
-                        .map_err(|e| garth::Error::Protocol(e.to_string()))?;
-                }
-                Ok(frame)
-            }
-            Self::Http {
-                stream,
-                rail,
-                parameters,
-            } => loop {
-                use futures_util::future::{Either, select};
-                if rail.can_open(parameters) {
-                    return Err(garth::Error::Http("committed transport handoff".to_owned()));
-                }
-                match select(Box::pin(stream.next_frame()), Box::pin(InksonPacer.pace())).await {
-                    Either::Left((frame, _)) => return Ok(frame?),
-                    Either::Right((paced, _)) => {
-                        paced?;
-                    }
-                }
-            },
-        }
-    }
-}
-
-pub enum SignalRailSource {
-    Http {
-        stream: arkret_sdk::http_client::SignalSubscribeFrameStream,
-        rail: WebSocketRail,
-    },
-    Socket(SocketChannel),
-}
-impl SignalRailSource {
-    pub async fn open(
-        http: &arkret_sdk::http_client::Client,
-        rail: &WebSocketRail,
-    ) -> garth::Result<Self> {
-        if let Some(channel) = rail.open(WebSocketOpenParameters::Signal(
-            WebSocketSignalOpenParameters {},
-        ))? {
-            return Ok(Self::Socket(channel));
-        }
-        Ok(Self::Http {
-            stream: http.signal_subscribe_frames().await?,
-            rail: rail.clone(),
-        })
-    }
-}
-impl garth::signal::SignalFrameSource for SignalRailSource {
-    async fn next_frame(&mut self) -> garth::Result<Option<arkret_wire::SignalStreamFrame>> {
-        match self {
-            Self::Socket(channel) => garth::signal::SignalFrameSource::next_frame(channel).await,
-            Self::Http { stream, rail } => loop {
-                use futures_util::future::{Either, select};
-                if rail.can_open(&WebSocketOpenParameters::Signal(
-                    WebSocketSignalOpenParameters {},
-                )) {
-                    return Err(garth::Error::Http("Signal transport handoff".to_owned()));
-                }
-                match select(Box::pin(stream.next_frame()), Box::pin(InksonPacer.pace())).await {
-                    Either::Left((frame, _)) => return Ok(frame?),
-                    Either::Right((paced, _)) => {
-                        paced?;
-                    }
-                }
-            },
-        }
     }
 }

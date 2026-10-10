@@ -10,6 +10,7 @@ use super::api_error_status_and_envelope;
 /// Realm founding may repeat an exact, already-frozen Event only for the
 /// Account Station's closed temporary-unavailability outcome. Other 5xx
 /// responses are not silently widened into a creator-bootstrap retry.
+#[cfg(test)]
 pub(crate) fn is_realm_bootstrap_temporarily_unavailable_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         status == StatusCode::SERVICE_UNAVAILABLE

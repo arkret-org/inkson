@@ -66,7 +66,7 @@ impl crate::transport::TransportClient {
         credential: &crate::state::StoredInviteCredential,
     ) -> anyhow::Result<InvitePreviewOutcome> {
         let request = arkret_sdk::SelfRealmJoinPreviewRequestBody {
-            request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms() as u64),
+            request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
             target: invite_join_target(realm_id, invite_id, credential)?,
         };
         match self
@@ -131,7 +131,7 @@ impl crate::transport::TransportClient {
         // substitutes an endpoint of its own choosing.
         let target = invite_join_target(realm_id, invite_id, credential)?;
         let request = arkret_sdk::SelfRealmJoinPrepareRequestBody {
-            request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms() as u64),
+            request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
             target,
             intent: arkret_sdk::RealmJoinIntent::InviteAccept { invite_id: invite },
         };

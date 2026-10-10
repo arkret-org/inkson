@@ -35,15 +35,6 @@ pub(crate) fn authority_at_station(principal: &str, station: &str) -> arkret_sdk
     arkret_sdk::AccountId::new(core_id(principal), core_id(station))
 }
 
-/// Account authored at the Station the operation layer currently selects, for
-/// tests that must agree with `crate::operation::authoring_station_id`.
-pub(crate) fn authority_at_authoring_station(principal: &str) -> arkret_sdk::AccountId {
-    arkret_sdk::AccountId::new(
-        core_id(principal),
-        crate::operation::authoring_station_id().expect("authoring station"),
-    )
-}
-
 /// Complete account actor at [`STATION_ID`].
 pub(crate) fn account_actor(principal: &str) -> arkret_sdk::ActorId {
     arkret_sdk::ActorId::account(authority(principal))
@@ -323,27 +314,6 @@ impl AccountFixture {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn authority_accepts_both_principal_id_forms() {
-        let from_core = authority("ak:did_core:web:alice.example");
-        let from_did = authority("did:web:alice.example");
-        assert_eq!(from_core, from_did);
-        assert_eq!(from_core.station_id.as_str(), STATION_ID);
-    }
-
-    #[test]
-    fn station_split_produces_distinct_accounts() {
-        let local = authority("ak:did_core:web:alice.example");
-        let remote = authority_at_station("ak:did_core:web:alice.example", SERVER_STATION_ID);
-        assert_ne!(local, remote);
-        assert_eq!(local.principal_id, remote.principal_id);
-    }
-}
-
 /// Install the authority-signed `CurrentSelector::MlsGroup` result for one
 /// effective scope.
 ///
@@ -522,4 +492,25 @@ pub(crate) fn key_backup_envelope_fixture(
     let backup: arkret_sdk::KeyBackup =
         serde_json::from_value(value).expect("complete SDK backup envelope fixture");
     serde_json::to_value(backup).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authority_accepts_both_principal_id_forms() {
+        let from_core = authority("ak:did_core:web:alice.example");
+        let from_did = authority("did:web:alice.example");
+        assert_eq!(from_core, from_did);
+        assert_eq!(from_core.station_id.as_str(), STATION_ID);
+    }
+
+    #[test]
+    fn station_split_produces_distinct_accounts() {
+        let local = authority("ak:did_core:web:alice.example");
+        let remote = authority_at_station("ak:did_core:web:alice.example", SERVER_STATION_ID);
+        assert_ne!(local, remote);
+        assert_eq!(local.principal_id, remote.principal_id);
+    }
 }

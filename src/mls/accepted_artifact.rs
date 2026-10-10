@@ -7,7 +7,7 @@
 //! locally authored Commit pairs its Event with the `RealmCommit` the submit
 //! returned, and a remote transition arrives as a full committed-event view.
 
-use arkret_wire::{CommittedEventFullView, CommittedEventRef, MlsGroupId};
+use arkret_wire::{CommittedEventFullView, MlsGroupId};
 
 /// One accepted `ak.mls.genesis` / `ak.mls.commit` with the exact commit
 /// coordinate that ordered it.
@@ -24,16 +24,6 @@ impl AcceptedMlsTransition {
     /// The Event this transition materialized.
     pub(crate) fn event(&self) -> &arkret_sdk::Event {
         &self.item.event
-    }
-
-    /// The exact committed coordinate an install queues against.
-    pub(crate) fn accepted_ref(&self) -> CommittedEventRef {
-        CommittedEventRef {
-            event_id: self.item.event.event_id.clone(),
-            commit_id: self.item.commit.commit_id.clone(),
-            stream_ref: self.item.commit.stream_ref.clone(),
-            stream_position: self.item.commit.stream_position,
-        }
     }
 }
 

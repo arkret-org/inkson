@@ -366,7 +366,7 @@ pub(crate) fn space_participants(
         for actor in joined {
             upsert_participant(
                 &mut participants,
-                &actor,
+                actor,
                 SpaceParticipantRole::Member,
                 principal_id,
                 None,

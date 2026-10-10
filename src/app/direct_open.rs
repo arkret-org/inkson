@@ -92,7 +92,7 @@ pub(super) fn open_direct_conversation(
         };
         let routed = std::rc::Rc::new(std::cell::Cell::new(false));
         let early_routed = routed.clone();
-        let early_navigator = navigator.clone();
+        let early_navigator = navigator;
         let final_fence = session_fence.clone();
         let subject = target.subject().to_owned();
         let failure_message = target.failure_message();
@@ -301,6 +301,55 @@ pub(super) fn open_direct_conversation(
     });
 }
 
+/// The founder authors the Direct Conversation's one scope-derived MLS Genesis
+/// right after its founding unit is accepted: the bootstrap send and Add
+/// phases both require that accepted Genesis
+/// (`identity/contact-and-direct-conversation.md` 7.2 / 7.3). A failure here
+/// does not block opening the conversation; the background creator bootstrap
+/// resumes the founder's outstanding Genesis.
+pub(crate) async fn start_founder_genesis(
+    api: &crate::transport::TransportClient,
+    state_store: &crate::runtime::input::StateStoreHandle,
+    founder: &arkret_sdk::AccountId,
+    founded: &arkret_sdk::DirectConversationResolveOutcome,
+    initiating_account: Option<&crate::config::ActiveAccountContext>,
+) {
+    let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(founded)
+    else {
+        return;
+    };
+    let Some(account) = initiating_account else {
+        return;
+    };
+    if &account.authority != founder {
+        return;
+    }
+    crate::mls::direct_binding::diagnostic_stage("founder_genesis", "entered");
+    let result = crate::mls::creator_bootstrap::start_creator_realm_mls_genesis(
+        api,
+        state_store,
+        coordinates.realm_id.as_str(),
+        founder,
+        &account.device_id,
+    )
+    .await;
+    crate::mls::direct_binding::diagnostic_stage(
+        "founder_genesis",
+        if result.is_ok() {
+            "completed"
+        } else {
+            "failed"
+        },
+    );
+    if let Err(error) = result {
+        tracing::warn!(
+            realm = %coordinates.realm_id,
+            %error,
+            "Direct Conversation founder Genesis is pending"
+        );
+    }
+}
+
 #[cfg(test)]
 mod lifecycle_tests {
     use std::cell::{Cell, RefCell};
@@ -378,54 +427,5 @@ mod lifecycle_tests {
         dom.in_runtime(|| probe.mounted.borrow().unwrap().set(false));
         dom.render_immediate_to_vec();
         assert!(probe.dropped.get(), "unmounted shell must cancel its task");
-    }
-}
-
-/// The founder authors the Direct Conversation's one scope-derived MLS Genesis
-/// right after its founding unit is accepted: the bootstrap send and Add
-/// phases both require that accepted Genesis
-/// (`identity/contact-and-direct-conversation.md` 7.2 / 7.3). A failure here
-/// does not block opening the conversation; the background creator bootstrap
-/// resumes the founder's outstanding Genesis.
-pub(crate) async fn start_founder_genesis(
-    api: &crate::transport::TransportClient,
-    state_store: &crate::runtime::input::StateStoreHandle,
-    founder: &arkret_sdk::AccountId,
-    founded: &arkret_sdk::DirectConversationResolveOutcome,
-    initiating_account: Option<&crate::config::ActiveAccountContext>,
-) {
-    let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(founded)
-    else {
-        return;
-    };
-    let Some(account) = initiating_account else {
-        return;
-    };
-    if &account.authority != founder {
-        return;
-    }
-    crate::mls::direct_binding::diagnostic_stage("founder_genesis", "entered");
-    let result = crate::mls::creator_bootstrap::start_creator_realm_mls_genesis(
-        api,
-        state_store,
-        coordinates.realm_id.as_str(),
-        founder,
-        &account.device_id,
-    )
-    .await;
-    crate::mls::direct_binding::diagnostic_stage(
-        "founder_genesis",
-        if result.is_ok() {
-            "completed"
-        } else {
-            "failed"
-        },
-    );
-    if let Err(error) = result {
-        tracing::warn!(
-            realm = %coordinates.realm_id,
-            %error,
-            "Direct Conversation founder Genesis is pending"
-        );
     }
 }

@@ -125,20 +125,6 @@ fn spec_schema_registry() -> &'static Registry<'static> {
     })
 }
 
-/// Read one spec schema file and return its `$id`.
-fn spec_schema_id(filename: &str) -> String {
-    let path = spec_artifact(&format!("schemas/{filename}"));
-    let raw = fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("read {} failed: {err}", path.display()));
-    let schema: Value =
-        serde_json::from_str(&raw).unwrap_or_else(|err| panic!("{filename} parses as JSON: {err}"));
-    schema
-        .get("$id")
-        .and_then(Value::as_str)
-        .unwrap_or_else(|| panic!("{filename} declares no $id"))
-        .to_owned()
-}
-
 /// Compile the event-schema once per test process.
 fn event_schema_validator() -> &'static jsonschema::Validator {
     static VALIDATOR: OnceLock<jsonschema::Validator> = OnceLock::new();
@@ -161,38 +147,6 @@ fn event_schema_validator() -> &'static jsonschema::Validator {
             .build(&event_schema)
             .expect("event-schema compiles")
     })
-}
-
-/// Validate a value against a whole spec schema file, or against one `$defs`
-/// entry inside it when `def_name` is set.
-///
-/// The payload-def helper above is hard-wired to `event-payload.schema.json`;
-/// device messages and service DTOs live in their own files.
-fn assert_matches_schema(label: &str, filename: &str, def_name: Option<&str>, value: &Value) {
-    let reference = match def_name {
-        Some(def_name) => format!("{}#/$defs/{def_name}", spec_schema_id(filename)),
-        None => spec_schema_id(filename),
-    };
-    let schema = Value::Object(
-        [("$ref".to_owned(), Value::String(reference.clone()))]
-            .into_iter()
-            .collect(),
-    );
-    let validator = jsonschema::options()
-        .with_registry(spec_schema_registry())
-        .build(&schema)
-        .unwrap_or_else(|err| panic!("{reference} compiles: {err}"));
-    if !validator.is_valid(value) {
-        let errors: Vec<String> = validator
-            .iter_errors(value)
-            .map(|err| format!("  - {} (at {})", err, err.instance_path()))
-            .collect();
-        panic!(
-            "{label}: value failed {reference} validation:\n{}\nvalue was:\n{}",
-            errors.join("\n"),
-            serde_json::to_string_pretty(value).unwrap_or_default()
-        );
-    }
 }
 
 /// Deterministic Ed25519 key the test process uses for signing

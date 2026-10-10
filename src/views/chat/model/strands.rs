@@ -256,8 +256,12 @@ impl MessageMergeIndex {
     }
 
     fn duplicate_slots(&self, message: &ChatMessage) -> std::collections::BTreeSet<usize> {
-        let same_id = self.ids.get(&message.id).expect("merged row is indexed");
-        let primary = *same_id.first().expect("merged row has a primary slot");
+        let Some(same_id) = self.ids.get(&message.id) else {
+            return Default::default();
+        };
+        let Some(primary) = same_id.first().copied() else {
+            return Default::default();
+        };
         let same_protocol =
             chat_message_protocol_id(message).and_then(|protocol| self.protocols.get(protocol));
         same_id
@@ -285,19 +289,26 @@ pub(crate) fn merge_chat_messages(target: &mut Vec<ChatMessage>, incoming: Vec<C
         .collect::<Vec<_>>();
     let mut index = MessageMergeIndex::default();
     for (slot, message) in slots.iter().enumerate() {
-        index.insert(slot, message.as_ref().expect("initial slot is occupied"));
+        if let Some(message) = message {
+            index.insert(slot, message);
+        }
     }
     for message in incoming {
         if let Some(slot) = index.first_match(&message) {
-            let existing = slots[slot].as_mut().expect("matched slot is occupied");
+            let Some(existing) = slots.get_mut(slot).and_then(Option::as_mut) else {
+                index.insert(slots.len(), &message);
+                slots.push(Some(message));
+                continue;
+            };
             index.remove(slot, existing);
             merge_duplicate_create_message(existing, message);
             index.insert(slot, existing);
             // Merging can rewrite both aliases. The earliest row with the new
             // keep ID survives even if it precedes the row we just updated.
             for duplicate in index.duplicate_slots(existing) {
-                let removed = slots[duplicate].take().expect("duplicate slot is occupied");
-                index.remove(duplicate, &removed);
+                if let Some(removed) = slots.get_mut(duplicate).and_then(Option::take) {
+                    index.remove(duplicate, &removed);
+                }
             }
         } else {
             index.insert(slots.len(), &message);
@@ -305,11 +316,7 @@ pub(crate) fn merge_chat_messages(target: &mut Vec<ChatMessage>, incoming: Vec<C
         }
     }
     // Compact once, without sorting or rebuilding identities across streams.
-    target.extend(slots.into_iter().filter_map(|message| {
-        #[cfg(test)]
-        MERGE_INDEX_STEPS.with(|steps| steps.set(steps.get() + 1));
-        message
-    }));
+    target.extend(slots.into_iter().flatten());
 }
 
 #[cfg(test)]

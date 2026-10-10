@@ -241,7 +241,7 @@ impl DurableOutboundState {
         let plan = self
             .creator_realm_discussions
             .get_mut(realm)
-            .expect("validated plan");
+            .ok_or_else(|| garth::Error::Storage("default discussion plan is missing".into()))?;
         match step {
             CreatorDiscussionStep::Create => plan.create = Some(candidate.event_id.clone()),
             CreatorDiscussionStep::Select => plan.select = Some(candidate.event_id.clone()),

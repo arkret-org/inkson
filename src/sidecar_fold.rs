@@ -277,14 +277,16 @@ pub(crate) fn rebuild(
     Ok(rebuild_with_closes(store, controller, realm)?.0)
 }
 
+type RebuiltExchanges = (
+    Vec<AgentSidecarExchangeProjection>,
+    Vec<(AgentSidecarExchangeProjection, AgentSidecarExchangeControl)>,
+);
+
 pub(crate) fn rebuild_with_closes(
     store: &LocalStateStore,
     controller: &AccountId,
     realm: &str,
-) -> anyhow::Result<(
-    Vec<AgentSidecarExchangeProjection>,
-    Vec<(AgentSidecarExchangeProjection, AgentSidecarExchangeControl)>,
-)> {
+) -> anyhow::Result<RebuiltExchanges> {
     let (snapshot, histories) = store.verified_sidecar_inputs(realm)?;
     let mut validation = FoldValidationCache::new(store);
     let mut result = Vec::new();
@@ -432,7 +434,7 @@ pub(crate) fn rebuild_with_closes(
                         let context = binding
                             .request_context
                             .as_ref()
-                            .expect("shape-checked request context");
+                            .ok_or_else(|| anyhow::anyhow!("Sidecar request has no context"))?;
                         let source = SidecarContextRef::Strand {
                             strand_id: context.source_track_ref.strand_id.clone(),
                         };
@@ -661,6 +663,115 @@ fn accept_response(
 #[path = "sidecar_fold/tests_mls.rs"]
 mod mls_tests;
 
+fn accept_control(
+    exchange: &mut Exchange,
+    event: &Event,
+    control: &AgentSidecarExchangeControl,
+) -> anyhow::Result<()> {
+    control.validate_shape()?;
+    anyhow::ensure!(
+        control.exchange_id == exchange.projection.exchange_id
+            && control.request_event_id == exchange.projection.private_request_event_id
+            && !control.basis_event_ids.is_empty()
+            && sorted_unique(&control.basis_event_ids)
+            && exchange.projection.terminal_event_id.is_none(),
+        "Sidecar control has an invalid request, basis or terminal transition"
+    );
+    let basis = control
+        .basis_event_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    anyhow::ensure!(
+        basis.iter().all(|id| exchange.parents.contains_key(id)
+            && event
+                .semantic_refs
+                .iter()
+                .any(|reference| reference.role == "after"
+                    && reference.critical
+                    && reference.id == id.as_str())),
+        "Sidecar control basis is not covered by accepted causal refs"
+    );
+    let closure = exchange.closure(&basis);
+    anyhow::ensure!(
+        closure.contains(&exchange.projection.private_request_event_id)
+            && closure.contains(&exchange.projection.coordinator_assignment_event_id)
+            && basis.iter().all(
+                |id| !basis
+                    .iter()
+                    .filter(|other| *other != id)
+                    .any(|other| exchange
+                        .closure(&BTreeSet::from([other.clone()]))
+                        .contains(id))
+            ),
+        "Sidecar control basis does not cover its request and assignment as maximal heads"
+    );
+    match control.action {
+        AgentSidecarExchangeAction::ReassignCoordinator => {
+            let coordinator = control
+                .coordinator_agent_id
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Sidecar reassignment has no coordinator"))?;
+            anyhow::ensure!(
+                control.expected_coordinator_agent_id.as_ref()
+                    == Some(&exchange.projection.coordinator_agent_id)
+                    && exchange
+                        .projection
+                        .addressed_agent_ids
+                        .contains(coordinator),
+                "Sidecar coordinator reassignment does not extend its exact assignment"
+            );
+            exchange.projection.coordinator_agent_id = coordinator.clone();
+            exchange.projection.coordinator_assignment_event_id = event.event_id.clone();
+            exchange.completion_requested = false;
+        }
+        AgentSidecarExchangeAction::Close
+        | AgentSidecarExchangeAction::Cancel
+        | AgentSidecarExchangeAction::Fail => {
+            let responses = exchange
+                .projection
+                .user_facing_response_event_ids
+                .iter()
+                .filter(|id| closure.contains(*id))
+                .cloned()
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                control.response_event_ids.as_ref() == Some(&responses),
+                "Sidecar terminal control does not carry its exact causal response set"
+            );
+            anyhow::ensure!(
+                control.action == AgentSidecarExchangeAction::Close || responses.is_empty(),
+                "Sidecar fail/cancel cannot retain user-facing responses"
+            );
+            exchange.projection.user_facing_response_event_ids = responses;
+            if exchange
+                .projection
+                .user_facing_response_event_ids
+                .is_empty()
+            {
+                exchange.projection.status = AgentSidecarExchangeStatus::Failed;
+                exchange.projection.failure_reason_code = Some(match control.action {
+                    AgentSidecarExchangeAction::Close => {
+                        arkret_sdk::SIDECAR_EXCHANGE_CLOSED_EMPTY_REASON.to_owned()
+                    }
+                    AgentSidecarExchangeAction::Cancel => {
+                        arkret_sdk::SIDECAR_EXCHANGE_CANCELLED_REASON.to_owned()
+                    }
+                    AgentSidecarExchangeAction::Fail => control
+                        .failure_reason_code
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("Sidecar failure has no reason"))?,
+                    _ => unreachable!(),
+                });
+            } else {
+                exchange.projection.status = AgentSidecarExchangeStatus::Complete;
+            }
+            exchange.projection.terminal_event_id = Some(event.event_id.clone());
+        }
+    }
+    exchange.contribute(event, basis)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -862,113 +973,4 @@ mod tests {
         .unwrap();
         assert_eq!(exchange.projection, before);
     }
-}
-
-fn accept_control(
-    exchange: &mut Exchange,
-    event: &Event,
-    control: &AgentSidecarExchangeControl,
-) -> anyhow::Result<()> {
-    control.validate_shape()?;
-    anyhow::ensure!(
-        control.exchange_id == exchange.projection.exchange_id
-            && control.request_event_id == exchange.projection.private_request_event_id
-            && !control.basis_event_ids.is_empty()
-            && sorted_unique(&control.basis_event_ids)
-            && exchange.projection.terminal_event_id.is_none(),
-        "Sidecar control has an invalid request, basis or terminal transition"
-    );
-    let basis = control
-        .basis_event_ids
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    anyhow::ensure!(
-        basis.iter().all(|id| exchange.parents.contains_key(id)
-            && event
-                .semantic_refs
-                .iter()
-                .any(|reference| reference.role == "after"
-                    && reference.critical
-                    && reference.id == id.as_str())),
-        "Sidecar control basis is not covered by accepted causal refs"
-    );
-    let closure = exchange.closure(&basis);
-    anyhow::ensure!(
-        closure.contains(&exchange.projection.private_request_event_id)
-            && closure.contains(&exchange.projection.coordinator_assignment_event_id)
-            && basis.iter().all(
-                |id| !basis
-                    .iter()
-                    .filter(|other| *other != id)
-                    .any(|other| exchange
-                        .closure(&BTreeSet::from([other.clone()]))
-                        .contains(id))
-            ),
-        "Sidecar control basis does not cover its request and assignment as maximal heads"
-    );
-    match control.action {
-        AgentSidecarExchangeAction::ReassignCoordinator => {
-            let coordinator = control
-                .coordinator_agent_id
-                .as_ref()
-                .expect("shape-checked reassignment");
-            anyhow::ensure!(
-                control.expected_coordinator_agent_id.as_ref()
-                    == Some(&exchange.projection.coordinator_agent_id)
-                    && exchange
-                        .projection
-                        .addressed_agent_ids
-                        .contains(coordinator),
-                "Sidecar coordinator reassignment does not extend its exact assignment"
-            );
-            exchange.projection.coordinator_agent_id = coordinator.clone();
-            exchange.projection.coordinator_assignment_event_id = event.event_id.clone();
-            exchange.completion_requested = false;
-        }
-        AgentSidecarExchangeAction::Close
-        | AgentSidecarExchangeAction::Cancel
-        | AgentSidecarExchangeAction::Fail => {
-            let responses = exchange
-                .projection
-                .user_facing_response_event_ids
-                .iter()
-                .filter(|id| closure.contains(*id))
-                .cloned()
-                .collect::<Vec<_>>();
-            anyhow::ensure!(
-                control.response_event_ids.as_ref() == Some(&responses),
-                "Sidecar terminal control does not carry its exact causal response set"
-            );
-            anyhow::ensure!(
-                control.action == AgentSidecarExchangeAction::Close || responses.is_empty(),
-                "Sidecar fail/cancel cannot retain user-facing responses"
-            );
-            exchange.projection.user_facing_response_event_ids = responses;
-            if exchange
-                .projection
-                .user_facing_response_event_ids
-                .is_empty()
-            {
-                exchange.projection.status = AgentSidecarExchangeStatus::Failed;
-                exchange.projection.failure_reason_code = Some(match control.action {
-                    AgentSidecarExchangeAction::Close => {
-                        arkret_sdk::SIDECAR_EXCHANGE_CLOSED_EMPTY_REASON.to_owned()
-                    }
-                    AgentSidecarExchangeAction::Cancel => {
-                        arkret_sdk::SIDECAR_EXCHANGE_CANCELLED_REASON.to_owned()
-                    }
-                    AgentSidecarExchangeAction::Fail => control
-                        .failure_reason_code
-                        .clone()
-                        .expect("shape-checked failure reason"),
-                    _ => unreachable!(),
-                });
-            } else {
-                exchange.projection.status = AgentSidecarExchangeStatus::Complete;
-            }
-            exchange.projection.terminal_event_id = Some(event.event_id.clone());
-        }
-    }
-    exchange.contribute(event, basis)
 }

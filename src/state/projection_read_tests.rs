@@ -42,8 +42,8 @@ fn signed_link() -> LocallyAuthenticatedIdentityLink {
         "mls_group_id": "AQID", "mls_leaf_index": 4, "mls_epoch": 2,
         "response_signing_verification_method": method,
         "response_signing_algorithm": "Ed25519",
-        "response_signing_public_key_b64u": arkret_sdk::base64url_encode(&public_key),
-        "response_signing_public_key_digest": arkret_sdk::canonical::sha256_digest(&public_key),
+        "response_signing_public_key_b64u": arkret_sdk::base64url_encode(public_key),
+        "response_signing_public_key_digest": arkret_sdk::canonical::sha256_digest(public_key),
         "effective_at": "2026-10-06T00:00:00.000Z",
         "proof": {"verification_method": method, "signature_algorithm": "Ed25519",
             "payload_digest": placeholder, "signature": "pending"}
@@ -51,7 +51,7 @@ fn signed_link() -> LocallyAuthenticatedIdentityLink {
     .unwrap();
     link.proof.payload_digest = link.canonical_payload_digest().unwrap();
     link.proof.signature =
-        arkret_sdk::base64url_encode(&key.sign(&link.canonical_proof_input().unwrap()).to_bytes());
+        arkret_sdk::base64url_encode(key.sign(&link.canonical_proof_input().unwrap()).to_bytes());
     link.validate_minimal().unwrap();
     let bytes = arkret_sdk::canonical::canonical_json_bytes(&link).unwrap();
     LocallyAuthenticatedIdentityLink {
@@ -63,7 +63,7 @@ fn signed_link() -> LocallyAuthenticatedIdentityLink {
         identity_link_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&bytes))
             .unwrap(),
         leaf_node_canonical_bytes_b64u: arkret_sdk::Base64UrlString::new("AQID").unwrap(),
-        leaf_node_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&[1, 2, 3]))
+        leaf_node_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest([1, 2, 3]))
             .unwrap(),
         winning_group_state_ref: arkret_sdk::EventId::from_digest(
             arkret_sdk::DigestSuite::Sha256,

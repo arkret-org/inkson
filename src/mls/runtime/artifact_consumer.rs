@@ -1580,15 +1580,14 @@ mod tests {
         .await;
         assert!(lost.iter().all(|(_, attempt)| !attempt.settled()));
         let (state, shared) = handle(restarted);
-        let consumed = crate::mls::welcome_consume::drain_owed_consumes(
-            shared.lock().unwrap().pending_keypackage_consumes(),
-            |(_, request)| {
+        let pending_consumes = shared.lock().unwrap().pending_keypackage_consumes();
+        let consumed =
+            crate::mls::welcome_consume::drain_owed_consumes(pending_consumes, |(_, request)| {
                 sent.borrow_mut()
                     .push(arkret_sdk::canonical::canonical_json_string(&request).unwrap());
                 async { crate::mls::welcome_consume::ConsumeAttempt::Consumed }
-            },
-        )
-        .await;
+            })
+            .await;
         assert_eq!(sent.into_inner(), vec![signed.clone(), signed]);
         for ((claim_id, _), attempt) in consumed {
             assert!(attempt.settled());
@@ -1773,7 +1772,7 @@ mod tests {
         body.as_object_mut().unwrap().remove("signature");
         commit.commit_id =
             arkret_sdk::RealmCommitId::from_digest(arkret_sdk::canonical::sha256_bytes(
-                &arkret_sdk::canonical::canonical_json_bytes(&body).unwrap(),
+                arkret_sdk::canonical::canonical_json_bytes(&body).unwrap(),
             ));
         let commit =
             crate::test_support::committed_event::FixtureStation::did_web().seal_commit(commit);

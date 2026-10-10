@@ -1173,8 +1173,10 @@ mod tests {
             )),
         )
         .unwrap();
-        let mut snapshot = ClientLocalState::default();
-        snapshot.notification_projection = raw_notifications_from_sources(Some(&[delta]), &[]);
+        let mut snapshot = ClientLocalState {
+            notification_projection: raw_notifications_from_sources(Some(&[delta]), &[]),
+            ..Default::default()
+        };
         snapshot
             .notification_projection
             .push(StoredNotification::Invite {

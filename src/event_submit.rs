@@ -18,7 +18,7 @@ use std::sync::{Mutex, OnceLock as SyncOnceLock, PoisonError};
 use std::time::Duration;
 
 use anyhow::Context;
-use arkret_wire::{CapabilityActionId, event_kind_str};
+use arkret_wire::event_kind_str;
 use garth::{
     OutboundEngine, OutboundEngineOutcome, OutboundQueueStore as _, QueuedSubmission,
     SendQueueStatus,
@@ -31,7 +31,7 @@ use crate::identity::authoring_generation::{
     GenerationFenceDecision, ResolvedQueueGenerationFence,
 };
 use crate::models::{BackfillView, ServiceDescribe, SubmitEventResult};
-use crate::operation::{EventIntent, LocalOperation, uuid_v7};
+use crate::operation::{EventIntent, LocalOperation};
 use crate::outbound_store::{InksonOutboundStore, OutboundLane};
 
 mod authoring_unit;
@@ -126,45 +126,6 @@ pub(crate) async fn scan_stream_with(
             .await
             .map_err(anyhow::Error::from)?,
     ))
-}
-
-/// Confirm the current governance Station committed this exact Event, and
-/// return the commit coordinate it was given.
-///
-/// This replaces the removed proposal/Seal readback: an authority-signed
-/// `RealmCommit` in the Event's own stream is the only finality signal, and the
-/// Event's scope names the one stream that can carry it. The content binding is
-/// re-derived first, so a substituted envelope cannot borrow another Event's
-/// commit.
-pub(crate) async fn require_committed_event_with(
-    http: &arkret_sdk::http_client::Client,
-    event: &arkret_sdk::Event,
-) -> anyhow::Result<arkret_wire::CommittedEventRef> {
-    let digest_suite = event.event_id.digest_suite_code().digest_suite();
-    event.verify_event_id_matches_content_with_digest_suite(digest_suite)?;
-    let stream_ref =
-        arkret_wire::CommitStreamRef::from_scope(&event.scope_ref, Some(event.realm_id.clone()))
-            .map_err(anyhow::Error::from)?;
-    let mut after_position = None;
-    loop {
-        let page = scan_stream_with(http, &stream_ref, after_position, STREAM_SCAN_PAGE).await?;
-        if let Some(committed) = page
-            .committed_refs()
-            .into_iter()
-            .find(|reference| reference.event_id == event.event_id)
-        {
-            return Ok(committed);
-        }
-        match page.last_position() {
-            Some(position) if page.truncated() => after_position = Some(position),
-            _ => {
-                anyhow::bail!(
-                    "Event {} is not committed in its own stream yet",
-                    event.event_id
-                );
-            }
-        }
-    }
 }
 
 /// Compare a producer-authored Event with its accepted projection.
@@ -325,6 +286,7 @@ impl Drop for OutboundWriterTrace {
 
 /// How long an interactive caller should wait before looking at the durable
 /// queue again, for failures the engine does not classify for us.
+#[cfg(test)]
 fn outbound_retry_delay(error: &anyhow::Error) -> Option<Duration> {
     let rendered = format!("{error:#}");
     if crate::api_error::is_auth_expired_error(error)
@@ -487,7 +449,7 @@ fn pending_chat_event_ids_from_snapshot(
         .items
         .iter()
         .filter(|item| is_unsettled(item.status))
-        .map(|item| queued_event(item))
+        .map(queued_event)
         .filter(|event| {
             event.kind == arkret_sdk::EventKind::MessageCreate
                 && event.realm_id.as_str() == realm_id
@@ -1218,20 +1180,6 @@ impl EventSubmitter {
         Ok(mls_genesis_event_id_from_events(&events, realm_id))
     }
 
-    /// Confirm the current governance Station committed this exact Event, and
-    /// return the commit coordinate it was given.
-    ///
-    /// The Event's own scope names the one stream that can carry it, so this
-    /// walks that stream rather than asking a separate finality endpoint —
-    /// `resolve_committed_events` answers only for refs a Directory announce
-    /// already authorized.
-    pub(crate) async fn require_committed_event(
-        &self,
-        event: &arkret_sdk::Event,
-    ) -> anyhow::Result<arkret_wire::CommittedEventRef> {
-        require_committed_event_with(&self.http, event).await
-    }
-
     /// Read the immutable founding Event from position zero of the Realm's own
     /// stream.
     async fn realm_create_authority(
@@ -1500,16 +1448,16 @@ impl EventSubmitter {
         event: &mut arkret_sdk::AuthoredEvent,
         proof_context: crate::event_signer::ProducerProofContext,
     ) -> anyhow::Result<()> {
-        if let Some(realm_id) = intent.realm_id_opt() {
-            if self.state_store.as_ref().is_some_and(|store| {
+        if let Some(realm_id) = intent.realm_id_opt()
+            && self.state_store.as_ref().is_some_and(|store| {
                 store.read(|state| {
                     state.realm_projection_has_retired_minimal_metadata_marker(realm_id.as_str())
                 })
-            }) {
-                anyhow::bail!(
-                    "retired minimal-metadata Realm marker requires verified current governance genesis and schema"
-                );
-            }
+            })
+        {
+            anyhow::bail!(
+                "retired minimal-metadata Realm marker requires verified current governance genesis and schema"
+            );
         }
         sign_event_through_message_seam(event, |unsigned| {
             crate::event_signer::sign_sdk_event_with_active_context(unsigned, proof_context)
@@ -1803,15 +1751,6 @@ impl EventSubmitter {
             results.push(settled_outbound_result(&item)?);
         }
         Ok(results)
-    }
-
-    /// Author independent intents and submit them in order.
-    pub(crate) async fn submit_sdk_events_in_order(
-        &self,
-        intents: Vec<EventIntent>,
-    ) -> anyhow::Result<Vec<SubmitEventResult>> {
-        let events = self.author_independent_events(intents).await?;
-        self.submit_signed_sdk_events_in_order(&events).await
     }
 
     /// Author a Realm's complete genesis unit, then submit its members in

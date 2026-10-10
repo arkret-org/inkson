@@ -335,7 +335,7 @@ async fn fetch_key_backup_with_unlock_proof(
         .endpoint("_arkret/self/keys/backups")?
         .origin()
         .ascii_serialization();
-    let request_lock = unlock_request_lock(&request_key);
+    let request_lock = unlock_request_lock(&request_key)?;
     let _guard = request_lock.lock().await;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let stored = load_unlock_request(secure_store.as_ref(), &request_key)?;
@@ -480,21 +480,21 @@ fn unlock_request_storage_key(
     )))
 }
 
-fn unlock_request_lock(key: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+fn unlock_request_lock(key: &str) -> anyhow::Result<std::sync::Arc<tokio::sync::Mutex<()>>> {
     use std::sync::{Arc, Mutex, OnceLock, Weak};
     type Locks = std::collections::BTreeMap<String, Weak<tokio::sync::Mutex<()>>>;
     static LOCKS: OnceLock<Mutex<Locks>> = OnceLock::new();
     let mut locks = LOCKS
         .get_or_init(|| Mutex::new(Locks::new()))
         .lock()
-        .expect("unlock lock registry");
+        .map_err(|_| anyhow::anyhow!("unlock request lock registry is poisoned"))?;
     locks.retain(|_, value| value.strong_count() > 0);
     if let Some(lock) = locks.get(key).and_then(Weak::upgrade) {
-        return lock;
+        return Ok(lock);
     }
     let lock = Arc::new(tokio::sync::Mutex::new(()));
     locks.insert(key.to_owned(), Arc::downgrade(&lock));
-    lock
+    Ok(lock)
 }
 
 fn load_unlock_request(

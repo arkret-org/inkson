@@ -617,27 +617,22 @@ fn accepted_invite_route_recovers_from_canonical_history_after_restart() {
             "invitee_account_id": invitee,
         }),
     );
-    accept.producer_proof = Some(
-        arkret_sdk::ProducerEventProof {
-            kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-            verification_method: arkret_sdk::DidUrl::new(format!(
-                "did:web:bob.example#{device_id}"
-            ))
+    accept.producer_proof = Some(arkret_sdk::ProducerEventProof {
+        kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+        verification_method: arkret_sdk::DidUrl::new(format!("did:web:bob.example#{device_id}"))
             .unwrap(),
-            event_digest: arkret_sdk::Hash::new(
-                accept
-                    .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
-                    .unwrap(),
-            )
-            .unwrap(),
-            created_at: accept.created_at,
-            domain: None,
-            audience: None,
-            proof_purpose: None,
-            jws: "header..producer".to_owned(),
-        }
-        .into(),
-    );
+        event_digest: arkret_sdk::Hash::new(
+            accept
+                .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+                .unwrap(),
+        )
+        .unwrap(),
+        created_at: accept.created_at,
+        domain: None,
+        audience: None,
+        proof_purpose: None,
+        jws: "header..producer".to_owned(),
+    });
     // This is a projection test over already accepted Events; signature
     // verification belongs to the canonical ingest boundary. Start with no
     // locally authored invite hints, as on another device or after restart.

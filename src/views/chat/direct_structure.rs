@@ -846,7 +846,7 @@ async fn submit_structure(
         .then(|| arkret_sdk::StrandId::from_event_id(&event_id).to_string());
     if let (Some(envelope), Some(plaintext)) = (envelope, plaintext) {
         let id = match write.action.as_str() {
-            "new_chat" => created_chat.clone().unwrap(),
+            "new_chat" => arkret_sdk::StrandId::from_event_id(&event_id).to_string(),
             "new_topic" => arkret_sdk::SpaceId::from_event_id(&event_id).to_string(),
             "rename_chat" => write.chat,
             _ => write.topic_target,

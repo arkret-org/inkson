@@ -1255,7 +1255,6 @@ pub(super) fn submit_strand_position_move(
         } => {
             json!({"list_space_id": list_space_id, "rank": rank})
         }
-        StrandPositionEffect::Remove => serde_json::Value::Null,
     };
     let envelope = match crate::operation::ak_ops::strand_position_update(
         &realm_id,
@@ -1307,7 +1306,6 @@ pub(super) fn submit_strand_position_move(
                 list_space_id,
                 rank,
             } => json!({"list_space_id": list_space_id, "rank": rank}),
-            StrandPositionEffect::Remove => serde_json::Value::Null,
         },
         // Canonical move/reorder payload retained in the durable local op log.
         // The Board may use it as a discovery overlay, but canonical current

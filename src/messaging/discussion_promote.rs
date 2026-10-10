@@ -80,26 +80,6 @@ pub fn build_discussion_strand_create_op(
         .build_sdk_event("inkson")
 }
 
-/// Build the `ak.relation.create` event that links the private Strand back
-/// to the source public Strand/message.
-pub(crate) fn build_confidential_discussion_relation_op(
-    realm_id: &str,
-    actor: &str,
-    source_id: &str,
-    ids: &PromoteIds,
-    current: &crate::event_submit::VerifiedRelationCurrent,
-) -> anyhow::Result<crate::operation::LocalOperation> {
-    ak_ops::confidential_discussion_relation_create(
-        realm_id,
-        actor,
-        &ids.discussion_strand_id,
-        source_id,
-        &ids.circle_id,
-        current,
-    )?
-    .build_sdk_event("inkson")
-}
-
 /// The object id an authored create Event derives, or an error naming the kind
 /// that derives none.
 pub fn derived_id(event: &arkret_sdk::AuthoredEvent) -> anyhow::Result<String> {

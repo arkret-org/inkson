@@ -62,6 +62,7 @@ pub(crate) fn current_level(current: &StrandWatchCurrentOutcome) -> StrandWatchL
     }
 }
 
+#[cfg(test)]
 fn validate_own_observation(
     current: &StrandWatchCurrentOutcome,
     before: &arkret_sdk::RealmStateSnapshot,
@@ -96,17 +97,17 @@ fn validate_own_observation(
                 || head.commit_id == after_head.commit_id),
         "watch current observation crossed a generation or original head"
     );
-    if head == after_head {
-        if let StrandWatchCurrentOutcome::Current { result, .. } = current {
-            let original = serde_json::to_value(result)?;
-            anyhow::ensure!(
-                after
-                    .current_state_entries
-                    .iter()
-                    .any(|row| serde_json::to_value(row).ok().as_ref() == Some(&original)),
-                "watch current differs from the original same-cut row"
-            );
-        }
+    if head == after_head
+        && let StrandWatchCurrentOutcome::Current { result, .. } = current
+    {
+        let original = serde_json::to_value(result)?;
+        anyhow::ensure!(
+            after
+                .current_state_entries
+                .iter()
+                .any(|row| serde_json::to_value(row).ok().as_ref() == Some(&original)),
+            "watch current differs from the original same-cut row"
+        );
     }
     Ok(())
 }

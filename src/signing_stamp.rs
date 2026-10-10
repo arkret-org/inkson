@@ -1,70 +1,8 @@
 //! Inkson adapter for Garth's durable event-signing stamp allocator.
 
+#[cfg(not(test))]
 use anyhow::Context as _;
-use garth::{HostClock, SigningStamp, SigningStampAllocator, StampScope};
-
-#[derive(Clone, Copy, Debug)]
-struct InksonClock;
-
-impl HostClock for InksonClock {
-    fn now(&self) -> chrono::DateTime<chrono::Utc> {
-        crate::clock::now_utc()
-    }
-}
-
-/// Issue a signing stamp for the chain an Event is about to join.
-///
-/// A Realm genesis has no Realm id yet — it is a function of the create Event
-/// id, which this stamp's HLC feeds into — so genesis authoring gets its own
-/// fixed local scope instead of borrowing a placeholder that looks like a Realm.
-pub(crate) async fn issue_event_stamp_for(
-    actor_id: &arkret_sdk::ActorId,
-    realm_id: Option<&arkret_sdk::RealmId>,
-) -> anyhow::Result<SigningStamp> {
-    let signer = crate::event_signer::active_signer().context("no active event signer")?;
-    let device_id = signer
-        .device_id()
-        .context("active event signer is not bound to a device")?;
-    #[cfg(not(test))]
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    #[cfg(not(test))]
-    let material = crate::secure_key_store::load_signing_seed(secure_store.as_ref())?
-        .context("active event signing seed is unavailable")?;
-    #[cfg(not(test))]
-    let local_node_secret = material.seed;
-    #[cfg(test)]
-    let local_node_secret = [0x49; 32];
-    let scope = StampScope {
-        service_id: None,
-        actor_id: actor_id.signing_principal_id().clone(),
-        device_id: arkret_sdk::DeviceId::new(device_id.to_owned())?,
-        realm_id: match realm_id {
-            Some(realm_id) => realm_id.clone(),
-            None => genesis_authoring_stamp_realm(),
-        },
-    };
-
-    #[cfg(all(not(target_arch = "wasm32"), not(test)))]
-    let store = native_stamp_store()?;
-    #[cfg(any(target_arch = "wasm32", test))]
-    let store = memory_stamp_store();
-
-    SigningStampAllocator::with_clock(store, scope, &local_node_secret, InksonClock)
-        .issue()
-        .await
-        .map_err(Into::into)
-}
-
-/// Stamp scope for Realm genesis authoring.
-///
-/// Purely local: it partitions this device's monotonic stamp counters and never
-/// reaches the wire, so it cannot be mistaken for the Realm the create derives.
-fn genesis_authoring_stamp_realm() -> arkret_sdk::RealmId {
-    arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
-        arkret_sdk::canonical::DigestSuite::Sha256,
-        [0; 32],
-    ))
-}
+use garth::StampScope;
 
 pub(crate) fn issue_protocol_hlc(
     actor_id: &str,
@@ -81,17 +19,6 @@ pub(crate) fn issue_protocol_hlc(
     #[cfg(test)]
     let local_node_secret = [0x49; 32];
     issue_protocol_hlc_with_secret(actor_id, device_id, realm_id, &local_node_secret)
-}
-
-pub(crate) fn issue_protocol_hlc_for_active_device(
-    actor_id: &str,
-    realm_id: &str,
-) -> anyhow::Result<arkret_sdk::Hlc> {
-    let signer = crate::event_signer::active_signer().context("no active event signer")?;
-    let device_id = signer
-        .device_id()
-        .context("active event signer is not bound to a device")?;
-    issue_protocol_hlc(actor_id, device_id, realm_id)
 }
 
 /// Allocate HLC metadata for account-data payloads before their transport

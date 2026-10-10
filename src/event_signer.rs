@@ -261,6 +261,7 @@ impl InksonPayloadSignerAdapter<'_> {
     /// The ordinary Event proof above uses an alg-only protected header; a
     /// signature that has to be checked against one pinned method must
     /// additionally name it, so the two headers stay distinct.
+    #[cfg(test)]
     pub(crate) fn sign_payload_with_kid_and_digest_suite(
         &self,
         canonical_bytes: &[u8],
@@ -404,6 +405,7 @@ impl InksonEventSigner {
     /// session binds that same key to `<principal>#<device_id>`. Protocol
     /// authoring that commits to the account principal must use the latter
     /// identity, not the local key DID.
+    #[cfg(test)]
     pub(crate) fn payload_signer_adapter_for_principal(
         &self,
         principal_did: &Did,

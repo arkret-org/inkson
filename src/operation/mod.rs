@@ -364,15 +364,6 @@ impl LocalOperation {
     }
 }
 
-/// Durable outbound-record field carrying the holder-local operation identity.
-///
-/// It is a local reconciliation key only: producer Events have no holder-local
-/// members, so this never reaches the wire.
-pub(crate) const LOCAL_OPERATION_IDEMPOTENCY_ALIAS: &str = "local_operation_idempotency_alias";
-/// Durable outbound-record field naming the existing object a non-create write
-/// targets. Local only, for the same reason.
-pub(crate) const LOCAL_TARGET_REF: &str = "local_target_ref";
-
 /// Standard Event builder whose kind is fixed by the SDK payload marker.
 ///
 /// This boundary never accepts a runtime `EventKind` or an erased JSON payload.

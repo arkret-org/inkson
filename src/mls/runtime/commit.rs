@@ -74,6 +74,7 @@ fn restore_for_commit(
 
 /// Stage the native Sidecar's derived member withdrawal or access rotation.
 /// The caller supplies the exact verified authority cut, never Circle membership.
+#[cfg(test)]
 pub(crate) fn build_sidecar_access_commit(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -312,58 +313,6 @@ pub(crate) fn build_mls_remove_actors_commit_for_scope(
             staged_checkpoint,
         },
     ))
-}
-
-pub(crate) fn build_add_member_commit_for_effective_scope(
-    state_store: &crate::state::LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    circle_id: Option<&str>,
-    authority: &AccountId,
-    device_id: &DeviceId,
-    member_key_package: &arkret_sdk::MlsKeyPackageRecord,
-    member_authority_hint: &crate::mls::governance_proof::MlsLeafAuthorityHint,
-) -> Result<(arkret_sdk::MlsAddMemberResult, StagedMlsCommit), MlsRuntimeError> {
-    build_add_member_commit_for_scope(
-        state_store,
-        secure_store,
-        &scope_for(realm_id, circle_id, None)?,
-        authority,
-        device_id,
-        member_key_package,
-        std::slice::from_ref(member_authority_hint),
-        None,
-    )
-}
-
-/// Stage the addition of one claimed KeyPackage endpoint.
-///
-/// `member_authority_hints` carry the checked claim evidence for the leaf this
-/// Add occupies; without them the post-transition attribution cannot be
-/// installed and the commit fails closed rather than shipping a group whose
-/// roster reads are refused.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn build_add_member_commit_for_scope(
-    state_store: &crate::state::LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    effective_scope: &arkret_sdk::ScopeRef,
-    authority: &AccountId,
-    device_id: &DeviceId,
-    member_key_package: &arkret_sdk::MlsKeyPackageRecord,
-    member_authority_hints: &[crate::mls::governance_proof::MlsLeafAuthorityHint],
-    member_actor_id: Option<&arkret_sdk::ActorId>,
-) -> Result<(arkret_sdk::MlsAddMemberResult, StagedMlsCommit), MlsRuntimeError> {
-    build_add_member_commit_with_binding(
-        state_store,
-        secure_store,
-        effective_scope,
-        authority,
-        device_id,
-        member_key_package,
-        member_authority_hints,
-        member_actor_id,
-        None,
-    )
 }
 
 #[allow(clippy::too_many_arguments)]

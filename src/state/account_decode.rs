@@ -103,8 +103,9 @@ pub(super) fn decode_account_state(bytes: &[u8]) -> serde_json::Result<ClientLoc
         if object.get(field).is_some_and(retired_genesis) {
             // Preserve the complete checkpoint, including accepted stage and
             // receipts. It cannot authorize setup or be retried on the wire.
-            let old = object.insert(field.to_owned(), Value::Null).unwrap();
-            retired.insert(field.to_owned(), old);
+            if let Some(old) = object.insert(field.to_owned(), Value::Null) {
+                retired.insert(field.to_owned(), old);
+            }
         }
     }
     if retired.is_empty() {

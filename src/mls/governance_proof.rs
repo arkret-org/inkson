@@ -31,16 +31,11 @@ pub(crate) trait GovernanceProofStateStore:
     Clone + GovernanceProofStateStorePlatform + 'static
 {
     fn with_read<R>(&self, read: impl FnOnce(&crate::state::LocalStateStore) -> R) -> R;
-    fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R;
 }
 
 impl GovernanceProofStateStore for crate::runtime::input::StateStoreHandle {
     fn with_read<R>(&self, read: impl FnOnce(&crate::state::LocalStateStore) -> R) -> R {
         self.read(read)
-    }
-
-    fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R {
-        self.write(write)
     }
 }
 

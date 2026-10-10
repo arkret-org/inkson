@@ -750,7 +750,7 @@ fn connection_review_details(change: &crate::station_connection::ConnectionTrust
         details { class: "auth-connection-details",
             summary { {crate::i18n::tr("login.connection.details")} }
             p { class: "auth-connection-server", {crate::i18n::tr_args("login.connection.server", &[("url", change.candidate.base_url.clone())])} }
-            for detail in crate::station_connection::connection_changes(&change) {
+            for detail in crate::station_connection::connection_changes(change) {
                 div { class: "auth-connection-field",
                     strong { {connection_review_field_label(&detail.label)} }
                     dl {

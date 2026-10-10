@@ -145,6 +145,7 @@ fn typed_backup(body: &Value) -> Option<arkret_sdk::KeyBackup> {
 
 /// True when `body` is an MLS account-secret envelope under any recipient
 /// method.
+#[cfg(test)]
 pub(crate) fn is_mls_account_secret_backup(body: &Value) -> bool {
     typed_backup(body).is_some_and(|backup| {
         backup

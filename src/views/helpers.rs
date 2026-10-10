@@ -244,6 +244,66 @@ pub(crate) fn verified_handle_claim(
     claim
 }
 
+/// Home Realm of a stored projection body, falling back to the key it is
+/// stored under.
+pub(crate) fn projection_home_realm_id(
+    projection: &serde_json::Value,
+    stored_under: &str,
+) -> String {
+    projection
+        .get("realm_id")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            projection
+                .get("summary")
+                .and_then(|summary| summary.get("realm_id"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|realm_id| !realm_id.is_empty())
+        .unwrap_or(stored_under)
+        .to_owned()
+}
+
+/// The MLS activation of the Realm-default scope of `realm_id` as the
+/// installed durable current view knows it.
+///
+/// `Some(true)` is the Station's accepted `mls_group`; `Some(false)` is a
+/// complete verified cut without one. `None` means no complete cut of that
+/// Realm is installed — never "plaintext"; gates that could leak plaintext
+/// must fail closed on it.
+pub(crate) fn realm_mls_activation(
+    current: Option<&crate::current_projection::RealmCurrentView>,
+    realm_id: &str,
+) -> Option<bool> {
+    let realm = arkret_sdk::RealmId::new(realm_id.trim().to_owned()).ok()?;
+    current?
+        .scope_mls_current(&arkret_sdk::ScopeRef::Realm { realm_id: realm })
+        .activated()
+}
+
+/// [`realm_mls_activation`] for an id that may name a Realm or one of the
+/// containers stored beside it.
+///
+/// Only Realm, Circle and Sidecar are security scopes, so a Space or board id
+/// resolves through its stored body's home Realm rather than pretending to
+/// carry a scope of its own.
+pub(crate) fn scope_mls_activation(
+    projections: &std::collections::BTreeMap<String, serde_json::Value>,
+    current: Option<&crate::current_projection::RealmCurrentView>,
+    scope_id: &str,
+) -> Option<bool> {
+    let scope_id = scope_id.trim();
+    if scope_id.is_empty() {
+        return None;
+    }
+    if arkret_sdk::RealmId::new(scope_id.to_owned()).is_ok() {
+        return realm_mls_activation(current, scope_id);
+    }
+    let projection = projections.get(scope_id)?;
+    realm_mls_activation(current, &projection_home_realm_id(projection, scope_id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,64 +471,4 @@ mod tests {
             "did:web:auth.loc...ANONICAL"
         );
     }
-}
-
-/// Home Realm of a stored projection body, falling back to the key it is
-/// stored under.
-pub(crate) fn projection_home_realm_id(
-    projection: &serde_json::Value,
-    stored_under: &str,
-) -> String {
-    projection
-        .get("realm_id")
-        .and_then(serde_json::Value::as_str)
-        .or_else(|| {
-            projection
-                .get("summary")
-                .and_then(|summary| summary.get("realm_id"))
-                .and_then(serde_json::Value::as_str)
-        })
-        .map(str::trim)
-        .filter(|realm_id| !realm_id.is_empty())
-        .unwrap_or(stored_under)
-        .to_owned()
-}
-
-/// The MLS activation of the Realm-default scope of `realm_id` as the
-/// installed durable current view knows it.
-///
-/// `Some(true)` is the Station's accepted `mls_group`; `Some(false)` is a
-/// complete verified cut without one. `None` means no complete cut of that
-/// Realm is installed — never "plaintext"; gates that could leak plaintext
-/// must fail closed on it.
-pub(crate) fn realm_mls_activation(
-    current: Option<&crate::current_projection::RealmCurrentView>,
-    realm_id: &str,
-) -> Option<bool> {
-    let realm = arkret_sdk::RealmId::new(realm_id.trim().to_owned()).ok()?;
-    current?
-        .scope_mls_current(&arkret_sdk::ScopeRef::Realm { realm_id: realm })
-        .activated()
-}
-
-/// [`realm_mls_activation`] for an id that may name a Realm or one of the
-/// containers stored beside it.
-///
-/// Only Realm, Circle and Sidecar are security scopes, so a Space or board id
-/// resolves through its stored body's home Realm rather than pretending to
-/// carry a scope of its own.
-pub(crate) fn scope_mls_activation(
-    projections: &std::collections::BTreeMap<String, serde_json::Value>,
-    current: Option<&crate::current_projection::RealmCurrentView>,
-    scope_id: &str,
-) -> Option<bool> {
-    let scope_id = scope_id.trim();
-    if scope_id.is_empty() {
-        return None;
-    }
-    if arkret_sdk::RealmId::new(scope_id.to_owned()).is_ok() {
-        return realm_mls_activation(current, scope_id);
-    }
-    let projection = projections.get(scope_id)?;
-    realm_mls_activation(current, &projection_home_realm_id(projection, scope_id))
 }

@@ -116,9 +116,7 @@ pub fn split_verification_method(verification_method: &str) -> Option<(String, S
 /// The device that signed an accepted human Event, when its producer proof is
 /// controlled by the Event's own signing principal.
 pub fn accepted_human_event_signing_device(event: &Event) -> Option<DeviceId> {
-    let Some(proof) = event.producer_proof.as_ref() else {
-        return None;
-    };
+    let proof = event.producer_proof.as_ref()?;
     let (controller, fragment) = proof.verification_method.as_str().split_once('#')?;
     let controller = Did::new(controller.to_owned()).ok()?;
     let controller = project_did_to_core_id(&controller).ok()?;

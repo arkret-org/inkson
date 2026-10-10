@@ -145,7 +145,9 @@ pub(super) fn interleave_private_timeline_rows(
             })
         });
         if private_precedes {
-            let head = available.pop_first().expect("available private head");
+            let Some(head) = available.pop_first() else {
+                continue;
+            };
             let stream_id = head.5;
             if let Some(row) = private.get_mut(&stream_id).and_then(VecDeque::pop_front) {
                 merged.push(row);

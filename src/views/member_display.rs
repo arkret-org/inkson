@@ -215,6 +215,7 @@ pub(crate) fn realm_handle_issuer_policies(
 /// scope, validity window, priority layers and the deterministic tie-break)
 /// lives in `arkret_sdk::identity`; this client only assembles the
 /// deterministic input tuple.
+#[cfg(test)]
 pub(crate) fn inline_primary_handle(
     row: &RealmMemberRow,
     handle_issuer_policies: &[HandleIssuerPolicyEntry],

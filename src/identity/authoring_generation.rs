@@ -41,6 +41,7 @@ impl AuthoringGeneration {
     /// It binds both the controller's own current generation and the exact
     /// delegation the write claims, so withdrawing either one invalidates every
     /// queued Agent write authored under it.
+    #[cfg(test)]
     pub(crate) fn agent(
         authority_principal_id: &str,
         controller: &Self,
@@ -97,27 +98,6 @@ pub(crate) fn cache_verified_principal_generation(
     if previous.as_ref().is_some_and(|value| value != generation) {}
 }
 
-#[cfg(test)]
-pub(crate) fn cache_verified_principal_generation_for_test(
-    principal_id: &str,
-    device_id: &str,
-    generation_ref: &str,
-) {
-    cache_verified_principal_generation(
-        &arkret_sdk::AccountId::new(
-            arkret_sdk::DidCoreId::new(principal_id.to_owned()).unwrap(),
-            crate::operation::authoring_station_id().unwrap(),
-        ),
-        device_id,
-        &AuthoringGeneration {
-            authority_model: AuthoringAuthorityModel::AcceptedDevice,
-            authority_principal_id: arkret_sdk::DidCoreId::new(principal_id.to_owned())
-                .expect("test principal_id must be valid"),
-            generation_ref: generation_ref.to_owned(),
-        },
-    );
-}
-
 pub(crate) fn reset_verified_authoring_generations() {
     verified_generation_cache()
         .lock()
@@ -146,94 +126,6 @@ pub(crate) fn cached_principal_authoring_generation(
 /// Nothing here depends on `event_id`, which is why the fence can run on a
 /// frozen intent as well as on an authored Event — and why it never needed an
 /// Event to be authored early just to answer this question.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct EventAuthorityFacts<'a> {
-    actor_id: &'a arkret_sdk::ActorId,
-    executed_by: Option<&'a arkret_sdk::ActorId>,
-    authorization_ref: Option<&'a arkret_sdk::AuthorizationRef>,
-}
-
-impl<'a> EventAuthorityFacts<'a> {
-    fn authority_account(&self) -> anyhow::Result<&arkret_sdk::AccountId> {
-        self.executed_by
-            .unwrap_or(self.actor_id)
-            .as_account_id()
-            .ok_or_else(|| {
-                anyhow::anyhow!("device authoring generation requires an exact account actor")
-            })
-    }
-    pub(crate) fn from_intent(intent: &'a crate::operation::EventIntent) -> Self {
-        Self {
-            actor_id: intent.actor_id(),
-            executed_by: intent.executed_by(),
-            authorization_ref: intent.authorization_ref(),
-        }
-    }
-
-    /// The principal whose device generation authorizes this write.
-    fn authority_principal(&self) -> &str {
-        self.executed_by
-            .unwrap_or(self.actor_id)
-            .signing_principal_id()
-            .as_str()
-    }
-
-    /// True when a Agent authors on a controller's behalf.
-    fn is_delegated(&self) -> bool {
-        self.executed_by
-            .is_some_and(|executed_by| executed_by != self.actor_id)
-    }
-
-    fn authorization_ref_str(&self) -> &str {
-        self.authorization_ref
-            .map(|value| value.as_str())
-            .unwrap_or_default()
-    }
-}
-
-pub(crate) fn cached_event_authoring_generation(
-    facts: &EventAuthorityFacts<'_>,
-) -> anyhow::Result<Option<AuthoringGeneration>> {
-    let authority_principal = facts.authority_principal();
-    let account_id = facts.authority_account()?;
-    let signer = crate::event_signer::active_signer().ok_or_else(|| {
-        anyhow::anyhow!("no active signer configured for generation-fenced write")
-    })?;
-    let device_id = signer.device_id().ok_or_else(|| {
-        anyhow::anyhow!("active signer has no device_id for generation-fenced write")
-    })?;
-    let Some(controller_generation) = verified_generation_cache()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&principal_generation_cache_key(account_id, device_id))
-        .cloned()
-    else {
-        return Ok(None);
-    };
-
-    if facts.is_delegated() {
-        return AuthoringGeneration::agent(
-            authority_principal,
-            &controller_generation,
-            facts.authorization_ref_str(),
-        )
-        .map(Some)
-        .map_err(anyhow::Error::from);
-    }
-    Ok(Some(controller_generation))
-}
-
-pub(crate) async fn resolve_event_authoring_generation(
-    _http: &arkret_sdk::http_client::Client,
-    facts: &EventAuthorityFacts<'_>,
-) -> anyhow::Result<AuthoringGeneration> {
-    cached_event_authoring_generation(facts)?.ok_or_else(|| {
-        anyhow::anyhow!(
-            "frontier_unavailable: no locally verified device authoring authority is available"
-        )
-    })
-}
-
 enum PrincipalGenerationResolution {
     Active(AuthoringGeneration),
     Quarantine(String),
@@ -248,35 +140,12 @@ pub(crate) fn principal_authoring_generation_from_keys(
     Ok(
         match resolve_principal_authoring_generation_from_keys(outcome, account_id, device_id)? {
             PrincipalGenerationResolution::Active(generation) => Some(generation),
-            PrincipalGenerationResolution::Quarantine(_) => None,
+            PrincipalGenerationResolution::Quarantine(reason) => {
+                tracing::warn!(%reason, "device authoring generation is quarantined");
+                None
+            }
         },
     )
-}
-
-/// Cache the current authoring generation from a keys projection that the
-/// authenticated connection bootstrap has already fetched. Returning `false`
-/// keeps the device-authorization gate closed when the projection quarantines
-/// the device, so offline submission can never fall back to an unverified
-/// generation after a full-page WASM reload.
-pub(crate) fn cache_principal_authoring_generation_from_keys(
-    outcome: &arkret_models_crypto::KeysQueryOutcome,
-    account_id: &arkret_sdk::AccountId,
-    device_id: &str,
-) -> anyhow::Result<bool> {
-    match resolve_principal_authoring_generation_from_keys(outcome, account_id, device_id)? {
-        PrincipalGenerationResolution::Active(generation) => {
-            cache_verified_principal_generation(account_id, device_id, &generation);
-            Ok(true)
-        }
-        PrincipalGenerationResolution::Quarantine(reason) => {
-            tracing::warn!(%reason, "device authoring generation is quarantined");
-            verified_generation_cache()
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .remove(&principal_generation_cache_key(account_id, device_id));
-            Ok(false)
-        }
-    }
 }
 
 fn resolve_principal_authoring_generation_from_keys(

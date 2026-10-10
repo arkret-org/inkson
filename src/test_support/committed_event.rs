@@ -37,7 +37,6 @@ pub(crate) struct FixtureStation {
     service_id: DidCoreId,
     route: Value,
     key: SigningKey,
-    resolution: Option<arkret_models_identity::AuthenticatedServiceResolution>,
 }
 
 impl FixtureStation {
@@ -69,7 +68,6 @@ impl FixtureStation {
             service_id,
             route: serde_json::to_value(route).unwrap(),
             key,
-            resolution: None,
         }
     }
 
@@ -114,20 +112,11 @@ impl FixtureStation {
             service_id,
             route: serde_json::to_value(&resolution).unwrap(),
             key,
-            resolution: Some(resolution),
         }
     }
 
     pub(crate) fn service_id(&self) -> &DidCoreId {
         &self.service_id
-    }
-
-    /// The complete method-native history Garth resolves historical keys
-    /// from; `None` for the mutable did:web Station.
-    pub(crate) fn resolution(
-        &self,
-    ) -> Option<&arkret_models_identity::AuthenticatedServiceResolution> {
-        self.resolution.as_ref()
     }
 
     fn initial_signature(&self, context: DetachedSignatureContext) -> DetachedObjectSignature {
@@ -190,7 +179,7 @@ impl FixtureStation {
         object.remove("snapshot_id");
         snapshot.snapshot_id =
             arkret_sdk::RealmSnapshotId::from_digest(arkret_sdk::canonical::sha256_bytes(
-                &arkret_sdk::canonical::canonical::canonical_json_bytes(&identity).unwrap(),
+                arkret_sdk::canonical::canonical::canonical_json_bytes(&identity).unwrap(),
             ));
         let unsigned =
             arkret_sdk::canonical::canonical::unsigned_value(&*snapshot, &["signature"]).unwrap();

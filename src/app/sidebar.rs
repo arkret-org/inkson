@@ -75,11 +75,13 @@ mod manage_link_tests {
         }
     }
 
+    type NavigationHandle = Rc<RefCell<Option<Signal<(bool, bool)>>>>;
+
     #[test]
     fn contacts_sidebar_link_survives_tab_changes_and_navigation_rerenders() {
         let handle = Rc::new(RefCell::new(None::<Signal<(bool, bool)>>));
         let mut dom = VirtualDom::new_with_props(
-            |handle: Rc<RefCell<Option<Signal<(bool, bool)>>>>| {
+            |handle: NavigationHandle| {
                 let state = use_signal(|| (false, false));
                 use_context_provider(|| state);
                 *handle.borrow_mut() = Some(state);

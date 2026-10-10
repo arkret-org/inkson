@@ -102,11 +102,11 @@ fn accepted_card_route_migrates_only_its_local_handle_with_a_complete_basis() {
     };
     assert_eq!(card_task_route_after_acceptance(&route, &card, &[]), None);
     assert_eq!(
-        card_task_route_after_acceptance(&route, &card, &[receipt.clone()]),
+        card_task_route_after_acceptance(&route, &card, std::slice::from_ref(&receipt)),
         Some(accepted_route.clone())
     );
     assert_eq!(
-        card_task_route_after_acceptance(&accepted_route, &card, &[receipt.clone()]),
+        card_task_route_after_acceptance(&accepted_route, &card, std::slice::from_ref(&receipt)),
         None
     );
     let without_board = Route::KanbanTask {
@@ -115,7 +115,7 @@ fn accepted_card_route_migrates_only_its_local_handle_with_a_complete_basis() {
         tab: "discussion".to_owned(),
     };
     assert_eq!(
-        card_task_route_after_acceptance(&without_board, &card, &[receipt.clone()]),
+        card_task_route_after_acceptance(&without_board, &card, std::slice::from_ref(&receipt)),
         Some(Route::KanbanTask {
             realm_id: TEST_REALM_ID.to_owned(),
             task_id: strand_id.to_string(),
@@ -128,12 +128,12 @@ fn accepted_card_route_migrates_only_its_local_handle_with_a_complete_basis() {
         tab: "discussion".to_owned(),
     };
     assert_eq!(
-        card_task_route_after_acceptance(&unrelated, &card, &[receipt.clone()]),
+        card_task_route_after_acceptance(&unrelated, &card, std::slice::from_ref(&receipt)),
         None
     );
     card.authoring_basis = None;
     assert_eq!(
-        card_task_route_after_acceptance(&route, &card, &[receipt.clone()]),
+        card_task_route_after_acceptance(&route, &card, std::slice::from_ref(&receipt)),
         None
     );
     card.authoring_basis = Some(arkret_wire::CurrentRevision {
@@ -450,7 +450,7 @@ fn open_pending_card_editor_resolves_its_receipt_without_rebasing_accepted_edits
     columns[0].cards = vec![incomplete.clone()];
     assert!(!card_detail_write_ready(&incomplete));
     assert_eq!(
-        selected_card_projection_update(&pending, &columns, &[receipt.clone()], true),
+        selected_card_projection_update(&pending, &columns, std::slice::from_ref(&receipt), true),
         None,
         "a canonical identity alone is not an editable accepted current"
     );

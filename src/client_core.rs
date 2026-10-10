@@ -501,11 +501,6 @@ impl InksonClientRuntime {
         self.store.clone()
     }
 
-    /// The durable inbox the projectors drain.
-    pub(crate) fn inbox_store(&self) -> InksonLocalStateStoreAdapter {
-        self.store.clone()
-    }
-
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn executor(&self) -> garth::NativeExecutor {
         garth::NativeExecutor
@@ -514,21 +509,6 @@ impl InksonClientRuntime {
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn executor(&self) -> garth::WasmExecutor {
         garth::WasmExecutor
-    }
-
-    /// An account run loop bound to this runtime's durable cursor store.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn account_runner(
-        &self,
-    ) -> garth::AccountRunner<garth::NativeExecutor, InksonLocalStateStoreAdapter> {
-        garth::AccountRunner::new(self.executor(), self.cursors())
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) fn account_runner(
-        &self,
-    ) -> garth::AccountRunner<garth::WasmExecutor, InksonLocalStateStoreAdapter> {
-        garth::AccountRunner::new(self.executor(), self.cursors())
     }
 }
 

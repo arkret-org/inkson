@@ -60,6 +60,55 @@ pub struct MemberIdentityStore {
 }
 
 impl MemberIdentityStore {
+    #[cfg(test)]
+    pub fn verification_issues(
+        &self,
+        realm_id: &str,
+        actor_id: &arkret_sdk::ActorId,
+    ) -> Vec<(String, &'static str)> {
+        let key = ActorKey {
+            realm_id: realm_id.to_owned(),
+            actor_id: actor_id.clone(),
+        };
+        let Some(stored) = self.inner.get(&key) else {
+            return Vec::new();
+        };
+        let candidates = stored
+            .values()
+            .filter(|event| {
+                event.payload.realm_id.as_str() == realm_id && &event.payload.member_id == actor_id
+            })
+            .collect::<Vec<_>>();
+        let mut issues = Vec::new();
+        for event in &candidates {
+            if let IdentityPayloadCarrier::MemberIdentity { member_identity } =
+                &event.payload.identity_payload
+                && (member_identity.realm_id != event.payload.realm_id
+                    || member_identity.actor_id != event.payload.member_id
+                    || !verify_member_identity_proof(member_identity))
+            {
+                issues.push((
+                    event.event_id.clone(),
+                    arkret_sdk::ReasonCode::MEMBER_IDENTITY_PROOF_INVALID,
+                ));
+            }
+            for edge in &event.payload.replaces {
+                let valid = candidates
+                    .iter()
+                    .find(|target| target.event_id == edge.event_id.as_str())
+                    .and_then(|target| target.payload.identity_payload.carrier_sha256().ok())
+                    .is_some_and(|digest| digest == edge.payload_digest.as_str());
+                if !valid {
+                    issues.push((
+                        event.event_id.clone(),
+                        arkret_sdk::ReasonCode::MEMBER_IDENTITY_REPLACEMENT_DIGEST_MISMATCH,
+                    ));
+                }
+            }
+        }
+        issues
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -129,59 +178,6 @@ impl MemberIdentityStore {
                 },
             );
         }
-    }
-
-    /// MID-3 — compute the current effective [`MemberIdentity`] for a
-    /// `(realm, actor)`. Applies the SDK's replacement-edge filter and
-    /// returns the most recently asserted plaintext identity, or `None`
-    /// when every effective event is still `decryption_pending`.
-    /// Consumer verification diagnostics never remove accepted assertions.
-    pub fn verification_issues(
-        &self,
-        realm_id: &str,
-        actor_id: &arkret_sdk::ActorId,
-    ) -> Vec<(String, &'static str)> {
-        let key = ActorKey {
-            realm_id: realm_id.to_owned(),
-            actor_id: actor_id.clone(),
-        };
-        let Some(stored) = self.inner.get(&key) else {
-            return Vec::new();
-        };
-        let candidates = stored
-            .values()
-            .filter(|event| {
-                event.payload.realm_id.as_str() == realm_id && &event.payload.member_id == actor_id
-            })
-            .collect::<Vec<_>>();
-        let mut issues = Vec::new();
-        for event in &candidates {
-            if let IdentityPayloadCarrier::MemberIdentity { member_identity } =
-                &event.payload.identity_payload
-                && (member_identity.realm_id != event.payload.realm_id
-                    || member_identity.actor_id != event.payload.member_id
-                    || !verify_member_identity_proof(member_identity))
-            {
-                issues.push((
-                    event.event_id.clone(),
-                    arkret_sdk::ReasonCode::MEMBER_IDENTITY_PROOF_INVALID,
-                ));
-            }
-            for edge in &event.payload.replaces {
-                let valid = candidates
-                    .iter()
-                    .find(|target| target.event_id == edge.event_id.as_str())
-                    .and_then(|target| target.payload.identity_payload.carrier_sha256().ok())
-                    .is_some_and(|digest| digest == edge.payload_digest.as_str());
-                if !valid {
-                    issues.push((
-                        event.event_id.clone(),
-                        arkret_sdk::ReasonCode::MEMBER_IDENTITY_REPLACEMENT_DIGEST_MISMATCH,
-                    ));
-                }
-            }
-        }
-        issues
     }
 
     pub fn current_identity(

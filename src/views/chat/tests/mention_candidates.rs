@@ -692,7 +692,7 @@ fn mention_candidate_without_handle_keeps_exact_account_and_marks_unresolved() {
     let nodes = composer_mention_nodes(
         true,
         &draft,
-        &[candidate.clone()],
+        std::slice::from_ref(&candidate),
         "ak:did_core:web:alice.example",
     );
     let mention = nodes[0]

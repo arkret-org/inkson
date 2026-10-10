@@ -219,7 +219,9 @@ pub(crate) fn begin_query(
         let key = queries
             .iter()
             .min_by_key(|(_, value)| *value)
-            .unwrap()
+            .ok_or_else(|| {
+                anyhow::anyhow!("Direct Conversation query registry has no eviction candidate")
+            })?
             .0
             .clone();
         queries.remove(&key);
@@ -585,7 +587,7 @@ pub(crate) async fn ensure_binding(
     let peer = participants
         .iter()
         .find(|actor| **actor != self_actor)
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!("Direct Conversation founders contain no peer"))?;
     diagnostic_stage("exact_pair", "entered");
     let snapshot = diagnostic_result(
         "exact_pair",

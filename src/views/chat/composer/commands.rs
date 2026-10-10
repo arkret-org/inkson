@@ -1280,157 +1280,6 @@ fn send_sidecar_message_with_hosted(
     });
 }
 
-#[cfg(test)]
-mod pending_sidecar_draft_tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
-    use super::*;
-
-    type Signals = (
-        Signal<String>,
-        Signal<crate::messaging::mentions::MentionPickerState>,
-        Signal<String>,
-        Signal<bool>,
-    );
-    type Control = Rc<RefCell<Option<Signals>>>;
-
-    fn harness(control: Control) -> Element {
-        let draft = use_signal(|| "original private draft".to_owned());
-        let picker = use_signal(crate::messaging::mentions::MentionPickerState::new);
-        let strand = use_signal(|| "source strand".to_owned());
-        let background_ready = use_signal(|| false);
-        *control.borrow_mut() = Some((draft, picker, strand, background_ready));
-        rsx! { input { value: draft() } }
-    }
-
-    #[test]
-    fn delayed_private_send_rejects_a_changed_mode_or_controller() {
-        let controller = crate::test_support::authority("ak:did_core:web:alice.example");
-        let replacement = crate::test_support::authority("ak:did_core:web:bob.example");
-        assert!(private_target_mode_matches(
-            arkret_sdk::AgentInteractionMode::Private,
-            None,
-            &controller
-        ));
-        assert!(private_target_mode_matches(
-            arkret_sdk::AgentInteractionMode::Private,
-            Some(&controller),
-            &controller
-        ));
-        assert!(!private_target_mode_matches(
-            arkret_sdk::AgentInteractionMode::Public,
-            Some(&controller),
-            &controller
-        ));
-        assert!(!private_target_mode_matches(
-            arkret_sdk::AgentInteractionMode::Private,
-            Some(&replacement),
-            &controller
-        ));
-    }
-
-    #[test]
-    fn delayed_sidecar_send_requires_unchanged_draft_binding_and_source_revision() {
-        let control = Rc::new(RefCell::new(None));
-        let mut dom = VirtualDom::new_with_props(harness, control.clone());
-        dom.rebuild_to_vec();
-        let (mut draft, mut picker, mut strand, mut background) = control.borrow().unwrap();
-        dom.in_runtime(|| {
-            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
-            background.set(true);
-            assert!(
-                fence.finish(),
-                "background readiness must not cancel the frozen draft"
-            );
-
-            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
-            draft.set("ordinary edited message".into());
-            draft.set("original private draft".into());
-            assert!(
-                !fence.finish(),
-                "restoring the same text cannot restore the old Send authorization"
-            );
-
-            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
-            picker.write().clear();
-            assert!(
-                !fence.finish(),
-                "mention binding writes invalidate delayed Send"
-            );
-
-            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
-            strand.set("different source".into());
-            strand.set("source strand".into());
-            assert!(
-                !fence.finish(),
-                "returning to the same Strand cannot resume an old Send"
-            );
-
-            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
-            assert!(fence.finish());
-        });
-    }
-
-    #[tokio::test]
-    async fn pending_access_resumes_only_the_unchanged_private_send() {
-        for edit_during_wait in [false, true] {
-            let control = Rc::new(RefCell::new(None));
-            let mut dom = VirtualDom::new_with_props(harness, control.clone());
-            dom.rebuild_to_vec();
-            let (mut draft, picker, strand, mut background) = control.borrow().unwrap();
-            let fence = dom.in_runtime(|| PendingSidecarDraftFence::capture(draft, picker, strand));
-            let reads = std::cell::Cell::new(0);
-            let result = wait_for_sidecar_access(
-                || {
-                    let call = reads.get() + 1;
-                    reads.set(call);
-                    dom.in_runtime(|| {
-                        background.set(true);
-                        if call == 2 && edit_during_wait {
-                            draft.set("edited ordinary draft".into());
-                            draft.set("original private draft".into());
-                        }
-                    });
-                    std::future::ready(Ok((call == 2).then_some(true)))
-                },
-                || {
-                    anyhow::ensure!(fence.is_current(), "draft intent changed");
-                    Ok(())
-                },
-                2,
-            )
-            .await;
-            assert_eq!(reads.get(), 2);
-            if edit_during_wait {
-                assert!(
-                    result.is_err(),
-                    "readiness must not revive a revoked Send intent"
-                );
-                assert!(!fence.finish());
-            } else {
-                assert!(result.unwrap());
-                assert!(
-                    fence.finish(),
-                    "background access preparation preserves intent"
-                );
-            }
-        }
-        let reads = std::cell::Cell::new(0);
-        let timeout = wait_for_sidecar_access(
-            || {
-                reads.set(reads.get() + 1);
-                std::future::ready(Ok::<Option<bool>, anyhow::Error>(None))
-            },
-            || Ok(()),
-            1,
-        )
-        .await;
-        assert!(timeout.is_err());
-        assert_eq!(reads.get(), 1, "access waits have a finite read budget");
-    }
-}
-
 /// One encrypted chat send: build the MLS payload, submit it, and persist the
 /// author's own plaintext into the actor-private sidecar.
 ///
@@ -1905,4 +1754,155 @@ pub(super) fn send_encrypted_message(
         });
       });
     });
+}
+
+#[cfg(test)]
+mod pending_sidecar_draft_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::*;
+
+    type Signals = (
+        Signal<String>,
+        Signal<crate::messaging::mentions::MentionPickerState>,
+        Signal<String>,
+        Signal<bool>,
+    );
+    type Control = Rc<RefCell<Option<Signals>>>;
+
+    fn harness(control: Control) -> Element {
+        let draft = use_signal(|| "original private draft".to_owned());
+        let picker = use_signal(crate::messaging::mentions::MentionPickerState::new);
+        let strand = use_signal(|| "source strand".to_owned());
+        let background_ready = use_signal(|| false);
+        *control.borrow_mut() = Some((draft, picker, strand, background_ready));
+        rsx! { input { value: draft() } }
+    }
+
+    #[test]
+    fn delayed_private_send_rejects_a_changed_mode_or_controller() {
+        let controller = crate::test_support::authority("ak:did_core:web:alice.example");
+        let replacement = crate::test_support::authority("ak:did_core:web:bob.example");
+        assert!(private_target_mode_matches(
+            arkret_sdk::AgentInteractionMode::Private,
+            None,
+            &controller
+        ));
+        assert!(private_target_mode_matches(
+            arkret_sdk::AgentInteractionMode::Private,
+            Some(&controller),
+            &controller
+        ));
+        assert!(!private_target_mode_matches(
+            arkret_sdk::AgentInteractionMode::Public,
+            Some(&controller),
+            &controller
+        ));
+        assert!(!private_target_mode_matches(
+            arkret_sdk::AgentInteractionMode::Private,
+            Some(&replacement),
+            &controller
+        ));
+    }
+
+    #[test]
+    fn delayed_sidecar_send_requires_unchanged_draft_binding_and_source_revision() {
+        let control = Rc::new(RefCell::new(None));
+        let mut dom = VirtualDom::new_with_props(harness, control.clone());
+        dom.rebuild_to_vec();
+        let (mut draft, mut picker, mut strand, mut background) = control.borrow().unwrap();
+        dom.in_runtime(|| {
+            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
+            background.set(true);
+            assert!(
+                fence.finish(),
+                "background readiness must not cancel the frozen draft"
+            );
+
+            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
+            draft.set("ordinary edited message".into());
+            draft.set("original private draft".into());
+            assert!(
+                !fence.finish(),
+                "restoring the same text cannot restore the old Send authorization"
+            );
+
+            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
+            picker.write().clear();
+            assert!(
+                !fence.finish(),
+                "mention binding writes invalidate delayed Send"
+            );
+
+            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
+            strand.set("different source".into());
+            strand.set("source strand".into());
+            assert!(
+                !fence.finish(),
+                "returning to the same Strand cannot resume an old Send"
+            );
+
+            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
+            assert!(fence.finish());
+        });
+    }
+
+    #[tokio::test]
+    async fn pending_access_resumes_only_the_unchanged_private_send() {
+        for edit_during_wait in [false, true] {
+            let control = Rc::new(RefCell::new(None));
+            let mut dom = VirtualDom::new_with_props(harness, control.clone());
+            dom.rebuild_to_vec();
+            let (mut draft, picker, strand, mut background) = control.borrow().unwrap();
+            let fence = dom.in_runtime(|| PendingSidecarDraftFence::capture(draft, picker, strand));
+            let reads = std::cell::Cell::new(0);
+            let result = wait_for_sidecar_access(
+                || {
+                    let call = reads.get() + 1;
+                    reads.set(call);
+                    dom.in_runtime(|| {
+                        background.set(true);
+                        if call == 2 && edit_during_wait {
+                            draft.set("edited ordinary draft".into());
+                            draft.set("original private draft".into());
+                        }
+                    });
+                    std::future::ready(Ok((call == 2).then_some(true)))
+                },
+                || {
+                    anyhow::ensure!(fence.is_current(), "draft intent changed");
+                    Ok(())
+                },
+                2,
+            )
+            .await;
+            assert_eq!(reads.get(), 2);
+            if edit_during_wait {
+                assert!(
+                    result.is_err(),
+                    "readiness must not revive a revoked Send intent"
+                );
+                assert!(!fence.finish());
+            } else {
+                assert!(result.unwrap());
+                assert!(
+                    fence.finish(),
+                    "background access preparation preserves intent"
+                );
+            }
+        }
+        let reads = std::cell::Cell::new(0);
+        let timeout = wait_for_sidecar_access(
+            || {
+                reads.set(reads.get() + 1);
+                std::future::ready(Ok::<Option<bool>, anyhow::Error>(None))
+            },
+            || Ok(()),
+            1,
+        )
+        .await;
+        assert!(timeout.is_err());
+        assert_eq!(reads.get(), 1, "access waits have a finite read budget");
+    }
 }

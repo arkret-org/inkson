@@ -29,10 +29,15 @@ mod own_station;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
+#[cfg(test)]
 use arkret_sdk::EventPayloadExt;
+#[cfg(test)]
+use garth::AuthorityClient;
+#[cfg(test)]
+use garth::RealmReplica;
 use garth::{
-    AuthorityClient, ClientEvent, CommitStreamRef, CommittedDelta, CommittedEventView,
-    DecodedInbound, InboundDecoder, RealmReplica, RetrySchedule, StreamScanRequest,
+    ClientEvent, CommitStreamRef, CommittedDelta, CommittedEventView, DecodedInbound,
+    InboundDecoder, RetrySchedule, StreamScanRequest,
 };
 pub(crate) use own_station::{
     refresh_accepted_sidecar, refresh_joined_realm, refresh_sidecar_history,
@@ -408,24 +413,6 @@ pub(crate) async fn verified_sidecar_mls_current(
     Ok((current, client))
 }
 
-/// The human PCR's root is its accepted genesis: the closed PCR allowlist
-/// has no owner-transfer or authority-reset writer. A fresh verified authority
-/// bundle proves that exact lifetime lineage without disclosing a private PCR
-/// through the ordinary Collaboration Realm snapshot surface.
-pub(crate) async fn verified_root_authorization(
-    http: &arkret_sdk::http_client::Client,
-    realm: &arkret_sdk::RealmId,
-    actor: &arkret_sdk::ActorId,
-) -> garth::Result<arkret_sdk::AuthorizationRef> {
-    let holder = actor
-        .as_account_id()
-        .ok_or_else(|| protocol("PCR lifetime root requires a complete holder Account"))?;
-    let root = crate::transport::own_station_results::holder_pcr_root_ref(http, realm, holder)
-        .await
-        .map_err(protocol)?;
-    arkret_sdk::AuthorizationRef::new(root.to_string()).map_err(protocol)
-}
-
 #[cfg(test)]
 fn holder_pcr_root_authorization(
     bundle: &arkret_sdk::RealmAuthorityBundle,
@@ -574,14 +561,22 @@ async fn creator_own_station_cut(
     let genesis: arkret_sdk::RealmGenesis =
         serde_json::from_value(genesis.clone()).map_err(protocol)?;
     let session = response.session();
-    let sequence = NEXT_QUERY
-        .fetch_update(
+    // Keep the checked increment compatible with the declared Rust 1.98 MSRV.
+    let mut previous = NEXT_QUERY.load(std::sync::atomic::Ordering::SeqCst);
+    let sequence = loop {
+        let next = previous
+            .checked_add(1)
+            .ok_or_else(|| protocol("creator read sequence exhausted"))?;
+        match NEXT_QUERY.compare_exchange_weak(
+            previous,
+            next,
             std::sync::atomic::Ordering::SeqCst,
             std::sync::atomic::Ordering::SeqCst,
-            |v| v.checked_add(1),
-        )
-        .map_err(|_| protocol("creator read sequence exhausted"))?
-        + 1;
+        ) {
+            Ok(_) => break next,
+            Err(actual) => previous = actual,
+        }
+    };
     let cut = MlsCreatorBootstrapAuthority::own_station(
         snapshot.clone(),
         genesis,
@@ -673,10 +668,9 @@ async fn verified_creator_genesis_at_cut(
             };
             if full.event.kind == arkret_sdk::EventKind::MlsGenesis
                 && full.event.scope_ref == *intent.effective_scope()
+                && accepted.replace(full.clone()).is_some()
             {
-                if accepted.replace(full.clone()).is_some() {
-                    return Err(protocol("creator scope has multiple accepted Genesis"));
-                }
+                return Err(protocol("creator scope has multiple accepted Genesis"));
             }
         }
     }
@@ -814,6 +808,7 @@ pub(crate) async fn resolve_stream_agent_keys(
 /// The exact signed predecessor a limited Account window names, and the own
 /// Station description whose operation bundles decide whether the by-ref read
 /// exists at all.
+#[cfg(test)]
 #[derive(Clone, Copy)]
 struct FloorAnchor<'a> {
     basis: &'a arkret_models_collaboration::sync_frames::account_sync::StreamWindowStartBasis,
@@ -821,10 +816,9 @@ struct FloorAnchor<'a> {
 }
 
 /// Where one verified per-stream replay may begin.
+#[cfg(test)]
 #[derive(Clone, Copy)]
 enum ReplayStart<'a> {
-    /// Continue only from a predecessor installed by this live verifier.
-    VerifiedTail,
     /// Position 0 only. A readable history that begins above genesis cannot
     /// settle an Account window without a signed basis: such a window stays
     /// `preview_only` (`sync/client-sync.md` 5.2).
@@ -858,7 +852,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
     // readable page must extend that signed head.
     let floor_anchor = match start {
         ReplayStart::Basis(anchor) => Some(anchor),
-        ReplayStart::Genesis | ReplayStart::ReadableFloor | ReplayStart::VerifiedTail => None,
+        ReplayStart::Genesis | ReplayStart::ReadableFloor => None,
     };
     let floor_basis = floor_anchor.map(|anchor| anchor.basis);
     let snapshot = if let Some(anchor) = floor_anchor {
@@ -877,16 +871,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
     } else {
         None
     };
-    let mut after_position = if matches!(start, ReplayStart::VerifiedTail) {
-        Some(
-            replica
-                .verified_head(stream_ref)
-                .ok_or_else(|| protocol("tail continuation has no verified predecessor"))?
-                .stream_position,
-        )
-    } else {
-        snapshot.as_ref().map(|(_, position)| *position)
-    };
+    let mut after_position = snapshot.as_ref().map(|(_, position)| *position);
     let mut pages = Vec::new();
     let mut verified_floor_snapshot = None;
     let mut dependency_pages = BTreeMap::new();
@@ -963,15 +948,6 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
             limit,
         };
         let outcome = authority.scan(&request).await?;
-        if matches!(start, ReplayStart::VerifiedTail)
-            && outcome
-                .readable_floor
-                .as_ref()
-                .is_some_and(|floor| floor.oldest_position > next_position)
-        {
-            outcome.validate_for_request(&request)?;
-            return Ok(StreamPages::FloorAdvanced);
-        }
         if let Some(basis) = floor_basis {
             if pages.is_empty() {
                 let floor = outcome.readable_floor.as_ref().ok_or_else(|| {
@@ -999,8 +975,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
                     basis,
                     floor,
                     snapshot,
-                    &snapshot_freshness,
-                    &snapshot_keys,
+                    (&snapshot_freshness, &snapshot_keys),
                     &dependency_pages,
                 )?);
             }
@@ -1054,15 +1029,16 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
 /// One stream's verified scan, or the fact that a replay from genesis cannot
 /// start because the caller's readable history begins above position 0 and
 /// no signed basis was named.
+#[cfg(test)]
 enum StreamPages {
     Verified(
         Vec<garth::VerifiedScanPage>,
         Option<garth::VerifiedFloorSnapshot>,
     ),
     AboveGenesis,
-    FloorAdvanced,
 }
 
+#[cfg(test)]
 impl StreamPages {
     fn into_verified(
         self,
@@ -1073,7 +1049,6 @@ impl StreamPages {
         match self {
             Self::Verified(pages, snapshot) => Ok((pages, snapshot)),
             Self::AboveGenesis => Err(above_genesis_without_basis()),
-            Self::FloorAdvanced => Err(protocol("stream readable floor moved during continuation")),
         }
     }
 }
@@ -1084,6 +1059,7 @@ fn above_genesis_without_basis() -> garth::Error {
     )
 }
 
+#[cfg(test)]
 fn require_genesis_readable_floor(outcome: &arkret_sdk::StreamScanOutcome) -> garth::Result<()> {
     if outcome
         .readable_floor
@@ -1227,17 +1203,16 @@ impl VerifiedAccountFrame {
     ) -> Result<R, String> {
         store.verified_projection_transaction(|store| {
             self.check_session().map_err(|error| error.to_string())?;
-            if let Some(client) = &self.own_client {
-                if store.active_authority().as_ref()
+            if let Some(client) = &self.own_client
+                && store.active_authority().as_ref()
                     != Some(
                         client
                             .session()
                             .map_err(|error| error.to_string())?
                             .account_id(),
                     )
-                {
-                    return Err("ordinary frame belongs to another account store".into());
-                }
+            {
+                return Err("ordinary frame belongs to another account store".into());
             }
             body(store)
         })
@@ -1257,6 +1232,7 @@ impl VerifiedAccountFrame {
         &self.genesis_roles
     }
 
+    #[cfg(test)]
     fn retain_verified_authority(
         &mut self,
         bundle: &arkret_sdk::RealmAuthorityBundle,
@@ -1470,6 +1446,7 @@ where
 /// use their existing SDK value types and retain their exact Realm subjects.
 /// Missing structural siblings, unknown families and cross-row mismatches
 /// reject the whole snapshot.
+#[cfg(test)]
 fn validate_signed_floor_rows(
     realm_id: &arkret_sdk::RealmId,
     bundle: &arkret_sdk::RealmAuthorityBundle,
@@ -2309,6 +2286,7 @@ async fn verify_snapshot_realm<T: garth::AuthorityTransport>(
     Ok(())
 }
 
+#[cfg(test)]
 fn require_verified_window_head(
     window: &arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow,
     replica: &RealmReplica,
@@ -2335,6 +2313,7 @@ fn require_verified_window_head(
 /// replayed stream at its verified head, and
 /// every row sourced from a stream the frame settles (exact, or explicitly
 /// preview so the cut stays out of the product current).
+#[cfg(test)]
 fn require_floor_current_cut(
     current: &arkret_models_collaboration::sync_frames::current_results::AccountCurrentView,
     floor_snapshots: &[&garth::VerifiedFloorSnapshot],
@@ -2476,6 +2455,7 @@ async fn verify_full_history_realm<T: garth::AuthorityTransport>(
 
 /// How one stream window of a snapshot-less Realm entry was settled.
 #[derive(Debug)]
+#[cfg(test)]
 enum WindowResolution {
     /// The verified replay from genesis covers the window and its head.
     Exact(Vec<garth::VerifiedScanPage>),
@@ -2484,6 +2464,7 @@ enum WindowResolution {
     Preview,
 }
 
+#[cfg(test)]
 fn resolve_full_history_window(
     window: Option<&arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow>,
     claimed_rows: &[&CommittedEventView],
@@ -2503,11 +2484,6 @@ fn resolve_full_history_window(
             return Ok(WindowResolution::Preview);
         }
         StreamPages::AboveGenesis => return Err(above_genesis_without_basis()),
-        StreamPages::FloorAdvanced => {
-            return Err(protocol(
-                "stream readable floor moved during window verification",
-            ));
-        }
     };
     let scanned = pages
         .iter()
@@ -2533,6 +2509,7 @@ fn snapshot_window_basis(
 /// The first verified row of a snapshot-anchored window starts right after
 /// the committed-prefix anchor the basis names (Garth has already bound the
 /// first row's predecessor to that signed head); the tail may be empty.
+#[cfg(test)]
 fn require_window_start_row(
     basis: &arkret_models_collaboration::sync_frames::account_sync::StreamWindowStartBasis,
     scanned: &[&CommittedEventView],
@@ -2549,6 +2526,7 @@ fn require_window_start_row(
     }
 }
 
+#[cfg(test)]
 fn require_genesis_window_basis(
     entry: &arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry,
 ) -> garth::Result<()> {
@@ -2587,6 +2565,7 @@ pub(crate) fn require_exact_claimed_rows(
     Ok(())
 }
 
+#[cfg(test)]
 fn require_exact_window_head(
     window: &arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow,
     scanned: &[&CommittedEventView],
@@ -4921,7 +4900,7 @@ mod tests {
             identity.as_object_mut().unwrap().remove("signature");
             commit.commit_id =
                 arkret_sdk::RealmCommitId::from_digest(arkret_sdk::canonical::sha256_bytes(
-                    &arkret_sdk::canonical::canonical_json_bytes(&identity).unwrap(),
+                    arkret_sdk::canonical::canonical_json_bytes(&identity).unwrap(),
                 ));
             native.push(arkret_sdk::CommittedEventFullView {
                 commit: station.seal_commit(commit),

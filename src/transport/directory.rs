@@ -5,7 +5,6 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 use chrono::{Duration, Utc};
 use garth::{PrefetchedRouteSource, ServiceRouteEvaluator};
 
-use crate::models::DirectoryRealmResolutionOutcome;
 use crate::wire_helpers::validate_cursor;
 
 const DIRECTORY_ROUTE_CACHE_CAPACITY: usize = 16;
@@ -186,18 +185,6 @@ pub async fn search_realms(
         cursor,
     };
     http.directory_search_realms(&body)
-        .await
-        .map_err(anyhow::Error::from)
-}
-
-pub async fn resolve_realm(
-    http: &arkret_sdk::http_client::Client,
-    realm_id: &str,
-) -> anyhow::Result<DirectoryRealmResolutionOutcome> {
-    let body = arkret_models_discovery::DirectoryResolveRealmRequestBody {
-        realm_id: arkret_sdk::RealmId::new(realm_id.trim().to_owned())?,
-    };
-    http.directory_resolve_realm(&body)
         .await
         .map_err(anyhow::Error::from)
 }

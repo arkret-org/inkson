@@ -10,7 +10,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  DIOXUS_CLI_VERSION: "0.7.9"
+  DIOXUS_CLI_VERSION: "0.7.10"
   # Private `yoface` git dependency: cargo must fetch through the git CLI so
   # the credential rewrite installed below applies. Redundant with
   # inkson/.cargo/config.toml, but also covers cargo runs started outside the
@@ -72,6 +72,11 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
+      - name: Install nightly rustfmt
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -106,13 +111,13 @@ jobs:
         working-directory: inkson
         run: bash scripts/deletion_gate.sh
 
-      - name: Registered cell-family literal gate
+      - name: SDK wire type ownership gate
         working-directory: inkson
-        run: python ../arkret-rust-sdk/tools/lint-cell-family-literals.py --root .
+        run: python ../arkret-rust-sdk/tools/wire_type_ownership_audit.py --workspace-root .. --require-repository inkson
 
       - name: Check formatting
         working-directory: inkson
-        run: cargo fmt --all -- --check
+        run: cargo +nightly fmt --all -- --check
 
       - name: Clippy
         working-directory: inkson
@@ -145,8 +150,23 @@ jobs:
         with:
           install-chromedriver: true
 
+      - name: Resolve locked wasm-bindgen version
+        working-directory: inkson
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+          packages = tomllib.loads(Path("Cargo.lock").read_text())["package"]
+          versions = {p["version"] for p in packages if p["name"] == "wasm-bindgen"}
+          if len(versions) != 1:
+              raise SystemExit("Expected exactly one locked wasm-bindgen version")
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write(f"WASM_BINDGEN_VERSION={versions.pop()}\n")
+          PY
+
       - name: Install wasm-bindgen test runner
-        run: cargo install wasm-bindgen-cli --version 0.2.123 --locked
+        run: cargo install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION" --locked
 
       - name: WebAssembly browser tests
         working-directory: inkson
@@ -179,7 +199,9 @@ jobs:
 
       - name: Lighthouse budget
         working-directory: inkson
-        run: npx --yes lighthouse@12 http://127.0.0.1:4528 --output=json --output-path=dist/lighthouse/lighthouse.json --budget-path=docs/lighthouse-budget.json --chrome-flags="--headless=new --no-sandbox"
+        run: |
+          mkdir -p dist/lighthouse
+          npx --yes lighthouse@12 http://127.0.0.1:4528 --output=json --output-path=dist/lighthouse/lighthouse.json --budget-path=docs/lighthouse-budget.json --chrome-flags="--headless=new --no-sandbox"
 
       - name: Upload Lighthouse report
         if: always()

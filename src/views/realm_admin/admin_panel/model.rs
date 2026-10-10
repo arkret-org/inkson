@@ -49,6 +49,7 @@ pub(super) fn capability_issuer_basis(
 
 /// Operator guidance for the known authority-root rejection reasons, appended
 /// to the raw error in the status line. `None` for anything unrecognized.
+#[cfg(test)]
 pub(super) fn governance_failure_hint(error_text: &str) -> Option<&'static str> {
     if error_text.contains("realm_authority_root_conflict") {
         Some(

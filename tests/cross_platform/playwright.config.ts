@@ -74,7 +74,8 @@ export default defineConfig({
           "dx serve --platform web --addr 127.0.0.1 --port 4528 --open false --hot-reload false --watch false",
         url: baseURL,
         reuseExistingServer: !process.env.CI,
-        timeout: 240_000,
+        // A clean WASM build can take several minutes before the socket opens.
+        timeout: 900_000,
       }
     : undefined,
 });

@@ -113,10 +113,14 @@ fn target_of(selector: &CurrentSelector) -> CurrentTarget {
         | CurrentSelector::CalendarScheduleSource { strand_id } => CurrentTarget::Strand {
             strand_id: strand_id.clone(),
         },
-        CurrentSelector::CallState { call_id } => CurrentTarget::Event {
-            event_id: arkret_sdk::EventId::from_token_bytes(call_id.token_bytes())
-                .expect("validated CallId carries an Event identity token"),
-        },
+        CurrentSelector::CallState { call_id } => {
+            match arkret_sdk::EventId::from_token_bytes(call_id.token_bytes()) {
+                Ok(event_id) => CurrentTarget::Event { event_id },
+                Err(_) => CurrentTarget::Selector {
+                    selector: selector.clone(),
+                },
+            }
+        }
         CurrentSelector::MlsGroup { scope_ref } => CurrentTarget::MlsGroup {
             scope_ref: scope_ref.clone(),
         },
@@ -495,10 +499,10 @@ impl CurrentStage {
     pub(crate) fn changed(&self) -> bool {
         self.changed
     }
-    pub(crate) fn filtered_frame(&self) -> &AccountSubscribeFrame {
+    pub(crate) fn filtered_frame(&self) -> anyhow::Result<&AccountSubscribeFrame> {
         self.filtered
             .as_ref()
-            .expect("Account stage has its original frame")
+            .ok_or_else(|| anyhow::anyhow!("Account stage has no original frame"))
     }
     pub(crate) fn arm_account_commit(&mut self) {
         if self.changed {
@@ -659,6 +663,7 @@ fn split_version(key: &str) -> anyhow::Result<(&str, u64)> {
 }
 
 impl CurrentIndex {
+    #[cfg(any(test, target_arch = "wasm32"))]
     pub(crate) async fn open(
         authority: &AccountId,
         committed_generation: u64,
@@ -922,10 +927,10 @@ impl CurrentIndex {
     ) -> anyhow::Result<Option<TypedCurrentRow>> {
         let prefix = self.row_prefix(realm, selector)?;
         let row_generation = self.latest_generation(&prefix, generation).await?;
-        if let Some(retired) = self.retired(realm, selector, generation).await? {
-            if retired.generation >= row_generation {
-                return Ok(None);
-            }
+        if let Some(retired) = self.retired(realm, selector, generation).await?
+            && retired.generation >= row_generation
+        {
+            return Ok(None);
         }
         self.latest(&prefix, generation).await
     }
@@ -1032,6 +1037,7 @@ impl CurrentIndex {
         Ok((generation, states))
     }
 
+    #[cfg(any(test, target_arch = "wasm32"))]
     pub(crate) async fn read_selector_ready(
         &self,
         realm: &str,
@@ -1184,6 +1190,7 @@ impl CurrentIndex {
         }
     }
     /// Circle join authoring uses a parent row at one complete durable cut.
+    #[cfg(test)]
     pub(crate) async fn read_parent_membership_revision_ready(
         &self,
         realm: &arkret_sdk::RealmId,
@@ -1602,7 +1609,9 @@ impl CurrentIndex {
         if frame.is_none()
             && let Some((realm, _)) = &standalone
         {
-            let snapshot = snapshots.get(realm).copied().expect("standalone original");
+            let snapshot = snapshots.get(realm).copied().ok_or_else(|| {
+                anyhow::anyhow!("standalone current stage has no original snapshot")
+            })?;
             let progress = self.progress_at(realm, expected_generation).await?;
             guard()?;
             let original_digest = hash(snapshot)?;
@@ -2601,15 +2610,6 @@ mod tests {
             "value":if removed{json!({"status":"removed"})}else{json!({"status":"value","value":null})}
         })).unwrap()
     }
-    fn device_generation_row(revision: u64) -> TypedCurrentRow {
-        serde_json::from_value(json!({
-            "selector":{"kind":"device_generation"},
-            "source_stream_ref":{"kind":"realm","realm_id":REALM},
-            "revision":{"commit_id":COMMIT,"stream_position":revision},
-            "value":{"generation":revision}
-        }))
-        .unwrap()
-    }
     fn mls_group_row(realm: &str, revision: u64) -> TypedCurrentRow {
         serde_json::from_value(json!({
             "selector":{"kind":"mls_group","scope_ref":{"kind":"realm","realm_id":realm}},
@@ -2879,7 +2879,14 @@ mod tests {
             serde_json::from_value(preview_window.clone()).unwrap(),
         ]);
         let stage = index.stage_frame(0, &preview).await.unwrap();
-        let filtered = stage.filtered_frame().realms.as_ref().unwrap().entries[REALM].clone();
+        let filtered = stage
+            .filtered_frame()
+            .unwrap()
+            .realms
+            .as_ref()
+            .unwrap()
+            .entries[REALM]
+            .clone();
         assert!(filtered.current.is_none() && filtered.baseline.is_none());
         stage.finish();
         let selector = selector_of(&row(1, false)).clone();
@@ -2967,7 +2974,7 @@ mod tests {
             .stage_verified_frame(0, &batch(1, 1), &unresolved)
             .await
             .unwrap();
-        let filtered = stage.filtered_frame().realms.clone().unwrap();
+        let filtered = stage.filtered_frame().unwrap().realms.clone().unwrap();
         assert!(filtered.entries[REALM].current.is_none());
         assert!(filtered.entries[OTHER_REALM].current.is_some());
         stage.finish();
@@ -3844,7 +3851,13 @@ mod tests {
             )
             .await
             .unwrap();
-        let discarded = &stale.filtered_frame().realms.as_ref().unwrap().entries[REALM];
+        let discarded = &stale
+            .filtered_frame()
+            .unwrap()
+            .realms
+            .as_ref()
+            .unwrap()
+            .entries[REALM];
         assert!(discarded.current.is_none());
         assert!(discarded.baseline.is_none());
         stale.finish();

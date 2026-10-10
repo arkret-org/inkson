@@ -88,10 +88,9 @@ fn board_and_lists_render_from_current_without_create_history() {
 #[test]
 fn queued_list_is_visible_under_a_current_only_board() {
     let entries = current_space_siblings(PENDING_TEST_SPACE, "board", "Current board", None);
-    let mut list = accepted_board_create_record();
+    let mut list = pending_board_create_record("queued");
     list.operation_id = "pending-list-operation".to_owned();
     list.payload["write_state"] = json!("queued");
-    list.payload.as_object_mut().unwrap().remove("event_id");
     list.payload["operation_id"] = json!("pending-list-operation");
     list.payload["local_target_ref"] = json!("pending-list-operation");
     list.payload["body"]["object"]["kind"] = json!("list");
@@ -542,7 +541,7 @@ fn missing_or_terminal_board_metadata_cannot_be_recreated_from_a_list_parent() {
     };
     let canonical = list.clone();
     assert!(
-        board_space_options_from_projection(&[list.clone()]).is_empty(),
+        board_space_options_from_projection(std::slice::from_ref(&list)).is_empty(),
         "a List parent ref is not evidence that its unavailable Board is active"
     );
     let mut metadata = list.clone();
@@ -683,19 +682,14 @@ fn terminal_current_suppresses_history_when_projection_omits_the_board() {
     let mut foreign = entries.clone();
     let arkret_wire::TypedCurrentRow::Value {
         source_stream_ref, ..
-    } = &mut foreign[0]
-    else {
-        unreachable!()
-    };
+    } = &mut foreign[0];
     *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
         realm_id: arkret_sdk::RealmId::new("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-")
             .unwrap(),
     };
     assert!(terminal_space_ids_from_current(&foreign, PENDING_TEST_REALM).is_empty());
     foreign = entries.clone();
-    let arkret_wire::TypedCurrentRow::Value { selector, .. } = &mut foreign[0] else {
-        unreachable!()
-    };
+    let arkret_wire::TypedCurrentRow::Value { selector, .. } = &mut foreign[0];
     *selector = arkret_wire::CurrentSelector::Space {
         space_id: arkret_sdk::SpaceId::new("ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-")
             .unwrap(),

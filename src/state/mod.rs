@@ -65,6 +65,13 @@ struct BlocklistProjectionCache {
 
 const BLOCKLIST_PROJECTION_CACHE_MAX_ACTORS: usize = 256;
 
+type ProductCurrentDemand = (
+    arkret_sdk::AccountId,
+    String,
+    Vec<arkret_sdk::StrandId>,
+    Vec<arkret_wire::CurrentSelector>,
+);
+
 // Structural split: client-state data types (RawOperationRecord,
 // ClientLocalState, MlsReceiveOverlay, the persisted-record structs, ...)
 // moved out of this file into `types` (move only). The glob re-export keeps
@@ -173,16 +180,7 @@ pub struct LocalStateStore {
     /// projection once per hydrated Account. Never persisted or sent on wire.
     contact_remarks_restored_for: Option<arkret_sdk::AccountId>,
     /// Ephemeral UI demand, not a second current-state or head cache.
-    product_current_demand: Arc<
-        Mutex<
-            Option<(
-                arkret_sdk::AccountId,
-                String,
-                Vec<arkret_sdk::StrandId>,
-                Vec<arkret_wire::CurrentSelector>,
-            )>,
-        >,
-    >,
+    product_current_demand: Arc<Mutex<Option<ProductCurrentDemand>>>,
     /// Bounded in-memory product view of the selected Realm's typed current
     /// results, read page by page from the durable [`CurrentIndex`]. It is
     /// never persisted: the index owns durable current state, and the account

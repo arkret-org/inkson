@@ -174,7 +174,7 @@ fn circle_commit_restoration_uses_only_its_own_accepted_epoch() {
         &authority,
         &device,
         "application/vnd.arkret.message+json",
-        &[plaintext.clone()],
+        std::slice::from_ref(&plaintext),
         arkret_sdk::EventKind::MessageCreate.as_str(),
         state_ref.clone(),
         Some(circle),

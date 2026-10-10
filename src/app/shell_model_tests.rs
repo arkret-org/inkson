@@ -1,3 +1,4 @@
+type ContactGateResults = std::rc::Rc<std::cell::RefCell<Vec<(u64, usize, Vec<String>)>>>;
 use super::*;
 
 fn node(id: &str, title: &str, parent: Option<&str>) -> RealmTreeNode {
@@ -428,7 +429,7 @@ fn contact_inbox_uses_one_revision_for_visible_rows_and_attention() {
 
     let result = Rc::new(RefCell::new(Vec::new()));
     let mut dom = VirtualDom::new_with_props(
-        |result: Rc<RefCell<Vec<(u64, usize, Vec<String>)>>>| {
+        |result: ContactGateResults| {
             let rows = use_signal(|| {
                 [
                     "block.example",
@@ -444,8 +445,10 @@ fn contact_inbox_uses_one_revision_for_visible_rows_and_attention() {
                 })
                 .collect()
             });
-            let mut snapshot = crate::state::ClientLocalState::default();
-            snapshot.client_blocklist_revision = 7;
+            let mut snapshot = crate::state::ClientLocalState {
+                client_blocklist_revision: 7,
+                ..Default::default()
+            };
             snapshot.client_blocklist = [
                 ("block.example", AccountBlocklistMode::Block),
                 ("hide.example", AccountBlocklistMode::Hide),

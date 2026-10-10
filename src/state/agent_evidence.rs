@@ -145,6 +145,7 @@ impl LocalStateStore {
             .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn historical_agent_signer_keys_for_realm(
         &self,
         realm: &str,

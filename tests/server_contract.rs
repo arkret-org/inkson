@@ -11,6 +11,9 @@ use inkson::models::{
 };
 use inkson::operation::TypedOperationBuilder;
 
+// This shared fixture module also serves tests that exercise WebVH and
+// snapshot signatures; this binary uses only its accepted Event fixtures.
+#[allow(dead_code)]
 #[path = "../src/test_support/committed_event.rs"]
 mod committed_event;
 mod common;

@@ -1,3 +1,17 @@
+fn canonical_candidate_fixture(raw: &str) -> String {
+    let mut request = super::model::parse_runtime_key_approval_request(raw).unwrap();
+    request.runtime_key_binding_digest =
+        arkret_models_collaboration::agent_scope::agent_runtime_key_binding_digest(
+            &request.agent_id,
+            &request.pairing_request_id,
+            &request.verification_method,
+            &request.public_key,
+            request.runtime_attestation.as_ref(),
+        )
+        .unwrap();
+    serde_json::to_string(&request).unwrap()
+}
+
 #[cfg(test)]
 mod agent_tests {
     use super::super::*;
@@ -585,8 +599,8 @@ mod agent_tests {
             event.payload["public_key"],
             serde_json::to_value(&request.public_key).unwrap()
         );
-        assert!(event.payload.get("public_key_digest").is_none());
-        assert!(event.payload.get("signing_key_binding_digest").is_none());
+        assert!(!event.payload.contains_key("public_key_digest"));
+        assert!(!event.payload.contains_key("signing_key_binding_digest"));
         let event_wire = serde_json::to_value(event.event()).unwrap();
         let event_created_at = event_wire["created_at"].as_str().unwrap();
         assert_eq!(event_created_at.len(), 24);
@@ -780,18 +794,4 @@ mod agent_tests {
             assert!(!token.contains(' '));
         }
     }
-}
-
-fn canonical_candidate_fixture(raw: &str) -> String {
-    let mut request = super::model::parse_runtime_key_approval_request(raw).unwrap();
-    request.runtime_key_binding_digest =
-        arkret_models_collaboration::agent_scope::agent_runtime_key_binding_digest(
-            &request.agent_id,
-            &request.pairing_request_id,
-            &request.verification_method,
-            &request.public_key,
-            request.runtime_attestation.as_ref(),
-        )
-        .unwrap();
-    serde_json::to_string(&request).unwrap()
 }

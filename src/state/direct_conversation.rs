@@ -49,14 +49,15 @@ impl LocalStateStore {
             }
         }
         while self.cached.direct_message_contexts.len() > 64 {
-            let key = self
+            let Some(key) = self
                 .cached
                 .direct_message_contexts
                 .iter()
                 .min_by_key(|(_, value)| value.query_sequence)
-                .unwrap()
-                .0
-                .clone();
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
             self.cached.direct_message_contexts.remove(&key);
         }
     }

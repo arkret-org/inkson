@@ -7,6 +7,10 @@
 //! unit test without mounting a component.
 
 use super::*;
+#[cfg(test)]
+pub(super) use crate::state::realm_membership::{
+    AcceptedInviteClaimRoute, accepted_invite_claim_route, claim_target_device_id,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) enum AgentAddState {
@@ -313,9 +317,7 @@ pub(super) fn mention_state_from_entries(
     }
 }
 
-pub(super) use crate::state::realm_membership::{
-    is_local_account_actor, principal_core_key, trimmed_string,
-};
+pub(super) use crate::state::realm_membership::{is_local_account_actor, trimmed_string};
 
 pub(super) fn owned_agent_actor_key(principal: &str) -> Option<String> {
     let station = crate::operation::authoring_station_id().ok()?;
@@ -825,9 +827,7 @@ pub(super) fn local_pending_invite_profile_from_raw_operation(
 }
 
 pub(super) use crate::state::realm_membership::{
-    AcceptedInviteClaimRoute, accepted_invite_claim_route, claim_target_device_id,
-    local_invitee_by_invite_id_for_realm, raw_invite_create_account_id, raw_invite_create_invitee,
-    raw_member_actor_id, raw_member_membership, raw_operation_invite_ref,
+    local_invitee_by_invite_id_for_realm, raw_invite_create_account_id, raw_operation_invite_ref,
     raw_operation_is_accepted_fact, raw_operation_path_string, raw_operation_payload_kind,
     raw_operation_realm_matches_exact,
 };

@@ -49,6 +49,7 @@ fn creator_genesis_resume_action(
 /// creator check is only a cheap scheduling hint. The asynchronous entry point
 /// revalidates the creator against the accepted authority-root/founding Event
 /// before it authors Genesis; this local predicate never grants authority.
+#[cfg(test)]
 pub(crate) fn creator_mls_bootstrap_pending(
     store: &LocalStateStore,
     realm_id: &str,
@@ -68,6 +69,7 @@ pub(crate) fn creator_mls_bootstrap_pending(
 /// optimistic security projection before account current-sync installs the
 /// authority-root cell. In that gap the asynchronous entry point verifies the
 /// exact accepted founding Event directly with the Station.
+#[cfg(test)]
 fn creator_mls_bootstrap_incomplete(store: &LocalStateStore, realm_id: &str) -> bool {
     let Ok(realm_id) = arkret_sdk::RealmId::new(realm_id) else {
         return true;
@@ -75,6 +77,7 @@ fn creator_mls_bootstrap_incomplete(store: &LocalStateStore, realm_id: &str) -> 
     creator_scope_mls_bootstrap_pending(store, &arkret_sdk::ScopeRef::Realm { realm_id })
 }
 
+#[cfg(test)]
 pub(crate) fn creator_scope_mls_bootstrap_pending(
     store: &LocalStateStore,
     scope: &arkret_sdk::ScopeRef,
@@ -634,9 +637,9 @@ async fn bootstrap_creator_realm_mls_genesis(
     if !authenticated_account_is_realm_creator(api, state_store, realm_id, authority).await? {
         return Err("the authenticated actor is not the accepted Realm creator".to_owned());
     }
-    if durable_intent.is_some() {
+    if let Some(durable_intent) = &durable_intent {
         let submitter = submitter.for_founding_realm(scope.realm_id().clone());
-        if matches!(durable_intent.as_ref().expect("durable intent").signed_scope_create_unit(),
+        if matches!(durable_intent.signed_scope_create_unit(),
             arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(_)) {
             submitter.ensure_creator_realm_default_discussion(scope.realm_id()).await
                 .map_err(|error| format!("resume creator default discussion: {error}"))?;
@@ -1242,7 +1245,7 @@ mod tests {
             store
                 .mls_group_state_ref_for_scope(
                     &scope,
-                    &scope.canonical_mls_group_id().unwrap().to_string(),
+                    scope.canonical_mls_group_id().unwrap().as_ref(),
                     1
                 )
                 .unwrap(),

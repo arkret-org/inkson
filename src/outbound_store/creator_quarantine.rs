@@ -48,11 +48,11 @@ pub(super) fn belongs_to_attempt(
     let Some(request) = item.pointer("/submission/request") else {
         return false;
     };
-    request.get("event").is_some_and(&matches)
-        || request.get("commit_event").is_some_and(&matches)
+    request.get("event").is_some_and(matches)
+        || request.get("commit_event").is_some_and(matches)
         || request
             .pointer("/event_submission/event")
-            .is_some_and(&matches)
+            .is_some_and(matches)
         || request
             .get("events")
             .and_then(Value::as_array)
@@ -175,11 +175,11 @@ pub(super) fn stop_creator(
     let raw = serde_json::to_value(&state.creator_bootstrap_records[position])?;
     let mut items = serde_json::to_value(&state.items)?
         .as_array()
-        .expect("serialized queue array")
+        .ok_or_else(|| garth::Error::Storage("serialized queue is not an array".into()))?
         .clone();
     let mut index = serde_json::to_value(&state.creator_ready_index)?
         .as_array()
-        .expect("serialized index array")
+        .ok_or_else(|| garth::Error::Storage("serialized creator index is not an array".into()))?
         .clone();
     let diagnostic = quarantine_raw(raw, &mut items, &mut index, invariant, detail, known)?;
     state.creator_bootstrap_records[position] = serde_json::from_value(diagnostic)?;
@@ -430,11 +430,13 @@ pub(super) fn decode_for_recovery(
             let known = known_original(record);
             let mut items = serde_json::to_value(&state.items)?
                 .as_array()
-                .expect("serialized queue array")
+                .ok_or_else(|| garth::Error::Storage("serialized queue is not an array".into()))?
                 .clone();
             let mut index = serde_json::to_value(&state.creator_ready_index)?
                 .as_array()
-                .expect("serialized index array")
+                .ok_or_else(|| {
+                    garth::Error::Storage("serialized creator index is not an array".into())
+                })?
                 .clone();
             let diagnostic = quarantine_raw(
                 raw,

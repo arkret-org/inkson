@@ -227,6 +227,7 @@ pub(super) fn chat_composer_should_send_key(
     key == "Enter" && !shift && !alt && !is_composing && !is_auto_repeating
 }
 
+#[cfg(test)]
 pub(super) fn chat_secure_send_blocked(
     pending_mls_binding: bool,
     creator_mls_bootstrap_pending: bool,

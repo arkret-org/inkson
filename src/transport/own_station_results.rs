@@ -97,7 +97,7 @@ pub(crate) async fn genesis_response(
         stream_position: 0,
     };
     let response =
-        garth::own_station_results::consume_bound_event(&client, &reference, response).await?;
+        garth::own_station_results::consume_bound_event(client, &reference, response).await?;
     let arkret_sdk::CommittedEventView::Full(full) = response.value()? else {
         return Err(garth::Error::Protocol(
             "Genesis original is withheld".into(),

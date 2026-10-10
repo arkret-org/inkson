@@ -14,12 +14,12 @@
 set -euo pipefail
 
 VERSION="${1:-2.19.2}"
-EXPECTED_SHA256="${2:-cc4d7f3ee245316debdb9eff1b6851da0a7b13ba9509532a727884afe9e5e882}"
+EXPECTED_SHA256="${2:-2e8fd28afad004dcad97c0eb124d4d28ce5437205a881f533f2667960de83990}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 VENDOR_DIR="$HERE/assets/vendor"
 UMD_PATH="$VENDOR_DIR/livekit-client.umd.min.js"
 WRAPPER_PATH="$HERE/assets/livekit_vendor.js"
-URL="https://cdn.jsdelivr.net/npm/livekit-client@${VERSION}/dist/livekit-client.umd.min.js"
+URL="https://cdn.jsdelivr.net/npm/livekit-client@${VERSION}/dist/livekit-client.umd.js"
 
 mkdir -p "$VENDOR_DIR"
 echo "Fetching livekit-client@${VERSION} ..."

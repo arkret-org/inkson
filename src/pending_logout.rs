@@ -555,7 +555,8 @@ mod tests {
 
     #[test]
     fn account_logout_terminal_errors_complete_pending_logout() {
-        for (status, code) in [(401, "session_logged_out")] {
+        {
+            let (status, code) = (401, "session_logged_out");
             let error = arkret_sdk::http_client::Error::Api {
                 status,
                 error: Box::new(arkret_sdk::Problem::from_code(code, "terminal")),

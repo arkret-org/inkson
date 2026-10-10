@@ -66,10 +66,11 @@ impl RestoreRetryBook {
         }
         let mut available_at = entry.available_at.unwrap_or(now);
         let retry = retrying || entry.available_at.is_some();
-        if retry && entry.retries.len() >= arkret_retry::SPEC_MAX_RETRIES as usize {
-            if let Some(first) = entry.retries.front() {
-                available_at = available_at.max(*first + window);
-            }
+        if retry
+            && entry.retries.len() >= arkret_retry::SPEC_MAX_RETRIES as usize
+            && let Some(first) = entry.retries.front()
+        {
+            available_at = available_at.max(*first + window);
         }
         if available_at > now {
             return RestoreAdmission::Wait((available_at - now).to_std().unwrap_or_default());
@@ -266,7 +267,9 @@ pub(super) fn use_sidecar_reconciliation(
                     Ok(view) => {
                         prepared = true;
                         retry_seconds = 2;
-                        let mut open = hosted.peek().clone().unwrap();
+                        let Some(mut open) = hosted.peek().clone() else {
+                            return;
+                        };
                         open.native_mls_ready =
                             crate::sidecar::native_mls_ready_for_view(&state_store.read(), &view);
                         open.access_readiness = view.access_readiness;

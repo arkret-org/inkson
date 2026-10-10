@@ -99,12 +99,14 @@ async fn production_command_callback_does_not_allocate_hooks_and_survives_rerend
     }
 }
 
+type UploadHandles = Rc<RefCell<Option<(EventHandler<()>, Signal<String>, Signal<String>)>>>;
+
 #[derive(Clone)]
 struct UploadControl {
     path: std::path::PathBuf,
     base_url: String,
     is_private_sidecar: bool,
-    handles: Rc<RefCell<Option<(EventHandler<()>, Signal<String>, Signal<String>)>>>,
+    handles: UploadHandles,
 }
 
 fn upload_command_harness(control: UploadControl) -> Element {

@@ -241,7 +241,7 @@ fn ContactRow(
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
-    let mut state_store = crate::app::SessionContext::get().state_store;
+    let state_store = crate::app::SessionContext::get().state_store;
     let nav = use_navigator();
     let mut row_status = use_signal(ContactFeedback::default);
     let mut busy = use_signal(|| false);
@@ -957,9 +957,8 @@ fn ContactRow(
                                             )
                                         }
                                     }
-                                    if completion_fence.check().is_ok() {
-                                        if let Ok(mut value) = busy.try_write() { *value = false; }
-                                    }
+                                    if completion_fence.check().is_ok()
+                                        && let Ok(mut value) = busy.try_write() { *value = false; }
                                 });
                             }
                         },

@@ -78,11 +78,6 @@ pub(super) fn realm_create_authority_from_events(
     })
 }
 
-pub(super) fn realm_owner_covers_event_kind(kind: &str) -> bool {
-    arkret_schema::capability_action(CapabilityActionId::REALM_OWNER)
-        .is_some_and(|descriptor| descriptor.target_event_kinds.contains(&kind))
-}
-
 /// Verify the original producer using its pinned authorized Device key and
 /// the SDK's generated Event preimage contract, which omits Event id/proof.
 pub(crate) fn verify_creator_genesis_producer(
@@ -173,7 +168,7 @@ fn restored_creator_artifacts_with_secret(
         .epoch_zero()
         .ok_or_else(|| anyhow::anyhow!("creator artifact lost original private unit"))?;
     let (_, summary) =
-        crate::mls::runtime::restore_creator_epoch_zero(unit, record.intent(), &secret)
+        crate::mls::runtime::restore_creator_epoch_zero(unit, record.intent(), secret)
             .map_err(|error| anyhow::anyhow!(error.user_message()))?;
     Ok(MlsCreatorBootstrapArtifacts::new(
         record,

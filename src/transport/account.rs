@@ -422,7 +422,7 @@ async fn submit_contact_response(
         match crate::transport::contacts::finish_contact_commit(
             http,
             commit_context,
-            &pending,
+            pending,
             &commit,
         )
         .await?
@@ -487,7 +487,7 @@ async fn submit_contact_response(
         match crate::transport::contacts::finish_contact_commit(
             http,
             commit_context,
-            &pending,
+            pending,
             &commit,
         )
         .await?
@@ -1182,32 +1182,6 @@ pub async fn tombstone_contact(
         }
         _ => anyhow::bail!("Contact tombstone commit returned the wrong result kind"),
     }
-}
-
-/// Read one holder-private consent result. Spec OpenAPI
-/// `ak.self.consent.resource.get.v1`.
-///
-/// The result is addressed by its exact frozen `consent_peer`, both kinds
-/// included. Nothing here reconstructs a peer from a bare DID: an ordinary
-/// Account peer carries its complete ActorId and a Realm-local ephemeral
-/// pairwise peer its `(realm_id, principal_id)` pair, and the two never
-/// address each other's result.
-pub async fn consent_result(
-    http: &arkret_sdk::http_client::Client,
-    _holder: &str,
-    peer: &arkret_sdk::ConsentPeer,
-    scope: &str,
-) -> anyhow::Result<arkret_sdk::ConsentView> {
-    let peer = serde_json::to_string(peer)?;
-    let path = format!(
-        "{}?peer={}&consent_scope={}",
-        arkret_wire::PATH_SELF_CONSENT_RESULT,
-        crate::wire_helpers::path_component(&peer),
-        crate::wire_helpers::path_component(scope.trim()),
-    );
-    let view: arkret_sdk::ConsentView = http.get(&path).await.map_err(anyhow::Error::from)?;
-    view.validate()?;
-    Ok(view)
 }
 
 /// Grant scoped consent to `peer` from the holder result. `expires_at` is an

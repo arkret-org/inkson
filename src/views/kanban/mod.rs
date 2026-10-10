@@ -65,12 +65,7 @@ pub(crate) enum StrandPositionExpectation {
 /// Placement this write asks for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum StrandPositionEffect {
-    SetPosition {
-        list_space_id: String,
-        rank: String,
-    },
-    /// The Strand leaves the target Board.
-    Remove,
+    SetPosition { list_space_id: String, rank: String },
 }
 
 #[cfg(test)]

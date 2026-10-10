@@ -903,7 +903,7 @@ pub(super) fn RealmsSection(
                                                             || realm.first_commit.stream_position != 0
                                                         {
                                                             let error = tr("setup.error.non_genesis_commit")
-                                                                .replace("{commit}", &realm.first_commit.commit_id.to_string());
+                                                                .replace("{commit}", realm.first_commit.commit_id.as_ref());
                                                             let message = BootstrapProgressStrings::fill(
                                                                 &strings.created_then_failed,
                                                                 &[("id", realm_id.clone()), ("error", error)],

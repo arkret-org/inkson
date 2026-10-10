@@ -151,26 +151,6 @@ pub(crate) fn mls_coverage_repair_dedup_hint(store: &LocalStateStore, realm_id: 
         .join(",")
 }
 
-/// Whether the scope's accepted MLS epoch still covers its current key-access
-/// revision.
-///
-/// The scope's own current MLS group state publishes both numbers: a
-/// `covered_key_access_revision` behind `current_key_access_revision` means a
-/// membership or key-access change has landed that no accepted `ak.mls.commit`
-/// covers yet, which is exactly the condition a receiver reports as
-/// `epoch_update_required`. An undelivered current view answers nothing and
-/// never schedules a repair on its own.
-pub(crate) fn mls_key_access_coverage_is_stale(
-    store: &LocalStateStore,
-    effective_scope: &arkret_sdk::ScopeRef,
-) -> bool {
-    store
-        .current_mls_group_for_scope(effective_scope)
-        .is_some_and(|current| {
-            current.covered_key_access_revision < current.current_key_access_revision
-        })
-}
-
 /// Advance the MLS epoch so the scope's new commit covers its current
 /// key-access revision, restoring encrypted sending.
 ///

@@ -1,9 +1,9 @@
 # Round 28 (rev. round 35): cross-platform Playwright matrix CI wiring.
 #
-# Drives the round-27 `tests/cross_platform/` 11-test suite (4 spec
-# files: subtle_crypto / push_subscribe / local_storage / oidc_pkce)
+# Drives the `tests/cross_platform/` 15-test suite (5 spec
+# files: subtle_crypto / push_subscribe / push_receive / local_storage / oidc_pkce)
 # against Chromium, Firefox, and WebKit on a single ubuntu-latest
-# runner via Playwright's bundled engines. 11 tests × 3 browsers = 33
+# runner via Playwright's bundled engines. 15 tests × 3 browsers = 45
 # datapoints per CI run. The matrix runs on push / pull_request but
 # only when something under `src/**` or `tests/cross_platform/**`
 # changes — engine setup costs ~3 minutes per browser so we don't want
@@ -109,13 +109,13 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  DIOXUS_CLI_VERSION: "0.7.9"
+  DIOXUS_CLI_VERSION: "0.7.10"
   # Private `yoface` git dependency — see .github/workflows/ci.yml.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
   cross-platform:
-    name: ${{ matrix.browser }} (11-test suite)
+    name: ${{ matrix.browser }} (platform contracts)
     runs-on: ubuntu-latest
     # Round 27 self-skip rule: PRs from forks can't access secrets,
     # mirroring Playwright's existing self-skip logic in the e2e

@@ -97,10 +97,10 @@ pub(super) fn KanbanEffects(
         mut card_detail_actions_open,
         mut card_detail_discussion_mounted_for,
         mut card_detail_tab,
-        card_detail_sidebar_tab,
+        card_detail_sidebar_tab: _,
         mut card_synthesis_history_open_id,
         mut card_synthesis_selected_revision_id,
-        mut member_handle_fetching,
+        member_handle_fetching: _,
         mut command_queue,
         board_status,
         ..

@@ -339,9 +339,7 @@ impl SidecarProjectionFold {
             value.context_ref.strand_id.to_string(),
         );
         let should_replace = self.view_states.get(&key).is_none_or(|current| {
-            compare_sidecar_view_state_stamp(&value, current)
-                .expect("typed Sidecar view-state stamps are canonical")
-                .is_gt()
+            compare_sidecar_view_state_stamp(&value, current).is_ok_and(|order| order.is_gt())
         });
         if should_replace {
             self.view_states.insert(key, value);
@@ -421,39 +419,6 @@ pub fn cached_sidecar_exchange_projections(
     crate::sidecar_fold::rebuild(store, controller_account_id, source_realm_id)
 }
 
-/// Server readiness cannot publish local access before this device's private
-/// checkpoint agrees with the independently verified signed current cut.
-pub(crate) fn native_sidecar_mls_ready(
-    store: &crate::state::LocalStateStore,
-    view: &arkret_sdk::AgentSidecarView,
-) -> bool {
-    let scope = arkret_sdk::ScopeRef::Sidecar {
-        realm_id: view.sidecar.realm_id.clone(),
-        sidecar_id: view.sidecar.id.clone(),
-    };
-    view.mls_context.mls_group_id.as_ref().is_some_and(|group| {
-        let current = store
-            .verified_sidecar_inputs(view.sidecar.realm_id.as_str())
-            .ok()
-            .and_then(|(snapshot, _)| {
-                crate::current_projection::current_mls_group(
-                    &snapshot.current_state_entries,
-                    &scope,
-                )
-            });
-        store
-            .mls_checkpoint_for_scope_and_group(&scope, group)
-            .is_some_and(|checkpoint| {
-                Some(checkpoint.epoch) == view.mls_context.epoch
-                    && current.is_some_and(|current| {
-                        current.epoch == checkpoint.epoch
-                            && checkpoint.group_state_event_id.as_ref()
-                                == Some(&current.current_mls_commit_event_ref)
-                    })
-            })
-    })
-}
-
 /// The opt-in test hook does not report an empty successful fold while
 /// verified Sidecar Commit/current input is unavailable.
 #[cfg(all(
@@ -494,9 +459,12 @@ pub(crate) fn sidecar_fold_evidence_canonical_json(
 pub(crate) enum SidecarDisclosureSurface {
     Search,
     Unread,
+    #[cfg(test)]
     Watch,
     Notification,
+    #[cfg(test)]
     PublicExport,
+    #[cfg(test)]
     SharedPublish,
 }
 
@@ -618,6 +586,7 @@ impl SidecarPrivacyGate {
             .is_some_and(|value| !self.value_discloses_private_identifier(&value))
     }
 
+    #[cfg(test)]
     pub(crate) fn validate_shared_publish(
         &self,
         controller_confirmed: bool,
@@ -643,6 +612,7 @@ impl SidecarPrivacyGate {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn validate_public_export<T: serde::Serialize>(
         &self,
         value: &T,
@@ -846,6 +816,7 @@ pub(crate) fn remove_pending_sidecar_submission(
 }
 
 /// Every stored pending submission of this controller, with its storage key.
+#[cfg(test)]
 pub(crate) fn pending_sidecar_submissions(
     store: &crate::state::LocalStateStore,
     controller_principal_id: &str,
@@ -1376,13 +1347,13 @@ mod tests {
             );
         }
 
-        assert!(!gate.allows_serialized(
-            SidecarDisclosureSurface::PublicExport,
-            &serde_json::json!({
+        assert!(
+            gate.validate_public_export(&serde_json::json!({
                 "body": "ordinary looking preview",
                 "internal_locator": "ak:sidecar:ARtoYyyaAqwT8z7xX2YLO-x_zdkPXEy8ygoDx-tu-5fm",
-            }),
-        ));
+            }))
+            .is_err()
+        );
         assert!(!gate.allows_serialized(
             SidecarDisclosureSurface::Notification,
             &serde_json::json!({

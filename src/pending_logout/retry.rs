@@ -85,8 +85,7 @@ enum Decision {
 impl RetryBook {
     fn claim(&mut self, record: &PendingLogout, id: IntentId, now: DateTime<Utc>) -> Decision {
         let policy = arkret_sdk::RetryPolicy::arkret_default();
-        let window =
-            Duration::from_std(policy.retry_window()).expect("SDK retry window fits chrono");
+        let window = Duration::from_std(policy.retry_window()).unwrap_or(Duration::MAX);
         self.intents.retain(|_, entry| {
             entry.running
                 || now - entry.created_at < Duration::hours(super::AUTOMATIC_RETRY_MAX_AGE_HOURS)
@@ -105,7 +104,7 @@ impl RetryBook {
             available_at: now,
             schedule: arkret_sdk::RetrySchedule::arkret_default().with_jitter(
                 policy.jitter_ratio(),
-                u64::from_le_bytes(id[..8].try_into().expect("digest length")),
+                u64::from_le_bytes([id[0], id[1], id[2], id[3], id[4], id[5], id[6], id[7]]),
             ),
         });
         match entry.state {
@@ -123,7 +122,7 @@ impl RetryBook {
         let attempts = self.budgets.entry(record.authority.clone()).or_default();
         // One initial presentation and at most five automatic retries in the
         // sliding window. Distinct old journals cannot multiply that limit.
-        if attempts.len() >= policy.max_retries() as usize + 1 {
+        if attempts.len() > policy.max_retries() as usize {
             return Decision::Deferred;
         }
         attempts.push_back(now);

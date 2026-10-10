@@ -5,6 +5,7 @@ fn identity_link_cache_key(realm_id: &str, group_id: &str, epoch: u64, leaf_inde
 }
 
 impl LocalStateStore {
+    #[cfg(test)]
     pub(crate) fn locally_authenticated_identity_link(
         &self,
         realm_id: &arkret_sdk::RealmId,

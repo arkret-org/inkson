@@ -177,14 +177,6 @@ pub(crate) struct MlsCommitBasis {
 }
 
 impl MlsCommitBasis {
-    pub(crate) fn governance_binding(&self) -> &arkret_sdk::MlsGovernanceBindingPayload {
-        &self.governance_binding
-    }
-
-    pub(crate) fn effective_scope(&self) -> &arkret_sdk::ScopeRef {
-        &self.effective_scope
-    }
-
     /// Build the commit Event. Proposals are carried inside the Commit bytes,
     /// so nothing here waits on separately authored Events.
     pub(crate) fn build(self) -> Result<crate::operation::LocalOperation, String> {
@@ -275,24 +267,6 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope(
         actor_id,
         commit_envelope,
         None,
-    )?
-    .build()
-}
-
-pub(crate) fn mls_commit_event_from_store_for_sidecar_scope(
-    state_store: &LocalStateStore,
-    realm_id: &str,
-    actor_id: &str,
-    commit_envelope: &arkret_sdk::MlsCommitEnvelope,
-    sidecar_id: &arkret_sdk::SidecarId,
-) -> Result<crate::operation::LocalOperation, String> {
-    mls_commit_basis_from_store(
-        state_store,
-        realm_id,
-        None,
-        actor_id,
-        commit_envelope,
-        Some(sidecar_id),
     )?
     .build()
 }

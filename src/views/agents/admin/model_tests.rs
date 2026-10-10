@@ -39,7 +39,7 @@ fn newly_created_agent_selection_survives_directory_refresh_and_follows_filter_c
     let mut dom = VirtualDom::new_with_props(harness, control.clone());
     dom.rebuild_in_place();
     settle(&mut dom);
-    let (mut agents, mut selected, mut filter) = control.borrow().as_ref().unwrap().clone();
+    let (mut agents, mut selected, mut filter) = *control.borrow().as_ref().unwrap();
     let new = agent("new", AgentLifecycleState::Active);
     let new_id = agent_id(&new);
     dom.in_runtime(|| selected.set(new_id.clone()));

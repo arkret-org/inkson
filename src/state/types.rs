@@ -171,7 +171,7 @@ pub struct NotificationClientState {
 #[serde(tag = "projection_kind", rename_all = "snake_case")]
 pub enum StoredNotification {
     Event {
-        notification: arkret_sdk::Notification,
+        notification: Box<arkret_sdk::Notification>,
         agent_id: Option<arkret_sdk::DidCoreId>,
     },
     Invite {
@@ -901,7 +901,7 @@ pub struct PersistedDeviceAuthoringAuthority {
     pub account_id: arkret_sdk::AccountId,
     pub device_id: arkret_sdk::DeviceId,
     pub device_projection: arkret_models_crypto::VerifiedDeviceProjection,
-    pub authoring_generation: crate::identity::authoring_generation::AuthoringGeneration,
+    pub(crate) authoring_generation: crate::identity::authoring_generation::AuthoringGeneration,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

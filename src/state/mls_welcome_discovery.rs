@@ -12,6 +12,7 @@ pub struct MlsWelcomeDiscoveryProgress {
 }
 
 impl MlsWelcomeDiscoveryProgress {
+    #[cfg(test)]
     pub(crate) fn observe_inputs(&mut self, frontier: Vec<String>, key_material_hint: String) {
         if self.key_material_hint != key_material_hint
             || (self.exhausted && self.observed_frontier != frontier)
@@ -24,6 +25,7 @@ impl MlsWelcomeDiscoveryProgress {
 }
 
 impl LocalStateStore {
+    #[cfg(test)]
     pub(crate) fn welcome_discovery_progress(&self, key: &str) -> MlsWelcomeDiscoveryProgress {
         self.cached
             .mls_welcome_discovery
@@ -32,6 +34,7 @@ impl LocalStateStore {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub(crate) fn save_welcome_discovery_progress(
         &mut self,
         key: String,

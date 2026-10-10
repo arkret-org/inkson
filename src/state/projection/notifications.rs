@@ -276,7 +276,7 @@ pub(crate) fn apply_notification_projection(
                     }
                 };
                 let replacement = StoredNotification::Event {
-                    notification,
+                    notification: Box::new(notification),
                     agent_id,
                 };
                 if let Some(existing) = current
@@ -334,17 +334,6 @@ pub(crate) fn default_notification_title(kind: &str) -> &'static str {
     }
 }
 
-pub(crate) fn event_preview_string(notification: &Notification, keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|key| {
-        notification
-            .preview
-            .as_ref()?
-            .get(*key)
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-    })
-}
-
 #[cfg(test)]
 pub(crate) fn test_event_notification(
     ordinal: u64,
@@ -361,7 +350,7 @@ pub(crate) fn test_event_notification(
     });
     StoredNotification::Event {
         agent_id: None,
-        notification: Notification {
+        notification: Box::new(Notification {
             id: arkret_sdk::derive_notification_projection_id(
                 crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
                     .expect("valid test actor")
@@ -409,7 +398,7 @@ pub(crate) fn test_event_notification(
                 .with_timezone(&chrono::Utc)
                 + chrono::Duration::seconds(ordinal as i64),
             updated_at: None,
-        },
+        }),
     }
 }
 

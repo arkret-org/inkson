@@ -347,11 +347,9 @@ pub(crate) async fn fetch_route_material(
     if let Some(state) = InksonServiceRouteStore::open_default()
         .load_route_state(service_id, MEDIA_SERVICE_KIND)?
         .and_then(|snapshot| snapshot.method_state)
+        && let Ok(material) = fetch_route_material_from_did(http, service_id, &state.did, now).await
     {
-        if let Ok(material) = fetch_route_material_from_did(http, service_id, &state.did, now).await
-        {
-            return Ok(material);
-        }
+        return Ok(material);
     }
     let Some((first_origin, remaining_origins)) = candidate_origins.split_first() else {
         anyhow::bail!("realm media_service cell carries no endpoint origin for {service_id}");
