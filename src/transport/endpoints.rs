@@ -59,13 +59,13 @@ impl KeysEndpoints<'_> {
 
     pub async fn receive_device_messages_page(
         &self,
-        from: Option<&str>,
+        after: Option<&str>,
         limit: Option<u32>,
     ) -> anyhow::Result<crate::models::DeviceMessagesGetOutcome> {
-        let from = from.map(str::trim).filter(|value| !value.is_empty());
+        let after = after.map(str::trim).filter(|value| !value.is_empty());
         self.transport
             .http()
-            .receive_device_messages(from, limit)
+            .receive_device_messages(after, limit)
             .await
             .map_err(|error| anyhow::anyhow!("receive device messages: {error}"))
     }
