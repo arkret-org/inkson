@@ -274,17 +274,9 @@ fn member_handle_line_keeps_all_handles_without_repeating_primary() {
     ];
     let visible = member_handles_for_line(&multiple, "alice:local.host");
     assert_eq!(visible, vec!["alice:work.local.host"]);
-    assert_eq!(
-        member_handles_line_label(&multiple, &visible),
-        "Other handles"
-    );
 
     let display_title = member_handles_for_line(&multiple, "Alice");
     assert_eq!(display_title, multiple);
-    assert_eq!(
-        member_handles_line_label(&display_title, &display_title),
-        "Handles"
-    );
 }
 
 #[test]

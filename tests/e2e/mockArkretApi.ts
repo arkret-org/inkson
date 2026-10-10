@@ -177,6 +177,53 @@ const mockOperationInventory = (
   ),
 }));
 const validatedMockResponses = new Set<string>();
+const snapshotReadOperations = new Set([
+  "ak.self.realm_state_snapshot.read.manifest_head.v1",
+  "ak.self.realm_state_snapshot.read.by_ref.v1",
+]);
+type MockErrorDescriptor = {
+  code: string;
+  http_status: number;
+  type_uri: string;
+  title: string;
+  status: string;
+};
+// The SDK exposes these descriptors in Rust, but the existing wire CLI only
+// exposes schema validation. Read the normative metadata once, without copying
+// its status/type/title table or adding another Rust command.
+const mockErrorRegistryRoot = resolve(inksonRepoRoot, "..", "arkret-spec", "spec", "v1", "artifacts", "registry");
+const mockErrorRegistry = JSON.parse(readFileSync(resolve(mockErrorRegistryRoot, "error-code-registry.json"), "utf8")) as {
+  codes: MockErrorDescriptor[];
+};
+const mockOperationErrorMapping = JSON.parse(readFileSync(resolve(mockErrorRegistryRoot, "operations-error-mapping.json"), "utf8")) as {
+  rules: { universal_codes: string };
+  operations: Array<{ operation_id: string; operation_specific: string[] }>;
+};
+function activeMockErrorDescriptor(code: string): MockErrorDescriptor {
+  const matches = mockErrorRegistry.codes.filter((entry) => entry.code === code && entry.status === "active");
+  if (matches.length !== 1) throw new Error(`${code} must resolve to one active error registry descriptor`);
+  return matches[0];
+}
+const snapshotUnavailableDescriptor = (() => {
+  const descriptor = activeMockErrorDescriptor("realm_state_snapshot_unavailable");
+  for (const operationId of snapshotReadOperations) {
+    const operations = mockOperationErrorMapping.operations.filter((operation) => operation.operation_id === operationId);
+    if (operations.length !== 1 || !operations[0].operation_specific.includes(descriptor.code)) {
+      throw new Error(`snapshot unavailable is not registered for ${operationId}`);
+    }
+  }
+  return descriptor;
+})();
+const streamScanOperationId = "ak.self.committed_event.read.scan.v1";
+const streamScanCapabilityDeniedDescriptor = (() => {
+  const descriptor = activeMockErrorDescriptor("capability_denied");
+  const operations = mockOperationErrorMapping.operations.filter((operation) => operation.operation_id === streamScanOperationId);
+  const universalCodes = mockOperationErrorMapping.rules.universal_codes.match(/[a-z][a-z0-9_]+/g) ?? [];
+  if (operations.length !== 1 || !universalCodes.includes(descriptor.code)) {
+    throw new Error(`stream scan capability denial is not registered for ${streamScanOperationId}`);
+  }
+  return descriptor;
+})();
 const currentPrincipalServiceResolution = inksonWire<Record<string, any>>(
   "service-resolution",
   {},
@@ -293,7 +340,7 @@ export function inksonWire<T>(command: InksonWireCommand, input: unknown): T {
   return JSON.parse(result.stdout.trim()) as T;
 }
 
-function validateMockResponse(route: Route, status: number, value?: unknown) {
+function validateMockResponse(route: Route, status: number, value?: unknown, contentType = "application/json") {
   const request = route.request();
   const method = request.method().toUpperCase();
   const pathname = new URL(request.url()).pathname;
@@ -314,14 +361,26 @@ function validateMockResponse(route: Route, status: number, value?: unknown) {
       `mock route ${method} ${pathname} resolves to ${matches.length} embedded OpenAPI operations`,
     );
   }
-  validateMockResponseForOperation(matches[0], status, value);
+  validateMockResponseForOperation(matches[0], status, value, contentType);
 }
 
-function validateMockResponseForOperation(
-  operation: (typeof mockOperationInventory)[number],
+export function validateMockResponseForOperation(
+  operation: MockOperationInventoryRow,
   status: number,
   value?: unknown,
+  contentType = "application/json",
 ) {
+  // OpenAPI lists the success shapes. These exact registered failures
+  // come from the global HTTP Problem contract and its operation error map.
+  // No other operation or undeclared status receives an error-response bypass.
+  if (snapshotReadOperations.has(operation.operation_id) && status === snapshotUnavailableDescriptor.http_status) {
+    validateClosedMockProblem(snapshotUnavailableDescriptor, status, value, contentType);
+    return;
+  }
+  if (operation.operation_id === streamScanOperationId && status === streamScanCapabilityDeniedDescriptor.http_status) {
+    validateClosedMockProblem(streamScanCapabilityDeniedDescriptor, status, value, contentType);
+    return;
+  }
   const response =
     operation.responses[String(status)] ?? operation.responses.default;
   if (!response) {
@@ -344,6 +403,23 @@ function validateMockResponseForOperation(
   }
   assertNoRetiredMockFields(value);
   validateMockSchema(response.schema_ref, value);
+}
+
+function validateClosedMockProblem(descriptor: MockErrorDescriptor, status: number, value: unknown, contentType: string) {
+  if (contentType !== "application/problem+json") {
+    throw new Error(`${descriptor.code} requires application/problem+json`);
+  }
+  validateMockSchema("schemas/http-problem-details.schema.json", value);
+  const problem = value as Record<string, unknown>;
+  if (status !== descriptor.http_status || problem.status !== status || problem.type !== descriptor.type_uri || problem.title !== descriptor.title) {
+    throw new Error(`${descriptor.code} status/type/title do not match the error registry`);
+  }
+  // RFC consumers tolerate unknown extensions. These producers emit only the
+  // standard members of their minimal responses.
+  const members = new Set(["type", "title", "status", "detail", "instance"]);
+  if (Object.keys(problem).some((member) => !members.has(member))) {
+    throw new Error(`${descriptor.code} producer forbids extension members`);
+  }
 }
 
 function preflightStaticMockResponses(fixtures: StaticMockResponseFixture[]) {
@@ -2350,7 +2426,12 @@ export async function mockArkretApi(
       const requestedRealm =
         typeof requestBody.realm_id === "string" ? requestBody.realm_id : "";
       const fixture = nativeFixtures.get(requestedRealm);
-      if (!fixture) return json(route, { error: { code: "not_found" } }, 404);
+      if (!fixture) return json(route, {
+        type: streamScanCapabilityDeniedDescriptor.type_uri,
+        title: streamScanCapabilityDeniedDescriptor.title,
+        status: streamScanCapabilityDeniedDescriptor.http_status,
+        detail: "The requested stream is not readable by this fixture caller.",
+      }, streamScanCapabilityDeniedDescriptor.http_status, "application/problem+json");
       return json(route, inksonWire("mock-realm-scan", { fixture, request: requestBody }));
     }
 
@@ -2413,11 +2494,11 @@ export async function mockArkretApi(
 
     if (url.pathname === "/_arkret/self/realm-state-snapshot/head" && route.request().method() === "GET") {
       const fixture = nativeFixtures.get(url.searchParams.get("realm_id") ?? "");
-      return fixture ? json(route, fixture.snapshot) : json(route, { error: { code: "not_found" } }, 404);
+      return fixture ? json(route, fixture.snapshot) : snapshotUnavailable(route);
     }
     if (url.pathname.startsWith("/_arkret/self/realm-state-snapshot/") && route.request().method() === "GET") {
       const fixture = nativeFixtures.get(url.searchParams.get("realm_id") ?? "");
-      return fixture && fixture.snapshot.snapshot_id === decodeURIComponent(url.pathname.split("/").at(-1) ?? "") ? json(route, fixture.snapshot) : json(route, { error: { code: "not_found" } }, 404);
+      return fixture && fixture.snapshot.snapshot_id === decodeURIComponent(url.pathname.split("/").at(-1) ?? "") ? json(route, fixture.snapshot) : snapshotUnavailable(route);
     }
     if (url.pathname === "/_arkret/self/signer-keys/query" && route.request().method() === "POST") {
       const request = await route.request().postDataJSON();
@@ -3986,11 +4067,20 @@ function mimiProviderDirectory() {
   };
 }
 
-function json(route: Route, body: unknown, status = 200) {
-  validateMockResponse(route, status, body);
+function snapshotUnavailable(route: Route) {
+  return json(route, {
+    type: snapshotUnavailableDescriptor.type_uri,
+    title: snapshotUnavailableDescriptor.title,
+    status: snapshotUnavailableDescriptor.http_status,
+    detail: "The requested snapshot is not available in this fixture.",
+  }, snapshotUnavailableDescriptor.http_status, "application/problem+json");
+}
+
+function json(route: Route, body: unknown, status = 200, contentType = "application/json") {
+  validateMockResponse(route, status, body, contentType);
   return route.fulfill({
     status,
-    contentType: "application/json",
+    contentType,
     body: JSON.stringify(body),
   });
 }

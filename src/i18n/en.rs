@@ -2433,6 +2433,165 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("circles.controls.retire", "Permanently retire Circle");
 
+    dict.set("chat.direct_structure.reply_hint", "Reply preference applies only to the selected Chat. Other permissions and encryption readiness are checked separately.");
+    dict.set(
+        "chat.direct_structure.allow_agent_reply",
+        "Allow Agent replies in this Chat",
+    );
+    dict.set("chat.direct_structure.chat", "Chat");
+    dict.set("chat.direct_structure.manage", "Manage chats and topics");
+    dict.set("chat.direct_structure.action", "Action");
+    dict.set("chat.direct_structure.topic", "Topic");
+    dict.set("chat.direct_structure.select_topic", "Select Topic");
+    dict.set("chat.direct_structure.new_chat", "New Chat");
+    dict.set("chat.direct_structure.new_topic", "New Topic");
+    dict.set("chat.direct_structure.rename_chat", "Rename Chat");
+    dict.set("chat.direct_structure.archive_chat", "Archive Chat");
+    dict.set("chat.direct_structure.restore_chat", "Restore Chat");
+    dict.set("chat.direct_structure.place", "Move Chat to Topic");
+    dict.set("chat.direct_structure.unplace", "Remove Chat from Topic");
+    dict.set("chat.direct_structure.reorder", "Move Chat to end of Topic");
+    dict.set("chat.direct_structure.rename_topic_target", "Rename Topic");
+    dict.set("chat.direct_structure.reorder_topic", "Move Topic to end");
+    dict.set(
+        "chat.direct_structure.archive_topic_target",
+        "Archive Topic",
+    );
+    dict.set(
+        "chat.direct_structure.restore_topic_target",
+        "Restore Topic",
+    );
+    dict.set(
+        "chat.direct_structure.delete_topic_target",
+        "Delete empty Topic",
+    );
+    dict.set("chat.direct_structure.unread_suffix", " ({count} unread)");
+    dict.set("chat.direct_structure.archived_suffix", " (archived)");
+    dict.set("realm_admin.roster.pending_badge", "Pending invite");
+    dict.set("realm_admin.roster.member_state", "Member state");
+    dict.set("realm_admin.roster.display", "Display");
+    dict.set("realm_admin.roster.subject", "Subject");
+    dict.set("realm_admin.roster.add_agent", "Add agent to Realm");
+    dict.set("realm_admin.roster.add_agent_hint", "Choose one of your active agents. It joins immediately under your control and does not receive an invitation.");
+    dict.set("realm_admin.roster.adding_agent", "Adding agent to Realm…");
+    dict.set(
+        "realm_admin.roster.no_available_agents",
+        "No agents available to add.",
+    );
+    dict.set("realm_admin.roster.no_available_agents_hint", "Create or activate an agent in Settings, or remove an existing agent from this Realm first.");
+    dict.set("realm_admin.roster.adding", "Adding…");
+    dict.set("realm_admin.roster.add", "Add");
+    dict.set("realm_admin.roster.invite_member", "Invite member");
+    dict.set(
+        "realm_admin.roster.invite_target_placeholder",
+        "alice:example.com",
+    );
+    dict.set("realm_admin.roster.send_invite", "Send Invite");
+    dict.set("realm_admin.roster.pending_count", "{total} pending");
+    dict.set("realm_admin.roster.add_my_agent", "Add one of my agents");
+    dict.set("realm_admin.roster.add_agent_short", "Add agent");
+    dict.set(
+        "realm_admin.roster.actions_unavailable",
+        "Member-management actions are not available for this account.",
+    );
+    dict.set("realm_admin.roster.search", "Search members…");
+    dict.set("realm_admin.roster.sections", "Member sections");
+    dict.set("realm_admin.roster.owners", "Owners");
+    dict.set("realm_admin.roster.admins", "Admins");
+    dict.set("realm_admin.roster.my_agents", "My agents");
+    dict.set("realm_admin.roster.pending_invites", "Pending invites");
+    dict.set("realm_admin.roster.shown", "{total} shown");
+    dict.set(
+        "realm_admin.roster.pending_no_match",
+        "No pending invites match your search.",
+    );
+    dict.set("realm_admin.roster.owner", "Owner");
+    dict.set("realm_admin.roster.admin", "Admin");
+    dict.set("realm_admin.roster.agent_count", "{total} AI");
+    dict.set("realm_admin.roster.my_name", "My name");
+    dict.set("realm_admin.roster.note", "Note");
+    dict.set("realm_admin.roster.agents", "AI agents");
+    dict.set("realm_admin.roster.agents_colon", "AI agents:");
+    dict.set(
+        "realm_admin.roster.my_agents_hint",
+        "Your agents that are members of this Realm.",
+    );
+    dict.set("realm_admin.roster.total", "{total} total");
+    dict.set(
+        "realm_admin.roster.no_realm_agents",
+        "No agents in this Realm.",
+    );
+    dict.set(
+        "realm_admin.roster.no_realm_agents_hint",
+        "Add one of your existing active agents. No invitation or agent approval is required.",
+    );
+    dict.set("realm_admin.roster.remove", "Remove");
+    dict.set("realm_admin.roster.interaction", "Group interaction");
+    dict.set("realm_admin.roster.private", "Private");
+    dict.set("realm_admin.roster.public", "Public");
+    dict.set("realm_admin.roster.reply", "Reply as agent");
+    dict.set("realm_admin.roster.mention", "Accept @mentions");
+    dict.set("realm_admin.roster.act_on_behalf", "Act on my behalf");
+    dict.set(
+        "realm_admin.roster.load_more",
+        "Load more — showing {visible} of {total} groups",
+    );
+    dict.set(
+        "realm_admin.roster.cancel_direct",
+        "Cancel pending direct invite",
+    );
+    dict.set(
+        "realm_admin.roster.revoke_token",
+        "Revoke pending token or 3PID invite",
+    );
+    dict.set(
+        "realm_admin.roster.invite_id_unavailable",
+        "Invite id is not available yet",
+    );
+    dict.set("realm_admin.roster.pending", "Pending");
+    dict.set("realm_admin.roster.invitation_sent", "Invitation sent");
+    dict.set("realm_admin.roster.cancel_invite", "Cancel invite");
+    dict.set("realm_admin.roster.revoke_invite", "Revoke invite");
+    dict.set(
+        "realm_admin.roster.members_description",
+        "Active Realm members without owner or admin authority.",
+    );
+    dict.set(
+        "realm_admin.roster.owners_description",
+        "Realm owners with top-level governance authority.",
+    );
+    dict.set(
+        "realm_admin.roster.admins_description",
+        "Realm admins with management authority.",
+    );
+    dict.set(
+        "realm_admin.roster.my_agents_description",
+        "Manage your agents and their behavior in this Realm.",
+    );
+    dict.set(
+        "realm_admin.roster.pending_invites_description",
+        "Invitations sent for this Realm that have not been accepted yet.",
+    );
+    dict.set("realm_admin.roster.realm_owner", "Realm owner");
+    dict.set("realm_admin.roster.realm_admin", "Realm admin");
+    dict.set("realm_admin.roster.realm_member", "Realm member");
+    dict.set("realm_admin.roster.handles", "Handles");
+    dict.set("realm_admin.roster.other_handles", "Other handles");
+    dict.set("realm_admin.roster.mention_allowed", "Members can @");
+    dict.set("realm_admin.roster.mention_owner_only", "Controller only");
+    dict.set("realm_admin.roster.mention_unknown", "@ policy unknown");
+    dict.set("realm_admin.roster.agent_awaiting", "Awaiting runtime");
+    dict.set("realm_admin.roster.agent_ready", "Ready");
+    dict.set(
+        "realm_admin.roster.agent_replacing",
+        "Awaiting replacement runtime",
+    );
+    dict.set("realm_admin.roster.agent_active", "Active");
+    dict.set("realm_admin.roster.agent_expired", "Pairing expired");
+    dict.set("realm_admin.roster.agent_paused", "Paused");
+    dict.set("realm_admin.roster.agent_deactivated", "Deactivated");
+    dict.set("realm_admin.roster.in_realm", "in Realm");
+
     add_r3_error_keys(&mut dict);
     add_generic_error_keys(&mut dict);
 

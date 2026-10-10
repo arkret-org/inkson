@@ -15,6 +15,301 @@ fn owned_direct_agent(
     }
 }
 
+#[cfg(test)]
+mod locale_tests {
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+
+    use super::*;
+    use crate::i18n::{I18nSignal, UiLocale};
+
+    const RAW_TITLE: &str = "chat.direct_structure.new_chat {count} 原文";
+    const RAW_TOPIC: &str = "chat.direct_structure.archived_suffix {topic} 原始话题";
+    const ACTIONS: [&str; 13] = [
+        "new_chat",
+        "new_topic",
+        "rename_chat",
+        "archive_chat",
+        "restore_chat",
+        "place",
+        "unplace",
+        "reorder",
+        "rename_topic_target",
+        "reorder_topic",
+        "archive_topic_target",
+        "restore_topic_target",
+        "delete_topic_target",
+    ];
+    const ENGLISH: [&str; 13] = [
+        "New Chat",
+        "New Topic",
+        "Rename Chat",
+        "Archive Chat",
+        "Restore Chat",
+        "Move Chat to Topic",
+        "Remove Chat from Topic",
+        "Move Chat to end of Topic",
+        "Rename Topic",
+        "Move Topic to end",
+        "Archive Topic",
+        "Restore Topic",
+        "Delete empty Topic",
+    ];
+    const CHINESE: [&str; 13] = [
+        "新建聊天",
+        "新建话题",
+        "重命名聊天",
+        "归档聊天",
+        "恢复聊天",
+        "将聊天移入话题",
+        "将聊天移出话题",
+        "将聊天移到话题末尾",
+        "重命名话题",
+        "将话题移到末尾",
+        "归档话题",
+        "恢复话题",
+        "删除空话题",
+    ];
+
+    #[derive(Default)]
+    struct Handles {
+        locale: Option<I18nSignal>,
+        action: Option<Signal<String>>,
+        title: Option<Signal<String>>,
+        topic: Option<Signal<String>>,
+        unread: Option<Signal<Option<usize>>>,
+        state: Option<Signal<Option<arkret_sdk::ObjectState>>>,
+        initializations: usize,
+    }
+
+    fn retained_direct_labels(handle: Rc<RefCell<Handles>>) -> Element {
+        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
+        let action = use_signal(|| {
+            handle.borrow_mut().initializations += 1;
+            "new_chat".to_owned()
+        });
+        let title = use_signal(|| {
+            handle.borrow_mut().initializations += 1;
+            RAW_TITLE.to_owned()
+        });
+        let topic = use_signal(|| {
+            handle.borrow_mut().initializations += 1;
+            RAW_TOPIC.to_owned()
+        });
+        let unread = use_signal(|| {
+            handle.borrow_mut().initializations += 1;
+            Some(7usize)
+        });
+        let state = use_signal(|| {
+            handle.borrow_mut().initializations += 1;
+            Some(arkret_sdk::ObjectState::Archived)
+        });
+        {
+            let mut handles = handle.borrow_mut();
+            handles.locale = Some(locale);
+            handles.action = Some(action);
+            handles.title = Some(title);
+            handles.topic = Some(topic);
+            handles.unread = Some(unread);
+            handles.state = Some(state);
+        }
+        // These are the production option and row presentation helpers. The
+        // session-dependent panel and authoring lifecycle are not mounted.
+        rsx! {
+            select { "aria-label": crate::i18n::tr("chat.direct_structure.action"), value: action(), {direct_action_options()} }
+            select {
+                option { value: "raw-chat", {direct_chat_option_label(&title(), unread().as_ref(), &state(), Some(&topic()))} }
+                option { value: "raw-chat-without-topic", {direct_chat_option_label(&title(), None, &None, None)} }
+            }
+        }
+    }
+
+    fn rendered_options(dom: &VirtualDom, node: &dioxus::core::VNode) -> BTreeMap<String, String> {
+        fn visit(
+            dom: &VirtualDom,
+            node: &dioxus::core::VNode,
+            template: &dioxus::core::TemplateNode,
+            options: &mut BTreeMap<String, String>,
+        ) -> String {
+            use dioxus::core::{DynamicNode, TemplateAttribute, TemplateNode};
+            match template {
+                TemplateNode::Text { text } => (*text).to_owned(),
+                TemplateNode::Element {
+                    tag,
+                    attrs,
+                    children,
+                    ..
+                } => {
+                    let text = children
+                        .iter()
+                        .map(|child| visit(dom, node, child, options))
+                        .collect::<String>();
+                    if *tag == "option" {
+                        let value = attrs
+                            .iter()
+                            .find_map(|attr| match attr {
+                                TemplateAttribute::Static {
+                                    name: "value",
+                                    value,
+                                    ..
+                                } => Some(*value),
+                                _ => None,
+                            })
+                            .expect("production option retains its wire value");
+                        options.insert(value.to_owned(), text.clone());
+                    }
+                    text
+                }
+                TemplateNode::Dynamic { id } => match &node.dynamic_nodes[*id] {
+                    DynamicNode::Text(text) => text.value.clone(),
+                    DynamicNode::Fragment(children) => children
+                        .iter()
+                        .map(|child| vnode_text(dom, child, options))
+                        .collect(),
+                    DynamicNode::Component(component) => vnode_text(
+                        dom,
+                        component
+                            .mounted_scope(*id, node, dom)
+                            .expect("mounted presentation")
+                            .root_node(),
+                        options,
+                    ),
+                    DynamicNode::Placeholder(_) => String::new(),
+                },
+            }
+        }
+        fn vnode_text(
+            dom: &VirtualDom,
+            node: &dioxus::core::VNode,
+            options: &mut BTreeMap<String, String>,
+        ) -> String {
+            node.template
+                .roots
+                .iter()
+                .map(|root| visit(dom, node, root, options))
+                .collect()
+        }
+        let mut options = BTreeMap::new();
+        vnode_text(dom, node, &mut options);
+        options
+    }
+
+    fn apply_attributes(
+        attrs: &mut BTreeMap<(usize, &'static str), String>,
+        edits: dioxus::core::Mutations,
+    ) {
+        use dioxus::core::{AttributeValue, Mutation};
+        for edit in edits.edits {
+            if let Mutation::SetAttribute {
+                id,
+                name,
+                value: AttributeValue::Text(value),
+                ..
+            } = edit
+            {
+                attrs.insert((id.0, name), value);
+            }
+        }
+    }
+
+    #[test]
+    fn retained_direct_labels_preserve_actions_typed_state_counts_and_original_metadata() {
+        let handle = Rc::new(RefCell::new(Handles::default()));
+        let mut dom = VirtualDom::new_with_props(retained_direct_labels, handle.clone());
+        let mut attrs = BTreeMap::new();
+        apply_attributes(&mut attrs, dom.rebuild_to_vec());
+        let mut locale = handle.borrow().locale.expect("locale signal");
+        let mut action = handle.borrow().action.expect("action signal");
+        let title = handle.borrow().title.expect("title signal");
+        let topic = handle.borrow().topic.expect("topic signal");
+        let mut unread = handle.borrow().unread.expect("count signal");
+        let mut state = handle.borrow().state.expect("typed state signal");
+        let action_id = attrs
+            .iter()
+            .find_map(|((id, name), value)| {
+                (*name == "aria-label" && value == "Action").then_some(*id)
+            })
+            .expect("action select");
+        for count in [None, Some(0), Some(7), Some(usize::MAX)] {
+            for object_state in [
+                None,
+                Some(arkret_sdk::ObjectState::Active),
+                Some(arkret_sdk::ObjectState::Archived),
+            ] {
+                for wire_action in ACTIONS {
+                    dom.in_runtime(|| {
+                        unread.set(count);
+                        state.set(object_state.clone());
+                        action.set(wire_action.to_owned());
+                    });
+                    apply_attributes(&mut attrs, dom.render_immediate_to_vec());
+                    let english = rendered_options(&dom, dom.base_scope().root_node());
+                    for language in [UiLocale::Zh, UiLocale::En] {
+                        dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
+                        apply_attributes(&mut attrs, dom.render_immediate_to_vec());
+                        let options = rendered_options(&dom, dom.base_scope().root_node());
+                        assert_eq!(options.len(), 15);
+                        let labels = if language == UiLocale::Zh {
+                            CHINESE
+                        } else {
+                            ENGLISH
+                        };
+                        for (value, label) in ACTIONS.into_iter().zip(labels) {
+                            assert_eq!(options.get(value).map(String::as_str), Some(label));
+                        }
+                        let suffix = count
+                            .map(|count| {
+                                if language == UiLocale::Zh {
+                                    format!("（{count} 条未读）")
+                                } else {
+                                    format!(" ({count} unread)")
+                                }
+                            })
+                            .unwrap_or_default();
+                        let archived = if object_state == Some(arkret_sdk::ObjectState::Archived) {
+                            if language == UiLocale::Zh {
+                                "（已归档）"
+                            } else {
+                                " (archived)"
+                            }
+                        } else {
+                            ""
+                        };
+                        assert_eq!(
+                            options.get("raw-chat"),
+                            Some(&format!("{RAW_TITLE}{suffix}{archived} · {RAW_TOPIC}"))
+                        );
+                        assert_eq!(
+                            options.get("raw-chat-without-topic").map(String::as_str),
+                            Some(RAW_TITLE)
+                        );
+                        assert_eq!(
+                            attrs.get(&(action_id, "value")).map(String::as_str),
+                            Some(wire_action)
+                        );
+                        dom.in_runtime(|| {
+                            assert_eq!(action(), wire_action);
+                            assert_eq!(title(), RAW_TITLE);
+                            assert_eq!(topic(), RAW_TOPIC);
+                            assert_eq!(unread(), count);
+                            assert_eq!(state(), object_state);
+                        });
+                        assert_eq!(
+                            handle.borrow().initializations,
+                            5,
+                            "locale changes retain every original signal"
+                        );
+                        if language == UiLocale::En {
+                            assert_eq!(options, english);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[component]
 fn DirectAgentReplyPreference(
     realm: String,
@@ -38,7 +333,7 @@ fn DirectAgentReplyPreference(
     }));
     rsx! {
         div { "data-testid": "direct-agent-reply-preference",
-            p { "Reply preference applies only to the selected Chat. Other permissions and encryption readiness are checked separately." }
+            p { {crate::i18n::tr("chat.direct_structure.reply_hint")} }
             button {
                 disabled: pending(),
                 onclick: move |_| {
@@ -97,7 +392,7 @@ fn DirectAgentReplyPreference(
                         pending.set(false);
                     });
                 },
-                "Allow Agent replies in this Chat"
+                {crate::i18n::tr("chat.direct_structure.allow_agent_reply")}
             }
             p { role: "status", "{status}" }
         }
@@ -568,6 +863,42 @@ async fn submit_structure(
     Ok((accepted, created_chat))
 }
 
+fn direct_action_options() -> Element {
+    rsx! {
+        option { value: "new_chat", {crate::i18n::tr("chat.direct_structure.new_chat")} }
+        option { value: "new_topic", {crate::i18n::tr("chat.direct_structure.new_topic")} }
+        option { value: "rename_chat", {crate::i18n::tr("chat.direct_structure.rename_chat")} }
+        option { value: "archive_chat", {crate::i18n::tr("chat.direct_structure.archive_chat")} }
+        option { value: "restore_chat", {crate::i18n::tr("chat.direct_structure.restore_chat")} }
+        option { value: "place", {crate::i18n::tr("chat.direct_structure.place")} }
+        option { value: "unplace", {crate::i18n::tr("chat.direct_structure.unplace")} }
+        option { value: "reorder", {crate::i18n::tr("chat.direct_structure.reorder")} }
+        option { value: "rename_topic_target", {crate::i18n::tr("chat.direct_structure.rename_topic_target")} }
+        option { value: "reorder_topic", {crate::i18n::tr("chat.direct_structure.reorder_topic")} }
+        option { value: "archive_topic_target", {crate::i18n::tr("chat.direct_structure.archive_topic_target")} }
+        option { value: "restore_topic_target", {crate::i18n::tr("chat.direct_structure.restore_topic_target")} }
+        option { value: "delete_topic_target", {crate::i18n::tr("chat.direct_structure.delete_topic_target")} }
+    }
+}
+
+fn direct_chat_option_label(
+    name: &str,
+    unread: Option<&usize>,
+    state: &Option<arkret_sdk::ObjectState>,
+    topic: Option<&str>,
+) -> Element {
+    rsx! {
+        "{name}"
+        if let Some(count) = unread {
+            {crate::i18n::tr_args("chat.direct_structure.unread_suffix", &[("count", count.to_string())])}
+        }
+        if *state == Some(arkret_sdk::ObjectState::Archived) {
+            {crate::i18n::tr("chat.direct_structure.archived_suffix")}
+        }
+        if let Some(topic) = topic { " · {topic}" }
+    }
+}
+
 #[component]
 pub(super) fn DirectStructurePanel(
     realm: String,
@@ -816,42 +1147,30 @@ pub(super) fn DirectStructurePanel(
                 }
             }
             if chat_rows.len() > 1 {
-                select { "aria-label": "Chat", value: selected(), onchange: move |e| on_select.call(e.value()),
+                select { "aria-label": crate::i18n::tr("chat.direct_structure.chat"), value: selected(), onchange: move |e| on_select.call(e.value()),
                     for (id, name, state, classification) in &chat_rows {
                         option { value: "{id}",
-                            "{name}"
-                            if let Some(count) = unread.get(id) { " ({count} unread)" }
-                            if *state == Some(arkret_sdk::ObjectState::Archived) { " (archived)" }
-                            if let Some(topic_id) = classification {
-                                " · {spaces.iter().find(|(id,_,_,_)| id == topic_id).map(|(_,name,_,_)| name.as_str()).unwrap_or(topic_id.as_str())}"
-                            }
+                            {direct_chat_option_label(
+                                name,
+                                unread.get(id),
+                                state,
+                                classification.as_ref().map(|topic_id| spaces.iter().find(|(id,_,_,_)| id == topic_id).map(|(_,name,_,_)| name.as_str()).unwrap_or(topic_id.as_str())),
+                            )}
                         }
                     }
                 }
             }
-            button { onclick: move |_| expanded.set(!expanded()), "Manage chats and topics" }
+            button { onclick: move |_| expanded.set(!expanded()), {crate::i18n::tr("chat.direct_structure.manage")} }
             if expanded() {
-                select { "aria-label": "Action", value: action(), onchange: move |e| action.set(e.value()),
-                    option { value: "new_chat", "New Chat" }
-                    option { value: "new_topic", "New Topic" }
-                    option { value: "rename_chat", "Rename Chat" }
-                    option { value: "archive_chat", "Archive Chat" }
-                    option { value: "restore_chat", "Restore Chat" }
-                    option { value: "place", "Move Chat to Topic" }
-                    option { value: "unplace", "Remove Chat from Topic" }
-                    option { value: "reorder", "Move Chat to end of Topic" }
-                    option { value: "rename_topic_target", "Rename Topic" }
-                    option { value: "reorder_topic", "Move Topic to end" }
-                    option { value: "archive_topic_target", "Archive Topic" }
-                    option { value: "restore_topic_target", "Restore Topic" }
-                    option { value: "delete_topic_target", "Delete empty Topic" }
+                select { "aria-label": crate::i18n::tr("chat.direct_structure.action"), value: action(), onchange: move |e| action.set(e.value()),
+                    {direct_action_options()}
                 }
                 if matches!(action().as_str(), "new_chat" | "new_topic" | "rename_chat" | "rename_topic_target") {
-                    input { "aria-label": "Title", placeholder: "Title", value: title(), oninput: move |e| title.set(e.value()) }
+                    input { "aria-label": crate::i18n::tr("chat.label.title"), placeholder: crate::i18n::tr("chat.label.title"), value: title(), oninput: move |e| title.set(e.value()) }
                 }
                 if matches!(action().as_str(), "place" | "reorder") {
-                    select { "aria-label": "Topic", value: topic(), onchange: move |e| topic.set(e.value()),
-                        option { value: "", "Select Topic" }
+                    select { "aria-label": crate::i18n::tr("chat.direct_structure.topic"), value: topic(), onchange: move |e| topic.set(e.value()),
+                        option { value: "", {crate::i18n::tr("chat.direct_structure.select_topic")} }
                         for (id, name, kind, parent) in &spaces {
                             if kind == "topic" && parent.is_none()
                                 && arkret_sdk::SpaceId::new(id).ok().and_then(|id| view.spaces.get(&id)).is_some_and(|space| space.state.as_ref().is_none_or(|state| state == &arkret_sdk::SpaceState::Active))
@@ -860,8 +1179,8 @@ pub(super) fn DirectStructurePanel(
                     }
                 }
                 if matches!(action().as_str(), "rename_topic_target" | "reorder_topic" | "archive_topic_target" | "restore_topic_target" | "delete_topic_target") {
-                    select { "aria-label": "Topic", value: topic_target(), onchange: move |e| topic_target.set(e.value()),
-                        option { value: "", "Select Topic" }
+                    select { "aria-label": crate::i18n::tr("chat.direct_structure.topic"), value: topic_target(), onchange: move |e| topic_target.set(e.value()),
+                        option { value: "", {crate::i18n::tr("chat.direct_structure.select_topic")} }
                         for (id, name, _, _) in &spaces { option { value: "{id}", "{name}" } }
                     }
                 }
@@ -892,7 +1211,7 @@ pub(super) fn DirectStructurePanel(
                                 pending.set(false);
                             });
                         }
-                    }, "Save"
+                    }, {crate::i18n::tr("common.save")}
                 }
                 p { role: "status", "data-testid": "direct-structure-status", "{status}" }
             }

@@ -2265,6 +2265,162 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("circles.controls.retire", "永久停用 Circle");
 
+    dict.set(
+        "chat.direct_structure.reply_hint",
+        "回复偏好仅适用于所选聊天。其他权限和加密就绪状态会单独检查。",
+    );
+    dict.set(
+        "chat.direct_structure.allow_agent_reply",
+        "允许 Agent 在此聊天中回复",
+    );
+    dict.set("chat.direct_structure.chat", "聊天");
+    dict.set("chat.direct_structure.manage", "管理聊天和话题");
+    dict.set("chat.direct_structure.action", "操作");
+    dict.set("chat.direct_structure.topic", "话题");
+    dict.set("chat.direct_structure.select_topic", "选择话题");
+    dict.set("chat.direct_structure.new_chat", "新建聊天");
+    dict.set("chat.direct_structure.new_topic", "新建话题");
+    dict.set("chat.direct_structure.rename_chat", "重命名聊天");
+    dict.set("chat.direct_structure.archive_chat", "归档聊天");
+    dict.set("chat.direct_structure.restore_chat", "恢复聊天");
+    dict.set("chat.direct_structure.place", "将聊天移入话题");
+    dict.set("chat.direct_structure.unplace", "将聊天移出话题");
+    dict.set("chat.direct_structure.reorder", "将聊天移到话题末尾");
+    dict.set("chat.direct_structure.rename_topic_target", "重命名话题");
+    dict.set("chat.direct_structure.reorder_topic", "将话题移到末尾");
+    dict.set("chat.direct_structure.archive_topic_target", "归档话题");
+    dict.set("chat.direct_structure.restore_topic_target", "恢复话题");
+    dict.set("chat.direct_structure.delete_topic_target", "删除空话题");
+    dict.set("chat.direct_structure.unread_suffix", "（{count} 条未读）");
+    dict.set("chat.direct_structure.archived_suffix", "（已归档）");
+    dict.set("realm_admin.roster.pending_badge", "待处理邀请");
+    dict.set("realm_admin.roster.member_state", "成员状态");
+    dict.set("realm_admin.roster.display", "显示名称");
+    dict.set("realm_admin.roster.subject", "主体");
+    dict.set("realm_admin.roster.add_agent", "将 Agent 添加到 Realm");
+    dict.set(
+        "realm_admin.roster.add_agent_hint",
+        "选择你的一个活跃 Agent。它会立即在你的控制下加入，不会收到邀请。",
+    );
+    dict.set(
+        "realm_admin.roster.adding_agent",
+        "正在将 Agent 添加到 Realm…",
+    );
+    dict.set(
+        "realm_admin.roster.no_available_agents",
+        "没有可添加的 Agent。",
+    );
+    dict.set(
+        "realm_admin.roster.no_available_agents_hint",
+        "请在设置中创建或激活 Agent，或先从此 Realm 移除已有 Agent。",
+    );
+    dict.set("realm_admin.roster.adding", "正在添加…");
+    dict.set("realm_admin.roster.add", "添加");
+    dict.set("realm_admin.roster.invite_member", "邀请成员");
+    dict.set(
+        "realm_admin.roster.invite_target_placeholder",
+        "alice:example.com",
+    );
+    dict.set("realm_admin.roster.send_invite", "发送邀请");
+    dict.set("realm_admin.roster.pending_count", "{total} 个待处理");
+    dict.set("realm_admin.roster.add_my_agent", "添加我的一个 Agent");
+    dict.set("realm_admin.roster.add_agent_short", "添加 Agent");
+    dict.set(
+        "realm_admin.roster.actions_unavailable",
+        "此账号无法使用成员管理操作。",
+    );
+    dict.set("realm_admin.roster.search", "搜索成员…");
+    dict.set("realm_admin.roster.sections", "成员分区");
+    dict.set("realm_admin.roster.owners", "所有者");
+    dict.set("realm_admin.roster.admins", "管理员");
+    dict.set("realm_admin.roster.my_agents", "我的 Agent");
+    dict.set("realm_admin.roster.pending_invites", "待处理邀请");
+    dict.set("realm_admin.roster.shown", "已显示 {total} 个");
+    dict.set(
+        "realm_admin.roster.pending_no_match",
+        "没有符合搜索条件的待处理邀请。",
+    );
+    dict.set("realm_admin.roster.owner", "所有者");
+    dict.set("realm_admin.roster.admin", "管理员");
+    dict.set("realm_admin.roster.agent_count", "{total} 个 AI");
+    dict.set("realm_admin.roster.my_name", "我的备注名");
+    dict.set("realm_admin.roster.note", "备注");
+    dict.set("realm_admin.roster.agents", "AI Agent");
+    dict.set("realm_admin.roster.agents_colon", "AI Agent：");
+    dict.set(
+        "realm_admin.roster.my_agents_hint",
+        "属于此 Realm 成员的你的 Agent。",
+    );
+    dict.set("realm_admin.roster.total", "共 {total} 个");
+    dict.set(
+        "realm_admin.roster.no_realm_agents",
+        "此 Realm 中没有你的 Agent。",
+    );
+    dict.set(
+        "realm_admin.roster.no_realm_agents_hint",
+        "添加你已有的活跃 Agent，无需邀请或 Agent 批准。",
+    );
+    dict.set("realm_admin.roster.remove", "移除");
+    dict.set("realm_admin.roster.interaction", "群组互动");
+    dict.set("realm_admin.roster.private", "私密");
+    dict.set("realm_admin.roster.public", "公开");
+    dict.set("realm_admin.roster.reply", "以 Agent 身份回复");
+    dict.set("realm_admin.roster.mention", "接受 @提及");
+    dict.set("realm_admin.roster.act_on_behalf", "代表我执行操作");
+    dict.set(
+        "realm_admin.roster.load_more",
+        "加载更多 — 已显示 {visible}/{total} 组",
+    );
+    dict.set("realm_admin.roster.cancel_direct", "取消待处理的直接邀请");
+    dict.set(
+        "realm_admin.roster.revoke_token",
+        "撤销待处理的令牌或 3PID 邀请",
+    );
+    dict.set(
+        "realm_admin.roster.invite_id_unavailable",
+        "邀请 ID 尚不可用",
+    );
+    dict.set("realm_admin.roster.pending", "待处理");
+    dict.set("realm_admin.roster.invitation_sent", "邀请已发送");
+    dict.set("realm_admin.roster.cancel_invite", "取消邀请");
+    dict.set("realm_admin.roster.revoke_invite", "撤销邀请");
+    dict.set(
+        "realm_admin.roster.members_description",
+        "没有所有者或管理员权限的活跃 Realm 成员。",
+    );
+    dict.set(
+        "realm_admin.roster.owners_description",
+        "具有最高治理权限的 Realm 所有者。",
+    );
+    dict.set(
+        "realm_admin.roster.admins_description",
+        "具有管理权限的 Realm 管理员。",
+    );
+    dict.set(
+        "realm_admin.roster.my_agents_description",
+        "管理你的 Agent 及其在此 Realm 中的行为。",
+    );
+    dict.set(
+        "realm_admin.roster.pending_invites_description",
+        "已为此 Realm 发出且尚未被接受的邀请。",
+    );
+    dict.set("realm_admin.roster.realm_owner", "Realm 所有者");
+    dict.set("realm_admin.roster.realm_admin", "Realm 管理员");
+    dict.set("realm_admin.roster.realm_member", "Realm 成员");
+    dict.set("realm_admin.roster.handles", "账号标识");
+    dict.set("realm_admin.roster.other_handles", "其他账号标识");
+    dict.set("realm_admin.roster.mention_allowed", "成员可以 @提及");
+    dict.set("realm_admin.roster.mention_owner_only", "仅控制者");
+    dict.set("realm_admin.roster.mention_unknown", "@提及策略未知");
+    dict.set("realm_admin.roster.agent_awaiting", "等待运行时");
+    dict.set("realm_admin.roster.agent_ready", "就绪");
+    dict.set("realm_admin.roster.agent_replacing", "等待替换运行时");
+    dict.set("realm_admin.roster.agent_active", "活跃");
+    dict.set("realm_admin.roster.agent_expired", "配对已过期");
+    dict.set("realm_admin.roster.agent_paused", "已暂停");
+    dict.set("realm_admin.roster.agent_deactivated", "已停用");
+    dict.set("realm_admin.roster.in_realm", "已在 Realm 中");
+
     add_r3_error_keys_zh(&mut dict);
     add_generic_error_keys_zh(&mut dict);
 

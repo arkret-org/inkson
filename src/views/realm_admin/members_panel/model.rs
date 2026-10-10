@@ -87,14 +87,6 @@ pub(super) enum AgentMentionPolicy {
 }
 
 impl AgentMentionPolicy {
-    pub(super) fn label(self) -> &'static str {
-        match self {
-            Self::Allowed => "Members can @",
-            Self::OwnerOnly => "Controller only",
-            Self::Unknown => "@ policy unknown",
-        }
-    }
-
     pub(super) fn badge_class(self) -> &'static str {
         match self {
             Self::Allowed => "badge green",
@@ -114,28 +106,6 @@ pub(super) enum MemberRosterSection {
 }
 
 impl MemberRosterSection {
-    pub(super) fn title(self) -> &'static str {
-        match self {
-            Self::Members => "Members",
-            Self::Owners => "Owners",
-            Self::Admins => "Admins",
-            Self::MyAgents => "My agents",
-            Self::PendingInvites => "Pending invites",
-        }
-    }
-
-    pub(super) fn description(self) -> &'static str {
-        match self {
-            Self::Members => "Active Realm members without owner or admin authority.",
-            Self::Owners => "Realm owners with top-level governance authority.",
-            Self::Admins => "Realm admins with management authority.",
-            Self::MyAgents => "Manage your agents and their behavior in this Realm.",
-            Self::PendingInvites => {
-                "Invitations sent for this Realm that have not been accepted yet."
-            }
-        }
-    }
-
     /// Class for this section's entry in the panel's left menu, given which
     /// section is currently selected. One place decides what "active" looks
     /// like, instead of five copies of the same conditional in the component.
@@ -254,16 +224,6 @@ impl MemberProfile {
     /// never upgrades the tier out of "degraded".
     pub(super) fn display_tier(&self) -> crate::views::member_display::MemberDisplayTier {
         self.rendered_public().1
-    }
-
-    pub(super) fn role_label(&self) -> &'static str {
-        if self.is_owner {
-            "Realm owner"
-        } else if self.is_admin {
-            "Realm admin"
-        } else {
-            "Realm member"
-        }
     }
 
     pub(super) fn normalized_membership(&self) -> Option<&str> {
@@ -962,17 +922,6 @@ pub(super) fn member_handles_for_line(handles: &[String], primary_label: &str) -
             .cloned()
             .collect(),
         _ => handles.to_vec(),
-    }
-}
-
-pub(super) fn member_handles_line_label(
-    all_handles: &[String],
-    visible_handles: &[String],
-) -> &'static str {
-    if visible_handles.len() == all_handles.len() {
-        "Handles"
-    } else {
-        "Other handles"
     }
 }
 

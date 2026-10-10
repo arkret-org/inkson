@@ -31,6 +31,63 @@ use controller::*;
 use effects::use_realm_members_effects;
 use model::*;
 
+// These helpers translate presentation only; roster classification and wire values stay in the
+// model.
+fn member_section_title(section: MemberRosterSection) -> String {
+    crate::i18n::tr(match section {
+        MemberRosterSection::Members => "realm_admin.members",
+        MemberRosterSection::Owners => "realm_admin.roster.owners",
+        MemberRosterSection::Admins => "realm_admin.roster.admins",
+        MemberRosterSection::MyAgents => "realm_admin.roster.my_agents",
+        MemberRosterSection::PendingInvites => "realm_admin.roster.pending_invites",
+    })
+}
+fn member_section_description(section: MemberRosterSection) -> String {
+    crate::i18n::tr(match section {
+        MemberRosterSection::Members => "realm_admin.roster.members_description",
+        MemberRosterSection::Owners => "realm_admin.roster.owners_description",
+        MemberRosterSection::Admins => "realm_admin.roster.admins_description",
+        MemberRosterSection::MyAgents => "realm_admin.roster.my_agents_description",
+        MemberRosterSection::PendingInvites => "realm_admin.roster.pending_invites_description",
+    })
+}
+fn member_role_label(profile: &MemberProfile) -> String {
+    crate::i18n::tr(if profile.is_owner {
+        "realm_admin.roster.realm_owner"
+    } else if profile.is_admin {
+        "realm_admin.roster.realm_admin"
+    } else {
+        "realm_admin.roster.realm_member"
+    })
+}
+fn member_handles_label(all: &[String], visible: &[String]) -> String {
+    crate::i18n::tr(if all.len() == visible.len() {
+        "realm_admin.roster.handles"
+    } else {
+        "realm_admin.roster.other_handles"
+    })
+}
+fn member_mention_label(policy: AgentMentionPolicy) -> String {
+    crate::i18n::tr(match policy {
+        AgentMentionPolicy::Allowed => "realm_admin.roster.mention_allowed",
+        AgentMentionPolicy::OwnerOnly => "realm_admin.roster.mention_owner_only",
+        AgentMentionPolicy::Unknown => "realm_admin.roster.mention_unknown",
+    })
+}
+fn member_agent_state_label(state: &str) -> String {
+    let key = match state {
+        "pending" | "pending_runtime_key" => "realm_admin.roster.agent_awaiting",
+        "ready" => "realm_admin.roster.agent_ready",
+        "replacing" => "realm_admin.roster.agent_replacing",
+        "active" => "realm_admin.roster.agent_active",
+        "pairing_expired" => "realm_admin.roster.agent_expired",
+        "paused" => "realm_admin.roster.agent_paused",
+        "deactivated" => "realm_admin.roster.agent_deactivated",
+        other => return other.to_owned(),
+    };
+    crate::i18n::tr(key)
+}
+
 #[component]
 fn MemberRowActions(
     controller: RealmMembersController,
@@ -226,20 +283,20 @@ fn PendingInviteRow(
         && !invite_id.trim().is_empty();
     let cancel_title = if can_terminate_this_invite {
         if is_direct_invite {
-            "Cancel pending direct invite"
+            crate::i18n::tr("realm_admin.roster.cancel_direct")
         } else {
-            "Revoke pending token or 3PID invite"
+            crate::i18n::tr("realm_admin.roster.revoke_token")
         }
     } else {
-        "Invite id is not available yet"
+        crate::i18n::tr("realm_admin.roster.invite_id_unavailable")
     };
     let state = profile
         .normalized_membership()
         .unwrap_or("invite")
         .to_owned();
     let state_label = match state.as_str() {
-        "pending" | "pending_invite" => "Pending",
-        _ => "Invitation sent",
+        "pending" | "pending_invite" => crate::i18n::tr("realm_admin.roster.pending"),
+        _ => crate::i18n::tr("realm_admin.roster.invitation_sent"),
     };
     let display_name = profile.display_name.clone().unwrap_or_default();
     let subject_id = profile.subject_id.clone().unwrap_or_default();
@@ -251,7 +308,7 @@ fn PendingInviteRow(
     let show_member_identity =
         member_line_identity_visible(&member_identity_label, &member_label, &handles);
     let visible_handles = member_handles_for_line(&handles, &member_label);
-    let handles_label = member_handles_line_label(&handles, &visible_handles);
+    let handles_label = member_handles_label(&handles, &visible_handles);
     let subject_label = member_identity_fallback_label(&subject_id);
     rsx! {
         div {
@@ -285,7 +342,7 @@ fn PendingInviteRow(
                                 "{badge}"
                             }
                         }
-                        span { class: "badge amber", "Pending invite" }
+                        span { class: "badge amber", {crate::i18n::tr("realm_admin.roster.pending_badge")} }
                     }
                     div { class: "muted member-row-sub member-profile-lines",
                         div { class: "member-profile-line",
@@ -295,12 +352,12 @@ fn PendingInviteRow(
                             }
                         }
                         div { class: "member-profile-line",
-                            span { class: "member-profile-label", "Member state" }
+                            span { class: "member-profile-label", {crate::i18n::tr("realm_admin.roster.member_state")} }
                             span { "{state}" }
                         }
                         if !display_name.is_empty() && display_name != member_label {
                             div { class: "member-profile-line",
-                                span { class: "member-profile-label", "Display" }
+                                span { class: "member-profile-label", {crate::i18n::tr("realm_admin.roster.display")} }
                                 span { "{display_name}" }
                             }
                         }
@@ -314,7 +371,7 @@ fn PendingInviteRow(
                         }
                         if !subject_id.is_empty() && subject_id != member {
                             div { class: "member-profile-line",
-                                span { class: "member-profile-label", "Subject" }
+                                span { class: "member-profile-label", {crate::i18n::tr("realm_admin.roster.subject")} }
                                 span { title: "{subject_id}", "{subject_label}" }
                             }
                         }
@@ -353,7 +410,7 @@ fn PendingInviteRow(
                                 );
                             }
                         },
-                        {if is_direct_invite { "Cancel invite" } else { "Revoke invite" }}
+                        {if is_direct_invite { crate::i18n::tr("realm_admin.roster.cancel_invite") } else { crate::i18n::tr("realm_admin.roster.revoke_invite") }}
                     }
                 }
             }
@@ -466,8 +523,8 @@ pub fn RealmMembersPanel(
         query: &member_filter(),
         visible_limit: member_visible(),
     });
-    let selected_section_title = selected_section.title();
-    let selected_section_description = selected_section.description();
+    let selected_section_title = member_section_title(selected_section);
+    let selected_section_description = member_section_description(selected_section);
     let members_section_class = MemberRosterSection::Members.menu_item_class(selected_section);
     let owners_section_class = MemberRosterSection::Owners.menu_item_class(selected_section);
     let admins_section_class = MemberRosterSection::Admins.menu_item_class(selected_section);
@@ -484,14 +541,14 @@ pub fn RealmMembersPanel(
                         overlay_class: "modal-backdrop",
                         surface_class: "modal invite-modal",
                         overlay_test_id: Some("add-realm-agent-modal".to_owned()),
-                        aria_label: "Add agent to Realm",
+                        aria_label: crate::i18n::tr("realm_admin.roster.add_agent"),
                         on_dismiss: move |_| agent_add_modal_open.set(false),
                         div { class: "modal-head",
-                            h3 { "Add agent to Realm" }
+                            h3 { {crate::i18n::tr("realm_admin.roster.add_agent")} }
                             Button {
                                 variant: ButtonVariant::Secondary,
                                 class: "icon-button close",
-                                "aria-label": "Close",
+                                "aria-label": crate::i18n::tr("common.close"),
                                 "data-testid": "add-realm-agent-modal-close",
                                 onclick: move |_| agent_add_modal_open.set(false),
                                 "\u{2715}"
@@ -499,12 +556,12 @@ pub fn RealmMembersPanel(
                         }
                         div { class: "modal-body workflow-form",
                             p { class: "muted",
-                                "Choose one of your active agents. It joins immediately under your control and does not receive an invitation."
+                                {crate::i18n::tr("realm_admin.roster.add_agent_hint")}
                             }
                             match agent_add_state() {
                                 AgentAddState::Pending(_) => rsx! {
                                     div { role: "status", "aria-live": "polite", "data-testid": "add-realm-agent-status",
-                                        "Adding agent to Realm…"
+                                        {crate::i18n::tr("realm_admin.roster.adding_agent")}
                                     }
                                 },
                                 AgentAddState::Failed(message) => rsx! {
@@ -517,8 +574,8 @@ pub fn RealmMembersPanel(
                             if available_self_agent_rows.is_empty() {
                                 div { class: "members-empty compact", "data-testid": "available-realm-agents-empty",
                                     div { class: "members-empty-icon", crate::components::UiIcon { name: "bot" } }
-                                    div { class: "members-empty-title", "No agents available to add." }
-                                    div { class: "muted members-empty-hint", "Create or activate an agent in Settings, or remove an existing agent from this Realm first." }
+                                    div { class: "members-empty-title", {crate::i18n::tr("realm_admin.roster.no_available_agents")} }
+                                    div { class: "muted members-empty-hint", {crate::i18n::tr("realm_admin.roster.no_available_agents_hint")} }
                                 }
                             } else {
                                 div { class: "member-self-agent-list", "data-testid": "available-realm-agent-list",
@@ -527,7 +584,7 @@ pub fn RealmMembersPanel(
                                             let agent_id = available_agent.agent_id.clone();
                                             let agent_title = available_agent.display_name.clone();
                                             let status_class = crate::views::agents::agent_state_badge_class(&available_agent.status);
-                                            let status_label = crate::views::agents::agent_state_label(&available_agent.status).to_owned();
+                                            let status_label = member_agent_state_label(&available_agent.status);
                                             rsx! {
                                                 div { class: "member-self-agent-row", "data-testid": "available-realm-agent-row", "data-agent-id": "{agent_id}",
                                                     div { class: "member-agent-summary",
@@ -571,9 +628,9 @@ pub fn RealmMembersPanel(
                                                         },
                                                         if matches!(&*agent_add_state.read(), AgentAddState::Pending(target)
                                                             if owned_agent_actor_key(&agent_id).as_ref() == Some(target)) {
-                                                            "Adding…"
+                                                            {crate::i18n::tr("realm_admin.roster.adding")}
                                                         } else {
-                                                            "Add"
+                                                            {crate::i18n::tr("realm_admin.roster.add")}
                                                         }
                                                     }
                                                 }
@@ -590,14 +647,14 @@ pub fn RealmMembersPanel(
                         overlay_class: "modal-backdrop",
                         surface_class: "modal invite-modal",
                         overlay_test_id: Some("invite-member-modal".to_owned()),
-                        aria_label: "Invite member",
+                        aria_label: crate::i18n::tr("realm_admin.roster.invite_member"),
                         on_dismiss: move |_| invite_modal_open.set(false),
                             div { class: "modal-head",
-                                h3 { "Invite member" }
+                                h3 { {crate::i18n::tr("realm_admin.roster.invite_member")} }
                                 Button {
                                     variant: ButtonVariant::Secondary,
                                     class: "icon-button close",
-                                    "aria-label": "Close",
+                                    "aria-label": crate::i18n::tr("common.close"),
                                     "data-testid": "invite-modal-close",
                                     onclick: move |_| invite_modal_open.set(false),
                                     "\u{2715}"
@@ -708,7 +765,7 @@ pub fn RealmMembersPanel(
                                         id: "invite-target-input",
                                         "data-testid": "invite-target-input",
                                         value: "{invite_target}",
-                                        placeholder: "alice:example.com",
+                                        placeholder: crate::i18n::tr("realm_admin.roster.invite_target_placeholder"),
                                         oninput: move |event: FormEvent| invite_target.set(event.value()),
                                     }
                                     div { class: "muted members-invite-hint",
@@ -721,7 +778,7 @@ pub fn RealmMembersPanel(
                                     variant: ButtonVariant::Secondary,
                                     "data-testid": "invite-modal-cancel",
                                     onclick: move |_| invite_modal_open.set(false),
-                                    "Cancel"
+                                    {crate::i18n::tr("common.cancel")}
                                 }
                                 Button {
                                     variant: ButtonVariant::Primary,
@@ -743,7 +800,7 @@ pub fn RealmMembersPanel(
                                             );
                                         }
                                     },
-                                    "Send Invite"
+                                    {crate::i18n::tr("realm_admin.roster.send_invite")}
                                 }
                             }
                     }
@@ -751,7 +808,7 @@ pub fn RealmMembersPanel(
 
                 div { class: "event member-list-card", "data-testid": "member-table",
                     div { class: "event-head",
-                        span { "Members" }
+                        span { {crate::i18n::tr("realm_admin.members")} }
                         div { class: "member-head-actions",
                             span {
                                 class: "badge member-count-badge",
@@ -762,7 +819,7 @@ pub fn RealmMembersPanel(
                                 span {
                                     class: "badge member-pending-count-badge",
                                     "data-testid": "realm-pending-invite-count",
-                                    "{total_pending_invites} pending"
+                                    {crate::i18n::tr("realm_admin.roster.pending_count").replace("{total}", &total_pending_invites.to_string())}
                                 }
                             }
                             if selected_section == MemberRosterSection::MyAgents {
@@ -771,8 +828,8 @@ pub fn RealmMembersPanel(
                                     size: ButtonSize::Sm,
                                     class: "member-head-icon-btn-accent",
                                     "data-testid": "open-add-realm-agent-modal-button",
-                                    title: "Add one of my agents",
-                                    "aria-label": "Add agent to Realm",
+                                    title: crate::i18n::tr("realm_admin.roster.add_my_agent"),
+                                    "aria-label": crate::i18n::tr("realm_admin.roster.add_agent"),
                                     onclick: move |_| {
                                         if !agent_add_state.read().is_pending() {
                                             agent_add_state.set(AgentAddState::Idle);
@@ -780,7 +837,7 @@ pub fn RealmMembersPanel(
                                         agent_add_modal_open.set(true);
                                     },
                                     crate::components::UiIcon { name: "plus" }
-                                    "Add agent"
+                                    {crate::i18n::tr("realm_admin.roster.add_agent_short")}
                                 }
                             } else if can_invite {
                                 Button {
@@ -788,8 +845,8 @@ pub fn RealmMembersPanel(
                                     size: ButtonSize::IconSm,
                                     class: "member-head-icon-btn member-head-icon-btn-accent",
                                     "data-testid": "open-invite-modal-button",
-                                    title: "Invite member",
-                                    "aria-label": "Invite member",
+                                    title: crate::i18n::tr("realm_admin.roster.invite_member"),
+                                    "aria-label": crate::i18n::tr("realm_admin.roster.invite_member"),
                                     onclick: move |_| invite_modal_open.set(true),
                                     crate::components::UiIcon { name: "plus" }
                                 }
@@ -830,7 +887,7 @@ pub fn RealmMembersPanel(
                         div {
                             class: "muted",
                             "data-testid": "realm-member-actions-hidden",
-                            "Member-management actions are not available for this account."
+                            {crate::i18n::tr("realm_admin.roster.actions_unavailable")}
                         }
                     }
                     if show_search {
@@ -838,7 +895,7 @@ pub fn RealmMembersPanel(
                             class: "member-search-input",
                             "data-testid": "member-search-input",
                             value: "{member_filter}",
-                            placeholder: "Search members…",
+                            placeholder: crate::i18n::tr("realm_admin.roster.search"),
                             oninput: move |event: FormEvent| {
                                 member_filter.set(event.value());
                                 member_visible.set(MEMBER_PAGE_SIZE);
@@ -846,7 +903,7 @@ pub fn RealmMembersPanel(
                         }
                     }
                     div { class: "members-admin-layout",
-                        nav { class: "members-admin-menu", "aria-label": "Member sections",
+                        nav { class: "members-admin-menu", "aria-label": crate::i18n::tr("realm_admin.roster.sections"),
                             button {
                                 class: "{members_section_class}",
                                 "data-testid": "members-section-members",
@@ -854,7 +911,7 @@ pub fn RealmMembersPanel(
                                     member_roster_section.set(MemberRosterSection::Members);
                                     member_visible.set(MEMBER_PAGE_SIZE);
                                 },
-                                span { "Members" }
+                                span { {crate::i18n::tr("realm_admin.members")} }
                                 span { class: "badge", "{total_regular_members}" }
                             }
                             button {
@@ -864,7 +921,7 @@ pub fn RealmMembersPanel(
                                     member_roster_section.set(MemberRosterSection::Owners);
                                     member_visible.set(MEMBER_PAGE_SIZE);
                                 },
-                                span { "Owners" }
+                                span { {crate::i18n::tr("realm_admin.roster.owners")} }
                                 span { class: "badge", "{total_owner_members}" }
                             }
                             button {
@@ -874,7 +931,7 @@ pub fn RealmMembersPanel(
                                     member_roster_section.set(MemberRosterSection::Admins);
                                     member_visible.set(MEMBER_PAGE_SIZE);
                                 },
-                                span { "Admins" }
+                                span { {crate::i18n::tr("realm_admin.roster.admins")} }
                                 span { class: "badge", "{total_admin_members}" }
                             }
                             button {
@@ -885,7 +942,7 @@ pub fn RealmMembersPanel(
                                     member_filter.set(String::new());
                                     member_visible.set(MEMBER_PAGE_SIZE);
                                 },
-                                span { "My agents" }
+                                span { {crate::i18n::tr("realm_admin.roster.my_agents")} }
                                 span { class: "badge", "{self_realm_agent_rows.len()}" }
                             }
                             button {
@@ -895,7 +952,7 @@ pub fn RealmMembersPanel(
                                     member_roster_section.set(MemberRosterSection::PendingInvites);
                                     member_visible.set(MEMBER_PAGE_SIZE);
                                 },
-                                span { "Pending invites" }
+                                span { {crate::i18n::tr("realm_admin.roster.pending_invites")} }
                                 span { class: "badge member-pending-count-badge", "{total_pending_invites}" }
                             }
                         }
@@ -908,7 +965,7 @@ pub fn RealmMembersPanel(
                                 span {
                                     class: "badge member-count-badge",
                                     "data-testid": "member-section-visible-count",
-                                    "{selected_section_visible_count} shown"
+                                    {crate::i18n::tr("realm_admin.roster.shown").replace("{total}", &selected_section_visible_count.to_string())}
                                 }
                             }
                             if selected_section == MemberRosterSection::PendingInvites {
@@ -919,7 +976,7 @@ pub fn RealmMembersPanel(
                                         div {
                                             class: "muted member-pending-invite-empty",
                                             "data-testid": "pending-invites-no-match",
-                                            "No pending invites match your search."
+                                            {crate::i18n::tr("realm_admin.roster.pending_no_match")}
                                         }
                                     }
                                     for invite in visible_pending_invites {
@@ -952,7 +1009,7 @@ pub fn RealmMembersPanel(
                                 .avatar_blob_ref
                                 .as_ref()
                                 .map(ToString::to_string);
-                            let role_label = member_profile.role_label();
+                            let role_label = member_role_label(&member_profile);
                             let remark_name = member_profile.remark_name.clone().unwrap_or_default();
                             let remark_note = member_profile.remark_note.clone().unwrap_or_default();
                             let display_name = member_profile.display_name.clone().unwrap_or_default();
@@ -965,7 +1022,7 @@ pub fn RealmMembersPanel(
                             let show_member_identity =
                                 member_line_identity_visible(&member_identity_label, &member_label, &handles);
                             let visible_handles = member_handles_for_line(&handles, &member_label);
-                            let handles_label = member_handles_line_label(&handles, &visible_handles);
+                            let handles_label = member_handles_label(&handles, &visible_handles);
                             let subject_label = member_identity_fallback_label(&subject_id);
                             let self_leave_reason = if is_self {
                                 self_leave_disabled_reason.clone()
@@ -1028,9 +1085,9 @@ pub fn RealmMembersPanel(
                                                         }
                                                     }
                                                     if member_profile.is_owner {
-                                                        span { class: "badge amber", "Owner" }
+                                                        span { class: "badge amber", {crate::i18n::tr("realm_admin.roster.owner")} }
                                                     } else if member_profile.is_admin {
-                                                        span { class: "badge blue", "Admin" }
+                                                        span { class: "badge blue", {crate::i18n::tr("realm_admin.roster.admin")} }
                                                     }
                                                     if member_profile.confusable_contact_warning {
                                                         span {
@@ -1044,7 +1101,7 @@ pub fn RealmMembersPanel(
                                                         span {
                                                             class: "badge blue",
                                                             "data-testid": "member-agent-count",
-                                                            "{group.agents.len()} AI"
+                                                            {crate::i18n::tr("realm_admin.roster.agent_count").replace("{total}", &group.agents.len().to_string())}
                                                         }
                                                     }
                                                 }
@@ -1057,13 +1114,13 @@ pub fn RealmMembersPanel(
                                                     }
                                                     if !remark_name.is_empty() && remark_name != public_label {
                                                         div { class: "member-profile-line",
-                                                            span { class: "member-profile-label", "My name" }
+                                                            span { class: "member-profile-label", {crate::i18n::tr("realm_admin.roster.my_name")} }
                                                             span { "{remark_name}" }
                                                         }
                                                     }
                                                     if !display_name.is_empty() && display_name != member_label {
                                                         div { class: "member-profile-line",
-                                                            span { class: "member-profile-label", "Display" }
+                                                            span { class: "member-profile-label", {crate::i18n::tr("realm_admin.roster.display")} }
                                                             span { "{display_name}" }
                                                         }
                                                     }
@@ -1077,13 +1134,13 @@ pub fn RealmMembersPanel(
                                                     }
                                                     if !remark_note.is_empty() {
                                                         div { class: "member-profile-line",
-                                                            span { class: "member-profile-label", "Note" }
+                                                            span { class: "member-profile-label", {crate::i18n::tr("realm_admin.roster.note")} }
                                                             span { "{remark_note}" }
                                                         }
                                                     }
                                                     if !subject_id.is_empty() && subject_id != member {
                                                         div { class: "member-profile-line",
-                                                            span { class: "member-profile-label", "Subject" }
+                                                            span { class: "member-profile-label", {crate::i18n::tr("realm_admin.roster.subject")} }
                                                             span { title: "{subject_id}", "{subject_label}" }
                                                         }
                                                     }
@@ -1107,16 +1164,16 @@ pub fn RealmMembersPanel(
                                         div { class: "member-self-agent-settings", "data-testid": "member-self-agent-settings",
                                             div { class: "member-self-agent-settings-head",
                                                 div {
-                                                    div { class: "entity-title", "AI agents" }
-                                                    div { class: "muted", "Your agents that are members of this Realm." }
+                                                    div { class: "entity-title", {crate::i18n::tr("realm_admin.roster.agents")} }
+                                                    div { class: "muted", {crate::i18n::tr("realm_admin.roster.my_agents_hint")} }
                                                 }
-                                                span { class: "badge", "{self_realm_agent_rows.len()} total" }
+                                                span { class: "badge", {crate::i18n::tr("realm_admin.roster.total").replace("{total}", &self_realm_agent_rows.len().to_string())} }
                                             }
                                             if self_realm_agent_rows.is_empty() {
                                                 div { class: "members-empty compact", "data-testid": "member-self-agent-empty",
                                                     div { class: "members-empty-icon", crate::components::UiIcon { name: "bot" } }
-                                                    div { class: "members-empty-title", "No agents in this Realm." }
-                                                    div { class: "muted members-empty-hint", "Add one of your existing active agents. No invitation or agent approval is required." }
+                                                    div { class: "members-empty-title", {crate::i18n::tr("realm_admin.roster.no_realm_agents")} }
+                                                    div { class: "muted members-empty-hint", {crate::i18n::tr("realm_admin.roster.no_realm_agents_hint")} }
                                                     Button {
                                                         variant: ButtonVariant::Primary,
                                                         size: ButtonSize::Sm,
@@ -1127,7 +1184,7 @@ pub fn RealmMembersPanel(
                                                             }
                                                             agent_add_modal_open.set(true);
                                                         },
-                                                        "Add agent"
+                                                        {crate::i18n::tr("realm_admin.roster.add_agent_short")}
                                                     }
                                                 }
                                             } else {
@@ -1137,11 +1194,11 @@ pub fn RealmMembersPanel(
                                                             let agent_in_realm = owned_agent_actor_key(&owned_agent.agent_id).is_some_and(|key| member_set.contains(&key));
                                                             let policy = owned_agent.mention_policy;
                                                             let policy_class = policy.badge_class();
-                                                            let policy_label = policy.label();
+                                                            let policy_label = member_mention_label(policy);
                                                             let agent_id = owned_agent.agent_id.clone();
                                                             let agent_title = owned_agent.display_name.clone();
                                                             let status_class = crate::views::agents::agent_state_badge_class(&owned_agent.status);
-                                                            let status_label = crate::views::agents::agent_state_label(&owned_agent.status).to_owned();
+                                                            let status_label = member_agent_state_label(&owned_agent.status);
                                                             let can_enable = agent_in_realm && !agent_behavior_pending.read().contains(&agent_id);
                                                             let can_remove_agent = agent_in_realm;
                                                             rsx! {
@@ -1167,7 +1224,7 @@ pub fn RealmMembersPanel(
                                                                     }
                                                                     div { class: "member-self-agent-actions",
                                                                         if agent_in_realm {
-                                                                            span { class: "badge green", "in Realm" }
+                                                                            span { class: "badge green", {crate::i18n::tr("realm_admin.roster.in_realm")} }
                                                                             span { class: "{policy_class}", "data-testid": "member-agent-mention-policy", "{policy_label}" }
                                                                             if can_remove_agent {
                                                                                 Button {
@@ -1188,12 +1245,12 @@ pub fn RealmMembersPanel(
                                                                                             );
                                                                                         }
                                                                                         },
-                                                                                    "Remove"
+                                                                                    {crate::i18n::tr("realm_admin.roster.remove")}
                                                                                 }
                                                                             }
                                                                             div { class: "member-agent-interaction-mode", "data-testid": "member-agent-interaction-mode",
-                                                                                span { "Group interaction" }
-                                                                                for (label, mode) in [("Private", arkret_sdk::AgentInteractionMode::Private), ("Public", arkret_sdk::AgentInteractionMode::Public)] {
+                                                                                span { {crate::i18n::tr("realm_admin.roster.interaction")} }
+                                                                                for (label, mode) in [({crate::i18n::tr("realm_admin.roster.private")}, arkret_sdk::AgentInteractionMode::Private), ({crate::i18n::tr("realm_admin.roster.public")}, arkret_sdk::AgentInteractionMode::Public)] {
                                                                                     button { r#type: "button", disabled: !can_enable,
                                                                                         onclick: { let base = base_url.clone(); let realm = selected_realm_id.clone(); let agent = agent_id.clone(); move |_| spawn_set_agent_interaction(base.clone(), token(), realm.clone(), agent.clone(), mode, status_msg, agent_behavior_pending) },
                                                                                         "{label}"
@@ -1220,7 +1277,7 @@ pub fn RealmMembersPanel(
                                                                                             }
                                                                                         },
                                                                                     }
-                                                                                    span { "Reply as agent" }
+                                                                                    span { {crate::i18n::tr("realm_admin.roster.reply")} }
                                                                                 }
                                                                                 label { class: "member-agent-behavior-toggle",
                                                                                     Checkbox {
@@ -1241,7 +1298,7 @@ pub fn RealmMembersPanel(
                                                                                             }
                                                                                         },
                                                                                     }
-                                                                                    span { "Accept @mentions" }
+                                                                                    span { {crate::i18n::tr("realm_admin.roster.mention")} }
                                                                                 }
                                                                                 label { class: "member-agent-behavior-toggle",
                                                                                     Checkbox {
@@ -1262,7 +1319,7 @@ pub fn RealmMembersPanel(
                                                                                             }
                                                                                         },
                                                                                     }
-                                                                                    span { "Act on my behalf" }
+                                                                                    span { {crate::i18n::tr("realm_admin.roster.act_on_behalf")} }
                                                                                 }
                                                                             }
                                                                         }
@@ -1276,7 +1333,7 @@ pub fn RealmMembersPanel(
                                     }
                                     if !is_self && has_agents {
                                         div { class: "member-agent-list", "data-testid": "member-agent-list",
-                                            span { class: "member-profile-label", "AI agents:" }
+                                            span { class: "member-profile-label", {crate::i18n::tr("realm_admin.roster.agents_colon")} }
                                             for agent in group.agents {
                                                 {
                                                     let agent_id = agent.agent_id.clone();
@@ -1325,7 +1382,7 @@ pub fn RealmMembersPanel(
                                     let next = member_visible() + MEMBER_PAGE_SIZE;
                                     member_visible.set(next);
                                 },
-                                "Load more — showing {visible} of {filtered_count} groups"
+                                {crate::i18n::tr("realm_admin.roster.load_more").replace("{visible}", &visible.to_string()).replace("{total}", &filtered_count.to_string())}
                             }
                         }
                     }
@@ -1341,3 +1398,195 @@ pub fn RealmMembersPanel(
 #[cfg(test)]
 #[path = "members_panel/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod locale_tests {
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+
+    use super::*;
+    use crate::i18n::{I18nSignal, UiLocale};
+
+    type Handle = Rc<RefCell<(Option<I18nSignal>, usize)>>;
+    const ORIGINAL: &str = "realm_admin.roster.realm_owner {member} 原文";
+    const QUERY: &str = "member-0:original.example";
+
+    fn retained_roster_presentation(handle: Handle) -> Element {
+        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
+        handle.borrow_mut().0 = Some(locale);
+        let query = use_signal(move || {
+            handle.borrow_mut().1 += 1;
+            QUERY.to_owned()
+        });
+        let section = use_signal(|| MemberRosterSection::Members);
+        let raw = query();
+        assert_eq!(section(), MemberRosterSection::Members);
+        assert_eq!(raw, QUERY);
+        assert_eq!(arkret_sdk::Handle::parse(QUERY).unwrap().canonical(), QUERY);
+        // Exercise the actual roster projection above the real search threshold,
+        // without mounting session effects or inventing membership permissions.
+        let profiles = (0..10)
+            .map(|index| {
+                let principal =
+                    arkret_sdk::DidCoreId::new(format!("ak:did_core:web:member-{index}.example"))
+                        .unwrap();
+                let station =
+                    arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap();
+                let mut profile = MemberProfile::bare(
+                    arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal, station))
+                        .to_string(),
+                );
+                profile.membership = Some("join".to_owned());
+                profile.display_name = Some(if index == 0 {
+                    ORIGINAL.to_owned()
+                } else {
+                    format!("Original {index}")
+                });
+                profile.handles = vec![format!("member-{index}:original.example")];
+                profile
+            })
+            .collect();
+        let view = build_realm_roster(RealmRosterInput {
+            members: profiles,
+            owned_agents: Vec::new(),
+            principal_id: "ak:did_core:web:local.example",
+            section: section(),
+            query: &raw,
+            visible_limit: MEMBER_PAGE_SIZE,
+        });
+        assert!(view.show_search);
+        assert_eq!(view.filtered_count, 1);
+        assert_eq!(view.visible_groups.len(), 1);
+        let profile = &view.visible_groups[0].controller;
+        assert_eq!(profile.display_name.as_deref(), Some(ORIGINAL));
+        assert_eq!(profile.handles, ["member-0:original.example"]);
+        // The real identity ladder prefers the valid cached handle to display_name.
+        // Search the rendered handle and keep the underlying display name verbatim.
+        assert_eq!(profile.primary_label(), QUERY);
+        let actor = profile.actor_id.clone();
+        let display = profile.display_name.clone().unwrap();
+        let handle_text = profile.handles[0].clone();
+        let mut role_profile = profile.clone();
+        role_profile.is_owner = true;
+        let owner = member_role_label(&role_profile);
+        role_profile.is_owner = false;
+        role_profile.is_admin = true;
+        let admin = member_role_label(&role_profile);
+        role_profile.is_admin = false;
+        let member = member_role_label(&role_profile);
+        rsx! {
+            div {
+                for item in [MemberRosterSection::Members, MemberRosterSection::Owners, MemberRosterSection::Admins, MemberRosterSection::MyAgents, MemberRosterSection::PendingInvites] {
+                    p { {member_section_title(item)} }
+                    p { {member_section_description(item)} }
+                }
+                p { "{owner}" } p { "{admin}" } p { "{member}" }
+                p { {member_handles_label(&profile.handles, &profile.handles)} }
+                p { {member_handles_label(&profile.handles, &[])} }
+                for policy in [AgentMentionPolicy::Allowed, AgentMentionPolicy::OwnerOnly, AgentMentionPolicy::Unknown] {
+                    p { {member_mention_label(policy)} }
+                }
+                for state in ["pending", "pending_runtime_key", "ready", "replacing", "active", "pairing_expired", "paused", "deactivated", ORIGINAL] {
+                    p { {member_agent_state_label(state)} }
+                }
+                p { "{raw}" } p { "{actor}" } p { "{display}" } p { "{handle_text}" }
+            }
+        }
+    }
+
+    fn apply_text(text: &mut BTreeMap<usize, String>, edits: dioxus::core::Mutations) -> usize {
+        let mut changed = 0;
+        for edit in edits.edits {
+            match edit {
+                dioxus::core::Mutation::CreateTextNode { id, value }
+                | dioxus::core::Mutation::SetText { id, value } => {
+                    text.insert(id.0, value);
+                    changed += 1;
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+
+    #[test]
+    fn retained_member_labels_and_real_roster_search_preserve_typed_sections_and_original_values() {
+        let handle = Rc::new(RefCell::new((None, 0)));
+        let mut dom = VirtualDom::new_with_props(retained_roster_presentation, handle.clone());
+        let mut text = BTreeMap::new();
+        assert!(apply_text(&mut text, dom.rebuild_to_vec()) > 0);
+        let english = text.clone();
+        for expected in [
+            "Members",
+            "Owners",
+            "Admins",
+            "My agents",
+            "Pending invites",
+            "Realm owner",
+            "Realm admin",
+            "Realm member",
+            "Handles",
+            "Other handles",
+            "Members can @",
+            "Controller only",
+            "@ policy unknown",
+            "Awaiting runtime",
+            "Ready",
+            "Awaiting replacement runtime",
+            "Active",
+            "Pairing expired",
+            "Paused",
+            "Deactivated",
+            ORIGINAL,
+            "member-0:original.example",
+        ] {
+            assert!(
+                text.values().any(|value| value == expected),
+                "missing label: {expected}"
+            );
+        }
+        let mut locale = handle.borrow().0.expect("presentation provides locale");
+        for language in [UiLocale::Zh, UiLocale::En] {
+            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
+            assert!(apply_text(&mut text, dom.render_immediate_to_vec()) > 0);
+            assert_eq!(handle.borrow().1, 1, "raw query signal must stay mounted");
+            assert!(text.values().any(|value| value == ORIGINAL));
+            assert!(
+                text.values()
+                    .any(|value| value == "member-0:original.example")
+            );
+            if language == UiLocale::Zh {
+                for expected in [
+                    "成员",
+                    "所有者",
+                    "管理员",
+                    "我的 Agent",
+                    "待处理邀请",
+                    "Realm 所有者",
+                    "Realm 管理员",
+                    "Realm 成员",
+                    "账号标识",
+                    "其他账号标识",
+                    "成员可以 @提及",
+                    "仅控制者",
+                    "@提及策略未知",
+                    "等待运行时",
+                    "就绪",
+                    "等待替换运行时",
+                    "活跃",
+                    "配对已过期",
+                    "已暂停",
+                    "已停用",
+                ] {
+                    assert!(
+                        text.values().any(|value| value == expected),
+                        "missing label: {expected}"
+                    );
+                }
+            } else {
+                assert_eq!(text, english);
+            }
+        }
+    }
+}
