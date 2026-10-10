@@ -294,3 +294,56 @@ test("global keyboard shortcuts trigger their target surfaces", async ({
   await expect(page).toHaveURL(/\/search$/);
   await expect(page.getByTestId("global-search-panel")).toBeVisible();
 });
+
+test("notification feed controls and local mute feedback follow the active language", async ({
+  page,
+}) => {
+  await openSettings(page);
+  await page.getByTestId("settings-nav-item-theme").click();
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (
+      path === "/_arkret/self/events" ||
+      path.endsWith("/realm-joins/prepare") ||
+      (path.startsWith("/_arkret/self/account_data/") && request.method() === "PUT")
+    ) {
+      writes.push(path);
+    }
+  });
+  for (const language of ["en", "zh", "en"] as const) {
+    await page.getByTestId(`language-${language}`).click();
+    await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", language);
+    await page.getByTestId("topbar-notifications-button").click();
+    const panel = page.getByTestId("notifications-panel");
+    await expect(panel).toHaveAttribute(
+      "aria-label", language === "zh" ? "通知" : "Notifications",
+    );
+    await expect(panel.getByRole("tablist")).toHaveAttribute(
+      "aria-label", language === "zh" ? "通知分组" : "Notification grouping",
+    );
+    await expect(panel.getByTestId("mark-all-read-button")).toHaveAttribute(
+      "title", language === "zh" ? "全部标为已读" : "Mark all read",
+    );
+    await expect(panel.getByTestId("archive-button").first()).toHaveAttribute(
+      "title", language === "zh" ? "归档" : "Archive",
+    );
+    const message = panel.getByTestId("notification-item").filter({
+      hasText: "Alice sent a message in Demo Realm",
+    });
+    await expect(message).toBeVisible();
+    await expect(message.getByTestId("mute-realm-button")).toHaveAttribute(
+      "title", language === "zh" ? "静音此 Realm" : "Mute this realm",
+    );
+    await page.getByTestId("notifications-drawer-close").click();
+  }
+  await page.getByTestId("language-zh").click();
+  await page.getByTestId("topbar-notifications-button").click();
+  const message = page.getByTestId("notification-item").filter({
+    hasText: "Alice sent a message in Demo Realm",
+  });
+  await message.getByTestId("mute-realm-button").click();
+  await expect(message).toHaveCount(0);
+  await expect(page.getByTestId("notifications-status")).toContainText("已静音");
+  expect(writes).toEqual([]);
+});

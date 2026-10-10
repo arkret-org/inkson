@@ -10,8 +10,9 @@ use super::actions::{
     run_notification_action, set_notification_inbox_state,
 };
 use super::model::{
-    UiNotificationGroup, hydrate_notifications_with_privacy_gate, notification_kind_enabled,
-    notification_overrides_realm_mute, notification_scope_kind, realm_is_muted,
+    NotificationFeedback, UiNotificationGroup, hydrate_notifications_with_privacy_gate,
+    notification_kind_enabled, notification_overrides_realm_mute, notification_scope_kind,
+    realm_is_muted,
 };
 use crate::components::{EmptyState, EmptyStateKind, UiIcon};
 use crate::notification_rules::{dnd_settings_from_account_data, push_rules_from_account_data};
@@ -56,7 +57,7 @@ pub fn NotificationsPanel(
     let contact_inbox = use_context::<crate::app::ContactInbox>();
     let mut state_store = session.state_store;
     let Some(account) = session.active_account() else {
-        return rsx! { div { class: "event error-banner", "Active account context is unavailable." } };
+        return rsx! { div { class: "event error-banner", {crate::i18n::tr("notifications.no_account")} } };
     };
     let authority = account.authority;
     let (initial_state, initial_privacy_gate) = {
@@ -79,7 +80,7 @@ pub fn NotificationsPanel(
     let mut group_by = use_signal(|| UiNotificationGroup::Latest);
     let mut show_archived = use_signal(|| false);
     let mut did_bootstrap = use_signal(|| false);
-    let mut status_msg = use_signal(String::new);
+    let mut status_msg = use_signal(NotificationFeedback::default);
 
     if !did_bootstrap() {
         did_bootstrap.set(true);
@@ -157,10 +158,10 @@ pub fn NotificationsPanel(
         .take(visible_window)
         .collect();
     let has_more_to_load = visible_total > visible_window;
-    let status_text = status_msg();
+    let status_text = status_msg.read().render();
 
     rsx! {
-        div { class: "timeline notifications-panel", "data-testid": "notifications-panel", role: "region", "aria-label": "Notifications",
+        div { class: "timeline notifications-panel", "data-testid": "notifications-panel", role: "region", "aria-label": crate::i18n::tr("notifications.panel_label"),
             for contact in pending_contacts {
                 ContactRequestNotification {
                     key: "{contact.peer.contact_actor_id()}",
@@ -169,7 +170,7 @@ pub fn NotificationsPanel(
                 }
             }
             div { class: "toolbar-row",
-                div { class: "segmented-control", role: "tablist", "aria-label": "Notification grouping",
+                div { class: "segmented-control", role: "tablist", "aria-label": crate::i18n::tr("notifications.grouping_label"),
                     Button {
                         variant: ButtonVariant::Secondary,
                         class: if group_by() == UiNotificationGroup::Latest { "segment active" } else { "segment" },
@@ -267,15 +268,14 @@ pub fn NotificationsPanel(
                     key: "{notification.id}",
                     style: if notification.read { "opacity: 0.6;" } else { "" },
                     div { class: "event-head",
-                        // `title` may be server-provided copy or an i18n
-                        // default-title key — `tr()` translates keys and
-                        // passes unknown strings through unchanged.
-                        span { {crate::i18n::tr(&notification.title)} }
+                        // Explicit origin distinguishes default title keys from
+                        // server copy; render_title translates only defaults.
+                        span { {notification.render_title()} }
                         span { "{notification.kind} / {notification.timestamp}" }
                     }
                     div {
                         class: if notification.read { "muted" } else { "entity-title" },
-                        "{notification.body}"
+                        {notification.render_body()}
                     }
                     if let Some(route) = super::model::direct_notification_route(&state_store.read(), notification) {
                         dioxus_router::Link {
@@ -284,7 +284,7 @@ pub fn NotificationsPanel(
                             onclick: move |_| {
                                 if let Some(handler) = on_open_chat { handler.call(()); }
                             },
-                            "Open chat"
+                            {crate::i18n::tr("notifications.open_chat")}
                         }
                     }
                     if let Some(ref hint) = notification.watch_hint {
@@ -297,7 +297,7 @@ pub fn NotificationsPanel(
                     }
                     if !notification.realm_id.is_empty() {
                         {
-                            let scope_kind = notification_scope_kind(notification);
+                            let scope_kind = crate::i18n::tr(notification_scope_kind(notification));
                             let realm_label = notification
                                 .realm_label
                                 .as_deref()
@@ -336,8 +336,8 @@ pub fn NotificationsPanel(
                                 size: ButtonSize::Sm,
                                 class: "btn icon",
                                 "data-testid": "mark-read-button",
-                                title: "Mark read",
-                                "aria-label": "Mark read",
+                                title: crate::i18n::tr("notifications.tooltip.mark_read"),
+                                "aria-label": crate::i18n::tr("notifications.tooltip.mark_read"),
                                 onclick: {
                                     let base_url = base_url.clone();
                                     let principal_id = principal_id.clone();
@@ -365,8 +365,8 @@ pub fn NotificationsPanel(
                                 size: ButtonSize::Sm,
                                 class: "btn icon",
                                 "data-testid": "mark-unread-button",
-                                title: "Mark unread",
-                                "aria-label": "Mark unread",
+                                title: crate::i18n::tr("notifications.tooltip.mark_unread"),
+                                "aria-label": crate::i18n::tr("notifications.tooltip.mark_unread"),
                                 onclick: {
                                     let base_url = base_url.clone();
                                     let principal_id = principal_id.clone();
@@ -395,8 +395,8 @@ pub fn NotificationsPanel(
                                 size: ButtonSize::Sm,
                                 class: "btn icon",
                                 "data-testid": "archive-button",
-                                title: "Archive",
-                                "aria-label": "Archive",
+                                title: crate::i18n::tr("notifications.tooltip.archive"),
+                                "aria-label": crate::i18n::tr("notifications.tooltip.archive"),
                                 onclick: {
                                     let base_url = base_url.clone();
                                     let principal_id = principal_id.clone();
@@ -427,16 +427,13 @@ pub fn NotificationsPanel(
                                 size: ButtonSize::Sm,
                                 class: "btn icon",
                                 "data-testid": "mute-realm-button",
-                                title: "Mute this realm",
-                                "aria-label": "Mute this realm",
+                                title: crate::i18n::tr("notifications.tooltip.mute_realm"),
+                                "aria-label": crate::i18n::tr("notifications.tooltip.mute_realm"),
                                 onclick: {
                                     let realm_id = notification.realm_id.clone();
                                     move |_| {
                                         state_store.write().set_realm_muted(realm_id.clone(), true);
-                                        status_msg.set(format!(
-                                            "Muted notifications for {}.",
-                                            short_protocol_id(&realm_id)
-                                        ));
+                                        status_msg.set(NotificationFeedback::new("notifications.feedback.muted").with("realm", short_protocol_id(&realm_id)));
                                     }
                                 },
                                 UiIcon { name: "bell" }
@@ -451,8 +448,9 @@ pub fn NotificationsPanel(
                                     let base_url = base_url.clone();
                                     let authority = authority.clone();
                                     let notification_id = notification.id.clone();
-                                    // Translate now (default titles are i18n keys).
-                                    let title = crate::i18n::tr(&notification.title);
+                                    // Keep the title key until feedback rendering in the active locale.
+                                    let title = notification.title.clone();
+                                    let title_is_key = notification.title_is_key;
                                     move |_| {
                                         if let Some(action_to_run) = action_to_run.clone() {
                                             run_notification_action(
@@ -466,7 +464,7 @@ pub fn NotificationsPanel(
                                                 action_to_run,
                                             );
                                         } else {
-                                            status_msg.set(format!("Action queued for {title}."));
+                                            status_msg.set(NotificationFeedback::new("notifications.feedback.queued").with_title(title.clone(), title_is_key));
                                         }
                                     }
                                 },
@@ -523,7 +521,7 @@ fn ContactRequestNotification(
     let session = crate::app::SessionContext::get();
     let mut inbox = use_context::<crate::app::ContactInbox>();
     let busy = use_signal(|| false);
-    let status = use_signal(String::new);
+    let status = use_signal(crate::views::contacts::ContactFeedback::default);
     let peer = contact.peer.contact_actor_id().to_string();
     let request_event_ref = contact.request_event_ref.as_ref().map(ToString::to_string);
     let label = crate::views::helpers::contact_peer_label(&session.state_store.read(), &contact);
@@ -548,7 +546,7 @@ fn ContactRequestNotification(
                             requester: peer.clone(), request_event_ref: request_event_ref.clone(),
                             verb: "accept".to_owned(),
                         },
-                        crate::i18n::tr("contacts.action.accepting"), busy, status,
+                        "contacts.action.accepting", busy, status,
                         EventHandler::new(move |_| {
                             if *session.session_generation.peek() == generation {
                                 inbox.0.write().retain(|row| {
@@ -567,7 +565,9 @@ fn ContactRequestNotification(
                 else { {crate::i18n::tr("contacts.action.accept")} }
             }
             if !status().is_empty() {
-                div { role: "status", class: "muted", "{status}" }
+                div { role: "status", class: "muted",
+                    {status.read().render()}
+                }
             }
         }
     }

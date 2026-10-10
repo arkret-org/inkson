@@ -4,6 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Result, bail, ensure};
+use arkret_models_collaboration::sync_frames::account_subscribe::{
+    NotificationData, NotificationDelta, NotificationDeltaAction,
+};
 use arkret_sdk::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -26,6 +29,8 @@ struct BuildInput {
     #[serde(default)]
     encrypted: bool,
     #[serde(default)]
+    demo_notification: bool,
+    #[serde(default)]
     plaintext_visible_services: Option<PlaintextVisibleServicesPayload>,
 }
 
@@ -42,6 +47,64 @@ struct Fixture {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     public_blobs: BTreeMap<String, Base64UrlString>,
     managed_agent: ManagedAgentFixture,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    notification_deltas: Vec<NotificationDelta>,
+}
+
+const DEMO_NOTIFICATION_BODY: &str = "Alice sent a message in Demo Realm";
+
+fn notification_deltas(
+    events: &[CommittedEventFullView],
+    recipient: &AccountId,
+) -> Result<Vec<NotificationDelta>> {
+    let mut deltas = Vec::new();
+    for full in events {
+        if full.event.kind != EventKind::MessageCreate {
+            continue;
+        }
+        let message = full.event.typed_payload::<event_spec::MessageCreate>()?;
+        if message.content.is_none() || message.plain_body()? != DEMO_NOTIFICATION_BODY {
+            continue;
+        }
+        ensure!(
+            !events
+                .iter()
+                .any(|source| source.event.kind == EventKind::MlsGenesis),
+            "plaintext demo notification is unavailable in an encrypted fixture"
+        );
+        let content = OrdinaryProjectionContent {
+            realm_id: full.commit.realm_id.clone(),
+            source_event_id: full.event.event_id.clone(),
+            source_ref: Some(NotificationSourceRef::Message(MessageId::from_event_id(
+                &full.event.event_id,
+            ))),
+            strand_id: Some(message.strand_id),
+            track_name: Some(message.track_name),
+            notification_kind: OrdinaryNotificationKind::Message,
+            priority: NotificationPriority::Normal,
+            preview: Some(BTreeMap::from([
+                ("title".to_owned(), Value::String("New message".to_owned())),
+                (
+                    "body".to_owned(),
+                    Value::String(DEMO_NOTIFICATION_BODY.to_owned()),
+                ),
+                (
+                    "event_kind".to_owned(),
+                    Value::String(event_spec::MessageCreate::KIND_STR.to_owned()),
+                ),
+            ])),
+            created_at: full.event.created_at,
+            updated_at: None,
+        };
+        let id = content.derive_id(recipient)?;
+        content.verify_id(recipient, &id)?;
+        deltas.push(NotificationDelta::try_new(
+            NotificationIdentity::Projection(id),
+            NotificationDeltaAction::Upsert,
+            Some(NotificationData::OrdinaryProjection(Box::new(content))),
+        )?);
+    }
+    Ok(deltas)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -976,6 +1039,18 @@ impl Builder {
                 strand.id = Some(id.clone());
                 self.row(full, CurrentSelector::Strand { strand_id: id }, strand)?;
             }
+            EventKind::MessageCreate => {
+                let message = full.event.typed_payload::<event_spec::MessageCreate>()?;
+                ensure!(
+                    self.rows.iter().any(|row| matches!(row,
+                        TypedCurrentRow::Value {
+                            selector: CurrentSelector::Strand { strand_id }, ..
+                        } if strand_id == &message.strand_id
+                    )),
+                    "fixture Message requires its exact existing Strand"
+                );
+                // Messages belong to the committed Event stream, not a current selector.
+            }
             EventKind::StrandMove => {
                 let payload: StrandMovePayload = serde_json::from_value(payload)?;
                 self.row(
@@ -1060,6 +1135,7 @@ impl Builder {
     }
 
     fn finish(self) -> Result<Fixture> {
+        let notification_deltas = notification_deltas(&self.events, &self.identity.account_id)?;
         let last = self
             .events
             .last()
@@ -1196,6 +1272,7 @@ impl Builder {
             managed_agent: self
                 .managed_agent
                 .ok_or_else(|| anyhow::anyhow!("managed Agent source missing"))?,
+            notification_deltas,
         })
     }
 }
@@ -1205,6 +1282,10 @@ pub(super) fn build(input: Value) -> Result<Value> {
     ensure!(
         [9, 10, 11, 12, 13].contains(&input.salt),
         "fixture salt is not registered"
+    );
+    ensure!(
+        !input.demo_notification || (input.salt == 9 && !input.encrypted),
+        "demo notification requires the registered unencrypted Demo Realm"
     );
     let mut builder = Builder::new(&input)?;
     inkson::operation::set_authoring_station_id(Some(builder.authority.service_id.clone()));
@@ -1463,6 +1544,34 @@ pub(super) fn build(input: Value) -> Result<Value> {
                 .author_with_digest_suite(created_at, DigestSuite::Sha256)?;
         builder.append(event)?;
     }
+    if input.demo_notification {
+        let strand_id = match builder.ids.get("review") {
+            Some(id) => StrandId::new(id.clone())?,
+            None => {
+                let mut strand = Strand::new_create(
+                    realm.clone(),
+                    "Notification discussion",
+                    builder.actor.clone(),
+                );
+                strand.created_at = at(builder.events.len() + 10);
+                strand.state = Some(ObjectState::Active);
+                strand.tracks = serde_json::from_value(json!({"discussion":{}}))?;
+                let source = builder.author::<event_spec::StrandCreate>(
+                    &realm,
+                    StrandCreatePayload { object: strand },
+                )?;
+                StrandId::from_event_id(&source.event_id)
+            }
+        };
+        builder.author::<event_spec::MessageCreate>(
+            &realm,
+            MessageCreatePayload::with_content(
+                strand_id,
+                "discussion",
+                ContentBlock::text(DEMO_NOTIFICATION_BODY),
+            ),
+        )?;
+    }
     serde_json::to_value(builder.finish()?).map_err(Into::into)
 }
 
@@ -1492,6 +1601,7 @@ fn validate_fixture(fixture: &Fixture) -> Result<Fixture> {
         board: false,
         empty_board: true,
         encrypted: false,
+        demo_notification: false,
         plaintext_visible_services: None,
     };
     let mut builder = Builder::new(&configuration)?;
@@ -1701,6 +1811,7 @@ pub(super) fn submit(input: Value) -> Result<Value> {
         board: false,
         empty_board: true,
         encrypted: false,
+        demo_notification: false,
         plaintext_visible_services: None,
     };
     let mut builder = Builder::new(&configuration)?;

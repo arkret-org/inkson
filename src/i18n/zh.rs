@@ -1471,6 +1471,106 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.empty.create_button", "创建 Strand");
 
     // Notifications panel
+    dict.set("notifications.no_account", "当前账号信息不可用。");
+    dict.set("notifications.panel_label", "通知");
+    dict.set("notifications.grouping_label", "通知分组");
+    dict.set("notifications.open_chat", "打开聊天");
+    dict.set("notifications.tooltip.mark_read", "标为已读");
+    dict.set("notifications.tooltip.mark_unread", "标为未读");
+    dict.set("notifications.tooltip.archive", "归档");
+    dict.set("notifications.tooltip.mute_realm", "静音此 Realm");
+    dict.set(
+        "notifications.feedback.refresh_failed",
+        "刷新通知失败：{error}",
+    );
+    dict.set(
+        "notifications.feedback.all_cursor_failed",
+        "已在本机将所有已加载通知标为已读，但创建阅读游标失败：{error}",
+    );
+    dict.set(
+        "notifications.feedback.all_read_local",
+        "已在本机将所有已加载通知标为已读。",
+    );
+    dict.set(
+        "notifications.feedback.all_read_syncing",
+        "已将所有已加载通知标为已读，正在同步 {count} 个阅读游标……",
+    );
+    dict.set(
+        "notifications.feedback.all_read_synced",
+        "已将所有已加载通知标为已读，并同步 {count} 个阅读游标。",
+    );
+    dict.set(
+        "notifications.feedback.all_projection_failed",
+        "阅读游标已同步，但更新本机视图失败：{error}",
+    );
+    dict.set(
+        "notifications.feedback.all_sync_failed",
+        "已在本机将所有已加载通知标为已读，但同步阅读游标失败：{error}",
+    );
+    dict.set(
+        "notifications.feedback.cursor_failed",
+        "已在本机将通知标为已读，但创建阅读游标失败：{error}",
+    );
+    dict.set(
+        "notifications.feedback.unread_local",
+        "已在本机将通知标为未读。",
+    );
+    dict.set(
+        "notifications.feedback.read_local",
+        "已在本机将通知标为已读。",
+    );
+    dict.set(
+        "notifications.feedback.read_syncing",
+        "已将通知标为已读，正在同步阅读游标……",
+    );
+    dict.set(
+        "notifications.feedback.read_synced",
+        "通知已标为已读并已同步。",
+    );
+    dict.set(
+        "notifications.feedback.projection_failed",
+        "阅读游标已同步，但更新本机视图失败：{error}",
+    );
+    dict.set(
+        "notifications.feedback.sync_failed",
+        "已在本机将通知标为已读，但同步阅读游标失败：{error}",
+    );
+    dict.set(
+        "notifications.feedback.archive_unavailable",
+        "通知已在本机归档，但暂时无法跨设备同步：{error}",
+    );
+    dict.set(
+        "notifications.feedback.archived",
+        "通知已在你的所有设备上归档。",
+    );
+    dict.set(
+        "notifications.feedback.archive_failed",
+        "通知已在本机归档，但跨设备同步失败：{error}",
+    );
+    dict.set(
+        "notifications.feedback.accepting",
+        "正在接受 {realm} 的 Realm 邀请……",
+    );
+    dict.set("notifications.feedback.joined", "已加入 Realm {realm}。");
+    dict.set(
+        "notifications.feedback.accept_failed",
+        "接受邀请失败：{error}",
+    );
+    dict.set("notifications.feedback.muted", "已静音 {realm} 的通知。");
+    dict.set(
+        "notifications.feedback.queued",
+        "已将“{title}”的操作加入队列。",
+    );
+    dict.set("contacts.state.expired", "已过期");
+    dict.set("notifications.runtime_approval.title", "Agent 运行授权审批");
+    dict.set(
+        "notifications.runtime_approval.body",
+        "审查待处理的 Agent 运行密钥请求。",
+    );
+    dict.set("notifications.default_body", "通知");
+    dict.set("notifications.invite_body", "你收到了加入 {realm} 的邀请。");
+    dict.set("notifications.scope.realm", "Realm");
+    dict.set("notifications.scope.space", "空间");
     dict.set("notifications.feed_title", "通知流");
     dict.set(
         "notifications.invite_preview.loading",
@@ -1890,6 +1990,21 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
 /// Chinese translations for the contacts surfaces — mirrors
 /// [`add_contacts_keys`].
 fn add_contacts_keys_zh(dict: &mut TranslationDict) {
+    dict.set(
+        "contacts.dm.rejoin_pending",
+        "已受理重新加入私聊。正在等待加密会话就绪。",
+    );
+    dict.set("contacts.dm.rejoin_failed", "无法重新加入私聊：{error}");
+    dict.set(
+        "contacts.dm.locally_blocked",
+        "此私聊在本机被阻止：{blockers}",
+    );
+    dict.set("contacts.dm.create_failed", "无法创建私聊：{error}");
+    dict.set(
+        "contacts.lineage_unavailable",
+        "验证联系人关系后才能执行此操作。",
+    );
+    dict.set("dashboard.notifications_open", "打开通知");
     // ── ContactsPanel ─────────────────────────────────────────────────
     dict.set("contacts.title", "联系人");
     dict.set("contacts.add_button", "添加联系人");
@@ -1970,7 +2085,7 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.remark.saving", "正在保存…");
     dict.set("contacts.petname.cleared", "备注名已清除");
     dict.set("contacts.petname.badge", "备注名");
-    dict.set("contacts.petname.invalid", "备注名无效");
+    dict.set("contacts.petname.invalid", "备注名无效：{error}");
     dict.set("contacts.petname.invalid_principal", "联系人主体无效");
     dict.set("contacts.petname.confusable_warning", "疑似冒充联系人");
     dict.set(

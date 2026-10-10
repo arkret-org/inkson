@@ -957,3 +957,183 @@ fn ordinary_notification_with_another_recipient_id_is_discarded() {
 
     assert!(raw_notifications_from_sources(Some(&[delta]), &[]).is_empty());
 }
+
+#[test]
+fn local_notification_action_feedback_retranslates_without_changing_identity() {
+    use dioxus::prelude::*;
+
+    use super::model::NotificationFeedback;
+    let path = std::env::temp_dir().join(format!(
+        "notification-locale-{}.json",
+        crate::operation::uuid_v7()
+    ));
+    let raw = event(
+        901,
+        arkret_sdk::NotificationKind::Message,
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+        None,
+        json!({"title": "notifications.default_title.message", "body": "User body {error} / 原文"}),
+    );
+    let rows = hydrate_notifications(vec![raw], &ClientLocalState::default(), None, None);
+    let original = rows[0].clone();
+    let mut dom = VirtualDom::new(|| rsx! {});
+    dom.rebuild_in_place();
+    dom.in_scope(ScopeId::ROOT, || {
+        let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
+            crate::i18n::UiLocale::En,
+        ));
+        let store = SyncSignal::new_maybe_sync_in_scope(
+            LocalStateStore::with_path(path.clone()),
+            ScopeId::ROOT,
+        );
+        let notifications = Signal::new(rows.clone());
+        let feedback = Signal::new(NotificationFeedback::default());
+        // Actual production action: marking unread is local and issues no HTTP.
+        super::actions::mark_notification_read_state(
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            original.clone(),
+            false,
+            store,
+            notifications,
+            feedback,
+        );
+        for (language, expected) in [
+            (
+                crate::i18n::UiLocale::En,
+                "Notification marked unread locally.",
+            ),
+            (crate::i18n::UiLocale::Zh, "已在本机将通知标为未读。"),
+            (
+                crate::i18n::UiLocale::En,
+                "Notification marked unread locally.",
+            ),
+        ] {
+            crate::i18n::set_locale(&mut locale, language);
+            assert_eq!(feedback.read().render(), expected);
+            let snapshot = notifications.read();
+            let current = &snapshot[0];
+            assert!(!current.read);
+            assert_eq!(current.id, original.id);
+            assert_eq!(current.realm_id, original.realm_id);
+            assert_eq!(current.source_event_id, original.source_event_id);
+            // Even a user title identical to a known key stays user content.
+            assert_eq!(
+                current.render_title(),
+                "notifications.default_title.message"
+            );
+            assert_eq!(current.render_body(), "User body {error} / 原文");
+        }
+    });
+    drop(dom);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn retained_notification_defaults_and_api_errors_follow_the_current_locale() {
+    use dioxus::prelude::*;
+
+    use super::model::NotificationFeedback;
+    use crate::transport::auth::ApiCallError;
+    let problem: arkret_sdk::Problem = serde_json::from_value(json!({
+        "type": "https://arkret.org/problems/internal_error", "title": "Internal error",
+        "status": 500, "detail": "private server detail / 原文", "code": "internal_error"
+    }))
+    .unwrap();
+    let errors = [
+        ApiCallError::Failed(
+            crate::api_error::TransportClientError {
+                status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                error: problem,
+            }
+            .into(),
+        ),
+        ApiCallError::Unavailable(anyhow::anyhow!("private unavailable diagnostic")),
+        ApiCallError::AuthExpired(anyhow::anyhow!("private session diagnostic")),
+        ApiCallError::Failed(anyhow::anyhow!("{}", "local validation {realm} / 原文")),
+    ];
+    let retained = errors
+        .into_iter()
+        .map(|error| {
+            NotificationFeedback::new("notifications.feedback.accept_failed").with_api_error(error)
+        })
+        .collect::<Vec<_>>();
+    // Reuse the accepted frozen Event fixture. Projection and locale state
+    // below are test-local; this does not register or mutate shared fixtures.
+    let invite = test_invite(1, "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1");
+    let mut raw = Vec::new();
+    push_test_invite_projection(&mut raw, vec![invite.clone()], &JoinedRealmIds::default());
+    let rows = hydrate_notifications(raw, &ClientLocalState::default(), None, None);
+    let mut dom = VirtualDom::new(|| rsx! {});
+    dom.rebuild_in_place();
+    dom.in_scope(ScopeId::ROOT, || {
+        let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
+            crate::i18n::UiLocale::En,
+        ));
+        for language in [
+            crate::i18n::UiLocale::En,
+            crate::i18n::UiLocale::Zh,
+            crate::i18n::UiLocale::En,
+        ] {
+            crate::i18n::set_locale(&mut locale, language);
+            for feedback in &retained {
+                let output = feedback.render();
+                // Same original ApiCallError, evaluated at render time with the
+                // existing three-state safe display policy rather than diagnostics.
+                assert!(!output.contains("private server detail"));
+                assert!(!output.contains("private unavailable diagnostic"));
+                assert!(!output.contains("private session diagnostic"));
+            }
+            for (index, key) in [
+                (0, "error.generic"),
+                (1, "error.server_unavailable"),
+                (2, "error.session_expired"),
+            ] {
+                assert_eq!(
+                    retained[index].render(),
+                    crate::i18n::tr_args(
+                        "notifications.feedback.accept_failed",
+                        &[("error", crate::i18n::tr(key))]
+                    )
+                );
+            }
+            assert!(
+                retained[0]
+                    .render()
+                    .contains(if language == crate::i18n::UiLocale::Zh {
+                        "与服务器通信时出现问题"
+                    } else {
+                        "Something went wrong while talking to the server"
+                    })
+            );
+            assert!(
+                retained[3]
+                    .render()
+                    .ends_with("local validation {realm} / 原文")
+            );
+            assert_eq!(
+                rows[0].render_title(),
+                crate::i18n::tr("notifications.default_title.invite")
+            );
+            assert!(
+                rows[0]
+                    .render_body()
+                    .contains(&crate::views::helpers::short_protocol_id(
+                        invite.realm_id.as_str()
+                    ))
+            );
+            assert!(
+                rows[0]
+                    .render_body()
+                    .starts_with(if language == crate::i18n::UiLocale::Zh {
+                        "你收到了加入"
+                    } else {
+                        "You were invited to join"
+                    })
+            );
+            assert_eq!(rows[0].realm_id, invite.realm_id.as_str());
+        }
+    });
+}

@@ -29,6 +29,61 @@ pub(crate) use crate::state::projection::notifications::{
 };
 use crate::state::{ClientLocalState, StoredNotification};
 
+/// Local UI feedback only: protocol IDs remain literal arguments, while API
+/// errors retain the existing three-state safe display policy until rendering.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct NotificationFeedback {
+    key: &'static str,
+    args: Vec<(&'static str, String)>,
+    translated_arg: Option<(&'static str, String)>,
+    api_error: Option<std::rc::Rc<crate::transport::auth::ApiCallError>>,
+}
+
+impl NotificationFeedback {
+    pub(crate) fn new(key: &'static str) -> Self {
+        Self {
+            key,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn with(mut self, name: &'static str, value: impl ToString) -> Self {
+        self.args.push((name, value.to_string()));
+        self
+    }
+
+    pub(crate) fn with_title(mut self, title: String, is_key: bool) -> Self {
+        // Default titles are keys; server-provided titles remain literal arguments.
+        if is_key {
+            self.translated_arg = Some(("title", title));
+        } else {
+            self.args.push(("title", title));
+        }
+        self
+    }
+
+    pub(crate) fn with_api_error(mut self, error: crate::transport::auth::ApiCallError) -> Self {
+        self.api_error = Some(std::rc::Rc::new(error));
+        self
+    }
+
+    pub(crate) fn render(&self) -> String {
+        if self.key.is_empty() {
+            return String::new();
+        }
+        let mut args = self.args.clone();
+        if let Some((name, key)) = &self.translated_arg {
+            args.push((*name, crate::i18n::tr(key)));
+        }
+        if let Some(error) = &self.api_error {
+            args.push(("error", error.display()));
+        }
+        // Opaque local errors may contain placeholders; insert them last.
+        args.sort_by_key(|(name, _)| *name == "error");
+        crate::i18n::tr_args(self.key, &args)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UiNotificationGroup {
     Latest,
@@ -50,7 +105,9 @@ pub(crate) struct UiNotification {
     pub(crate) id: String,
     pub(crate) source_event_id: Option<String>,
     pub(crate) title: String,
+    pub(crate) title_is_key: bool,
     pub(crate) body: String,
+    body_translation: Option<(&'static str, Vec<(&'static str, String)>)>,
     pub(crate) realm_id: String,
     pub(crate) strand_id: Option<String>,
     pub(crate) realm_label: Option<String>,
@@ -324,7 +381,9 @@ fn notification_from_stored(
         id,
         source_event_id,
         title,
+        title_is_key: notification_title_is_key(&value),
         body,
+        body_translation: notification_body_translation(&value),
         realm_id,
         strand_id,
         realm_label,
@@ -508,9 +567,9 @@ fn default_notification_action(kind: &str) -> &'static str {
 
 pub(crate) fn notification_scope_kind(notification: &UiNotification) -> &'static str {
     if notification.kind == "invite" {
-        "Realm"
+        "notifications.scope.realm"
     } else {
-        "Space"
+        "notifications.scope.space"
     }
 }
 
@@ -609,9 +668,13 @@ pub(crate) fn notification_eval_context(value: &StoredNotification) -> Notificat
     }
 }
 
-fn notification_title(value: &StoredNotification, kind: &str) -> String {
+pub(crate) fn notification_title_is_key(value: &StoredNotification) -> bool {
+    value.agent_runtime_approval().is_some() || preview_string(value, &["title"]).is_none()
+}
+
+pub(crate) fn notification_title(value: &StoredNotification, kind: &str) -> String {
     if value.agent_runtime_approval().is_some() {
-        return "Agent runtime approval".to_owned();
+        return "notifications.runtime_approval.title".to_owned();
     }
     match value {
         StoredNotification::Event { .. } => preview_string(value, &["title"])
@@ -620,7 +683,44 @@ fn notification_title(value: &StoredNotification, kind: &str) -> String {
     }
 }
 
-fn notification_body(value: &StoredNotification) -> String {
+pub(crate) fn notification_body_translation(
+    value: &StoredNotification,
+) -> Option<(&'static str, Vec<(&'static str, String)>)> {
+    if value.agent_runtime_approval().is_some() {
+        return Some(("notifications.runtime_approval.body", vec![]));
+    }
+    match value {
+        StoredNotification::Event { .. } => preview_string(value, &["body", "summary"])
+            .is_none()
+            .then_some(("notifications.default_body", vec![])),
+        StoredNotification::Invite { invite } => Some((
+            "notifications.invite_body",
+            vec![(
+                "realm",
+                crate::views::helpers::short_protocol_id(invite.realm_id.as_str()),
+            )],
+        )),
+    }
+}
+
+impl UiNotification {
+    pub(crate) fn render_title(&self) -> String {
+        if self.title_is_key {
+            crate::i18n::tr(&self.title)
+        } else {
+            self.title.clone()
+        }
+    }
+
+    pub(crate) fn render_body(&self) -> String {
+        match &self.body_translation {
+            Some((key, args)) => crate::i18n::tr_args(key, args),
+            None => self.body.clone(),
+        }
+    }
+}
+
+pub(crate) fn notification_body(value: &StoredNotification) -> String {
     if value.agent_runtime_approval().is_some() {
         return "Review the pending Agent runtime key request.".to_owned();
     }

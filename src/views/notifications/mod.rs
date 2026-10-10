@@ -22,7 +22,8 @@ mod tests;
 // invite projection reducer lives in `projection::notifications` and is
 // consumed there directly by the sync layer.
 pub(crate) use model::{
-    default_notification_title, notification_blocklist_suppressed,
-    notification_value_read_by_cursor, notification_wire_state,
+    notification_blocklist_suppressed, notification_body, notification_body_translation,
+    notification_title, notification_title_is_key, notification_value_read_by_cursor,
+    notification_wire_state,
 };
 pub use panel::NotificationsPanel;
