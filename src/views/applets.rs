@@ -18,6 +18,7 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::Value;
 
+use crate::i18n::tr;
 use crate::transport::auth::{with_authed_sdk_client, with_event_submitter};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -323,6 +324,16 @@ pub fn classify_manifest_input(raw: &str) -> ManifestInputKind {
     ManifestInputKind::Invalid
 }
 
+/// Translate only the count label, keeping the observed registration count intact.
+fn applet_registered_count(count: usize) -> String {
+    crate::i18n::tr_args("applets.registered_count", &[("count", count.to_string())])
+}
+
+/// Substitute one presentation value once; raw identifiers are never dictionary keys.
+fn applet_value_label(key: &'static str, value: &str) -> String {
+    crate::i18n::tr_args(key, &[("value", value.to_owned())])
+}
+
 #[component]
 pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element {
     // A4 — base_url / state_store from session context instead of props.
@@ -446,18 +457,18 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     };
 
     rsx! {
-           div { class: "timeline", "data-testid": "applets-panel", role: "region", "aria-label": "Applet registry and bridge errors",
+           div { class: "timeline", "data-testid": "applets-panel", role: "region", "aria-label": tr("applets.region"),
                div { class: "event",
                    div { class: "event-head",
-                       span { "Applet registry" }
-                       span { class: "badge", "{registrations.len()} registered" }
+                       span { {tr("applets.registry")} }
+                       span { class: "badge", {applet_registered_count(registrations.len())} }
                    }
                    div { class: "muted",
-                       "Spec extensions/applet-integration.md §2 — registrations are emitted from a verified, signed Applet Package. The registry lists every ak.applet.registration the local raw-operation log has observed."
+                       {tr("applets.registry_help")}
                    }
                    if registrations.is_empty() {
                        div { class: "muted", "data-testid": "applet-registry-empty",
-                           "No applets registered yet. Use the signed Applet Package install flow below; registration is derived during commit."
+                           {tr("applets.registry_empty")}
                        }
                    } else {
                        for (r, service_id) in registrations {
@@ -472,7 +483,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                            span { class: "mono", title: "{service_id}", "{service_id_label}" }
                                            span { class: "badge", "{namespace}" }
                                        }
-                                       div { class: "muted", title: "{op_id}", "operation_id {op_id_label}" }
+                                       div { class: "muted", title: "{op_id}", {applet_value_label("applets.operation_id", &op_id_label)} }
                                    }
                                }
                            }
@@ -481,11 +492,11 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                }
                div { class: "event", "data-testid": "applet-bridge-errors",
                    div { class: "event-head",
-                       span { "Bridge errors" }
+                       span { {tr("applets.bridge_errors")} }
                        span { class: "badge red", "{bridge_errors.len()}" }
                    }
                    if bridge_errors.is_empty() {
-                       div { class: "muted", "No bridge errors observed." }
+                       div { class: "muted", {tr("applets.bridge_errors_empty")} }
                    } else {
                        for e in bridge_errors {
                            {
@@ -525,20 +536,20 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                // ─────────────────────────────────────────────────────
                div { class: "event", "data-testid": "applet-list-panel",
                    div { class: "event-head",
-                       span { "Installed applets" }
+                       span { {tr("applets.installed")} }
                        span { class: "badge", "{applet_rows.len()}" }
                        Button {
                            variant: ButtonVariant::Primary,
                            "data-testid": "applet-install-button",
                            onclick: move |_| install_open.set(!install_open()),
-                           if install_open() { "Close install" } else { "+ Install applet" }
+                           if install_open() { {tr("applets.close_install")} } else { {tr("applets.open_install")} }
                        }
                    }
                    if install_open() {
                        div { class: "workflow-form",
                            Textarea {
                                "data-testid": "applet-install-manifest-input",
-                               placeholder: "manifest URL or JSON body",
+                               placeholder: tr("applets.manifest_placeholder"),
                                value: "{install_manifest}",
                                oninput: move |event: FormEvent| {
                                    install_manifest.set(event.value());
@@ -552,7 +563,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                            // is computed over effective_scope), so re-preview.
                            Textarea {
                                "data-testid": "applet-install-circle-input",
-                               placeholder: "optional Circle id (ak:circle:…) — blank = Realm-wide",
+                               placeholder: tr("applets.circle_placeholder"),
                                value: "{install_circle_id}",
                                oninput: move |event: FormEvent| {
                                    install_circle_id.set(event.value());
@@ -562,7 +573,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                            }
                            Textarea {
                                "data-testid": "applet-install-approve-actions-input",
-                               placeholder: "approved actions, comma or newline separated",
+                               placeholder: tr("applets.actions_placeholder"),
                                value: "{install_approve_actions}",
                                oninput: move |event: FormEvent| {
                                    install_approve_actions.set(event.value());
@@ -579,7 +590,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                        install_preview.set(None);
                                    },
                                }
-                               span { "allow Applet-managed Ghost Actors" }
+                               span { {tr("applets.allow_ghost")} }
                            }
                            // Step 1 — author the administrator Events once, then ask
                            // the Station to sign the closed authoring request.
@@ -769,7 +780,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                            });
                                        }
                                    },
-                                   "Preview plan"
+                                   {tr("applets.preview_plan")}
                                }
                                // Commit only the administrator-signed Service installation.
                                Button {
@@ -832,7 +843,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                            });
                                        }
                                    },
-                                   "Install applet"
+                                   {tr("applets.install")}
                                }
                            }
                            if !install_status().is_empty() {
@@ -843,7 +854,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
 
                    if applet_rows.is_empty() {
                        div { class: "muted", "data-testid": "applet-empty",
-                           "No applets installed."
+                           {tr("applets.installed_empty")}
                        }
                    } else {
                        for (applet_id, service_id, namespace, registration_epoch, registration_event_id, installed_scope) in applet_rows.iter().cloned() {
@@ -863,7 +874,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                            span { class: "mono muted", title: "{registration_epoch}", "{registration_epoch_label}" }
                                        }
                                        div { class: "muted", "data-testid": "applet-bot-creation-status",
-                                           "Service installation supports zero or more independent Bots. Create Bots through the Applet's own management controls; this client has no authenticated Applet control connection. Any required approval must complete before acceptance."
+                                           {tr("applets.bot_creation_help")}
                                        }
                                        div { class: "actions",
                                            Button {
@@ -873,7 +884,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                    let aid = applet_id.clone();
                                                    move |_| trace_open_for.set(Some(aid.clone()))
                                                },
-                                               "Trace events"
+                                               {tr("applets.trace_events")}
                                            }
                                            Button {
                                                variant: ButtonVariant::Destructive,
@@ -969,7 +980,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                        });
                                                    }
                                                },
-                                               "Uninstall"
+                                               {tr("applets.uninstall")}
                                            }
                                        }
                                    }
@@ -997,12 +1008,12 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                    class: "publish-to-source-modal",
                                    header {
                                        class: "publish-to-source-modal-header",
-                                       h2 { title: "{target}", "Accountability trace — {target_label}" }
+                                       h2 { title: "{target}", {applet_value_label("applets.trace_title", &target_label)} }
                                    }
                                    section {
                                        class: "publish-to-source-modal-body",
                                        if trace_events.is_empty() {
-                                           p { class: "muted", "No events observed for this applet yet." }
+                                           p { class: "muted", {tr("applets.trace_empty")} }
                                        } else {
                                            for ev in trace_events.iter() {
                                                {
@@ -1030,7 +1041,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                                span { class: "mono", "{kind}" }
                                                                span { class: "muted", "{emitted_at}" }
                                                            }
-                                                           div { class: "muted", title: "{event_id}", "event_id {event_id_label}" }
+                                                           div { class: "muted", title: "{event_id}", {applet_value_label("applets.event_id", &event_id_label)} }
                                                        }
                                                    }
                                                }
@@ -1042,7 +1053,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                        Button {
                                            variant: ButtonVariant::Secondary,
                                            onclick: move |_| trace_open_for.set(None),
-                                           "Close"
+                                           {tr("common.close")}
                                        }
                                    }
                                }
@@ -1056,6 +1067,64 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
 
 #[cfg(test)]
 mod tests {
+
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use dioxus::prelude::*;
+
+    use crate::i18n::{I18nSignal, UiLocale};
+
+    type LocaleHandle = Rc<RefCell<Option<I18nSignal>>>;
+
+    fn retained_applet_labels(handle: LocaleHandle) -> Element {
+        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
+        *handle.borrow_mut() = Some(locale);
+        // This surface exercises production presentation helpers, not the
+        // session-dependent AppletsPanel lifecycle or registration authoring.
+        let observed = use_signal(|| (7usize, "applets.registry {value} {count} 原文".to_owned()));
+        let (count, original) = &*observed.read();
+        let text = format!(
+            "{} | {} | {} | {} | {}",
+            super::applet_registered_count(*count),
+            super::applet_value_label("applets.operation_id", original),
+            super::applet_value_label("applets.trace_title", original),
+            super::applet_value_label("applets.event_id", ""),
+            original,
+        );
+        rsx! { p { "{text}" } }
+    }
+
+    fn text_edits(edits: dioxus::core::Mutations) -> Vec<String> {
+        edits
+            .edits
+            .into_iter()
+            .filter_map(|edit| match edit {
+                dioxus::core::Mutation::CreateTextNode { value, .. }
+                | dioxus::core::Mutation::SetText { value, .. } => Some(value),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn retained_applet_labels_rerender_without_interpreting_identifiers_or_empty_values() {
+        let handle = Rc::new(RefCell::new(None));
+        let mut dom = VirtualDom::new_with_props(retained_applet_labels, handle.clone());
+        let original = "applets.registry {value} {count} 原文";
+        let english = format!(
+            "7 registered | operation_id {original} | Accountability trace — {original} | event_id  | {original}"
+        );
+        let chinese = format!(
+            "已注册 7 个 | 操作标识 {original} | 问责事件追踪 — {original} | 事件标识  | {original}"
+        );
+        assert_eq!(text_edits(dom.rebuild_to_vec()), vec![english.clone()]);
+        let mut locale = handle.borrow().expect("surface provides locale");
+        for (language, text) in [(UiLocale::Zh, chinese), (UiLocale::En, english)] {
+            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
+            assert_eq!(text_edits(dom.render_immediate_to_vec()), vec![text]);
+        }
+    }
 
     // ── G3.Y4 — install helpers ─────────────────────────────────
 

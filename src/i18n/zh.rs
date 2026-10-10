@@ -1946,6 +1946,78 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("search.kind.message", "消息");
 
+    dict.set("login.create_identity", "第一次使用？创建可恢复的身份");
+    dict.set("login.connection.review", "检查服务器变更");
+    dict.set("login.connection.changed", "服务器连接已变更");
+    dict.set("login.connection.identity_changed", "服务器身份已变更");
+    dict.set("login.connection.domain_changed", "信任域已变更");
+    dict.set("login.connection.provider_changed", "登录提供方已变更");
+    dict.set(
+        "login.connection.warning",
+        "请仅在确认这是预期变更后信任新连接。你需要重新登录。",
+    );
+    dict.set("login.connection.details", "查看变更详情");
+    dict.set("login.connection.server", "服务器：{url}");
+    dict.set("login.connection.previous", "原值");
+    dict.set("login.connection.new", "新值");
+    dict.set("login.connection.keep", "保留原连接");
+    dict.set("login.connection.trust", "信任新连接");
+    dict.set("login.retry_verification", "重试验证");
+    dict.set("login.connection.field.identity", "服务器身份");
+    dict.set("login.connection.field.trust_domain", "信任域");
+    dict.set("login.connection.field.sign_in_service", "登录服务");
+    dict.set("login.connection.field.origin", "来源");
+    dict.set("login.connection.field.url", "地址");
+    dict.set("login.connection.field.method", "登录方式");
+    dict.set("login.connection.field.type", "类型");
+    dict.set("login.connection.field.issuer", "签发方");
+    dict.set("login.connection.field.provider", "提供方");
+    dict.set(
+        "login.connection.field.provider_discovery",
+        "提供方发现地址",
+    );
+    dict.set("login.connection.field.client", "客户端");
+    dict.set("login.connection.field.permissions", "权限");
+    dict.set("login.connection.field.grant_exchange", "授权交换");
+    dict.set(
+        "login.connection.field.identity_binding_methods",
+        "身份绑定方式",
+    );
+    dict.set(
+        "login.connection.field.numbered_method",
+        "登录方式 {index}（{method}）",
+    );
+    dict.set("applets.region", "小程序注册表与桥接错误");
+    dict.set("applets.registry", "小程序注册表");
+    dict.set("applets.registry_help", "规范 extensions/applet-integration.md 第 2 节：注册来自已验证签名的小程序包。注册表列出本地操作日志已观察到的每条 ak.applet.registration。");
+    dict.set(
+        "applets.registry_empty",
+        "尚未注册小程序。请使用下方已签名小程序包的安装流程；注册记录会在提交时生成。",
+    );
+    dict.set("applets.bridge_errors", "桥接错误");
+    dict.set("applets.bridge_errors_empty", "尚未观察到桥接错误。");
+    dict.set("applets.installed", "已安装的小程序");
+    dict.set("applets.close_install", "关闭安装表单");
+    dict.set("applets.open_install", "+ 安装小程序");
+    dict.set("applets.manifest_placeholder", "清单网址或 JSON 内容");
+    dict.set(
+        "applets.circle_placeholder",
+        "可选 Circle 标识（ak:circle:…）；留空表示整个 Realm",
+    );
+    dict.set("applets.actions_placeholder", "获批操作，以逗号或换行分隔");
+    dict.set("applets.allow_ghost", "允许由小程序管理的 Ghost Actor");
+    dict.set("applets.preview_plan", "预览计划");
+    dict.set("applets.install", "安装小程序");
+    dict.set("applets.installed_empty", "尚未安装小程序。");
+    dict.set("applets.bot_creation_help", "服务安装可以包含零个或多个独立 Bot。请通过小程序自己的管理入口创建 Bot；此客户端尚无已认证的小程序控制连接。所有必要审批都必须在接纳前完成。");
+    dict.set("applets.trace_events", "查看事件追踪");
+    dict.set("applets.uninstall", "卸载");
+    dict.set("applets.trace_empty", "尚未观察到此小程序的事件。");
+    dict.set("applets.registered_count", "已注册 {count} 个");
+    dict.set("applets.operation_id", "操作标识 {value}");
+    dict.set("applets.trace_title", "问责事件追踪 — {value}");
+    dict.set("applets.event_id", "事件标识 {value}");
+
     add_r3_error_keys_zh(&mut dict);
     add_generic_error_keys_zh(&mut dict);
 
