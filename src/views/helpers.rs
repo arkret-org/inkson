@@ -36,7 +36,6 @@ pub(crate) fn account_handles_display(handles: &[String], fallback: &str) -> Str
         handles.join(", ")
     }
 }
-use crate::api_error::normalize_wait_for_sync_token;
 use crate::config::{ClientConfig, LocalConfigStore};
 
 /// Persist the current authenticated configuration. Derived strings are
@@ -65,10 +64,6 @@ pub fn persist_config(
     config_store
         .write()
         .save(ClientConfig::authenticated(account, session_credential));
-}
-
-pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {
-    normalize_wait_for_sync_token(sync_cursor.as_ref())
 }
 
 fn normalize_inline_token(token: &str) -> &str {

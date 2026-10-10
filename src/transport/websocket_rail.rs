@@ -76,7 +76,7 @@ fn selector_key(parameters: &WebSocketOpenParameters) -> garth::Result<Vec<u8>> 
     let mut value =
         serde_json::to_value(parameters).map_err(|e| garth::Error::Protocol(e.to_string()))?;
     if let Some(object) = value.as_object_mut() {
-        for name in ["after", "catchup", "wait_for", "replace_filter"] {
+        for name in ["after", "catchup", "replace_filter"] {
             object.remove(name);
         }
     }
@@ -672,6 +672,21 @@ impl garth::signal::SignalFrameSource for SignalRailSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn account_wait_targets_have_distinct_channel_identity() {
+        let first = WebSocketOpenParameters::Account(WebSocketAccountOpenParameters {
+            wait_for: Some("ak:cursor:01".into()),
+            ..Default::default()
+        });
+        let second = WebSocketOpenParameters::Account(WebSocketAccountOpenParameters {
+            wait_for: Some("ak:cursor:02".into()),
+            ..Default::default()
+        });
+        assert_ne!(
+            selector_key(&first).unwrap(),
+            selector_key(&second).unwrap()
+        );
+    }
     fn signal() -> WebSocketOpenParameters {
         WebSocketOpenParameters::Signal(WebSocketSignalOpenParameters::default())
     }

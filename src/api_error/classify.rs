@@ -340,22 +340,21 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
     if sync_token.is_empty() {
         return None;
     }
-    let mut tokens = Vec::new();
-    for candidate in sync_token.split(',').map(str::trim) {
-        if candidate.is_empty() {
-            continue;
-        }
-        let cursor = arkret_sdk::identifiers::Cursor::new(candidate.to_owned()).ok()?;
-        tokens.push(cursor.into_string());
-    }
-    if tokens.is_empty() {
-        return None;
-    }
-    Some(tokens.join(","))
+    arkret_sdk::identifiers::Cursor::new(sync_token.to_owned())
+        .ok()
+        .map(|cursor| cursor.into_string())
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn wait_for_is_one_opaque_token() {
+        assert_eq!(
+            super::normalize_wait_for_sync_token("ak:cursor:01"),
+            Some("ak:cursor:01".into())
+        );
+        assert!(super::normalize_wait_for_sync_token("ak:cursor:01,ak:cursor:02").is_none());
+    }
     use super::{
         is_pcr_genesis_already_accepted_error, is_realm_bootstrap_temporarily_unavailable_detail,
         is_realm_bootstrap_temporarily_unavailable_error,

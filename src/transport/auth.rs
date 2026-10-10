@@ -228,7 +228,7 @@ where
 /// Same as [`with_authed_api`] but also forwards a sync-cursor token to
 /// the resulting `TransportClient` so any subsequent read is fenced behind
 /// the latest write (read-your-writes consistency). Pass the result of
-/// [`active_sync_token`] as `wait_for_sync_token`.
+/// an explicitly returned write barrier as `wait_for_sync_token`.
 pub async fn with_authed_api_with_sync<F, Fut, T>(
     base_url: &str,
     session_credential: String,

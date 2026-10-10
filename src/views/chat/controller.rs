@@ -538,7 +538,7 @@ impl ChatController {
 
         let base_url = context.base_url;
         let api_token = (context.token)();
-        let wait_for = active_sync_token((context.sync_cursor)());
+        let wait_for = None;
         let key = item.account_data_key;
         let mut status_msg = self.status_msg;
         spawn(async move {
@@ -633,7 +633,7 @@ impl ChatController {
         let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
         let base_url = context.base_url;
         let api_token = (context.token)();
-        let wait_for = active_sync_token((context.sync_cursor)());
+        let wait_for = None;
         let mut frontier_state = context.frontier_state;
         let mut shared_pins = self.shared_pins;
         let mut status_msg = self.status_msg;
@@ -743,7 +743,7 @@ impl ChatController {
         self.reaction_picker.set(None);
         let base_url = context.base_url;
         let api_token = (context.token)();
-        let wait_for = active_sync_token((context.sync_cursor)());
+        let wait_for = None;
         let mut status_msg = self.status_msg;
         spawn(async move {
             let result =
@@ -797,7 +797,7 @@ impl ChatController {
         let realm_id = context.selected_realm_id;
         let actor = context.principal_id;
         let api_token = (context.token)();
-        let wait_for = active_sync_token((context.sync_cursor)());
+        let wait_for = None;
         let mut messages = self.messages;
         let mut status_msg = self.status_msg;
         // Closing the edit composer unmounts its Save Button. Keep the
@@ -909,7 +909,7 @@ impl ChatController {
         let realm_id = context.selected_realm_id;
         let actor = context.principal_id;
         let api_token = (context.token)();
-        let wait_for = active_sync_token((context.sync_cursor)());
+        let wait_for = None;
         let mut frontier_state = context.frontier_state;
         let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
         let mut messages = self.messages;
@@ -1020,7 +1020,7 @@ impl ChatController {
         let device_id = context.device_id;
         let encrypted = context.selected_channel_security_encrypted;
         let api_token = (context.token)();
-        let wait_for = active_sync_token((context.sync_cursor)());
+        let wait_for = None;
         let mut frontier_state = context.frontier_state;
         let mut state_store = state_store;
         let mut messages = self.messages;

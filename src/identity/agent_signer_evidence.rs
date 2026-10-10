@@ -808,6 +808,8 @@ mod historical_result_tests {
                     Err(error) => panic!("{error}"),
                 }
             };
+            // Windows can retain the listener's nonblocking mode on accepted sockets.
+            socket.set_nonblocking(false).unwrap();
             socket
                 .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                 .unwrap();

@@ -21,7 +21,7 @@ use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
-use crate::views::helpers::{active_sync_token, actor_display_label, short_protocol_id};
+use crate::views::helpers::{actor_display_label, short_protocol_id};
 
 mod controller;
 mod effects;
@@ -795,7 +795,7 @@ pub fn RealmMembersPanel(
                                                 context.clone(),
                                                 RealmMembersCommand::InviteResolvedTarget {
                                                     target,
-                                                    wait_for: active_sync_token(sync_cursor()),
+                                                    wait_for: None,
                                                 },
                                             );
                                         }

@@ -27,9 +27,7 @@ use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{
-    MentionNode, active_sync_token, parse_mention_nodes, short_protocol_id,
-};
+use crate::views::helpers::{MentionNode, parse_mention_nodes, short_protocol_id};
 
 pub(crate) mod agent_modes;
 mod circle_welcome;
@@ -2789,7 +2787,7 @@ pub fn ChatPanel(
                                         // exists only once that Event is accepted. Until then this
                                         // write is known by its holder-local operation id.
                                         let api_token = token();
-                                        let wait_for = active_sync_token(sync_cursor());
+                                        let wait_for = None;
                                         let channel_topic = if summary.is_empty() { None } else { Some(summary) };
                                         let base = base.clone();
                                         let realm = realm.clone();

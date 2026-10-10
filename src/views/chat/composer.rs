@@ -386,7 +386,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         mention_insert_request,
         mentions_enabled,
         token,
-        sync_cursor,
+        sync_cursor: _,
         frontier_state,
     } = context;
     // The component boundary retains the validated identifier type. The view
@@ -732,7 +732,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
             // we've folded the mentions into the
             // pending send state.
             mention_picker_state.write().clear();
-            let wait_for = active_sync_token(sync_cursor());
+            let wait_for = None;
             commands::send_plaintext_message(
                 controller,
                 frontier_state,
@@ -945,7 +945,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
             let actor = actor.clone();
             let did = device_id.clone();
             let api_token = token();
-            let wait_for = active_sync_token(sync_cursor());
+            let wait_for = None;
             let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
             commands::send_encrypted_message(
                 controller,
