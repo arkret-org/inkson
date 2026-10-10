@@ -4998,7 +4998,23 @@ mod tests {
                 &keys,
             )
             .unwrap();
-        store.ingest_verified_message_history(&page).unwrap();
+        let checkpoint_scope = garth::CursorScope::Account {
+            service_id: None,
+            actor_id: actor.clone(),
+            device_id: arkret_sdk::DeviceId::new(DEVICE_ID).unwrap(),
+        };
+        let old_checkpoint = garth::AccountCursorCheckpoint {
+            cursor: "ak:cursor:verified-sidecar-old-cut".to_owned(),
+            station_cas: garth::StationCasProjection::default(),
+        };
+        store
+            .verified_projection_transaction(|store| {
+                store.ingest_verified_message_history(&page)?;
+                store
+                    .save_account_checkpoint(&checkpoint_scope, old_checkpoint.clone())
+                    .map_err(|error| error.to_string())
+            })
+            .unwrap();
         store.flush().unwrap();
         assert!(std::fs::read_dir(&directory).unwrap().next().is_some());
         drop(store);
@@ -5077,8 +5093,12 @@ mod tests {
         });
         assert!(incomplete_cut.is_err());
         assert_eq!(
-            reopened.load().verified_sidecar_current,
-            before_new_cut.verified_sidecar_current
+            serde_json::to_value(reopened.load()).unwrap(),
+            serde_json::to_value(&before_new_cut).unwrap()
+        );
+        assert_eq!(
+            reopened.load_account_checkpoint(&checkpoint_scope).unwrap(),
+            Some(old_checkpoint.clone())
         );
         reopened
             .install_verified_sidecar_current(&VerifiedCurrentSnapshot {
@@ -5121,6 +5141,67 @@ mod tests {
                 &keys,
             )
             .unwrap();
+        let atomic_path = directory.join("atomic-cut.json");
+        let mut atomic = LocalStateStore::with_path(&atomic_path);
+        atomic.save(before_new_cut.clone());
+        atomic.flush().unwrap();
+        let new_checkpoint = garth::AccountCursorCheckpoint {
+            cursor: "ak:cursor:verified-sidecar-new-cut".to_owned(),
+            ..old_checkpoint.clone()
+        };
+        let install_cut = |store: &mut LocalStateStore| -> Result<(), String> {
+            store.ingest_verified_message_history(&page)?;
+            store
+                .sidecar_history_at_snapshot(&snapshot)
+                .map_err(|error| error.to_string())?;
+            store.install_verified_sidecar_current(&VerifiedCurrentSnapshot {
+                snapshot: snapshot.clone(),
+            })?;
+            store
+                .save_account_checkpoint(&checkpoint_scope, new_checkpoint.clone())
+                .map_err(|error| error.to_string())
+        };
+        let before_atomic = serde_json::to_value(atomic.load()).unwrap();
+        let account_path = std::fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("atomic-cut.account.")
+                    && path.extension().is_some_and(|ext| ext == "json")
+            })
+            .expect("the real account-state shard must have been persisted");
+        let bytes = std::fs::read(&account_path).unwrap();
+        let backup = account_path.with_extension("backup");
+        std::fs::rename(&account_path, &backup).unwrap();
+        std::fs::create_dir(&account_path).unwrap();
+        let failed = atomic.verified_projection_transaction(install_cut);
+        std::fs::remove_dir(&account_path).unwrap();
+        std::fs::rename(&backup, &account_path).unwrap();
+        assert!(failed.is_err());
+        assert_eq!(serde_json::to_value(atomic.load()).unwrap(), before_atomic);
+        assert_eq!(std::fs::read(&account_path).unwrap(), bytes);
+        assert_eq!(
+            serde_json::to_value(LocalStateStore::with_path(&atomic_path).load()).unwrap(),
+            before_atomic
+        );
+        atomic.verified_projection_transaction(install_cut).unwrap();
+        drop(atomic);
+        let atomic = LocalStateStore::with_path(&atomic_path);
+        assert_eq!(
+            atomic.load_account_checkpoint(&checkpoint_scope).unwrap(),
+            Some(new_checkpoint)
+        );
+        assert_eq!(
+            atomic.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            native
+        );
+        assert_eq!(
+            atomic.load().verified_sidecar_current.get(REALM_ID),
+            Some(&snapshot)
+        );
         let mut live_follow = LocalStateStore::with_path(directory.join("live-follow.json"));
         live_follow.save(before_new_cut.clone());
         let previous_current = live_follow.load().verified_sidecar_current;
