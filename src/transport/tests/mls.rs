@@ -22,8 +22,6 @@ fn keypackage_upload_endpoint_signature_is_raw_signature_tuple() {
             arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001".to_owned())
                 .unwrap(),
         ),
-        pairwise_verification_method: None,
-        intended_realm_id: None,
         agent_verification_method: None,
         agent_key_authorize_event_id: None,
         keypackages: vec![arkret_sdk::KeyPackageUploadEntry {
@@ -114,9 +112,6 @@ fn keypackage_claim_request_carries_required_capabilities() {
         }
         arkret_sdk::PeerKeyPackageRequesterAuthorization::Agent { .. } => {
             panic!("human caller must author device authorization")
-        }
-        arkret_sdk::PeerKeyPackageRequesterAuthorization::MinimalMetadataPairwise { .. } => {
-            panic!("human caller must not author pairwise authorization")
         }
     }
 

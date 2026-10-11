@@ -320,9 +320,6 @@ fn welcome_recipient_endpoint(
         // `MlsWelcomeRecipientEndpoint` has no minimal-metadata pairwise
         // variant, so a delivery cannot be addressed to a pairwise endpoint.
         // Fail closed rather than mislabel the recipient as a device.
-        arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
-            Err("a Welcome delivery cannot address a minimal-metadata pairwise endpoint".to_owned())
-        }
     }
 }
 
@@ -566,7 +563,6 @@ mod tests {
             device_id: Some(device_id),
             agent_id: None,
             agent_verification_method: None,
-            pairwise_verification_method: None,
             keypackage: record.keypackage.clone(),
             capabilities: record.capabilities.clone(),
             device_authorize_event_id: Some(
@@ -610,7 +606,6 @@ mod tests {
             target_agent_id: None,
             target_agent_verification_method: None,
             target_agent_key_authorize_event_id: None,
-            target_pairwise_verification_method: None,
             timeout_ms: None,
             strand_id: None,
             pair_key: None,
@@ -691,18 +686,6 @@ mod tests {
                 verification_method: method
             }
         );
-        let pairwise = arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
-            arkret_sdk::DidCoreId::new(
-                "ak:did_core:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x".to_owned(),
-            )
-            .unwrap(),
-            arkret_sdk::DidUrl::new(
-                "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x#z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x".to_owned(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        assert!(welcome_recipient_endpoint(&pairwise).is_err());
     }
 
     #[test]
@@ -768,6 +751,64 @@ mod tests {
             body, expected,
             "the sealed body is the delivery minus its proof"
         );
+    }
+
+    #[test]
+    fn welcome_authoring_projection_matches_the_canonical_signature_kat() {
+        let fixture = arkret_schema_conformance::spec_json_artifact(
+            "fixtures/detached-object-signature-kat-fixture.json",
+        )
+        .unwrap();
+        let case = fixture["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["context"] == "ak.mls_welcome_delivery_signature.v1")
+            .unwrap();
+        let delivery: arkret_wire::MlsWelcomeDelivery =
+            serde_json::from_value(case["host_object"].clone()).unwrap();
+        let unsigned = UnsignedWelcomeDelivery {
+            welcome_id: delivery.welcome_id.clone(),
+            realm_id: delivery.realm_id.clone(),
+            effective_scope: delivery.effective_scope.clone(),
+            commit_event_ref: delivery.commit_event_ref.clone(),
+            recipient_actor_id: delivery.recipient_actor_id.clone(),
+            recipient_endpoint: delivery.recipient_endpoint.clone(),
+            keypackage_claim_ref: delivery.keypackage_claim_ref.clone(),
+            ciphertext_b64: delivery.ciphertext_b64.clone(),
+        };
+        let body = unsigned.unsigned_body();
+        assert_eq!(body, case["unsigned_projection"]);
+        assert_eq!(
+            hex::encode(arkret_sdk::canonical::canonical_json_bytes(&body).unwrap()),
+            case["unsigned_jcs_utf8_hex"]
+        );
+        let digest =
+            arkret_signatures::detached_object::detached_object_signed_digest(&body).unwrap();
+        assert_eq!(digest.as_str(), case["expected_signed_digest"]);
+        let proof = &delivery.producer_proof;
+        let input = arkret_signatures::detached_object::detached_object_signing_bytes(
+            proof.context,
+            &proof.verification_method,
+            &digest,
+            proof.created_at,
+        )
+        .unwrap();
+        assert_eq!(hex::encode(input), case["signature_input_hex"]);
+        let key = arkret_signatures::PublicKeyMaterial::Ed25519Raw {
+            bytes: arkret_sdk::canonical::base64url_decode(
+                case["public_key_b64u"].as_str().unwrap(),
+            )
+            .unwrap(),
+        };
+        arkret_signatures::detached_object::verify_detached_object_signature(
+            proof,
+            &body,
+            arkret_wire::DetachedSignatureContext::MlsWelcomeDelivery,
+            &key,
+        )
+        .unwrap();
+        assert_eq!(unsigned.into_delivery(proof.clone()), delivery);
     }
 
     #[test]

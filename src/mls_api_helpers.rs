@@ -219,71 +219,7 @@ pub(crate) fn generate_mls_claim_request_id() -> anyhow::Result<String> {
 pub(crate) fn keypackage_claim_record_to_mls_record(
     claim: &arkret_sdk::KeyPackageClaimRecord,
 ) -> anyhow::Result<arkret_sdk::MlsKeyPackageRecord> {
-    if claim.device_id.is_some() && claim.device_authorize_event_id.is_none() {
-        anyhow::bail!("device KeyPackage claim is missing its authorization event");
-    }
-    if claim.agent_id.is_some() && claim.device_authorize_event_id.is_some() {
-        anyhow::bail!("Agent KeyPackage claim has mixed authorization evidence");
-    }
-    anyhow::ensure!(
-        claim.pairwise_verification_method.is_none(),
-        "retired pairwise KeyPackage claim is not an active MLS endpoint"
-    );
-    let endpoint = match (
-        &claim.device_id,
-        &claim.agent_id,
-        &claim.agent_verification_method,
-        &claim.agent_key_authorize_event_id,
-    ) {
-        (Some(device_id), None, None, None) => arkret_sdk::MlsEndpointIdentity::human_device(
-            claim.principal_id.clone(),
-            device_id.clone(),
-        ),
-        (None, Some(agent_id), Some(method), Some(authorization_ref)) => {
-            if agent_id != &claim.principal_id {
-                anyhow::bail!("Agent KeyPackage claim endpoint binding mismatch");
-            }
-            arkret_sdk::MlsEndpointIdentity::agent_runtime(
-                agent_id.clone(),
-                method.clone(),
-                authorization_ref.clone(),
-            )?
-        }
-        (None, None, None, None) => {
-            anyhow::bail!("retired pairwise KeyPackage claim is not an active MLS endpoint")
-        }
-        _ => anyhow::bail!("KeyPackage claim has an incomplete or mixed endpoint identity"),
-    };
-    let keypackage = arkret_sdk::base64url_decode(claim.keypackage.as_bytes())?;
-    let leaf = arkret_sdk::mls::author_leaf_from_key_package_bytes(&keypackage, 0)?;
-    let arkret_sdk::mls::AuthorLeafCredential::Basic { identity } = leaf.credential else {
-        anyhow::bail!("claimed KeyPackage does not carry an Arkret BasicCredential");
-    };
-    let credential_actor = arkret_sdk::decode_mls_basic_credential_identity(&identity)?;
-    anyhow::ensure!(
-        credential_actor == claim.actor_id,
-        "claimed KeyPackage credential differs from claim actor_id"
-    );
-    let keypackage_ref = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&keypackage))?;
-    Ok(arkret_sdk::MlsKeyPackageRecord {
-        keypackage_id: claim.keypackage_ref.as_str().to_owned(),
-        actor_id: claim.actor_id.clone(),
-        endpoint,
-        keypackage: claim.keypackage.clone(),
-        keypackage_ref,
-        cipher_suites: vec![
-            arkret_sdk::mls::keypackage_ciphersuite_canonical_id(&keypackage)?.to_owned(),
-        ],
-        capabilities: claim.capabilities.clone(),
-        state: arkret_sdk::MlsKeyPackageState::Claimed,
-        claim_id: Some(claim.claim_id.clone()),
-        created_at: crate::clock::now_utc(),
-        expires_at: Some(claim.expires_at),
-        // Reconstructed claim-side record (admin builds the Welcome from the
-        // KeyPackage bytes, which already carry any last_resort extension); the
-        // flag is not re-published, so a plain default is correct here.
-        last_resort: false,
-    })
+    arkret_sdk::mls_key_package_record_from_claim(claim).map_err(anyhow::Error::from)
 }
 
 pub(crate) fn mls_keypackage_claim_required_capabilities()
@@ -413,7 +349,6 @@ fn build_mls_keypackage_claim_request_with_requester(
         target_agent_id,
         target_agent_verification_method,
         target_agent_key_authorize_event_id,
-        target_pairwise_verification_method: None,
         timeout_ms: Some(30_000),
         strand_id: None,
         pair_key: None,
@@ -457,10 +392,6 @@ fn build_mls_keypackage_claim_request_with_requester(
         }
         | arkret_sdk::PeerKeyPackageRequesterAuthorization::Agent {
             signature: proof, ..
-        }
-        | arkret_sdk::PeerKeyPackageRequesterAuthorization::MinimalMetadataPairwise {
-            signature: proof,
-            ..
         } => proof.sig = signature,
     }
     let body = arkret_sdk::KeyPackagesClaimRequestBody {
@@ -477,7 +408,6 @@ fn build_mls_keypackage_claim_request_with_requester(
         target_agent_id: unsigned.target_agent_id,
         target_agent_verification_method: unsigned.target_agent_verification_method,
         target_agent_key_authorize_event_id: unsigned.target_agent_key_authorize_event_id,
-        target_pairwise_verification_method: unsigned.target_pairwise_verification_method,
         timeout_ms: unsigned.timeout_ms,
         strand_id: unsigned.strand_id,
         pair_key: unsigned.pair_key,
@@ -517,20 +447,18 @@ mod tests {
                 principal_id,
                 device_id,
             } => (principal_id.clone(), device_id.clone()),
-            arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. }
-            | arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
+            arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. } => {
                 panic!("test fixture requires a human-device record")
             }
         };
         arkret_sdk::KeyPackageClaimRecord {
-            claim_id: "claim".to_owned(),
+            claim_id: "ak:keypackage_claim:01964137-0000-7000-8000-000000000003".to_owned(),
             keypackage_ref: record.keypackage_ref.as_str().to_owned(),
             actor_id: record.actor_id.clone(),
             principal_id,
             device_id: Some(device_id),
             agent_id: None,
             agent_verification_method: None,
-            pairwise_verification_method: None,
             keypackage: record.keypackage.clone(),
             capabilities: record.capabilities.clone(),
             device_authorize_event_id: Some(
@@ -642,15 +570,10 @@ mod tests {
         )
         .unwrap();
         let record = identity.key_package_record().unwrap();
-        let mut claim = claim_for(&record, "did:web:bob.example#device");
-        claim.pairwise_verification_method =
-            Some(arkret_sdk::DidUrl::new("did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x#z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x").unwrap());
-        assert!(
-            keypackage_claim_record_to_mls_record(&claim)
-                .unwrap_err()
-                .to_string()
-                .contains("retired pairwise")
-        );
+        let claim = claim_for(&record, "did:web:bob.example#device");
+        let mut wire = serde_json::to_value(&claim).unwrap();
+        wire["pairwise_verification_method"] = serde_json::json!("did:key:z6Mkretired#z6Mkretired");
+        assert!(serde_json::from_value::<arkret_sdk::KeyPackageClaimRecord>(wire).is_err());
     }
 
     #[test]
@@ -672,20 +595,10 @@ mod tests {
             arkret_sdk::DidCoreId::new("ak:did_core:web:station-b.example".to_owned()).unwrap(),
         ));
 
-        let error = keypackage_claim_record_to_mls_record(&claim).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("credential differs from claim actor_id")
-        );
+        assert!(keypackage_claim_record_to_mls_record(&claim).is_err());
 
         let mut mismatched_record = record;
         mismatched_record.actor_id = claim.actor_id;
-        let error = mls_key_package_record_upload_entry(&mismatched_record).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("credential differs from record actor_id")
-        );
+        assert!(mls_key_package_record_upload_entry(&mismatched_record).is_err());
     }
 }
