@@ -6,16 +6,28 @@ use garth::own_station_results::{OwnStationReplica, OwnStationScanPage};
 use super::*;
 
 const MAX_REPLAY_BYTES: usize = 64 * 1024 * 1024;
+const DISCOVERY_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub(super) struct SubscriptionState {
     cursor: Option<String>,
-    catchup_complete: bool,
 }
 
 impl SubscriptionState {
     pub(super) fn reset(&mut self) {
         *self = Self::default();
+    }
+
+    fn hint_read<T>(&mut self, result: garth::Result<T>) -> garth::Result<T> {
+        if result
+            .as_ref()
+            .is_err_and(|error| error.is_invalid_cursor())
+        {
+            // Discovery has its own disposable enumeration cursor. Only a
+            // failure on the hint surface may reset this subscription handle.
+            self.reset();
+        }
+        result
     }
 }
 
@@ -31,35 +43,38 @@ pub(super) async fn subscription<F: Fn() -> bool>(
 ) -> garth::Result<()> {
     use arkret_models_collaboration::sync_frames::committed_event_subscribe::CommittedEventSubscribeFrameKind as Kind;
     client.check_session()?;
-    let mut stream = crate::transport::websocket_rail::CommittedRailSource::open(
+    let opened = crate::transport::websocket_rail::CommittedRailSource::open(
         http,
         &ctx.websocket_rail,
         realm.clone(),
         resume.cursor.clone(),
     )
-    .await?;
+    .await;
+    let mut stream = resume.hint_read(opened)?;
     client.check_session()?;
-    // A cursor alone never proves that the independent initial scan completed.
-    // After that scan succeeds, a normal long-poll rollover with a valid resume
-    // cursor continues this same session. Its replayed Event hints trigger the
-    // existing independent drain; an idle rollover need not re-admit the head.
-    // Failed catchup, an absent/refused cursor, a new session and a new engine
-    // run all retain the full durable-head verification path.
-    if !resume.catchup_complete || resume.cursor.is_none() {
-        follow_once(client, http, realm, projector, ctx, is_active, current).await?;
-        resume.catchup_complete = true;
-    }
+    // The bounded hint subscription cannot notify every discovered stream.
+    // Re-enumerate at rollover and while idle or busy so the first 64 cannot
+    // permanently starve another stream. Only verified scans move checkpoints.
+    follow_once(client, http, realm, projector, ctx, is_active, current).await?;
+    let mut rediscovery = Box::pin(crate::runtime_helpers::sleep_for(DISCOVERY_INTERVAL));
     while is_active() {
         client.check_session()?;
         let frame = loop {
             use futures_util::future::{Either, select};
             match select(
-                Box::pin(stream.next_frame()),
-                Box::pin(crate::runtime_helpers::sleep_for(SUBSCRIBE_CANCEL_POLL)),
+                &mut rediscovery,
+                Box::pin(select(
+                    Box::pin(stream.next_frame()),
+                    Box::pin(crate::runtime_helpers::sleep_for(SUBSCRIBE_CANCEL_POLL)),
+                )),
             )
             .await
             {
-                Either::Left((frame, _)) => break frame?,
+                Either::Left(_) => {
+                    follow_once(client, http, realm, projector, ctx, is_active, current).await?;
+                    rediscovery = Box::pin(crate::runtime_helpers::sleep_for(DISCOVERY_INTERVAL));
+                }
+                Either::Right((Either::Left((frame, _)), _)) => break resume.hint_read(frame)?,
                 Either::Right(_) if !is_active() => return Ok(()),
                 Either::Right(_) => {
                     client.check_session()?;
@@ -141,51 +156,34 @@ async fn follow_once<F: Fn() -> bool>(
     http: &arkret_sdk::http_client::Client,
     realm: &arkret_sdk::RealmId,
     projector: &RealmIngestProjector,
-    ctx: &RealmEventsEngineContext,
+    _ctx: &RealmEventsEngineContext,
     is_active: &F,
     current: &mut OwnStationReplica,
 ) -> garth::Result<()> {
     client.check_session()?;
-    let circles = http.circle_list(realm.as_str()).await?;
-    client.check_session()?;
-    let mut streams = followed_streams(realm, ctx, &circles)
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    let mut cursor = None;
-    let mut seen = BTreeSet::new();
-    loop {
-        let page = http
-            .agent_sidecar_list(Some(realm), cursor.as_deref())
-            .await?;
-        client.check_session()?;
-        for view in page.sidecars {
-            view.validate()?;
-            if view.sidecar.realm_id != *realm {
-                return Err(protocol("Sidecar directory crosses Realm"));
-            }
-            if view.sidecar.state != arkret_sdk::AgentSidecarState::Tombstoned {
-                streams.insert(CommitStreamRef::Sidecar {
-                    realm_id: realm.clone(),
-                    sidecar_id: view.sidecar.id,
-                });
-            }
-        }
-        let Some(next) = page.next_cursor else {
-            break;
-        };
-        if !seen.insert(next.to_string()) || seen.len() > 128 {
-            return Err(protocol("Sidecar pagination did not terminate"));
-        }
-        cursor = Some(next.to_string());
-    }
+    let mut streams = garth::discover_realm_streams(client, realm).await?;
+    // Prioritize the selected Realm's live tail; this is scheduling only,
+    // never an ordering or position comparison between independent streams.
+    streams.sort_by_key(|row| !matches!(row.stream_ref, CommitStreamRef::Realm { .. }));
     let private = streams
         .iter()
-        .any(|s| matches!(s, CommitStreamRef::Sidecar { .. }));
-    for stream in streams {
+        .any(|s| matches!(s.stream_ref, CommitStreamRef::Sidecar { .. }));
+    let snapshot = client.snapshot_head(realm).await?;
+    for row in streams {
         if !is_active() {
             return Ok(());
         }
-        drain(client, http, realm, &stream, projector, is_active, current).await?;
+        drain_from_snapshot(
+            client,
+            http,
+            realm,
+            &row.stream_ref,
+            &snapshot,
+            projector,
+            is_active,
+            current,
+        )
+        .await?;
     }
     if private && is_active() {
         refresh_sidecars(client, http, realm, projector, is_active, current).await?;
@@ -292,13 +290,29 @@ pub(super) async fn drain<F: Fn() -> bool>(
     current: &mut OwnStationReplica,
 ) -> garth::Result<()> {
     let snapshot = client.snapshot_head(realm).await?;
-    current.install_bound_snapshot(&snapshot)?;
+    drain_from_snapshot(
+        client, http, realm, stream, &snapshot, projector, is_active, current,
+    )
+    .await
+}
+
+async fn drain_from_snapshot<F: Fn() -> bool>(
+    client: &OwnStationResultClient,
+    http: &arkret_sdk::http_client::Client,
+    realm: &arkret_sdk::RealmId,
+    stream: &CommitStreamRef,
+    snapshot: &CreatorOwnSnapshot,
+    projector: &RealmIngestProjector,
+    is_active: &F,
+    current: &mut OwnStationReplica,
+) -> garth::Result<()> {
+    current.install_bound_snapshot(snapshot)?;
     own_station::validate_current_product(snapshot.value()?, realm)?;
     let saved = projector
         .state_store
         .read(|s| s.verified_commit_stream_cursor(stream))
         .map_err(protocol)?;
-    let (replica, pages) = replay(client, realm, stream, &snapshot, saved.as_ref()).await?;
+    let (replica, pages) = replay(client, realm, stream, snapshot, saved.as_ref()).await?;
     let mut rows = Vec::new();
     for page in &pages {
         rows.extend(page.rows()?.iter().cloned());
@@ -309,7 +323,7 @@ pub(super) async fn drain<F: Fn() -> bool>(
     }
     client.check_session()?;
     let (changed, _) = install_live_current_snapshot(
-        client, &snapshot, realm, stream, projector, &replica, &pages, &batch, is_active,
+        client, snapshot, realm, stream, projector, &replica, &pages, &batch, is_active,
     )
     .await?;
     let evidence = resolve_stream_agent_keys(http, &projector.state_store, changed > 0).await?;

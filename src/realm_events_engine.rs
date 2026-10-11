@@ -327,11 +327,6 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
                 backoff.reset();
             }
             Err(error) => {
-                if error.is_invalid_cursor() {
-                    // Only this subscription handle is invalid. Independent
-                    // verified stream heads and private MLS state survive.
-                    subscription_state.reset();
-                }
                 if garth::classify_error(&error) == garth::RunErrorClass::Unauthorized {
                     match crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
                         &ctx.base_url.get(),
@@ -723,65 +718,6 @@ async fn refresh_verified_realm<T: garth::AuthorityTransport>(
     let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
     replica.refresh_verified_authority(&request, bundle.clone(), &freshness, &keys)?;
     Ok((bundle, freshness))
-}
-
-/// The independent streams this client follows for one Realm.
-///
-/// The Realm stream is always followed. The authenticated Circle directory
-/// supplies readable Circle streams even before any local MLS state exists;
-/// previously held MLS scopes remain followed during directory refresh.
-/// A directory preview never adds a stream. Every row is still checked
-/// against the signed authority and Commit chain.
-/// No combined ordering is derived across streams.
-fn followed_streams(
-    realm_id: &arkret_sdk::RealmId,
-    ctx: &RealmEventsEngineContext,
-    circles: &arkret_sdk::CircleList,
-) -> Vec<CommitStreamRef> {
-    let scopes = ctx
-        .state_store
-        .read(|store| store.local_mls_scopes_in_realm(realm_id.as_str()));
-    merge_followed_streams(realm_id, circles, scopes)
-}
-
-fn merge_followed_streams(
-    realm_id: &arkret_sdk::RealmId,
-    circles: &arkret_sdk::CircleList,
-    local_scopes: impl IntoIterator<Item = arkret_sdk::ScopeRef>,
-) -> Vec<CommitStreamRef> {
-    let mut refs: BTreeSet<CommitStreamRef> = BTreeSet::from([CommitStreamRef::Realm {
-        realm_id: realm_id.clone(),
-    }]);
-    refs.extend(directory_circle_streams(realm_id, circles));
-    for scope in local_scopes {
-        if let Ok(stream_ref) = CommitStreamRef::from_scope(&scope, Some(realm_id.clone()))
-            && stream_ref.realm_id() == realm_id
-        {
-            refs.insert(stream_ref);
-        }
-    }
-    refs.into_iter().collect()
-}
-
-fn directory_circle_streams(
-    realm_id: &arkret_sdk::RealmId,
-    circles: &arkret_sdk::CircleList,
-) -> BTreeSet<CommitStreamRef> {
-    let mut refs = BTreeSet::new();
-    if circles.realm_id == *realm_id {
-        for circle in &circles.circles {
-            if let arkret_sdk::CircleReadView::Full(circle) = circle
-                && circle.realm_id == *realm_id
-                && circle.viewer_membership == Some(arkret_sdk::CircleMembership::Join)
-            {
-                refs.insert(CommitStreamRef::Circle {
-                    realm_id: realm_id.clone(),
-                    circle_id: circle.circle_id.clone(),
-                });
-            }
-        }
-    }
-    refs
 }
 
 /// Pull one stream forward from its durable position until the Station stops
@@ -2692,92 +2628,6 @@ mod tests {
             json!(collaboration_genesis(GENESIS_SALT)),
         );
         assert!(holder_pcr_root_authorization(&collaboration, &realm, &actor).is_err());
-    }
-
-    #[test]
-    fn plaintext_circle_directory_membership_selects_scannable_streams() {
-        let circle_id =
-            arkret_sdk::CircleId::new("ak:circle:AdP2S6y0Ms7yp9-GNvXZ3sVfvTEo8mtnV3G_RfApIOn0")
-                .unwrap();
-        let preview_id = "ak:circle:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu";
-        let directory_value = json!({
-            "realm_id": REALM_ID,
-            "circles": [
-                {
-                    "circle_id": circle_id,
-                    "realm_id": REALM_ID,
-                    "title": "Polls",
-                    "summary": null,
-                    "display": {"short_name": "Polls", "color_token": "blue", "symbol": {"glyph": "bolt"}},
-                    "directory_visibility": "members",
-                    "join_rule": "public",
-                    "history_access": "all_history_for_current_members",
-                    "mls_group_id": null,
-                    "state": "active",
-                    "viewer_membership": "join",
-                    "member_ids": [{"kind": "account", "account_id": {
-                        "principal_id": ACTOR_ID,
-                        "station_id": "ak:did_core:web:station.example"}}],
-                    "created_by": {"kind": "account", "account_id": {
-                        "principal_id": ACTOR_ID,
-                        "station_id": "ak:did_core:web:station.example"}},
-                    "created_at": "2026-01-01T00:00:00.000Z",
-                    "updated_by": null,
-                    "updated_at": null
-                },
-                {
-                    "circle_id": preview_id,
-                    "realm_id": REALM_ID,
-                    "visibility": "realm_members",
-                    "display": {"color_token": "blue", "symbol": {"glyph": "bolt"}},
-                    "member_count_bucket": "2-3",
-                    "join_rule": "public",
-                    "opaque_commitment": "a".repeat(64)
-                }
-            ]
-        });
-        let full: arkret_sdk::CircleView =
-            serde_json::from_value(directory_value["circles"][0].clone()).unwrap();
-        let mut nonmember_full = full.clone();
-        nonmember_full.circle_id = arkret_sdk::CircleId::from_event_id(
-            &arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x62; 32]),
-        );
-        nonmember_full.viewer_membership = Some(arkret_sdk::CircleMembership::Leave);
-        let preview: arkret_sdk::CirclePreview =
-            serde_json::from_value(directory_value["circles"][1].clone()).unwrap();
-        let directory = arkret_sdk::CircleList {
-            realm_id: arkret_sdk::RealmId::new(REALM_ID).unwrap(),
-            circles: vec![
-                arkret_sdk::CircleReadView::Full(full),
-                arkret_sdk::CircleReadView::Full(nonmember_full),
-                arkret_sdk::CircleReadView::Preview(preview),
-            ],
-        };
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
-        let sidecar_id = arkret_sdk::SidecarId::from_event_id(&arkret_sdk::EventId::from_digest(
-            arkret_sdk::DigestSuite::Sha256,
-            [0x61; 32],
-        ));
-        let local_sidecar = arkret_sdk::ScopeRef::Sidecar {
-            realm_id: realm_id.clone(),
-            sidecar_id: sidecar_id.clone(),
-        };
-        assert_eq!(
-            merge_followed_streams(&realm_id, &directory, [local_sidecar]),
-            vec![
-                CommitStreamRef::Realm {
-                    realm_id: realm_id.clone(),
-                },
-                CommitStreamRef::Circle {
-                    realm_id: realm_id.clone(),
-                    circle_id,
-                },
-                CommitStreamRef::Sidecar {
-                    realm_id,
-                    sidecar_id,
-                },
-            ]
-        );
     }
 
     fn set_row_value(row: &mut TypedCurrentRow, next: serde_json::Value) {
