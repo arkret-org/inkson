@@ -272,7 +272,7 @@ pub(super) fn submit_kanban_operation_event(
         match result {
             Ok(resp) => {
                 // `build_sdk_event` names an event-derived create from its
-                // draft Event id. Final authoring attaches actor-chain/HLC/CBS
+                // draft Event id. Final authoring attaches producer proof
                 // fields and refreshes that content-bound id, so preserve the
                 // accepted id on the optimistic row. The projection uses it to
                 // migrate the temporary object id, and backfill can then merge
@@ -767,9 +767,8 @@ pub(super) struct ColumnNeighbours {
 ///
 /// - Cross-column drop ⇒ `ak.strand.move` Event kind.
 /// - Same-column drop ⇒ `ak.strand.reorder`.
-/// - Both compile to the same `ak:cell:ak.component.strand.position.v1:<board>:<strand>`
-///   causal-register cell; the difference is whether `effect.list_space_id` equals
-///   `expected.list_space_id`.
+/// - Both address the same holder-local Board/Strand queue key. causal-register cell; the
+///   difference is whether `effect.list_space_id` equals `expected.list_space_id`.
 pub(super) fn dispatch_strand_position_move(
     base_url: String,
     token: Signal<String>,

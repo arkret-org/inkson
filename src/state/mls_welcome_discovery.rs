@@ -7,19 +7,23 @@ pub struct MlsWelcomeDiscoveryProgress {
     pub pending: Vec<arkret_sdk::EventId>,
     pub next_cursor: Option<String>,
     pub exhausted: bool,
-    pub observed_frontier: Vec<String>,
+    pub observed_commit_event_ids: Vec<String>,
     pub key_material_hint: String,
 }
 
 impl MlsWelcomeDiscoveryProgress {
     #[cfg(test)]
-    pub(crate) fn observe_inputs(&mut self, frontier: Vec<String>, key_material_hint: String) {
+    pub(crate) fn observe_inputs(
+        &mut self,
+        commit_event_ids: Vec<String>,
+        key_material_hint: String,
+    ) {
         if self.key_material_hint != key_material_hint
-            || (self.exhausted && self.observed_frontier != frontier)
+            || (self.exhausted && self.observed_commit_event_ids != commit_event_ids)
         {
             *self = Self::default();
         }
-        self.observed_frontier = frontier;
+        self.observed_commit_event_ids = commit_event_ids;
         self.key_material_hint = key_material_hint;
     }
 }
@@ -58,10 +62,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn restored_private_key_reopens_exhausted_window_without_frontier_change() {
+    fn restored_private_key_reopens_exhausted_window_without_commit_event_ids_change() {
         let mut progress = MlsWelcomeDiscoveryProgress {
             exhausted: true,
-            observed_frontier: vec!["same-head".into()],
+            observed_commit_event_ids: vec!["same-head".into()],
             key_material_hint: "missing-private-key".into(),
             ..Default::default()
         };

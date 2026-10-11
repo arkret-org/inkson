@@ -190,8 +190,7 @@ pub fn build_realm_bootstrap_facet_intents(
         .into_intent(),
     );
     // object-addressing.md §3.3: `ak.realm.alias` is the ONLY wire carrier of a
-    // Realm alias, and §2.5 lists it among the seal_basis-exempt bootstrap
-    // follow-ups, so naming a Realm at creation happens here rather than on the
+    // Realm alias. Naming a Realm at creation happens here rather than on the
     // closed Realm object. The alias domain is the deployment that issues it.
     //
     // Emptiness is judged AFTER stripping the `#` share sigil: the sigil is a
@@ -962,7 +961,6 @@ pub fn build_realm_alias_event(
         realm_id,
         actor_id,
         arkret_sdk::RealmAliasPayload::declaration(canonical),
-        Value::Null,
     )
 }
 
@@ -986,49 +984,19 @@ fn build_realm_alias_event_for_station(
         realm_id,
         actor_id,
         arkret_sdk::RealmAliasPayload::declaration(canonical),
-        Value::Null,
-    )
-}
-
-/// Rename an already-claimed alias. `settled_payload` is the whole current
-/// sequenced value, so a concurrent rename returns the current result instead
-/// of silently overwriting a live address.
-pub fn build_realm_alias_rename_event(
-    realm_id: &str,
-    actor_id: &str,
-    authority_service_did: &str,
-    alias: &str,
-    settled_payload: Value,
-) -> anyhow::Result<crate::operation::LocalOperation> {
-    let authority = arkret_sdk::RealmAlias::authority_domain_for_service(authority_service_did)
-        .map_err(|error| {
-            anyhow::anyhow!(
-                "cannot derive realm alias authority from {authority_service_did}: {error}"
-            )
-        })?;
-    let canonical = arkret_sdk::RealmAlias::prepare_under_authority(alias, &authority)
-        .map_err(|error| anyhow::anyhow!("invalid realm alias {alias:?}: {error}"))?;
-    build_realm_alias_payload_event(
-        realm_id,
-        actor_id,
-        arkret_sdk::RealmAliasPayload::declaration(canonical),
-        settled_payload,
     )
 }
 
 /// Build the `ak.realm.alias` value tombstone that releases the Realm's alias.
 /// After it is accepted the Realm is addressable only by `realm_id`.
-/// `settled_payload` is the whole current cell value for the head_eq guard.
 pub fn build_realm_alias_tombstone_event(
     realm_id: &str,
     actor_id: &str,
-    settled_payload: Value,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     build_realm_alias_payload_event(
         realm_id,
         actor_id,
         arkret_sdk::RealmAliasPayload::tombstone(),
-        settled_payload,
     )
 }
 
@@ -1036,7 +1004,6 @@ fn build_realm_alias_payload_event(
     realm_id: &str,
     actor_id: &str,
     payload: arkret_sdk::RealmAliasPayload,
-    _expected_head: Value,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let created_at = event_timestamp();
     TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmAlias>(realm_id, actor_id, payload)
@@ -1049,7 +1016,6 @@ fn build_realm_alias_payload_event_for_station(
     realm_id: &str,
     actor_id: &str,
     payload: arkret_sdk::RealmAliasPayload,
-    _expected_head: Value,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let created_at = event_timestamp();
     TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::RealmAlias>(
@@ -1208,7 +1174,7 @@ fn build_member_state_transition_event_for_station(
     let member_id = member_actor_id.clone();
     // `member.state` is keyed by the complete ActorId. ActorId is structured
     // canonical JSON, so the registry's canonical_json composite rule hashes
-    // that JSON string into the single safe CellRef subject segment.
+    // that JSON string into the single safe typed current subject segment.
     let member_actor_key = member_id.canonical_key()?;
     let member_cell_subject = member_actor_key.to_owned();
     // Strong `membership_payload` (`event-payload.schema.json`). The schema's

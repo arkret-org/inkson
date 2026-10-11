@@ -233,7 +233,7 @@ async fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
     let mut state = isolated_store_for_tests("encrypted-scope-allows-encrypted-value");
     state.save_realm_tree_projection(
         TEST_REALM_ID,
-        creator_realm_projection(TEST_REALM_ID, &actor_id, "mls_rfc9420"),
+        creator_realm_projection(&actor_id, "mls_rfc9420"),
     );
     fixture::install_accepted_mls_group(
         &mut state,
@@ -634,10 +634,7 @@ async fn encrypted_private_patch_uses_checkpoint_proven_creator_snapshot() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let actor_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
     let mut state = isolated_store_for_tests("creator-bootstrap-mls");
-    state.save_realm_tree_projection(
-        realm,
-        creator_realm_projection(realm, &actor_id, "mls_rfc9420"),
-    );
+    state.save_realm_tree_projection(realm, creator_realm_projection(&actor_id, "mls_rfc9420"));
     fixture::install_accepted_mls_group(
         &mut state,
         &arkret_sdk::ScopeRef::Realm {
@@ -686,10 +683,7 @@ async fn encrypted_private_patch_rejects_epoch_zero_without_accepted_genesis_ref
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let actor_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
     let mut state = isolated_store_for_tests("creator-persisted-epoch-zero");
-    state.save_realm_tree_projection(
-        realm,
-        creator_realm_projection(realm, &actor_id, "mls_rfc9420"),
-    );
+    state.save_realm_tree_projection(realm, creator_realm_projection(&actor_id, "mls_rfc9420"));
     fixture::install_accepted_mls_group(
         &mut state,
         &arkret_sdk::ScopeRef::Realm {

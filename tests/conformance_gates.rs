@@ -167,6 +167,7 @@ const TEST_REALM_ID: &str = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2
 const TEST_SPACE_ID: &str = "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
 const TEST_ACTOR_ID: &str = "ak:did_core:web:alice.example";
 const TEST_ACTOR_DID: &str = "did:web:alice.example";
+const TEST_DEVICE_ID: &str = "ak:device:0196419b-0000-7000-8000-000000000091";
 const TEST_SERVICE_ID: &str = "ak:did_core:web:server.example";
 const TEST_SERVICE_DID: &str = "did:web:server.example";
 const TEST_INVITEE_DID: &str = "did:web:bob.example";
@@ -184,20 +185,17 @@ fn select_authoring_station() {
     ));
 }
 
-/// Stamp the wire fields the submit pipeline would normally attach
-/// (CBS basis + Ed25519 proof) so the envelope satisfies the reducer-input
-/// rules baked into event-envelope.schema.json.
+/// Finalize and sign the current typed Event before schema validation.
 fn wire_envelope(operation: LocalOperation) -> arkret_sdk::AuthoredEvent {
     wire_envelope_from_intent(operation.into_intent())
 }
 
 /// Attach the producer proof to an envelope that is already authored.
 ///
-/// A genesis unit's members are authored together, and every one of them is
-/// CBS-exempt, so there is nothing left to stamp before signing.
+/// A genesis unit's members are authored together and retain their original bytes.
 fn sign_authored(envelope: &mut arkret_sdk::AuthoredEvent) {
     let signer_did = TEST_ACTOR_DID;
-    let key_id = format!("{signer_did}#device");
+    let key_id = format!("{signer_did}#{TEST_DEVICE_ID}");
     envelope
         .sign_ed25519(signer_did, key_id, test_signing_key())
         .expect("Ed25519 sign succeeds for schema-conformant envelope");
@@ -235,7 +233,7 @@ fn authored_realm_bootstrap(
 fn wire_envelope_from_intent(intent: inkson::operation::EventIntent) -> arkret_sdk::AuthoredEvent {
     let mut envelope = common::author_intent_at_index(intent, 1);
     let signer_did = TEST_ACTOR_DID;
-    let key_id = format!("{signer_did}#device");
+    let key_id = format!("{signer_did}#{TEST_DEVICE_ID}");
     envelope
         .sign_ed25519(signer_did, key_id, test_signing_key())
         .expect("Ed25519 sign succeeds for schema-conformant envelope");
@@ -257,47 +255,33 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
         "validator accepted an empty object; resolver wiring is broken"
     );
 
-    // Correct envelope shape but an invalid Event identity token.
-    let bogus = serde_json::json!({
-        "event_id": "ak:event:ARVsG4AMRBL8f5CJIY_5XgOEXn-Y-qGjMws333Urc-KI",
-        "kind": "ak.realm.create",
-        "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-        "actor_id": "ak:did_core:web:alice.example",
-        "actor_seq": 1,
-        "created_at": "2026-05-21T13:00:00.000Z",
-        "prev_refs": [],
-        "payload": {}
-    });
+    select_authoring_station();
+    let valid = wire_envelope(
+        event_builders::build_space_create_event(
+            TEST_REALM_ID,
+            TEST_ACTOR_ID,
+            "Schema control",
+            None,
+            "list",
+            None,
+        )
+        .unwrap(),
+    );
+    assert_envelope_matches_schema("negative control", valid.event());
+    let valid = serde_json::to_value(valid.event()).unwrap();
+
+    let mut bogus = valid.clone();
+    bogus["event_id"] = serde_json::json!("ak:event:invalid");
     assert!(
         !validator.is_valid(&bogus),
-        "validator accepted a malformed event_id; resolver wiring is broken"
+        "invalid Event identity must be refused"
     );
 
-    // A reducer-input envelope missing its required scope MUST be rejected.
-    // Preconditions are optional for both ordinary Events and Control Moves;
-    // registered effects are reducer-derived and have no envelope field.
-    let reducer_missing_required = serde_json::json!({
-        "event_id": "ak:event:AZEAhO4CFzelWMJKtLZI-HSeK3Nh28YP3M24_4uLoFAF",
-        "kind": "ak.realm.create",
-        "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-        "actor_id": "ak:did_core:web:alice.example",
-        "actor_seq": 1,
-        "created_at": "2026-05-21T13:00:00.000Z",
-        "prev_refs": [],
-        "payload": {},
-        "producer_proof": {
-            "kind": "detached_jws",
-            "verification_method": "did:web:alice.example#device",
-            "event_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            "created_at": "2026-05-21T13:00:00.000Z",
-            "jws": "a.b.c"
-        }
-    });
+    let mut missing_scope = valid;
+    missing_scope.as_object_mut().unwrap().remove("scope_ref");
     assert!(
-        !validator.is_valid(&reducer_missing_required),
-        "validator accepted a reducer-input ak.realm.create envelope \
-         missing scope_ref; the conditional \
-         branch on event-envelope.schema.json is not being evaluated"
+        !validator.is_valid(&missing_scope),
+        "missing scope_ref must be refused"
     );
 }
 
@@ -555,8 +539,7 @@ fn realm_bootstrap_keeps_plaintext_services_off_the_closed_realm_object() {
 
 /// The sibling of the plaintext-services regression: an alias is also NOT a
 /// property of the closed `realm.schema.json`. `ak.realm.alias` is its only
-/// wire carrier (object-addressing.md §3.3), and it is a registered
-/// seal_basis-exempt bootstrap follow-up (realm-and-space.md §2.5), so a
+/// wire carrier (object-addressing.md §3.3), so a
 /// create-time alias must appear as its own Event in the same batch.
 ///
 /// This is the case the old gate could not see: it only ever passed

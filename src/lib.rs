@@ -69,7 +69,6 @@ pub mod messaging;
 pub mod mls;
 pub(crate) mod mls_api_helpers;
 pub mod models;
-pub mod move_builder;
 pub mod notification_rules;
 pub mod notification_sound;
 pub mod object_address;

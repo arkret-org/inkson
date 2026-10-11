@@ -16,12 +16,12 @@ use serde_json::Value;
 use crate::event_builders::build_realm_profile_replacement_event;
 use crate::event_builders::{
     build_capability_relinquish_control_intent, build_member_state_transition_event,
-    build_realm_alias_event, build_realm_alias_rename_event, build_realm_alias_tombstone_event,
-    build_realm_archive_event, build_realm_authority_reset_control_intent,
-    build_realm_bootstrap_steps_for_station, build_realm_destroy_event,
-    build_realm_owner_transfer_control_intent, build_realm_profile_update_event,
-    build_realm_state_event_for_station, build_space_create_event, build_space_lifecycle_event,
-    parse_wire_enum, recommended_realm_policy_bundle_value,
+    build_realm_alias_event, build_realm_alias_tombstone_event, build_realm_archive_event,
+    build_realm_authority_reset_control_intent, build_realm_bootstrap_steps_for_station,
+    build_realm_destroy_event, build_realm_owner_transfer_control_intent,
+    build_realm_profile_update_event, build_realm_state_event_for_station,
+    build_space_create_event, build_space_lifecycle_event, parse_wire_enum,
+    recommended_realm_policy_bundle_value,
 };
 use crate::event_submit::EventSubmitter;
 use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
@@ -327,17 +327,7 @@ pub async fn set_realm_alias(
     let current = latest_realm_alias_payload(&rows)?;
     let requested = alias.map(str::trim).filter(|alias| !alias.is_empty());
     let event = match (requested, current) {
-        (Some(alias), Some(expected)) => {
-            let service_id = submitter.service_did().await?;
-            build_realm_alias_rename_event(
-                realm_id.as_str(),
-                actor_id,
-                &service_id,
-                alias,
-                expected,
-            )?
-        }
-        (Some(alias), None) => {
+        (Some(alias), _) => {
             let service_id = submitter.service_did().await?;
             build_realm_alias_event(realm_id.as_str(), actor_id, &service_id, alias)?
         }
@@ -348,7 +338,7 @@ pub async fn set_realm_alias(
             if payload.alias().is_none() {
                 anyhow::bail!("Realm alias is already absent");
             }
-            build_realm_alias_tombstone_event(realm_id.as_str(), actor_id, expected)?
+            build_realm_alias_tombstone_event(realm_id.as_str(), actor_id)?
         }
         (None, None) => anyhow::bail!("Realm alias is already absent"),
     };
@@ -756,9 +746,7 @@ mod tests {
     fn latest_alias_payload_folds_accepted_declaration_and_tombstone() {
         let declaration =
             build_realm_alias_event(REALM_ID, ACTOR_ID, SERVICE_DID, "engineering").unwrap();
-        let declaration_value = serde_json::to_value(declaration.payload()).unwrap();
-        let tombstone =
-            build_realm_alias_tombstone_event(REALM_ID, ACTOR_ID, declaration_value).unwrap();
+        let tombstone = build_realm_alias_tombstone_event(REALM_ID, ACTOR_ID).unwrap();
         let rows = vec![
             committed_row(crate::operation::author_for_test(&declaration).into_event()),
             committed_row(crate::operation::author_for_test(&tombstone).into_event()),

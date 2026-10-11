@@ -3,13 +3,10 @@
 use super::TypedOperationBuilder;
 
 /// Durable `ak.device.revoke` Control Move on the principal control
-/// stream (`crypto-media/device-lifecycle.md` §2.2, SPEC-SOL-003
-/// resolution). `realm_id` MUST be the principal's control realm
-/// (`arkret_sdk::auth::principal_control_realm_id`); the caller MUST
-/// attach a `seal_basis` minted from the registered frontier sourcing
-/// before building. The payload carries no frontier field — the
-/// authorization basis is the envelope `seal_basis` and the effective
-/// cutoff is the accepted Seal covering this Move.
+/// Realm (`crypto-media/device-lifecycle.md` §2.2). `realm_id` MUST be the
+/// principal control Realm (`arkret_sdk::auth::principal_control_realm_id`).
+/// The payload binds the exact current device authorization; revocation
+/// becomes effective at the accepted RealmCommit.
 ///
 /// `reason` must match the schema slug form `^[a-z][a-z0-9_]{0,63}$`
 /// (e.g. `user_request`, `device_lost`).

@@ -378,14 +378,10 @@ fn inkson_accepts_server_contract_payloads() {
 
     let error = decode_arkret_error(
         StatusCode::CONFLICT,
-        &problem_bytes(
-            StatusCode::CONFLICT,
-            "expected_head_mismatch",
-            "expected_head mismatch",
-        ),
+        &problem_bytes(StatusCode::CONFLICT, "conflict", "revision mismatch"),
     );
-    assert_eq!(error.code(), "expected_head_mismatch");
-    assert_eq!(error.detail, "expected_head mismatch");
+    assert_eq!(error.code(), "conflict");
+    assert_eq!(error.detail, "revision mismatch");
 }
 
 #[test]
@@ -894,24 +890,24 @@ fn bare_401_does_not_count_as_session_loss() {
 fn decoder_handles_problem_and_non_problem() {
     let problem = serde_json::to_vec(
         &arkret_sdk::Problem::new(
-            "expected_head_mismatch",
+            "conflict",
             StatusCode::CONFLICT.as_u16(),
-            "head mismatch",
+            "revision mismatch",
         )
         .with_instance("ak:request:server-contract")
         .with_extension("retry_after_ms", json!(250))
         .with_extension(
-            "cell",
-            json!("ak:cell:ak.component.strand.position.v1:demo"),
+            "resource_ref",
+            json!("ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"),
         ),
     )
     .unwrap();
     let decoded = decode_arkret_error(StatusCode::CONFLICT, &problem);
-    assert_eq!(decoded.code(), "expected_head_mismatch");
+    assert_eq!(decoded.code(), "conflict");
     assert_eq!(decoded.retry_after_ms(), Some(250));
     assert_eq!(
-        decoded.extensions["cell"],
-        "ak:cell:ak.component.strand.position.v1:demo"
+        decoded.extensions["resource_ref"],
+        "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
     );
 
     let fallback = decode_arkret_error(StatusCode::SERVICE_UNAVAILABLE, b"<html>busy</html>");

@@ -1106,7 +1106,7 @@ pub fn SettingsPanel(
                                                         );
                                                         // Publish the public tombstone before the
                                                         // actor-private mirror. Both Events share
-                                                        // one actor frontier; authoring them in the
+                                                        // one stream head; authoring them in the
                                                         // opposite order lets the mirror advance the
                                                         // frontier after the profile Event was built.
                                                         controller.remove_avatar(base, api_token, first_profile_display_name);

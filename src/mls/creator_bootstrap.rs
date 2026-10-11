@@ -1006,12 +1006,8 @@ mod tests {
         )
     }
 
-    /// A realm projection in its post-P1 shape: the creator fact is only
-    /// available through the Station's current `ak.component.realm.authority_root.v1`
-    /// value, whose controller comes from the accepted `ak.realm.create`
-    /// envelope. The retired `owner` / `created_by` mirrors are deliberately
-    /// absent — a fixture that carried them would test a fallback the client
-    /// no longer has.
+    /// Local roster/display cache for pending MLS hint tests.
+    /// It carries no authenticated authority current.
     fn realm_projection(creator: &str) -> serde_json::Value {
         let principal_id = crate::mls_api_helpers::principal_core_id(creator).unwrap();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
@@ -1022,26 +1018,7 @@ mod tests {
             "__kind": "realm",
             "member_roster_entries_limited": false,
             "member_roster_entries": [{ "actor_id": creator, "membership": "join" }],
-            "summary": { "title": "Realm" },
-            "current": {
-                "entries": [authority_root_entry(&creator)]
-            }
-        })
-    }
-
-    /// The single installed current authority-root result for [`REALM`].
-    fn authority_root_entry(controller: &arkret_sdk::ActorId) -> serde_json::Value {
-        json!({
-            "selector": {
-                "scope_ref": {"kind": "realm", "realm_id": REALM},
-                "cell_id": "ak:cell:ak.component.realm.authority_root.v1:null"
-            },
-            "result": {"status": "value", "value": {
-                "controller_actor_id": controller,
-                "controller_epoch": 0,
-                "authority_generation": 0,
-                    "authority_event_ref": REALM.replacen("ak:realm:", "ak:event:", 1)
-            }}
+            "summary": { "title": "Realm" }
         })
     }
 

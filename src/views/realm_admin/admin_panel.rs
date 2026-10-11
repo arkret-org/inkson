@@ -996,7 +996,7 @@ pub fn RealmAdminPanel(
                 // dropdown (`temporal` / `quota` / `scope_limitation` /
                 // `none`) and fill in the form for that family. Today only
                 // `temporal` is fully wired - the other options surface
-                // their hint copy but no inputs (matching the move_builder
+                // their hint copy but no inputs (matching the typed operation builder
                 // constraint surface, which only provides a `temporal`
                 // builder helper).
                 div { class: "event-head", "data-testid": "cap-constraint-editor",
