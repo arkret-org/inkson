@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 
+use super::CircleFeedback;
 use crate::transport::auth::with_authed_api;
 
 #[component]
@@ -56,7 +57,7 @@ pub(super) fn CircleSelfMembership(
     token: Signal<String>,
     mut busy: Signal<bool>,
     mut refresh: Signal<u64>,
-    mut status: Signal<String>,
+    mut status: Signal<CircleFeedback>,
 ) -> Element {
     let session = crate::app::SessionContext::get();
     let base = crate::app::SessionContext::base_url_string();
@@ -72,7 +73,7 @@ pub(super) fn CircleSelfMembership(
             disabled: busy(),
             onclick: move |_| {
                 let Some(account) = session.active_account() else {
-                    status.set("An active account is required".to_owned());
+                    status.set(CircleFeedback::new("circles.feedback.account_required"));
                     return;
                 };
                 let member = arkret_sdk::ActorId::account(account.authority);
@@ -102,8 +103,8 @@ pub(super) fn CircleSelfMembership(
                         Ok::<_, anyhow::Error>(())
                     }).await;
                     match outcome {
-                        Ok(()) => { status.set(if target == arkret_sdk::CircleMembership::Knock { "Join request submitted" } else { "Membership updated" }.to_owned()); refresh += 1; }
-                        Err(error) => status.set(format!("Membership update failed: {}", error.display())),
+                        Ok(()) => { status.set(CircleFeedback::new(if target == arkret_sdk::CircleMembership::Knock { "circles.feedback.join_requested" } else { "circles.feedback.membership_updated" })); refresh += 1; }
+                        Err(error) => status.set(CircleFeedback::new("circles.feedback.membership_failed").with_api_error(error)),
                     }
                     busy.set(false);
                 });
@@ -126,7 +127,7 @@ pub(super) fn CircleEditForm(
     token: Signal<String>,
     mut busy: Signal<bool>,
     mut refresh: Signal<u64>,
-    mut status: Signal<String>,
+    mut status: Signal<CircleFeedback>,
 ) -> Element {
     let mut title = use_signal(|| initial_title.clone());
     let mut summary = use_signal(|| initial_summary.clone().unwrap_or_default());
@@ -156,7 +157,7 @@ pub(super) fn CircleEditForm(
                             realm_id.as_str(), &principal_id, circle_id.as_str(),
                             &title(), &summary(), display, visibility(), join_rule(),
                         ).and_then(|builder| builder.build_sdk_event("inkson"));
-                        let event = match event { Ok(event) => event, Err(error) => { status.set(error.to_string()); return; } };
+                        let event = match event { Ok(event) => event, Err(error) => { tracing::warn!(%error, "Circle event preparation failed"); status.set(CircleFeedback::new("circles.feedback.prepare_failed")); return; } };
                         let base = base.clone();
                         let credential = token();
                         busy.set(true);
@@ -165,8 +166,8 @@ pub(super) fn CircleEditForm(
                                 api.event_submitter()?.submit_sdk_event(&event).await
                             }).await;
                             match outcome {
-                                Ok(_) => { status.set("Circle updated".to_owned()); refresh += 1; }
-                                Err(error) => status.set(format!("Circle update failed: {}", error.display())),
+                                Ok(_) => { status.set(CircleFeedback::new("circles.feedback.updated")); refresh += 1; }
+                                Err(error) => status.set(CircleFeedback::new("circles.feedback.update_failed").with_api_error(error)),
                             }
                             busy.set(false);
                         });
@@ -188,7 +189,7 @@ pub(super) fn CircleTerminalActions(
     token: Signal<String>,
     mut busy: Signal<bool>,
     mut refresh: Signal<u64>,
-    mut status: Signal<String>,
+    mut status: Signal<CircleFeedback>,
 ) -> Element {
     let mut history_confirm = use_signal(|| false);
     let mut terminal_confirm = use_signal(|| false);
@@ -214,15 +215,15 @@ pub(super) fn CircleTerminalActions(
                         let principal_id = principal_id.clone();
                         move |_| {
                             let event = crate::operation::ak_ops::circle_restrict_history(realm_id.as_str(), &principal_id, circle_id.as_str()).and_then(|builder| builder.build_sdk_event("inkson"));
-                            let event = match event { Ok(event) => event, Err(error) => { status.set(error.to_string()); return; } };
+                            let event = match event { Ok(event) => event, Err(error) => { tracing::warn!(%error, "Circle event preparation failed"); status.set(CircleFeedback::new("circles.feedback.prepare_failed")); return; } };
                             let base = base.clone();
                             let credential = token();
                             busy.set(true);
                             spawn(async move {
                                 let outcome = with_authed_api(&base, credential, |api| async move { api.event_submitter()?.submit_sdk_event(&event).await }).await;
                                 match outcome {
-                                    Ok(_) => { status.set("History restricted to since joining".to_owned()); history_confirm.set(false); refresh += 1; }
-                                    Err(error) => status.set(format!("History change failed: {}", error.display())),
+                                    Ok(_) => { status.set(CircleFeedback::new("circles.feedback.history_restricted")); history_confirm.set(false); refresh += 1; }
+                                    Err(error) => status.set(CircleFeedback::new("circles.feedback.history_failed").with_api_error(error)),
                                 }
                                 busy.set(false);
                             });
@@ -239,15 +240,15 @@ pub(super) fn CircleTerminalActions(
                 class: "secondary danger", r#type: "button", disabled: busy() || !terminal_confirm(), "data-testid": "circle-tombstone",
                 onclick: move |_| {
                     let event = crate::operation::ak_ops::circle_lifecycle(realm_id.as_str(), &principal_id, circle_id.as_str(), arkret_sdk::EventKind::CircleTombstone, None).and_then(|builder| builder.build_sdk_event("inkson"));
-                    let event = match event { Ok(event) => event, Err(error) => { status.set(error.to_string()); return; } };
+                    let event = match event { Ok(event) => event, Err(error) => { tracing::warn!(%error, "Circle event preparation failed"); status.set(CircleFeedback::new("circles.feedback.prepare_failed")); return; } };
                     let base = base.clone();
                     let credential = token();
                     busy.set(true);
                     spawn(async move {
                         let outcome = with_authed_api(&base, credential, |api| async move { api.event_submitter()?.submit_sdk_event(&event).await }).await;
                         match outcome {
-                            Ok(_) => { status.set("Circle permanently retired".to_owned()); terminal_confirm.set(false); refresh += 1; }
-                            Err(error) => status.set(format!("Circle retirement failed: {}", error.display())),
+                            Ok(_) => { status.set(CircleFeedback::new("circles.feedback.retired")); terminal_confirm.set(false); refresh += 1; }
+                            Err(error) => status.set(CircleFeedback::new("circles.feedback.retire_failed").with_api_error(error)),
                         }
                         busy.set(false);
                     });

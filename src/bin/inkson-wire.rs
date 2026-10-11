@@ -62,6 +62,7 @@ fn main() -> Result<()> {
         "contact-request-sign" => contact_request_sign(input)?,
         "contact-request-verify" => contact_request_verify(input)?,
         "mock-realm-fixture" => realm_fixture::build(input)?,
+        "mock-realm-list" => realm_fixture::realm_list(input)?,
         "mock-realm-verify" => realm_fixture::verify(input)?,
         "mock-realm-authority-bundle" => realm_fixture::authority_bundle(input)?,
         "mock-current-principal" => realm_fixture::current_principal(input)?,

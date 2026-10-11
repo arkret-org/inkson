@@ -9,6 +9,40 @@ use crate::components::{CircleIdentityBadge, HelpTip};
 use crate::routes::Route;
 use crate::transport::auth::with_authed_api;
 
+/// Keep action results in their original form so a locale change can re-render
+/// retained feedback without repeating the request.
+#[derive(Clone, Default)]
+pub(super) struct CircleFeedback {
+    key: &'static str,
+    error: Option<std::rc::Rc<crate::transport::auth::ApiCallError>>,
+}
+
+impl CircleFeedback {
+    fn new(key: &'static str) -> Self {
+        Self { key, error: None }
+    }
+
+    fn with_api_error(mut self, error: crate::transport::auth::ApiCallError) -> Self {
+        self.error = Some(std::rc::Rc::new(error));
+        self
+    }
+
+    fn is_empty(&self) -> bool {
+        self.key.is_empty()
+    }
+
+    fn render(&self) -> String {
+        if self.is_empty() {
+            return String::new();
+        }
+        if let Some(error) = &self.error {
+            crate::i18n::tr_args(self.key, &[("error", error.display())])
+        } else {
+            crate::i18n::tr(self.key)
+        }
+    }
+}
+
 fn valid_short_name(value: &str) -> bool {
     let bytes = value.as_bytes();
     (1..=24).contains(&bytes.len())
@@ -83,7 +117,7 @@ pub fn CirclesPanel(
     let mut circles = use_signal(Vec::<arkret_sdk::CircleView>::new);
     let mut previews = use_signal(Vec::<arkret_sdk::CirclePreview>::new);
     let mut loading = use_signal(|| true);
-    let mut status = use_signal(String::new);
+    let mut status = use_signal(CircleFeedback::default);
     let mut refresh = use_signal(|| 0_u64);
     let mut create_open = use_signal(|| false);
     let mut create_title = use_signal(String::new);
@@ -123,7 +157,10 @@ pub fn CirclesPanel(
                     Err(error) => {
                         circles.set(Vec::new());
                         previews.set(Vec::new());
-                        status.set(format!("Could not load Circles: {}", error.display()));
+                        status.set(
+                            CircleFeedback::new("circles.feedback.load_failed")
+                                .with_api_error(error),
+                        );
                     }
                 }
                 loading.set(false);
@@ -170,7 +207,7 @@ pub fn CirclesPanel(
             }
 
             if !status().is_empty() {
-                div { class: "circle-status", role: "status", "data-testid": "circle-status", "{status}" }
+                div { class: "circle-status", role: "status", "data-testid": "circle-status", {status().render()} }
             }
 
             if let Some(circle_id) = selected_circle_id.clone() {
@@ -318,8 +355,8 @@ pub fn CirclesPanel(
                                                             ).await
                                                         }).await;
                                                         match outcome {
-                                                            Ok(_) => { status.set("Member access removed".to_owned()); refresh += 1; }
-                                                            Err(error) => status.set(format!("Member removal failed: {}", error.display())),
+                                                            Ok(_) => { status.set(CircleFeedback::new("circles.feedback.member_removed")); refresh += 1; }
+                                                            Err(error) => status.set(CircleFeedback::new("circles.feedback.member_removal_failed").with_api_error(error)),
                                                         }
                                                         busy.set(false);
                                                     });
@@ -361,7 +398,7 @@ pub fn CirclesPanel(
                                         let principal_id = principal_id.clone();
                                         move |_| {
                                             let Ok(member_id) = serde_json::from_str::<arkret_sdk::ActorId>(member_actor().trim()) else {
-                                                status.set("Enter a complete member ActorId including its identity kind and Station when applicable".to_owned());
+                                                status.set(CircleFeedback::new("circles.feedback.invalid_member"));
                                                 return;
                                             };
                                             let membership = match member_state().as_str() {
@@ -370,7 +407,7 @@ pub fn CirclesPanel(
                                                 "leave" => arkret_sdk::CircleMembership::Leave,
                                                 "ban" => arkret_sdk::CircleMembership::Ban,
                                                 _ => {
-                                                    status.set("Choose a valid membership transition".to_owned());
+                                                    status.set(CircleFeedback::new("circles.feedback.invalid_transition"));
                                                     return;
                                                 },
                                             };
@@ -387,8 +424,8 @@ pub fn CirclesPanel(
                                                     ).await
                                                 }).await;
                                                 match outcome {
-                                                    Ok(_) => { status.set("Membership updated".to_owned()); member_actor.set(String::new()); refresh += 1; }
-                                                    Err(error) => status.set(format!("Membership update failed: {}", error.display())),
+                                                    Ok(_) => { status.set(CircleFeedback::new("circles.feedback.membership_updated")); member_actor.set(String::new()); refresh += 1; }
+                                                    Err(error) => status.set(CircleFeedback::new("circles.feedback.membership_failed").with_api_error(error)),
                                                 }
                                                 busy.set(false);
                                             });
@@ -422,8 +459,8 @@ pub fn CirclesPanel(
                                                     crate::transport::circle::archive_circle(&api.event_submitter()?, &realm_id, &principal_id, &circle_id, None).await
                                                 }).await;
                                                 match outcome {
-                                                    Ok(_) => { status.set("Circle archived".to_owned()); refresh += 1; }
-                                                    Err(error) => status.set(format!("Archive failed: {}", error.display())),
+                                                    Ok(_) => { status.set(CircleFeedback::new("circles.feedback.archived")); refresh += 1; }
+                                                    Err(error) => status.set(CircleFeedback::new("circles.feedback.archive_failed").with_api_error(error)),
                                                 }
                                                 busy.set(false);
                                             });
@@ -453,8 +490,8 @@ pub fn CirclesPanel(
                                                     crate::transport::circle::restore_circle(&api.event_submitter()?, &realm_id, &principal_id, &circle_id, None).await
                                                 }).await;
                                                 match outcome {
-                                                    Ok(_) => { status.set("Circle restored".to_owned()); refresh += 1; }
-                                                    Err(error) => status.set(format!("Restore failed: {}", error.display())),
+                                                    Ok(_) => { status.set(CircleFeedback::new("circles.feedback.restored")); refresh += 1; }
+                                                    Err(error) => status.set(CircleFeedback::new("circles.feedback.restore_failed").with_api_error(error)),
                                                 }
                                                 busy.set(false);
                                             });
@@ -545,11 +582,11 @@ pub fn CirclesPanel(
                                     move |_| {
                                         let realm_id_text = realm_id.clone();
                                         let Ok(realm_id) = arkret_sdk::RealmId::new(realm_id_text.clone()) else {
-                                            status.set("Invalid Realm id".to_owned());
+                                            status.set(CircleFeedback::new("circles.feedback.invalid_realm"));
                                             return;
                                         };
                                         let Ok(actor_id) = arkret_sdk::DidCoreId::new(principal_id.clone()) else {
-                                            status.set("Invalid account principal id".to_owned());
+                                            status.set(CircleFeedback::new("circles.feedback.invalid_account"));
                                             return;
                                         };
                                         // The Circle id is `retype(create.event_id)`, so the
@@ -578,7 +615,7 @@ pub fn CirclesPanel(
                                         {
                                             Ok(event) => event,
                                             Err(error) => {
-                                                status.set(format!("Circle creation failed: {error}"));
+                                                tracing::warn!(%error, "Circle create event preparation failed"); status.set(CircleFeedback::new("circles.feedback.prepare_failed"));
                                                 return;
                                             }
                                         };
@@ -588,7 +625,7 @@ pub fn CirclesPanel(
                                         let account = session.active_account();
                                         let state_store = crate::app::runtime_adapter::state_store_handle(session.state_store);
                                         busy.set(true);
-                                        status.set("Creating Circle and establishing initial membership…".to_owned());
+                                        status.set(CircleFeedback::new("circles.feedback.creating"));
                                         let base = base.clone();
                                         let credential = token();
                                         spawn(async move {
@@ -638,13 +675,13 @@ pub fn CirclesPanel(
                                                     create_encrypted.set(false);
                                                     create_open.set(false);
                                                     refresh += 1;
-                                                    status.set("Circle created".to_owned());
+                                                    status.set(CircleFeedback::new("circles.feedback.created"));
                                                     let _ = navigator.push(Route::CircleDetail {
                                                         realm_id: realm_id_text,
                                                         circle_id,
                                                     });
                                                 }
-                                                Err(error) => status.set(format!("Circle creation failed: {}", error.display())),
+                                                Err(error) => status.set(CircleFeedback::new("circles.feedback.create_failed").with_api_error(error)),
                                             }
                                             busy.set(false);
                                         });
@@ -694,6 +731,68 @@ mod locale_tests {
     use crate::i18n::{I18nSignal, UiLocale};
 
     type LocaleHandle = Rc<RefCell<(Option<I18nSignal>, usize)>>;
+
+    fn retained_circle_feedback(handle: LocaleHandle) -> Element {
+        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
+        handle.borrow_mut().0 = Some(locale);
+        let feedback = use_signal(move || {
+            handle.borrow_mut().1 += 1;
+            vec![
+                CircleFeedback::new("circles.feedback.creating"),
+                CircleFeedback::new("circles.feedback.created"),
+                CircleFeedback::new("circles.feedback.invalid_member"),
+                CircleFeedback::new("circles.feedback.prepare_failed"),
+                CircleFeedback::new("circles.feedback.membership_failed").with_api_error(
+                    crate::transport::auth::ApiCallError::AuthExpired(anyhow::anyhow!(
+                        "private session diagnostic"
+                    )),
+                ),
+            ]
+        });
+        rsx! {
+            div {
+                for (index, item) in feedback().iter().enumerate() {
+                    p { key: "{index}", {item.render()} }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn retained_circle_feedback_retranslates_without_repeating_actions() {
+        let handle = Rc::new(RefCell::new((None, 0)));
+        let mut dom = VirtualDom::new_with_props(retained_circle_feedback, handle.clone());
+        let mut text = BTreeMap::new();
+        apply_text_edits(&mut text, dom.rebuild_to_vec());
+        let english = text.clone();
+        assert!(text.values().any(|value| value == "Circle created"));
+        let mut locale = handle.borrow().0.expect("feedback provides locale");
+        dom.in_runtime(|| crate::i18n::set_locale(&mut locale, UiLocale::Zh));
+        assert_eq!(
+            apply_text_edits(&mut text, dom.render_immediate_to_vec()),
+            5
+        );
+        for expected in [
+            "正在创建圈子并设置初始成员…",
+            "圈子已创建",
+            "请输入完整的成员身份标识，包含身份类型及适用的托管站点。",
+            "无法准备圈子变更，请刷新重试。",
+            "更新成员状态失败：登录已过期。请重新登录以继续。",
+        ] {
+            assert!(
+                text.values().any(|value| value == expected),
+                "missing {expected}"
+            );
+        }
+        assert!(text.values().all(|value| !value.contains("private")));
+        dom.in_runtime(|| crate::i18n::set_locale(&mut locale, UiLocale::En));
+        assert_eq!(
+            apply_text_edits(&mut text, dom.render_immediate_to_vec()),
+            5
+        );
+        assert_eq!(text, english);
+        assert_eq!(handle.borrow().1, 1, "retained actions must not repeat");
+    }
 
     fn retained_circle_labels(handle: LocaleHandle) -> Element {
         let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));

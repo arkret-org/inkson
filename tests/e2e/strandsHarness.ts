@@ -292,6 +292,11 @@ export async function openKanban(page: import("@playwright/test").Page) {
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await dismissHistoryRecoveryModal(page);
   await dismissBlockingRecoveryModal(page);
+  if (scenarioRealms.get(page)?.hasSeededCards) {
+    // A visible shell or seeded columns do not mean the signed card cut has
+    // finished loading. Keep product assertions behind that real seed boundary.
+    await page.getByTestId("kanban-card").first().waitFor({ state: "visible", timeout: 120_000 });
+  }
 }
 
 export async function assertRealmTreeSeeded(

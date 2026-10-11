@@ -167,7 +167,7 @@ fn CardMemberMentionRow(
                 r#type: "button",
                 class: if agent_slug.is_some() { "card-detail-actor-mention-button card-detail-agent-mention-button" } else { "card-detail-actor-mention-button" },
                 "data-testid": "card-detail-member-mention-button",
-                "aria-label": "Mention {label}",
+                "aria-label": crate::i18n::tr_args("kanban.ui.mention_member", &[("name", (label).to_string())]),
                 disabled: !mentionable,
                 onclick: {
                     let mention_target = mention_target.clone();
@@ -452,9 +452,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                     );
                     let sidebar_is_visible = card_detail_sidebar_visible();
                     let sidebar_toggle_label = if sidebar_is_visible {
-                        "Hide details"
+                        crate::i18n::tr("kanban.ui.hide_details")
                     } else {
-                        "Show details"
+                        crate::i18n::tr("kanban.ui.show_details")
                     };
                     let sidebar_toggle_icon = if sidebar_is_visible {
                         "panel-right-close"
@@ -469,9 +469,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                     let is_docked = card_detail_docked();
                     let dock_width = card_detail_dock_width();
                     let dock_toggle_label = if is_docked {
-                        "Expand to dialog"
+                        crate::i18n::tr("kanban.ui.expand_to_dialog")
                     } else {
-                        "Dock to side"
+                        crate::i18n::tr("kanban.ui.dock_to_side")
                     };
                     let dock_toggle_icon = if is_docked { "maximize" } else { "minimize" };
                     let overlay_class = if is_docked {
@@ -645,8 +645,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                             variant: ButtonVariant::Secondary,
                                             class: "card-detail-header-button",
                                             "data-testid": "card-detail-share-link-button",
-                                            "aria-label": "Copy strand link",
-                                            title: "Copy strand link",
+                                            "aria-label": crate::i18n::tr("kanban.ui.copy_strand_link"),
+                                            title: crate::i18n::tr("kanban.ui.copy_strand_link"),
                                             onclick: {
                                                 let link_path = card_link_path.clone();
                                                 move |_| {
@@ -692,9 +692,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                 variant: ButtonVariant::Secondary,
                                                 class: "card-detail-header-button",
                                                 "data-testid": "card-detail-actions-button",
-                                                "aria-label": "Actions",
+                                                "aria-label": crate::i18n::tr("kanban.ui.actions"),
                                                 "aria-expanded": "{card_detail_actions_open()}",
-                                                title: "Actions",
+                                                title: crate::i18n::tr("kanban.ui.actions"),
                                                 onclick: move |_| card_detail_actions_open.set(!card_detail_actions_open()),
                                                 UiIcon { name: "more-horizontal" }
                                             }
@@ -702,18 +702,18 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                 div { class: "{action_menu_class}", "data-testid": "card-detail-actions-menu",
                                                     if editing_card_detail() && card_edit_scope() == CardEditScope::Summary {
                                                         div { class: "card-detail-action-menu-field",
-                                                            Label { html_for: "card-detail-labels-input-input", "Labels" }
+                                                            Label { html_for: "card-detail-labels-input-input", {crate::i18n::tr("kanban.ui.labels")} }
                                                             Input {
                                                                 id: "card-detail-labels-input-input",
                                                                 class: "input",
                                                                 "data-testid": "card-detail-labels-input",
                                                                 value: "{card_edit_labels}",
-                                                                placeholder: "release, ops",
+                                                                placeholder: crate::i18n::tr("kanban.ui.release_ops"),
                                                                 oninput: move |event: FormEvent| card_edit_labels.set(event.value()),
                                                             }
                                                         }
                                                         div { class: "card-detail-action-menu-field",
-                                                            Label { html_for: "card-detail-due-input-input", "Due date" }
+                                                            Label { html_for: "card-detail-due-input-input", {crate::i18n::tr("kanban.ui.due_date")} }
                                                             Input {
                                                                 id: "card-detail-due-input-input",
                                                                 class: "input",
@@ -829,8 +829,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                             variant: ButtonVariant::Secondary,
                                             class: "card-detail-header-button card-detail-close",
                                             "data-testid": "card-detail-close-button",
-                                            "aria-label": "Close card detail",
-                                            title: "Close",
+                                            "aria-label": crate::i18n::tr("kanban.ui.close_card_detail"),
+                                            title: crate::i18n::tr("common.close"),
                                             onclick: move |_| {
                                                 selected_card.set(None);
                                                 editing_card_detail.set(false);
@@ -988,7 +988,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         }
                                                     }
                                                 } else if summary_text.is_empty() {
-                                                    div { class: "card-detail-empty", "No summary" }
+                                                    div { class: "card-detail-empty", {crate::i18n::tr("kanban.ui.no_summary")} }
                                                 } else {
                                                     div {
                                                         class: "card-detail-summary",
@@ -1003,7 +1003,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                     class: "card-detail-tabs",
                                                     "data-testid": "card-detail-tabs",
                                                     role: "tablist",
-                                                    "aria-label": "Strand content sections",
+                                                    "aria-label": crate::i18n::tr("kanban.ui.strand_content_sections"),
                                                     button {
                                                         r#type: "button",
                                                         class: "{description_tab_class}",
@@ -1029,7 +1029,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 replace_card_detail_tab_query(CardDetailContentTab::Description);
                                                             }
                                                         },
-                                                        "Description"
+                                                        {crate::i18n::tr("kanban.ui.description")}
                                                     }
                                                     button {
                                                         r#type: "button",
@@ -1056,7 +1056,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 replace_card_detail_tab_query(CardDetailContentTab::Synthesis);
                                                             }
                                                         },
-                                                        "Synthesis"
+                                                        {crate::i18n::tr("kanban.ui.synthesis")}
                                                     }
                                                     button {
                                                         r#type: "button",
@@ -1077,7 +1077,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 );
                                                             }
                                                         },
-                                                        "Discussion"
+                                                        {crate::i18n::tr("kanban.ui.discussion")}
                                                     }
                                                 }
                                                 if active_detail_tab == CardDetailContentTab::Description {
@@ -1178,7 +1178,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     "{MLS_LOCKED_FIELD_PLACEHOLDER}"
                                                                 }
                                                             } else if card.description_body.trim().is_empty() {
-                                                                div { class: "card-detail-empty", "No description" }
+                                                                div { class: "card-detail-empty", {crate::i18n::tr("kanban.ui.no_description")} }
                                                             } else {
                                                                 div { class: "card-detail-description", "data-testid": "card-description-body",
                                                                     {crate::content::render_blocks(
@@ -1234,7 +1234,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             }
                                                         } else if synthesis_entries.is_empty() {
                                                             div { class: "card-detail-empty",
-                                                                div { "No synthesis yet." }
+                                                                div { {crate::i18n::tr("kanban.ui.no_synthesis_yet")} }
                                                             }
                                                         } else {
                                                             div { class: "card-synthesis-track", "data-testid": "card-synthesis-track",
@@ -1287,7 +1287,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                             .as_deref()
                                                                             == Some(entry.id.as_str());
                                                                         let actor_title = if display_revision.actor_id.trim().is_empty() {
-                                                                            "Unknown author".to_owned()
+                                                                            crate::i18n::tr("kanban.ui.unknown_author").to_owned()
                                                                         } else {
                                                                             display_revision.actor_id.clone()
                                                                         };
@@ -1314,7 +1314,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                     if selected_synthesis_is_latest {
                                                                                         span { class: "badge badge-success", "latest" }
                                                                                     } else {
-                                                                                        span { class: "badge badge-warning", "historical version" }
+                                                                                        span { class: "badge badge-warning", {crate::i18n::tr("kanban.ui.historical_version")} }
                                                                                         Button {
                                                                                             variant: ButtonVariant::Secondary,
                                                                                             r#type: "button",
@@ -1324,7 +1324,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                 card_synthesis_selected_revision_id.set(None);
                                                                                                 card_synthesis_history_open_id.set(None);
                                                                                             },
-                                                                                            "Latest"
+                                                                                            {crate::i18n::tr("kanban.ui.latest")}
                                                                                         }
                                                                                     }
                                                                                     if entry.revisions.len() > 1 {
@@ -1349,7 +1349,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             }
                                                                                             if history_open {
                                                                                                 div { class: "card-synthesis-history-menu", "data-testid": "card-synthesis-history-menu",
-                                                                                                    div { class: "card-synthesis-history-title", "History" }
+                                                                                                    div { class: "card-synthesis-history-title", {crate::i18n::tr("kanban.ui.history")} }
                                                                                                     for (history_index, history_entry) in entry.revisions.iter().enumerate().rev() {
                                                                                                         {
                                                                                                             let history_entry_id = history_entry.id.clone();
@@ -1361,7 +1361,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                                 "card-synthesis-history-item"
                                                                                                             };
                                                                                                             let history_author_title = if history_entry.actor_id.trim().is_empty() {
-                                                                                                                "Unknown author".to_owned()
+                                                                                                                crate::i18n::tr("kanban.ui.unknown_author").to_owned()
                                                                                                             } else {
                                                                                                                 history_entry.actor_id.clone()
                                                                                                             };
@@ -1664,7 +1664,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         }
                                                                     },
                                                                     UiIcon { name: "plus" }
-                                                                    span { "New" }
+                                                                    span { {crate::i18n::tr("kanban.ui.new")} }
                                                                 }
                                                             }
                                                         }
@@ -1704,7 +1704,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 "data-testid": "card-discussion-pending-target",
                                                                 role: "status",
                                                                 "aria-live": "polite",
-                                                                "Discussion will be available when this card finishes syncing."
+                                                                {crate::i18n::tr("kanban.ui.discussion_will_be_available_when_this_card_finishes_syncing")}
                                                             }
                                                         }
                                                     }
@@ -1766,7 +1766,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         class: "card-detail-tabs card-detail-sidebar-tabs",
                                                         "data-testid": "card-detail-sidebar-tabs",
                                                         role: "tablist",
-                                                        "aria-label": "Sidebar views",
+                                                        "aria-label": crate::i18n::tr("kanban.ui.sidebar_views"),
                                                         button {
                                                             r#type: "button",
                                                             class: "{details_tab_class}",
@@ -1774,7 +1774,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             role: "tab",
                                                             "aria-selected": "{active_sidebar_tab == CardDetailSidebarTab::Details}",
                                                             onclick: move |_| card_detail_sidebar_tab.set(CardDetailSidebarTab::Details),
-                                                            "Details"
+                                                            {crate::i18n::tr("kanban.ui.details")}
                                                         }
                                                         button {
                                                             r#type: "button",
@@ -1783,7 +1783,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             role: "tab",
                                                             "aria-selected": "{active_sidebar_tab == CardDetailSidebarTab::Members}",
                                                             onclick: move |_| card_detail_sidebar_tab.set(CardDetailSidebarTab::Members),
-                                                            "Members ({realm_member_count})"
+                                                            {crate::i18n::tr_args("kanban.ui.member_count", &[("count", (realm_member_count).to_string())])}
                                                         }
                                                     }
                                                     if active_sidebar_tab == CardDetailSidebarTab::Details {
@@ -1839,11 +1839,11 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         div { class: "card-detail-side-fields", "data-testid": "card-fields",
                                                             dl { class: "card-detail-field-list",
                                                                 div {
-                                                                    dt { "Strand ID" }
+                                                                    dt { {crate::i18n::tr("kanban.ui.strand_id")} }
                                                                     dd { class: "card-detail-field-code", title: "{card.id}", "{card_id_label}" }
                                                                 }
                                                                 div {
-                                                                    dt { "Assignees" }
+                                                                    dt { {crate::i18n::tr("kanban.ui.assignees")} }
                                                                     dd {
                                                                         div {
                                                                             class: "assignee-editor",
@@ -1856,7 +1856,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                         class: "assignee-add assignee-add-empty",
                                                                                         "aria-haspopup": "listbox",
                                                                                         "aria-expanded": "{picker_open}",
-                                                                                        title: "Add assignees",
+                                                                                        title: crate::i18n::tr("kanban.ui.add_assignees"),
                                                                                         onclick: {
                                                                                             let current_selection = assigned_actor_ids
                                                                                                 .iter()
@@ -1870,7 +1870,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             }
                                                                                         },
                                                                                         UiIcon { name: "plus" }
-                                                                                        span { "Add assignees" }
+                                                                                        span { {crate::i18n::tr("kanban.ui.add_assignees")} }
                                                                                     }
                                                                                 } else {
                                                                                     span { class: "assignee-chip-list",
@@ -1892,10 +1892,10 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                         variant: ButtonVariant::Secondary,
                                                                                         r#type: "button",
                                                                                         class: "assignee-add",
-                                                                                        "aria-label": "Add or remove assignees",
+                                                                                        "aria-label": crate::i18n::tr("kanban.ui.add_or_remove_assignees"),
                                                                                         "aria-haspopup": "listbox",
                                                                                         "aria-expanded": "{picker_open}",
-                                                                                        title: "Add or remove assignees",
+                                                                                        title: crate::i18n::tr("kanban.ui.add_or_remove_assignees"),
                                                                                         onclick: {
                                                                                             let current_selection = assigned_actor_ids
                                                                                                 .iter()
@@ -1914,8 +1914,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                         variant: ButtonVariant::Secondary,
                                                                                         r#type: "button",
                                                                                         class: "assignee-add assignee-clear",
-                                                                                        "aria-label": "Clear assignees",
-                                                                                        title: "Clear assignees",
+                                                                                        "aria-label": crate::i18n::tr("kanban.ui.clear_assignees"),
+                                                                                        title: crate::i18n::tr("kanban.ui.clear_assignees"),
                                                                                         onclick: {
                                                                                             let base = base_url.clone();
                                                                                             let realm = selected_realm_id.clone();
@@ -1954,16 +1954,16 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             class: "input",
                                                                                             "data-testid": "card-detail-assignees-search",
                                                                                             value: "{picker_filter}",
-                                                                                            placeholder: "Filter members",
+                                                                                            placeholder: crate::i18n::tr("kanban.ui.filter_members"),
                                                                                             oninput: move |event: FormEvent| assignee_filter.set(event.value()),
                                                                                         }
                                                                                     }
                                                                                     div {
                                                                                         class: "assignee-options",
                                                                                         role: "listbox",
-                                                                                        "aria-label": "Assignees",
+                                                                                        "aria-label": crate::i18n::tr("kanban.ui.assignees"),
                                                                                         if picker_people.is_empty() {
-                                                                                            div { class: "assignee-option-empty", "No members match" }
+                                                                                            div { class: "assignee-option-empty", {crate::i18n::tr("kanban.ui.no_members_match")} }
                                                                                         } else {
                                                                                             for (actor_id, label, compact_id) in picker_people.iter() {
                                                                                                 {
@@ -2024,7 +2024,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             variant: ButtonVariant::Secondary,
                                                                                             r#type: "button",
                                                                                             onclick: move |_| assignee_selected_actor_ids.set(BTreeSet::new()),
-                                                                                            "Clear"
+                                                                                            {crate::i18n::tr("kanban.ui.clear")}
                                                                                         }
                                                                                         Button {
                                                                                             variant: ButtonVariant::Secondary,
@@ -2071,7 +2071,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     }
                                                                 }
                                                                 div {
-                                                                    dt { "Due" }
+                                                                    dt { {crate::i18n::tr("kanban.ui.due")} }
                                                                     dd {
                                                                         {
                                                                             let due_editor_value = editor_value_for_optional_card_field(&card.due);
@@ -2097,10 +2097,10 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             variant: ButtonVariant::Secondary,
                                                                                             r#type: "button",
                                                                                             class: "due-edit-button",
-                                                                                            "aria-label": "Edit due date",
+                                                                                            "aria-label": crate::i18n::tr("kanban.ui.edit_due_date"),
                                                                                             "aria-haspopup": "dialog",
                                                                                             "aria-expanded": "{due_open}",
-                                                                                            title: "Edit due date",
+                                                                                            title: crate::i18n::tr("kanban.ui.edit_due_date"),
                                                                                             onclick: {
                                                                                                 let current_due = due_editor_value.clone();
                                                                                                 move |_| {
@@ -2117,8 +2117,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             variant: ButtonVariant::Secondary,
                                                                                             r#type: "button",
                                                                                             class: "due-edit-button due-clear-button",
-                                                                                            "aria-label": "Clear due date",
-                                                                                            title: "Clear due date",
+                                                                                            "aria-label": crate::i18n::tr("kanban.ui.clear_due_date"),
+                                                                                            title: crate::i18n::tr("kanban.ui.clear_due_date"),
                                                                                             onclick: {
                                                                                                 let base = base_url.clone();
                                                                                                 let realm = selected_realm_id.clone();
@@ -2160,7 +2160,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             class: "due-add-button",
                                                                                             "aria-haspopup": "dialog",
                                                                                             "aria-expanded": "{due_open}",
-                                                                                            title: "Add due date",
+                                                                                            title: crate::i18n::tr("kanban.ui.add_due_date"),
                                                                                             onclick: move |_| {
                                                                                                 due_edit_value.set(String::new());
                                                                                                 due_calendar_month.set(default_due_calendar_month());
@@ -2169,7 +2169,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                 due_picker_open.set(!due_picker_open());
                                                                                             },
                                                                                             UiIcon { name: "plus" }
-                                                                                            span { "Add due date" }
+                                                                                            span { {crate::i18n::tr("kanban.ui.add_due_date")} }
                                                                                         }
                                                                                     }
                                                                                     if due_open {
@@ -2190,15 +2190,15 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             },
                                                                                             div { class: "due-date-modal-head",
                                                                                                 div { class: "due-date-modal-title",
-                                                                                                    h3 { "Set due date" }
-                                                                                                    p { "Choose a date for this card." }
+                                                                                                    h3 { {crate::i18n::tr("kanban.ui.set_due_date")} }
+                                                                                                    p { {crate::i18n::tr("kanban.ui.choose_a_date_for_this_card")} }
                                                                                                 }
                                                                                                 Button {
                                                                                                     variant: ButtonVariant::Secondary,
                                                                                                     r#type: "button",
                                                                                                     class: "due-date-modal-close",
-                                                                                                    "aria-label": "Close due date dialog",
-                                                                                                    title: "Close",
+                                                                                                    "aria-label": crate::i18n::tr("kanban.ui.close_due_date_dialog"),
+                                                                                                    title: crate::i18n::tr("common.close"),
                                                                                                     onclick: {
                                                                                                         let cancel_due = due_editor_value.clone();
                                                                                                         move |_| {
@@ -2213,13 +2213,13 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             }
                                                                                             div { class: "due-date-modal-body",
                                                                                             div { class: "due-date-modal-field",
-                                                                                                Label { html_for: "card-detail-due-inline-input-input", "Due date" }
+                                                                                                Label { html_for: "card-detail-due-inline-input-input", {crate::i18n::tr("kanban.ui.due_date")} }
                                                                                                 Input {
                                                                                                     id: "card-detail-due-inline-input-input",
                                                                                                     class: "input",
                                                                                                     "data-testid": "card-detail-due-inline-input",
                                                                                                     value: "{due_edit_value}",
-                                                                                                    placeholder: "YYYY-MM-DD",
+                                                                                                    placeholder: crate::i18n::tr("kanban.ui.yyyy_mm_dd"),
                                                                                                     oninput: move |event: FormEvent| {
                                                                                                         let next = event.value();
                                                                                                         if let Some(date) = parse_due_calendar_date(&next) {
@@ -2235,8 +2235,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         variant: ButtonVariant::Secondary,
                                                                                                         r#type: "button",
                                                                                                         class: "due-calendar-nav",
-                                                                                                        "aria-label": "Previous month",
-                                                                                                        title: "Previous month",
+                                                                                                        "aria-label": crate::i18n::tr("kanban.ui.previous_month"),
+                                                                                                        title: crate::i18n::tr("kanban.ui.previous_month"),
                                                                                                         onclick: move |_| {
                                                                                                             due_calendar_month.set(add_due_calendar_months(due_calendar_month(), -1));
                                                                                                         },
@@ -2247,8 +2247,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         variant: ButtonVariant::Secondary,
                                                                                                         r#type: "button",
                                                                                                         class: "due-calendar-nav",
-                                                                                                        "aria-label": "Next month",
-                                                                                                        title: "Next month",
+                                                                                                        "aria-label": crate::i18n::tr("kanban.ui.next_month"),
+                                                                                                        title: crate::i18n::tr("kanban.ui.next_month"),
                                                                                                         onclick: move |_| {
                                                                                                             due_calendar_month.set(add_due_calendar_months(due_calendar_month(), 1));
                                                                                                         },
@@ -2257,18 +2257,18 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                 }
                                                                                                 div {
                                                                                                     class: "due-calendar-weekdays",
-                                                                                                    span { "Sun" }
-                                                                                                    span { "Mon" }
-                                                                                                    span { "Tue" }
-                                                                                                    span { "Wed" }
-                                                                                                    span { "Thu" }
-                                                                                                    span { "Fri" }
-                                                                                                    span { "Sat" }
+                                                                                                    span { {crate::i18n::tr("kanban.ui.sun")} }
+                                                                                                    span { {crate::i18n::tr("kanban.ui.mon")} }
+                                                                                                    span { {crate::i18n::tr("kanban.ui.tue")} }
+                                                                                                    span { {crate::i18n::tr("kanban.ui.wed")} }
+                                                                                                    span { {crate::i18n::tr("kanban.ui.thu")} }
+                                                                                                    span { {crate::i18n::tr("kanban.ui.fri")} }
+                                                                                                    span { {crate::i18n::tr("kanban.ui.sat")} }
                                                                                                 }
                                                                                                 div {
                                                                                                     class: "due-calendar-grid",
                                                                                                     role: "grid",
-                                                                                                    "aria-label": "Due date calendar",
+                                                                                                    "aria-label": crate::i18n::tr("kanban.ui.due_date_calendar"),
                                                                                                     for cell in calendar_cells.iter() {
                                                                                                         {
                                                                                                             let selected = selected_date.is_some_and(|date| date == cell.date);
@@ -2323,7 +2323,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         due_edit_value.set(String::new());
                                                                                                         due_calendar_month.set(default_due_calendar_month());
                                                                                                     },
-                                                                                                    "Clear"
+                                                                                                    {crate::i18n::tr("kanban.ui.clear")}
                                                                                                 }
                                                                                                 Button {
                                                                                                     variant: ButtonVariant::Secondary,
@@ -2382,7 +2382,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     }
                                                                 }
                                                                 div {
-                                                                    dt { "Calendar" }
+                                                                    dt { {crate::i18n::tr("kanban.ui.calendar")} }
                                                                     dd {
                                                                         {
                                                                             let schedule = card.calendar.clone();
@@ -2423,15 +2423,15 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             },
                                                                                             div { class: "due-date-modal-head",
                                                                                                 div { class: "due-date-modal-title",
-                                                                                                    h3 { if has_schedule { "Edit schedule" } else { "Add schedule" } }
-                                                                                                    p { "Set the event time, recurrence, and calendar details." }
+                                                                                                    h3 { if has_schedule { {crate::i18n::tr("kanban.ui.edit_schedule")} } else { {crate::i18n::tr("kanban.ui.add_schedule")} } }
+                                                                                                    p { {crate::i18n::tr("kanban.ui.set_the_event_time_recurrence_and_calendar_details")} }
                                                                                                 }
                                                                                                 Button {
                                                                                                     variant: ButtonVariant::Secondary,
                                                                                                     r#type: "button",
                                                                                                     class: "due-date-modal-close",
-                                                                                                    "aria-label": "Close calendar schedule dialog",
-                                                                                                    title: "Close",
+                                                                                                    "aria-label": crate::i18n::tr("kanban.ui.close_calendar_schedule_dialog"),
+                                                                                                    title: crate::i18n::tr("common.close"),
                                                                                                     onclick: {
                                                                                                         let current_calendar = card.calendar.clone();
                                                                                                         move |_| {
@@ -2495,41 +2495,41 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             div { class: "calendar-summary",
                                                                                                 if !schedule.start.trim().is_empty() {
                                                                                                     div {
-                                                                                                        span { "Start" }
+                                                                                                        span { {crate::i18n::tr("kanban.ui.start")} }
                                                                                                         strong { "{schedule.start}" }
                                                                                                     }
                                                                                                 }
                                                                                                 if !schedule.end.trim().is_empty() {
                                                                                                     div {
-                                                                                                        span { "End" }
+                                                                                                        span { {crate::i18n::tr("kanban.ui.end")} }
                                                                                                         strong { "{schedule.end}" }
                                                                                                     }
                                                                                                 }
                                                                                                 if !schedule.timezone.trim().is_empty() {
                                                                                                     div {
-                                                                                                        span { "Timezone" }
+                                                                                                        span { {crate::i18n::tr("kanban.ui.timezone")} }
                                                                                                         strong { "{schedule.timezone}" }
                                                                                                     }
                                                                                                 }
                                                                                                 if schedule.all_day {
                                                                                                     div {
-                                                                                                        span { "Mode" }
-                                                                                                        strong { "All day" }
+                                                                                                        span { {crate::i18n::tr("kanban.ui.mode")} }
+                                                                                                        strong { {crate::i18n::tr("kanban.ui.all_day")} }
                                                                                                     }
                                                                                                 }
                                                                                                 div {
-                                                                                                    span { "Status" }
+                                                                                                    span { {crate::i18n::tr("kanban.ui.status")} }
                                                                                                     strong { "{schedule.status}" }
                                                                                                 }
                                                                                                 if !recurrence_label.trim().is_empty() {
                                                                                                     div {
-                                                                                                        span { "Recurrence" }
+                                                                                                        span { {crate::i18n::tr("kanban.ui.recurrence")} }
                                                                                                         strong { "{recurrence_label}" }
                                                                                                     }
                                                                                                 }
                                                                                                 if !location_label.trim().is_empty() {
                                                                                                     div {
-                                                                                                        span { "Location" }
+                                                                                                        span { {crate::i18n::tr("kanban.ui.location")} }
                                                                                                         strong { "{location_label}" }
                                                                                                     }
                                                                                                 }
@@ -2539,7 +2539,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                     div {
                                                                                                         class: "calendar-agenda",
                                                                                                         "data-testid": "card-detail-calendar-agenda",
-                                                                                                        span { "Upcoming" }
+                                                                                                        span { {crate::i18n::tr("kanban.ui.upcoming")} }
                                                                                                         ul {
                                                                                                             for item in items {
                                                                                                                 li {
@@ -2555,19 +2555,19 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                     div {
                                                                                                         class: "card-detail-empty",
                                                                                                         "data-testid": "card-detail-calendar-agenda-empty",
-                                                                                                        "No occurrences in the next 90 days"
+                                                                                                        {crate::i18n::tr("kanban.ui.no_occurrences_in_the_next_90_days")}
                                                                                                     }
                                                                                                 },
                                                                                                 Err(error) => rsx! {
                                                                                                     div {
                                                                                                         class: "card-detail-empty",
                                                                                                         "data-testid": "card-detail-calendar-agenda-unresolved",
-                                                                                                        "Agenda unavailable: {error}"
+                                                                                                        {crate::i18n::tr_args("kanban.ui.agenda_unavailable", &[("error", (error).to_string())])}
                                                                                                     }
                                                                                                 },
                                                                                             }
                                                                                         } else {
-                                                                                            div { class: "card-detail-empty", "No schedule" }
+                                                                                            div { class: "card-detail-empty", {crate::i18n::tr("kanban.ui.no_schedule")} }
                                                                                         }
                                                                                         Button {
                                                                                             variant: ButtonVariant::Secondary,
@@ -2754,12 +2754,12 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             match owned_agent_inventory_snapshot.as_ref() {
                                                                 None => rsx! {
                                                                     div { class: "card-detail-empty", "data-testid": "card-detail-member-identities-pending",
-                                                                        "Loading member identities…"
+                                                                        {crate::i18n::tr("kanban.ui.members_loading")}
                                                                     }
                                                                 },
                                                                 Some(Err(_)) => rsx! {
                                                                     div { class: "card-detail-empty", "data-testid": "card-detail-member-identities-error",
-                                                                        "Member identities are temporarily unavailable."
+                                                                        {crate::i18n::tr("kanban.ui.members_unavailable")}
                                                                     }
                                                                 },
                                                                 Some(Ok(owned_agent_slugs)) => rsx! {

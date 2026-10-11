@@ -8,6 +8,281 @@ use super::{TranslationDict, UiLocale};
 /// Build the default English translation dictionary.
 pub fn english_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(UiLocale::En);
+    dict.set("kanban.ui.members_loading", "Loading member identities…");
+    dict.set(
+        "kanban.ui.members_unavailable",
+        "Member identities are temporarily unavailable.",
+    );
+    dict.set(
+        "circles.feedback.account_required",
+        "An active account is required",
+    );
+    dict.set("circles.feedback.archive_failed", "Archive failed: {error}");
+    dict.set("circles.feedback.archived", "Circle archived");
+    dict.set(
+        "circles.feedback.create_failed",
+        "Circle creation failed: {error}",
+    );
+    dict.set("circles.feedback.created", "Circle created");
+    dict.set(
+        "circles.feedback.creating",
+        "Creating Circle and establishing initial membership…",
+    );
+    dict.set(
+        "circles.feedback.history_failed",
+        "History change failed: {error}",
+    );
+    dict.set(
+        "circles.feedback.history_restricted",
+        "History restricted to since joining",
+    );
+    dict.set(
+        "circles.feedback.invalid_account",
+        "Invalid account principal id",
+    );
+    dict.set(
+        "circles.feedback.invalid_member",
+        "Enter a complete member ActorId including its identity kind and Station when applicable",
+    );
+    dict.set("circles.feedback.invalid_realm", "Invalid Realm id");
+    dict.set(
+        "circles.feedback.invalid_transition",
+        "Choose a valid membership transition",
+    );
+    dict.set("circles.feedback.join_requested", "Join request submitted");
+    dict.set(
+        "circles.feedback.load_failed",
+        "Could not load Circles: {error}",
+    );
+    dict.set(
+        "circles.feedback.member_removal_failed",
+        "Member removal failed: {error}",
+    );
+    dict.set("circles.feedback.member_removed", "Member access removed");
+    dict.set(
+        "circles.feedback.membership_failed",
+        "Membership update failed: {error}",
+    );
+    dict.set("circles.feedback.membership_updated", "Membership updated");
+    dict.set(
+        "circles.feedback.prepare_failed",
+        "Could not prepare the Circle change. Refresh and try again.",
+    );
+    dict.set("circles.feedback.restore_failed", "Restore failed: {error}");
+    dict.set("circles.feedback.restored", "Circle restored");
+    dict.set(
+        "circles.feedback.retire_failed",
+        "Circle retirement failed: {error}",
+    );
+    dict.set("circles.feedback.retired", "Circle permanently retired");
+    dict.set(
+        "circles.feedback.update_failed",
+        "Circle update failed: {error}",
+    );
+    dict.set("circles.feedback.updated", "Circle updated");
+    dict.set("kanban.ui.actions", "Actions");
+    dict.set(
+        "kanban.ui.add_a_card_to_this_list",
+        "Add a card to this list",
+    );
+    dict.set(
+        "kanban.ui.add_a_list_to_this_board",
+        "Add a list to this board",
+    );
+    dict.set("kanban.ui.add_a_location", "Add a location");
+    dict.set("kanban.ui.add_assignees", "Add assignees");
+    dict.set("kanban.ui.add_due_date", "Add due date");
+    dict.set(
+        "kanban.ui.add_or_remove_assignees",
+        "Add or remove assignees",
+    );
+    dict.set("kanban.ui.add_schedule", "Add schedule");
+    dict.set(
+        "kanban.ui.advanced_calendar_settings",
+        "Advanced calendar settings",
+    );
+    dict.set(
+        "kanban.ui.agenda_unavailable",
+        "Agenda unavailable: {error}",
+    );
+    dict.set("kanban.ui.all_day", "All day");
+    dict.set(
+        "kanban.ui.archive_this_card_ak_strand_archive",
+        "Archive this card (ak.strand.archive)",
+    );
+    dict.set("kanban.ui.archived_cards", "{count} card(s)");
+    dict.set("kanban.ui.archived_lists", "{count} list(s)");
+    dict.set("kanban.ui.asia_shanghai", "Asia/Shanghai");
+    dict.set("kanban.ui.assignees", "Assignees");
+    dict.set("kanban.ui.board_title", "Board title");
+    dict.set("kanban.ui.boards", "Boards");
+    dict.set("kanban.ui.calendar", "Calendar");
+    dict.set("kanban.ui.calendar_status", "Calendar status");
+    dict.set("kanban.ui.cancel_card", "Cancel card");
+    dict.set("kanban.ui.cancelled", "Cancelled");
+    dict.set(
+        "kanban.ui.canonical_lifecycle_state_is_unavailable",
+        "Canonical lifecycle state is unavailable",
+    );
+    dict.set(
+        "kanban.ui.canonical_position_is_unavailable",
+        "Canonical position is unavailable",
+    );
+    dict.set(
+        "kanban.ui.canonical_space_state_is_unavailable_refresh_to_retry",
+        "Canonical Space state is unavailable; refresh to retry.",
+    );
+    dict.set("kanban.ui.card_pages", "Card pages");
+    dict.set("kanban.ui.card_title", "Card title");
+    dict.set(
+        "kanban.ui.choose_a_date_for_this_card",
+        "Choose a date for this card.",
+    );
+    dict.set("kanban.ui.clear", "Clear");
+    dict.set("kanban.ui.clear_assignees", "Clear assignees");
+    dict.set("kanban.ui.clear_due_date", "Clear due date");
+    dict.set(
+        "kanban.ui.close_calendar_schedule_dialog",
+        "Close calendar schedule dialog",
+    );
+    dict.set("kanban.ui.close_card_detail", "Close card detail");
+    dict.set("kanban.ui.close_due_date_dialog", "Close due date dialog");
+    dict.set("kanban.ui.confirmed", "Confirmed");
+    dict.set("kanban.ui.copy_strand_link", "Copy strand link");
+    dict.set("kanban.ui.create_board", "Create Board");
+    dict.set(
+        "kanban.ui.custom_repeat_rules_are_configured",
+        "Custom repeat rules are configured",
+    );
+    dict.set("kanban.ui.customize_recurrence", "Customize recurrence");
+    dict.set("kanban.ui.daily", "Daily");
+    dict.set("kanban.ui.days_of_month", "Days of month");
+    dict.set("kanban.ui.days_of_week", "Days of week");
+    dict.set("kanban.ui.description", "Description");
+    dict.set("kanban.ui.details", "Details");
+    dict.set("kanban.ui.discussion", "Discussion");
+    dict.set(
+        "kanban.ui.discussion_will_be_available_when_this_card_finishes_syncing",
+        "Discussion will be available when this card finishes syncing.",
+    );
+    dict.set("kanban.ui.dock_to_side", "Dock to side");
+    dict.set("kanban.ui.does_not_repeat", "Does not repeat");
+    dict.set("kanban.ui.drag_column", "Drag column {title}");
+    dict.set("kanban.ui.drop_column", "Drop column before {title}");
+    dict.set("kanban.ui.due", "Due");
+    dict.set("kanban.ui.due_date", "Due date");
+    dict.set("kanban.ui.due_date_calendar", "Due date calendar");
+    dict.set("kanban.ui.edit_due_date", "Edit due date");
+    dict.set("kanban.ui.edit_schedule", "Edit schedule");
+    dict.set("kanban.ui.end", "End");
+    dict.set("kanban.ui.end_after_occurrences", "End after occurrences");
+    dict.set("kanban.ui.end_on", "End on");
+    dict.set("kanban.ui.expand_to_dialog", "Expand to dialog");
+    dict.set("kanban.ui.filter_members", "Filter members");
+    dict.set("kanban.ui.fri", "Fri");
+    dict.set("kanban.ui.source_list", "from list: {title}");
+    dict.set("kanban.ui.hide_details", "Hide details");
+    dict.set("kanban.ui.historical_version", "historical version");
+    dict.set("kanban.ui.history", "History");
+    dict.set(
+        "kanban.ui.intervals_selected_days_and_an_optional_end",
+        "Intervals, selected days, and an optional end",
+    );
+    dict.set("kanban.ui.labels", "Labels");
+    dict.set("kanban.ui.latest", "Latest");
+    dict.set("kanban.ui.unavailable_lifecycle_cards", "{count} card(s)");
+    dict.set("kanban.ui.lifecycle_unavailable", "Lifecycle unavailable");
+    dict.set("kanban.ui.location", "Location");
+    dict.set("kanban.ui.member_count", "Members ({count})");
+    dict.set("kanban.ui.mention_member", "Mention {name}");
+    dict.set("kanban.ui.mo", "MO");
+    dict.set("kanban.ui.mo_we_fr", "MO, WE, FR");
+    dict.set("kanban.ui.mode", "Mode");
+    dict.set("kanban.ui.mon", "Mon");
+    dict.set("kanban.ui.monthly", "Monthly");
+    dict.set("kanban.ui.months", "Months");
+    dict.set("kanban.ui.new", "New");
+    dict.set("kanban.ui.new_board", "New board");
+    dict.set("kanban.ui.new_list_title", "New list title");
+    dict.set("kanban.ui.next_cards", "Next cards");
+    dict.set("kanban.ui.next_month", "Next month");
+    dict.set("kanban.ui.no_board_selected", "No board selected");
+    dict.set("kanban.ui.no_description", "No description");
+    dict.set("kanban.ui.no_lists_yet", "No lists yet");
+    dict.set("kanban.ui.no_members_match", "No members match");
+    dict.set(
+        "kanban.ui.no_occurrences_in_the_next_90_days",
+        "No occurrences in the next 90 days",
+    );
+    dict.set("kanban.ui.no_schedule", "No schedule");
+    dict.set("kanban.ui.no_summary", "No summary");
+    dict.set("kanban.ui.no_synthesis_yet", "No synthesis yet.");
+    dict.set("kanban.ui.card_page", "Page {page} / {total}");
+    dict.set("kanban.ui.position_in_period", "Position in period");
+    dict.set("kanban.ui.position_unavailable", "Position unavailable");
+    dict.set("kanban.ui.previous_cards", "Previous cards");
+    dict.set("kanban.ui.previous_month", "Previous month");
+    dict.set("kanban.ui.list_card_count", "rank {rank} / {count} card(s)");
+    dict.set("kanban.ui.recurrence", "Recurrence");
+    dict.set("kanban.ui.refresh_to_retry", "Refresh to retry.");
+    dict.set("kanban.ui.release_ops", "release, ops");
+    dict.set("kanban.ui.repeat", "Repeat");
+    dict.set("kanban.ui.repeat_every", "Repeat every");
+    dict.set("kanban.ui.sat", "Sat");
+    dict.set("kanban.ui.save_card", "Save card");
+    dict.set("kanban.ui.select_board", "Select board");
+    dict.set("kanban.ui.set_due_date", "Set due date");
+    dict.set(
+        "kanban.ui.set_the_event_time_recurrence_and_calendar_details",
+        "Set the event time, recurrence, and calendar details.",
+    );
+    dict.set("kanban.ui.show_details", "Show details");
+    dict.set("kanban.ui.sidebar_views", "Sidebar views");
+    dict.set("kanban.ui.start", "Start");
+    dict.set("kanban.ui.status", "Status");
+    dict.set(
+        "kanban.ui.status_and_timezone_database_version",
+        "Status and timezone database version",
+    );
+    dict.set(
+        "kanban.ui.strand_content_sections",
+        "Strand content sections",
+    );
+    dict.set("kanban.ui.strand_id", "Strand ID");
+    dict.set("kanban.ui.sun", "Sun");
+    dict.set("kanban.ui.switch_board", "Switch board");
+    dict.set("kanban.ui.switch_board_title", "Switch board: {title}");
+    dict.set("kanban.ui.synthesis", "Synthesis");
+    dict.set("kanban.ui.tentative", "Tentative");
+    dict.set("kanban.ui.thu", "Thu");
+    dict.set("kanban.ui.timezone", "Timezone");
+    dict.set("kanban.ui.tue", "Tue");
+    dict.set("kanban.ui.tzdb_version", "TZDB version");
+    dict.set("kanban.ui.unavailable_cards", "{count} card(s)");
+    dict.set(
+        "kanban.ui.unavailable_lists",
+        "Unavailable list state ({count})",
+    );
+    dict.set("kanban.ui.unknown_author", "Unknown author");
+    dict.set("kanban.ui.upcoming", "Upcoming");
+    dict.set("kanban.ui.waiting_for_realm_sync", "Waiting for Realm sync");
+    dict.set(
+        "kanban.ui.waiting_for_sync_and_encryption_setup",
+        "Waiting for sync and encryption setup",
+    );
+    dict.set(
+        "kanban.ui.waiting_for_the_board_to_be_accepted",
+        "Waiting for the board to be accepted",
+    );
+    dict.set(
+        "kanban.ui.waiting_for_the_list_to_be_accepted",
+        "Waiting for the list to be accepted",
+    );
+    dict.set("kanban.ui.wed", "Wed");
+    dict.set("kanban.ui.week_starts_on", "Week starts on");
+    dict.set("kanban.ui.weekly", "Weekly");
+    dict.set("kanban.ui.yearly", "Yearly");
+    dict.set("kanban.ui.yyyy_mm_dd", "YYYY-MM-DD");
 
     // Navigation & Shell
     dict.set("nav.dashboard", "Home");
@@ -30,8 +305,6 @@ pub fn english_translations() -> TranslationDict {
     add_circle_error_keys(&mut dict);
 
     // Directory
-    dict.set("directory.tab.organizations", "Organizations");
-    dict.set("directory.tab.actors", "People");
 
     // Settings navigation — section labels (design/settings-ia-reorg.md §3.1).
     // Terminology humanised: Capabilities → App authorizations, Blocked actors → Block list,
@@ -607,13 +880,7 @@ pub fn english_translations() -> TranslationDict {
     // F-NOTIF-VLIST-1: client-side paging UI.
     dict.set("notifications.showing", "Showing");
     dict.set("notifications.load_more", "Load more");
-    dict.set("directory.loading_more", "Loading...");
     dict.set("directory.load_more_realms", "Load More Realms");
-    dict.set(
-        "directory.load_more_organizations",
-        "Load More Organizations",
-    );
-    dict.set("directory.load_more_actors", "Load More People");
 
     dict.set("command_palette.realms", "Realms");
     dict.set("command_palette.jump_to", "Jump to");
@@ -684,10 +951,6 @@ pub fn english_translations() -> TranslationDict {
         "realm_admin.admin_subject_required",
         "enter the subject DID to make an admin",
     );
-    dict.set(
-        "realm_admin.admin_grant_id_required",
-        "enter the grant ID to revoke admin authority",
-    );
     dict.set("realm_admin.admin_grant_button", "Make admin");
     dict.set("realm_admin.admin_revoke_button", "Revoke admin");
     dict.set("realm_admin.refresh_members", "Refresh");
@@ -702,9 +965,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.leave_confirm_target", "Realm to leave");
     dict.set("realm_admin.leave_confirm_button", "Leave Realm");
     dict.set("realm_admin.leave_confirm_cancel", "Cancel");
-    dict.set("directory.list_contacts", "List");
-    dict.set("directory.search_button", "Search");
-    dict.set("directory.resolve_selected", "Resolve Selected");
     dict.set("settings.register_push", "Register Push");
     dict.set("settings.unregister_push", "Unregister Push");
     dict.set("kanban.archive_action", "Archive");
@@ -720,7 +980,6 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("kanban.archive_board_action", "Archive board");
     dict.set("kanban.direct_conversation_unavailable", "Direct conversations do not support boards or lists. Create them in a collaboration Realm.");
-    dict.set("kanban.open_conversation", "Open conversation");
     dict.set(
         "kanban.archive_board_pending",
         "Archiving board and all its cards...",
@@ -753,14 +1012,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.archived_cards_header", "Archived cards");
     dict.set("kanban.archived_cards_empty", "No archived cards.");
     // Directory view (tabs share the existing `directory.tab.*` keys).
-    dict.set(
-        "directory.org_empty_body",
-        "No organizations found. Try a search.",
-    );
-    dict.set(
-        "directory.actors_empty_body",
-        "No actors found. Try a search.",
-    );
 
     // Recovery view (top-level section headers)
     dict.set("recovery.recovery_key_section", "Recovery Key (24 words)");
@@ -1330,14 +1581,6 @@ pub fn english_translations() -> TranslationDict {
     );
     // T6: human-readable copy for late-recovery rejections; the raw
     // protocol reason code is only surfaced via the element tooltip.
-    dict.set(
-        "chat.crypto.late_recovery_rejected",
-        "This message can't be recovered — its encryption key was rotated before you joined.",
-    );
-    dict.set(
-        "chat.crypto.undecryptable_generic",
-        "This message can't be decrypted on this device.",
-    );
     // T7.5 layout polish.
     dict.set("chat.tabs.settings", "Settings");
     dict.set("chat.tabs.members", "Members");
@@ -1973,16 +2216,6 @@ pub fn english_translations() -> TranslationDict {
         "profile_gate.body",
         "This server does not yet support the capabilities needed for this view. Try a different server or contact your administrator.",
     );
-    dict.set(
-        "profile_gate.technical_detail",
-        "Write controls for this surface are hidden until /server/describe advertises the matching profile requirements.",
-    );
-    dict.set("profile_gate.friendly.minimal_client", "Basic client");
-    dict.set("profile_gate.friendly.kanban_mvp", "Boards");
-    dict.set("profile_gate.friendly.chat_mvp", "Discussions");
-    dict.set("profile_gate.friendly.full_client", "Full client");
-    dict.set("profile_gate.friendly.e2ee_client", "Encrypted messaging");
-    dict.set("profile_gate.friendly.unknown", "Client feature");
 
     // Developer Tools / Diagnostics entry points used to expose the
     // protocol-level details that used to leak into the main flow.
@@ -1994,7 +2227,6 @@ pub fn english_translations() -> TranslationDict {
         "developer.hint",
         "These details are intended for developers and operators. End users do not need to read them.",
     );
-    dict.set("developer.profile.required", "Required profile id");
 
     // R3 spec sync (b47ff6ec) — new error toast strings surfaced by the
     // arkret-spec error code expansion (media binding,
@@ -2664,18 +2896,6 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
         "feedback.directory_search_failed",
         "Directory search failed",
     );
-    dict.set(
-        "feedback.directory_resolve_failed",
-        "Directory resolve failed",
-    );
-    dict.set(
-        "feedback.directory_load_more_failed",
-        "Loading more results failed",
-    );
-    dict.set(
-        "feedback.realm_resolved",
-        "Realm resolved (join rule: {join_rule})",
-    );
     dict.set("feedback.realm_create_failed", "Realm creation failed");
     dict.set("feedback.copied_did", "DID copied");
     dict.set("feedback.copied_handles", "Handles copied");
@@ -2808,11 +3028,6 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
         "contacts.new.target_placeholder",
         "Paste an invite link or enter alice:example.com",
     );
-    dict.set(
-        "contacts.new.scope_label",
-        "Friend permissions (both on by default for a regular contact)",
-    );
-    dict.set("contacts.new.scope_empty", "Pick at least one permission.");
     dict.set("contacts.new.message_label", "Note (optional)");
     dict.set("contacts.new.message_placeholder", "Say hello…");
     dict.set("contacts.new.sending", "Sending request…");
@@ -2848,10 +3063,6 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     // ── ContactRow ────────────────────────────────────────────────────
     dict.set("contacts.state.pending_incoming", "Waiting on you");
     dict.set("notifications.contact_request.title", "New contact request");
-    dict.set(
-        "notifications.contact_request.review",
-        "Review contact requests",
-    );
     dict.set("contacts.state.pending_outgoing", "Waiting for them");
     dict.set("contacts.state.accepted", "Contact");
     dict.set("contacts.state.rejected", "Declined");
@@ -3400,24 +3611,12 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
         "The Circle is archived or tombstoned and can no longer receive messages.",
     );
     dict.set(
-        "error.circle.not_archived",
-        "Only archived Circles can be restored.",
-    );
-    dict.set(
         "error.circle.member_not_in_realm",
         "Cannot add this user to the Circle — they are not an active member of the parent Realm.",
     );
     dict.set(
         "error.circle.scope_rebind_forbidden",
         "Changing an existing object's Circle scope requires an audited admin action.",
-    );
-    dict.set(
-        "error.circle.metadata_floor",
-        "This write would expose metadata below the Realm or Circle encryption floor.",
-    );
-    dict.set(
-        "error.circle.encryption_below_realm_floor",
-        "This Realm requires E2EE, so the Circle must stay MLS-backed.",
     );
     // CircleScopePicker — default scope option + help text (render site
     // localizes; `CircleScope::label()` stays a static str).
@@ -3428,17 +3627,6 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
     );
 
     // Shareable object links.
-    dict.set("object_link.open", "Open shared link");
-    dict.set("object_link.open_placeholder", "Paste a shared link");
-    dict.set("object_link.opening", "Opening link…");
-    dict.set(
-        "object_link.error.unavailable",
-        "This link is unavailable or has expired.",
-    );
-    dict.set(
-        "object_link.error.invalid",
-        "This link's format is not recognized.",
-    );
 }
 
 /// Setup surface: the `ak.realm.create` wizard, the `ak.space.create` form,
@@ -3884,10 +4072,6 @@ fn setup_space_strings(dict: &mut TranslationDict) {
         "setup.space.parent.no_siblings",
         "No sibling Spaces in this Realm yet — leave at root.",
     );
-    dict.set(
-        "setup.space.advanced_summary",
-        "Advanced (cross-Realm default for new resources)",
-    );
     dict.set("setup.space.action.create", "Create Space");
     dict.set("setup.space.outcome", "Outcome");
     dict.set("setup.space.outcome.hint", "Space create");
@@ -4257,11 +4441,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "audit.access_events_hint",
         "Recorded when a Realm logs every read",
     );
-    dict.set("audit.write_receipts", "Writes recorded");
-    dict.set(
-        "audit.write_receipts_hint",
-        "Recorded when a Realm logs every write",
-    );
     dict.set("audit.total_observed", "Total seen here");
     dict.set(
         "audit.total_observed_hint",
@@ -4403,7 +4582,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "This replaces the runtime key of an active or paused agent.",
     );
     dict.set("agent_runtime.slug", "Slug: {slug}");
-    dict.set("agent_runtime.requested", "Requested {time}");
     dict.set(
         "agent_runtime.compare_code",
         "Compare this code before approving",
@@ -4494,10 +4672,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "The runtime key request is invalid. {error}",
     );
     dict.set("agent_runtime.approving", "Approving agent runtime…");
-    dict.set(
-        "agent_runtime.approved_refresh_failed",
-        "Runtime key approved ({id}). Couldn't refresh the agent's recovery backup: {error}",
-    );
     dict.set(
         "agent_runtime.approved_current",
         "Runtime key approved ({id}). The agent's recovery backup is up to date.",

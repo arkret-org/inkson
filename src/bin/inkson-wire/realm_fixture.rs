@@ -1395,6 +1395,28 @@ impl Builder {
             "snapshot content ID mismatch"
         );
         let account_entry = RealmSyncEntry {
+            baseline: Some(
+                arkret_models_collaboration::sync_frames::account_subscribe::RealmDetailBaseline {
+                    snapshot_cursor: format!(
+                        "ak:cursor:{}",
+                        base64url_encode(arkret_sdk::canonical::sha256_bytes(
+                            &arkret_sdk::canonical::canonical_json_bytes(&snapshot)?
+                        ))
+                    ),
+                    cut_revision: snapshot
+                        .visible_stream_heads
+                        .iter()
+                        .map(|head| head.stream_position)
+                        .max()
+                        .unwrap_or(0),
+                    coverage: AccountCurrentCoverage {
+                        realm_id: snapshot.realm_id.clone(),
+                        stream_heads: snapshot.visible_stream_heads.clone(),
+                        complete_for_authorized_streams: true,
+                    },
+                    complete: true,
+                },
+            ),
             streams: Some(
                 snapshot
                     .visible_stream_heads
@@ -1445,6 +1467,56 @@ impl Builder {
             notification_deltas,
         })
     }
+}
+
+pub(super) fn realm_list(input: Value) -> Result<Value> {
+    use arkret_models_collaboration::sync_frames::demand_sync::{
+        RealmListMembership, RealmListPage, RealmListRow,
+    };
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        fixtures: Vec<Fixture>,
+    }
+    let input: Input = serde_json::from_value(input)?;
+    let mut items = Vec::new();
+    for (index, fixture) in input.fixtures.into_iter().enumerate() {
+        let title = fixture
+            .snapshot
+            .current_state_entries
+            .iter()
+            .find_map(|row| {
+                let TypedCurrentRow::Value {
+                    selector, value, ..
+                } = row;
+                matches!(selector, CurrentSelector::RealmProfile)
+                    .then(|| serde_json::from_value::<RealmProfile>(value.clone()))
+            })
+            .transpose()?
+            .map(|profile| profile.title);
+        items.push(RealmListRow {
+            realm_id: fixture.snapshot.realm_id,
+            revision: fixture.committed_events.len() as u64,
+            activity_position: index as u64,
+            membership: RealmListMembership::Join,
+            title,
+            default_strand_id: None,
+        });
+    }
+    let snapshot_cursor = format!(
+        "ak:cursor:{}",
+        base64url_encode(arkret_sdk::canonical::sha256_bytes(
+            &arkret_sdk::canonical::canonical_json_bytes(&items)?
+        ))
+    );
+    let page = RealmListPage {
+        snapshot_cursor,
+        snapshot_revision: items.iter().map(|row| row.revision).sum(),
+        items,
+        next_cursor: None,
+    };
+    page.validate()?;
+    Ok(serde_json::to_value(page)?)
 }
 
 pub(super) fn build(input: Value) -> Result<Value> {

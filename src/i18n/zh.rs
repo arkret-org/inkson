@@ -110,14 +110,6 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
     );
 
     // Shareable object links.
-    dict.set("object_link.open", "打开分享链接");
-    dict.set(
-        "object_link.open_placeholder",
-        "粘贴 web+arkret: 或 https 分享链接",
-    );
-    dict.set("object_link.opening", "正在打开链接…");
-    dict.set("object_link.error.unavailable", "此链接不可用或已过期。");
-    dict.set("object_link.error.invalid", "无法识别此链接格式。");
 }
 
 /// Generic API-error copy — zh counterparts of en.rs `add_generic_error_keys`.
@@ -182,6 +174,239 @@ fn add_generic_error_keys_zh(dict: &mut TranslationDict) {
 /// Build Chinese translation dictionary.
 pub fn chinese_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(UiLocale::Zh);
+    dict.set("kanban.ui.members_loading", "正在加载成员身份…");
+    dict.set("kanban.ui.members_unavailable", "暂时无法读取成员身份。");
+    dict.set("circles.feedback.account_required", "请先登录账号。");
+    dict.set("circles.feedback.archive_failed", "归档失败：{error}");
+    dict.set("circles.feedback.archived", "圈子已归档");
+    dict.set("circles.feedback.create_failed", "创建圈子失败：{error}");
+    dict.set("circles.feedback.created", "圈子已创建");
+    dict.set("circles.feedback.creating", "正在创建圈子并设置初始成员…");
+    dict.set(
+        "circles.feedback.history_failed",
+        "修改历史记录范围失败：{error}",
+    );
+    dict.set(
+        "circles.feedback.history_restricted",
+        "历史记录已限制为加入之后",
+    );
+    dict.set(
+        "circles.feedback.invalid_account",
+        "账号标识无效，请重新登录。",
+    );
+    dict.set(
+        "circles.feedback.invalid_member",
+        "请输入完整的成员身份标识，包含身份类型及适用的托管站点。",
+    );
+    dict.set(
+        "circles.feedback.invalid_realm",
+        "Realm 标识无效，请刷新重试。",
+    );
+    dict.set(
+        "circles.feedback.invalid_transition",
+        "请选择有效的成员状态变更。",
+    );
+    dict.set("circles.feedback.join_requested", "加入申请已提交");
+    dict.set("circles.feedback.load_failed", "无法加载圈子：{error}");
+    dict.set(
+        "circles.feedback.member_removal_failed",
+        "移除成员失败：{error}",
+    );
+    dict.set("circles.feedback.member_removed", "成员访问权限已移除");
+    dict.set(
+        "circles.feedback.membership_failed",
+        "更新成员状态失败：{error}",
+    );
+    dict.set("circles.feedback.membership_updated", "成员状态已更新");
+    dict.set(
+        "circles.feedback.prepare_failed",
+        "无法准备圈子变更，请刷新重试。",
+    );
+    dict.set("circles.feedback.restore_failed", "恢复失败：{error}");
+    dict.set("circles.feedback.restored", "圈子已恢复");
+    dict.set("circles.feedback.retire_failed", "停用圈子失败：{error}");
+    dict.set("circles.feedback.retired", "圈子已永久停用");
+    dict.set("circles.feedback.update_failed", "更新圈子失败：{error}");
+    dict.set("circles.feedback.updated", "圈子已更新");
+    dict.set("kanban.ui.actions", "操作");
+    dict.set("kanban.ui.add_a_card_to_this_list", "向此列表添加卡片");
+    dict.set("kanban.ui.add_a_list_to_this_board", "向此看板添加列表");
+    dict.set("kanban.ui.add_a_location", "添加地点");
+    dict.set("kanban.ui.add_assignees", "添加负责人");
+    dict.set("kanban.ui.add_due_date", "添加截止日期");
+    dict.set("kanban.ui.add_or_remove_assignees", "添加或移除负责人");
+    dict.set("kanban.ui.add_schedule", "添加日程");
+    dict.set("kanban.ui.advanced_calendar_settings", "高级日程设置");
+    dict.set("kanban.ui.agenda_unavailable", "日程不可用：{error}");
+    dict.set("kanban.ui.all_day", "全天");
+    dict.set(
+        "kanban.ui.archive_this_card_ak_strand_archive",
+        "归档此卡片",
+    );
+    dict.set("kanban.ui.archived_cards", "{count} 张卡片");
+    dict.set("kanban.ui.archived_lists", "{count} 个列表");
+    dict.set("kanban.ui.asia_shanghai", "例如：Asia/Shanghai");
+    dict.set("kanban.ui.assignees", "负责人");
+    dict.set("kanban.ui.board_title", "看板标题");
+    dict.set("kanban.ui.boards", "看板");
+    dict.set("kanban.ui.calendar", "日程");
+    dict.set("kanban.ui.calendar_status", "日程状态");
+    dict.set("kanban.ui.cancel_card", "取消卡片");
+    dict.set("kanban.ui.cancelled", "已取消");
+    dict.set(
+        "kanban.ui.canonical_lifecycle_state_is_unavailable",
+        "无法读取生命周期状态",
+    );
+    dict.set(
+        "kanban.ui.canonical_position_is_unavailable",
+        "无法读取卡片位置",
+    );
+    dict.set(
+        "kanban.ui.canonical_space_state_is_unavailable_refresh_to_retry",
+        "无法读取空间状态，请刷新重试。",
+    );
+    dict.set("kanban.ui.card_pages", "卡片分页");
+    dict.set("kanban.ui.card_title", "卡片标题");
+    dict.set(
+        "kanban.ui.choose_a_date_for_this_card",
+        "为此卡片选择日期。",
+    );
+    dict.set("kanban.ui.clear", "清除");
+    dict.set("kanban.ui.clear_assignees", "清除负责人");
+    dict.set("kanban.ui.clear_due_date", "清除截止日期");
+    dict.set("kanban.ui.close_calendar_schedule_dialog", "关闭日程对话框");
+    dict.set("kanban.ui.close_card_detail", "关闭卡片详情");
+    dict.set("kanban.ui.close_due_date_dialog", "关闭截止日期对话框");
+    dict.set("kanban.ui.confirmed", "已确认");
+    dict.set("kanban.ui.copy_strand_link", "复制卡片链接");
+    dict.set("kanban.ui.create_board", "创建看板");
+    dict.set(
+        "kanban.ui.custom_repeat_rules_are_configured",
+        "已设置自定义重复规则",
+    );
+    dict.set("kanban.ui.customize_recurrence", "自定义重复规则");
+    dict.set("kanban.ui.daily", "每天");
+    dict.set("kanban.ui.days_of_month", "每月的日期");
+    dict.set("kanban.ui.days_of_week", "每周的星期");
+    dict.set("kanban.ui.description", "描述");
+    dict.set("kanban.ui.details", "详情");
+    dict.set("kanban.ui.discussion", "讨论");
+    dict.set(
+        "kanban.ui.discussion_will_be_available_when_this_card_finishes_syncing",
+        "卡片同步完成后即可参与讨论。",
+    );
+    dict.set("kanban.ui.dock_to_side", "停靠至侧边");
+    dict.set("kanban.ui.does_not_repeat", "不重复");
+    dict.set("kanban.ui.drag_column", "拖动列表 {title}");
+    dict.set("kanban.ui.drop_column", "将列表放在 {title} 之前");
+    dict.set("kanban.ui.due", "截止日期");
+    dict.set("kanban.ui.due_date", "截止日期");
+    dict.set("kanban.ui.due_date_calendar", "截止日期日历");
+    dict.set("kanban.ui.edit_due_date", "编辑截止日期");
+    dict.set("kanban.ui.edit_schedule", "编辑日程");
+    dict.set("kanban.ui.end", "结束");
+    dict.set("kanban.ui.end_after_occurrences", "重复指定次数后结束");
+    dict.set("kanban.ui.end_on", "结束日期");
+    dict.set("kanban.ui.expand_to_dialog", "展开为对话框");
+    dict.set("kanban.ui.filter_members", "筛选成员");
+    dict.set("kanban.ui.fri", "周五");
+    dict.set("kanban.ui.source_list", "来自列表：{title}");
+    dict.set("kanban.ui.hide_details", "隐藏详情");
+    dict.set("kanban.ui.historical_version", "历史版本");
+    dict.set("kanban.ui.history", "历史");
+    dict.set(
+        "kanban.ui.intervals_selected_days_and_an_optional_end",
+        "设置间隔、重复日期及可选的结束条件",
+    );
+    dict.set("kanban.ui.labels", "标签");
+    dict.set("kanban.ui.latest", "最新");
+    dict.set("kanban.ui.unavailable_lifecycle_cards", "{count} 张卡片");
+    dict.set("kanban.ui.lifecycle_unavailable", "生命周期状态不可用");
+    dict.set("kanban.ui.location", "地点");
+    dict.set("kanban.ui.member_count", "成员（{count}）");
+    dict.set("kanban.ui.mention_member", "提及 {name}");
+    dict.set("kanban.ui.mo", "例如：MO（周一）");
+    dict.set("kanban.ui.mo_we_fr", "例如：MO, WE, FR（周一、周三、周五）");
+    dict.set("kanban.ui.mode", "模式");
+    dict.set("kanban.ui.mon", "周一");
+    dict.set("kanban.ui.monthly", "每月");
+    dict.set("kanban.ui.months", "月份");
+    dict.set("kanban.ui.new", "新建");
+    dict.set("kanban.ui.new_board", "新建看板");
+    dict.set("kanban.ui.new_list_title", "新列表标题");
+    dict.set("kanban.ui.next_cards", "下一页卡片");
+    dict.set("kanban.ui.next_month", "下个月");
+    dict.set("kanban.ui.no_board_selected", "尚未选择看板");
+    dict.set("kanban.ui.no_description", "暂无描述");
+    dict.set("kanban.ui.no_lists_yet", "暂无列表");
+    dict.set("kanban.ui.no_members_match", "没有匹配的成员");
+    dict.set(
+        "kanban.ui.no_occurrences_in_the_next_90_days",
+        "未来 90 天内没有日程",
+    );
+    dict.set("kanban.ui.no_schedule", "暂无日程");
+    dict.set("kanban.ui.no_summary", "暂无摘要");
+    dict.set("kanban.ui.no_synthesis_yet", "暂无总结。");
+    dict.set("kanban.ui.card_page", "第 {page} / {total} 页");
+    dict.set("kanban.ui.position_in_period", "周期内的顺序");
+    dict.set("kanban.ui.position_unavailable", "位置不可用");
+    dict.set("kanban.ui.previous_cards", "上一页卡片");
+    dict.set("kanban.ui.previous_month", "上个月");
+    dict.set("kanban.ui.list_card_count", "排序 {rank} / {count} 张卡片");
+    dict.set("kanban.ui.recurrence", "重复规则");
+    dict.set("kanban.ui.refresh_to_retry", "请刷新重试。");
+    dict.set("kanban.ui.release_ops", "例如：发布、运维");
+    dict.set("kanban.ui.repeat", "重复");
+    dict.set("kanban.ui.repeat_every", "重复间隔");
+    dict.set("kanban.ui.sat", "周六");
+    dict.set("kanban.ui.save_card", "保存卡片");
+    dict.set("kanban.ui.select_board", "选择看板");
+    dict.set("kanban.ui.set_due_date", "设置截止日期");
+    dict.set(
+        "kanban.ui.set_the_event_time_recurrence_and_calendar_details",
+        "设置日程时间、重复规则及详情。",
+    );
+    dict.set("kanban.ui.show_details", "显示详情");
+    dict.set("kanban.ui.sidebar_views", "侧栏视图");
+    dict.set("kanban.ui.start", "开始");
+    dict.set("kanban.ui.status", "状态");
+    dict.set(
+        "kanban.ui.status_and_timezone_database_version",
+        "状态与时区数据库版本",
+    );
+    dict.set("kanban.ui.strand_content_sections", "卡片内容分区");
+    dict.set("kanban.ui.strand_id", "Strand ID");
+    dict.set("kanban.ui.sun", "周日");
+    dict.set("kanban.ui.switch_board", "切换看板");
+    dict.set("kanban.ui.switch_board_title", "切换看板：{title}");
+    dict.set("kanban.ui.synthesis", "总结");
+    dict.set("kanban.ui.tentative", "暂定");
+    dict.set("kanban.ui.thu", "周四");
+    dict.set("kanban.ui.timezone", "时区");
+    dict.set("kanban.ui.tue", "周二");
+    dict.set("kanban.ui.tzdb_version", "时区数据库版本");
+    dict.set("kanban.ui.unavailable_cards", "{count} 张卡片");
+    dict.set("kanban.ui.unavailable_lists", "列表状态不可用（{count}）");
+    dict.set("kanban.ui.unknown_author", "未知作者");
+    dict.set("kanban.ui.upcoming", "即将到来");
+    dict.set("kanban.ui.waiting_for_realm_sync", "正在等待 Realm 同步");
+    dict.set(
+        "kanban.ui.waiting_for_sync_and_encryption_setup",
+        "正在等待同步与加密设置完成",
+    );
+    dict.set(
+        "kanban.ui.waiting_for_the_board_to_be_accepted",
+        "正在等待服务器确认看板",
+    );
+    dict.set(
+        "kanban.ui.waiting_for_the_list_to_be_accepted",
+        "正在等待服务器确认列表",
+    );
+    dict.set("kanban.ui.wed", "周三");
+    dict.set("kanban.ui.week_starts_on", "一周起始日");
+    dict.set("kanban.ui.weekly", "每周");
+    dict.set("kanban.ui.yearly", "每年");
+    dict.set("kanban.ui.yyyy_mm_dd", "年-月-日（YYYY-MM-DD）");
 
     dict.set("nav.dashboard", "主页");
     dict.set("nav.directory", "目录");
@@ -198,9 +423,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("sidebar.realms_empty", "尚未加载 Realm");
     dict.set("sidebar.realms_sign_in", "登录后加载 Realm");
     dict.set("sidebar.realms_no_results", "没有匹配的 Realm");
-
-    dict.set("directory.tab.organizations", "组织");
-    dict.set("directory.tab.actors", "成员");
 
     dict.set("mls_backup.button_confirm_saved", "我已安全保存");
     dict.set("mls_backup.button_regenerate", "重新生成");
@@ -300,10 +522,7 @@ pub fn chinese_translations() -> TranslationDict {
     // F-NOTIF-VLIST-1: pagination button copy synced with the en dict.
     dict.set("notifications.showing", "已显示");
     dict.set("notifications.load_more", "加载更多");
-    dict.set("directory.loading_more", "加载中…");
     dict.set("directory.load_more_realms", "加载更多 Realm");
-    dict.set("directory.load_more_organizations", "加载更多组织");
-    dict.set("directory.load_more_actors", "加载更多成员");
 
     dict.set("command_palette.realms", "Realm");
     dict.set("command_palette.jump_to", "跳转到");
@@ -359,10 +578,6 @@ pub fn chinese_translations() -> TranslationDict {
         "realm_admin.admin_subject_required",
         "请填写要设为管理员的主体 DID",
     );
-    dict.set(
-        "realm_admin.admin_grant_id_required",
-        "请填写要撤销的 Grant ID",
-    );
     dict.set("realm_admin.admin_grant_button", "设为管理员");
     dict.set("realm_admin.admin_revoke_button", "撤销管理员");
     dict.set("realm_admin.refresh_members", "刷新");
@@ -377,9 +592,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.leave_confirm_target", "将退出的 Realm");
     dict.set("realm_admin.leave_confirm_button", "退出 Realm");
     dict.set("realm_admin.leave_confirm_cancel", "取消");
-    dict.set("directory.list_contacts", "列出");
-    dict.set("directory.search_button", "搜索");
-    dict.set("directory.resolve_selected", "解析选中");
     dict.set("settings.register_push", "注册推送");
     dict.set("settings.unregister_push", "注销推送");
     // Settings navigation - section labels (design/settings-ia-reorg.md 3.1).
@@ -777,7 +989,6 @@ pub fn chinese_translations() -> TranslationDict {
         "kanban.direct_conversation_unavailable",
         "私聊不支持看板或列表，请在协作 Realm 中创建。",
     );
-    dict.set("kanban.open_conversation", "打开聊天");
     dict.set("kanban.archive_board_pending", "正在归档看板及其全部卡片…");
     dict.set("kanban.archive_board_done", "看板已归档;卡片已级联归档。");
     dict.set("kanban.archive_board_confirm_title", "归档此看板？");
@@ -805,24 +1016,12 @@ pub fn chinese_translations() -> TranslationDict {
         "Circle 已归档或已终止，不能继续写入。",
     );
     dict.set(
-        "error.circle.not_archived",
-        "只有已归档的 Circle 可以恢复。",
-    );
-    dict.set(
         "error.circle.member_not_in_realm",
         "该用户不是父 Realm 的成员，不能加入 Circle。",
     );
     dict.set(
         "error.circle.scope_rebind_forbidden",
         "改变已有对象的 Circle scope 需要审计管理操作。",
-    );
-    dict.set(
-        "error.circle.metadata_floor",
-        "这次写入会低于 Realm 或 Circle 的元数据加密下限。",
-    );
-    dict.set(
-        "error.circle.encryption_below_realm_floor",
-        "该 Realm 要求 E2EE，Circle 必须保持 MLS 加密。",
     );
     // CircleScopePicker 的默认 scope 选项与帮助文案。
     dict.set("circle.scope.realm_everyone", "Realm（所有人）");
@@ -835,8 +1034,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.archived_cards_header", "已归档卡片");
     dict.set("kanban.archived_cards_empty", "暂无已归档卡片。");
     // Directory view
-    dict.set("directory.org_empty_body", "未找到组织，可尝试搜索。");
-    dict.set("directory.actors_empty_body", "未找到 actor，可尝试搜索。");
 
     // Recovery view
     dict.set("recovery.recovery_key_section", "恢复密钥（24 词）");
@@ -1324,14 +1521,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.crypto.needs_verification", "正在验证发送方身份…");
     // T6: human-readable copy for late-recovery rejections; the raw
     // protocol reason code is only surfaced via the element tooltip.
-    dict.set(
-        "chat.crypto.late_recovery_rejected",
-        "无法恢复这条消息——加密密钥在你加入前已轮换。",
-    );
-    dict.set(
-        "chat.crypto.undecryptable_generic",
-        "此设备无法解密这条消息。",
-    );
     // T7.5 layout adjustments
     dict.set("chat.tabs.settings", "设置");
     dict.set("chat.tabs.members", "成员");
@@ -1836,16 +2025,6 @@ pub fn chinese_translations() -> TranslationDict {
         "profile_gate.body",
         "当前服务器尚未提供该视图所需的能力。请尝试其他服务器或联系管理员。",
     );
-    dict.set(
-        "profile_gate.technical_detail",
-        "在 /server/describe 公布匹配的 profile 要求之前,该界面的写入控件保持隐藏。",
-    );
-    dict.set("profile_gate.friendly.minimal_client", "基础客户端");
-    dict.set("profile_gate.friendly.kanban_mvp", "看板");
-    dict.set("profile_gate.friendly.chat_mvp", "讨论");
-    dict.set("profile_gate.friendly.full_client", "完整客户端");
-    dict.set("profile_gate.friendly.e2ee_client", "加密通讯");
-    dict.set("profile_gate.friendly.unknown", "客户端功能");
 
     dict.set("developer.title", "开发者工具");
     dict.set("developer.subtitle", "协议诊断与审计");
@@ -1855,7 +2034,6 @@ pub fn chinese_translations() -> TranslationDict {
         "developer.hint",
         "以下信息面向开发者和运维人员。终端用户无需阅读。",
     );
-    dict.set("developer.profile.required", "所需 Profile id");
 
     // R3 spec sync (b47ff6ec) — Chinese error toast translations.
     dict.set("dashboard.object_state.active", "活跃");
@@ -2474,12 +2652,6 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
         "当前授权或运行状态不允许创建此会话",
     );
     dict.set("feedback.directory_search_failed", "目录搜索失败");
-    dict.set("feedback.directory_resolve_failed", "目录解析失败");
-    dict.set("feedback.directory_load_more_failed", "加载更多结果失败");
-    dict.set(
-        "feedback.realm_resolved",
-        "Realm 已解析(加入规则:{join_rule})",
-    );
     dict.set("feedback.realm_create_failed", "Realm 创建失败");
     dict.set("feedback.copied_did", "已复制 DID");
     dict.set("feedback.copied_handles", "已复制 Handle");
@@ -2598,8 +2770,6 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "contacts.new.target_placeholder",
         "粘贴邀请链接或输入 alice:example.com",
     );
-    dict.set("contacts.new.scope_label", "好友权限(普通好友默认两项都开)");
-    dict.set("contacts.new.scope_empty", "至少需要选择一项权限。");
     dict.set("contacts.new.message_label", "附言(可选)");
     dict.set("contacts.new.message_placeholder", "打个招呼…");
     dict.set("contacts.new.sending", "正在发送请求…");
@@ -2626,7 +2796,6 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     // ── ContactRow ────────────────────────────────────────────────────
     dict.set("contacts.state.pending_incoming", "等待你处理");
     dict.set("notifications.contact_request.title", "新的联系人请求");
-    dict.set("notifications.contact_request.review", "查看联系人请求");
     dict.set("contacts.state.pending_outgoing", "等待对方接受");
     dict.set("contacts.state.accepted", "已是联系人");
     dict.set("contacts.state.rejected", "已拒绝");
@@ -3299,10 +3468,6 @@ fn setup_space_strings(dict: &mut TranslationDict) {
         "setup.space.parent.no_siblings",
         "该 Realm 下还没有同级空间——保留在根层级。",
     );
-    dict.set(
-        "setup.space.advanced_summary",
-        "高级（新资源的跨 Realm 默认值）",
-    );
     dict.set("setup.space.action.create", "创建空间");
     dict.set("setup.space.outcome", "结果");
     dict.set("setup.space.outcome.hint", "空间创建");
@@ -3631,8 +3796,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("audit.help", "有些 Realm 会记录每一次读取,有些会记录每一次写入。此视图只读,只显示这台设备已经看到的记录。");
     dict.set("audit.access_events", "已记录的读取");
     dict.set("audit.access_events_hint", "在 Realm 记录每次读取时产生");
-    dict.set("audit.write_receipts", "已记录的写入");
-    dict.set("audit.write_receipts_hint", "在 Realm 记录每次写入时产生");
     dict.set("audit.total_observed", "本机共计");
     dict.set("audit.total_observed_hint", "仅统计这台设备已同步到的部分");
     dict.set("audit.empty_title", "还没有审计记录");
@@ -3753,7 +3916,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "这将替换一个处于活跃或暂停状态的代理的运行时密钥。",
     );
     dict.set("agent_runtime.slug", "标识:{slug}");
-    dict.set("agent_runtime.requested", "请求时间 {time}");
     dict.set("agent_runtime.compare_code", "批准前请比对此代码");
     dict.set("agent_runtime.permissions", "请求的权限");
     dict.set(
@@ -3823,10 +3985,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "运行时密钥请求无效。{error}",
     );
     dict.set("agent_runtime.approving", "正在批准代理运行时…");
-    dict.set(
-        "agent_runtime.approved_refresh_failed",
-        "运行时密钥已批准({id})。代理的恢复备份刷新失败:{error}",
-    );
     dict.set(
         "agent_runtime.approved_current",
         "运行时密钥已批准({id})。代理的恢复备份已是最新。",

@@ -835,6 +835,7 @@ export async function mockArkretApi(
   const DEMO_STRAND_SECONDARY_CARD = demoNative.ids.secondary;
   let invitedRealmId = DEMO_REALM;
   const nativeFixtures = new Map<string, NativeRealmFixture>();
+  const historicalSignerResponses = new Map<string, Record<string, any>>();
   const registerNative = (fixture: NativeRealmFixture) => {
     nativeFixtures.set(String(fixture.snapshot.realm_id), structuredClone(fixture));
     projectionEvents.push(...fixture.committed_events.map(full => structuredClone(full.event)));
@@ -2113,7 +2114,9 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       const catchup = url.searchParams.get("catchup") === "true";
-      if (url.searchParams.has("after")) {
+      const filter = JSON.parse(url.searchParams.get("filter") ?? "{}");
+      const requestedRealms: string[] | undefined = filter.realm_ids;
+      if (url.searchParams.has("after") && url.searchParams.get("replace_filter") !== "true") {
         await new Promise((resolve) => setTimeout(resolve, 5_000));
         const frames = [
           { kind: "delta", cursor: "ak:cursor:e2e-2" },
@@ -2286,8 +2289,15 @@ export async function mockArkretApi(
         const fixture = nativeFixtures.get(realmId);
         if (fixture) Object.assign(entry, structuredClone(fixture.account_entry));
       }
+      const realmList = inksonWire("mock-realm-list", {
+        fixtures: Array.from(nativeFixtures.values()).filter(nativeReadable)
+          .filter((fixture) => Object.hasOwn(frame.realms, String(fixture.snapshot.realm_id))),
+      });
+      for (const realmId of Object.keys(frame.realms)) {
+        if (requestedRealms && !requestedRealms.includes(realmId)) delete frame.realms[realmId];
+      }
       const frames = [
-        frame,
+        { ...frame, realm_list: realmList },
         ...(catchup ? [{ kind: "catchup_complete", cursor: "ak:cursor:e2e-2" }] : []),
       ];
       frames.forEach((value) =>
@@ -2547,7 +2557,17 @@ export async function mockArkretApi(
     if (url.pathname === "/_arkret/self/signer-keys/query" && route.request().method() === "POST") {
       const request = await route.request().postDataJSON();
       const fixture = nativeFixtures.get(request.realm_id);
-      return fixture && nativeReadable(fixture) ? json(route, inksonWire("mock-realm-signer-keys", { fixture, request })) : json(route, { error: { code: "not_found" } }, 404);
+      if (!fixture || !nativeReadable(fixture)) return json(route, { error: { code: "not_found" } }, 404);
+      // Cache only identical source facts and query bindings. Request IDs are
+      // correlation, while every historical proof still reaches the verifier.
+      const { request_id, ...binding } = request;
+      const cacheKey = canonicalJson({ fixture, binding });
+      let outcome = historicalSignerResponses.get(cacheKey);
+      if (!outcome) {
+        outcome = inksonWire<Record<string, any>>("mock-realm-signer-keys", { fixture, request });
+        historicalSignerResponses.set(cacheKey, outcome);
+      }
+      return json(route, { ...structuredClone(outcome), request_id });
     }
     if (
       url.pathname === "/_arkret/root/identity/describe" &&
@@ -3877,7 +3897,11 @@ export async function mockArkretApi(
 
     return route.fulfill({ status: 404 });
   });
-  return { demoRealm: DEMO_REALM, demoBoardSpace: DEMO_BOARD_SPACE };
+  return {
+    demoRealm: DEMO_REALM,
+    demoBoardSpace: DEMO_BOARD_SPACE,
+    hasSeededCards: includeDemoRealms && !options.emptyBoard,
+  };
 }
 
 async function contractRequestBody(route: Route) {

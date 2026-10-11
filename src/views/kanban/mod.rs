@@ -292,7 +292,7 @@ fn CalendarScheduleEditForm(
             section { class: "calendar-schedule-section calendar-schedule-primary",
                 div { class: "calendar-schedule-field-grid",
                     div { class: "field",
-                        Label { html_for: "card-detail-calendar-start-input", "Start" }
+                        Label { html_for: "card-detail-calendar-start-input", {crate::i18n::tr("kanban.ui.start")} }
                         Input {
                             id: "card-detail-calendar-start-input",
                             class: "input",
@@ -303,7 +303,7 @@ fn CalendarScheduleEditForm(
                         }
                     }
                     div { class: "field",
-                        Label { html_for: "card-detail-calendar-end-input", "End" }
+                        Label { html_for: "card-detail-calendar-end-input", {crate::i18n::tr("kanban.ui.end")} }
                         Input {
                             id: "card-detail-calendar-end-input",
                             class: "input",
@@ -321,27 +321,27 @@ fn CalendarScheduleEditForm(
                                 update_calendar_draft(calendar, |draft| draft.all_day = bool::from(state));
                             },
                         }
-                        span { "All day" }
+                        span { {crate::i18n::tr("kanban.ui.all_day")} }
                     }
                     div { class: "field",
-                        Label { html_for: "card-detail-calendar-timezone-input", "Timezone" }
+                        Label { html_for: "card-detail-calendar-timezone-input", {crate::i18n::tr("kanban.ui.timezone")} }
                         Input {
                             id: "card-detail-calendar-timezone-input",
                             class: "input",
                             "data-testid": "card-detail-calendar-timezone-input",
                             value: "{calendar().timezone}",
-                            placeholder: "Asia/Shanghai",
+                            placeholder: crate::i18n::tr("kanban.ui.asia_shanghai"),
                             oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.timezone = event.value()),
                         }
                     }
                     div { class: "field calendar-schedule-span-2",
-                        Label { html_for: "card-detail-calendar-location-input", "Location" }
+                        Label { html_for: "card-detail-calendar-location-input", {crate::i18n::tr("kanban.ui.location")} }
                         Input {
                             id: "card-detail-calendar-location-input",
                             class: "input",
                             "data-testid": "card-detail-calendar-location-input",
                             value: "{calendar().location}",
-                            placeholder: "Add a location",
+                            placeholder: crate::i18n::tr("kanban.ui.add_a_location"),
                             oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| {
                                 draft.location = event.value();
                                 draft.location_locked = false;
@@ -349,7 +349,7 @@ fn CalendarScheduleEditForm(
                         }
                     }
                     div { class: "field calendar-schedule-repeat-field",
-                        Label { html_for: "card-detail-calendar-recurrence-select", "Repeat" }
+                        Label { html_for: "card-detail-calendar-recurrence-select", {crate::i18n::tr("kanban.ui.repeat")} }
                         Select::<String> {
                             "data-testid": "card-detail-calendar-recurrence-select",
                             value: Some(selected_frequency.into()),
@@ -372,11 +372,11 @@ fn CalendarScheduleEditForm(
                                     });
                                 }
                             },
-                            SelectOption::<String> { index: 0usize, value: "none".to_owned(), text_value: "Does not repeat", "Does not repeat" }
-                            SelectOption::<String> { index: 1usize, value: "daily".to_owned(), text_value: "Daily", "Daily" }
-                            SelectOption::<String> { index: 2usize, value: "weekly".to_owned(), text_value: "Weekly", "Weekly" }
-                            SelectOption::<String> { index: 3usize, value: "monthly".to_owned(), text_value: "Monthly", "Monthly" }
-                            SelectOption::<String> { index: 4usize, value: "yearly".to_owned(), text_value: "Yearly", "Yearly" }
+                            SelectOption::<String> { index: 0usize, value: "none".to_owned(), text_value: "Does not repeat", {crate::i18n::tr("kanban.ui.does_not_repeat")} }
+                            SelectOption::<String> { index: 1usize, value: "daily".to_owned(), text_value: "Daily", {crate::i18n::tr("kanban.ui.daily")} }
+                            SelectOption::<String> { index: 2usize, value: "weekly".to_owned(), text_value: "Weekly", {crate::i18n::tr("kanban.ui.weekly")} }
+                            SelectOption::<String> { index: 3usize, value: "monthly".to_owned(), text_value: "Monthly", {crate::i18n::tr("kanban.ui.monthly")} }
+                            SelectOption::<String> { index: 4usize, value: "yearly".to_owned(), text_value: "Yearly", {crate::i18n::tr("kanban.ui.yearly")} }
                         }
                     }
                 }
@@ -387,12 +387,12 @@ fn CalendarScheduleEditForm(
                     "data-testid": "card-detail-calendar-recurrence-options",
                     summary { class: "calendar-schedule-disclosure-summary",
                         span {
-                            strong { "Customize recurrence" }
+                            strong { {crate::i18n::tr("kanban.ui.customize_recurrence")} }
                             small {
                                 if custom_recurrence_configured() {
-                                    "Custom repeat rules are configured"
+                                    {crate::i18n::tr("kanban.ui.custom_repeat_rules_are_configured")}
                                 } else {
-                                    "Intervals, selected days, and an optional end"
+                                    {crate::i18n::tr("kanban.ui.intervals_selected_days_and_an_optional_end")}
                                 }
                             }
                         }
@@ -400,7 +400,7 @@ fn CalendarScheduleEditForm(
                     }
                     div { class: "calendar-schedule-field-grid calendar-schedule-disclosure-body",
                         div { class: "field",
-                            Label { html_for: "card-detail-calendar-interval-input", "Repeat every" }
+                            Label { html_for: "card-detail-calendar-interval-input", {crate::i18n::tr("kanban.ui.repeat_every")} }
                             Input {
                                 id: "card-detail-calendar-interval-input",
                                 class: "input",
@@ -411,18 +411,18 @@ fn CalendarScheduleEditForm(
                             }
                         }
                         div { class: "field",
-                            Label { html_for: "card-detail-calendar-by-day-input", "Days of week" }
+                            Label { html_for: "card-detail-calendar-by-day-input", {crate::i18n::tr("kanban.ui.days_of_week")} }
                             Input {
                                 id: "card-detail-calendar-by-day-input",
                                 class: "input",
                                 "data-testid": "card-detail-calendar-by-day-input",
                                 value: "{calendar().recurrence_by_day}",
-                                placeholder: "MO, WE, FR",
+                                placeholder: crate::i18n::tr("kanban.ui.mo_we_fr"),
                                 oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_by_day = event.value()),
                             }
                         }
                         div { class: "field",
-                            Label { html_for: "card-detail-calendar-by-month-input", "Months" }
+                            Label { html_for: "card-detail-calendar-by-month-input", {crate::i18n::tr("kanban.ui.months")} }
                             Input {
                                 id: "card-detail-calendar-by-month-input",
                                 class: "input",
@@ -433,7 +433,7 @@ fn CalendarScheduleEditForm(
                             }
                         }
                         div { class: "field",
-                            Label { html_for: "card-detail-calendar-by-month-day-input", "Days of month" }
+                            Label { html_for: "card-detail-calendar-by-month-day-input", {crate::i18n::tr("kanban.ui.days_of_month")} }
                             Input {
                                 id: "card-detail-calendar-by-month-day-input",
                                 class: "input",
@@ -444,7 +444,7 @@ fn CalendarScheduleEditForm(
                             }
                         }
                         div { class: "field",
-                            Label { html_for: "card-detail-calendar-by-set-position-input", "Position in period" }
+                            Label { html_for: "card-detail-calendar-by-set-position-input", {crate::i18n::tr("kanban.ui.position_in_period")} }
                             Input {
                                 id: "card-detail-calendar-by-set-position-input",
                                 class: "input",
@@ -455,18 +455,18 @@ fn CalendarScheduleEditForm(
                             }
                         }
                         div { class: "field",
-                            Label { html_for: "card-detail-calendar-first-weekday-input", "Week starts on" }
+                            Label { html_for: "card-detail-calendar-first-weekday-input", {crate::i18n::tr("kanban.ui.week_starts_on")} }
                             Input {
                                 id: "card-detail-calendar-first-weekday-input",
                                 class: "input",
                                 "data-testid": "card-detail-calendar-first-weekday-input",
                                 value: "{calendar().recurrence_first_day_of_week}",
-                                placeholder: "MO",
+                                placeholder: crate::i18n::tr("kanban.ui.mo"),
                                 oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_first_day_of_week = event.value()),
                             }
                         }
                         div { class: "field",
-                            Label { html_for: "card-detail-calendar-count-input", "End after occurrences" }
+                            Label { html_for: "card-detail-calendar-count-input", {crate::i18n::tr("kanban.ui.end_after_occurrences")} }
                             Input {
                                 id: "card-detail-calendar-count-input",
                                 class: "input",
@@ -477,7 +477,7 @@ fn CalendarScheduleEditForm(
                             }
                         }
                         div { class: "field",
-                            Label { html_for: "card-detail-calendar-until-input", "End on" }
+                            Label { html_for: "card-detail-calendar-until-input", {crate::i18n::tr("kanban.ui.end_on")} }
                             Input {
                                 id: "card-detail-calendar-until-input",
                                 class: "input",
@@ -495,14 +495,14 @@ fn CalendarScheduleEditForm(
                 "data-testid": "card-detail-calendar-advanced-options",
                 summary { class: "calendar-schedule-disclosure-summary",
                     span {
-                        strong { "Advanced calendar settings" }
-                        small { "Status and timezone database version" }
+                        strong { {crate::i18n::tr("kanban.ui.advanced_calendar_settings")} }
+                        small { {crate::i18n::tr("kanban.ui.status_and_timezone_database_version")} }
                     }
                     UiIcon { name: "chevron-down" }
                 }
                 div { class: "calendar-schedule-field-grid calendar-schedule-disclosure-body",
                     div { class: "field",
-                        Label { html_for: "card-detail-calendar-status-select", "Calendar status" }
+                        Label { html_for: "card-detail-calendar-status-select", {crate::i18n::tr("kanban.ui.calendar_status")} }
                         Select::<String> {
                             "data-testid": "card-detail-calendar-status-select",
                             value: Some(selected_status.into()),
@@ -511,13 +511,13 @@ fn CalendarScheduleEditForm(
                                     update_calendar_draft(calendar, |draft| draft.status = value);
                                 }
                             },
-                            SelectOption::<String> { index: 0usize, value: "confirmed".to_owned(), text_value: "Confirmed", "Confirmed" }
-                            SelectOption::<String> { index: 1usize, value: "tentative".to_owned(), text_value: "Tentative", "Tentative" }
-                            SelectOption::<String> { index: 2usize, value: "cancelled".to_owned(), text_value: "Cancelled", "Cancelled" }
+                            SelectOption::<String> { index: 0usize, value: "confirmed".to_owned(), text_value: "Confirmed", {crate::i18n::tr("kanban.ui.confirmed")} }
+                            SelectOption::<String> { index: 1usize, value: "tentative".to_owned(), text_value: "Tentative", {crate::i18n::tr("kanban.ui.tentative")} }
+                            SelectOption::<String> { index: 2usize, value: "cancelled".to_owned(), text_value: "Cancelled", {crate::i18n::tr("kanban.ui.cancelled")} }
                         }
                     }
                     div { class: "field",
-                        Label { html_for: "card-detail-calendar-tzdb-input", "TZDB version" }
+                        Label { html_for: "card-detail-calendar-tzdb-input", {crate::i18n::tr("kanban.ui.tzdb_version")} }
                         Input {
                             id: "card-detail-calendar-tzdb-input",
                             class: "input",
@@ -1304,8 +1304,8 @@ pub fn KanbanPanel(
                                         SelectOption::<String> {
                                             index: 0usize,
                                             value: "".to_string(),
-                                            text_value: "Select board",
-                                            "Select board"
+                                            text_value: crate::i18n::tr("kanban.ui.select_board"),
+                                            {crate::i18n::tr("kanban.ui.select_board")}
                                         }
                                         for (i, board_option) in board_space_options().iter().enumerate() {
                                             SelectOption::<String> {
@@ -1322,8 +1322,8 @@ pub fn KanbanPanel(
                                 variant: ButtonVariant::Secondary,
                                 class: "board-select-button",
                                 "data-testid": "board-space-select-button",
-                                title: "Switch board: {selected_board_title}",
-                                "aria-label": "Switch board",
+                                title: crate::i18n::tr_args("kanban.ui.switch_board_title", &[("title", (selected_board_title).to_string())]),
+                                "aria-label": crate::i18n::tr("kanban.ui.switch_board"),
                                 "aria-expanded": "{board_popover() == BoardToolbarPopover::SelectBoard}",
                                 onclick: move |_| {
                                     let next = if board_popover() == BoardToolbarPopover::SelectBoard {
@@ -1341,7 +1341,7 @@ pub fn KanbanPanel(
                                 div {
                                     class: "board-select-menu-panel",
                                     role: "listbox",
-                                    "aria-label": "Boards",
+                                    "aria-label": crate::i18n::tr("kanban.ui.boards"),
                                     {
                                         let board_route_realm_id_for_empty = board_route_realm_id.clone();
                                         rsx! {
@@ -1362,7 +1362,7 @@ pub fn KanbanPanel(
                                                     );
                                                 },
                                                 UiIcon { name: "board" }
-                                                span { "Select board" }
+                                                span { {crate::i18n::tr("kanban.ui.select_board")} }
                                             }
                                         }
                                     }
@@ -1482,7 +1482,7 @@ pub fn KanbanPanel(
                                 Input {
                                     "data-testid": "new-column-input",
                                     value: "{new_column_title}",
-                                    placeholder: "New list title",
+                                    placeholder: crate::i18n::tr("kanban.ui.new_list_title"),
                                     oninput: move |event: FormEvent| new_column_title.set(event.value()),
                                 }
                                 Button {
@@ -1495,9 +1495,9 @@ pub fn KanbanPanel(
                                     // unlocks when the receipt commits the selection.
                                     disabled: selected_board_value.is_none(),
                                     title: if selected_board_value.is_some() {
-                                        "Add a list to this board"
+                                        crate::i18n::tr("kanban.ui.add_a_list_to_this_board")
                                     } else {
-                                        "Waiting for the board to be accepted"
+                                        crate::i18n::tr("kanban.ui.waiting_for_the_board_to_be_accepted")
                                     },
                                     onclick: {
                                         // Lists are Space containers in v1. The local column is
@@ -1603,7 +1603,7 @@ pub fn KanbanPanel(
                                     };
                                     board_popover.set(next);
                                 },
-                                "New board"
+                                {crate::i18n::tr("kanban.ui.new_board")}
                             }
                             if board_popover() == BoardToolbarPopover::CreateBoard {
                                 div {
@@ -1612,7 +1612,7 @@ pub fn KanbanPanel(
                                     Input {
                                         "data-testid": "new-board-title-input",
                                         value: "{new_board_title}",
-                                        placeholder: "Board title",
+                                        placeholder: crate::i18n::tr("kanban.ui.board_title"),
                                         oninput: move |event: FormEvent| new_board_title.set(event.value()),
                                     }
                                     Button {
@@ -1620,9 +1620,9 @@ pub fn KanbanPanel(
                                         "data-testid": "create-board-space-button",
                                         disabled: !card_write_ready,
                                         title: if card_write_ready {
-                                            "Create Board"
+                                            crate::i18n::tr("kanban.ui.create_board")
                                         } else {
-                                            "Waiting for Realm sync"
+                                            crate::i18n::tr("kanban.ui.waiting_for_realm_sync")
                                         },
                                         onclick: {
                                             let base = base_url.clone();
@@ -1699,7 +1699,7 @@ pub fn KanbanPanel(
                                                 board_popover.set(BoardToolbarPopover::None);
                                             }
                                         },
-                                        "Create Board"
+                                        {crate::i18n::tr("kanban.ui.create_board")}
                                     }
                                 }
                             }
@@ -1714,17 +1714,17 @@ pub fn KanbanPanel(
                 "{board_status_text}"
             }
             if current_page_count > 1 {
-                nav { "aria-label": "Card pages",
+                nav { "aria-label": crate::i18n::tr("kanban.ui.card_pages"),
                     Button {
                         disabled: current_card_page() == 0,
                         onclick: move |_| current_card_page.set(current_card_page().saturating_sub(1)),
-                        "Previous cards"
+                        {crate::i18n::tr("kanban.ui.previous_cards")}
                     }
-                    span { "Page {current_card_page().min(current_page_count - 1) + 1} / {current_page_count}" }
+                    span { {crate::i18n::tr_args("kanban.ui.card_page", &[("page", (current_card_page().min(current_page_count - 1) + 1).to_string()), ("total", (current_page_count).to_string())])} }
                     Button {
                         disabled: current_card_page() >= current_page_count - 1,
                         onclick: move |_| current_card_page.set(current_card_page() + 1),
-                        "Next cards"
+                        {crate::i18n::tr("kanban.ui.next_cards")}
                     }
                 }
             }
@@ -1766,7 +1766,7 @@ pub fn KanbanPanel(
                     div { class: "board-empty-state",
                         if board_surface_active {
                             EmptyState {
-                                title: "No lists yet".to_owned(),
+                                title: crate::i18n::tr("kanban.ui.no_lists_yet").to_owned(),
                                 kind: EmptyStateKind::Empty,
                                 message: Some("Add a list before adding cards to this board.".to_owned()),
                                 badge_override: Some("empty board".to_owned()),
@@ -1774,7 +1774,7 @@ pub fn KanbanPanel(
                             }
                         } else {
                             EmptyState {
-                                title: "No board selected".to_owned(),
+                                title: crate::i18n::tr("kanban.ui.no_board_selected").to_owned(),
                                 kind: EmptyStateKind::Empty,
                                 message: Some("Create or select a board before adding lists and cards.".to_owned()),
                                 badge_override: Some("select board".to_owned()),
@@ -1870,8 +1870,8 @@ pub fn KanbanPanel(
                         div {
                             class: "column-drop-target-before",
                             "data-testid": "column-drop-target-before",
-                            "aria-label": "Drop column before {column_title}",
-                            title: "Drop column before {column_title}",
+                            "aria-label": crate::i18n::tr_args("kanban.ui.drop_column", &[("title", (column_title).to_string())]),
+                            title: crate::i18n::tr_args("kanban.ui.drop_column", &[("title", (column_title).to_string())]),
                             ondragover: move |event| event.prevent_default(),
                             ondrop: {
                                 let target_column_id = column_id.clone();
@@ -1927,8 +1927,8 @@ pub fn KanbanPanel(
                                     "data-testid": "column-drag-handle",
                                     disabled: columns().iter().filter(|column| column.state == SpaceContainerLifecycleState::Active).any(|column| arkret_sdk::SpaceId::new(column.id.clone()).is_err()),
                                     draggable: if columns().iter().filter(|column| column.state == SpaceContainerLifecycleState::Active).all(|column| arkret_sdk::SpaceId::new(column.id.clone()).is_ok()) { "true" } else { "false" },
-                                    title: "Drag column {column_title}",
-                                    "aria-label": "Drag column {column_title}",
+                                    title: crate::i18n::tr_args("kanban.ui.drag_column", &[("title", (column_title).to_string())]),
+                                    "aria-label": crate::i18n::tr_args("kanban.ui.drag_column", &[("title", (column_title).to_string())]),
                                     ondragstart: {
                                         let column_id = column_id.clone();
                                         move |event| {
@@ -2251,7 +2251,7 @@ pub fn KanbanPanel(
                                         let title_text = if !card_settled {
                                             crate::i18n::tr("kanban.archive_draft_blocked")
                                         } else {
-                                            "Archive this card (ak.strand.archive)".to_owned()
+                                            crate::i18n::tr("kanban.ui.archive_this_card_ak_strand_archive").to_owned()
                                         };
                                         let testid_state = if !card_settled {
                                             "draft"
@@ -2328,7 +2328,7 @@ pub fn KanbanPanel(
                                     class: "board-card-composer-input",
                                     "data-testid": "new-card-title-input",
                                     value: "{new_card_title}",
-                                    placeholder: "Card title",
+                                    placeholder: crate::i18n::tr("kanban.ui.card_title"),
                                     rows: "3",
                                     wrap: "soft",
                                     maxlength: "512",
@@ -2341,8 +2341,8 @@ pub fn KanbanPanel(
                                         class: "board-card-composer-save",
                                         "data-testid": "save-card-button",
                                         disabled: !card_write_ready || arkret_sdk::SpaceId::new(column.id.as_str()).is_err(),
-                                        title: "Save card",
-                                        "aria-label": "Save card",
+                                        title: crate::i18n::tr("kanban.ui.save_card"),
+                                        "aria-label": crate::i18n::tr("kanban.ui.save_card"),
                                         onclick: {
                                             // Card create submits a real
                                             // ak.strand.create envelope, which
@@ -2420,8 +2420,8 @@ pub fn KanbanPanel(
                                     Button {
                                         variant: ButtonVariant::Secondary,
                                         class: "board-card-composer-cancel",
-                                        title: "Cancel card",
-                                        "aria-label": "Cancel card",
+                                        title: crate::i18n::tr("kanban.ui.cancel_card"),
+                                        "aria-label": crate::i18n::tr("kanban.ui.cancel_card"),
                                         onclick: move |_| adding_card_to.set(None),
                                         UiIcon { name: "x" }
                                         span { {crate::i18n::tr("kanban.cancel_card")} }
@@ -2438,11 +2438,11 @@ pub fn KanbanPanel(
                                     // unlocks when the receipt commits the Space id.
                                     disabled: !card_write_ready || arkret_sdk::SpaceId::new(column.id.as_str()).is_err(),
                                     title: if !card_write_ready {
-                                        "Waiting for sync and encryption setup"
+                                        crate::i18n::tr("kanban.ui.waiting_for_sync_and_encryption_setup")
                                     } else if arkret_sdk::SpaceId::new(column.id.as_str()).is_ok() {
-                                        "Add a card to this list"
+                                        crate::i18n::tr("kanban.ui.add_a_card_to_this_list")
                                     } else {
-                                        "Waiting for the list to be accepted"
+                                        crate::i18n::tr("kanban.ui.waiting_for_the_list_to_be_accepted")
                                     },
                                     onclick: {
                                         let col_id = column.id.clone();
@@ -2513,8 +2513,8 @@ pub fn KanbanPanel(
                             "data-testid": "kanban-lifecycle-unavailable",
                             open: true,
                             summary {
-                                span { "Lifecycle unavailable" }
-                                span { "{lifecycle_issues.len()} card(s)" }
+                                span { {crate::i18n::tr("kanban.ui.lifecycle_unavailable")} }
+                                span { {crate::i18n::tr_args("kanban.ui.unavailable_lifecycle_cards", &[("count", (lifecycle_issues.len()).to_string())])} }
                             }
                             for card in lifecycle_issues.iter() {
                                 div {
@@ -2523,9 +2523,9 @@ pub fn KanbanPanel(
                                     "data-testid": "kanban-lifecycle-unavailable-row",
                                     div { class: "event-head",
                                         span { class: "entity-title", "{card.title}" }
-                                        span { "Canonical lifecycle state is unavailable" }
+                                        span { {crate::i18n::tr("kanban.ui.canonical_lifecycle_state_is_unavailable")} }
                                     }
-                                    div { class: "muted", "Refresh to retry." }
+                                    div { class: "muted", {crate::i18n::tr("kanban.ui.refresh_to_retry")} }
                                 }
                             }
                         }
@@ -2558,8 +2558,8 @@ pub fn KanbanPanel(
                             "data-testid": "kanban-position-unavailable",
                             open: true,
                             summary {
-                                span { "Position unavailable" }
-                                span { "{unavailable.len()} card(s)" }
+                                span { {crate::i18n::tr("kanban.ui.position_unavailable")} }
+                                span { {crate::i18n::tr_args("kanban.ui.unavailable_cards", &[("count", (unavailable.len()).to_string())])} }
                             }
                             for card in unavailable.iter() {
                                 div {
@@ -2568,9 +2568,9 @@ pub fn KanbanPanel(
                                     "data-testid": "kanban-position-unavailable-row",
                                     div { class: "event-head",
                                         span { class: "entity-title", "{card.title}" }
-                                        span { "Canonical position is unavailable" }
+                                        span { {crate::i18n::tr("kanban.ui.canonical_position_is_unavailable")} }
                                     }
-                                    div { class: "muted", "Refresh to retry." }
+                                    div { class: "muted", {crate::i18n::tr("kanban.ui.refresh_to_retry")} }
                                 }
                             }
                         }
@@ -2587,12 +2587,12 @@ pub fn KanbanPanel(
                 if !unresolved.is_empty() {
                     rsx! {
                         details { class: "event board-maintenance", open: true, "data-testid": "kanban-space-conflicts",
-                            summary { "Unavailable list state ({unresolved.len()})" }
+                            summary { {crate::i18n::tr_args("kanban.ui.unavailable_lists", &[("count", (unresolved.len()).to_string())])} }
                             for column in unresolved {
                                 div { key: "space-unavailable-{column.id}", class: "event",
                                     div { class: "event-head",
                                         span { class: "entity-title", "{column.id}" }
-                                        span { "Canonical Space state is unavailable; refresh to retry." }
+                                        span { {crate::i18n::tr("kanban.ui.canonical_space_state_is_unavailable_refresh_to_retry")} }
                                     }
                                 }
                             }
@@ -2621,7 +2621,7 @@ pub fn KanbanPanel(
                         "data-testid": "kanban-archived-lists",
                         summary {
                             span { {crate::i18n::tr("kanban.archived_lists_header")} }
-                            span { "{archived_count} list(s)" }
+                            span { {crate::i18n::tr_args("kanban.ui.archived_lists", &[("count", (archived_count).to_string())])} }
                         }
                         if archived_count == 0 {
                             div { class: "muted", {crate::i18n::tr("kanban.archived_lists_empty")} }
@@ -2630,7 +2630,7 @@ pub fn KanbanPanel(
                                 div { key: "{column.id}", class: "event", "data-testid": "kanban-archived-list-row",
                                     div { class: "event-head",
                                         span { class: "entity-title", "{column.title}" }
-                                        span { "rank {column.rank} / {column.cards.len()} card(s)" }
+                                        span { {crate::i18n::tr_args("kanban.ui.list_card_count", &[("rank", (column.rank).to_string()), ("count", (column.cards.len()).to_string())])} }
                                         {
                                             let title_text = "Restore this list (ak.space.restore)".to_owned();
                                             rsx! {
@@ -2707,7 +2707,7 @@ pub fn KanbanPanel(
                         open: archived_count > 0,
                         summary {
                             span { {crate::i18n::tr("kanban.archived_cards_header")} }
-                            span { "{archived_count} card(s)" }
+                            span { {crate::i18n::tr_args("kanban.ui.archived_cards", &[("count", (archived_count).to_string())])} }
                         }
                         if archived_count == 0 {
                             div { class: "muted", {crate::i18n::tr("kanban.archived_cards_empty")} }
@@ -2723,7 +2723,7 @@ pub fn KanbanPanel(
                                             }
                                             span { class: "strand-title-text", "{row.card.title}" }
                                         }
-                                        span { "from list: {row.column_title}" }
+                                        span { {crate::i18n::tr_args("kanban.ui.source_list", &[("title", (row.column_title).to_string())])} }
                                         {
                                             let title_text = "Restore this card (ak.strand.restore)".to_owned();
                                             rsx! {
