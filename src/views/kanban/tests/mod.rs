@@ -72,10 +72,9 @@ pub(super) fn assert_registered_payload_valid(event: &impl TestEventPayloadView)
         });
 }
 
-/// Realm projection carrying the Station's installed authority-root result.
+/// Local Realm display and roster projection; it grants no authority.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn creator_realm_projection(
-    realm_id: &str,
     actor_id: &arkret_sdk::DidCoreId,
     encryption_profile: &str,
 ) -> serde_json::Value {
@@ -88,21 +87,6 @@ pub(super) fn creator_realm_projection(
             "title": "Encrypted Realm",
             "encryption_profile": encryption_profile,
         },
-        "current": {"entries": [{
-            "selector": {
-                "scope_ref": {"kind":"realm", "realm_id":realm_id},
-                "cell_id":"ak:cell:ak.component.realm.authority_root.v1:null"
-            },
-            "target":{"kind":"realm"},
-            "revision":1,
-            "result":{"status":"value", "value":{
-                "controller_actor_id":crate::mls_api_helpers::local_account_actor_id(actor_id.as_str()).unwrap(),
-                "controller_epoch":0,
-                "authority_generation":0,
-                    "authority_event_ref": realm_id.replacen("ak:realm:", "ak:event:", 1)
-            }}
-        }]}
-
     })
 }
 

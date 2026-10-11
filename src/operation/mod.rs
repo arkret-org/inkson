@@ -372,7 +372,7 @@ impl LocalOperation {
 /// validation.
 ///
 /// It produces a [`LocalOperation`], never an `Event`: the actor-chain position,
-/// HLC and CBS basis are not known here, and a builder that authored anyway
+/// HLC and typed current basis are not known here, and a builder that authored anyway
 /// would be handing out an identity it is about to change.
 #[derive(Debug)]
 pub struct TypedOperationBuilder {
@@ -628,7 +628,7 @@ pub mod ak_ops;
 ///
 /// Producer-signed content is only complete once the actor chain and the HLC are
 /// stamped, so the envelope a test wants to inspect does not exist until then.
-/// Production takes both from the realm actor frontier and the durable
+/// Production takes both from the realm stream head and the durable
 /// signing-stamp allocator; a test has neither, so it pins them.
 ///
 /// Test-only: nothing in production may author against a pinned actor chain.

@@ -1005,7 +1005,7 @@ pub(super) fn RealmsSection(
                                                                 state = "pending",
                                                                 "Realm setup phase started"
                                                             );
-                                                            // Acquiring the accepted Seal view, verifying + pinning the
+                                                            // Acquiring the accepted Commit view, verifying + pinning the
                                                             // governance proof, creating the epoch-0 group and landing
                                                             // `ak.mls.genesis` all live in the shared creator bootstrap so
                                                             // an interrupted attempt (unmount / network / closed tab) is

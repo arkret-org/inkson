@@ -284,7 +284,7 @@ impl AgentAdminController {
     }
 
     /// Pause or resume an Agent. The lifecycle Event rides its own request
-    /// body, so it is authored against the accepted actor frontier here
+    /// body, so it is authored against the accepted stream head here
     /// rather than queued.
     pub(super) fn set_agent_enabled(
         self,
@@ -374,7 +374,7 @@ impl AgentAdminController {
                 );
                 // The lifecycle Event rides its own request body rather than the
                 // durable submit queue, so it is authored here and positioned by the
-                // same submitter that reads the accepted actor frontier.
+                // same submitter that reads the accepted stream head.
                 let draft = submitter.author_for_direct_submission(&operation).await?;
                 let lifecycle_event = submitter
                     .prepare_initial_submissions(std::slice::from_ref(&draft))
@@ -525,7 +525,7 @@ impl AgentAdminController {
                     "active controller authority changed before lifecycle submission"
                 );
                 // Carried in the deactivate request body, so it is authored here
-                // against the accepted actor frontier rather than queued.
+                // against the accepted stream head rather than queued.
                 let authored = submitter.author_for_direct_submission(&operation).await?;
                 let lifecycle_event = submitter
                     .prepare_initial_submissions(std::slice::from_ref(&authored))

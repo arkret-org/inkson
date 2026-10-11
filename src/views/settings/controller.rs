@@ -465,7 +465,7 @@ impl SettingsController {
     /// Remove the account avatar.
     ///
     /// Publishes the public tombstone before the actor-private mirror. Both
-    /// Events share one actor frontier; authoring them in the opposite order
+    /// Events share one stream head; authoring them in the opposite order
     /// lets the mirror advance the frontier after the profile Event was built.
     pub(super) fn remove_avatar(
         self,

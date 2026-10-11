@@ -1176,7 +1176,7 @@ mod tests {
     fn sdk_event(
         event_id: &str,
         kind: &str,
-        _actor_seq: u64,
+        _fixture_index: u64,
         created_at: &str,
         payload: Value,
     ) -> arkret_sdk::Event {
@@ -1415,7 +1415,7 @@ mod tests {
                 "operation_id": operation_id,
                 "actor_id": "ak:did_core:web:alice.example",
                 "created_at": received_at,
-                "cell": format!("ak:cell:ak.component.strand.position.v1:{BOARD}:{operation_id}"),
+                "cell": format!("{BOARD}#{operation_id}"),
                 "effect": {
                     "board_space_id": BOARD,
                     "list_space_id": list_space_id,

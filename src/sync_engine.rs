@@ -386,6 +386,12 @@ pub struct NativeAccountHost {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl NativeAccountHost {
+    /// Refresh this host's active endpoint through the ordinary signed keys
+    /// directory before rebuilding author-bound private projections.
+    pub async fn refresh_authoring_authority(&self) -> anyhow::Result<()> {
+        refresh_local_device_authoring_authority(&self.http, &self.projector.ctx).await
+    }
+
     pub async fn new(
         http: arkret_sdk::http_client::Client,
         authority: arkret_sdk::AccountId,

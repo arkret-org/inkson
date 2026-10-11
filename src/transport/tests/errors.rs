@@ -30,9 +30,9 @@ fn sdk_api_error(status: StatusCode, code: &str, detail: &str) -> anyhow::Error 
 fn decodes_canonical_problem_details() {
     let body = serde_json::to_vec(
         &arkret_sdk::Problem::new(
-            "expected_head_mismatch",
+            "conflict",
             StatusCode::CONFLICT.as_u16(),
-            "expected_head mismatch",
+            "revision mismatch",
         )
         .with_instance("ak:request:test")
         .with_extension("retry_after_ms", serde_json::json!(250))
@@ -40,8 +40,8 @@ fn decodes_canonical_problem_details() {
     )
     .unwrap();
     let decoded = decode_arkret_error(StatusCode::CONFLICT, &body);
-    assert_eq!(decoded.code(), "expected_head_mismatch");
-    assert_eq!(decoded.detail, "expected_head mismatch");
+    assert_eq!(decoded.code(), "conflict");
+    assert_eq!(decoded.detail, "revision mismatch");
     assert_eq!(decoded.retry_after_ms(), Some(250));
     assert_eq!(decoded.extensions["scope"], "repo");
 }

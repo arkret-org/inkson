@@ -429,7 +429,7 @@ pub(crate) fn chat_content_with_mentions(
 ///
 /// This is the only thing a chat send hands to the shared authoring engine.
 /// There is deliberately no way to reach an Event envelope from here: the
-/// actor chain position, authority closure and CBS basis are the Station's
+/// actor chain position, authority closure and typed current basis are the Station's
 /// answers, and this client checks them rather than inventing them.
 pub(crate) fn chat_message_authoring_intent(
     strand_id: &str,

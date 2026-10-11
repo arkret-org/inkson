@@ -170,10 +170,8 @@ pub fn capability_revoke_from_applet_preview(
 /// account that is not in the Realm at all (account-lifecycle.md §156).
 /// `resources` defaults to a single
 /// `{kind:"realm", realm_id}` selector — the management surface this
-/// covers. The Envelope `seal_basis` / signature carries the issuer
-/// proof; the per-grant `proofs[]` the strict SDK builder mints is not
-/// re-derived here (consistent with the rest of the inkson `ak_ops`
-/// event pipeline, which signs at the Envelope boundary).
+/// covers. The Event producer proof binds the issuer. The typed grant body
+/// is prepared here and signed at the Event boundary.
 pub fn capability_grant_actions(
     realm_id: &str,
     actor: &str,
