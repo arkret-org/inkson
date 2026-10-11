@@ -34,14 +34,14 @@ jobs:
       RUSTFLAGS: -D warnings
     steps:
       - name: Checkout candidate
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: candidate-source
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Checkout compatibility manifest source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: .compatibility-source
@@ -80,55 +80,55 @@ jobs:
           path: ${{ runner.temp }}/resolved-compatibility-manifest.json
           if-no-files-found: error
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/arkret-spec
           path: arkret-spec
           ref: ${{ steps.manifest.outputs.arkret_spec }}
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: arkret-rust-sdk
           ref: ${{ steps.manifest.outputs.arkret_rust_sdk }}
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/floria
           path: floria
           ref: ${{ steps.manifest.outputs.floria }}
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/coland
           path: coland
           ref: ${{ steps.manifest.outputs.coland }}
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/coauth
           path: coauth
           ref: ${{ steps.manifest.outputs.coauth }}
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/garth
           path: garth
           ref: ${{ steps.manifest.outputs.garth }}
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/chime
           path: chime
           ref: ${{ steps.manifest.outputs.chime }}
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/inkson
           path: inkson
           ref: ${{ steps.manifest.outputs.inkson }}
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/cotest
           path: cotest

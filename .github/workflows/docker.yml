@@ -17,26 +17,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout inkson
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: inkson
 
       - name: Checkout arkret-rust-sdk
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: arkret-rust-sdk
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout garth
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/garth
           path: garth
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout chime
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/chime
           path: chime
