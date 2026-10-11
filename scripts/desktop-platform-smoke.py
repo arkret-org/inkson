@@ -37,7 +37,8 @@ def renderer_ids():
     return {row['ProcessId'] for row in rows}
 
 
-with tempfile.TemporaryDirectory(prefix='inkson-desktop-runtime-') as private:
+private_directory = tempfile.TemporaryDirectory(prefix='inkson-desktop-runtime-')
+with private_directory as private:
     env = dict(os.environ)
     env.update(HOME=private, APPDATA=private + '/roaming', LOCALAPPDATA=private + '/local',
                XDG_CONFIG_HOME=private + '/config', XDG_DATA_HOME=private + '/data',
@@ -112,6 +113,15 @@ print(String(data: try JSONSerialization.data(withJSONObject: rows), encoding: .
                 if app.returncode != 0:
                     raise RuntimeError('normal window close failed: ' + str(app.returncode))
                 result['normal_window_close_exit'] = app.returncode
+                # The owning window can close before WebView2 has flushed its
+                # private profile. Observe natural subprocess shutdown before
+                # deleting it; a surviving renderer is an actual failure.
+                deadline = time.monotonic() + 30
+                while renderer_ids() - baseline:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError('WebView2 subprocesses did not exit after normal native close')
+                    time.sleep(0.25)
+                result['renderer_subprocesses_exited'] = True
             else:
                 app.send_signal(signal.SIGTERM)
                 app.wait(timeout=15)
@@ -124,4 +134,21 @@ print(String(data: try JSONSerialization.data(withJSONObject: rows), encoding: .
         if app is not None and app.poll() is None:
             app.terminate()
             app.wait(timeout=15)
-        (out / (platform + '-result.json')).write_text(json.dumps(result, indent=2) + '\n')
+        # Keep cleanup fatal and include it in the result. Windows can briefly
+        # retain filesystem handles after the last WebView2 process exits.
+        deadline = time.monotonic() + 30
+        try:
+            while True:
+                try:
+                    private_directory.cleanup()
+                    result['private_profile_cleanup_completed'] = True
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.25)
+        except OSError as error:
+            result.update(passed=False, cleanup_error=str(error))
+            raise
+        finally:
+            (out / (platform + '-result.json')).write_text(json.dumps(result, indent=2) + '\n')

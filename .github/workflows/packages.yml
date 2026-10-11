@@ -115,8 +115,16 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: inkson
         run: |
-          cargo test --locked --release --features desktop --lib private_plaintext_tests
-          cargo test --locked --release --features desktop --lib cache_persist_tests
+          set -euo pipefail
+          verify_family() {
+            local family="$1" expected="$2" name="$3"
+            cargo test --locked --release --features desktop --lib "$family" -- --list > "$name-list.txt"
+            test "$(grep -c ': test$' "$name-list.txt")" = "$expected"
+            cargo test --locked --release --features desktop --lib "$family" 2>&1 | tee "$name-result.txt"
+            grep -q "test result: ok\. $expected passed; 0 failed; 0 ignored;" "$name-result.txt"
+          }
+          verify_family 'state::tests::private_plaintext::' 23 private-plaintext
+          verify_family 'state::e2ee_secure_cache::cache_persist_tests::' 12 cache-persist
 
       - name: Prepare artifact directory
         shell: pwsh

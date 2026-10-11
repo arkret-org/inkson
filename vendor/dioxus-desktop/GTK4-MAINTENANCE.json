@@ -103,5 +103,13 @@
     "all_three_release_builds": "actual success",
     "linux_native_tests": "0 executed: missing official Spec fixture checkout, natural exit101",
     "linux_package_runtime": "not executed"
+  },
+  "fourth_attempt": {
+    "source": "c756c1a93e16bda3afe5f7eba529a06fb60000ec",
+    "run": "https://github.com/arkret-org/inkson/actions/runs/38177105835",
+    "macos": "actual initialized window/renderer passed; unauthenticated",
+    "windows": "actual initialized window/renderer/normal close passed before private-profile cleanup WinError145; overall job failed",
+    "linux": "actual release/advisory passed; private filter executed0 not23; cache12 passed; signing dryrun failed no secret key, package/runtime not executed",
+    "next_repair": "strict nonzero23+12 discovery/results; key-aware unsigned local dryrun, sign/verify errors remain fatal; bounded natural renderer exit and strict private cleanup"
   }
 }
