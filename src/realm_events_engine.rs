@@ -1017,6 +1017,10 @@ pub struct VerifiedAccountFrame {
     own_pages: Vec<garth::own_station_results::OwnStationScanPage>,
     own_replicas: BTreeMap<CommitStreamRef, garth::own_station_results::OwnStationReplica>,
     own_client: Option<arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    own_windows: Vec<(
+        arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow,
+        usize,
+    )>,
     current_snapshots: BTreeMap<String, VerifiedCurrentSnapshot>,
     authority_bases: Vec<crate::state::PersistedRealmAuthorityBasis>,
     genesis_roles: BTreeMap<String, Option<arkret_sdk::CollaborationRealmRole>>,
@@ -1025,6 +1029,70 @@ pub struct VerifiedAccountFrame {
     resolved_preview_streams: BTreeSet<CommitStreamRef>,
     /// `preview_only` windows that stay display-only in this frame.
     preview_streams: BTreeSet<CommitStreamRef>,
+}
+
+/// In-memory capabilities retained only after an interrupted batch durably
+/// projected its independent public history. Never serialized as wire evidence.
+#[derive(Default)]
+pub(crate) struct AccountRecoveryHistory {
+    windows: BTreeMap<CommitStreamRef, RecoveredAccountWindow>,
+}
+
+struct RecoveredAccountWindow {
+    session: arkret_sdk::http_client::own_station_results::OwnStationSessionSnapshot,
+    window: arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow,
+    replica: garth::own_station_results::OwnStationReplica,
+    pages: Vec<garth::own_station_results::OwnStationScanPage>,
+}
+
+impl AccountRecoveryHistory {
+    pub(crate) fn retain(&mut self, proof: &mut VerifiedAccountFrame) -> garth::Result<()> {
+        proof.check_session()?;
+        let Some(client) = &proof.own_client else {
+            return Ok(());
+        };
+        let session = client.session()?.clone();
+        let mut pages = std::mem::take(&mut proof.own_pages).into_iter();
+        for (window, count) in std::mem::take(&mut proof.own_windows) {
+            let pages: Vec<_> = pages.by_ref().take(count).collect();
+            if matches!(window.stream_ref, CommitStreamRef::Sidecar { .. }) {
+                continue;
+            }
+            if let Some(replica) = proof.own_replicas.remove(&window.stream_ref) {
+                self.windows.insert(
+                    window.stream_ref.clone(),
+                    RecoveredAccountWindow {
+                        session: session.clone(),
+                        window,
+                        replica,
+                        pages,
+                    },
+                );
+            }
+        }
+        // Retention is bounded across the entire batch, not per Realm/window.
+        let mut bytes = 0usize;
+        for window in self.windows.values() {
+            if let Some(snapshot) = window.replica.snapshot() {
+                bytes = bytes.saturating_add(
+                    serde_json::to_vec(snapshot)
+                        .map_err(|error| garth::Error::Protocol(error.to_string()))?
+                        .len(),
+                );
+            }
+            for page in &window.pages {
+                bytes = bytes.saturating_add(
+                    serde_json::to_vec(page.rows()?)
+                        .map_err(|error| garth::Error::Protocol(error.to_string()))?
+                        .len(),
+                );
+            }
+        }
+        if bytes > 64 * 1024 * 1024 || self.windows.len() > 128 {
+            self.windows.clear();
+        }
+        Ok(())
+    }
 }
 
 /// Complete current material at a signature-verified head. Only the fetch
@@ -1998,7 +2066,15 @@ pub async fn verify_account_frame_commits(
     http: &arkret_sdk::http_client::Client,
     frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
 ) -> garth::Result<VerifiedAccountFrame> {
-    own_station::account_frame(http, frame).await
+    verify_account_frame_recovering(http, frame, &mut AccountRecoveryHistory::default()).await
+}
+
+pub(crate) async fn verify_account_frame_recovering(
+    http: &arkret_sdk::http_client::Client,
+    frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
+    recovery: &mut AccountRecoveryHistory,
+) -> garth::Result<VerifiedAccountFrame> {
+    own_station::account_frame(http, frame, recovery).await
 }
 
 #[cfg(test)]

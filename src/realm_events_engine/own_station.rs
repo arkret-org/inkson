@@ -197,6 +197,7 @@ mod accepted_readback_tests;
 pub(super) async fn account_frame(
     http: &arkret_sdk::http_client::Client,
     frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
+    recovery: &mut super::AccountRecoveryHistory,
 ) -> garth::Result<VerifiedAccountFrame> {
     let client = crate::transport::own_station_results::client_for_http(http).await?;
     let mut accepted = VerifiedAccountFrame::default();
@@ -206,20 +207,38 @@ pub(super) async fn account_frame(
         let mut current_replica = OwnStationReplica::new(realm_id.clone());
         current_replica.install_bound_snapshot(&response)?;
         let snapshot = response.value()?;
+        let session = client.session()?;
         validate_current_product(snapshot, &realm_id)?;
         let mut claimed = claimed_rows_by_stream(&realm_id, entry)?;
         for window in entry.streams.iter().flatten() {
             let rows = claimed.remove(&window.stream_ref).unwrap_or_default();
-            let mut replica = OwnStationReplica::new(realm_id.clone());
+            // Exact frozen windows may reuse their already admitted capabilities.
+            // A different local provider/grant or window requires fresh self reads.
+            let cached = recovery.windows.remove(&window.stream_ref).filter(|saved| {
+                saved.window == *window
+                    && &saved.session == session
+                    && saved.replica.snapshot() == Some(snapshot)
+                    && saved.pages.iter().all(|page| page.session() == session)
+            });
+            let (mut replica, cached_pages) = match cached {
+                Some(saved) => (saved.replica, Some(saved.pages)),
+                None => (OwnStationReplica::new(realm_id.clone()), None),
+            };
+            // Fresh current disclosure must still cover the admitted history;
+            // install_bound_snapshot rejects a changed session, rollback or fork.
             replica.install_bound_snapshot(&response)?;
-            let pages =
-                match window_pages(&client, &realm_id, &response, &mut replica, window).await {
-                    Err(error) if error.is_stream_interruption() => {
-                        accepted.stream_interruption.get_or_insert(error);
-                        continue;
+            let pages = match cached_pages {
+                Some(pages) => Some(pages),
+                None => {
+                    match window_pages(&client, &realm_id, &response, &mut replica, window).await {
+                        Err(error) if error.is_stream_interruption() => {
+                            accepted.stream_interruption.get_or_insert(error);
+                            continue;
+                        }
+                        other => other?,
                     }
-                    other => other?,
-                };
+                }
+            };
             let Some(pages) = pages else {
                 accepted.preview_streams.insert(window.stream_ref.clone());
                 continue;
@@ -269,6 +288,7 @@ pub(super) async fn account_frame(
             accepted
                 .own_replicas
                 .insert(window.stream_ref.clone(), replica);
+            accepted.own_windows.push((window.clone(), pages.len()));
             accepted.own_pages.extend(pages);
         }
         if !claimed.is_empty() {

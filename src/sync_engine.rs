@@ -366,6 +366,8 @@ struct InksonAccountProjector {
     current_index: tokio::sync::Mutex<Option<crate::state::CurrentIndex>>,
     station_cas_projection: std::sync::Arc<tokio::sync::Mutex<garth::StationCasProjection>>,
     removal_schedule: std::sync::Mutex<RemovalSchedule>,
+    recovery_history:
+        tokio::sync::Mutex<Option<(u64, crate::realm_events_engine::AccountRecoveryHistory)>>,
     transport:
         crate::transport::websocket_rail::StreamRail<crate::client_core::InksonAccountTransport>,
 }
@@ -502,6 +504,7 @@ impl NativeAccountHost {
                 garth::StationCasProjection::default(),
             )),
             removal_schedule: std::sync::Mutex::new(RemovalSchedule::default()),
+            recovery_history: tokio::sync::Mutex::new(None),
             transport: crate::transport::websocket_rail::StreamRail::select(
                 &crate::transport::websocket_rail::WebSocketRail::default(),
                 crate::client_core::InksonAccountTransport::new(http.clone()),
@@ -1501,10 +1504,24 @@ impl InksonAccountProjector {
             .ctx
             .state_store
             .read(LocalStateStore::current_generation);
+        let mut recovery = self
+            .recovery_history
+            .lock()
+            .await
+            .take()
+            .filter(|(saved_generation, _)| *saved_generation == generation)
+            .map(|(_, history)| history)
+            .unwrap_or_default();
         let mut verified = Vec::with_capacity(batch.frames.len());
         for frame in &batch.frames {
-            verified
-                .push(crate::realm_events_engine::verify_account_frame_commits(http, frame).await?);
+            verified.push(
+                crate::realm_events_engine::verify_account_frame_recovering(
+                    http,
+                    frame,
+                    &mut recovery,
+                )
+                .await?,
+            );
         }
         if self
             .ctx
@@ -1542,6 +1559,20 @@ impl InksonAccountProjector {
             await_account_state_durable(&self.ctx, "independent stream history")
                 .await
                 .map_err(|error| garth::Error::Storage(error.to_string()))?;
+            if !self.fence()
+                || self
+                    .ctx
+                    .state_store
+                    .read(LocalStateStore::current_generation)
+                    != generation
+            {
+                return Err(garth::Error::AuthorityCutBehind);
+            }
+            let mut history = crate::realm_events_engine::AccountRecoveryHistory::default();
+            for proof in &mut verified {
+                history.retain(proof)?;
+            }
+            *self.recovery_history.lock().await = Some((generation, history));
             return Err(error);
         }
         for (index, (frame, proof)) in batch.frames.iter().zip(verified.iter()).enumerate() {
@@ -1638,6 +1669,7 @@ pub async fn run_sync_engine(
             current_index: tokio::sync::Mutex::new(None),
             station_cas_projection: station_cas_projection.clone(),
             removal_schedule: std::sync::Mutex::new(RemovalSchedule::default()),
+            recovery_history: tokio::sync::Mutex::new(None),
             transport,
         };
         let result = {
