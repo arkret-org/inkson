@@ -144,6 +144,7 @@ jobs:
           if-no-files-found: error
 
       - name: Exercise the real Linux GTK4 WebKit renderer
+        id: linux_renderer
         if: runner.os == 'Linux'
         working-directory: inkson
         run: |
@@ -151,7 +152,7 @@ jobs:
           dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --backend wayland --binary target/release/inkson
 
       - name: Upload Linux GTK4 runtime evidence
-        if: runner.os == 'Linux' && always()
+        if: runner.os == 'Linux' && always() && steps.linux_renderer.outcome != 'skipped'
         uses: actions/upload-artifact@v7
         with:
           name: inkson-linux-gtk4-runtime

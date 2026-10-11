@@ -43,7 +43,7 @@
       "default_features": false
     }
   },
-  "status": "candidate_not_audit_or_linux_runtime_pass",
+  "status": "candidate_all_target_strict_audit_passed_three_platform_compile_pending",
   "adapters": {
     "linux_webview": "Tao Gtk4Box remains passed to Wry build_gtk; one resolved gtk4 0.11.5 makes IsA identity exact",
     "linux_menu": "Tao GTK4 ApplicationWindow has registered Application; Muda GTK4 init_for_gtk_window retains API",
@@ -54,7 +54,13 @@
       "fullscreen"
     ],
     "rwh": "Tao rwh_06 and Wry raw-window-handle0.6.2 same registry package; inherited rwh_05 retained for Dioxus exported compatibility",
-    "tray": "official KSNI worker + Muda snapshot, shared Muda0.21.2 Gtk4 feature"
+    "tray": "official KSNI worker + Muda snapshot, shared Muda0.21.2 Gtk4 feature",
+    "custom_protocols": "Wry0.57 Send+Sync callback carries only Tao EventLoopProxy and one-shot Send request/responder; all Rc DOM/assets/edits and custom Config handlers stay on owning UI thread. Window instance identity prevents late delivery after native window ID reuse. Closed loop/window returns410. Original synchronous Config protocol API preserved by asynchronous transport response.",
+    "files": [
+      "src/ipc.rs",
+      "src/launch.rs",
+      "src/webview.rs"
+    ]
   },
   "resolution": {
     "cargo_metadata_exit": 0,
@@ -77,5 +83,16 @@
       }
     ],
     "policy": "Normal license allowlist addition approved by root; no crate exception or advisory ignore."
+  },
+  "initial_compile_failure": {
+    "run": "https://github.com/arkret-org/inkson/actions/runs/38174012058",
+    "source": "b130d94dfe9b4c0a2909624f5b2e36fdd4ecfd5e",
+    "platforms": [
+      "linux",
+      "windows",
+      "macos"
+    ],
+    "error": "12 E0277 errors: upstream Wry Send+Sync protocol bounds reject original Dioxus Rc-backed handlers",
+    "latest_remote_checked_after_failure": true
   }
 }

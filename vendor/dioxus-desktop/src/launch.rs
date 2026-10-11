@@ -1,17 +1,18 @@
-use crate::Config;
-use crate::{
-    app::App,
-    ipc::{IpcMethod, UserWindowEvent},
-};
+use std::any::Any;
+
 use dioxus_core::*;
 use dioxus_document::eval;
-use std::any::Any;
 use tao::event::{Event, StartCause, WindowEvent};
+
+use crate::Config;
+use crate::app::App;
+use crate::ipc::{IpcMethod, UserWindowEvent};
 
 /// Launch the WebView and run the event loop, with configuration and root props.
 ///
-/// This will block the main thread, and *must* be spawned on the main thread. This function does not assume any runtime
-/// and is equivalent to calling launch_with_props with the tokio feature disabled.
+/// This will block the main thread, and *must* be spawned on the main thread. This function does
+/// not assume any runtime and is equivalent to calling launch_with_props with the tokio feature
+/// disabled.
 pub fn launch_virtual_dom_blocking(virtual_dom: VirtualDom, mut desktop_config: Config) -> ! {
     let mut custom_event_handler = desktop_config.custom_event_handler.take();
     let (event_loop, mut app) = App::new(desktop_config, virtual_dom);
@@ -37,6 +38,13 @@ pub fn launch_virtual_dom_blocking(virtual_dom: VirtualDom, mut desktop_config: 
             },
 
             Event::UserEvent(event) => match event {
+                UserWindowEvent::ProtocolRequest(request) => {
+                    if let Some(webview) = app.webviews.get(&request.window_id) {
+                        webview.handle_protocol_request(request);
+                    } else {
+                        request.reject();
+                    }
+                }
                 UserWindowEvent::Poll(id) => app.poll_vdom(id),
                 UserWindowEvent::NewWindow => app.handle_new_window(),
                 UserWindowEvent::CloseWindow(id) => app.handle_close_requested(id),
@@ -57,7 +65,8 @@ pub fn launch_virtual_dom_blocking(virtual_dom: VirtualDom, mut desktop_config: 
                 #[cfg(all(feature = "devtools", debug_assertions))]
                 UserWindowEvent::HotReloadEvent(msg) => app.handle_hot_reload_msg(msg),
 
-                // Windows-only drag-n-drop fix events. We need to call the interpreter drag-n-drop code.
+                // Windows-only drag-n-drop fix events. We need to call the interpreter drag-n-drop
+                // code.
                 UserWindowEvent::WindowsDragDrop(id) => {
                     if let Some(webview) = app.webviews.get(&id) {
                         webview.dom.in_scope(ScopeId::ROOT, || {

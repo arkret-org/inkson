@@ -1,24 +1,31 @@
-use crate::file_upload::{DesktopFileData, DesktopFileDragEvent};
-use crate::menubar::DioxusMenu;
-use crate::PendingDesktopContext;
-use crate::{
-    app::SharedContext, assets::AssetHandlerRegistry, edits::WryQueue,
-    file_upload::NativeFileHover, ipc::UserWindowEvent, protocol, waker::tao_waker, Config,
-    DesktopContext, DesktopService,
-};
-use crate::{document::DesktopDocument, WeakDesktopContext};
-use crate::{element::DesktopElement, file_upload::DesktopFormData};
+use std::cell::OnceCell;
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::task::Waker;
+use std::time::Duration;
+
 use base64::prelude::BASE64_STANDARD;
-use dioxus_core::{consume_context, provide_context, Runtime, ScopeId, VirtualDom};
+use dioxus_core::{Runtime, ScopeId, VirtualDom, consume_context, provide_context};
 use dioxus_document::Document;
 use dioxus_history::{History, MemoryHistory};
 use dioxus_hooks::to_owned;
 use dioxus_html::{FileData, FormValue, HtmlEvent, PlatformEventData, SerializedFileData};
-use futures_util::{pin_mut, FutureExt};
-use std::sync::{atomic::AtomicBool, Arc};
-use std::{cell::OnceCell, time::Duration};
-use std::{rc::Rc, task::Waker};
+use futures_util::{FutureExt, pin_mut};
 use wry::{DragDropEvent, RequestAsyncResponder, WebContext, WebViewBuilder, WebViewId};
+
+use crate::app::SharedContext;
+use crate::assets::AssetHandlerRegistry;
+use crate::document::DesktopDocument;
+use crate::edits::WryQueue;
+use crate::element::DesktopElement;
+use crate::file_upload::{DesktopFileData, DesktopFileDragEvent, DesktopFormData, NativeFileHover};
+use crate::ipc::{ProtocolRequest, UserWindowEvent};
+use crate::menubar::DioxusMenu;
+use crate::waker::tao_waker;
+use crate::{
+    Config, DesktopContext, DesktopService, PendingDesktopContext, WeakDesktopContext, protocol,
+};
 
 #[derive(Clone)]
 pub(crate) struct WebviewEdits {
@@ -60,10 +67,11 @@ impl WebviewEdits {
         // todo(jon):
         //
         // I'm a small bit worried about the size of the header being too big on some platforms.
-        // It's unlikely we'll hit the 256k limit (from 2010 browsers...) but it's important to think about
-        // https://stackoverflow.com/questions/3326210/can-http-headers-be-too-big-for-browsers
+        // It's unlikely we'll hit the 256k limit (from 2010 browsers...) but it's important to
+        // think about https://stackoverflow.com/questions/3326210/can-http-headers-be-too-big-for-browsers
         //
-        // Also important to remember here that we don't pass a body from the JavaScript side of things
+        // Also important to remember here that we don't pass a body from the JavaScript side of
+        // things
         let data = request
             .headers()
             .get("dioxus-data")
@@ -155,7 +163,8 @@ impl WebviewEdits {
             }
             // Which also includes drops...
             dioxus_html::EventData::Drag(ref drag) => {
-                // we want to override this with a native file engine, provided by the most recent drag event
+                // we want to override this with a native file engine, provided by the most recent
+                // drag event
                 let full_file_paths = hovered_file.current_paths();
 
                 let xfer_data = drag.data_transfer.clone();
@@ -195,19 +204,27 @@ impl WebviewEdits {
     }
 }
 
+type MainThreadProtocolHandler =
+    Box<dyn Fn(&str, wry::http::Request<Vec<u8>>, RequestAsyncResponder)>;
+
+// Native window IDs can be reused. Never deliver a late request to a new DOM.
+static NEXT_PROTOCOL_INSTANCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 pub(crate) struct WebviewInstance {
     pub dom: VirtualDom,
     pub edits: WebviewEdits,
     pub desktop_context: DesktopContext,
     pub waker: Waker,
+    protocol_instance: u64,
+    protocol_handlers: Vec<MainThreadProtocolHandler>,
 
     // Wry assumes the webcontext is alive for the lifetime of the webview.
     // We need to keep the webcontext alive, otherwise the webview will crash
     _web_context: WebContext,
 
     // Same with the menu.
-    // Currently it's a DioxusMenu because 1) we don't touch it and 2) we support a number of platforms
-    // like ios where muda does not give us a menu type. It sucks but alas.
+    // Currently it's a DioxusMenu because 1) we don't touch it and 2) we support a number of
+    // platforms like ios where muda does not give us a menu type. It sucks but alas.
     //
     // This would be a good thing for someone looking to contribute to fix.
     _menu: Option<DioxusMenu>,
@@ -223,8 +240,8 @@ impl WebviewInstance {
 
         // tao makes small windows for some reason, make them bigger on desktop
         //
-        // on mobile, we want them to be `None` so tao makes them the size of the screen. Otherwise we
-        // get a window that is not the size of the screen and weird black bars.
+        // on mobile, we want them to be `None` so tao makes them the size of the screen. Otherwise
+        // we get a window that is not the size of the screen and weird black bars.
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         {
             if cfg.window.window.inner_size.is_none() {
@@ -276,6 +293,10 @@ impl WebviewInstance {
         let file_hover = NativeFileHover::default();
         let headless = !cfg.window.window.visible;
 
+        let protocol_instance =
+            NEXT_PROTOCOL_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        assert_ne!(protocol_instance, 0, "protocol instance IDs exhausted");
+        let mut protocol_handlers: Vec<MainThreadProtocolHandler> = Vec::new();
         let request_handler = {
             to_owned![
                 cfg.custom_head,
@@ -305,6 +326,8 @@ impl WebviewInstance {
             }
         };
 
+        protocol_handlers.push(Box::new(request_handler));
+
         let ipc_handler = {
             let window_id = window.id();
             to_owned![shared.proxy];
@@ -322,13 +345,14 @@ impl WebviewInstance {
             let (proxy, window_id) = (shared.proxy.to_owned(), window.id());
             move |evt: DragDropEvent| {
                 if cfg!(not(windows)) {
-                    // Update the most recent file drop event - when the event comes in from the webview we can use the
-                    // most recent event to build a new event with the files in it.
+                    // Update the most recent file drop event - when the event comes in from the
+                    // webview we can use the most recent event to build a new
+                    // event with the files in it.
                     file_hover.set(evt);
                 } else {
                     // Windows webview blocks HTML-native events when the drop handler is provided.
-                    // The problem is that the HTML-native events don't provide the file, so we need this.
-                    // Solution: this glue code to mimic drag drop events.
+                    // The problem is that the HTML-native events don't provide the file, so we need
+                    // this. Solution: this glue code to mimic drag drop events.
                     file_hover.set(evt.clone());
                     match evt {
                         wry::DragDropEvent::Drop {
@@ -391,7 +415,10 @@ impl WebviewInstance {
                 // However, users can customize this to allow/disallow domains/routes/patterns.
                 navigation_handler.as_ref().map(|f| f(&var)).unwrap_or(true)
             })
-            .with_asynchronous_custom_protocol(String::from("dioxus"), request_handler);
+            .with_asynchronous_custom_protocol(
+                String::from("dioxus"),
+                protocol_dispatcher(shared.proxy.clone(), window.id(), protocol_instance, 0),
+            );
 
         // Enable https scheme on android, needed for secure context API, like the geolocation API
         #[cfg(target_os = "android")]
@@ -420,22 +447,42 @@ impl WebviewInstance {
             #[cfg(feature = "tokio_runtime")]
             let tokio_rt = tokio::runtime::Handle::current();
 
-            webview = webview.with_custom_protocol(name, move |a, b| {
+            let handler_id = protocol_handlers.len();
+            protocol_handlers.push(Box::new(move |id, request, responder| {
                 #[cfg(feature = "tokio_runtime")]
                 let _guard = tokio_rt.enter();
-                handler(a, b)
-            });
+                responder.respond(handler(id, request));
+            }));
+            webview = webview.with_asynchronous_custom_protocol(
+                name,
+                protocol_dispatcher(
+                    shared.proxy.clone(),
+                    window.id(),
+                    protocol_instance,
+                    handler_id,
+                ),
+            );
         }
 
         for (name, handler) in cfg.asynchronous_protocols.drain(..) {
             #[cfg(feature = "tokio_runtime")]
             let tokio_rt = tokio::runtime::Handle::current();
 
-            webview = webview.with_asynchronous_custom_protocol(name, move |a, b, c| {
+            let handler_id = protocol_handlers.len();
+            protocol_handlers.push(Box::new(move |id, request, responder| {
                 #[cfg(feature = "tokio_runtime")]
                 let _guard = tokio_rt.enter();
-                handler(a, b, c)
-            });
+                handler(id, request, responder)
+            }));
+            webview = webview.with_asynchronous_custom_protocol(
+                name,
+                protocol_dispatcher(
+                    shared.proxy.clone(),
+                    window.id(),
+                    protocol_instance,
+                    handler_id,
+                ),
+            );
         }
 
         const INITIALIZATION_SCRIPT: &str = r#"
@@ -527,10 +574,26 @@ impl WebviewInstance {
         WebviewInstance {
             dom,
             edits,
+            protocol_instance,
+            protocol_handlers,
             waker: tao_waker(shared.proxy.clone(), desktop_context.window.id()),
             desktop_context,
             _menu: menu,
             _web_context: web_context,
+        }
+    }
+
+    pub(crate) fn handle_protocol_request(&self, event: ProtocolRequest) {
+        if event.instance_id != self.protocol_instance {
+            event.reject();
+            return;
+        }
+        let Some(handler) = self.protocol_handlers.get(event.handler_id) else {
+            event.reject();
+            return;
+        };
+        if let Some(payload) = event.take() {
+            handler(&payload.webview_id, payload.request, payload.responder);
         }
     }
 
@@ -566,7 +629,8 @@ impl WebviewInstance {
             }
 
             {
-                // lock the hack-ed in lock sync wry has some thread-safety issues with event handlers and async tasks
+                // lock the hack-ed in lock sync wry has some thread-safety issues with event
+                // handlers and async tasks
                 #[cfg(target_os = "android")]
                 let _lock = crate::android_sync_lock::android_runtime_lock();
                 let fut = self.dom.wait_for_work();
@@ -640,8 +704,9 @@ impl SynchronousEventResponse {
     }
 }
 
-/// A webview that is queued to be created. We can't spawn webviews outside of the main event loop because it may
-/// block on windows so we queue them into the shared context and then create them when the main event loop is ready.
+/// A webview that is queued to be created. We can't spawn webviews outside of the main event loop
+/// because it may block on windows so we queue them into the shared context and then create them
+/// when the main event loop is ready.
 pub(crate) struct PendingWebview {
     dom: VirtualDom,
     cfg: Config,
@@ -665,5 +730,22 @@ impl PendingWebview {
         _ = self.sender.send(cx);
 
         window
+    }
+}
+
+fn protocol_dispatcher(
+    proxy: tao::event_loop::EventLoopProxy<UserWindowEvent>,
+    window_id: tao::window::WindowId,
+    instance_id: u64,
+    handler_id: usize,
+) -> impl Fn(WebViewId, wry::http::Request<Vec<u8>>, RequestAsyncResponder) + Send + Sync {
+    move |id, request, responder| {
+        let event =
+            ProtocolRequest::new(window_id, instance_id, handler_id, id, request, responder);
+        if let Err(closed) = proxy.send_event(UserWindowEvent::ProtocolRequest(event)) {
+            if let UserWindowEvent::ProtocolRequest(event) = closed.0 {
+                event.reject();
+            }
+        }
     }
 }
