@@ -74,7 +74,7 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
       - name: Preserve resolved manifest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: resolved-compatibility-manifest-${{ github.run_id }}
           path: ${{ runner.temp }}/resolved-compatibility-manifest.json
@@ -207,7 +207,7 @@ jobs:
 
       - name: Preserve joint failure evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: compatibility-joint-evidence-${{ github.run_id }}
           path: cotest/artifacts/
