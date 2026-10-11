@@ -44,7 +44,8 @@ pub use backup_body::{
     decrypt_mls_private_plaintext_backup, open_mls_account_secret_recovery_public_key_backup,
 };
 pub(crate) use recovery_transaction::{
-    CompletedFreshDeviceRecovery, execute_pcr_policy_recovery, resume_pending_pcr_policy_recovery,
+    CompletedFreshDeviceRecovery, execute_pcr_policy_recovery,
+    load_completed_pending_pcr_policy_recovery, resume_pending_pcr_policy_recovery,
 };
 pub(crate) use restore::mls_restore_prompt_required_after_material;
 pub use restore::{

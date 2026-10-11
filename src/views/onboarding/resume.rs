@@ -26,12 +26,34 @@ pub(super) async fn recover_bound_principal_device(
         principal_did,
         replacement_device_id,
     )?;
+    let account_id = arkret_sdk::AccountId::new(
+        handoff
+            .bound_principal_id
+            .clone()
+            .context("recovery handoff has no principal")?,
+        handoff.audience_id.clone(),
+    );
+    let expected_device = arkret_sdk::DeviceId::new(replacement_device_id.to_owned())?;
+    if let Some(mut completed) =
+        crate::mls::account_recovery::load_completed_pending_pcr_policy_recovery(
+            &account_id,
+            &expected_device,
+        )?
+    {
+        let account =
+            issue_recovery_completion_grant(handoff, &completed.transaction_id, state_store)
+                .await?;
+        completed.standard_grant_installed = true;
+        return Ok((completed, account));
+    }
     let (api, recovery_grant_id, recovery_grant_jkt) =
         issue_recovery_session_transport(handoff, state_store).await?;
     let store_handle = crate::app::runtime_adapter::state_store_handle(state_store);
     if let Some(mut completed) = crate::mls::account_recovery::resume_pending_pcr_policy_recovery(
         &api,
         &store_handle,
+        &account_id,
+        &expected_device,
         recovery_words,
     )
     .await?
@@ -209,14 +231,23 @@ pub(super) async fn activate_recovery_replacement_signer(
     let device_id = arkret_sdk::DeviceId::new(handoff.device_id.clone())?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let user_store = crate::secure_key_store::UserLocalStore::new(authority, device_id.clone())?;
+    // A partial grant promotion can already have installed the accepted key.
+    // Recovery records still belong to the original pending namespace.
+    let pending_store = crate::secure_key_store::PendingLocalStore::new(device_id.clone());
+    pending_store.activate();
     let signing_seed = match user_store.load_signing_seed(secure_store.as_ref())? {
-        Some(material) => material,
+        Some(material) => {
+            // Cleanup may have consumed pending keys before its last write
+            // failed. Restore the same accepted holder, never generate one.
+            pending_store
+                .restore_from_user_durable(secure_store.as_ref(), &user_store)
+                .await?;
+            material
+        }
         None => {
             // This is the explicit RecoverWithPolicy branch. The old accepted
             // signer is proved absent and the recovery transaction will
             // authorize this fresh replacement key before it becomes active.
-            let pending_store = crate::secure_key_store::PendingLocalStore::new(device_id.clone());
-            pending_store.activate();
             pending_store
                 .create_fresh_signing_seed_durable(secure_store.as_ref())
                 .await?

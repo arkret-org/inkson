@@ -4,6 +4,7 @@
 //! policy authorizes the unit, while the replacement device signs both
 //! `ak.device.reanchor` and `ak.device.authorize` with its identity key.
 
+use anyhow::Context;
 use arkret_models_collaboration::events_payloads::SignatureMaterial;
 use arkret_models_collaboration::events_payloads::device_identity::{
     DeviceAuthorizationBindingKind, DeviceAuthorizePayload, DeviceOrPrincipalRef,
@@ -35,6 +36,87 @@ pub(crate) struct CompletedFreshDeviceRecovery {
     pub transaction_id: TransactionId,
     pub readiness: crate::fresh_device_recovery::RecoveryReadinessEvidence,
     pub standard_grant_installed: bool,
+    pub pending: crate::security_transaction::PendingFreshDeviceRecovery,
+}
+
+fn completed_recovery(
+    transaction: &SecurityTransaction,
+) -> anyhow::Result<CompletedFreshDeviceRecovery> {
+    transaction.validate_structural()?;
+    anyhow::ensure!(
+        crate::fresh_device_recovery::transaction_is_completed(transaction),
+        "recovery transaction is not completed"
+    );
+    let binding = &transaction
+        .recovery_plan()
+        .ok_or_else(|| anyhow::anyhow!("completed recovery has no PCR-policy binding"))?
+        .binding;
+    Ok(CompletedFreshDeviceRecovery {
+        transaction_id: transaction.transaction_id.clone(),
+        readiness: crate::fresh_device_recovery::RecoveryReadinessEvidence {
+            transaction_id: transaction.transaction_id.clone(),
+            terminal_receipt_id: binding.terminal_receipt_id.clone(),
+            authorization_event_id: binding.authorize_event_id.clone(),
+        },
+        standard_grant_installed: false,
+        pending: crate::security_transaction::PendingFreshDeviceRecovery::capture(
+            &transaction.transaction_id,
+        )?,
+    })
+}
+
+/// A durable completed recovery already flushed restored private material
+/// before its terminal submission. Resume grant issuance directly; its
+/// consumed recovery session is no longer a backup-unlock credential.
+pub(crate) fn load_completed_pending_pcr_policy_recovery(
+    account_id: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+) -> anyhow::Result<Option<CompletedFreshDeviceRecovery>> {
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let Some(transaction_id) =
+        crate::security_transaction::pending_fresh_device_recovery(secure_store.as_ref())?
+    else {
+        return Ok(None);
+    };
+    let store = crate::security_transaction::InksonSecurityTransactionStore::new(secure_store);
+    let Some(local) = garth::SecurityTransactionStore::load(&store, &transaction_id)? else {
+        return Ok(None);
+    };
+    let Some(resource) = &local.last_observed_resource else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        resource.account_id == *account_id
+            && resource.transaction_id == transaction_id
+            && resource.request_digest
+                == Hash::new(arkret_sdk::canonical::sha256_digest(
+                    &local.canonical_create_request
+                ))?
+            && resource
+                .recovery_plan()
+                .is_some_and(|plan| { plan.binding.replacement_device_id == *device_id }),
+        "pending recovery belongs to another account or replacement device"
+    );
+    if !crate::fresh_device_recovery::transaction_is_completed(resource) {
+        return Ok(None);
+    }
+    let receipt = local
+        .completed_recovery_receipt()?
+        .ok_or_else(|| anyhow::anyhow!("completed recovery has no durable terminal receipt"))?;
+    let Some(SecurityTransactionTerminalOutcome::Completed {
+        completion_attestation: Some(attestation),
+        ..
+    }) = &resource.terminal_outcome
+    else {
+        anyhow::bail!("completed recovery has no completion attestation");
+    };
+    anyhow::ensure!(
+        Hash::new(arkret_sdk::canonical::sha256_digest(
+            &arkret_sdk::canonical::canonical_json_bytes(&receipt)?
+        ))? == attestation.terminal_receipt_digest,
+        "completed recovery changed its durable terminal receipt"
+    );
+    completed_recovery(resource).map(Some)
 }
 
 fn next_recovery_device_generation(current: u64) -> anyhow::Result<u64> {
@@ -100,6 +182,12 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         .public_key_multibase()
         .ok_or_else(|| anyhow::anyhow!("replacement device signer has no Ed25519 public key"))?;
     let device_public_key = format!("did:key:{device_public_key_multibase}");
+    anyhow::ensure!(
+        device_signer.device_id() == Some(verified_session.requesting_device_id.as_str())
+            && verified_session.requesting_device_public_key_did.as_str() == device_public_key
+            && crate::clock::now_utc() < verified_session.expires_at,
+        "recovery session does not bind the current replacement key or is expired"
+    );
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let (_, hpke_public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair_durable(
         secure_store.as_ref(),
@@ -417,21 +505,7 @@ pub(crate) async fn execute_pcr_policy_recovery(
     if !crate::fresh_device_recovery::transaction_is_completed(&transaction) {
         anyhow::bail!("recovery transaction did not reach completed state");
     }
-    let binding = transaction
-        .recovery_plan()
-        .map(|plan| &plan.binding)
-        .ok_or_else(|| anyhow::anyhow!("completed transaction lost its PCR-policy binding"))?
-        .clone();
-    crate::security_transaction::clear_pending_fresh_device_recovery(secure_store.as_ref())?;
-    Ok(CompletedFreshDeviceRecovery {
-        transaction_id,
-        readiness: crate::fresh_device_recovery::RecoveryReadinessEvidence {
-            transaction_id: transaction.transaction_id,
-            terminal_receipt_id: binding.terminal_receipt_id,
-            authorization_event_id: binding.authorize_event_id,
-        },
-        standard_grant_installed: false,
-    })
+    completed_recovery(&transaction)
 }
 
 /// Resume the byte-identical durable request after reload or response loss.
@@ -439,6 +513,8 @@ pub(crate) async fn execute_pcr_policy_recovery(
 pub(crate) async fn resume_pending_pcr_policy_recovery(
     api: &crate::transport::TransportClient,
     state_store: &crate::runtime::input::StateStoreHandle,
+    expected_account: &arkret_sdk::AccountId,
+    expected_device: &arkret_sdk::DeviceId,
     recovery_words: &str,
 ) -> anyhow::Result<Option<CompletedFreshDeviceRecovery>> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -463,6 +539,12 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
     let SecurityTransactionCreateRequest::Recovery(create) = create else {
         anyhow::bail!("pending fresh-device recovery is not a recovery transaction");
     };
+    anyhow::ensure!(
+        create.account_id == *expected_account
+            && create.transaction_id == transaction_id
+            && create.recovery_intent.replacement_device_id == *expected_device,
+        "pending recovery create belongs to another account or device"
+    );
     let engine = crate::security_transaction::security_transaction_engine(
         api.sdk_http_client()?,
         secure_store.clone(),
@@ -478,6 +560,9 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
         transaction = retried;
     }
     reject_terminal_recovery_transaction(&transaction, secure_store.as_ref())?;
+    if crate::fresh_device_recovery::transaction_is_completed(&transaction) {
+        return completed_recovery(&transaction).map(Some);
+    }
     let binding = transaction
         .recovery_plan()
         .map(|plan| &plan.binding)
@@ -487,6 +572,23 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
         .recovery_session(binding.recovery_session_id.as_str())
         .await?;
     session.validate_shape()?;
+    let plan = transaction
+        .recovery_plan()
+        .context("pending recovery has no plan")?;
+    anyhow::ensure!(
+        session.state == arkret_sdk::RecoverySessionState::Verified
+            && session.identity_model == arkret_sdk::RecoveryIdentityModel::PcrPolicy
+            && session.account_id == *expected_account
+            && session.requesting_device_id == *expected_device
+            && session.recovery_session_id == binding.recovery_session_id
+            && session.current_device_generation_ref == plan.previous_model_generation_ref
+            && session.proof_summary.as_ref().is_some_and(|proof| {
+                proof.kind == RecoveryProofKind::RecoveryUnlock
+                    && proof.proof_digest == plan.proof_digest
+            })
+            && crate::clock::now_utc() < session.expires_at,
+        "pending recovery session changed its frozen account, device, generation or proof"
+    );
     let proof_summary = session
         .proof_summary
         .clone()
@@ -549,21 +651,7 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
     if !crate::fresh_device_recovery::transaction_is_completed(&transaction) {
         anyhow::bail!("pending recovery did not reach completed state");
     }
-    let binding = transaction
-        .recovery_plan()
-        .map(|plan| &plan.binding)
-        .ok_or_else(|| anyhow::anyhow!("completed recovery transaction has no terminal binding"))?;
-    let readiness = crate::fresh_device_recovery::RecoveryReadinessEvidence {
-        transaction_id: transaction.transaction_id.clone(),
-        terminal_receipt_id: binding.terminal_receipt_id.clone(),
-        authorization_event_id: binding.authorize_event_id.clone(),
-    };
-    crate::security_transaction::clear_pending_fresh_device_recovery(secure_store.as_ref())?;
-    Ok(Some(CompletedFreshDeviceRecovery {
-        transaction_id,
-        readiness,
-        standard_grant_installed: false,
-    }))
+    completed_recovery(&transaction).map(Some)
 }
 
 #[cfg(test)]
