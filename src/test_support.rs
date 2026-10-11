@@ -173,9 +173,6 @@ pub(crate) fn accepted_mls_welcome(
         } => arkret_sdk::MlsWelcomeRecipientEndpoint::AgentRuntime {
             verification_method: verification_method.clone(),
         },
-        arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
-            panic!("accepted Welcome fixture requires an authority-addressable endpoint")
-        }
     };
     let delivery = arkret_sdk::MlsWelcomeDelivery {
         welcome_id: arkret_wire::MlsWelcomeDeliveryId::new_v7_at(delivery_time_ms),

@@ -64,11 +64,6 @@ fn creator_leaf_authority_from_group(
             },
             agent_key_authorize_event_id.clone(),
         ),
-        arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
-            return Err(MlsRuntimeError::Genesis(
-                "retired pairwise endpoint cannot bind an MLS Genesis leaf".to_owned(),
-            ));
-        }
     };
     let result = arkret_sdk::MlsGenesisCreatorLeafAuthority {
         leaf_signature_key_b64u: creator.signature_key.clone(),
@@ -312,11 +307,6 @@ pub(crate) fn generate_creator_epoch_zero(
                 })?,
         ),
         arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. } => None,
-        arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
-            return Err(MlsRuntimeError::Identity(
-                "retired minimal-metadata endpoint cannot create an MLS group".to_owned(),
-            ));
-        }
     };
     let creator_actor = arkret_sdk::ActorId::account(authority.clone());
     group

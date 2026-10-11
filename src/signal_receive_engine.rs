@@ -202,11 +202,6 @@ impl garth::signal::SignalDecryptor for MlsSignalDecryptor {
                 verification_method,
                 agent_key_authorize_event_id,
             },
-            arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
-                return Err(garth::Error::Protocol(
-                    "minimal-metadata MLS leaves cannot send Signal envelopes".to_owned(),
-                ));
-            }
         };
         let mut replay = self.replay.lock().map_err(|error| {
             garth::Error::Protocol(format!("signal replay tracker poisoned: {error}"))

@@ -203,9 +203,6 @@ impl MlsEndpoints<'_> {
             arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. } => {
                 anyhow::bail!("Agent KeyPackage requires the agent-authorized upload flow")
             }
-            arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => anyhow::bail!(
-                "minimal-metadata KeyPackage upload requires publish_pairwise_key_package"
-            ),
         };
         if records
             .iter()
@@ -221,8 +218,6 @@ impl MlsEndpoints<'_> {
             actor_id: first.actor_id.clone(),
             principal_id,
             device_id: Some(device_id),
-            pairwise_verification_method: None,
-            intended_realm_id: None,
             agent_verification_method: None,
             agent_key_authorize_event_id: None,
             keypackages,
