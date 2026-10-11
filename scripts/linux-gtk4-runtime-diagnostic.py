@@ -22,7 +22,15 @@ args = parser.parse_args()
 STATION_NAMES = {'Sign-in server URL', '登录服务器地址'}
 STATION_MARKER = 'http://127.0.0.1:18932'
 
+def dispatch_accessibility_events():
+    context = GLib.MainContext.default()
+    for _ in range(256):
+        if not context.pending():
+            break
+        context.iteration(False)
+
 def station_field(process_id):
+    dispatch_accessibility_events()
     rows = subprocess.check_output(['ps', '-eo', 'pid=,ppid='], text=True).splitlines()
     relations = [tuple(map(int, row.split())) for row in rows]
     process_ids = {process_id}
@@ -110,6 +118,14 @@ with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
     Path(env['XDG_RUNTIME_DIR']).mkdir(mode=0o700)
     background = None
     app = None
+    accessibility_events = {}
+    def observed_accessibility_event(event):
+        accessibility_events[event.type] = accessibility_events.get(event.type, 0) + 1
+    # WebKit enables its real AX cache for registered assistive clients.
+    # Polling the Registry alone does not register such a client.
+    listener_names = ('object', 'document')
+    pyatspi.Registry.registerEventListener(observed_accessibility_event, *listener_names)
+    result['registered_real_atspi_listener_names'] = list(listener_names)
     app_log = out / (args.backend + '-application.log')
     display_log = out / (args.backend + '-display.log')
     try:
@@ -186,6 +202,8 @@ with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
         result.update(passed=False, error=str(error))
         raise
     finally:
+        pyatspi.Registry.deregisterEventListener(observed_accessibility_event, *listener_names)
+        result['actual_atspi_event_counts'] = accessibility_events
         for process in [app, background]:
             if process is not None and process.poll() is None:
                 process.terminate()
