@@ -163,6 +163,7 @@ impl PcrRecoveryController {
             device_authorization_check_complete,
         } = self;
         spawn(async move {
+            let recovery_words = zeroize::Zeroizing::new(recovery_words);
             let result = recover_bound_principal_device(
                 &handoff,
                 &principal_did,
@@ -172,7 +173,6 @@ impl PcrRecoveryController {
             )
             .await;
             words.set(String::new());
-            busy.set(false);
             match result {
                 Ok((recovery, completed)) => {
                     match commit_completed_account(
@@ -188,6 +188,7 @@ impl PcrRecoveryController {
                         device_id,
                         needs_device_authorization,
                         device_authorization_check_complete,
+                        Some(&recovery.pending),
                     )
                     .await
                     {
@@ -215,6 +216,7 @@ impl PcrRecoveryController {
                 }
                 Err(error) => status.set(format!("Recovery could not finish: {error:#}")),
             }
+            busy.set(false);
         });
     }
 }
@@ -381,6 +383,7 @@ impl IdentityCreationController {
                         device_id,
                         needs_device_authorization,
                         device_authorization_check_complete,
+                        None,
                     )
                     .await
                     {

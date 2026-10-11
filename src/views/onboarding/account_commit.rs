@@ -317,6 +317,7 @@ pub(super) async fn commit_completed_account(
     mut device_id: Signal<String>,
     mut needs_device_authorization: Signal<bool>,
     mut device_authorization_check_complete: Signal<bool>,
+    recovery_pending: Option<&crate::security_transaction::PendingFreshDeviceRecovery>,
 ) -> anyhow::Result<()> {
     let correlation = state_store
         .peek()
@@ -394,6 +395,10 @@ pub(super) async fn commit_completed_account(
             &crate::secure_key_store::PendingLocalStore::new(completed.account.device_id.clone()),
         )
         .map_err(anyhow::Error::msg)?;
+
+        if let Some(pending) = recovery_pending {
+            pending.clear(secure_store.as_ref())?;
+        }
 
         active_account.set(Some(completed.account.clone()));
         principal_id.set(Some(completed.account.principal_id().clone()));

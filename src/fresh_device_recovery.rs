@@ -103,6 +103,24 @@ pub fn sign_recovery_terminal_commit_continue(
         anyhow::bail!("recovery terminal commit requires a PCR-policy recovery transaction");
     };
     let binding = &plan.binding;
+    let authorize = plan
+        .reanchor_unit
+        .request
+        .events
+        .get(1)
+        .ok_or_else(|| anyhow::anyhow!("recovery plan omitted replacement authorization"))?;
+    let public_key = signer
+        .public_key_multibase()
+        .ok_or_else(|| anyhow::anyhow!("replacement signer has no Ed25519 key"))?;
+    anyhow::ensure!(
+        signer.device_id() == Some(binding.replacement_device_id.as_str())
+            && authorize
+                .payload
+                .get("device_public_key_did")
+                .and_then(serde_json::Value::as_str)
+                == Some(format!("did:key:{public_key}").as_str()),
+        "recovery receipt signer differs from the frozen replacement device key"
+    );
     if observation.policy_version == 0
         || observation.proof_summary.proof_digest != plan.proof_digest
     {
@@ -261,6 +279,15 @@ where
             .last_observed_resource
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("recovery transaction has no authoritative resource"))?;
+        resource.validate_structural()?;
+        anyhow::ensure!(
+            resource.transaction_id == *transaction_id
+                && resource.request_digest
+                    == Hash::new(arkret_sdk::canonical::sha256_digest(
+                        &local.canonical_create_request
+                    ))?,
+            "durable recovery resource changed its canonical create binding"
+        );
         if !transaction_is_completed(resource) {
             anyhow::bail!("recovery completion grant requires a completed transaction");
         }
@@ -275,6 +302,13 @@ where
         let receipt = local.completed_recovery_receipt()?.ok_or_else(|| {
             anyhow::anyhow!("completed recovery omitted its durable terminal receipt")
         })?;
+        anyhow::ensure!(
+            initial_session.device_id == completion_attestation.replacement_device_id
+                && Hash::new(arkret_sdk::canonical::sha256_digest(
+                    &arkret_sdk::canonical::canonical_json_bytes(&receipt)?
+                ))? == completion_attestation.terminal_receipt_digest,
+            "recovery completion grant differs from the durable receipt or replacement device"
+        );
         let mut request = IssueRecoveryCompletionGrantRequest {
             transaction_id: transaction_id.clone(),
             transaction_request_digest: resource.request_digest.clone(),

@@ -107,14 +107,53 @@ fn pending_fresh_device_recovery_storage_key() -> garth::Result<String> {
         .map_err(|error| garth::Error::Protocol(error.to_string()))
 }
 
+/// Retain the original namespace across Standard grant promotion. Cleanup
+/// must never resolve its key from the newly activated account scope.
+pub(crate) struct PendingFreshDeviceRecovery {
+    storage_key: String,
+    canonical_pointer: Vec<u8>,
+}
+
+impl PendingFreshDeviceRecovery {
+    pub(crate) fn capture(transaction_id: &arkret_sdk::TransactionId) -> garth::Result<Self> {
+        Ok(Self {
+            storage_key: pending_fresh_device_recovery_storage_key()?,
+            canonical_pointer: pending_fresh_device_recovery_bytes(transaction_id)?,
+        })
+    }
+
+    pub(crate) fn clear(&self, secure_store: &dyn SecureKeyStore) -> garth::Result<()> {
+        let current = secure_store
+            .get_secret_bytes(&self.storage_key)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        match current {
+            None => Ok(()),
+            Some(current) if current.as_slice() == self.canonical_pointer.as_slice() => {
+                secure_store
+                    .delete_secret(&self.storage_key)
+                    .map_err(|error| garth::Error::Protocol(error.to_string()))
+            }
+            Some(_) => Err(garth::Error::Protocol(
+                "pending recovery was replaced before cleanup".to_owned(),
+            )),
+        }
+    }
+}
+
+fn pending_fresh_device_recovery_bytes(
+    transaction_id: &arkret_sdk::TransactionId,
+) -> garth::Result<Vec<u8>> {
+    arkret_sdk::canonical::canonical_json_bytes(&serde_json::json!({
+        "transaction_id": transaction_id,
+    }))
+    .map_err(|error| garth::Error::Protocol(error.to_string()))
+}
+
 pub(crate) async fn store_pending_fresh_device_recovery(
     secure_store: &(dyn SecureKeyStore + Send + Sync),
     transaction_id: &arkret_sdk::TransactionId,
 ) -> garth::Result<()> {
-    let bytes = arkret_sdk::canonical::canonical_json_bytes(&serde_json::json!({
-        "transaction_id": transaction_id,
-    }))
-    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+    let bytes = pending_fresh_device_recovery_bytes(transaction_id)?;
     secure_store
         .put_secret(
             &pending_fresh_device_recovery_storage_key()?,
@@ -394,6 +433,52 @@ mod tests {
         clear_pending_fresh_device_recovery(&secure_store).unwrap();
         assert!(
             pending_fresh_device_recovery(&secure_store)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn completed_recovery_cleanup_keeps_the_original_scope_and_new_pointer() {
+        let _scope = activate_test_scope();
+        let secure = garth::MemorySecureKeyStore::new();
+        let original =
+            arkret_sdk::TransactionId::new("ak:transaction:01904100-0000-7000-8000-abcdefabcda0")
+                .unwrap();
+        let replacement =
+            arkret_sdk::TransactionId::new("ak:transaction:01904100-0000-7000-8000-abcdefabcda1")
+                .unwrap();
+        store_pending_fresh_device_recovery(&secure, &original)
+            .await
+            .unwrap();
+        let cleanup = PendingFreshDeviceRecovery::capture(&original).unwrap();
+        store_pending_fresh_device_recovery(&secure, &replacement)
+            .await
+            .unwrap();
+        assert!(cleanup.clear(&secure).is_err());
+        assert_eq!(
+            pending_fresh_device_recovery(&secure).unwrap(),
+            Some(replacement.clone())
+        );
+
+        store_pending_fresh_device_recovery(&secure, &original)
+            .await
+            .unwrap();
+        let other_device =
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000043").unwrap();
+        crate::secure_key_store::PendingLocalStore::new(other_device).activate();
+        store_pending_fresh_device_recovery(&secure, &replacement)
+            .await
+            .unwrap();
+        cleanup.clear(&secure).unwrap();
+        cleanup.clear(&secure).unwrap();
+        assert_eq!(
+            pending_fresh_device_recovery(&secure).unwrap(),
+            Some(replacement)
+        );
+        assert!(
+            secure
+                .get_secret_bytes(&cleanup.storage_key)
                 .unwrap()
                 .is_none()
         );
