@@ -95,9 +95,8 @@ def diagnostic_tree(process_id):
             nodes.append(record)
     (out / (args.backend + '-accessibility-tree.json')).write_text(
         json.dumps({'own_pid': process_id, 'nodes': nodes}, indent=2) + '\n')
-    if args.backend == 'x11':
-        subprocess.run(['scrot', '--overwrite', str(out / 'x11-screen.png')],
-                       check=False, capture_output=True)
+    subprocess.run(['scrot', '--overwrite', str(out / (args.backend + '-screen.png'))],
+                   check=False, capture_output=True)
 
 def wait_station(app, expected=None):
     deadline = time.monotonic() + 60
@@ -219,6 +218,17 @@ with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
                     time.sleep(0.5)
                     if clipboard.poll() is not None:
                         raise RuntimeError('real platform clipboard owner exited before keyboard paste')
+                    if args.backend == 'wayland':
+                        # wl-copy's fallback surface can receive keyboard focus.
+                        # Weston 13 desktop-shell registers its real window
+                        # switcher on Super+Tab (the default binding modifier).
+                        # Return the actual seat to the app before pasting.
+                        subprocess.run(['xdotool', 'key', '--clearmodifiers', 'super+Tab'], check=True, env=env)
+                        time.sleep(0.5)
+                        if not field.queryComponent().grabFocus():
+                            raise RuntimeError('Station rejected focus after real Weston window switch')
+                        subprocess.run(['xdotool', 'key', '--clearmodifiers', 'ctrl+a'], check=True, env=env)
+                        result['actual_wayland_focus_transport'] = 'Weston 13 desktop-shell physical Super+Tab and real Component focus'
                     subprocess.run(['xdotool', 'key', '--clearmodifiers', 'ctrl+v'], check=True, env=env)
                     wait_station(app, STATION_MARKER)
                 finally:
