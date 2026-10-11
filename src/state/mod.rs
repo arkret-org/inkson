@@ -107,8 +107,8 @@ thread_local! {
     static FULL_STATE_READ_COPIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 pub(crate) use e2ee_secure_cache::{
-    BrowserStorageEstimate, E2eePlaintextCacheClearScope, E2eePlaintextCacheUsage,
-    browser_storage_estimate,
+    BrowserStorageEstimate, E2eeCacheWriteIntent, E2eePlaintextCacheClearScope,
+    E2eePlaintextCacheUsage, browser_storage_estimate,
 };
 
 mod account_decode;
@@ -220,6 +220,9 @@ pub struct LocalStateStore {
     /// Process-only hydration fences for in-flight secure-cache clears.
     /// Shared by clones and bound to the exact account cache key.
     e2ee_cache_clears: Arc<Mutex<e2ee_secure_cache::CacheClearFences>>,
+    /// Per-clone reconciliation already absorbed into this live cache.
+    e2ee_cache_reconciliations_seen: BTreeSet<String>,
+    e2ee_cache_clear_generations_seen: BTreeMap<String, u64>,
     /// Serialization lock for the MLS "decrypt → state
     /// write-back" critical section. Multiple views (chat / kanban) can
     /// trigger decrypt-on-read for the same realm; holding this
@@ -274,6 +277,8 @@ impl Clone for LocalStateStore {
             corrupt_account_scopes: Arc::clone(&self.corrupt_account_scopes),
             mls_receive_overlay: Arc::clone(&self.mls_receive_overlay),
             e2ee_cache_clears: Arc::clone(&self.e2ee_cache_clears),
+            e2ee_cache_reconciliations_seen: self.e2ee_cache_reconciliations_seen.clone(),
+            e2ee_cache_clear_generations_seen: self.e2ee_cache_clear_generations_seen.clone(),
             mls_decrypt_serial: Arc::clone(&self.mls_decrypt_serial),
             sidecar_projection_fold: self.sidecar_projection_fold.clone(),
             // A clone may hold a different unaccepted local edit. Never share
@@ -350,6 +355,8 @@ impl Default for LocalStateStore {
             corrupt_account_scopes: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             e2ee_cache_clears: Arc::new(Mutex::new(Default::default())),
+            e2ee_cache_reconciliations_seen: BTreeSet::new(),
+            e2ee_cache_clear_generations_seen: BTreeMap::new(),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
             sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default(),
             blocklist_projection_cache: Mutex::new(BlocklistProjectionCache::default()),
@@ -684,6 +691,8 @@ impl LocalStateStore {
             corrupt_account_scopes: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             e2ee_cache_clears: Arc::new(Mutex::new(Default::default())),
+            e2ee_cache_reconciliations_seen: BTreeSet::new(),
+            e2ee_cache_clear_generations_seen: BTreeMap::new(),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
             sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default(),
             blocklist_projection_cache: Mutex::new(BlocklistProjectionCache::default()),
@@ -1083,6 +1092,7 @@ impl LocalStateStore {
         if self.loaded.load(Ordering::Relaxed)
             && self.cached_account_key.as_deref() == Some(effective_account_key.as_str())
         {
+            self.absorb_e2ee_cache_recoveries();
             return;
         }
         // The root index is read through storage on demand (no `self.root`
@@ -1094,6 +1104,10 @@ impl LocalStateStore {
         self.cached_account_key = Some(effective_account_key);
         self.contact_remarks_restored_for = None;
         self.loaded.store(true, Ordering::Relaxed);
+        self.e2ee_cache_reconciliations_seen.clear();
+        self.e2ee_cache_clear_generations_seen.clear();
+        self.initialize_e2ee_cache_generation();
+        self.absorb_e2ee_cache_recoveries();
     }
 }
 

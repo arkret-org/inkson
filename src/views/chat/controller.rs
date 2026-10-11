@@ -1884,7 +1884,12 @@ fn use_composer_state(target: ComposerTarget) -> ComposerState {
     let mut targets = use_signal(std::collections::BTreeMap::<ComposerTarget, ComposerState>::new);
     let mut last_seen =
         use_signal(std::collections::BTreeMap::<ComposerTarget, (u64, String)>::new);
-    let mut pending = use_signal(std::collections::BTreeMap::<ComposerTarget, (u64, String)>::new);
+    let mut pending = use_signal(
+        std::collections::BTreeMap::<
+            ComposerTarget,
+            (u64, String, crate::state::E2eeCacheWriteIntent),
+        >::new,
+    );
     let mut running = use_signal(|| false);
     let mut previous_session = use_signal(|| None::<u64>);
     if let Some(session) = session {
@@ -1989,7 +1994,19 @@ fn use_composer_state(target: ComposerTarget) -> ComposerState {
             }
             state.draft_storage.set("saving");
             last_seen.write().insert(target.clone(), value.clone());
-            pending.write().insert(target, value);
+            let intent = session
+                .state_store
+                .read()
+                .capture_e2ee_cache_write_intent(&target.realm_id);
+            match intent {
+                Ok(intent) => {
+                    pending.write().insert(target, (value.0, value.1, intent));
+                }
+                Err(error) => {
+                    tracing::warn!(?error, "composer intent provenance unavailable");
+                    state.draft_storage.set("error");
+                }
+            }
         }
         if *running.peek() || pending.peek().is_empty() {
             return;
@@ -2003,7 +2020,7 @@ fn use_composer_state(target: ComposerTarget) -> ComposerState {
                         pending.write().remove(&target).map(|value| (target, value))
                     })
                 };
-                let Some((target, (generation, draft))) = next else {
+                let Some((target, (generation, draft, intent))) = next else {
                     break;
                 };
                 if !composer_session_matches(session, &target, generation) {
@@ -2018,10 +2035,13 @@ fn use_composer_state(target: ComposerTarget) -> ComposerState {
                     let secure = crate::secure_key_store::default_secure_key_store("inkson");
                     let write = {
                         let mut store = session.state_store.write();
+                        // Validate before hydration or preparation. Input queued
+                        // behind another await cannot survive a same-session clear.
+                        store.validate_e2ee_cache_write_intent(&intent, &target.realm_id)?;
                         // Do not overwrite an unread secure entry after a failed
                         // initialization, and never route an old session to a new account.
                         store.hydrate_e2ee_plaintext_cache_with_secure_store(secure.as_ref())?;
-                        store.prepare_composer_draft_write(
+                        store.prepare_composer_draft_write_captured(
                             &target.authority,
                             &target.device_id,
                             &target.realm_id,
@@ -2029,10 +2049,9 @@ fn use_composer_state(target: ComposerTarget) -> ComposerState {
                             draft.clone(),
                         )?
                     };
-                    crate::state::LocalStateStore::persist_e2ee_plaintext_cache_write_durable(
+                    crate::state::LocalStateStore::persist_captured_e2ee_cache_write_durable(
                         secure.as_ref(),
-                        &write.0,
-                        write.1.as_deref(),
+                        write,
                     )
                     .await
                 }
