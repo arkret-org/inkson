@@ -1,0 +1,91 @@
+name: GTK4 exact-artifact runtime diagnosis
+
+on:
+  push:
+    branches: ["codex/0932-gtk4-runtime-diagnostic"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  renderer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev dpkg-dev \
+            libwebkitgtk-6.0-dev \
+            libdbus-1-dev \
+            xvfb xdotool openbox weston gnome-keyring dbus-x11 at-spi2-core python3-pyatspi \
+            libxdo-dev \
+            librsvg2-dev
+
+      - name: Admit the real WebKit sandbox through the official AppArmor profile
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y apparmor-profiles bubblewrap
+          # Ubuntu's official purpose-built profile admits bwrap user namespaces
+          # while stripping capabilities from sandboxed children. Keep the
+          # global userns restriction and the WebKit sandbox enabled.
+          profile=''
+          for directory in /usr/share/apparmor/extra-profiles /etc/apparmor.d; do
+            if test -d "$directory"; then
+              profile=$(find "$directory" -type f -name bwrap-userns-restrict -print -quit)
+              if test -n "$profile"; then break; fi
+            fi
+          done
+          if test -z "$profile"; then
+            profile="$RUNNER_TEMP/bwrap-userns-restrict"
+            curl --fail --silent --show-error --location \
+              https://gitlab.com/apparmor/apparmor/-/raw/b0eb95457bc2de401920308869d016e696c73664/profiles/apparmor/profiles/extras/bwrap-userns-restrict \
+              --output "$profile"
+            printf '%s  %s\n' 11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9 "$profile" | sha256sum --check
+          fi
+          dpkg-query --show apparmor apparmor-profiles bubblewrap
+          sha256sum "$profile"
+          sudo apparmor_parser --replace "$profile"
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          bwrap --unshare-user --unshare-pid --ro-bind / / --proc /proc --dev /dev \
+            /bin/sh -c 'test "$(awk "/^CapEff:/{print \$2}" /proc/self/status)" = "0000000000000000"'
+
+      - name: Download the original sixth-run package
+        uses: actions/download-artifact@v7
+        with:
+          name: inkson-linux-x64-deb-local
+          run-id: 38180974413
+          github-token: ${{ github.token }}
+          path: exact-artifact
+      - name: Verify fixed original product provenance and bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/arkret-org/inkson/actions/runs/38180974413 --jq .head_sha)" = cb47de3210b094d45863f5f4d9a797b1a5aecf68
+          printf '%s  %s\n' ba7d42f3cd235fd4447c4336afcf9fdf72aa044cab5848dc4147457a4b02ca14 exact-artifact/inkson_0.9.0-local_amd64.deb | sha256sum --check
+          dpkg-deb --extract exact-artifact/inkson_0.9.0-local_amd64.deb exact-product
+          printf '%s  %s\n' db050be3b6e63744e312c91a0fbe1da1d2ef6f5e9c19272806e6d7ef5cee2735 exact-product/usr/bin/inkson | sha256sum --check
+          sha256sum scripts/linux-gtk4-runtime-diagnostic.py
+      - name: Exact product X11 full DOM, input and cold oracle with failure diagnosis
+        id: x11
+        continue-on-error: true
+        run: xvfb-run -a dbus-run-session -- python3 scripts/linux-gtk4-runtime-diagnostic.py --backend x11 --binary exact-product/usr/bin/inkson
+      - name: Exact product Wayland full DOM, input and cold oracle with failure diagnosis
+        id: wayland
+        continue-on-error: true
+        run: dbus-run-session -- python3 scripts/linux-gtk4-runtime-diagnostic.py --backend wayland --binary exact-product/usr/bin/inkson
+      - name: Preserve bounded actual runtime diagnostic results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: exact-cb47-gtk4-runtime-diagnosis
+          path: dist/linux-gtk4-runtime/
+          if-no-files-found: error
+      - name: Require both original full oracles
+        if: always()
+        run: test '${{ steps.x11.outcome }}' = success && test '${{ steps.wayland.outcome }}' = success
