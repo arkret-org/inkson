@@ -4,9 +4,10 @@
 name: Packages
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
-    branches: ["main", "master"]
+    branches: ["main", "master", "codex/0932-gtk4-linux-candidate"]
 
 permissions:
   contents: read
@@ -24,7 +25,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             package_name: inkson-linux-x64
             binary_name: inkson
             artifact_path: target/release/inkson
@@ -48,6 +49,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: arkret-rust-sdk
+          ref: 516c2992040337b4cb2eb008a80202fd48b23a47
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout garth
@@ -55,6 +57,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/garth
           path: garth
+          ref: 80dc94db5a8f6ca8dc951d63ce5cbdf11dcf8ce3
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout chime
@@ -62,6 +65,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/chime
           path: chime
+          ref: afb66dd2fba230ebdb891ed58f9b917810615934
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Install Linux desktop dependencies
@@ -69,9 +73,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
+            libgtk-4-dev \
+            libwebkitgtk-6.0-dev \
+            libdbus-1-dev \
+            xvfb xdotool openbox weston gnome-keyring dbus-x11 \
             libxdo-dev \
             librsvg2-dev
 
@@ -136,4 +141,19 @@ jobs:
         with:
           name: ${{ matrix.package_name }}-deb-local
           path: inkson/dist/linux-packages/
+          if-no-files-found: error
+
+      - name: Exercise the real Linux GTK4 WebKit renderer
+        if: runner.os == 'Linux'
+        working-directory: inkson
+        run: |
+          xvfb-run -a dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --backend x11 --binary target/release/inkson
+          dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --backend wayland --binary target/release/inkson
+
+      - name: Upload Linux GTK4 runtime evidence
+        if: runner.os == 'Linux' && always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: inkson-linux-gtk4-runtime
+          path: inkson/dist/linux-gtk4-runtime/
           if-no-files-found: error

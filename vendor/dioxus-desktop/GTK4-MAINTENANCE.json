@@ -1,0 +1,81 @@
+{
+  "upstream_registry_package": "dioxus-desktop",
+  "version": "0.7.10",
+  "registry_archive_sha256": "236deb81f1a04de704fb80cf7838c65607441c76914de2e036709540c540a39d",
+  "registry_archive_checksum_verified": true,
+  "upstream_source": {
+    "git": {
+      "sha1": "57d6794ad60b949e5bd8aa282f6f8c3dc97a365e",
+      "dirty": true
+    },
+    "path_in_vcs": "packages/desktop"
+  },
+  "upstream_url": "https://github.com/DioxusLabs/dioxus/tree/v0.7.10/packages/desktop",
+  "license_files": [
+    "LICENSE-APACHE",
+    "LICENSE-MIT"
+  ],
+  "source_policy": "Only host adapter and actual dependency constraints change. No disguised versions. GLib must remain registry sourced.",
+  "dependencies": {
+    "tao": {
+      "version": "0.35.3",
+      "revision": "1879ad839cb8caaf7b4c733392c21f68a86787f4",
+      "pr": "https://github.com/tauri-apps/tao/pull/1258",
+      "state": "closed_unmerged"
+    },
+    "wry": {
+      "version": "0.57.0",
+      "revision": "006d0155eb46dedb6c43fa3aa152e55d162a4aa5",
+      "pr": "https://github.com/tauri-apps/wry/pull/1767",
+      "state": "open_non_draft_unmerged"
+    },
+    "muda": {
+      "version": "0.21.2",
+      "features": [
+        "gtk4"
+      ]
+    },
+    "tray-icon": {
+      "version": "0.26.1",
+      "features": [
+        "ksni"
+      ],
+      "default_features": false
+    }
+  },
+  "status": "candidate_not_audit_or_linux_runtime_pass",
+  "adapters": {
+    "linux_webview": "Tao Gtk4Box remains passed to Wry build_gtk; one resolved gtk4 0.11.5 makes IsA identity exact",
+    "linux_menu": "Tao GTK4 ApplicationWindow has registered Application; Muda GTK4 init_for_gtk_window retains API",
+    "features_removed_by_upstream": [
+      "protocol",
+      "drag-drop",
+      "transparent",
+      "fullscreen"
+    ],
+    "rwh": "Tao rwh_06 and Wry raw-window-handle0.6.2 same registry package; inherited rwh_05 retained for Dioxus exported compatibility",
+    "tray": "official KSNI worker + Muda snapshot, shared Muda0.21.2 Gtk4 feature"
+  },
+  "resolution": {
+    "cargo_metadata_exit": 0,
+    "glib": "registry0.22.10 only",
+    "gtk4": "registry0.11.5 only",
+    "gtk3": false,
+    "webkit2gtk": false,
+    "webkit6": "registry0.6.1",
+    "not_linux_compile_or_runtime": true
+  },
+  "ksni_license": {
+    "package": "ksni",
+    "version": "0.3.6",
+    "source": "crates.io",
+    "spdx": "Unlicense",
+    "license_files": [
+      {
+        "path": "UNLICENSE",
+        "sha256": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c"
+      }
+    ],
+    "policy": "Normal license allowlist addition approved by root; no crate exception or advisory ignore."
+  }
+}
