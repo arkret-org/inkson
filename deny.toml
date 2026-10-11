@@ -63,6 +63,8 @@ unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
     "https://github.com/DioxusLabs/components",
+    # Official PHF 0.8 caller migration to the patched rand 0.8 registry line.
+    "https://github.com/rust-phf/rust-phf",
     # Shared Arkret frontend component crate, consumed straight from its
     # private repository instead of a sibling path dependency.
     "https://github.com/arkret-org/yoface",

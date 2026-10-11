@@ -83,10 +83,6 @@ jobs:
         with:
           workspaces: inkson
 
-      - name: Build release binary
-        working-directory: inkson
-        run: cargo build --release --features desktop
-
       # Library/Web graphs do not establish desktop dependency safety. Keep
       # unsound advisories fatal for the real Linux desktop renderer graph.
       - name: Audit the desktop renderer dependencies
@@ -94,9 +90,13 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           manifest-path: inkson/Cargo.toml
-          arguments: --features desktop
+          arguments: --locked --features desktop
           command: check
           command-arguments: advisories
+
+      - name: Build release binary
+        working-directory: inkson
+        run: cargo build --locked --release --features desktop
 
       - name: Prepare artifact directory
         shell: pwsh

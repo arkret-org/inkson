@@ -10,6 +10,13 @@ repository = "https://github.com/arkret-org/inkson"
 [workspace]
 resolver = "3"
 
+# Upstream's rand 0.8 migration predates the PHF 0.9 API release. Keep the
+# renderer's PHF 0.8 API while resolving rand to a patched registry release.
+# Both crates must share a source so phf_codegen uses the same PhfHash trait.
+[patch.crates-io]
+phf_generator = { git = "https://github.com/rust-phf/rust-phf", rev = "6d5bfb4a377270d2ae69e05347044b1a95499973" }
+phf_shared = { git = "https://github.com/rust-phf/rust-phf", rev = "6d5bfb4a377270d2ae69e05347044b1a95499973" }
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 
