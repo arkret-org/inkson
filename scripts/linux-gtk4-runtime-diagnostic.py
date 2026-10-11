@@ -48,6 +48,15 @@ def station_field(process_id):
                 stack.append(node)
         except (AttributeError, RuntimeError, GLib.Error):
             continue
+    # WebKit emits its real document root even when the toolkit's embedded
+    # accessibility socket has not grafted it into the GTK desktop tree.
+    # Preserve the exact same owning-process/descendant restriction.
+    for source in document_event_sources:
+        try:
+            if source.get_process_id() in process_ids:
+                stack.append(source)
+        except (AttributeError, RuntimeError, GLib.Error):
+            continue
     visited = 0
     while stack and visited < 4096:
         node = stack.pop()
@@ -65,7 +74,7 @@ def diagnostic_tree(process_id):
     rows = subprocess.check_output(['ps', '-eo', 'pid=,ppid=,args='], text=True)
     (out / (args.backend + '-processes.log')).write_text(rows)
     desktop = pyatspi.Registry.getDesktop(0)
-    stack = [(desktop, 0)]
+    stack = [(desktop, 0)] + [(source, 0) for source in document_event_sources]
     nodes = []
     while stack and len(nodes) < 2048:
         node, depth = stack.pop()
@@ -119,8 +128,22 @@ with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
     background = None
     app = None
     accessibility_events = {}
+    document_event_sources = []
+    document_event_metadata = []
     def observed_accessibility_event(event):
         accessibility_events[event.type] = accessibility_events.get(event.type, 0) + 1
+        if event.type.startswith('document:') and len(document_event_sources) < 16:
+            source = event.source
+            if source not in document_event_sources:
+                document_event_sources.append(source)
+                metadata = {'event': event.type}
+                for label, getter in [('pid', source.get_process_id), ('name', source.get_name),
+                                      ('role', source.get_role_name)]:
+                    try:
+                        metadata[label] = getter()
+                    except (AttributeError, RuntimeError, GLib.Error) as error:
+                        metadata[label + '_error'] = str(error)
+                document_event_metadata.append(metadata)
     # WebKit enables its real AX cache for registered assistive clients.
     # Polling the Registry alone does not register such a client.
     listener_names = ('object', 'document')
@@ -204,6 +227,7 @@ with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
     finally:
         pyatspi.Registry.deregisterEventListener(observed_accessibility_event, *listener_names)
         result['actual_atspi_event_counts'] = accessibility_events
+        result['actual_document_event_sources'] = document_event_metadata
         for process in [app, background]:
             if process is not None and process.poll() is None:
                 process.terminate()
