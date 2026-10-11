@@ -22,7 +22,7 @@ jobs:
             libgtk-4-dev dpkg-dev \
             libwebkitgtk-6.0-dev \
             libdbus-1-dev \
-            xvfb xdotool openbox weston gnome-keyring dbus-x11 at-spi2-core python3-pyatspi \
+            xvfb xdotool xclip wl-clipboard openbox weston gnome-keyring dbus-x11 at-spi2-core python3-pyatspi \
             libxdo-dev \
             librsvg2-dev
 

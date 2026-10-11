@@ -202,13 +202,30 @@ with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
                 else:
                     # Official nested backend receives physical X11 keys and
                     # dispatches them to the real Wayland application's seat.
-                    query = subprocess.run(['xdotool', 'search', '--onlyvisible', '--pid', str(background.pid)],
+                    query = subprocess.run(['xdotool', 'search', '--onlyvisible', '--class', '^Weston Compositor$'],
                                            text=True, capture_output=True, check=True)
-                    input_window = query.stdout.splitlines()[-1]
+                    candidates = query.stdout.splitlines()
+                    if len(candidates) != 1:
+                        raise RuntimeError('expected one actual Weston compositor X11 output window')
+                    input_window = candidates[0]
                 subprocess.run(['xdotool', 'windowfocus', '--sync', input_window], check=True, env=env)
                 subprocess.run(['xdotool', 'key', '--clearmodifiers', 'ctrl+a'], check=True, env=env)
-                subprocess.run(['xdotool', 'type', '--clearmodifiers', '--delay', '30', STATION_MARKER], check=True, env=env)
-                result['actual_input_transport'] = 'X11 physical keyboard' if args.backend == 'x11' else 'Weston X11 backend keyboard to native Wayland seat'
+                clipboard = subprocess.Popen(
+                    ['xclip', '-selection', 'clipboard', '-quiet'] if args.backend == 'x11' else ['wl-copy', '--foreground'],
+                    stdin=subprocess.PIPE, env=env)
+                try:
+                    clipboard.stdin.write(STATION_MARKER.encode())
+                    clipboard.stdin.close()
+                    time.sleep(0.5)
+                    if clipboard.poll() is not None:
+                        raise RuntimeError('real platform clipboard owner exited before keyboard paste')
+                    subprocess.run(['xdotool', 'key', '--clearmodifiers', 'ctrl+v'], check=True, env=env)
+                    wait_station(app, STATION_MARKER)
+                finally:
+                    if clipboard.poll() is None:
+                        clipboard.terminate()
+                    clipboard.wait(timeout=15)
+                result['actual_input_transport'] = 'X11 clipboard and physical Ctrl+V' if args.backend == 'x11' else 'Wayland clipboard and Weston native Wayland seat Ctrl+V'
                 wait_station(app, STATION_MARKER)
                 # Allow normal production config persistence to finish before close.
                 time.sleep(1)
