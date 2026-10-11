@@ -3201,7 +3201,16 @@ pub fn ChatPanel(
                     direct_structure::DirectStructurePanel {
                         realm: selected_realm_id.clone(), base: base_url.clone(), account: authority.clone(), device: account_device_id.clone(),
                         token, selected: selected_channel, frontier: frontier_state, live_epoch: realm_live_epoch,
-                        on_select: move |id| controller.select_channel(id),
+                        on_select: {
+                            let realm_id = selected_realm_id.clone();
+                            move |id: String| {
+                                controller.select_channel(id.clone());
+                                navigator.push(Route::DirectConversation {
+                                    realm_id: realm_id.clone(),
+                                    strand_id: id,
+                                });
+                            }
+                        },
                     }
                 }
                 if sidecar_mode && sidecar_exchange_current.is_err() {
