@@ -981,3 +981,140 @@ fn plain_local_data_remove_works() {
     store.remove_plain_local_data("temp");
     assert!(store.load_plain_local_data("temp").is_none());
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn composer_drafts_survive_restart_only_in_exact_account_device_realm_strand_secure_scope() {
+    use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
+    let path = temp_state_path("composer-drafts");
+    let secure = MemorySecureKeyStore::new();
+    let alice = "did:web:alice.example";
+    let bob = "did:web:bob.example";
+    let authority = test_authority(alice);
+    let device = test_device_id();
+    let other_device =
+        crate::test_support::device_id("ak:device:01964137-0000-7000-8000-000000000002");
+    let mut writer = LocalStateStore::with_path(path.clone());
+    writer.switch_test_account(alice);
+    let (key, json) = writer
+        .prepare_composer_draft_write(
+            &authority,
+            &device,
+            "realm-a",
+            "chat-a",
+            "private draft A".into(),
+        )
+        .unwrap();
+    let first_json = json.clone();
+    LocalStateStore::persist_e2ee_plaintext_cache_write_durable(&secure, &key, json.as_deref())
+        .await
+        .unwrap();
+    for (target_device, realm, strand, text) in [
+        (&device, "realm-a", "chat-b", "private draft B"),
+        (&device, "realm-b", "chat-a", "private draft other Realm"),
+        (
+            &other_device,
+            "realm-a",
+            "chat-a",
+            "private draft other device",
+        ),
+    ] {
+        let (key, json) = writer
+            .prepare_composer_draft_write(&authority, target_device, realm, strand, text.into())
+            .unwrap();
+        LocalStateStore::persist_e2ee_plaintext_cache_write_durable(&secure, &key, json.as_deref())
+            .await
+            .unwrap();
+    }
+    writer.flush().unwrap();
+    let raw = std::fs::read_to_string(
+        writer.account_state_path(&writer.active_authority_namespace_for_test()),
+    )
+    .unwrap();
+    assert!(!raw.contains("composer_drafts"));
+    assert!(!raw.contains("private draft"));
+    assert!(
+        !String::from_utf8(writer.private_plaintext_snapshot_json())
+            .unwrap()
+            .contains("private draft")
+    );
+    drop(writer);
+    let mut reader = LocalStateStore::with_path(path.clone());
+    reader.switch_test_account(alice);
+    assert_eq!(reader.composer_draft(&device, "realm-a", "chat-a"), "");
+    reader
+        .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+        .unwrap();
+    assert_eq!(
+        reader.composer_draft(&device, "realm-a", "chat-a"),
+        "private draft A"
+    );
+    assert_eq!(
+        reader.composer_draft(&device, "realm-a", "chat-b"),
+        "private draft B"
+    );
+    assert_eq!(
+        reader.composer_draft(&device, "realm-b", "chat-a"),
+        "private draft other Realm"
+    );
+    assert_eq!(
+        reader.composer_draft(&other_device, "realm-a", "chat-a"),
+        "private draft other device"
+    );
+    let (key, cleared) = reader
+        .prepare_composer_draft_write(&authority, &device, "realm-a", "chat-a", String::new())
+        .unwrap();
+    // Hydration of an earlier immutable snapshot cannot undo an explicit clear.
+    secure
+        .store_secret(&key, first_json.as_deref().unwrap())
+        .unwrap();
+    reader
+        .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+        .unwrap();
+    assert_eq!(reader.composer_draft(&device, "realm-a", "chat-a"), "");
+    LocalStateStore::persist_e2ee_plaintext_cache_write_durable(&secure, &key, cleared.as_deref())
+        .await
+        .unwrap();
+    reader.switch_test_account(bob);
+    assert!(
+        reader
+            .prepare_composer_draft_write(
+                &authority,
+                &device,
+                "realm-a",
+                "chat-a",
+                "stale Alice callback".into()
+            )
+            .is_err()
+    );
+    reader
+        .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+        .unwrap();
+    assert_eq!(reader.composer_draft(&device, "realm-a", "chat-b"), "");
+    reader.switch_test_account(alice);
+    reader
+        .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+        .unwrap();
+    assert_eq!(reader.composer_draft(&device, "realm-a", "chat-a"), "");
+    assert_eq!(
+        reader.composer_draft(&device, "realm-a", "chat-b"),
+        "private draft B"
+    );
+    reader.clear_account_scoped();
+    assert_eq!(
+        reader.composer_draft(&device, "realm-a", "chat-b"),
+        "private draft B",
+        "same-account projection reset must preserve authored drafts"
+    );
+    assert_eq!(reader.composer_draft(&device, "realm-a", "chat-a"), "");
+    reader.clear_stored_composer_drafts(&secure).unwrap();
+    reader.clear_account_scoped();
+    drop(reader);
+    let mut reset = LocalStateStore::with_path(path);
+    reset.switch_test_account(alice);
+    reset
+        .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+        .unwrap();
+    assert_eq!(reset.composer_draft(&device, "realm-a", "chat-b"), "");
+    assert_eq!(reset.composer_draft(&other_device, "realm-a", "chat-a"), "");
+}

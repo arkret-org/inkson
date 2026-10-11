@@ -1300,6 +1300,10 @@ pub struct ClientLocalState {
     /// persists only in the hardened E2EE cache.
     #[serde(default, skip_serializing)]
     pub(crate) authenticated_identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
+    /// Device-local composer text, isolated by device, Realm and actual Strand.
+    /// Only the existing account-scoped encrypted cache may persist this map.
+    #[serde(default, skip_serializing)]
+    pub(crate) composer_drafts: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
     /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the coland
     /// `/sync` `account_data[]` projection (entries with
@@ -1638,6 +1642,7 @@ impl Default for ClientLocalState {
             mls_private_plaintext: BTreeMap::new(),
             mls_decrypted_plaintext: BTreeMap::new(),
             authenticated_identity_links: BTreeMap::new(),
+            composer_drafts: BTreeMap::new(),
             realm_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             accepted_human_contact_principals: BTreeSet::new(),

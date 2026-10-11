@@ -236,6 +236,9 @@ pub(super) struct ChatController {
     pub selected_channel: Signal<String>,
     pub messages: Signal<Vec<ChatMessage>>,
     pub draft: Signal<String>,
+    pub draft_storage: Signal<&'static str>,
+    pub draft_saved: Signal<String>,
+    pub pending_drafts: Signal<std::collections::BTreeMap<String, String>>,
     pub typing_throttle: crate::perf::TypingThrottle,
     pub compose_dragover: Signal<bool>,
     pub compose_upload_status: Signal<String>,
@@ -311,6 +314,19 @@ impl ChatController {
         self.selected_channel.set(strand_id);
         self.message_context_menu.set(None);
         self.reaction_picker.set(None);
+    }
+
+    pub fn draft_storage_status(self) -> &'static str {
+        let status = (self.draft_storage)();
+        let draft = (self.draft)();
+        if status == "saved"
+            && ((self.draft_saved)() != draft
+                || (draft.is_empty() && !(self.pending_drafts)().is_empty()))
+        {
+            "saving"
+        } else {
+            status
+        }
     }
 
     pub fn update_draft(mut self, draft: String) {
@@ -1818,7 +1834,11 @@ pub(super) struct StrandCreateDraft {
 /// send failures and uploads retain the original target's signals after a switch.
 #[derive(Clone, Copy, PartialEq)]
 struct ComposerState {
+    session_generation: u64,
     draft: Signal<String>,
+    draft_storage: Signal<&'static str>,
+    draft_saved: Signal<String>,
+    pending_drafts: Signal<std::collections::BTreeMap<String, String>>,
     reply_to_message: Signal<Option<String>>,
     editing_message: Signal<Option<String>>,
     edit_draft: Signal<String>,
@@ -1844,31 +1864,202 @@ struct ComposerTarget {
     strand_id: String,
 }
 
+fn composer_session_matches(
+    session: crate::app::SessionContext,
+    target: &ComposerTarget,
+    generation: u64,
+) -> bool {
+    *session.session_generation.peek() == generation
+        && session
+            .active_account
+            .peek()
+            .as_ref()
+            .is_some_and(|account| {
+                account.authority == target.authority && account.device_id == target.device_id
+            })
+}
+
 fn use_composer_state(target: ComposerTarget) -> ComposerState {
+    let session = try_consume_context::<crate::app::SessionContext>();
     let mut targets = use_signal(std::collections::BTreeMap::<ComposerTarget, ComposerState>::new);
-    let existing = targets.peek().get(&target).copied();
-    if let Some(state) = existing {
-        return state;
+    let mut last_seen =
+        use_signal(std::collections::BTreeMap::<ComposerTarget, (u64, String)>::new);
+    let mut pending = use_signal(std::collections::BTreeMap::<ComposerTarget, (u64, String)>::new);
+    let mut running = use_signal(|| false);
+    let mut previous_session = use_signal(|| None::<u64>);
+    if let Some(session) = session {
+        let generation = *session.session_generation.peek();
+        if *previous_session.peek() != Some(generation) {
+            targets.write().clear();
+            last_seen.write().clear();
+            pending.write().clear();
+            previous_session.set(Some(generation));
+        }
     }
-    let state = ComposerState {
-        draft: Signal::new(String::new()),
-        reply_to_message: Signal::new(None),
-        editing_message: Signal::new(None),
-        edit_draft: Signal::new(String::new()),
-        compose_dragover: Signal::new(false),
-        compose_upload_status: Signal::new(String::new()),
-        message_context_menu: Signal::new(None),
-        moderation_report_draft: Signal::new(None),
-        moderation_report_pending: Signal::new(false),
-        status_msg: Signal::new(String::new()),
-        redact_confirm: Signal::new(None),
-        reaction_picker: Signal::new(None),
-        mention_picker_state: Signal::new(crate::messaging::mentions::MentionPickerState::new()),
-        attachment_menu_open: Signal::new(false),
-        poll_draft: Signal::new(None),
-        latest_read_cursor: Signal::new(String::new()),
-    };
-    targets.write().insert(target, state);
+    let existing = targets.peek().get(&target).copied();
+    let state =
+        existing.unwrap_or_else(|| {
+            let restored = session.and_then(|mut session| {
+                let generation = *session.session_generation.peek();
+                if !composer_session_matches(session, &target, generation) {
+                    return None;
+                }
+                #[cfg(target_arch = "wasm32")]
+                if !crate::secure_key_store::wasm_secure_store_ready() {
+                    return None;
+                }
+                let secure = crate::secure_key_store::default_secure_key_store("inkson");
+                let mut store = session.state_store.write();
+                if store.active_authority().as_ref() != Some(&target.authority) {
+                    return None;
+                }
+                if let Err(error) =
+                    store.hydrate_e2ee_plaintext_cache_with_secure_store(secure.as_ref())
+                {
+                    tracing::warn!(?error, "composer secure-cache hydration failed");
+                    return None;
+                }
+                Some(store.composer_draft(&target.device_id, &target.realm_id, &target.strand_id))
+            });
+            let state = ComposerState {
+                session_generation: session
+                    .map(|session| *session.session_generation.peek())
+                    .unwrap_or_default(),
+                draft: Signal::new(restored.clone().unwrap_or_default()),
+                draft_storage: Signal::new(if restored.is_some() {
+                    "saved"
+                } else {
+                    "memory"
+                }),
+                draft_saved: Signal::new(restored.unwrap_or_default()),
+                pending_drafts: Signal::new(std::collections::BTreeMap::new()),
+                reply_to_message: Signal::new(None),
+                editing_message: Signal::new(None),
+                edit_draft: Signal::new(String::new()),
+                compose_dragover: Signal::new(false),
+                compose_upload_status: Signal::new(String::new()),
+                message_context_menu: Signal::new(None),
+                moderation_report_draft: Signal::new(None),
+                moderation_report_pending: Signal::new(false),
+                status_msg: Signal::new(String::new()),
+                redact_confirm: Signal::new(None),
+                reaction_picker: Signal::new(None),
+                mention_picker_state: Signal::new(
+                    crate::messaging::mentions::MentionPickerState::new(),
+                ),
+                attachment_menu_open: Signal::new(false),
+                poll_draft: Signal::new(None),
+                latest_read_cursor: Signal::new(String::new()),
+            };
+            targets.write().insert(target.clone(), state);
+            state
+        });
+    // Always allocate this hook, including when switching to an existing target.
+    // One drain serializes exact encrypted snapshots; typing during a write
+    // replaces only the pending value and can never mark stale text as saved.
+    use_effect(move || {
+        let Some(mut session) = session else {
+            return;
+        };
+        let generation = (session.session_generation)();
+        let account = (session.active_account)();
+        for (target, mut state) in targets
+            .read()
+            .iter()
+            .map(|(target, state)| (target.clone(), *state))
+        {
+            if state.session_generation != generation {
+                continue;
+            }
+            let draft = (state.draft)();
+            let inflight = (state.pending_drafts)();
+            if !account.as_ref().is_some_and(|account| {
+                account.authority == target.authority && account.device_id == target.device_id
+            }) {
+                continue;
+            }
+            let durable_draft = if draft.is_empty() {
+                inflight.values().next_back().cloned().unwrap_or_default()
+            } else {
+                draft
+            };
+            let value = (generation, durable_draft);
+            if last_seen.peek().get(&target) == Some(&value) {
+                continue;
+            }
+            state.draft_storage.set("saving");
+            last_seen.write().insert(target.clone(), value.clone());
+            pending.write().insert(target, value);
+        }
+        if *running.peek() || pending.peek().is_empty() {
+            return;
+        }
+        running.set(true);
+        spawn(async move {
+            loop {
+                let next = {
+                    let target = pending.peek().keys().next().cloned();
+                    target.and_then(|target| {
+                        pending.write().remove(&target).map(|value| (target, value))
+                    })
+                };
+                let Some((target, (generation, draft))) = next else {
+                    break;
+                };
+                if !composer_session_matches(session, &target, generation) {
+                    continue;
+                }
+                let result: anyhow::Result<()> = async {
+                    #[cfg(target_arch = "wasm32")]
+                    anyhow::ensure!(
+                        crate::secure_key_store::wasm_secure_store_ready(),
+                        "encrypted storage is unavailable"
+                    );
+                    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+                    let write = {
+                        let mut store = session.state_store.write();
+                        // Do not overwrite an unread secure entry after a failed
+                        // initialization, and never route an old session to a new account.
+                        store.hydrate_e2ee_plaintext_cache_with_secure_store(secure.as_ref())?;
+                        store.prepare_composer_draft_write(
+                            &target.authority,
+                            &target.device_id,
+                            &target.realm_id,
+                            &target.strand_id,
+                            draft.clone(),
+                        )?
+                    };
+                    crate::state::LocalStateStore::persist_e2ee_plaintext_cache_write_durable(
+                        secure.as_ref(),
+                        &write.0,
+                        write.1.as_deref(),
+                    )
+                    .await
+                }
+                .await;
+                if !composer_session_matches(session, &target, generation) {
+                    continue;
+                }
+                if last_seen.peek().get(&target) != Some(&(generation, draft.clone())) {
+                    continue;
+                }
+                let state = targets.peek().get(&target).copied();
+                if let Some(mut state) = state {
+                    match result {
+                        Ok(()) => {
+                            state.draft_saved.set(draft);
+                            state.draft_storage.set("saved");
+                        }
+                        Err(error) => {
+                            tracing::warn!(?error, "composer draft durable write failed");
+                            state.draft_storage.set("error");
+                        }
+                    }
+                }
+            }
+            running.set(false);
+        });
+    });
     state
 }
 
@@ -1905,6 +2096,9 @@ pub(super) fn use_chat_controller(
         selected_channel,
         messages: use_signal(Vec::<ChatMessage>::new),
         draft: composer.draft,
+        draft_storage: composer.draft_storage,
+        draft_saved: composer.draft_saved,
+        pending_drafts: composer.pending_drafts,
         typing_throttle: crate::perf::use_typing_throttle(3_000, 4_000),
         compose_dragover: composer.compose_dragover,
         compose_upload_status: composer.compose_upload_status,

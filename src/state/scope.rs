@@ -135,6 +135,9 @@ impl LocalStateStore {
     /// grant; a logout flow follows up with explicit `set_session_grant(None)`).
     pub fn clear_account_scoped(&mut self) {
         self.ensure_cached_loaded();
+        // Authored drafts belong to the same Account/Device and actual Strand,
+        // not to its projection cache. A soft reset must keep them recoverable.
+        let preserved_drafts = self.cached.composer_drafts.clone();
         let preserved_identity = self.cached.local_identity.clone();
         let preserved_push = self.cached.push_registration.clone();
         let preserved_grant = self.cached.session_grant.clone();
@@ -153,6 +156,7 @@ impl LocalStateStore {
             dpop_device_key: preserved_dpop,
             recovery_material_evidence: preserved_recovery_material,
             retired_event_records: preserved_retired_records,
+            composer_drafts: preserved_drafts,
             ..ClientLocalState::default()
         };
         let _ = self.flush();
@@ -453,6 +457,8 @@ impl LocalStateStore {
 
     fn clear_device_scoped_state(&mut self) {
         self.ensure_cached_loaded();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.clear_stored_composer_drafts_on_reset();
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         // E7: reset the account-scoped cursor overlay alongside the receive
         // overlay so a stale cursor never leaks across account scope changes.

@@ -1624,6 +1624,10 @@ pub fn english_translations() -> TranslationDict {
         "Drop files here to attach, or click Attach",
     );
     dict.set("compose.upload_progress", "Uploading…");
+    dict.set(
+        "compose.draft_storage_error",
+        "This device could not save the draft. Keep this chat open until storage is available.",
+    );
     dict.set("compose.upload_error", "Upload failed");
     // Message write-status revision counter (edit history).
     dict.set("chat.message.revised", "revised");

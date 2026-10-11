@@ -31,6 +31,7 @@ pub(crate) struct PendingE2eePlaintextClear {
     previous_private: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
     previous_decrypted: BTreeMap<String, BTreeMap<String, String>>,
     previous_identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
+    previous_drafts: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
 }
 
 impl PendingE2eePlaintextClear {
@@ -89,6 +90,8 @@ struct E2eePlaintextCacheV1 {
     decrypted_plaintext: BTreeMap<String, BTreeMap<String, String>>,
     #[serde(default)]
     authenticated_identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
+    #[serde(default)]
+    composer_drafts: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
 }
 
 impl E2eePlaintextCacheV1 {
@@ -98,6 +101,7 @@ impl E2eePlaintextCacheV1 {
             private_plaintext: state.mls_private_plaintext.clone(),
             decrypted_plaintext: state.mls_decrypted_plaintext.clone(),
             authenticated_identity_links: state.authenticated_identity_links.clone(),
+            composer_drafts: state.composer_drafts.clone(),
         }
     }
 
@@ -128,6 +132,7 @@ impl E2eePlaintextCacheV1 {
             && self.private_plaintext.is_empty()
             && self.decrypted_plaintext.is_empty()
             && self.authenticated_identity_links.is_empty()
+            && self.composer_drafts.is_empty()
     }
 
     fn plaintext_usage(&self) -> E2eePlaintextCacheUsage {
@@ -144,6 +149,14 @@ impl E2eePlaintextCacheV1 {
             realm.received_entries += entries.len();
             realm.plaintext_bytes += entries.values().map(|value| value.len()).sum::<usize>();
         }
+        for realms in self.composer_drafts.values() {
+            for (realm_id, strands) in realms {
+                let realm = usage.realms.entry(realm_id.clone()).or_default();
+                realm.authored_entries +=
+                    strands.values().filter(|draft| !draft.is_empty()).count();
+                realm.plaintext_bytes += strands.values().map(String::len).sum::<usize>();
+            }
+        }
         for realm in usage.realms.values() {
             usage.plaintext_bytes += realm.plaintext_bytes;
             usage.authored_entries += realm.authored_entries;
@@ -152,7 +165,6 @@ impl E2eePlaintextCacheV1 {
         usage
     }
 
-    #[cfg(any(test, target_arch = "wasm32"))]
     fn merge_into(
         self,
         state: &mut ClientLocalState,
@@ -217,6 +229,22 @@ impl E2eePlaintextCacheV1 {
                 });
             }
         }
+        for (device, realms) in self.composer_drafts {
+            for (realm, strands) in realms {
+                let current = state
+                    .composer_drafts
+                    .entry(device.clone())
+                    .or_default()
+                    .entry(realm)
+                    .or_default();
+                for (strand, draft) in strands {
+                    current.entry(strand).or_insert_with(|| {
+                        changed = true;
+                        draft
+                    });
+                }
+            }
+        }
         for (key, identity_link) in self.authenticated_identity_links {
             state
                 .authenticated_identity_links
@@ -231,6 +259,87 @@ impl E2eePlaintextCacheV1 {
 }
 
 impl LocalStateStore {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn clear_stored_composer_drafts(
+        &self,
+        secure: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> anyhow::Result<()> {
+        let Some(key) = self.active_e2ee_plaintext_cache_key() else {
+            return Ok(());
+        };
+        let Some(json) = secure.get_secret(&key)? else {
+            return Ok(());
+        };
+        let mut cache: E2eePlaintextCacheV1 = serde_json::from_str(&json)?;
+        if cache.composer_drafts.is_empty() {
+            return Ok(());
+        }
+        cache.composer_drafts.clear();
+        secure.store_secret(&key, &serde_json::to_string(&cache)?)?;
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn clear_stored_composer_drafts_on_reset(&self) {
+        #[cfg(not(test))]
+        if let Err(error) = self.clear_stored_composer_drafts(
+            crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
+        ) {
+            tracing::warn!(
+                ?error,
+                "composer drafts could not be cleared from this device"
+            );
+        }
+    }
+
+    pub(crate) fn composer_draft(
+        &mut self,
+        device: &arkret_sdk::DeviceId,
+        realm: &str,
+        strand: &str,
+    ) -> String {
+        self.ensure_cached_loaded();
+        self.cached
+            .composer_drafts
+            .get(device.as_str())
+            .and_then(|realms| realms.get(realm))
+            .and_then(|strands| strands.get(strand))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The caller must bind the device and session to the authenticated context.
+    pub(crate) fn prepare_composer_draft_write(
+        &mut self,
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        realm: &str,
+        strand: &str,
+        draft: String,
+    ) -> anyhow::Result<(String, Option<String>)> {
+        anyhow::ensure!(
+            self.active_authority().as_ref() == Some(authority),
+            "composer account is no longer active"
+        );
+        self.ensure_cached_loaded();
+        self.cached_account_key_for_persist()?;
+        anyhow::ensure!(
+            !realm.is_empty() && !strand.is_empty(),
+            "composer target is missing"
+        );
+        // Empty strings are explicit clears. Keeping the entry prevents a late
+        // secure-cache hydration from resurrecting text already sent or erased.
+        self.cached
+            .composer_drafts
+            .entry(device.to_string())
+            .or_default()
+            .entry(realm.to_owned())
+            .or_default()
+            .insert(strand.to_owned(), draft);
+        self.e2ee_plaintext_cache_secure_write()?
+            .ok_or_else(|| anyhow::anyhow!("composer account cache is unavailable"))
+    }
+
     fn active_e2ee_plaintext_cache_key(&self) -> Option<String> {
         let root = self.read_root();
         let namespace = account_storage_scope(&root.active_entry()?.authority).ok()?;
@@ -315,14 +424,17 @@ impl LocalStateStore {
         let previous_private = self.cached.mls_private_plaintext.clone();
         let previous_decrypted = self.cached.mls_decrypted_plaintext.clone();
         let previous_identity_links = self.cached.authenticated_identity_links.clone();
+        let previous_drafts = self.cached.composer_drafts.clone();
         let changed = match scope {
             E2eePlaintextCacheClearScope::All => {
                 let changed = !self.cached.mls_private_plaintext.is_empty()
                     || !self.cached.mls_decrypted_plaintext.is_empty()
-                    || !self.cached.authenticated_identity_links.is_empty();
+                    || !self.cached.authenticated_identity_links.is_empty()
+                    || !self.cached.composer_drafts.is_empty();
                 self.cached.mls_private_plaintext.clear();
                 self.cached.mls_decrypted_plaintext.clear();
                 self.cached.authenticated_identity_links.clear();
+                self.cached.composer_drafts.clear();
                 changed
             }
             E2eePlaintextCacheClearScope::Realm(realm_id) => {
@@ -336,7 +448,12 @@ impl LocalStateStore {
                 self.cached
                     .authenticated_identity_links
                     .retain(|_, entry| entry.identity_link.realm_id.as_str() != realm_id);
+                let mut removed_draft = false;
+                for realms in self.cached.composer_drafts.values_mut() {
+                    removed_draft |= realms.remove(realm_id).is_some();
+                }
                 removed_private
+                    || removed_draft
                     || removed_decrypted
                     || retained != self.cached.authenticated_identity_links.len()
             }
@@ -349,6 +466,7 @@ impl LocalStateStore {
             self.cached.mls_private_plaintext = previous_private;
             self.cached.mls_decrypted_plaintext = previous_decrypted;
             self.cached.authenticated_identity_links = previous_identity_links;
+            self.cached.composer_drafts = previous_drafts;
             anyhow::bail!("cannot clear E2EE plaintext cache without an active account");
         };
         // Keep a minimal encrypted empty object instead of deleting the entry.
@@ -358,6 +476,7 @@ impl LocalStateStore {
             previous_private,
             previous_decrypted,
             previous_identity_links,
+            previous_drafts,
         }))
     }
 
@@ -390,6 +509,20 @@ impl LocalStateStore {
                 current_entries.entry(digest).or_insert(plaintext);
             }
         }
+        for (device, realms) in pending.previous_drafts {
+            for (realm, strands) in realms {
+                let current = self
+                    .cached
+                    .composer_drafts
+                    .entry(device.clone())
+                    .or_default()
+                    .entry(realm)
+                    .or_default();
+                for (strand, draft) in strands {
+                    current.entry(strand).or_insert(draft);
+                }
+            }
+        }
         for (key, identity_link) in pending.previous_identity_links {
             self.cached
                 .authenticated_identity_links
@@ -415,7 +548,6 @@ impl LocalStateStore {
         Ok(true)
     }
 
-    #[cfg(any(test, target_arch = "wasm32"))]
     pub(crate) fn hydrate_e2ee_plaintext_cache_with_secure_store(
         &mut self,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -480,7 +612,7 @@ impl LocalStateStore {
         if merged != persisted {
             #[cfg(target_arch = "wasm32")]
             self.persist_e2ee_plaintext_cache_if_ready();
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(test, not(target_arch = "wasm32")))]
             self.persist_e2ee_plaintext_cache_with_secure_store(secure_store)?;
         }
         Ok(changed)
@@ -531,6 +663,7 @@ impl LocalStateStore {
         self.cached.mls_private_plaintext.clear();
         self.cached.mls_decrypted_plaintext.clear();
         self.cached.authenticated_identity_links.clear();
+        self.cached.composer_drafts.clear();
     }
 
     pub(super) fn persist_e2ee_plaintext_cache_if_ready(&self) {

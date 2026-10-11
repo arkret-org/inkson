@@ -21,6 +21,77 @@ use super::*;
 #[path = "commands_context_tests.rs"]
 mod context_tests;
 
+/// Keep the submitted text recoverable until the original target receives a
+/// committed result or the durable exact-byte queue takes ownership. Only a
+/// definite failure restores an empty composer; pending submissions must not
+/// invite duplicate authoring, and new text always remains the current draft.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ComposerSubmissionState {
+    Recoverable,
+    DurablePending,
+    Committed,
+}
+
+struct PendingComposerDraft {
+    draft: Signal<String>,
+    pending: Signal<std::collections::BTreeMap<String, String>>,
+    operation: String,
+    body: String,
+    submission: ComposerSubmissionState,
+}
+
+impl PendingComposerDraft {
+    fn new(controller: ChatController, operation: &str, body: &str) -> Self {
+        let mut pending = controller.pending_drafts;
+        pending
+            .write()
+            .insert(operation.to_owned(), body.to_owned());
+        Self {
+            draft: controller.draft,
+            pending,
+            operation: operation.to_owned(),
+            body: body.to_owned(),
+            submission: ComposerSubmissionState::Recoverable,
+        }
+    }
+
+    fn record_send_status(&mut self, status: garth::SendQueueStatus) {
+        // Borrow the whole guard so async closures retain its Drop state until
+        // submission completes, rather than capturing only a state field.
+        self.submission = match status {
+            garth::SendQueueStatus::Committed => ComposerSubmissionState::Committed,
+            garth::SendQueueStatus::Queued | garth::SendQueueStatus::Forwarding => {
+                ComposerSubmissionState::DurablePending
+            }
+            garth::SendQueueStatus::Rejected
+            | garth::SendQueueStatus::Failed
+            | garth::SendQueueStatus::Cancelled => ComposerSubmissionState::Recoverable,
+        };
+    }
+
+    fn record_failure(&mut self, failure: &garth::MessageAuthoringFailure) {
+        if failure.recovery() == garth::MessageAuthoringRecovery::ReplayExactSubmission {
+            // The original queue and optimistic row own this pending result.
+            // Remove our transient draft reservation without making it editable.
+            self.submission = ComposerSubmissionState::DurablePending;
+        }
+    }
+}
+
+impl Drop for PendingComposerDraft {
+    fn drop(&mut self) {
+        if let Ok(mut pending) = self.pending.try_write() {
+            pending.remove(&self.operation);
+        }
+        if self.submission == ComposerSubmissionState::Recoverable
+            && let Ok(mut draft) = self.draft.try_write()
+            && draft.is_empty()
+        {
+            *draft = self.body.clone();
+        }
+    }
+}
+
 /// Upload every dropped file to the Realm's blob store and append an
 /// attachment reference to the draft for each one that lands.
 ///
@@ -772,6 +843,7 @@ pub(super) fn send_plaintext_message(
     let mut messages = controller.messages;
     let mut status_msg = controller.status_msg;
     let chat_draft = controller.draft;
+    let mut pending_draft = PendingComposerDraft::new(controller, &request.local_id, &request.body);
     let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
     // A verified-current refresh can replace the composer send Button.
     // Its in-flight write belongs to the controller's message list.
@@ -926,6 +998,7 @@ pub(super) fn send_plaintext_message(
             .await
             {
                 Ok(resp) => {
+                    pending_draft.record_send_status(resp.status);
                     match serde_json::to_value(AcceptedChatMessageOperation {
                         event_id: &resp.event_id,
                         kind: event_kind_str::MESSAGE_CREATE,
@@ -980,6 +1053,7 @@ pub(super) fn send_plaintext_message(
                     });
                 }
                 Err(failure) => {
+                    pending_draft.record_failure(&failure);
                     tracing::warn!(
                         event_id = %local_id,
                         error = %failure,
@@ -1316,7 +1390,11 @@ pub(super) fn send_encrypted_message(
     let mut messages = controller.messages;
     let mut status_msg = controller.status_msg;
     let chat_draft = controller.draft;
-    let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
+    let mut pending_draft =
+        PendingComposerDraft::new(controller, &request.message_id, &request.body);
+    let session = consume_context::<crate::app::SessionContext>();
+    let session_generation = *session.session_generation.peek();
+    let mut state_store = session.state_store;
     let EncryptedSendRequest {
         base_url: base,
         api_token,
@@ -1334,6 +1412,7 @@ pub(super) fn send_encrypted_message(
         shared_agent_targets,
         backup_trigger_signal,
     } = request;
+    let device_for_cache = did.clone();
     let base_for_backup_trigger = base.clone();
     let token_for_backup_trigger = api_token.clone();
     let actor_for_backup_trigger = actor.clone();
@@ -1580,6 +1659,7 @@ pub(super) fn send_encrypted_message(
                 crate::views::secure_send::SecureSendOutcome::MessageAuthoringFailed {
                     failure,
                 } => {
+                    pending_draft.record_failure(&failure);
                     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
                     tracing::warn!(error = %failure, "encrypted message authoring failed");
                     present_chat_send_failure(
@@ -1594,6 +1674,14 @@ pub(super) fn send_encrypted_message(
                 }
             };
             let (resp_event_id, resp_status) = resp;
+            pending_draft.record_send_status(match resp_status.as_str() {
+                "committed" => garth::SendQueueStatus::Committed,
+                "queued" => garth::SendQueueStatus::Queued,
+                "forwarding" => garth::SendQueueStatus::Forwarding,
+                "rejected" => garth::SendQueueStatus::Rejected,
+                "cancelled" => garth::SendQueueStatus::Cancelled,
+                _ => garth::SendQueueStatus::Failed,
+            });
             // The read-side projection derives the
             // protocol message id from the accepted
             // event id
@@ -1612,6 +1700,15 @@ pub(super) fn send_encrypted_message(
                         .to_owned()
                 })
                 .unwrap_or_else(|| message_id_for_record.clone());
+            // Acceptance belongs to the original account and device even when
+            // the UI session was replaced while submission awaited the Station.
+            if *session.session_generation.peek() != session_generation
+                || !session.active_account.peek().as_ref().is_some_and(|account|
+                    account.authority == authority_for_sidecar && account.device_id == device_for_cache)
+                || state_store.peek().active_authority().as_ref() != Some(&authority_for_sidecar)
+            {
+                return;
+            }
             {
                 let mut store = state_store.write();
                 // X10.6: persist the message identity
@@ -1669,14 +1766,15 @@ pub(super) fn send_encrypted_message(
             // must not race either IndexedDB write.
             let durable_result: anyhow::Result<()> = async {
                 let account_barrier = state_store.read().begin_durable_flush()?;
-                let e2ee_write = state_store.read().e2ee_plaintext_cache_secure_write()?;
-                account_barrier.wait().await?;
-                if let Some((key, Some(json))) = e2ee_write {
-                    crate::secure_key_store::default_secure_key_store("inkson")
-                        .store_secret_durable(&key, &json)
-                        .await?;
-                }
-                Ok(())
+                super::super::persist_chat_cache_after_account_barrier(
+                    state_store,
+                    &authority_for_sidecar,
+                    account_barrier.wait(),
+                    || *session.session_generation.peek() == session_generation
+                        && session.active_account.peek().as_ref().is_some_and(|account|
+                            account.authority == authority_for_sidecar && account.device_id == device_for_cache),
+                    crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
+                ).await
             }
             .await;
             if let Err(error) = durable_result {

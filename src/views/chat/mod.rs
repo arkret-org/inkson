@@ -1121,6 +1121,39 @@ impl SourceRoutedSidecarMessageOutcome {
 #[path = "tests/sidecar_accepted_readback.rs"]
 mod sidecar_accepted_readback_tests;
 
+/// Accepted sends share the cache writer with draft and receive updates. The
+/// account barrier can yield, so obtain the combined snapshot only afterwards.
+async fn persist_chat_cache_after_account_barrier(
+    state_store: SyncSignal<LocalStateStore>,
+    authority: &arkret_sdk::AccountId,
+    account_ready: impl std::future::Future<Output = anyhow::Result<()>>,
+    active: impl Fn() -> bool,
+    secure: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<()> {
+    account_ready.await?;
+    anyhow::ensure!(
+        active(),
+        "accepted write belongs to a replaced account session"
+    );
+    let write = {
+        let store = state_store.read();
+        anyhow::ensure!(
+            store.active_authority().as_ref() == Some(authority),
+            "accepted write belongs to a previous account"
+        );
+        store.e2ee_plaintext_cache_secure_write()?
+    };
+    if let Some((key, json)) = write {
+        LocalStateStore::persist_e2ee_plaintext_cache_write_durable(secure, &key, json.as_deref())
+            .await?;
+    }
+    anyhow::ensure!(
+        active(),
+        "accepted write belongs to a replaced account session"
+    );
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn submit_source_routed_sidecar_message(
     base_url: &str,
@@ -1349,7 +1382,7 @@ async fn submit_source_routed_sidecar_message(
             active(),
             "accepted private write belongs to a replaced account session"
         );
-        let (barrier, plaintext_write) = {
+        let barrier = {
             let mut store = state_store.write();
             // The read-side projection derives the protocol message id from the
             // accepted event id (`MessageId::from_event_id`); the raw-op record
@@ -1389,21 +1422,16 @@ async fn submit_source_routed_sidecar_message(
                 attached_source_strand_id,
                 &intent_digest,
             );
-            (
-                store.begin_durable_flush()?,
-                store.e2ee_plaintext_cache_secure_write()?,
-            )
+            store.begin_durable_flush()?
         };
-        barrier.wait().await?;
-        if let Some((key, Some(bytes))) = plaintext_write {
-            crate::secure_key_store::default_secure_key_store("inkson")
-                .store_secret_durable(&key, &bytes)
-                .await?;
-        }
-        anyhow::ensure!(
-            active(),
-            "accepted private write belongs to a replaced account session"
-        );
+        persist_chat_cache_after_account_barrier(
+            state_store,
+            authority,
+            barrier.wait(),
+            &active,
+            crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
+        )
+        .await?;
         anyhow::ensure!(
             status == "committed",
             "private write is queued; awaiting its committed native history"
@@ -1860,6 +1888,9 @@ pub fn ChatPanel(
         selected_channel,
         messages,
         draft: _,
+        draft_storage: _,
+        draft_saved: _,
+        pending_drafts: _,
         typing_throttle: _,
         compose_dragover: _,
         compose_upload_status: _,

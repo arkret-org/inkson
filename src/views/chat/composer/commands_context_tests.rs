@@ -8,6 +8,8 @@ type Handles = (
     Signal<String>,
     Signal<usize>,
     Signal<String>,
+    Signal<String>,
+    Signal<std::collections::BTreeMap<String, String>>,
 );
 
 #[derive(Clone)]
@@ -64,7 +66,14 @@ fn command_harness(control: Control) -> Element {
     // must not allocate component hooks, regardless of their caller's phase.
     use_hook(move || callback.call(()));
     let sentinel = use_signal(|| "stable hook after command".to_owned());
-    *control.handles.borrow_mut() = Some((callback, sentinel, calls, controller.status_msg));
+    *control.handles.borrow_mut() = Some((
+        callback,
+        sentinel,
+        calls,
+        controller.status_msg,
+        controller.draft,
+        controller.pending_drafts,
+    ));
     rsx! { div { "{calls}:{sentinel}:{controller.status_msg}" } }
 }
 
@@ -86,7 +95,8 @@ async fn production_command_callback_does_not_allocate_hooks_and_survives_rerend
         for _ in 0..8 {
             dom.render_immediate_to_vec();
         }
-        let (_, current_sentinel, calls, status) = control.handles.borrow().unwrap();
+        let (_, current_sentinel, calls, status, draft, pending_drafts) =
+            control.handles.borrow().unwrap();
         assert_eq!(current_sentinel, sentinel);
         dom.in_runtime(|| {
             assert_eq!(*calls.peek(), expected_calls);
@@ -95,8 +105,60 @@ async fn production_command_callback_does_not_allocate_hooks_and_survives_rerend
                 "stable hook after command"
             );
             assert!(status.peek().starts_with("send failed:"));
+            assert_eq!(draft.peek().as_str(), "local command fixture");
+            assert!(pending_drafts.peek().is_empty());
         });
     }
+    dom.in_runtime(|| {
+        use futures_util::FutureExt;
+        let (_, _, _, _, mut draft, mut pending) = control.handles.borrow().unwrap();
+        for (status, new_text, expected_text) in [
+            (garth::SendQueueStatus::Committed, "", ""),
+            (garth::SendQueueStatus::Queued, "", ""),
+            (garth::SendQueueStatus::Forwarding, "", ""),
+            (garth::SendQueueStatus::Failed, "", "submitted text"),
+            (garth::SendQueueStatus::Rejected, "new unsent text", "new unsent text"),
+        ] {
+            draft.set(new_text.to_owned());
+            pending
+                .write()
+                .insert("guard-fixture".to_owned(), "submitted text".to_owned());
+            let mut guard = PendingComposerDraft {
+                draft,
+                pending,
+                operation: "guard-fixture".to_owned(),
+                body: "submitted text".to_owned(),
+                submission: ComposerSubmissionState::Recoverable,
+            };
+            let completion = async move {
+                guard.record_send_status(status);
+            };
+            // Before the future runs, its guard must still protect the pending
+            // text. Capturing only a state field would drop the guard here.
+            assert!(pending.peek().contains_key("guard-fixture"));
+            assert_eq!(draft.peek().as_str(), new_text);
+            assert!(completion.now_or_never().is_some());
+            assert!(pending.peek().is_empty());
+            assert_eq!(draft.peek().as_str(), expected_text);
+        }
+        draft.set(String::new());
+        pending.write().insert("unknown-fixture".to_owned(), "submitted text".to_owned());
+        let mut guard = PendingComposerDraft {
+            draft,
+            pending,
+            operation: "unknown-fixture".to_owned(),
+            body: "submitted text".to_owned(),
+            submission: ComposerSubmissionState::Recoverable,
+        };
+        let unknown = garth::MessageAuthoringFailure::SubmissionOutcomeUnknown {
+            detail: "response lost after exact-byte queue persisted".to_owned(),
+        };
+        guard.record_failure(&unknown);
+        assert!(guard.submission == ComposerSubmissionState::DurablePending);
+        drop(guard);
+        assert!(pending.peek().is_empty());
+        assert!(draft.peek().is_empty(), "the durable exact-byte queue owns the unknown result, so the composer must not invite duplicate authoring");
+    });
 }
 
 type UploadHandles = Rc<RefCell<Option<(EventHandler<()>, Signal<String>, Signal<String>)>>>;

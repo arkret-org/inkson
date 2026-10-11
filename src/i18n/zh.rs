@@ -1562,6 +1562,10 @@ pub fn chinese_translations() -> TranslationDict {
         "将文件拖放到此处以附加,或点击「附加」",
     );
     dict.set("compose.upload_progress", "上传中…");
+    dict.set(
+        "compose.draft_storage_error",
+        "此设备未能保存草稿。请保持聊天打开，直到存储恢复可用。",
+    );
     dict.set("compose.upload_error", "上传失败");
     // Message write-status revision counter (edit history).
     dict.set("chat.message.revised", "已修订");

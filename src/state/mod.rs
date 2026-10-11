@@ -1129,6 +1129,7 @@ fn e2ee_safe_persist_state_owned_with_policy(
     stripped.mls_private_plaintext.clear();
     stripped.mls_decrypted_plaintext.clear();
     stripped.authenticated_identity_links.clear();
+    stripped.composer_drafts.clear();
     stripped
 }
 

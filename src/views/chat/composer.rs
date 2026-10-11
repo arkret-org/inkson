@@ -1080,8 +1080,14 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             commands::upload_dropped_attachments(controller, base, api_token, realm, files);
                         }
                     },
+                    if (controller.draft_storage)() == "error" {
+                        p { role: "alert", "data-testid": "draft-storage-error",
+                            {crate::i18n::tr("compose.draft_storage_error")}
+                        }
+                    }
                     Textarea {
                         "data-testid": "chat-input",
+                        "data-draft-storage": controller.draft_storage_status(),
                         value: "{chat_draft}",
                         placeholder: "{composer_placeholder}",
                         onkeydown: move |event: KeyboardEvent| {
