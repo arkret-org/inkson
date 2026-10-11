@@ -111,5 +111,14 @@
     "windows": "actual initialized window/renderer/normal close passed before private-profile cleanup WinError145; overall job failed",
     "linux": "actual release/advisory passed; private filter executed0 not23; cache12 passed; signing dryrun failed no secret key, package/runtime not executed",
     "next_repair": "strict nonzero23+12 discovery/results; key-aware unsigned local dryrun, sign/verify errors remain fatal; bounded natural renderer exit and strict private cleanup"
-  }
+  },
+  "fifth_attempt": {
+    "source": "b73ca23128bad004d59a9421bb9ab5107097b362",
+    "run": "https://github.com/arkret-org/inkson/actions/runs/38179056521",
+    "windows_macos": "actual release, initialized own renderer, normal/bounded shutdown and strict private cleanup passed",
+    "linux": "actual strict audit/release/23+12 native/deb/extracted byte comparison passed; X11 failed bwrap uid map permission, Wayland not executed",
+    "latest_remote_after_failure": "candidate/SDK/Garth/Chime/Spec actualfetch0/0",
+    "next_repair": "official AppArmor bwrap-userns-restrict profile from distro package or exact upstream4.0.1 commit+checksum; global restriction and WebKit sandbox retained, preflight child CapEff zero"
+  },
+  "apparmor_profile_source": "https://discourse.ubuntu.com/t/understanding-apparmor-user-namespace-restriction/58007"
 }

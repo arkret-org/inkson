@@ -88,6 +88,35 @@ jobs:
             libxdo-dev \
             librsvg2-dev
 
+      - name: Admit the real WebKit sandbox through the official AppArmor profile
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y apparmor-profiles bubblewrap
+          # Ubuntu's official purpose-built profile admits bwrap user namespaces
+          # while stripping capabilities from sandboxed children. Keep the
+          # global userns restriction and the WebKit sandbox enabled.
+          profile=''
+          for directory in /usr/share/apparmor/extra-profiles /etc/apparmor.d; do
+            if test -d "$directory"; then
+              profile=$(find "$directory" -type f -name bwrap-userns-restrict -print -quit)
+              if test -n "$profile"; then break; fi
+            fi
+          done
+          if test -z "$profile"; then
+            profile="$RUNNER_TEMP/bwrap-userns-restrict"
+            curl --fail --silent --show-error --location \
+              https://gitlab.com/apparmor/apparmor/-/raw/b0eb95457bc2de401920308869d016e696c73664/profiles/apparmor/profiles/extras/bwrap-userns-restrict \
+              --output "$profile"
+            printf '%s  %s\n' 11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9 "$profile" | sha256sum --check
+          fi
+          dpkg-query --show apparmor apparmor-profiles bubblewrap
+          sha256sum "$profile"
+          sudo apparmor_parser --replace "$profile"
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          bwrap --unshare-user --unshare-pid --ro-bind / / --proc /proc --dev /dev \
+            /bin/sh -c 'test "$(awk "/^CapEff:/{print \$2}" /proc/self/status)" = "0000000000000000"'
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
