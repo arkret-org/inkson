@@ -74,19 +74,20 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         trace_secure_store_bootstrap_stage("E2EE cache hydrated");
                         let secure_write = state_store_for_secure_upgrade
                             .read()
-                            .e2ee_plaintext_cache_secure_write();
+                            .capture_e2ee_plaintext_cache_secure_write();
                         match secure_write {
-                            Ok(Some((key, Some(json)))) => {
+                            Ok(Some(write)) if write.json.is_some() => {
+                                let key = write.key.clone();
+                                let json = write.json.clone().expect("nonempty secure cache");
                                 // Commit the recovered combined snapshot before
                                 // publishing readiness. Running this write in the
                                 // background lets an older repair overwrite a newer
                                 // cache write after normal effects have started. The
                                 // underlying WebCrypto and IndexedDB awaits are
                                 // timeout-bounded, so this barrier cannot hang forever.
-                                match crate::state::LocalStateStore::persist_e2ee_plaintext_cache_write_durable(
+                                match crate::state::LocalStateStore::persist_captured_e2ee_cache_write_durable(
                                     secure_store.as_ref(),
-                                    &key,
-                                    Some(&json),
+                                    write,
                                 ).await {
                                     Ok(()) => {
                                         // Clear pre-decrypt recovery checkpoints only
@@ -117,11 +118,10 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                     }
                                 }
                             }
-                            Ok(Some((key, None))) => {
-                                if let Err(error) = crate::state::LocalStateStore::persist_e2ee_plaintext_cache_write_durable(
+                            Ok(Some(write)) => {
+                                if let Err(error) = crate::state::LocalStateStore::persist_captured_e2ee_cache_write_durable(
                                     secure_store.as_ref(),
-                                    &key,
-                                    None,
+                                    write,
                                 ).await {
                                     tracing::warn!(
                                         ?error,

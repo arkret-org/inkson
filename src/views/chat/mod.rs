@@ -1141,11 +1141,10 @@ async fn persist_chat_cache_after_account_barrier(
             store.active_authority().as_ref() == Some(authority),
             "accepted write belongs to a previous account"
         );
-        store.e2ee_plaintext_cache_secure_write()?
+        store.capture_e2ee_plaintext_cache_secure_write()?
     };
-    if let Some((key, json)) = write {
-        LocalStateStore::persist_e2ee_plaintext_cache_write_durable(secure, &key, json.as_deref())
-            .await?;
+    if let Some(write) = write {
+        LocalStateStore::persist_captured_e2ee_cache_write_durable(secure, write).await?;
     }
     anyhow::ensure!(
         active(),
