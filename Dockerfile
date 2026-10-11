@@ -34,7 +34,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     test -f "$target_dir/dx/inkson/release/web/public/index.html" && \
     cp -a "$target_dir/dx/inkson/release/web/public" /web-public
 
-FROM nginx:1.29-alpine
+FROM nginx:1.31-alpine
 
 COPY --from=build /web-public /usr/share/nginx/html
 
