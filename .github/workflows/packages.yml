@@ -73,10 +73,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgtk-4-dev \
+            libgtk-4-dev dpkg-dev \
             libwebkitgtk-6.0-dev \
             libdbus-1-dev \
-            xvfb xdotool openbox weston gnome-keyring dbus-x11 \
+            xvfb xdotool openbox weston gnome-keyring dbus-x11 at-spi2-core python3-pyatspi \
             libxdo-dev \
             librsvg2-dev
 
@@ -102,6 +102,13 @@ jobs:
       - name: Build release binary
         working-directory: inkson
         run: cargo build --locked --release --features desktop
+
+      - name: Exercise the Linux native cache persistence regression families
+        if: runner.os == 'Linux'
+        working-directory: inkson
+        run: |
+          cargo test --locked --release --features desktop --lib private_plaintext_tests
+          cargo test --locked --release --features desktop --lib cache_persist_tests
 
       - name: Prepare artifact directory
         shell: pwsh
@@ -148,8 +155,13 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: inkson
         run: |
-          xvfb-run -a dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --backend x11 --binary target/release/inkson
-          dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --backend wayland --binary target/release/inkson
+          package=$(find dist/linux-packages -maxdepth 1 -type f -name '*.deb')
+          test -n "$package"
+          dpkg-deb --info "$package"
+          dpkg-deb --extract "$package" dist/linux-package-extracted
+          cmp target/release/inkson dist/linux-package-extracted/usr/bin/inkson
+          xvfb-run -a dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --backend x11 --binary dist/linux-package-extracted/usr/bin/inkson
+          dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --backend wayland --binary dist/linux-package-extracted/usr/bin/inkson
 
       - name: Upload Linux GTK4 runtime evidence
         if: runner.os == 'Linux' && always() && steps.linux_renderer.outcome != 'skipped'

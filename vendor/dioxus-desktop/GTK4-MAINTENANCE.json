@@ -93,6 +93,8 @@
       "macos"
     ],
     "error": "12 E0277 errors: upstream Wry Send+Sync protocol bounds reject original Dioxus Rc-backed handlers",
-    "latest_remote_checked_after_failure": true
-  }
+    "latest_remote_checked_after_failure": true,
+    "protocol_adapter_followup": "b7c86cab compiles Dioxus protocol bridge on all three platforms; Inkson exact-version guard mistook new dioxus-desktop patch for dioxus. Guard now compares assignment name exactly, same =0.7.10 enforced."
+  },
+  "platform_evidence_scope": "Next fixed-source CI uses real release native cache families and .deb-extracted byte-matched binary with GTK4/WebKit AT-SPI login DOM, input callback, same-home cold restart on X11 and Wayland. No authenticated conversation acceptance claim."
 }

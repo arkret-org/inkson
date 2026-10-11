@@ -21,7 +21,10 @@ fn check_dioxus_version(manifest_dir: &Path) {
     for crate_name in ["dioxus", "dioxus-router"] {
         let line = raw
             .lines()
-            .find(|line| line.trim_start().starts_with(crate_name))
+            .find(|line| {
+                line.split_once('=')
+                    .is_some_and(|(name, _)| name.trim() == crate_name)
+            })
             .unwrap_or_else(|| panic!("Cargo.toml Dioxus version drift: missing {crate_name}"));
         assert!(
             line.contains(DIOXUS_VERSION),

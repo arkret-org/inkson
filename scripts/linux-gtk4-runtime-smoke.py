@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Run the actual candidate desktop executable in isolated Linux displays."""
 import argparse
+import pyatspi
+from gi.repository import GLib
 import hashlib
 import json
 import os
@@ -14,16 +16,66 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--backend', choices=['x11', 'wayland'], required=True)
 parser.add_argument('--binary', type=Path, required=True)
 args = parser.parse_args()
+
+# AT-SPI reads and edits the actual WebKit accessibility document. No JS,
+# fake request acknowledgement, alternate app storage, or product test hook.
+STATION_NAMES = {'Sign-in server URL', '登录服务器地址'}
+STATION_MARKER = 'http://127.0.0.1:18932'
+
+def station_field(process_id):
+    rows = subprocess.check_output(['ps', '-eo', 'pid=,ppid='], text=True).splitlines()
+    relations = [tuple(map(int, row.split())) for row in rows]
+    process_ids = {process_id}
+    while True:
+        children = {pid for pid, parent in relations if parent in process_ids}
+        if children.issubset(process_ids):
+            break
+        process_ids.update(children)
+    desktop = pyatspi.Registry.getDesktop(0)
+    stack = []
+    for i in range(desktop.childCount):
+        try:
+            node = desktop.getChildAtIndex(i)
+            if node.get_process_id() in process_ids:
+                stack.append(node)
+        except (AttributeError, RuntimeError, GLib.Error):
+            continue
+    visited = 0
+    while stack and visited < 4096:
+        node = stack.pop()
+        visited += 1
+        try:
+            if node.name in STATION_NAMES:
+                node.queryEditableText()
+                return node
+            stack.extend(node.getChildAtIndex(i) for i in range(node.childCount))
+        except (AttributeError, RuntimeError, NotImplementedError, GLib.Error):
+            continue
+    return None
+
+def wait_station(app, expected=None):
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        if app.poll() is not None:
+            raise RuntimeError('application exited before real login document readiness')
+        field = station_field(app.pid)
+        if field is not None:
+            value = field.queryText().getText(0, -1)
+            if expected is None or value == expected:
+                return field
+        time.sleep(0.25)
+    raise RuntimeError('actual accessible login Station field did not reach expected state')
+
 binary = args.binary.resolve(strict=True)
 out = Path('dist/linux-gtk4-runtime')
 out.mkdir(parents=True, exist_ok=True)
 result = {'backend': args.backend, 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
-          'test': 'real desktop window and WebKit process smoke, not authenticated product acceptance'}
+          'test': 'actual GTK4/WebKit login DOM, input callback, same-home cold restart; not authenticated product acceptance'}
 with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
     env = dict(os.environ)
     env.update(HOME=private, XDG_CONFIG_HOME=private + '/config', XDG_DATA_HOME=private + '/data',
                XDG_CACHE_HOME=private + '/cache', XDG_RUNTIME_DIR=private + '/runtime',
-               GDK_BACKEND=args.backend, LIBGL_ALWAYS_SOFTWARE='1', WEBKIT_DISABLE_DMABUF_RENDERER='1')
+               GDK_BACKEND=args.backend, GTK_A11Y='atspi', LANG='en_US.UTF-8', LIBGL_ALWAYS_SOFTWARE='1', WEBKIT_DISABLE_DMABUF_RENDERER='1')
     Path(env['XDG_RUNTIME_DIR']).mkdir(mode=0o700)
     background = None
     app = None
@@ -71,6 +123,14 @@ with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
                 if app.poll() is not None:
                     raise RuntimeError('renderer startup did not remain live')
                 result.update(real_window=True, webkit_web_process=True, startup_remained_live=True)
+                field = wait_station(app)
+                result['actual_login_dom'] = True
+                if not field.queryEditableText().setTextContents(STATION_MARKER):
+                    raise RuntimeError('real accessible Station input rejected editing')
+                wait_station(app, STATION_MARKER)
+                # Allow normal production config persistence to finish before close.
+                time.sleep(1)
+                result['actual_station_input'] = True
                 if args.backend == 'x11':
                     subprocess.run(['xdotool', 'windowactivate', '--sync', window], check=True, env=env)
                     subprocess.run(['xdotool', 'key', '--clearmodifiers', 'alt+F4'], check=True, env=env)
@@ -84,6 +144,12 @@ with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
                     app.send_signal(signal.SIGTERM)
                     app.wait(timeout=15)
                     result['controlled_probe_shutdown_signal'] = 'SIGTERM'
+                # A new real process reads the original persisted configuration.
+                app = subprocess.Popen([str(binary)], env=env, stdout=app_output, stderr=subprocess.STDOUT)
+                wait_station(app, STATION_MARKER)
+                result['cold_restart_station_input_retained'] = True
+                app.send_signal(signal.SIGTERM)
+                app.wait(timeout=15)
                 result['passed'] = True
     except BaseException as error:
         result.update(passed=False, error=str(error))
