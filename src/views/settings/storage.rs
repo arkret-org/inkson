@@ -262,7 +262,10 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
                                                 crate::secure_key_store::default_secure_key_store("inkson");
                                             let pending = state_store
                                                 .write()
-                                                .prepare_e2ee_plaintext_cache_clear(&clear_scope);
+                                                .prepare_e2ee_plaintext_cache_clear_with_secure_store(
+                                                    &clear_scope,
+                                                    secure_store.as_ref(),
+                                                );
                                             let result = match pending {
                                                 Ok(Some(pending)) => {
                                                     if let Err(error) =

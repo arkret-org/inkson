@@ -217,6 +217,9 @@ pub struct LocalStateStore {
     /// [`MlsReceiveOverlay`]). Shared across clones like `persist_health` so
     /// a decrypt recorded through any handle is visible to every reader.
     mls_receive_overlay: Arc<Mutex<MlsReceiveOverlay>>,
+    /// Process-only hydration fences for in-flight secure-cache clears.
+    /// Shared by clones and bound to the exact account cache key.
+    e2ee_cache_clears: Arc<Mutex<e2ee_secure_cache::CacheClearFences>>,
     /// Serialization lock for the MLS "decrypt → state
     /// write-back" critical section. Multiple views (chat / kanban) can
     /// trigger decrypt-on-read for the same realm; holding this
@@ -270,6 +273,7 @@ impl Clone for LocalStateStore {
             persist_health: Arc::clone(&self.persist_health),
             corrupt_account_scopes: Arc::clone(&self.corrupt_account_scopes),
             mls_receive_overlay: Arc::clone(&self.mls_receive_overlay),
+            e2ee_cache_clears: Arc::clone(&self.e2ee_cache_clears),
             mls_decrypt_serial: Arc::clone(&self.mls_decrypt_serial),
             sidecar_projection_fold: self.sidecar_projection_fold.clone(),
             // A clone may hold a different unaccepted local edit. Never share
@@ -345,6 +349,7 @@ impl Default for LocalStateStore {
             persist_health: Arc::new(Mutex::new(None)),
             corrupt_account_scopes: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
+            e2ee_cache_clears: Arc::new(Mutex::new(Default::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
             sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default(),
             blocklist_projection_cache: Mutex::new(BlocklistProjectionCache::default()),
@@ -678,6 +683,7 @@ impl LocalStateStore {
             persist_health: Arc::new(Mutex::new(None)),
             corrupt_account_scopes: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
+            e2ee_cache_clears: Arc::new(Mutex::new(Default::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
             sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default(),
             blocklist_projection_cache: Mutex::new(BlocklistProjectionCache::default()),

@@ -134,6 +134,7 @@ impl LocalStateStore {
     /// usually has its own opinion (a fresh-login flow has just written the
     /// grant; a logout flow follows up with explicit `set_session_grant(None)`).
     pub fn clear_account_scoped(&mut self) {
+        self.invalidate_e2ee_cache_clear_rollback();
         self.ensure_cached_loaded();
         // Authored drafts belong to the same Account/Device and actual Strand,
         // not to its projection cache. A soft reset must keep them recoverable.
@@ -186,6 +187,7 @@ impl LocalStateStore {
             return Ok(false);
         }
 
+        self.invalidate_e2ee_cache_clear_rollback();
         let pending = root.pending_login.is_some().then(|| self.cached.clone());
         let _ = self.flush();
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
@@ -288,6 +290,7 @@ impl LocalStateStore {
         dpop_jkt: Option<&str>,
         preserve_onboarding: bool,
     ) {
+        self.invalidate_e2ee_cache_clear_rollback();
         self.ensure_cached_loaded();
 
         let (pending_account_handoff, pending_principal_registration) = if preserve_onboarding {
@@ -456,6 +459,7 @@ impl LocalStateStore {
     }
 
     fn clear_device_scoped_state(&mut self) {
+        self.invalidate_e2ee_cache_clear_rollback();
         self.ensure_cached_loaded();
         #[cfg(not(target_arch = "wasm32"))]
         self.clear_stored_composer_drafts_on_reset();

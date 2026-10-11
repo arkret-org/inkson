@@ -32,6 +32,44 @@ pub(crate) struct PendingE2eePlaintextClear {
     previous_decrypted: BTreeMap<String, BTreeMap<String, String>>,
     previous_identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
     previous_drafts: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
+    hydration_fence: Arc<CacheClearFence>,
+    lifecycle_epoch: u64,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct CacheClearFences {
+    active: BTreeMap<String, (String, E2eePlaintextCacheClearScope)>,
+    lifecycle_epoch: u64,
+}
+
+#[derive(Debug)]
+struct CacheClearFence {
+    id: String,
+    registry: Arc<Mutex<CacheClearFences>>,
+}
+
+impl Drop for CacheClearFence {
+    fn drop(&mut self) {
+        self.registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .active
+            .remove(&self.id);
+    }
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+async fn complete_cache_clear(
+    committed: tokio::sync::oneshot::Receiver<Result<(), String>>,
+    fence: Arc<CacheClearFence>,
+    reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+) {
+    let result = committed
+        .await
+        .map_err(|error| error.to_string())
+        .and_then(|result| result);
+    drop(fence);
+    let _ = reply.send(result);
 }
 
 impl PendingE2eePlaintextClear {
@@ -39,6 +77,25 @@ impl PendingE2eePlaintextClear {
         &self,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     ) -> anyhow::Result<()> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            // A page navigation can cancel the UI waiter. Keep the hydration
+            // fence until the shared writer commits, independently of that scope.
+            // Enqueue before spawning the waiter so later authored input is
+            // always persisted after this exact clear snapshot.
+            let committed =
+                cache_persist_driver::enqueue_exact(self.key.clone(), Some(self.json.clone()));
+            let fence = self.hydration_fence.clone();
+            let (reply, wait) = tokio::sync::oneshot::channel();
+            wasm_bindgen_futures::spawn_local(complete_cache_clear(committed, fence, reply));
+            let _ = secure_store;
+            return wait
+                .await
+                .context("secure-cache clear writer stopped")?
+                .map_err(anyhow::Error::msg)
+                .context("persist cleared E2EE plaintext cache");
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         LocalStateStore::persist_e2ee_plaintext_cache_write_durable(
             secure_store,
             &self.key,
@@ -95,6 +152,26 @@ struct E2eePlaintextCacheV1 {
 }
 
 impl E2eePlaintextCacheV1 {
+    fn exclude_clear_scope(&mut self, scope: &E2eePlaintextCacheClearScope) {
+        match scope {
+            E2eePlaintextCacheClearScope::All => {
+                self.private_plaintext.clear();
+                self.decrypted_plaintext.clear();
+                self.authenticated_identity_links.clear();
+                self.composer_drafts.clear();
+            }
+            E2eePlaintextCacheClearScope::Realm(realm) => {
+                self.private_plaintext.remove(realm);
+                self.decrypted_plaintext.remove(realm);
+                self.authenticated_identity_links
+                    .retain(|_, entry| entry.identity_link.realm_id.as_str() != realm);
+                for realms in self.composer_drafts.values_mut() {
+                    realms.remove(realm);
+                }
+            }
+        }
+    }
+
     fn from_state(state: &ClientLocalState) -> Self {
         Self {
             mls_local_checkpoints: state.mls_local_checkpoints.clone(),
@@ -411,6 +488,18 @@ impl LocalStateStore {
             .plaintext_usage()
     }
 
+    /// Include all entries known only to the encrypted backend before clearing.
+    /// Hydration applies pending clear fences and preserves newer live values.
+    pub(crate) fn prepare_e2ee_plaintext_cache_clear_with_secure_store(
+        &mut self,
+        scope: &E2eePlaintextCacheClearScope,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) -> anyhow::Result<Option<PendingE2eePlaintextClear>> {
+        self.ensure_e2ee_cache_clear_idle()?;
+        self.hydrate_e2ee_plaintext_cache_with_secure_store(secure_store)?;
+        self.prepare_e2ee_plaintext_cache_clear(scope)
+    }
+
     /// Apply the in-memory clear and return the owned durable write. Callers
     /// using a shared state lock must release that lock before awaiting
     /// [`PendingE2eePlaintextClear::persist`].
@@ -418,13 +507,14 @@ impl LocalStateStore {
         &mut self,
         scope: &E2eePlaintextCacheClearScope,
     ) -> anyhow::Result<Option<PendingE2eePlaintextClear>> {
+        self.ensure_e2ee_cache_clear_idle()?;
         self.ensure_cached_loaded();
         self.absorb_mls_receive_overlay();
 
-        let previous_private = self.cached.mls_private_plaintext.clone();
-        let previous_decrypted = self.cached.mls_decrypted_plaintext.clone();
-        let previous_identity_links = self.cached.authenticated_identity_links.clone();
-        let previous_drafts = self.cached.composer_drafts.clone();
+        let mut previous_private = self.cached.mls_private_plaintext.clone();
+        let mut previous_decrypted = self.cached.mls_decrypted_plaintext.clone();
+        let mut previous_identity_links = self.cached.authenticated_identity_links.clone();
+        let mut previous_drafts = self.cached.composer_drafts.clone();
         let changed = match scope {
             E2eePlaintextCacheClearScope::All => {
                 let changed = !self.cached.mls_private_plaintext.is_empty()
@@ -462,14 +552,37 @@ impl LocalStateStore {
             return Ok(None);
         }
 
-        let Some((key, json)) = self.e2ee_plaintext_cache_secure_write()? else {
+        let write = self.e2ee_plaintext_cache_secure_write();
+        if !matches!(&write, Ok(Some(_))) {
             self.cached.mls_private_plaintext = previous_private;
             self.cached.mls_decrypted_plaintext = previous_decrypted;
             self.cached.authenticated_identity_links = previous_identity_links;
             self.cached.composer_drafts = previous_drafts;
+            if let Err(error) = write {
+                return Err(error);
+            }
             anyhow::bail!("cannot clear E2EE plaintext cache without an active account");
-        };
+        }
+        let (key, json) = write?.expect("checked secure-cache clear write");
         // Keep a minimal encrypted empty object instead of deleting the entry.
+        if let E2eePlaintextCacheClearScope::Realm(realm) = scope {
+            previous_private.retain(|id, _| id == realm);
+            previous_decrypted.retain(|id, _| id == realm);
+            previous_identity_links
+                .retain(|_, entry| entry.identity_link.realm_id.as_str() == realm);
+            for realms in previous_drafts.values_mut() {
+                realms.retain(|id, _| id == realm);
+            }
+        }
+        let id = crate::operation::uuid_v7();
+        let mut fences = self
+            .e2ee_cache_clears
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let lifecycle_epoch = fences.lifecycle_epoch;
+        fences
+            .active
+            .insert(id.clone(), (key.clone(), scope.clone()));
         Ok(Some(PendingE2eePlaintextClear {
             key,
             json: json.unwrap_or_else(|| "{}".to_owned()),
@@ -477,6 +590,11 @@ impl LocalStateStore {
             previous_decrypted,
             previous_identity_links,
             previous_drafts,
+            hydration_fence: Arc::new(CacheClearFence {
+                id,
+                registry: self.e2ee_cache_clears.clone(),
+            }),
+            lifecycle_epoch,
         }))
     }
 
@@ -484,6 +602,18 @@ impl LocalStateStore {
         &mut self,
         pending: PendingE2eePlaintextClear,
     ) {
+        if self.active_e2ee_plaintext_cache_key().as_ref() != Some(&pending.key)
+            || self
+                .e2ee_cache_clears
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .lifecycle_epoch
+                != pending.lifecycle_epoch
+        {
+            // A settings waiter may outlive an account change. Its failed clear
+            // must never merge the previous account's plaintext into the new one.
+            return;
+        }
         // Preserve writes that arrived while the durable request was in
         // flight; restore only entries removed by the failed clear.
         for (realm_id, strands) in pending.previous_private {
@@ -531,6 +661,38 @@ impl LocalStateStore {
         }
     }
 
+    fn ensure_e2ee_cache_clear_idle(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.active_authority().is_some(),
+            "cannot clear an inactive account cache"
+        );
+        let Some(key) = self.active_e2ee_plaintext_cache_key() else {
+            anyhow::bail!("cannot clear E2EE plaintext cache without an active account");
+        };
+        anyhow::ensure!(
+            !self
+                .e2ee_cache_clears
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .active
+                .values()
+                .any(|(active_key, _)| active_key == &key),
+            "an E2EE plaintext cache clear is already in progress for this account"
+        );
+        Ok(())
+    }
+
+    pub(super) fn invalidate_e2ee_cache_clear_rollback(&self) {
+        let mut fences = self
+            .e2ee_cache_clears
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        fences.lifecycle_epoch = fences
+            .lifecycle_epoch
+            .checked_add(1)
+            .expect("secure-cache lifecycle epoch exhausted");
+    }
+
     /// Convenience wrapper for callers that exclusively own the state value.
     #[cfg(test)]
     pub(crate) async fn clear_e2ee_plaintext_cache_with_secure_store(
@@ -538,7 +700,9 @@ impl LocalStateStore {
         scope: &E2eePlaintextCacheClearScope,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     ) -> anyhow::Result<bool> {
-        let Some(pending) = self.prepare_e2ee_plaintext_cache_clear(scope)? else {
+        let Some(pending) =
+            self.prepare_e2ee_plaintext_cache_clear_with_secure_store(scope, secure_store)?
+        else {
             return Ok(false);
         };
         if let Err(error) = pending.persist(secure_store).await {
@@ -555,13 +719,24 @@ impl LocalStateStore {
         let Some(key) = self.active_e2ee_plaintext_cache_key() else {
             return Ok(false);
         };
-        let persisted = match secure_store
+        let mut persisted: E2eePlaintextCacheV1 = match secure_store
             .get_secret(&key)
             .context("load E2EE plaintext cache from secure store")?
         {
             Some(json) => serde_json::from_str(&json).context("decode E2EE plaintext cache")?,
             None => E2eePlaintextCacheV1::default(),
         };
+        for (account_key, scope) in self
+            .e2ee_cache_clears
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .active
+            .values()
+        {
+            if account_key == &key {
+                persisted.exclude_clear_scope(scope);
+            }
+        }
 
         self.ensure_cached_loaded();
         let (live_receive_snapshot_keys, overlay_recovery_snapshot_keys) = {
@@ -875,9 +1050,17 @@ mod cache_persist_driver {
         enqueue(key, json, None);
     }
 
-    pub(super) async fn persist_exact(key: String, json: Option<String>) -> anyhow::Result<()> {
+    pub(super) fn enqueue_exact(
+        key: String,
+        json: Option<String>,
+    ) -> tokio::sync::oneshot::Receiver<Result<(), String>> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         enqueue(key, json, Some(sender));
+        receiver
+    }
+
+    pub(super) async fn persist_exact(key: String, json: Option<String>) -> anyhow::Result<()> {
+        let receiver = enqueue_exact(key, json);
         receiver
             .await
             .context("E2EE cache durable writer stopped")?
@@ -911,6 +1094,79 @@ mod cache_persist_driver {
 #[cfg(test)]
 mod cache_persist_tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn cancelled_clear_waiter_keeps_key_fence_until_writer_commit() {
+        use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
+
+        let secure = MemorySecureKeyStore::default();
+        let mut state = super::super::storage_util::isolated_store_for_tests("cancelled-clear");
+        state.switch_test_account("did:web:alice.example");
+        let authority = state.active_authority().unwrap();
+        let device =
+            crate::test_support::device_id("ak:device:01964137-0000-7000-8000-000000000001");
+        state
+            .prepare_composer_draft_write(&authority, &device, "realm", "chat", "old draft".into())
+            .unwrap();
+        state
+            .persist_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        let pending = state
+            .prepare_e2ee_plaintext_cache_clear_with_secure_store(
+                &E2eePlaintextCacheClearScope::All,
+                &secure,
+            )
+            .unwrap()
+            .unwrap();
+        let key = pending.key.clone();
+        let json = pending.json.clone();
+        let (commit, committed) = tokio::sync::oneshot::channel();
+        let (reply, waiter) = tokio::sync::oneshot::channel();
+        let writer = tokio::spawn(complete_cache_clear(
+            committed,
+            pending.hydration_fence.clone(),
+            reply,
+        ));
+        // Dioxus drops the page-local waiter and Pending on navigation. The
+        // shared completion task still owns the key-bound read fence.
+        drop(waiter);
+        drop(pending);
+        state.switch_test_account("did:web:bob.example");
+        assert!(
+            state
+                .prepare_e2ee_plaintext_cache_clear(&E2eePlaintextCacheClearScope::All)
+                .unwrap()
+                .is_none()
+        );
+        state.switch_test_account("did:web:alice.example");
+        state
+            .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        assert_eq!(state.composer_draft(&device, "realm", "chat"), "");
+        assert!(
+            state
+                .prepare_e2ee_plaintext_cache_clear(&E2eePlaintextCacheClearScope::All)
+                .is_err()
+        );
+        state
+            .prepare_composer_draft_write(&authority, &device, "realm", "chat", "new draft".into())
+            .unwrap();
+        // Publish completion only after the actual backend commit.
+        secure.store_secret_durable(&key, &json).await.unwrap();
+        commit.send(Ok(())).unwrap();
+        writer.await.unwrap();
+        state
+            .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        assert_eq!(state.composer_draft(&device, "realm", "chat"), "new draft");
+        assert!(
+            state
+                .prepare_e2ee_plaintext_cache_clear(&E2eePlaintextCacheClearScope::All)
+                .unwrap()
+                .is_some()
+        );
+    }
 
     fn json(value: &str) -> Option<String> {
         Some(value.to_owned())
