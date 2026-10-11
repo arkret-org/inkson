@@ -78,7 +78,7 @@ jobs:
       - name: Exact product Wayland full DOM, input and cold oracle with failure diagnosis
         id: wayland
         continue-on-error: true
-        run: dbus-run-session -- python3 scripts/linux-gtk4-runtime-diagnostic.py --backend wayland --binary exact-product/usr/bin/inkson
+        run: xvfb-run -a dbus-run-session -- python3 scripts/linux-gtk4-runtime-diagnostic.py --backend wayland --binary exact-product/usr/bin/inkson
       - name: Preserve bounded actual runtime diagnostic results
         if: always()
         uses: actions/upload-artifact@v7

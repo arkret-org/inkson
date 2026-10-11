@@ -63,7 +63,7 @@ def station_field(process_id):
         visited += 1
         try:
             if node.name in STATION_NAMES:
-                node.queryEditableText()
+                node.queryText()
                 return node
             stack.extend(node.getChildAtIndex(i) for i in range(node.childCount))
         except (AttributeError, RuntimeError, NotImplementedError, GLib.Error):
@@ -155,7 +155,7 @@ with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
         with display_log.open('w') as display_output:
             if args.backend == 'wayland':
                 env['WAYLAND_DISPLAY'] = 'inkson-gtk4-test'
-                background = subprocess.Popen(['weston', '--backend=headless-backend.so',
+                background = subprocess.Popen(['weston', '--backend=x11-backend.so',
                     '--socket=' + env['WAYLAND_DISPLAY'], '--idle-time=0', '--width=1280', '--height=800'],
                     env=env, stdout=display_output, stderr=subprocess.STDOUT)
                 deadline = time.monotonic() + 30
@@ -195,8 +195,20 @@ with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
                 result.update(real_window=True, webkit_web_process=True, startup_remained_live=True)
                 field = wait_station(app)
                 result['actual_login_dom'] = True
-                if not field.queryEditableText().setTextContents(STATION_MARKER):
-                    raise RuntimeError('real accessible Station input rejected editing')
+                if not field.queryComponent().grabFocus():
+                    raise RuntimeError('real accessible Station input rejected focus')
+                if args.backend == 'x11':
+                    input_window = window
+                else:
+                    # Official nested backend receives physical X11 keys and
+                    # dispatches them to the real Wayland application's seat.
+                    query = subprocess.run(['xdotool', 'search', '--onlyvisible', '--pid', str(background.pid)],
+                                           text=True, capture_output=True, check=True)
+                    input_window = query.stdout.splitlines()[-1]
+                subprocess.run(['xdotool', 'windowfocus', '--sync', input_window], check=True, env=env)
+                subprocess.run(['xdotool', 'key', '--clearmodifiers', 'ctrl+a'], check=True, env=env)
+                subprocess.run(['xdotool', 'type', '--clearmodifiers', '--delay', '30', STATION_MARKER], check=True, env=env)
+                result['actual_input_transport'] = 'X11 physical keyboard' if args.backend == 'x11' else 'Weston X11 backend keyboard to native Wayland seat'
                 wait_station(app, STATION_MARKER)
                 # Allow normal production config persistence to finish before close.
                 time.sleep(1)
